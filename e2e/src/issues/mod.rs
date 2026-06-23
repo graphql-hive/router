@@ -3213,4 +3213,100 @@ mod issues_e2e_tests {
         }
         "#);
     }
+
+    #[ntex::test]
+    /// https://github.com/graphql-hive/router/issues/1164
+    ///
+    /// A mutation field (`doSomething`, subgraph TWO) returns a type that exposes the
+    /// root `Query` again. Inside it, `healthCheck` stays in TWO but `user` lives in ONE,
+    /// so the planner must re-enter the root `Query` of subgraph ONE to resolve `user`.
+    async fn issue_1164_self_referencing_query_via_mutation() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.1164.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      one:
+                        url: "http://{host}/one"
+                      two:
+                        url: "http://{host}/two"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        // TWO resolves the mutation and the re-entered `query.healthCheck`.
+        let two_mock = server
+            .mock("POST", "/two")
+            .match_request(|r| {
+                String::from_utf8(r.body().unwrap().clone())
+                    .unwrap()
+                    .contains("doSomething")
+            })
+            .expect(1)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":{"doSomething":{"ok":true,"query":{"healthCheck":true}}}}"#)
+            .create();
+
+        // ONE resolves `user`, reached by re-entering the root `Query`.
+        let one_mock = server
+            .mock("POST", "/one")
+            .match_request(|r| {
+                String::from_utf8(r.body().unwrap().clone())
+                    .unwrap()
+                    .contains("user(id:")
+            })
+            .expect(1)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":{"user":{"name":"Jane"}}}"#)
+            .create();
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                mutation {
+                  doSomething {
+                    ok
+                    query {
+                      healthCheck
+                      user(id: 1) {
+                        name
+                      }
+                    }
+                  }
+                }
+                "#,
+                None,
+                None,
+            )
+            .await;
+
+        two_mock.assert();
+        one_mock.assert();
+
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "doSomething": {
+              "ok": true,
+              "query": {
+                "healthCheck": true,
+                "user": {
+                  "name": "Jane"
+                }
+              }
+            }
+          }
+        }
+        "#);
+    }
 }

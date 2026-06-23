@@ -13,6 +13,8 @@ use std::{
 };
 
 use super::ast::normalization::utils::extract_type_condition;
+use crate::planner::walker::utils::get_entrypoints;
+use crate::state::supergraph_state::SubgraphName as StateSubgraphName;
 use crate::{
     ast::type_aware_selection::TypeAwareSelection,
     federation_spec::FederationRules,
@@ -842,17 +844,10 @@ impl Graph {
                         continue;
                     }
 
-                    trace!(
-                        "[x] Creating field move edge '{}.{}/{}' (type: {})",
-                        def_name,
-                        field_name,
-                        graph_id,
-                        target_type
-                    );
-
+                    let current_subgraph_resolved_id = state.resolve_graph_id(graph_id)?;
                     let head = self.upsert_node(Node::new_node(
                         def_name,
-                        state.resolve_graph_id(graph_id)?,
+                        current_subgraph_resolved_id.clone(),
                         state.is_interface_object_in_subgraph(def_name, graph_id),
                     ));
                     let tail = self.upsert_node(Node::new_node(
@@ -893,6 +888,46 @@ impl Graph {
                             overridden_by.clone(),
                         ),
                     );
+
+                    // If the target type is a root type, we handle it differently and checking if a re-entry is needed.
+                    // Our goal is to find all "Query/subgraph" entrypoints
+                    if let Some(root_entrypoints) = state
+                        .maybe_root_type(target_type)
+                        .and_then(|root_kind| get_entrypoints(self, &root_kind).ok())
+                        .map(|edge_references| {
+                            edge_references
+                                .iter()
+                                .map(|edge_ref| edge_ref.target())
+                                .collect::<Vec<_>>()
+                        })
+                    {
+                        // For every forgein possible "Query" entrypoint, create a "SubgraphEntrypoint"
+                        // to it will be translated into a separate fetch call later
+                        for target_node_index in root_entrypoints {
+                            let target_node = self.graph.node_weight(target_node_index).unwrap(); // safe because we know it's already there
+
+                            if let Some(graph_id) = target_node.graph_id() {
+                                if graph_id != current_subgraph_resolved_id.0 {
+                                    trace!(
+                                      "[x] Creating remote root re-entry field move edge '{}.{}/{}' (type: {})",
+                                      def_name,
+                                      field_name,
+                                      graph_id,
+                                      target_node.display_name()
+                                  );
+
+                                    self.upsert_edge(
+                                        head,
+                                        target_node_index,
+                                        Edge::SubgraphEntrypoint {
+                                            field_names: vec![field_name.to_string()],
+                                            name: StateSubgraphName(graph_id.to_string()),
+                                        },
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

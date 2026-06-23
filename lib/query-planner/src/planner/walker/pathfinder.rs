@@ -180,7 +180,9 @@ impl<'graph> PathSearch<'graph> {
             let relevant_edges = graph.edges_from(path.tail()).filter(|e| {
                 matches!(
                     e.weight(),
-                    Edge::EntityMove { .. } | Edge::InterfaceObjectTypeMove { .. }
+                    Edge::EntityMove { .. }
+                        | Edge::InterfaceObjectTypeMove { .. }
+                        | Edge::SubgraphEntrypoint { .. }
                 )
             });
 

@@ -358,11 +358,12 @@ fn create_fetch_step_for_root_move(
     subgraph_name: &SubgraphName,
     type_name: &str,
     mutation_field_position: MutationFieldPosition,
+    response_path: &MergePath,
 ) -> NodeIndex {
     let idx = fetch_graph.add_step(FetchStepData {
         id: fetch_graph.create_fetch_id(),
         service_name: subgraph_name.clone(),
-        response_path: MergePath::default(),
+        response_path: response_path.clone(),
         input: FetchStepSelections::new(type_name),
         output: FetchStepSelections::new(type_name),
         flags: FetchStepFlags::empty(),
@@ -1006,6 +1007,7 @@ fn process_subgraph_entrypoint_edge(
     parent_fetch_step_index: NodeIndex,
     subgraph_name: &SubgraphName,
     type_name: &str,
+    response_path: &MergePath,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     let fetch_step_index = create_fetch_step_for_root_move(
@@ -1014,6 +1016,7 @@ fn process_subgraph_entrypoint_edge(
         subgraph_name,
         type_name,
         query_node.mutation_field_position,
+        response_path,
     );
 
     fetch_graph.connect(parent_fetch_step_index, fetch_step_index);
@@ -1024,7 +1027,7 @@ fn process_subgraph_entrypoint_edge(
         override_context,
         query_node,
         fetch_step_index,
-        &MergePath::default(),
+        response_path,
         &MergePath::default(),
         None,
         None,
@@ -1693,6 +1696,7 @@ fn process_query_node(
                     parent_fetch_step_index,
                     name,
                     type_name,
+                    response_path,
                     created_from_requires,
                 )
             }

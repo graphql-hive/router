@@ -699,6 +699,18 @@ impl SupergraphState {
         result
     }
 
+    pub fn maybe_root_type(&self, type_name: &str) -> Option<OperationKind> {
+        if self.query_type == type_name {
+            Some(OperationKind::Query)
+        } else if self.mutation_type.as_deref().unwrap_or("Mutation") == type_name {
+            Some(OperationKind::Mutation)
+        } else if self.subscription_type.as_deref().unwrap_or("Subscription") == type_name {
+            Some(OperationKind::Subscription)
+        } else {
+            None
+        }
+    }
+
     pub fn root_type_name(&self, operation_kind: Option<&OperationKind>) -> &str {
         match operation_kind {
             Some(OperationKind::Query) => &self.query_type,

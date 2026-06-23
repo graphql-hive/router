@@ -17,7 +17,7 @@ use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
 };
 use hive_router_query_planner::ast::operation::SubgraphFetchOperation;
-use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
+use hive_router_query_planner::planner::plan_nodes::{CustomScalarPaths, FetchNode, FlattenNode};
 use hive_router_query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use hive_router_query_planner::{
     ast::operation::OperationDefinition,
@@ -669,6 +669,9 @@ pub enum ExecutionJob<'exec> {
         operation: &'exec SubgraphFetchOperation,
         response: SubgraphResponse<'exec>,
         output_rewrites: Option<&'exec [FetchRewrite]>,
+        // By default, this job is merged at the root. When this is set, we merge at
+        // a specific path instead of the root (used for root re-entry fetches)
+        merge_path: Option<&'exec FlattenNodePath>,
     },
     FlattenFetch {
         subgraph_name: &'exec str,
@@ -742,7 +745,7 @@ impl<'exec> ExecutionJob<'exec> {
 
     fn affected_path(&self) -> Option<&'exec FlattenNodePath> {
         match self {
-            ExecutionJob::Fetch { .. } => None,
+            ExecutionJob::Fetch { merge_path, .. } => *merge_path,
             ExecutionJob::FlattenFetch {
                 flatten_node_path, ..
             } => Some(flatten_node_path),
@@ -813,6 +816,27 @@ impl<'exec> Executor<'exec> {
                 }
             }
         }
+    }
+
+    fn prepare_root_reentry_fetch_job<'wave>(
+        &'wave self,
+        flatten_node: &'exec FlattenNode,
+        fetch_node: &'exec FetchNode,
+    ) -> BoxFuture<'wave, Result<ExecutionJob<'exec>, PlanExecutionError>> {
+        self.prepare_execution_job(PrepareExecutionJobOpts {
+            subgraph_name: &fetch_node.service_name,
+            variable_usages: fetch_node.variable_usages.as_ref(),
+            operation_name: self
+                .operation_name_factory
+                .generate(&fetch_node.service_name, fetch_node.id),
+            operation_kind: fetch_node.operation_kind.as_ref(),
+            operation: &fetch_node.operation,
+            output_rewrites: fetch_node.output_rewrites.as_deref(),
+            custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
+            raw_variable_values: None,
+            affected_path: Some(&flatten_node.path),
+        })
+        .boxed()
     }
 
     /**
@@ -890,7 +914,13 @@ impl<'exec> Executor<'exec> {
                     PlanNode::Fetch(fetch_node) => fetch_node,
                     _ => return None,
                 };
-                let requires_nodes = fetch_node.requires.as_ref()?;
+
+                // If there are no requirements in the node (no _entities call), then we only need to make
+                // a regular call. This happens when we perform subgraph re-entry.
+                // So we can just create the fetch step future with the info we have
+                let Some(requires_nodes) = fetch_node.requires.as_ref() else {
+                    return Some(self.prepare_root_reentry_fetch_job(flatten_node, fetch_node));
+                };
 
                 let mut index = 0;
                 let normalized_path = flatten_node.path.as_slice();
@@ -1058,6 +1088,7 @@ impl<'exec> Executor<'exec> {
                     ExecutionJob::Fetch {
                         mut response,
                         output_rewrites,
+                        merge_path,
                         ..
                     } => {
                         if let Some(response_bytes) = response.bytes {
@@ -1071,7 +1102,24 @@ impl<'exec> Executor<'exec> {
                                 );
                             }
                         }
-                        deep_merge(&mut ctx.data, response.data);
+
+                        match merge_path {
+                            // Root fetch
+                            None => deep_merge(&mut ctx.data, response.data),
+                            // Root re-entry
+                            Some(merge_path) => {
+                                let source = response.data;
+                                traverse_and_callback_mut(
+                                    &mut ctx.data,
+                                    merge_path.as_slice(),
+                                    self.schema_metadata,
+                                    None,
+                                    &mut |target, _error_path| {
+                                        deep_merge(target, source.clone());
+                                    },
+                                );
+                            }
+                        }
 
                         ctx.handle_errors(subgraph_name, affected_path, response.errors, None);
                     }
@@ -1572,6 +1620,7 @@ impl<'exec> Executor<'exec> {
                 operation: opts.operation,
                 response,
                 output_rewrites: opts.output_rewrites,
+                merge_path: opts.affected_path,
             })
         }
         .inspect_err(|err: &PlanExecutionError| {
