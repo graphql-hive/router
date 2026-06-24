@@ -1348,17 +1348,19 @@ insert: {}
 
 Propagate headers from subgraph responses to the final client response.
 
-**Behavior**
 - If multiple subgraphs return the header, values are merged using `algorithm`.
   Never-join headers are **never** comma-joined.
 - If **no** subgraph returns a match, `default` (if set) is emitted.
 - If `rename` is set, the outgoing header uses the new name.
 
+For `cache-control` propagation, `algorithm` must be `append`. See
+[`AggregationAlgo::Append`] for the full merge semantics.
+
 ### Examples
 ```yaml
-# Forward Cache-Control from whichever subgraph supplies it (last wins)
+# Forward X-Request-ID from whichever subgraph supplies it (last wins)
 propagate:
-  named: Cache-Control
+  named: X-Request-ID
   algorithm: last
 
 # Combine list-valued headers
@@ -1371,6 +1373,11 @@ propagate:
   named: x-backend
   algorithm: append
   default: unknown
+
+# Propagate cache-control with restrictive merge across all subgraphs
+propagate:
+  named: cache-control
+  algorithm: append
 ```
 
 
@@ -1823,17 +1830,19 @@ insert: {}
 
 Propagate headers from subgraph responses to the final client response.
 
-**Behavior**
 - If multiple subgraphs return the header, values are merged using `algorithm`.
   Never-join headers are **never** comma-joined.
 - If **no** subgraph returns a match, `default` (if set) is emitted.
 - If `rename` is set, the outgoing header uses the new name.
 
+For `cache-control` propagation, `algorithm` must be `append`. See
+[`AggregationAlgo::Append`] for the full merge semantics.
+
 ### Examples
 ```yaml
-# Forward Cache-Control from whichever subgraph supplies it (last wins)
+# Forward X-Request-ID from whichever subgraph supplies it (last wins)
 propagate:
-  named: Cache-Control
+  named: X-Request-ID
   algorithm: last
 
 # Combine list-valued headers
@@ -1846,6 +1855,11 @@ propagate:
   named: x-backend
   algorithm: append
   default: unknown
+
+# Propagate cache-control with restrictive merge across all subgraphs
+propagate:
+  named: cache-control
+  algorithm: append
 ```
 
 
