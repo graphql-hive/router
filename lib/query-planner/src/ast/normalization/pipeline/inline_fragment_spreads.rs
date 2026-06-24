@@ -65,9 +65,12 @@ fn handle_selection_set<'a>(
                 )?;
                 new_items.push(Selection::Field(field));
             }
-            Selection::FragmentSpread(mut spread) => {
+            Selection::FragmentSpread(spread) => {
                 // walk the spread chain iteratively so a long acyclic chain (...F1 -> ...F2 -> ...)
                 // can't blow the stack. we only recurse on a fragment body that has real content.
+                // `spread` stays a borrow throughout, retargeting into `fragment_map` per link so
+                // no FragmentSpread gets cloned while advancing.
+                let mut spread = &spread;
                 let fragment_def = loop {
                     let def = fragment_map.get(&spread.fragment_name).ok_or_else(|| {
                         NormalizationError::FragmentDefinitionNotFound {
@@ -84,7 +87,7 @@ fn handle_selection_set<'a>(
                     if inlineable {
                         if let [Selection::FragmentSpread(next)] = def.selection_set.items.as_slice()
                         {
-                            spread = next.clone();
+                            spread = next;
                             continue;
                         }
                     }
