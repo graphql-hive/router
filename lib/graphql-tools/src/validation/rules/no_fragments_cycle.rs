@@ -35,7 +35,7 @@ impl NoFragmentsCycle {
         &mut self,
         root: &'a FragmentDefinition,
         spread_paths: &mut Vec<&'a FragmentSpread>,
-        spread_path_index_by_name: &mut HashMap<String, usize>,
+        spread_path_index_by_name: &mut HashMap<&'a str, usize>,
         known_fragments: &'a HashMap<&'a str, &'a FragmentDefinition>,
         error_context: &mut ValidationErrorContext,
     ) {
@@ -44,9 +44,9 @@ impl NoFragmentsCycle {
         // target fragment or reports a cycle, Frame::PopSpread undoes that push on the way back.
         enum Frame<'a> {
             EnterFragment(&'a FragmentDefinition),
-            ExitFragment(String), // removes fragment from spread_path_index_by_name
+            ExitFragment(&'a str), // removes fragment from spread_path_index_by_name
             EnterSpread(&'a FragmentSpread), // push spread onto spread_paths
-            PopSpread,            // pop spread from spread_paths
+            PopSpread,             // pop spread from spread_paths
         }
 
         let mut stack: Vec<Frame<'a>> = vec![Frame::EnterFragment(root)];
@@ -54,7 +54,7 @@ impl NoFragmentsCycle {
         while let Some(frame) = stack.pop() {
             match frame {
                 Frame::ExitFragment(name) => {
-                    spread_path_index_by_name.remove(&name);
+                    spread_path_index_by_name.remove(name);
                 }
                 Frame::PopSpread => {
                     spread_paths.pop();
@@ -70,8 +70,8 @@ impl NoFragmentsCycle {
                         continue;
                     }
 
-                    spread_path_index_by_name.insert(fragment.name.clone(), spread_paths.len());
-                    stack.push(Frame::ExitFragment(fragment.name.clone()));
+                    spread_path_index_by_name.insert(fragment.name.as_str(), spread_paths.len());
+                    stack.push(Frame::ExitFragment(fragment.name.as_str()));
 
                     // push spreads in reverse so they execute left-to-right
                     for spread_node in spread_nodes.into_iter().rev() {
@@ -81,7 +81,7 @@ impl NoFragmentsCycle {
                 Frame::EnterSpread(spread_node) => {
                     let spread_name = &spread_node.fragment_name;
 
-                    match spread_path_index_by_name.get(spread_name) {
+                    match spread_path_index_by_name.get(spread_name.as_str()) {
                         None => {
                             if let Some(spread_def) = known_fragments.get(spread_name.as_str()) {
                                 // descend into the target; PopSpread restores spread_paths once the
@@ -135,7 +135,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for NoFragmentsCycle {
         fragment: &FragmentDefinition,
     ) {
         let mut spread_paths: Vec<&FragmentSpread> = vec![];
-        let mut spread_path_index_by_name: HashMap<String, usize> = HashMap::new();
+        let mut spread_path_index_by_name: HashMap<&str, usize> = HashMap::new();
 
         self.detect_cycles(
             fragment,
