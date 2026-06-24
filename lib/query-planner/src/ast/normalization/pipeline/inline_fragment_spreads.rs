@@ -85,7 +85,8 @@ fn handle_selection_set<'a>(
 
                     // pure chain link `fragment F on T { ...G }`: advance instead of recursing.
                     if inlineable {
-                        if let [Selection::FragmentSpread(next)] = def.selection_set.items.as_slice()
+                        if let [Selection::FragmentSpread(next)] =
+                            def.selection_set.items.as_slice()
                         {
                             spread = next;
                             continue;
