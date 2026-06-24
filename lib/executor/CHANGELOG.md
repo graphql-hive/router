@@ -94,6 +94,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 6.19.0 (2026-06-24)
+
+### Features
+
+#### Restrictive `Cache-Control` header merging
+
+`Cache-Control` headers from all subgraph responses are now merged using the most conservative directive before being forwarded to the client. No configuration required.
+
+### Merge algorithm
+
+Given N subgraph responses:
+
+1. Any `no-store`, `no-cache`, or `private` directive short-circuits the result to `no-store, no-cache`.
+2. Otherwise `max-age` is the minimum of all present values (missing values are ignored).
+3. `public` only when every subgraph is `public`.
+4. `must-revalidate` if any subgraph sets it.
+
+`no-store, no-cache, must-revalidate` is forced regardless of subgraph headers when:
+
+- Any subgraph executor error (network failure, bad status, etc.)
+- Any GraphQL-level error in a subgraph response (`errors` array non-empty)
+- The operation is a mutation
+
+The `Cache-Control` header is removed entirely when no subgraph sends a valid one.
+
+### Configuration
+
+Enable merging by propagating `Cache-Control` through header rules:
+
+```yaml
+headers:
+  all:
+    response:
+      - propagate:
+          named: cache-control
+          algorithm: append
+          # default emitted unless a subgraph provides one
+          default: "public, max-age=180"
+```
+
+Subgraph-level `insert` or `remove` rules let you pin or drop a specific subgraph's contribution before the merge runs:
+
+```yaml
+headers:
+  subgraphs:
+    pricing:
+      response:
+        - insert:
+            name: cache-control
+            value: "no-cache"
+```
+
+Configuring `propagate: named: cache-control` without the merge enabled is rejected at compile time. If no `Cache-Control` propagation is configured, merging is inactive.
+
+### Fixes
+
+#### Correctly process variables in introspection execution
+
+Introspection resolution only handled inline literal arguments, so arguments
+passed as variables (e.g. `__type(name: $name)` or `includeDeprecated: $flag`)
+were ignored and resolved to their defaults.
+
+The introspection context now carries the request variables.
+
+Fixes [#1185](https://github.com/graphql-hive/router/issues/1185)
+
+#### Fix shared response keys leaking across disjoint fragments
+
+When several fragments on different types selected the same response key with different sub-selections (e.g. `... on Article { meta { title } }` vs `... on Video { meta { wordCount } }`), the response projection merged their child selections together instead of keeping them per type.
+
+As a result, a sub-field selected for one type could leak into the projection of another. 
+
+When that leaked field was Non-Null and absent from the actual type's data, null propagation bubbled up and collapsed the whole response to `data: null`.
+
+Fixes [#1166](https://github.com/graphql-hive/router/pull/1166)
+
+#### Fix missing `__typename` with `@requires` re-entry
+
+Resolving a field with `@requires` makes the planner re-enter the entity's subgraph through `_entities`, using a representation built from the entity's data. That representation must carry the entity's `__typename`, since `_entities` routes on it.
+
+The fetch that produces the entity now always selects its `__typename`, so the re-entry representation is complete.
+
+Fixes [#1070](https://github.com/graphql-hive/router/issues/1070)
+
 ## 6.18.2 (2026-06-19)
 
 ### Fixes
