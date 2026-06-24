@@ -2723,4 +2723,31 @@ mod tests {
         "
         );
     }
+
+    #[test]
+    fn acyclic_fragment_chain_does_not_overflow_stack() {
+        let schema = parse_schema(
+            r#"
+            type Query {
+              __typename: String
+            }
+            "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+
+        // very cyclcal fragment chain that would overflow the stack if protections were not in place
+        let n = 10_000;
+        let mut doc = String::from("query { ...F1 }\n");
+        for i in 1..n {
+            doc.push_str(&format!("fragment F{i} on Query {{ ...F{} }}\n", i + 1));
+        }
+        doc.push_str(&format!("fragment F{n} on Query {{ __typename }}\n"));
+
+        let parsed = parse_query::<String>(&doc)
+            .expect("valid graphql")
+            .into_static();
+
+        // must return without overflowing; Ok or Err (i.e. no crash) both mean we survived
+        let _ = normalize_operation(&supergraph, &parsed, None);
+    }
 }
