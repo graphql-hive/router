@@ -30,6 +30,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 2.10.2 (2026-06-24)
+
+### Fixes
+
+#### Fix missing `__typename` with `@requires` re-entry
+
+Resolving a field with `@requires` makes the planner re-enter the entity's subgraph through `_entities`, using a representation built from the entity's data. That representation must carry the entity's `__typename`, since `_entities` routes on it.
+
+The fetch that produces the entity now always selects its `__typename`, so the re-entry representation is complete.
+
+Fixes [#1070](https://github.com/graphql-hive/router/issues/1070)
+
 ## 2.10.1 (2026-06-18)
 
 ### Fixes
