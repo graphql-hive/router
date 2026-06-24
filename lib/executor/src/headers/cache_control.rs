@@ -40,7 +40,7 @@ fn parse(header: &str) -> Option<CacheControl> {
                     Some(v) => match v.parse::<u32>() {
                         Ok(n) => Some(n),
                         Err(_) => {
-                            warn!("cache-control max-age has non-numeric value: {v}");
+                            warn!(value = v, "cache-control max-age has non-numeric value");
                             return None;
                         }
                     },
@@ -53,7 +53,7 @@ fn parse(header: &str) -> Option<CacheControl> {
             }
             v => {
                 // one invalid part is enough to stop parsing and discard the header
-                warn!("cache-control has unrecognized directive: {v}");
+                warn!(directive = v, "cache-control has unrecognized directive");
                 return None;
             }
         }
