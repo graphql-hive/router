@@ -2,6 +2,11 @@ use crate::headers::{plan::HeaderAggregationStrategy, response::ResponseHeaderAg
 use http::HeaderValue;
 use tracing::{debug, warn};
 
+lazy_static::lazy_static! {
+    static ref NO_STORE_HEADER_VALUE: HeaderValue =
+        HeaderValue::from_static("no-store, no-cache, must-revalidate");
+}
+
 #[derive(Clone, Default)]
 struct CacheControl {
     no_store: bool,
@@ -172,7 +177,7 @@ pub fn finalize(
     };
 
     if force_no_store {
-        let value = HeaderValue::from_static("no-store, no-cache, must-revalidate");
+        let value = NO_STORE_HEADER_VALUE.clone();
         aggregator.entries.insert(
             http::header::CACHE_CONTROL,
             (HeaderAggregationStrategy::Last, vec![value]),
