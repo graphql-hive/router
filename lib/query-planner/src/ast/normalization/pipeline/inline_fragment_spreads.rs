@@ -65,64 +65,53 @@ fn handle_selection_set<'a>(
                 )?;
                 new_items.push(Selection::Field(field));
             }
-            Selection::FragmentSpread(spread) => {
-                // iteratively resolve the fragment spread chain to avoid stack overflow on long
-                // acyclic chains. each iteration peels one same-type same-spread level off the chain
-                // until we hit a field boundary, a type mismatch, a directive, or a leaf.
-                let mut current_spread_name = spread.fragment_name.clone();
-                let mut current_directives = spread.directives.clone();
-                let mut current_position = spread.position;
-                let current_parent_tc = parent_type_condition.cloned();
-
-                loop {
-                    let fragment_def = fragment_map.get(&current_spread_name).ok_or_else(|| {
+            Selection::FragmentSpread(mut spread) => {
+                // walk the spread chain iteratively so a long acyclic chain (...F1 -> ...F2 -> ...)
+                // can't blow the stack. we only recurse on a fragment body that has real content.
+                let fragment_def = loop {
+                    let def = fragment_map.get(&spread.fragment_name).ok_or_else(|| {
                         NormalizationError::FragmentDefinitionNotFound {
-                            fragment_name: current_spread_name.clone(),
+                            fragment_name: spread.fragment_name.clone(),
                         }
                     })?;
 
-                    if current_parent_tc.as_ref() == Some(&fragment_def.type_condition)
-                        && current_directives.is_empty()
-                    {
-                        // same type, no directives: the original code would inline and recurse.
-                        // check if the entire body is a single fragment spread with no fields,
-                        // in which case we can just advance the chain iteratively.
-                        let items = &fragment_def.selection_set.items;
-                        if items.len() == 1 {
-                            if let Selection::FragmentSpread(next_spread) = &items[0] {
-                                // pure chain link: advance without recursing
-                                current_spread_name = next_spread.fragment_name.clone();
-                                current_directives = next_spread.directives.clone();
-                                current_position = next_spread.position;
-                                // parent type condition stays the same
-                                continue;
-                            }
+                    // can only inline (vs wrap) when the type matches and there are no directives
+                    // that would otherwise be lost.
+                    let inlineable = parent_type_condition == Some(&def.type_condition)
+                        && spread.directives.is_empty();
+
+                    // pure chain link `fragment F on T { ...G }`: advance instead of recursing.
+                    if inlineable {
+                        if let [Selection::FragmentSpread(next)] = def.selection_set.items.as_slice()
+                        {
+                            spread = next.clone();
+                            continue;
                         }
-                        // body has real content: inline it and recurse normally (bounded by
-                        // field depth, which is bounded by max_depth validation)
-                        let mut inlined = fragment_def.selection_set.clone();
-                        handle_selection_set(
-                            &mut inlined,
-                            fragment_map,
-                            current_parent_tc.as_ref(),
-                        )?;
-                        new_items.extend(inlined.items);
-                    } else {
-                        // type mismatch or has directives: wrap in an inline fragment
-                        let mut inline_fragment = InlineFragment {
-                            position: current_position,
-                            type_condition: Some(fragment_def.type_condition.clone()),
-                            directives: current_directives.clone(),
-                            selection_set: fragment_def.selection_set.clone(),
-                        };
-                        handle_selection_set(
-                            &mut inline_fragment.selection_set,
-                            fragment_map,
-                            inline_fragment.type_condition.as_ref(),
-                        )?;
-                        new_items.push(Selection::InlineFragment(inline_fragment));
                     }
-                    break;
+                    break def;
+                };
+
+                if parent_type_condition == Some(&fragment_def.type_condition)
+                    && spread.directives.is_empty()
+                {
+                    // same type, no directives: inline the body directly.
+                    let mut inlined = fragment_def.selection_set.clone();
+                    handle_selection_set(&mut inlined, fragment_map, parent_type_condition)?;
+                    new_items.extend(inlined.items);
+                } else {
+                    // type mismatch or has directives: wrap in an inline fragment.
+                    let mut inline_fragment = InlineFragment {
+                        position: spread.position,
+                        type_condition: Some(fragment_def.type_condition.clone()),
+                        directives: spread.directives.clone(),
+                        selection_set: fragment_def.selection_set.clone(),
+                    };
+                    handle_selection_set(
+                        &mut inline_fragment.selection_set,
+                        fragment_map,
+                        inline_fragment.type_condition.as_ref(),
+                    )?;
+                    new_items.push(Selection::InlineFragment(inline_fragment));
                 }
             }
             Selection::InlineFragment(mut inline_fragment) => {

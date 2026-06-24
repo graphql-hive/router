@@ -79,20 +79,21 @@ impl NoFragmentsCycle {
                     }
                 }
                 Frame::EnterSpread(spread_node) => {
-                    let spread_name = spread_node.fragment_name.clone();
-                    spread_paths.push(spread_node);
+                    let spread_name = &spread_node.fragment_name;
 
-                    match spread_path_index_by_name.get(&spread_name) {
+                    match spread_path_index_by_name.get(spread_name) {
                         None => {
                             if let Some(spread_def) = known_fragments.get(spread_name.as_str()) {
-                                // PopSpread runs after the child subtree is fully explored
+                                // descend into the target; PopSpread restores spread_paths once the
+                                // whole child subtree is explored.
+                                spread_paths.push(spread_node);
                                 stack.push(Frame::PopSpread);
                                 stack.push(Frame::EnterFragment(spread_def));
-                            } else {
-                                spread_paths.pop();
                             }
                         }
                         Some(cycle_index) => {
+                            // include the closing spread so the reported path ends where it loops.
+                            spread_paths.push(spread_node);
                             let cycle_path = &spread_paths[*cycle_index..];
                             let via_path = match cycle_path.len() {
                                 0 => vec![],

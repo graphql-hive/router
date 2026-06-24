@@ -2735,7 +2735,7 @@ mod tests {
         );
         let supergraph = SupergraphState::new(&schema);
 
-        // very cyclcal fragment chain that would overflow the stack if protections were not in place
+        // very long acyclic fragment chain that would overflow the stack if protections were not in place
         let n = 10_000;
         let mut doc = String::from("query { ...F1 }\n");
         for i in 1..n {
