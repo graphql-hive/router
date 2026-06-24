@@ -1,6 +1,6 @@
 use crate::headers::{plan::HeaderAggregationStrategy, response::ResponseHeaderAggregator};
 use http::HeaderValue;
-use tracing::warn;
+use tracing::{debug, warn};
 
 #[derive(Clone, Default)]
 struct CacheControl {
@@ -205,6 +205,9 @@ pub fn finalize(
     } else {
         // no valid values found, but there were cache-control headers
         // do the safe thing and graceful thing - completely omit the header
+        for v in values {
+            debug!(value = ?v, "invalid cache-control value");
+        }
         warn!("no valid cache-control values found, removing header");
         aggregator.entries.remove(&http::header::CACHE_CONTROL);
     }
