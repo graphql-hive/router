@@ -92,27 +92,7 @@ impl HeaderRuleCompiler<Vec<ResponseHeaderRule>> for config::ResponseHeaderRule 
                     rule.default.as_ref(),
                 )?;
 
-                // named path has no exclude at runtime, so exclude can only
-                // negate a regex match, never a named match
-                let named_includes_cache_control = spec
-                    .header_names
-                    .iter()
-                    .any(|n| n.as_str() == "cache-control");
-                let regex_includes_cache_control = spec
-                    .include_regex
-                    .as_ref()
-                    .is_some_and(|re| re.is_match("cache-control"));
-                let regex_excludes_cache_control = spec
-                    .exclude_regex
-                    .as_ref()
-                    .is_some_and(|re| re.is_match("cache-control"));
-                let cache_control_will_propagate = named_includes_cache_control
-                    || (regex_includes_cache_control && !regex_excludes_cache_control);
-                if !matches!(rule.algorithm, config::AggregationAlgo::Append)
-                    && cache_control_will_propagate
-                {
-                    return Err(HeaderRuleCompileError::CacheControlRequiresAppend);
-                }
+                validate_cache_control(&spec, rule.algorithm)?;
 
                 if !spec.header_names.is_empty() {
                     actions.push(ResponseHeaderRule::PropagateNamed(ResponsePropagateNamed {
@@ -242,6 +222,31 @@ struct HeaderMatchSpecResult {
     exclude_regex: Option<meta::Regex>,
     rename_header: Option<HeaderName>,
     default_header_value: Option<http::HeaderValue>,
+}
+
+fn validate_cache_control(
+    spec: &HeaderMatchSpecResult,
+    algorithm: config::AggregationAlgo,
+) -> Result<(), HeaderRuleCompileError> {
+    // named path has no exclude at runtime, so exclude can only
+    // negate a regex match, never a named match
+    let named_includes = spec
+        .header_names
+        .iter()
+        .any(|n| n.as_str() == "cache-control");
+    let regex_includes = spec
+        .include_regex
+        .as_ref()
+        .is_some_and(|re| re.is_match("cache-control"));
+    let regex_excludes = spec
+        .exclude_regex
+        .as_ref()
+        .is_some_and(|re| re.is_match("cache-control"));
+    let will_propagate = named_includes || (regex_includes && !regex_excludes);
+    if !matches!(algorithm, config::AggregationAlgo::Append) && will_propagate {
+        return Err(HeaderRuleCompileError::CacheControlRequiresAppend);
+    }
+    Ok(())
 }
 
 fn materialize_match_spec(
