@@ -462,6 +462,25 @@ fn no_spreading_itself_deeply_two_paths_alt_traverse_order() {
 }
 
 #[test]
+fn acyclic_fragment_chain_does_not_overflow_stack() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(NoFragmentsCycle::new()));
+
+    let n = 10_000;
+    let mut doc = String::from("");
+    for i in 1..n {
+        doc.push_str(&format!("fragment F{i} on Dog {{ ...F{} }}\n", i + 1));
+    }
+    doc.push_str(&format!("fragment F{n} on Dog {{ name }}\n"));
+
+    // must return without overflowing the stack
+    let errors = test_operation_with_schema(&doc, TEST_SCHEMA, &mut plan);
+    let mes = get_messages(&errors);
+    assert_eq!(mes.len(), 0);
+}
+
+#[test]
 fn no_spreading_itself_deeply_and_immediately() {
     use crate::validation::test_utils::*;
 
