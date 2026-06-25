@@ -3309,4 +3309,112 @@ mod issues_e2e_tests {
         }
         "#);
     }
+
+    #[ntex::test]
+    /// https://github.com/graphql-hive/router/issues/1164
+    ///
+    /// Root re-entry that lands on a union (`Viewer = User | Error`). A mutation field
+    /// (`test`, subgraph B) re-exposes `Query`, whose `viewer` lives in subgraph A. Each
+    /// union member must resolve fully: `User` pulls `id` from A and `name` from B (entity
+    /// fetch), `Error` resolves `message` directly in A.
+    async fn issue_1164_root_re_entry_into_union() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+
+        async fn run(viewer: serde_json::Value) -> String {
+            let subgraphs = TestSubgraphs::builder()
+                .with_on_request(mock_subgraphs(json!({
+                    "A": {
+                        "query": { "viewer": viewer }
+                    },
+                    "B": {
+                        "mutation": { "test": { "query": { "__typename": "Query" } } },
+                        "entities": [
+                            { "__typename": "User", "id": "1", "name": "Jane" }
+                        ]
+                    }
+                })))
+                .build()
+                .start()
+                .await;
+
+            let url = subgraphs.url();
+
+            let router = TestRouter::builder()
+                .with_subgraphs(&subgraphs)
+                .inline_config(format!(
+                    r#"
+                      supergraph:
+                        source: file
+                        path: src/issues/supergraph.1164-with-union.graphql
+                      override_subgraph_urls:
+                        subgraphs:
+                          A:
+                            url: "{url}/A"
+                          B:
+                            url: "{url}/B"
+                      "#,
+                ))
+                .build()
+                .start()
+                .await;
+
+            let res = router
+                .send_graphql_request(
+                    r#"
+                    mutation {
+                      test {
+                        query {
+                          viewer {
+                            ... on User {
+                              id
+                              name
+                            }
+                            ... on Error {
+                              message
+                            }
+                          }
+                        }
+                      }
+                    }
+                    "#,
+                    None,
+                    None,
+                )
+                .await;
+            assert!(res.status().is_success(), "Expected 200 OK");
+            res.json_body_string_pretty().await
+        }
+
+        // `viewer` resolves to a `User`: `id` from A, `name` from B.
+        insta::assert_snapshot!(run(json!({ "__typename": "User", "id": "1" })).await, @r#"
+        {
+          "data": {
+            "test": {
+              "query": {
+                "viewer": {
+                  "id": "1",
+                  "name": "Jane"
+                }
+              }
+            }
+          }
+        }
+        "#);
+
+        // `viewer` resolves to an `Error`: `message` from A.
+        insta::assert_snapshot!(run(json!({ "__typename": "Error", "message": "boom" })).await, @r#"
+        {
+          "data": {
+            "test": {
+              "query": {
+                "viewer": {
+                  "message": "boom"
+                }
+              }
+            }
+          }
+        }
+        "#);
+    }
 }
