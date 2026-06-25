@@ -99,7 +99,13 @@ impl NoFragmentsCycle {
                                 0 => vec![],
                                 _ => cycle_path[0..cycle_path.len() - 1]
                                     .iter()
-                                    .map(|s| format!("\"{}\"", s.node_name().unwrap()))
+                                    .map(|s| {
+                                        format!(
+                                            "\"{}\"",
+                                            s.node_name()
+                                                .expect("fragment spread must have a name")
+                                        )
+                                    })
                                     .collect::<Vec<String>>(),
                             };
 
