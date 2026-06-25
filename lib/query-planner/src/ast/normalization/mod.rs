@@ -2729,7 +2729,7 @@ mod tests {
         let schema = parse_schema(
             r#"
             type Query {
-              __typename: String
+              field: String
             }
             "#,
         );
