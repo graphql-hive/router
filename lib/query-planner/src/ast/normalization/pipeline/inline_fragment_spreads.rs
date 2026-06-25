@@ -71,8 +71,24 @@ fn handle_selection_set<'a>(
                 // `spread` stays a borrow throughout, retargeting into `fragment_map` per link so
                 // no FragmentSpread gets cloned while advancing.
                 let mut spread = &spread;
-                // each step follows exactly one spread, so a cycle-free walk visits each fragment
-                // at most once - a chain longer than the total fragment count must contain a cycle
+                // each chain step follows exactly one spread into one fragment, so a single walk
+                // can visit each fragment at most once before it must either terminate or revisit -
+                // if chain_len exceeds the number of known fragments, a name must have repeated,
+                // which means we're in a cycle.
+                //
+                // example - acyclic chain (chain_len reaches 2, fragment_map.len() == 3, ok):
+                //   fragment A on T { ...B }  fragment B on T { ...C }  fragment C on T { field }
+                //
+                // example - self-cycle (chain_len reaches 2, fragment_map.len() == 1, err):
+                //   fragment A on T { ...A }
+                //
+                // example - mutual cycle (chain_len reaches 3, fragment_map.len() == 2, err):
+                //   fragment A on T { ...B }  fragment B on T { ...A }
+                //
+                // spreading the same fragment multiple times does not break the check because each
+                // spread site starts its own independent walk with its own chain_len reset to 0 -
+                // the counter is local to one chain traversal, not shared across the selection set:
+                //   query { ...A ...A }  fragment A on T { field }  <- two walks, each chain_len=0
                 let max_chain = fragment_map.len();
                 let mut chain_len = 0usize;
                 let fragment_def = loop {
