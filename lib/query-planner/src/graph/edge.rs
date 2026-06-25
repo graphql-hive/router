@@ -266,7 +266,7 @@ impl Edge {
 impl Display for Edge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Edge::SubgraphEntrypoint { name, .. } => write!(f, "{}", name.0),
+            Edge::SubgraphEntrypoint { name, .. } => write!(f, "🚪{}", name.0),
             Edge::EntityMove(EntityMove { .. }) => write!(f, "🔑"),
             Edge::AbstractMove(_) => write!(f, "🔮"),
             Edge::Selfie(_) => write!(f, "🤳"),
@@ -285,7 +285,9 @@ impl Display for Edge {
 impl Debug for Edge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Edge::SubgraphEntrypoint { name, .. } => write!(f, "subgraph({})", name.0),
+            Edge::SubgraphEntrypoint { name, field_names } => {
+                write!(f, "subgraph({} {{ {} }})", name.0, field_names.join(", "))
+            }
             Edge::FieldMove(fm) => {
                 // Start with the field name
                 let mut result = write!(f, "{}", &fm.name);
