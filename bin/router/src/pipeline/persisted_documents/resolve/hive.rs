@@ -140,13 +140,23 @@ impl HiveCDNResolver {
     pub fn from_storage_config(
         config: &PersistedDocumentsHiveStorageConfig,
     ) -> Result<Self, HiveResolverError> {
-        let endpoints: Vec<String> = config
-            .endpoint
-            .clone()
-            .ok_or(HiveResolverError::MissingEndpoint)?
-            .into();
-        let key = config.key.clone().ok_or(HiveResolverError::MissingKey)?;
+        let endpoints: Vec<String> = std::env::var("HIVE_CDN_ENDPOINT")
+            .ok()
+            .map(|v| {
+                v.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .filter(|v| !v.is_empty())
+            .or_else(|| config.endpoint.as_ref().map(|e| e.values().to_vec()))
+            .ok_or(HiveResolverError::MissingEndpoint)?;
 
+        let key = std::env::var("HIVE_CDN_KEY")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .or_else(|| config.key.clone())
+            .ok_or(HiveResolverError::MissingKey)?;
         let circuit_breaker = CircuitBreakerBuilder::default()
             .error_threshold(config.circuit_breaker.error_threshold)
             .volume_threshold(config.circuit_breaker.volume_threshold)
