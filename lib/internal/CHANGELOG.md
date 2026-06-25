@@ -1,3 +1,9 @@
+## 0.0.32 (2026-06-25)
+
+### Fixes
+
+- Fix env vars passed to persisted_documents
+
 ## 0.0.31 (2026-06-19)
 
 ### Fixes
