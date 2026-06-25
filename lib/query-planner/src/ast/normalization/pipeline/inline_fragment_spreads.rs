@@ -96,9 +96,13 @@ fn handle_selection_set<'a>(
                 };
 
                 if parent_type_condition == Some(&fragment_def.type_condition)
+                    // `...Frag @include(...)` stores `@include` on the spread itself.
+                    // In the code below, we inline the fragment's selections,
+                    // so any directives would be lost.
                     && spread.directives.is_empty()
                 {
-                    // same type, no directives: inline the body directly.
+                    // If the fragment's type condition matches the top type condition,
+                    // we can inline its selections directly.
                     let mut inlined = fragment_def.selection_set.clone();
                     handle_selection_set(&mut inlined, fragment_map, parent_type_condition)?;
                     new_items.extend(inlined.items);
