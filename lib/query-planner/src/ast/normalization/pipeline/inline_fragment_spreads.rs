@@ -71,6 +71,10 @@ fn handle_selection_set<'a>(
                 // `spread` stays a borrow throughout, retargeting into `fragment_map` per link so
                 // no FragmentSpread gets cloned while advancing.
                 let mut spread = &spread;
+                // each step follows exactly one spread, so a cycle-free walk visits each fragment
+                // at most once - a chain longer than the total fragment count must contain a cycle
+                let max_chain = fragment_map.len();
+                let mut chain_len = 0usize;
                 let fragment_def = loop {
                     let def = fragment_map.get(&spread.fragment_name).ok_or_else(|| {
                         NormalizationError::FragmentDefinitionNotFound {
@@ -88,6 +92,12 @@ fn handle_selection_set<'a>(
                         if let [Selection::FragmentSpread(next)] =
                             def.selection_set.items.as_slice()
                         {
+                            chain_len += 1;
+                            if chain_len > max_chain {
+                                return Err(NormalizationError::CyclicFragmentSpread {
+                                    fragment_name: spread.fragment_name.clone(),
+                                });
+                            }
                             spread = next;
                             continue;
                         }

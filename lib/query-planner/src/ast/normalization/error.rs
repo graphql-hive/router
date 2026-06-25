@@ -26,4 +26,7 @@ pub enum NormalizationError {
 
     #[error("Fragment definition for '{fragment_name}' not found.")]
     FragmentDefinitionNotFound { fragment_name: String },
+
+    #[error("Cyclic fragment spread detected for '{fragment_name}'.")]
+    CyclicFragmentSpread { fragment_name: String },
 }
