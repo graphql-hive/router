@@ -12,6 +12,15 @@ pub enum SingleOrMultiple<T> {
     Multiple(Vec<T>),
 }
 
+impl<T> SingleOrMultiple<T> {
+    pub fn values(&self) -> &[T] {
+        match self {
+            SingleOrMultiple::Single(value) => std::slice::from_ref(value),
+            SingleOrMultiple::Multiple(values) => values,
+        }
+    }
+}
+
 impl<'de, T: DeserializeOwned> Deserialize<'de> for SingleOrMultiple<T> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
