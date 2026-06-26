@@ -87,7 +87,8 @@ mod extensions_propagation_e2e_tests {
             .start()
             .await;
 
-        // issue two separate requests so the sequence is deterministic
+        // issue a request where the plan executes accounts before products
+        // (sequence node) so the order is deterministic
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
