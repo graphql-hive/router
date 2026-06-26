@@ -85,10 +85,7 @@ pub fn apply_subgraph_extensions(
                 continue;
             }
         }
-        let sonic_val = match sonic_rs::to_value(val) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
+        let sonic_val = SonicValue::from(val);
         agg.write(key, sonic_val, propagate.strategy);
     }
 }
