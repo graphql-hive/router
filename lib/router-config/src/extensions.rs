@@ -20,6 +20,9 @@ pub struct ExtensionsPropagateConfig {
 
     /// Top-level extension keys allowed to propagate. When omitted, all keys
     /// are propagated. Any key not in this list is ignored.
+    ///
+    /// NOTE: `queryPlan` is a reserved key used by the router itself and will
+    /// never be propagated from subgraphs regardless of this list.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allow: Option<Vec<String>>,
 }
