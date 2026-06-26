@@ -9,6 +9,7 @@
 |[**cors**](#cors)|`object`|Configuration for CORS (Cross-Origin Resource Sharing).<br/>Default: `{"allow_any_origin":false,"allow_credentials":false,"enabled":false,"policies":[]}`<br/>|yes|
 |[**csrf**](#csrf)|`object`|Configuration for CSRF prevention.<br/>Default: `{"enabled":false,"required_headers":[]}`<br/>||
 |[**demand\_control**](#demand_control)|`object`, `null`||yes|
+|[**extensions**](#extensions)|`object`|Configuration for propagating subgraph response extensions to the client.<br/>Default: `{}`<br/>||
 |[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"graphql_endpoint":"/graphql","host":"0.0.0.0","port":4000}`<br/>||
 |**introspection**||Configuration to enable or disable introspection queries.<br/>||
@@ -56,6 +57,7 @@ csrf:
   enabled: true
   required_headers:
     - x-csrf-token
+extensions: {}
 headers:
   all:
     request:
@@ -993,6 +995,44 @@ Per-subgraph overrides. Keys are subgraph names.
 |----|----|-----------|--------|
 |**Additional Properties**|`integer`|Format: `"uint"`<br/>Minimum: `0`<br/>||
 
+<a name="extensions"></a>
+## extensions: object
+
+Configuration for propagating subgraph response extensions to the client.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**propagate**](#extensionspropagate)|`object`, `null`|Rules for propagating subgraph response `extensions` to the client.<br/>||
+
+<a name="extensionspropagate"></a>
+### extensions\.propagate: object,null
+
+Rules for propagating subgraph response `extensions` to the client.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**algorithm**||How to merge an extension key seen across multiple subgraph responses.<br/>Default: `last`.<br/>Default: `"last"`<br/>||
+|[**allow**](#extensionspropagateallow)|`string[]`|Top-level extension keys allowed to propagate. When omitted, all keys<br/>||
+
+<a name="extensionspropagateallow"></a>
+#### extensions\.propagate\.allow\[\]: array,null
+
+Top-level extension keys allowed to propagate. When omitted, all keys
+are propagated. Any key not in this list is ignored.
+
+NOTE: `queryPlan` is a reserved key used by the router itself and will
+never be propagated from subgraphs regardless of this list.
+
+
+**Items**
+
+**Item Type:** `string`  
 <a name="headers"></a>
 ## headers: object
 
