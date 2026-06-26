@@ -576,6 +576,9 @@ async fn execute_query_plan_with_data<'exec>(
     opts.response_header_sink
         .store(std::mem::take(&mut exec_ctx.response_headers_aggregator));
 
+    // merge_into takes ownership of the aggregator to drain it in one pass; mem::take
+    // gives us ownership while leaving a default (empty) aggregator in place, since
+    // exec_ctx is still borrowed and we cannot move out of it directly
     std::mem::take(&mut exec_ctx.extensions_aggregator).merge_into(&mut opts.extensions.extensions);
 
     // TODO: coprocessor.on_execution_response
