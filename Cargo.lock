@@ -5622,9 +5622,9 @@ dependencies = [
 
 [[package]]
 name = "recloser"
-version = "1.3.1"
+version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40ac0d06281c3556fea72cef9e5372d9ac172335be0d71c3b4f3db900483e0eb"
+checksum = "0c6baa991249ea64604766a394f49a5977507bcc8b12772a3ca68a26aed045c9"
 dependencies = [
  "crossbeam-epoch",
  "pin-project",
