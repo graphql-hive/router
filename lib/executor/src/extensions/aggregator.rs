@@ -95,6 +95,8 @@ pub fn apply_subgraph_extensions(
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
+
     use super::*;
     use crate::extensions::plan::{
         ExtensionsMergeStrategy, ExtensionsPlan, ExtensionsPropagatePlan,
@@ -120,12 +122,9 @@ mod tests {
         Value::Object(pairs)
     }
 
-    fn foo_val_a<'a>() -> Value<'a> {
-        Value::String(std::borrow::Cow::Borrowed("a"))
-    }
-
-    fn foo_val_b<'a>() -> Value<'a> {
-        Value::String(std::borrow::Cow::Borrowed("b"))
+    // Value::String holds a Cow<str>; Borrowed wraps a &'static str with no allocation
+    fn s(v: &'static str) -> Value<'static> {
+        Value::String(Cow::Borrowed(v))
     }
 
     #[test]
@@ -133,8 +132,8 @@ mod tests {
         let plan = make_plan(ExtensionsMergeStrategy::First, None);
         let mut agg = ExtensionsAggregator::default();
 
-        apply_subgraph_extensions(&plan, &obj(vec![("foo", foo_val_a())]), &mut agg);
-        apply_subgraph_extensions(&plan, &obj(vec![("foo", foo_val_b())]), &mut agg);
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", s("a"))]), &mut agg);
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", s("b"))]), &mut agg);
 
         let mut out = HashMap::new();
         agg.merge_into(&mut out);
@@ -147,8 +146,8 @@ mod tests {
         let plan = make_plan(ExtensionsMergeStrategy::Last, None);
         let mut agg = ExtensionsAggregator::default();
 
-        apply_subgraph_extensions(&plan, &obj(vec![("foo", foo_val_a())]), &mut agg);
-        apply_subgraph_extensions(&plan, &obj(vec![("foo", foo_val_b())]), &mut agg);
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", s("a"))]), &mut agg);
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", s("b"))]), &mut agg);
 
         let mut out = HashMap::new();
         agg.merge_into(&mut out);
@@ -161,8 +160,8 @@ mod tests {
         let plan = make_plan(ExtensionsMergeStrategy::Append, None);
         let mut agg = ExtensionsAggregator::default();
 
-        apply_subgraph_extensions(&plan, &obj(vec![("foo", foo_val_a())]), &mut agg);
-        apply_subgraph_extensions(&plan, &obj(vec![("foo", foo_val_b())]), &mut agg);
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", s("a"))]), &mut agg);
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", s("b"))]), &mut agg);
 
         let mut out = HashMap::new();
         agg.merge_into(&mut out);
@@ -175,7 +174,7 @@ mod tests {
         let plan = make_plan(ExtensionsMergeStrategy::Append, None);
         let mut agg = ExtensionsAggregator::default();
 
-        apply_subgraph_extensions(&plan, &obj(vec![("foo", foo_val_a())]), &mut agg);
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", s("a"))]), &mut agg);
 
         let mut out = HashMap::new();
         agg.merge_into(&mut out);
@@ -190,7 +189,7 @@ mod tests {
 
         apply_subgraph_extensions(
             &plan,
-            &obj(vec![("foo", foo_val_a()), ("bar", foo_val_b())]),
+            &obj(vec![("foo", s("a")), ("bar", s("b"))]),
             &mut agg,
         );
 
@@ -208,7 +207,7 @@ mod tests {
 
         apply_subgraph_extensions(
             &plan,
-            &obj(vec![("foo", foo_val_a()), ("bar", foo_val_b())]),
+            &obj(vec![("foo", s("a")), ("bar", s("b"))]),
             &mut agg,
         );
 
@@ -224,7 +223,7 @@ mod tests {
         let plan = make_plan(ExtensionsMergeStrategy::Last, None);
         let mut agg = ExtensionsAggregator::default();
 
-        apply_subgraph_extensions(&plan, &obj(vec![("foo", foo_val_a())]), &mut agg);
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", s("a"))]), &mut agg);
 
         let mut out = HashMap::new();
         out.insert("foo".to_string(), json!("existing"));
@@ -240,7 +239,7 @@ mod tests {
 
         apply_subgraph_extensions(
             &plan,
-            &obj(vec![("queryPlan", foo_val_a()), ("foo", foo_val_b())]),
+            &obj(vec![("queryPlan", s("a")), ("foo", s("b"))]),
             &mut agg,
         );
 
@@ -256,7 +255,7 @@ mod tests {
         let plan = ExtensionsPlan { propagate: None };
         let mut agg = ExtensionsAggregator::default();
 
-        apply_subgraph_extensions(&plan, &obj(vec![("foo", foo_val_a())]), &mut agg);
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", s("a"))]), &mut agg);
 
         let mut out = HashMap::new();
         agg.merge_into(&mut out);
@@ -269,11 +268,7 @@ mod tests {
         let plan = make_plan(ExtensionsMergeStrategy::Last, None);
         let mut agg = ExtensionsAggregator::default();
 
-        apply_subgraph_extensions(
-            &plan,
-            &Value::String(std::borrow::Cow::Borrowed("oops")),
-            &mut agg,
-        );
+        apply_subgraph_extensions(&plan, &Value::String(Cow::Borrowed("oops")), &mut agg);
 
         let mut out = HashMap::new();
         agg.merge_into(&mut out);
