@@ -123,7 +123,7 @@ mod tests {
     }
 
     // Value::String holds a Cow<str>; Borrowed wraps a &'static str with no allocation
-    fn s(v: &'static str) -> Value<'static> {
+    fn str(v: &'static str) -> Value<'static> {
         Value::String(Cow::Borrowed(v))
     }
 
@@ -132,8 +132,8 @@ mod tests {
         let plan = make_plan(ExtensionsMergeStrategy::First, None);
         let mut agg = ExtensionsAggregator::default();
 
-        apply_subgraph_extensions(&plan, &obj(vec![("foo", s("a"))]), &mut agg);
-        apply_subgraph_extensions(&plan, &obj(vec![("foo", s("b"))]), &mut agg);
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", str("a"))]), &mut agg);
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", str("b"))]), &mut agg);
 
         let mut out = HashMap::new();
         agg.merge_into(&mut out);
@@ -146,8 +146,8 @@ mod tests {
         let plan = make_plan(ExtensionsMergeStrategy::Last, None);
         let mut agg = ExtensionsAggregator::default();
 
-        apply_subgraph_extensions(&plan, &obj(vec![("foo", s("a"))]), &mut agg);
-        apply_subgraph_extensions(&plan, &obj(vec![("foo", s("b"))]), &mut agg);
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", str("a"))]), &mut agg);
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", str("b"))]), &mut agg);
 
         let mut out = HashMap::new();
         agg.merge_into(&mut out);
@@ -160,8 +160,8 @@ mod tests {
         let plan = make_plan(ExtensionsMergeStrategy::Append, None);
         let mut agg = ExtensionsAggregator::default();
 
-        apply_subgraph_extensions(&plan, &obj(vec![("foo", s("a"))]), &mut agg);
-        apply_subgraph_extensions(&plan, &obj(vec![("foo", s("b"))]), &mut agg);
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", str("a"))]), &mut agg);
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", str("b"))]), &mut agg);
 
         let mut out = HashMap::new();
         agg.merge_into(&mut out);
@@ -174,7 +174,7 @@ mod tests {
         let plan = make_plan(ExtensionsMergeStrategy::Append, None);
         let mut agg = ExtensionsAggregator::default();
 
-        apply_subgraph_extensions(&plan, &obj(vec![("foo", s("a"))]), &mut agg);
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", str("a"))]), &mut agg);
 
         let mut out = HashMap::new();
         agg.merge_into(&mut out);
@@ -189,7 +189,7 @@ mod tests {
 
         apply_subgraph_extensions(
             &plan,
-            &obj(vec![("foo", s("a")), ("bar", s("b"))]),
+            &obj(vec![("foo", str("a")), ("bar", str("b"))]),
             &mut agg,
         );
 
@@ -207,7 +207,7 @@ mod tests {
 
         apply_subgraph_extensions(
             &plan,
-            &obj(vec![("foo", s("a")), ("bar", s("b"))]),
+            &obj(vec![("foo", str("a")), ("bar", str("b"))]),
             &mut agg,
         );
 
@@ -223,7 +223,7 @@ mod tests {
         let plan = make_plan(ExtensionsMergeStrategy::Last, None);
         let mut agg = ExtensionsAggregator::default();
 
-        apply_subgraph_extensions(&plan, &obj(vec![("foo", s("a"))]), &mut agg);
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", str("a"))]), &mut agg);
 
         let mut out = HashMap::new();
         out.insert("foo".to_string(), json!("existing"));
@@ -239,7 +239,7 @@ mod tests {
 
         apply_subgraph_extensions(
             &plan,
-            &obj(vec![("queryPlan", s("a")), ("foo", s("b"))]),
+            &obj(vec![("queryPlan", str("a")), ("foo", str("b"))]),
             &mut agg,
         );
 
@@ -255,7 +255,7 @@ mod tests {
         let plan = ExtensionsPlan { propagate: None };
         let mut agg = ExtensionsAggregator::default();
 
-        apply_subgraph_extensions(&plan, &obj(vec![("foo", s("a"))]), &mut agg);
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", str("a"))]), &mut agg);
 
         let mut out = HashMap::new();
         agg.merge_into(&mut out);
