@@ -283,6 +283,7 @@ mod extensions_propagation_e2e_tests {
                 extensions:
                   propagate:
                     algorithm: last
+                    allow: [queryPlan] # even if explicitly allowed
                 "#,
             )
             .build()
