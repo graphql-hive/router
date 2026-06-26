@@ -92,3 +92,192 @@ pub fn apply_subgraph_extensions(
         agg.write(key, sonic_val, propagate.strategy);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::extensions::plan::{
+        ExtensionsMergeStrategy, ExtensionsPlan, ExtensionsPropagatePlan,
+    };
+    use crate::response::value::Value;
+    use ahash::HashSet;
+    use sonic_rs::json;
+
+    fn make_plan(strategy: ExtensionsMergeStrategy, allow: Option<Vec<&str>>) -> ExtensionsPlan {
+        ExtensionsPlan {
+            propagate: Some(ExtensionsPropagatePlan {
+                strategy,
+                allow: allow.map(|keys| {
+                    keys.into_iter()
+                        .map(|s| s.to_string())
+                        .collect::<HashSet<_>>()
+                }),
+            }),
+        }
+    }
+
+    fn obj<'a>(pairs: Vec<(&'a str, Value<'a>)>) -> Value<'a> {
+        Value::Object(pairs)
+    }
+
+    fn foo_val_a<'a>() -> Value<'a> {
+        Value::String(std::borrow::Cow::Borrowed("a"))
+    }
+
+    fn foo_val_b<'a>() -> Value<'a> {
+        Value::String(std::borrow::Cow::Borrowed("b"))
+    }
+
+    #[test]
+    fn test_first_keeps_first_value() {
+        let plan = make_plan(ExtensionsMergeStrategy::First, None);
+        let mut agg = ExtensionsAggregator::default();
+
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", foo_val_a())]), &mut agg);
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", foo_val_b())]), &mut agg);
+
+        let mut out = HashMap::new();
+        agg.merge_into(&mut out);
+
+        assert_eq!(out["foo"], json!("a"));
+    }
+
+    #[test]
+    fn test_last_keeps_last_value() {
+        let plan = make_plan(ExtensionsMergeStrategy::Last, None);
+        let mut agg = ExtensionsAggregator::default();
+
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", foo_val_a())]), &mut agg);
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", foo_val_b())]), &mut agg);
+
+        let mut out = HashMap::new();
+        agg.merge_into(&mut out);
+
+        assert_eq!(out["foo"], json!("b"));
+    }
+
+    #[test]
+    fn test_append_collects_all_values() {
+        let plan = make_plan(ExtensionsMergeStrategy::Append, None);
+        let mut agg = ExtensionsAggregator::default();
+
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", foo_val_a())]), &mut agg);
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", foo_val_b())]), &mut agg);
+
+        let mut out = HashMap::new();
+        agg.merge_into(&mut out);
+
+        assert_eq!(out["foo"], json!(["a", "b"]));
+    }
+
+    #[test]
+    fn test_append_single_value_is_array() {
+        let plan = make_plan(ExtensionsMergeStrategy::Append, None);
+        let mut agg = ExtensionsAggregator::default();
+
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", foo_val_a())]), &mut agg);
+
+        let mut out = HashMap::new();
+        agg.merge_into(&mut out);
+
+        assert_eq!(out["foo"], json!(["a"]));
+    }
+
+    #[test]
+    fn test_whitelist_drops_unlisted_key() {
+        let plan = make_plan(ExtensionsMergeStrategy::Last, Some(vec!["foo"]));
+        let mut agg = ExtensionsAggregator::default();
+
+        apply_subgraph_extensions(
+            &plan,
+            &obj(vec![("foo", foo_val_a()), ("bar", foo_val_b())]),
+            &mut agg,
+        );
+
+        let mut out = HashMap::new();
+        agg.merge_into(&mut out);
+
+        assert!(out.contains_key("foo"));
+        assert!(!out.contains_key("bar"));
+    }
+
+    #[test]
+    fn test_no_whitelist_keeps_all_keys() {
+        let plan = make_plan(ExtensionsMergeStrategy::Last, None);
+        let mut agg = ExtensionsAggregator::default();
+
+        apply_subgraph_extensions(
+            &plan,
+            &obj(vec![("foo", foo_val_a()), ("bar", foo_val_b())]),
+            &mut agg,
+        );
+
+        let mut out = HashMap::new();
+        agg.merge_into(&mut out);
+
+        assert!(out.contains_key("foo"));
+        assert!(out.contains_key("bar"));
+    }
+
+    #[test]
+    fn test_merge_into_existing_key_not_overwritten() {
+        let plan = make_plan(ExtensionsMergeStrategy::Last, None);
+        let mut agg = ExtensionsAggregator::default();
+
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", foo_val_a())]), &mut agg);
+
+        let mut out = HashMap::new();
+        out.insert("foo".to_string(), json!("existing"));
+        agg.merge_into(&mut out);
+
+        assert_eq!(out["foo"], json!("existing"));
+    }
+
+    #[test]
+    fn test_reserved_query_plan_key_is_ignored() {
+        let plan = make_plan(ExtensionsMergeStrategy::Last, None);
+        let mut agg = ExtensionsAggregator::default();
+
+        apply_subgraph_extensions(
+            &plan,
+            &obj(vec![("queryPlan", foo_val_a()), ("foo", foo_val_b())]),
+            &mut agg,
+        );
+
+        let mut out = HashMap::new();
+        agg.merge_into(&mut out);
+
+        assert!(!out.contains_key("queryPlan"));
+        assert!(out.contains_key("foo"));
+    }
+
+    #[test]
+    fn test_no_propagate_plan_is_noop() {
+        let plan = ExtensionsPlan { propagate: None };
+        let mut agg = ExtensionsAggregator::default();
+
+        apply_subgraph_extensions(&plan, &obj(vec![("foo", foo_val_a())]), &mut agg);
+
+        let mut out = HashMap::new();
+        agg.merge_into(&mut out);
+
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn test_non_object_extensions_ignored() {
+        let plan = make_plan(ExtensionsMergeStrategy::Last, None);
+        let mut agg = ExtensionsAggregator::default();
+
+        apply_subgraph_extensions(
+            &plan,
+            &Value::String(std::borrow::Cow::Borrowed("oops")),
+            &mut agg,
+        );
+
+        let mut out = HashMap::new();
+        agg.merge_into(&mut out);
+
+        assert!(out.is_empty());
+    }
+}
