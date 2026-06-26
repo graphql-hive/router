@@ -4,6 +4,7 @@ pub mod cors;
 pub mod csrf;
 pub mod demand_control;
 mod env_overrides;
+pub mod extensions;
 pub mod headers;
 pub mod http_server;
 pub mod introspection_policy;
@@ -83,6 +84,10 @@ pub struct HiveRouterConfig {
     /// Configuration for the headers.
     #[serde(default)]
     pub headers: headers::HeadersConfig,
+
+    /// Configuration for propagating subgraph response extensions to the client.
+    #[serde(default)]
+    pub extensions: extensions::ExtensionsConfig,
 
     /// Configuration for CSRF prevention.
     #[serde(default)]
