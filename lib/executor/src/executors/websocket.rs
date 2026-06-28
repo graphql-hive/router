@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use futures::channel::oneshot;
 use futures::stream::BoxStream;
 use futures_util::StreamExt;
+use hive_router_internal::telemetry::TelemetryContext;
 use ntex::rt;
 use tokio::sync::mpsc;
 use tracing::debug;
@@ -21,6 +22,7 @@ pub struct WsSubgraphExecutor {
     endpoint: http::Uri,
     tls_config: Option<Arc<rustls::ClientConfig>>,
     buffer_capacity: usize,
+    telemetry_context: Arc<TelemetryContext>,
 }
 
 impl WsSubgraphExecutor {
@@ -29,12 +31,14 @@ impl WsSubgraphExecutor {
         endpoint: http::Uri,
         tls_config: Option<Arc<rustls::ClientConfig>>,
         buffer_capacity: usize,
+        telemetry_context: Arc<TelemetryContext>,
     ) -> Self {
         Self {
             subgraph_name,
             endpoint,
             tls_config,
             buffer_capacity,
+            telemetry_context,
         }
     }
 }
@@ -136,6 +140,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         let subgraph_name = self.subgraph_name.clone();
         let tls_config = self.tls_config.clone();
         let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
+        let metrics = self.telemetry_context.metrics.clone();
 
         let (subscribe_payload, init_payload) = build_subscribe_payload(execution_request);
 
@@ -183,7 +188,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 .await
                 .map(Ok);
 
-            drain_into(stream, tx, &subgraph_name, &endpoint.to_string()).await;
+            drain_into(stream, tx, &subgraph_name, &endpoint.to_string(), &metrics).await;
         }));
 
         Ok(receiver_stream(rx))

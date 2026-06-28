@@ -462,7 +462,7 @@ impl SubgraphExecutorMap {
             .get(subgraph_name)
             .map(|r| r.value().clone());
 
-        match circuit_breaker {
+        let stream = match circuit_breaker {
             Some(SubgraphCircuitBreaker { recloser, .. }) => {
                 let circuit_breaker_metrics = &self.telemetry_context.metrics.circuit_breaker;
                 recloser
@@ -481,10 +481,27 @@ impl SubgraphExecutorMap {
                             Err(SubgraphExecutorError::CircuitBreakerRejected)
                         }
                     })
-                    .await
+                    .await?
             }
-            None => subscribe_fut.await,
-        }
+            None => subscribe_fut.await?,
+        };
+
+        // Track the active upstream subscription (tagged by subgraph). The guard increments the
+        // active gauge + subscribe counter now and decrements + records unsubscribe when the
+        // returned stream is dropped, covering all subscription transports at this single
+        // chokepoint.
+        let guard = self
+            .telemetry_context
+            .metrics
+            .subscriptions
+            .track_subgraph_subscription(subgraph_name);
+
+        Ok(Box::pin(async_stream::stream! {
+            let _guard = guard;
+            for await item in stream {
+                yield item;
+            }
+        }))
     }
 
     fn resolve_subgraph_timeout(
@@ -737,6 +754,7 @@ impl SubgraphExecutorMap {
                     ws_endpoint_uri,
                     ws_tls_config,
                     self.config.subscriptions.subgraph_buffer_capacity,
+                    self.telemetry_context.clone(),
                 )
                 .to_boxed_arc();
 

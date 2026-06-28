@@ -62,6 +62,20 @@ pub mod values {
         }
     }
 
+    #[derive(Clone, Copy, Debug, strum::IntoStaticStr)]
+    pub enum SubscriptionOperation {
+        #[strum(serialize = "subscribe")]
+        Subscribe,
+        #[strum(serialize = "unsubscribe")]
+        Unsubscribe,
+    }
+
+    impl SubscriptionOperation {
+        pub fn as_str(self) -> &'static str {
+            self.into()
+        }
+    }
+
     /// Circuit breaker state exposed via metrics.
     ///
     /// The internal recloser state has three values (Closed, HalfOpen, Open),
@@ -118,6 +132,7 @@ pub mod labels {
     pub const COPROCESSOR_STAGE: &str = "coprocessor.stage";
     pub const CIRCUIT_BREAKER_FROM_STATE: &str = "circuit_breaker.from_state";
     pub const CIRCUIT_BREAKER_TO_STATE: &str = "circuit_breaker.to_state";
+    pub const SUBSCRIPTION_OPERATION: &str = "subscription.operation";
 }
 
 pub mod units {
@@ -167,6 +182,16 @@ pub mod names {
     pub const COPROCESSOR_REQUESTS_TOTAL: &str = "hive.router.coprocessor.requests_total";
     pub const COPROCESSOR_DURATION: &str = "hive.router.coprocessor.duration";
     pub const COPROCESSOR_ERRORS_TOTAL: &str = "hive.router.coprocessor.errors_total";
+    // Client -> Router subscriptions (the router's server side).
+    pub const SUBSCRIPTIONS_ACTIVE: &str = "hive.router.subscriptions.active";
+    pub const WEBSOCKET_CONNECTIONS_ACTIVE: &str = "hive.router.websocket.connections.active";
+    pub const SUBSCRIPTIONS_OPERATIONS_TOTAL: &str = "hive.router.subscriptions.operations_total";
+    // Router -> Subgraph subscriptions (the router's client side), labeled by subgraph.
+    pub const SUBGRAPH_SUBSCRIPTIONS_ACTIVE: &str = "hive.router.subgraph.subscriptions.active";
+    pub const SUBGRAPH_SUBSCRIPTIONS_OPERATIONS_TOTAL: &str =
+        "hive.router.subgraph.subscriptions.operations_total";
+    pub const SUBGRAPH_SUBSCRIPTIONS_DROPPED_MESSAGES_TOTAL: &str =
+        "hive.router.subgraph.subscriptions.dropped_messages_total";
 }
 
 pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
@@ -333,6 +358,24 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
     (
         names::COPROCESSOR_ERRORS_TOTAL,
         &[labels::COPROCESSOR_STAGE],
+    ),
+    (names::SUBSCRIPTIONS_ACTIVE, &[]),
+    (names::WEBSOCKET_CONNECTIONS_ACTIVE, &[]),
+    (
+        names::SUBSCRIPTIONS_OPERATIONS_TOTAL,
+        &[labels::SUBSCRIPTION_OPERATION],
+    ),
+    (
+        names::SUBGRAPH_SUBSCRIPTIONS_ACTIVE,
+        &[labels::SUBGRAPH_NAME],
+    ),
+    (
+        names::SUBGRAPH_SUBSCRIPTIONS_OPERATIONS_TOTAL,
+        &[labels::SUBGRAPH_NAME, labels::SUBSCRIPTION_OPERATION],
+    ),
+    (
+        names::SUBGRAPH_SUBSCRIPTIONS_DROPPED_MESSAGES_TOTAL,
+        &[labels::SUBGRAPH_NAME],
     ),
 ];
 

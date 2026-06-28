@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use futures::stream::{BoxStream, Stream};
 use futures_util::StreamExt;
+use hive_router_internal::telemetry::metrics::Metrics;
 use ntex::rt;
 use tokio::sync::mpsc;
-use tracing::{error, warn};
+use tracing::{error, trace};
 
 use crate::executors::error::SubgraphExecutorError;
 use crate::response::subgraph_response::SubgraphResponse;
@@ -22,6 +25,7 @@ pub async fn drain_into<S>(
     tx: mpsc::Sender<SubscriptionItem>,
     subgraph_name: &str,
     endpoint: &str,
+    metrics: &Metrics,
 ) where
     S: Stream<Item = SubscriptionItem> + Unpin,
 {
@@ -30,10 +34,12 @@ pub async fn drain_into<S>(
             Ok(()) => (),
             Err(mpsc::error::TrySendError::Full(_)) => {
                 // drop the message but keep the subscription alive, same as broadcast::Lagged
-                warn!(
+                trace!(
                     "Consumer for subgraph {} at {} is too slow, dropping message",
-                    subgraph_name, endpoint
+                    subgraph_name,
+                    endpoint
                 );
+                metrics.subscriptions.record_dropped_message(subgraph_name);
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
                 error!(
@@ -68,6 +74,7 @@ pub fn buffered<S>(
     buffer_size: usize,
     subgraph_name: String,
     endpoint: String,
+    metrics: Arc<Metrics>,
 ) -> BoxStream<'static, SubscriptionItem>
 where
     S: Stream<Item = SubscriptionItem> + Unpin + 'static,
@@ -77,7 +84,7 @@ where
     // ntex::rt::spawn keeps the drainer on the local ntex runtime, matching the rest of the
     // subscription pipeline.
     drop(rt::spawn(async move {
-        drain_into(source, tx, &subgraph_name, &endpoint).await;
+        drain_into(source, tx, &subgraph_name, &endpoint, &metrics).await;
     }));
 
     receiver_stream(rx)
