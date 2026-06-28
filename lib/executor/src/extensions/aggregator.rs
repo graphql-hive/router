@@ -51,10 +51,10 @@ impl ExtensionsAggregator {
                 ExtensionsMergeStrategy::Append => {
                     SonicValue::from(values.into_iter().collect::<sonic_rs::Array>())
                 }
-                ExtensionsMergeStrategy::First | ExtensionsMergeStrategy::Last => {
-                    // guaranteed non-empty by write()
-                    values.into_iter().next().unwrap()
-                }
+                ExtensionsMergeStrategy::First | ExtensionsMergeStrategy::Last => values
+                    .into_iter()
+                    .next()
+                    .expect("First/Last entry guaranteed non-empty by write()"),
             };
             target.entry(key).or_insert(sonic_val);
         }
