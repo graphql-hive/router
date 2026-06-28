@@ -489,19 +489,20 @@ impl SubgraphExecutorMap {
         // Track the active upstream subscription (tagged by subgraph). The guard increments the
         // active gauge + subscribe counter now and decrements + records unsubscribe when the
         // returned stream is dropped, covering all subscription transports at this single
-        // chokepoint.
+        // chokepoint. We keep it alive via a zero-overhead `map` combinator rather than an
+        // `async_stream` generator to avoid per-message state-machine overhead on this hot path.
         let guard = self
             .telemetry_context
             .metrics
             .subscriptions
             .track_subgraph_subscription(subgraph_name);
 
-        Ok(Box::pin(async_stream::stream! {
-            let _guard = guard;
-            for await item in stream {
-                yield item;
-            }
-        }))
+        Ok(Box::pin(futures::StreamExt::map(stream, move |item| {
+            // reference the guard so the `move` closure captures it, keeping the subscription
+            // tracked until the returned stream is dropped
+            let _ = &guard;
+            item
+        })))
     }
 
     fn resolve_subgraph_timeout(
