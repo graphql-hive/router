@@ -208,66 +208,6 @@ fn handle_type_expansion_candidate<'schema, 'sel>(
 
     let field_def = field_def.unwrap();
 
-    // An interface may be defined in multiple subgraphs.
-    // If a field on that interface is not resolvable in all of those subgraphs,
-    // we must expand to concrete types to ensure we can find a resolvable query path.
-    let subgraphs_with_interface = interface_type
-        .join_type
-        .iter()
-        // if one of the interfaces is @interfaceObject,
-        // ignore it
-        .filter(|jt| !jt.is_interface_object)
-        .count();
-
-    if subgraphs_with_interface <= 1 {
-        // No need to expand if interface is in at most one subgraph.
-        return Ok(false);
-    }
-
-    if field_def.join_field.is_empty() {
-        // The field is available everywhere the interface is defined if there's no join info
-        return Ok(false);
-    }
-
-    // Check if the field is contributed by the interface object,
-    // which means it's available in all subgraphs that define the interface.
-    let interface_object_in_graphs: Vec<_> = interface_type
-        .join_type
-        .iter()
-        .filter_map(|jt| {
-            if jt.is_interface_object {
-                Some(&jt.graph_id)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let is_interface_object_field = field_def.join_field.iter().all(|j| j.graph_id.is_none())
-        || field_def.join_field.iter().any(|jf| {
-            !jf.external
-                && jf
-                    .graph_id
-                    .as_ref()
-                    .is_some_and(|g| interface_object_in_graphs.contains(&g))
-        });
-
-    if is_interface_object_field {
-        return Ok(false);
-    }
-
-    // All subgraphs where this field is resolvable
-    let subgraphs_resolving_field = field_def
-        .join_field
-        .iter()
-        .filter(|jf| !jf.external && jf.graph_id.is_some())
-        .count();
-
-    if subgraphs_resolving_field >= subgraphs_with_interface {
-        // All subgraphs are resolving the field
-        return Ok(false);
-    }
-
     let possible_object_types = state
         .abstract_possible_types(interface_type.name.as_str(), subgraph_name)
         .ok_or_else(|| NormalizationError::PossibleTypesNotFound {
@@ -295,7 +235,65 @@ fn handle_type_expansion_candidate<'schema, 'sel>(
     });
 
     if !should_expand {
-        return Ok(false);
+        // An interface may be defined in multiple subgraphs.
+        // If a field on that interface is not resolvable in all of those subgraphs,
+        // we must expand to concrete types to ensure we can find a resolvable query path.
+        let subgraphs_with_interface = interface_type
+            .join_type
+            .iter()
+            // if one of the interfaces is @interfaceObject,
+            // ignore it
+            .filter(|jt| !jt.is_interface_object)
+            .count();
+
+        if subgraphs_with_interface <= 1 {
+            // No need to expand if interface is in at most one subgraph.
+            return Ok(false);
+        }
+
+        if field_def.join_field.is_empty() {
+            // The field is available everywhere the interface is defined if there's no join info
+            return Ok(false);
+        }
+
+        // Check if the field is contributed by the interface object,
+        // which means it's available in all subgraphs that define the interface.
+        let interface_object_in_graphs: Vec<_> = interface_type
+            .join_type
+            .iter()
+            .filter_map(|jt| {
+                if jt.is_interface_object {
+                    Some(&jt.graph_id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let is_interface_object_field = field_def.join_field.iter().all(|j| j.graph_id.is_none())
+            || field_def.join_field.iter().any(|jf| {
+                !jf.external
+                    && jf
+                        .graph_id
+                        .as_ref()
+                        .is_some_and(|g| interface_object_in_graphs.contains(&g))
+            });
+
+        if is_interface_object_field {
+            return Ok(false);
+        }
+
+        // All subgraphs where this field is resolvable
+        let subgraphs_resolving_field = field_def
+            .join_field
+            .iter()
+            .filter(|jf| !jf.external && jf.graph_id.is_some())
+            .count();
+
+        if subgraphs_resolving_field >= subgraphs_with_interface {
+            // All subgraphs are resolving the field
+            return Ok(false);
+        }
     }
 
     // Sort object_types by name for deterministic fragment order

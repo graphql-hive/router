@@ -295,7 +295,11 @@ impl SupergraphState {
             Some(subgraph_name) => self
                 .abstract_possible_types_by_subgraph
                 .get(subgraph_name)
-                .and_then(|types| types.get(type_name)),
+                .and_then(|types| types.get(type_name))
+                // Normalization can ask for possible types of a concrete type condition such as
+                // `... on Account`, or for an abstract type that simply has no dedicated
+                // subgraph-scoped filtered view. In those cases, we fall back to the global map.
+                .or_else(|| self.abstract_possible_types.get(type_name)),
             None => self.abstract_possible_types.get(type_name),
         }
     }
@@ -363,6 +367,17 @@ impl SupergraphState {
 
         for (type_name, definition) in definitions {
             match definition {
+                SupergraphDefinition::Object(object_type) => {
+                    let singleton = HashSet::from([type_name.clone()]);
+                    all.insert(type_name.clone(), singleton.clone());
+
+                    for join_type in &object_type.join_type {
+                        by_subgraph
+                            .entry(join_type.graph_id.clone())
+                            .or_default()
+                            .insert(type_name.clone(), singleton.clone());
+                    }
+                }
                 SupergraphDefinition::Union(union_type) => {
                     let mut global_members = HashSet::new();
                     let mut members_by_graph: HashMap<String, HashSet<String>> = HashMap::new();
