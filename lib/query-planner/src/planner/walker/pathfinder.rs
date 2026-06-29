@@ -1,7 +1,8 @@
 use ahash::{HashMap, HashSet};
 use std::collections::VecDeque;
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
+use xxhash_rust::xxh3::Xxh3;
 
 use petgraph::graph::{EdgeIndex, NodeIndex};
 use petgraph::visit::{EdgeRef, NodeRef};
@@ -87,45 +88,41 @@ impl UnsatisfiedRequirementFingerprint {
             .node(path.tail())
             .expect("tail node should exist while pathfinding");
 
-        let mut type_hasher = DefaultHasher::new();
+        let mut type_hasher = Xxh3::new();
         tail_node.name_str().hash(&mut type_hasher);
 
-        let mut graph_hasher = DefaultHasher::new();
+        let mut graph_hasher = Xxh3::new();
         tail_node.graph_id().hash(&mut graph_hasher);
+
+        let mut requirement_hasher = Xxh3::new();
+        edge.requirements().hash(&mut requirement_hasher);
 
         Self {
             tail_type_hash: type_hasher.finish(),
             tail_graph_hash: graph_hasher.finish(),
-            requirement_hash: Self::edge_requirements_hash(edge),
+            requirement_hash: requirement_hasher.finish(),
             excluded_requirements_hash: Self::unordered_hash(excluded.requirement.iter()),
             use_only_direct_edges,
         }
     }
 
     #[inline]
-    fn item_hash<T: Hash>(item: &T) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        item.hash(&mut hasher);
-        hasher.finish()
-    }
-
-    #[inline]
     fn unordered_hash<T: Hash>(items: impl Iterator<Item = T>) -> u64 {
-        let mut hashes: Vec<u64> = items.map(|item| Self::item_hash(&item)).collect();
+        let mut hashes: Vec<u64> = items
+            .map(|item| {
+                let mut hasher = Xxh3::new();
+                item.hash(&mut hasher);
+                hasher.finish()
+            })
+            .collect();
         hashes.sort_unstable();
         hashes.dedup();
 
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = Xxh3::new();
         hashes.len().hash(&mut hasher);
         for h in hashes {
             h.hash(&mut hasher);
         }
-        hasher.finish()
-    }
-
-    fn edge_requirements_hash(edge: &Edge<'_>) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        edge.requirements().hash(&mut hasher);
         hasher.finish()
     }
 }
@@ -144,17 +141,55 @@ struct RequirementFieldKey {
     field_name: String,
 }
 
-struct RequirementTargetResolver<'graph> {
+// Requirement lookup can waste a lot of time walking through subgraphs that
+// cannot possibly satisfy the field we are looking for.
+//
+// We are on Book/products and need to satisfy a requirement for `delivery`.
+//
+// Book/products -🔑-> Book/inventory   has Book.delivery
+//               -🔑-> Book/reporting   no  Book.delivery
+//               -🔑-> Book/archive     no  Book.delivery
+//               -🔑-> ...              no  Book.delivery
+//
+// Without narrowing, indirect lookup may try each entity-move edge and only
+// discover later that most target subgraphs do not even expose the requested
+// field. On large supergraphs this creates a lot of obvious dead-end work.
+//
+//
+// For each requirement field, we inspect the built planner graph and ask:
+// "For this parent type, which subgraphs have an outgoing field edge with this field name?"
+// The result is cached per.
+//
+// Then, during indirect lookup for that field, we only follow entity-move edges
+// whose target subgraph is in that candidate set.
+//
+//  Before:
+//   try inventory   -> might work
+//   try reporting   -> cannot resolve field
+//   try archive     -> cannot resolve field
+//   try ...         -> cannot resolve field
+//
+//  After:
+//   try inventory   -> might work
+//   reporting       -> skipped
+//   archive         -> skipped
+//   ...more         -> skipped
+//
+//  If the planner graph has no `Book.delivery` field edge in subgraph X, then
+//  moving to `Book` in subgraph X cannot be the final step that satisfies the
+//  `delivery` requirement.
+//
+//  So, when we already know the set of subgraphs that expose the requested field,
+//  skipping entity moves to the other subgraphs cannot hide a valid solution.
+//  It only removes dead ends from the indirect search.
+struct SubgraphFilter<'graph> {
     graph: &'graph Graph<'graph>,
     supergraph_state: &'graph SupergraphState,
     cache: HashMap<RequirementFieldKey, Option<HashSet<String>>>,
 }
 
-impl<'graph> RequirementTargetResolver<'graph> {
-    fn new(
-        graph: &'graph Graph<'graph>,
-        supergraph_state: &'graph SupergraphState,
-    ) -> Self {
+impl<'graph> SubgraphFilter<'graph> {
+    fn new(graph: &'graph Graph<'graph>, supergraph_state: &'graph SupergraphState) -> Self {
         Self {
             graph,
             supergraph_state,
@@ -162,47 +197,6 @@ impl<'graph> RequirementTargetResolver<'graph> {
         }
     }
 
-    // Requirement lookup can waste a lot of time walking through subgraphs that
-    // cannot possibly satisfy the field we are looking for.
-    //
-    // We are on Book/products and need to satisfy a requirement for `delivery`.
-    //
-    // Book/products -🔑-> Book/inventory   has Book.delivery
-    //               -🔑-> Book/reporting   no  Book.delivery
-    //               -🔑-> Book/archive     no  Book.delivery
-    //               -🔑-> ...              no  Book.delivery
-    //
-    // Without narrowing, indirect lookup may try each entity-move edge and only
-    // discover later that most target subgraphs do not even expose the requested
-    // field. On large supergraphs this creates a lot of obvious dead-end work.
-    //
-    //
-    // For each requirement field, we inspect the built planner graph and ask:
-    // "For this parent type, which subgraphs have an outgoing field edge with this field name?"
-    // The result is cached per.
-    //
-    // Then, during indirect lookup for that field, we only follow entity-move edges
-    // whose target subgraph is in that candidate set.
-    //
-    //  Before:
-    //   try inventory   -> might work
-    //   try reporting   -> cannot resolve field
-    //   try archive     -> cannot resolve field
-    //   try ...         -> cannot resolve field
-    //
-    //  After:
-    //   try inventory   -> might work
-    //   reporting       -> skipped
-    //   archive         -> skipped
-    //   ...more         -> skipped
-    //
-    //  If the planner graph has no `Book.delivery` field edge in subgraph X, then
-    //  moving to `Book` in subgraph X cannot be the final step that satisfies the
-    //  `delivery` requirement.
-    //
-    //  So, when we already know the set of subgraphs that expose the requested field,
-    //  skipping entity moves to the other subgraphs cannot hide a valid solution.
-    //  It only removes dead ends from the indirect search.
     fn target_subgraph_ids(
         &mut self,
         field: &FieldSelection,
@@ -221,8 +215,7 @@ impl<'graph> RequirementTargetResolver<'graph> {
             let cached = if let Some(cached) = self.cache.get(&cache_key) {
                 cached.clone()
             } else {
-                let targets =
-                    self.lookup_from_supergraph(&parent_type_name, &field.name);
+                let targets = self.lookup_from_supergraph(&parent_type_name, &field.name);
 
                 self.cache.insert(cache_key, targets.clone());
                 targets
@@ -334,7 +327,7 @@ struct PathSearch<'graph> {
     /// Used to stop recursive loops when an edge depends on itself.
     active_edge_checks: ActiveEdgeChecks,
     unsatisfied_requirements: UnsatisfiedRequirementCache,
-    requirement_target_resolver: RequirementTargetResolver<'graph>,
+    subgraph_filter: SubgraphFilter<'graph>,
 }
 
 impl<'graph> PathSearch<'graph> {
@@ -344,15 +337,14 @@ impl<'graph> PathSearch<'graph> {
         supergraph_state: &'graph SupergraphState,
         cancellation_token: &'graph CancellationToken,
     ) -> Self {
-        let requirement_target_resolver =
-            RequirementTargetResolver::new(graph, supergraph_state);
+        let subgraph_filter = SubgraphFilter::new(graph, supergraph_state);
         Self {
             graph,
             override_context,
             cancellation_token,
             active_edge_checks: ActiveEdgeChecks::default(),
             unsatisfied_requirements: UnsatisfiedRequirementCache::default(),
-            requirement_target_resolver,
+            subgraph_filter,
         }
     }
 }
@@ -792,7 +784,12 @@ pub fn can_satisfy_edge<'graph>(
     use_only_direct_edges: bool,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<Option<Vec<OperationPath<'graph>>>, WalkOperationError> {
-    PathSearch::new(graph, override_context, supergraph_state, cancellation_token)
+    PathSearch::new(
+        graph,
+        override_context,
+        supergraph_state,
+        cancellation_token,
+    )
     .can_satisfy_edge(edge_ref, path, excluded, use_only_direct_edges)
 }
 
@@ -991,7 +988,7 @@ impl<'graph> PathSearch<'graph> {
     ) -> Result<FieldRequirementsResult<'graph>, WalkOperationError> {
         let mut next_paths: Vec<OperationPath<'graph>> = Vec::new();
         let target_subgraph_ids = self
-            .requirement_target_resolver
+            .subgraph_filter
             .target_subgraph_ids(field, move_requirement.paths.as_ref())?;
 
         for path in move_requirement.paths.iter() {
