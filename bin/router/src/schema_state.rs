@@ -288,7 +288,7 @@ impl SchemaState {
             },
         )?;
         let metadata = Arc::new(planner.consumer_schema.schema_metadata());
-        let authorization = AuthorizationMetadata::build(&planner.supergraph, &metadata)?;
+        let authorization = AuthorizationMetadata::build(planner.supergraph, &metadata)?;
         let operation_name_forward_config = Arc::new(OperationNameForwardConfig::new(
             &router_config.traffic_shaping,
             planner.supergraph.known_subgraphs.values(),

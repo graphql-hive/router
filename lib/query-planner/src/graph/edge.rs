@@ -192,11 +192,11 @@ impl<'a> Edge<'a> {
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::FieldMove(fm) => &fm.name,
+            Self::FieldMove(fm) => fm.name,
             Self::EntityMove(EntityMove { key, .. }) => key,
             Self::AbstractMove(id) => id,
             Self::Selfie(_) => "selfie",
-            Self::SubgraphEntrypoint { name, .. } => &name.0,
+            Self::SubgraphEntrypoint { name, .. } => name.0,
             Self::InterfaceObjectTypeMove(InterfaceObjectTypeMove {
                 object_type_name, ..
             }) => object_type_name,

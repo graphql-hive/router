@@ -518,7 +518,7 @@ fn ensure_fetch_step_for_requirement<'a>(
 
                     if !fetch_step
                         .input
-                        .contains(&requirement.type_name, &requirement.selection_set)
+                        .contains(requirement.type_name, &requirement.selection_set)
                     {
                         return None;
                     }

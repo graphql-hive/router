@@ -73,7 +73,7 @@ fn main() {
             let cancellation_token = CancellationToken::new();
             let best_paths_per_leaf = walk_operation(
                 &graph,
-                &supergraph_state,
+                supergraph_state,
                 &override_context,
                 &operation,
                 &cancellation_token,
@@ -170,7 +170,7 @@ fn process_fetch_graph<'a>(
     let cancellation_token = CancellationToken::new();
     build_fetch_graph_from_query_tree(
         &graph,
-        &supergraph_state,
+        supergraph_state,
         &override_context,
         query_tree,
         operation_kind,
@@ -189,7 +189,7 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
     let best_paths_per_leaf = measure_time("walk_operation", || {
         walk_operation(
             &graph,
-            &supergraph,
+            supergraph,
             &override_context,
             &operation,
             &cancellation_token,
@@ -202,7 +202,7 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
     let fetch_graph = measure_time("build_fetch_graph_from_query_tree", || {
         build_fetch_graph_from_query_tree(
             &graph,
-            &supergraph,
+            supergraph,
             &override_context,
             query_tree,
             operation
@@ -215,7 +215,7 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
         .expect("failed to build fetch graph")
     });
     let qp = measure_time("build_query_plan_from_fetch_graph", || {
-        build_query_plan_from_fetch_graph(fetch_graph, &supergraph, &cancellation_token)
+        build_query_plan_from_fetch_graph(fetch_graph, supergraph, &cancellation_token)
             .expect("failed to build query plan")
     });
     println!("total: {:?}", now.elapsed());

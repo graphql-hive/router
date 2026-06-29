@@ -202,7 +202,7 @@ impl<'a> From<&Node<'a>> for NodeLookupKey<'a> {
     fn from(node: &Node<'a>) -> Self {
         match node {
             Node::QueryRoot(name) | Node::MutationRoot(name) | Node::SubscriptionRoot(name) => {
-                Self::Root(*name)
+                Self::Root(name)
             }
             Node::SubgraphType(subgraph_type) => Self::SubgraphType {
                 name: subgraph_type.name,
@@ -1117,8 +1117,7 @@ impl<'a> Graph<'a> {
 
                         let possible_members = Arc::new(
                             member_types
-                                .iter()
-                                .map(|member| *member)
+                                .iter().copied()
                                 .collect::<Vec<_>>(),
                         );
                         let representative_member = *possible_members

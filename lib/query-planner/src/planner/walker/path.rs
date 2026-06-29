@@ -49,7 +49,7 @@ enum PossibleUnionMembers<'graph> {
 impl<'graph> PossibleUnionMembers<'graph> {
     fn contains(&self, member_type_name: &str) -> bool {
         match self {
-            Self::All(members) => members.iter().any(|member| *member == member_type_name),
+            Self::All(members) => members.contains(&member_type_name),
             Self::Some(members) => members.contains(&member_type_name),
             Self::One(member) => *member == member_type_name,
         }

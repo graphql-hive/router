@@ -38,7 +38,7 @@ pub fn query_plan(
     let parsed_operation = safe_parse_operation(query)?;
 
     let normalized_operation =
-        normalize_operation(&planner.supergraph, &parsed_operation, operation_name)?;
+        normalize_operation(planner.supergraph, &parsed_operation, operation_name)?;
 
     let request_override_context = PlannerOverrideContext::new(
         active_labels,

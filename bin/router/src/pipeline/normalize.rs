@@ -105,7 +105,7 @@ pub async fn normalize_request_with_cache(
             .entry(cache_key)
             .or_try_insert_with::<_, NormalizationError>(async {
                 let doc = normalize_operation(
-                    &supergraph.planner.supergraph,
+                    supergraph.planner.supergraph,
                     &parser_payload.parsed_operation,
                     graphql_params.operation_name.as_deref(),
                 )?;
