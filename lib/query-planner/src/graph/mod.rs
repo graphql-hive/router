@@ -143,7 +143,7 @@ impl<'a> SelectionCache<'a> {
 #[derive(Debug, Hash, PartialEq, Eq)]
 enum EdgeLookupValue<'a> {
     SubgraphEntrypoint(SubgraphName<'a>),
-    FieldMove(edge::FieldMove<'a>),
+    FieldMove(Box<edge::FieldMove<'a>>),
     EntityMove(&'a str),
     AbstractMove(&'a str),
     InterfaceObjectTypeMove(&'a str),
@@ -153,13 +153,11 @@ impl<'a> From<&Edge<'a>> for EdgeLookupValue<'a> {
     fn from(edge: &Edge<'a>) -> Self {
         match edge {
             Edge::SubgraphEntrypoint { name, .. } => Self::SubgraphEntrypoint(name.clone()),
-            Edge::FieldMove(field_move) => Self::FieldMove((**field_move).clone()),
+            Edge::FieldMove(field_move) => Self::FieldMove(field_move.clone()),
             Edge::EntityMove(entity_move) => Self::EntityMove(entity_move.key),
             Edge::AbstractMove(name) => Self::AbstractMove(name),
             Edge::Selfie(_) => unreachable!("Selfie edges are intentionally not deduplicated"),
-            Edge::InterfaceObjectTypeMove(m) => {
-                Self::InterfaceObjectTypeMove(m.object_type_name)
-            }
+            Edge::InterfaceObjectTypeMove(m) => Self::InterfaceObjectTypeMove(m.object_type_name),
         }
     }
 }
@@ -818,11 +816,7 @@ impl<'a> Graph<'a> {
                     join_implements.graph_id
                 );
 
-                self.push_edge(
-                    head,
-                    tail,
-                    Edge::AbstractMove(definition.name()),
-                );
+                self.push_edge(head, tail, Edge::AbstractMove(definition.name()));
             }
         }
 
@@ -979,13 +973,7 @@ impl<'a> Graph<'a> {
                         typename_head,
                         tail,
                         Edge::create_field_move(
-                            field_name,
-                            def_name,
-                            true,
-                            false,
-                            None,
-                            None,
-                            None,
+                            field_name, def_name, true, false, None, None, None,
                         ),
                     );
                 }
@@ -1115,14 +1103,9 @@ impl<'a> Graph<'a> {
                             continue;
                         }
 
-                        let possible_members = Arc::new(
-                            member_types
-                                .iter().copied()
-                                .collect::<Vec<_>>(),
-                        );
-                        let representative_member = *possible_members
-                            .first()
-                            .expect("member_types is not empty");
+                        let possible_members = Arc::new(member_types.to_vec());
+                        let representative_member =
+                            *possible_members.first().expect("member_types is not empty");
 
                         trace!(
                             "Handling a field {}.{}/{} resolving a union type {}",
@@ -1199,11 +1182,7 @@ impl<'a> Graph<'a> {
                                 "  [x] Creating abstract move edge for '{}.{}/{}' (union member: {})",
                                 def_name, field_name, graph_id, member
                             );
-                            self.push_edge(
-                                tail,
-                                abstract_tail,
-                                Edge::AbstractMove(member),
-                            );
+                            self.push_edge(tail, abstract_tail, Edge::AbstractMove(member));
                         }
 
                         continue;
@@ -1419,11 +1398,7 @@ impl<'a> Graph<'a> {
                     self.upsert_edge(tail, tail, Edge::Selfie(canonical_type_name));
 
                     // because it's abstract -> object move, add an abstract move edge
-                    self.upsert_edge(
-                        head,
-                        tail,
-                        Edge::AbstractMove(canonical_type_name),
-                    );
+                    self.upsert_edge(head, tail, Edge::AbstractMove(canonical_type_name));
 
                     // use object type (tail) when handling selection sets
                     self.handle_viewed_selection_set(
@@ -1506,11 +1481,7 @@ impl<'a> Graph<'a> {
                                     SubgraphTypeSpecialization::Provides(view_id),
                                 ));
 
-                                self.upsert_edge(
-                                    tail,
-                                    tail,
-                                    Edge::Selfie(return_type_name),
-                                );
+                                self.upsert_edge(tail, tail, Edge::Selfie(return_type_name));
 
                                 trace!(
                                     "Creating viewed (#{}) link for provided field '{}.{}/{:?}' (type: {})",
