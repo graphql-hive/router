@@ -11,7 +11,77 @@ use crate::{
     state::supergraph_state::{SupergraphDefinition, SupergraphState},
 };
 
-pub type PossibleTypesMap<'a> = HashMap<&'a str, HashSet<&'a str>>;
+struct PossibleTypesResolver<'a> {
+    state: &'a SupergraphState,
+    subgraph_name: Option<&'a str>,
+    cache: HashMap<String, HashSet<&'a str>>,
+}
+
+impl<'a> PossibleTypesResolver<'a> {
+    fn new(state: &'a SupergraphState, subgraph_name: Option<&'a str>) -> Self {
+        Self {
+            state,
+            subgraph_name,
+            cache: HashMap::new(),
+        }
+    }
+
+    fn possible_types(&mut self, type_name: &str) -> Result<HashSet<&'a str>, NormalizationError> {
+        if let Some(types) = self.cache.get(type_name) {
+            return Ok(types.clone());
+        }
+
+        let type_def = self.state.definitions.get(type_name).ok_or_else(|| {
+            NormalizationError::SchemaTypeNotFound {
+                type_name: type_name.to_string(),
+            }
+        })?;
+
+        let possible_types: HashSet<&'a str> = match type_def {
+            SupergraphDefinition::Union(union_type) => union_type
+                .union_members
+                .iter()
+                .filter_map(|m| {
+                    if let Some(subgraph_name) = self.subgraph_name {
+                        if m.graph.as_str() == subgraph_name {
+                            return None;
+                        }
+                    }
+                    Some(m.member.as_str())
+                })
+                .collect(),
+            SupergraphDefinition::Interface(_) => self
+                .state
+                .definitions
+                .iter()
+                .filter_map(|(obj_type_name, obj_type_def)| {
+                    let SupergraphDefinition::Object(object_type) = obj_type_def else {
+                        return None;
+                    };
+
+                    let belongs = object_type.join_implements.iter().any(|j| {
+                        let belongs_to_subgraph = match self.subgraph_name {
+                            Some(subgraph_name) => j.graph_id.as_str() == subgraph_name,
+                            None => true,
+                        };
+                        belongs_to_subgraph && j.interface == type_name
+                    });
+
+                    belongs.then_some(obj_type_name.as_str())
+                })
+                .collect(),
+            _ => {
+                return Err(NormalizationError::PossibleTypesNotFound {
+                    type_name: type_name.to_string(),
+                });
+            }
+        };
+
+        self.cache
+            .insert(type_name.to_string(), possible_types.clone());
+        Ok(possible_types)
+    }
+}
 
 /// This normalization step flattens fragment spreads and expands inline fragments on abstract types
 /// (unions and interfaces) into a series of inline fragments on concrete object types.
@@ -25,7 +95,7 @@ pub type PossibleTypesMap<'a> = HashMap<&'a str, HashSet<&'a str>>;
 ///    the correct semantics are maintained.
 #[inline]
 pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
-    let possible_types = build_possible_types_map(ctx);
+    let mut possible_types = PossibleTypesResolver::new(ctx.supergraph, ctx.subgraph_name);
     let query_type_name = ctx.query_type_name();
     let mutation_type_name = ctx.mutation_type_name();
     let subscription_type_name = ctx.subscription_type_name();
@@ -55,7 +125,7 @@ pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), Normaliza
 
             handle_selection_set(
                 ctx.supergraph,
-                &possible_types,
+                &mut possible_types,
                 root_type_def,
                 selection_set,
             )?;
@@ -66,79 +136,9 @@ pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), Normaliza
 }
 
 #[inline]
-fn build_possible_types_map<'a>(ctx: &NormalizationContext<'a>) -> PossibleTypesMap<'a> {
-    let mut possible_types = PossibleTypesMap::new();
-    let maybe_subgraph_name = ctx.subgraph_name.as_ref();
-
-    let mut object_types_list = Vec::new();
-    let mut abstract_types_list = Vec::new();
-
-    for (name, def) in &ctx.supergraph.definitions {
-        match def {
-            SupergraphDefinition::Union(_) | SupergraphDefinition::Interface(_)
-                if (maybe_subgraph_name.is_none()
-                    || maybe_subgraph_name.is_some_and(|subgraph_name| {
-                        def.is_defined_in_subgraph(subgraph_name)
-                    })) =>
-            {
-                abstract_types_list.push((name, def));
-            }
-            SupergraphDefinition::Object(_)
-                if (maybe_subgraph_name.is_none()
-                    || maybe_subgraph_name.is_some_and(|subgraph_name| {
-                        def.is_defined_in_subgraph(subgraph_name)
-                    })) =>
-            {
-                object_types_list.push((name, def));
-            }
-            _ => {}
-        }
-    }
-
-    for (type_name, type_def) in &abstract_types_list {
-        match type_def {
-            SupergraphDefinition::Union(union_type) => {
-                let members = union_type
-                    .union_members
-                    .iter()
-                    .filter_map(|m| {
-                        if let Some(subgraph_name) = maybe_subgraph_name {
-                            if m.graph.as_str() == *subgraph_name {
-                                return None;
-                            }
-                        }
-                        Some(m.member.as_str())
-                    })
-                    .collect();
-                possible_types.insert(type_name.as_str(), members);
-            }
-            SupergraphDefinition::Interface(_) => {
-                let mut object_types: HashSet<&str> = HashSet::new();
-                for (obj_type_name, obj_type_def) in &object_types_list {
-                    if let SupergraphDefinition::Object(object_type) = obj_type_def {
-                        if object_type.join_implements.iter().any(|j| {
-                            let belongs = match maybe_subgraph_name {
-                                Some(subgraph_name) => j.graph_id.as_str() == *subgraph_name,
-                                None => true,
-                            };
-                            belongs && &j.interface == *type_name
-                        }) {
-                            object_types.insert(obj_type_name.as_str());
-                        }
-                    }
-                }
-                possible_types.insert(type_name.as_str(), object_types);
-            }
-            _ => {}
-        }
-    }
-    possible_types
-}
-
-#[inline]
 fn handle_selection_set(
     state: &SupergraphState,
-    possible_types: &PossibleTypesMap,
+    possible_types: &mut PossibleTypesResolver<'_>,
     parent_type_def: &SupergraphDefinition,
     selection_set: &mut SelectionSet<'static, String>,
 ) -> Result<(), NormalizationError> {
@@ -173,7 +173,7 @@ fn handle_selection_set(
 #[inline]
 fn process_field(
     state: &SupergraphState,
-    possible_types: &PossibleTypesMap,
+    possible_types: &mut PossibleTypesResolver<'_>,
     parent_type_def: &SupergraphDefinition,
     field: &mut Field<'static, String>,
 ) -> Result<(), NormalizationError> {
@@ -206,7 +206,7 @@ fn process_field(
 #[inline]
 fn process_inline_fragment(
     state: &SupergraphState,
-    possible_types: &PossibleTypesMap,
+    possible_types: &mut PossibleTypesResolver<'_>,
     parent_type_def: &SupergraphDefinition,
     mut fragment: InlineFragment<'static, String>,
 ) -> Result<Vec<Selection<'static, String>>, NormalizationError> {
@@ -264,7 +264,7 @@ fn process_inline_fragment(
 #[inline]
 fn expand_fragment_with_type_condition(
     state: &SupergraphState,
-    possible_types: &PossibleTypesMap,
+    possible_types: &mut PossibleTypesResolver<'_>,
     parent_type_def: &SupergraphDefinition,
     mut fragment: InlineFragment<'static, String>,
 ) -> Result<Vec<Selection<'static, String>>, NormalizationError> {
@@ -314,7 +314,7 @@ fn expand_fragment_with_type_condition(
 #[inline]
 fn expand_abstract_fragment(
     state: &SupergraphState,
-    possible_types: &PossibleTypesMap,
+    possible_types: &mut PossibleTypesResolver<'_>,
     parent_type_def: &SupergraphDefinition,
     fragment: InlineFragment<'static, String>,
 ) -> Result<Vec<Selection<'static, String>>, NormalizationError> {
@@ -326,19 +326,14 @@ fn expand_abstract_fragment(
             .expect("type condition should exist"),
     );
 
-    let object_types_of_type_cond = possible_types.get(type_condition_name).ok_or_else(|| {
-        NormalizationError::PossibleTypesNotFound {
-            type_name: type_condition_name.to_string(),
-        }
-    })?;
+    let object_types_of_type_cond = possible_types.possible_types(type_condition_name)?;
 
     let owned_parent_set;
     let object_types_of_parent_type = match parent_type_def {
-        SupergraphDefinition::Union(_) | SupergraphDefinition::Interface(_) => possible_types
-            .get(parent_type_def.name())
-            .ok_or_else(|| NormalizationError::PossibleTypesNotFound {
-                type_name: parent_type_def.name().to_string(),
-            })?,
+        SupergraphDefinition::Union(_) | SupergraphDefinition::Interface(_) => {
+            owned_parent_set = possible_types.possible_types(parent_type_def.name())?;
+            &owned_parent_set
+        }
         _ => {
             owned_parent_set = HashSet::from([parent_type_def.name()]);
             &owned_parent_set
@@ -518,15 +513,15 @@ fn expand_abstract_fragment(
 }
 
 fn fragment_applies_to_object(
-    possible_types: &PossibleTypesMap,
+    possible_types: &mut PossibleTypesResolver<'_>,
     fragment: &InlineFragment<'static, String>,
     obj_type_name: &str,
 ) -> bool {
     match fragment.type_condition.as_ref().map(extract_type_condition) {
         Some(type_condition) if type_condition == obj_type_name => true,
         Some(type_condition) => possible_types
-            .get(type_condition)
-            .is_some_and(|possible_types| possible_types.contains(obj_type_name)),
+            .possible_types(type_condition)
+            .is_ok_and(|possible_types| possible_types.contains(obj_type_name)),
         None => true,
     }
 }

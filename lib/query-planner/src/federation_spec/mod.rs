@@ -7,8 +7,6 @@ use graphql_tools::parser::{
 use crate::{
     ast::{
         normalization::{context::RootTypes, normalize_operation_mut},
-        selection_item::SelectionItem,
-        selection_set::{FieldSelection, InlineFragmentSelection},
         type_aware_selection::TypeAwareSelection,
     },
     state::supergraph_state::{SupergraphDefinition, SupergraphField, SupergraphState},
@@ -69,107 +67,6 @@ fn normalize_fields_argument_value_mut(
     }
 }
 
-fn parse_key_fields_argument_value(
-    supergraph: &SupergraphState,
-    type_name: &str,
-    key: &str,
-) -> crate::ast::selection_set::SelectionSet {
-    let selection_set_str = format!("{{{key}}}");
-    let parsed = parse_query::<String>(&selection_set_str)
-        .unwrap_or_else(|err| panic!("Key parse error for {type_name}: {err}"));
-
-    let Some(Definition::Operation(OperationDefinition::SelectionSet(selection_set))) =
-        parsed.definitions.into_iter().next()
-    else {
-        unreachable!("key fields string '{{...}}' did not produce a SelectionSet")
-    };
-
-    resolve_key_selection_set(supergraph, type_name, &selection_set)
-}
-
-fn resolve_key_selection_set(
-    supergraph: &SupergraphState,
-    current_type_name: &str,
-    selection_set: &SelectionSet<'_, String>,
-) -> crate::ast::selection_set::SelectionSet {
-    let mut items = selection_set
-        .items
-        .iter()
-        .filter_map(|selection| match selection {
-            Selection::Field(field) => Some(resolve_key_field(supergraph, current_type_name, field)),
-            Selection::InlineFragment(fragment) => Some(resolve_key_fragment(supergraph, fragment)),
-            Selection::FragmentSpread(_) => {
-                panic!("Fragment spread is not supported in federation key fields")
-            }
-        })
-        .collect::<Vec<_>>();
-    items.sort();
-
-    crate::ast::selection_set::SelectionSet { items }
-}
-
-fn resolve_key_field(
-    supergraph: &SupergraphState,
-    current_type_name: &str,
-    field: &graphql_tools::parser::query::Field<'_, String>,
-) -> SelectionItem {
-    if field.name == "__typename" {
-        return SelectionItem::Field(FieldSelection::new_typename());
-    }
-
-    assert!(field.arguments.is_empty(), "Arguments are not supported in federation key fields");
-    assert!(field.directives.is_empty(), "Directives are not supported in federation key fields");
-
-    let current_type = supergraph
-        .definitions
-        .get(current_type_name)
-        .unwrap_or_else(|| panic!("Type '{current_type_name}' is not defined in supergraph"));
-
-    let supergraph_field = current_type.fields().get(&field.name).unwrap_or_else(|| {
-        panic!("Type '{current_type_name}' does not have field '{}'", field.name)
-    });
-
-    let output_type_name = supergraph_field.field_type.inner_type();
-    let selections = if field.selection_set.items.is_empty() {
-        crate::ast::selection_set::SelectionSet::default()
-    } else {
-        resolve_key_selection_set(supergraph, output_type_name, &field.selection_set)
-    };
-
-    SelectionItem::Field(FieldSelection {
-        name: field.name.clone(),
-        selections,
-        alias: field.alias.clone(),
-        arguments: None,
-        skip_if: None,
-        include_if: None,
-        omit_from_response: false,
-    })
-}
-
-fn resolve_key_fragment(
-    supergraph: &SupergraphState,
-    fragment: &graphql_tools::parser::query::InlineFragment<'_, String>,
-) -> SelectionItem {
-    let type_condition = fragment
-        .type_condition
-        .as_ref()
-        .map(crate::ast::normalization::utils::extract_type_condition)
-        .unwrap_or_else(|| panic!("Inline fragment without type condition is not supported in federation key fields"));
-
-    let type_definition = supergraph
-        .definitions
-        .get(type_condition)
-        .unwrap_or_else(|| panic!("Type '{type_condition}' is not defined in supergraph"));
-
-    SelectionItem::InlineFragment(InlineFragmentSelection {
-        type_condition: type_definition.name().to_string(),
-        selections: resolve_key_selection_set(supergraph, type_definition.name(), &fragment.selection_set),
-        skip_if: None,
-        include_if: None,
-    })
-}
-
 /// Walks a `sizedFields` selection set top-down, enforcing exactly one field per
 /// level and rejecting fragments, appending each field name to `path`.
 fn collect_sized_field_path(
@@ -208,14 +105,7 @@ impl FederationRules {
         type_name: &'a str,
         key: &str,
     ) -> TypeAwareSelection<'a> {
-        // TODO: This intentionally bypasses normalize_fields_argument_value_mut() because the
-        // old normalization-heavy path made Graph::graph_from_supergraph_state() spend tens of
-        // seconds in parse_key() during the first graph build after SupergraphState construction.
-        // If we switch back to the old path for semantic consistency (type expansion, fragment
-        // spread expansion, merge/dedup behavior), we need a solution that preserves first-build
-        // performance, not just a per-build cache inside graph construction.
-        let _ = subgraph_name;
-        let selection_set = parse_key_fields_argument_value(supergraph, type_name, key);
+        let selection_set = normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, key).into();
         TypeAwareSelection {
             type_name,
             selection_set,
