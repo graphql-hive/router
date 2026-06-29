@@ -103,7 +103,9 @@ fn main() {
         }
         "plan" => {
             let plan = process_plan(&args[2], &args[3]);
-            if args.contains(&"--json".into()) {
+            if args.contains(&"--silent".into()) {
+                println!("Done")
+            } else if args.contains(&"--json".into()) {
                 println!("{}", serde_json::to_string_pretty(&plan).unwrap());
             } else {
                 println!("{}", plan);
@@ -224,7 +226,12 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
 fn process_merged_tree<'a>(
     supergraph_path: &'a str,
     operation_path: &'a str,
-) -> (Graph<'static>, QueryTree, &'static SupergraphState, OperationKind) {
+) -> (
+    Graph<'static>,
+    QueryTree,
+    &'static SupergraphState,
+    OperationKind,
+) {
     let (graph, operation, supergraph_state) =
         load_graph_operation(supergraph_path, operation_path);
     let override_context = PlannerOverrideContext::default();
@@ -263,7 +270,11 @@ fn get_operation(operation_path: &str, supergraph: &SupergraphState) -> Operatio
 fn load_graph_operation<'a>(
     supergraph_path: &'a str,
     operation_path: &'a str,
-) -> (Graph<'static>, OperationDefinition, &'static SupergraphState) {
+) -> (
+    Graph<'static>,
+    OperationDefinition,
+    &'static SupergraphState,
+) {
     let supergraph_sdl =
         std::fs::read_to_string(supergraph_path).expect("Unable to read input file");
     let parsed_schema = measure_time("parse_schema", || parse_schema(&supergraph_sdl));

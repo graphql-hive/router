@@ -24,6 +24,7 @@ use crate::{
         tree::query_tree_node::QueryTreeNode,
         walker::best_path::{find_best_paths, BestPathTracker},
     },
+    state::supergraph_state::SupergraphState,
 };
 
 use super::{error::WalkOperationError, excluded::ExcludedFromLookup, path::OperationPath};
@@ -145,13 +146,18 @@ struct RequirementFieldKey {
 
 struct RequirementTargetResolver<'graph> {
     graph: &'graph Graph<'graph>,
+    supergraph_state: &'graph SupergraphState,
     cache: HashMap<RequirementFieldKey, Option<HashSet<String>>>,
 }
 
 impl<'graph> RequirementTargetResolver<'graph> {
-    fn new(graph: &'graph Graph<'graph>) -> Self {
+    fn new(
+        graph: &'graph Graph<'graph>,
+        supergraph_state: &'graph SupergraphState,
+    ) -> Self {
         Self {
             graph,
+            supergraph_state,
             cache: HashMap::default(),
         }
     }
@@ -215,34 +221,11 @@ impl<'graph> RequirementTargetResolver<'graph> {
             let cached = if let Some(cached) = self.cache.get(&cache_key) {
                 cached.clone()
             } else {
-                let mut targets = HashSet::default();
+                let targets =
+                    self.lookup_from_supergraph(&parent_type_name, &field.name);
 
-                for node_index in graph.graph.node_indices() {
-                    let node = graph.node(node_index)?;
-                    if node.name_str() != parent_type_name {
-                        continue;
-                    }
-
-                    let Some(graph_id) = node.graph_id() else {
-                        continue;
-                    };
-
-                    let has_field = graph.edges_from(node_index).any(
-                        |edge| matches!(edge.weight(), Edge::FieldMove(f) if f.name == field.name),
-                    );
-
-                    if has_field {
-                        targets.insert(graph_id.to_string());
-                    }
-                }
-
-                let cached = if targets.is_empty() {
-                    None
-                } else {
-                    Some(targets)
-                };
-                self.cache.insert(cache_key, cached.clone());
-                cached
+                self.cache.insert(cache_key, targets.clone());
+                targets
             };
 
             if let Some(cached) = cached {
@@ -251,9 +234,30 @@ impl<'graph> RequirementTargetResolver<'graph> {
         }
 
         if result.is_empty() {
-            Ok(None)
+            return Ok(None);
+        }
+
+        Ok(Some(result))
+    }
+
+    fn lookup_from_supergraph(
+        &self,
+        parent_type_name: &str,
+        field_name: &str,
+    ) -> Option<HashSet<String>> {
+        let supergraph = self.supergraph_state;
+        let type_def = supergraph.definitions.get(parent_type_name)?;
+        let field_def = type_def.fields().get(field_name)?;
+        let mut targets = HashSet::default();
+        for graph_enum_value in field_def.resolvable_in_graphs(type_def) {
+            if let Ok(subgraph_name) = supergraph.resolve_graph_id(&graph_enum_value) {
+                targets.insert(subgraph_name.0.to_string());
+            }
+        }
+        if targets.is_empty() {
+            None
         } else {
-            Ok(Some(result))
+            Some(targets)
         }
     }
 }
@@ -337,15 +341,18 @@ impl<'graph> PathSearch<'graph> {
     fn new(
         graph: &'graph Graph<'graph>,
         override_context: &'graph PlannerOverrideContext,
+        supergraph_state: &'graph SupergraphState,
         cancellation_token: &'graph CancellationToken,
     ) -> Self {
+        let requirement_target_resolver =
+            RequirementTargetResolver::new(graph, supergraph_state);
         Self {
             graph,
             override_context,
             cancellation_token,
             active_edge_checks: ActiveEdgeChecks::default(),
             unsatisfied_requirements: UnsatisfiedRequirementCache::default(),
-            requirement_target_resolver: RequirementTargetResolver::new(graph),
+            requirement_target_resolver,
         }
     }
 }
@@ -357,13 +364,19 @@ impl<'graph> PathSearch<'graph> {
 pub fn find_indirect_paths<'graph>(
     graph: &'graph Graph<'graph>,
     override_context: &'graph PlannerOverrideContext,
+    supergraph_state: &'graph SupergraphState,
     path: &OperationPath<'graph>,
     target: &NavigationTarget<'_>,
     excluded: &ExcludedFromLookup<'graph>,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
-    PathSearch::new(graph, override_context, cancellation_token)
-        .find_indirect_paths(path, target, excluded)
+    PathSearch::new(
+        graph,
+        override_context,
+        supergraph_state,
+        cancellation_token,
+    )
+    .find_indirect_paths(path, target, excluded)
 }
 
 impl<'graph> PathSearch<'graph> {
@@ -597,13 +610,19 @@ impl<'graph> PathSearch<'graph> {
 pub fn find_self_referencing_direct_path<'graph>(
     graph: &'graph Graph<'graph>,
     override_context: &'graph PlannerOverrideContext,
+    supergraph_state: &'graph SupergraphState,
     path: &OperationPath<'graph>,
     type_name: &'graph str,
     condition: &Condition,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<OperationPath<'graph>, WalkOperationError> {
     let path_tail_index = path.tail();
-    let mut path_search = PathSearch::new(graph, override_context, cancellation_token);
+    let mut path_search = PathSearch::new(
+        graph,
+        override_context,
+        supergraph_state,
+        cancellation_token,
+    );
 
     for edge_ref in graph
         .edges_from(path_tail_index)
@@ -634,11 +653,18 @@ pub fn find_self_referencing_direct_path<'graph>(
 pub fn find_direct_paths<'graph>(
     graph: &'graph Graph<'graph>,
     override_context: &'graph PlannerOverrideContext,
+    supergraph_state: &'graph SupergraphState,
     path: &OperationPath<'graph>,
     target: &NavigationTarget<'_>,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
-    PathSearch::new(graph, override_context, cancellation_token).find_direct_paths(path, target)
+    PathSearch::new(
+        graph,
+        override_context,
+        supergraph_state,
+        cancellation_token,
+    )
+    .find_direct_paths(path, target)
 }
 
 impl<'graph> PathSearch<'graph> {
@@ -738,11 +764,18 @@ impl<'graph> PathSearch<'graph> {
 pub fn find_direct_path<'graph>(
     graph: &'graph Graph<'graph>,
     override_context: &'graph PlannerOverrideContext,
+    supergraph_state: &'graph SupergraphState,
     path: &OperationPath<'graph>,
     target: &NavigationTarget<'_>,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<Option<OperationPath<'graph>>, WalkOperationError> {
-    PathSearch::new(graph, override_context, cancellation_token).find_direct_path(path, target)
+    PathSearch::new(
+        graph,
+        override_context,
+        supergraph_state,
+        cancellation_token,
+    )
+    .find_direct_path(path, target)
 }
 
 #[instrument(level = "trace", skip_all, fields(
@@ -752,18 +785,15 @@ pub fn find_direct_path<'graph>(
 pub fn can_satisfy_edge<'graph>(
     graph: &'graph Graph<'graph>,
     override_context: &'graph PlannerOverrideContext,
+    supergraph_state: &'graph SupergraphState,
     edge_ref: &EdgeReference<'graph>,
     path: &OperationPath<'graph>,
     excluded: &ExcludedFromLookup<'graph>,
     use_only_direct_edges: bool,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<Option<Vec<OperationPath<'graph>>>, WalkOperationError> {
-    PathSearch::new(graph, override_context, cancellation_token).can_satisfy_edge(
-        edge_ref,
-        path,
-        excluded,
-        use_only_direct_edges,
-    )
+    PathSearch::new(graph, override_context, supergraph_state, cancellation_token)
+    .can_satisfy_edge(edge_ref, path, excluded, use_only_direct_edges)
 }
 
 impl<'graph> PathSearch<'graph> {

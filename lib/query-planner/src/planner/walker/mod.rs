@@ -284,6 +284,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
             let direct_path = find_self_referencing_direct_path(
                 graph,
                 override_context,
+                supergraph,
                 path,
                 &fragment.type_condition,
                 condition.as_ref().expect("Condition should be present"),
@@ -324,6 +325,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
         let direct_path = find_direct_path(
             graph,
             override_context,
+            supergraph,
             path,
             &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
             cancellation_token,
@@ -340,6 +342,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
             let mut indirect_paths = find_indirect_paths(
                 graph,
                 override_context,
+                supergraph,
                 path,
                 &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
                 &ExcludedFromLookup::new(),
@@ -378,6 +381,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
             let direct_paths = find_direct_paths(
                 graph,
                 override_context,
+                supergraph,
                 path,
                 &NavigationTarget::Field {
                     field: &FieldSelection::new_typename(),
@@ -557,6 +561,7 @@ fn process_field<'graph, 'op: 'graph>(
         let direct_paths = find_direct_paths(
             graph,
             override_context,
+            supergraph,
             path,
             &NavigationTarget::Field {
                 field,
@@ -611,6 +616,7 @@ fn process_field<'graph, 'op: 'graph>(
             let indirect_paths = find_indirect_paths(
                 graph,
                 override_context,
+                supergraph,
                 path,
                 &NavigationTarget::Field {
                     field,
