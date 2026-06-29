@@ -22,6 +22,7 @@ use crate::{
         OperationKind, SubgraphName, SupergraphDefinition, SupergraphField, SupergraphState,
     },
 };
+use ahash::{AHashMap, AHashSet};
 use error::GraphError;
 use graphql_tools::parser::query::{Selection, SelectionSet};
 use petgraph::{
@@ -29,7 +30,6 @@ use petgraph::{
     graph::{EdgeIndex, Edges, NodeIndex},
     Directed, Direction, Graph as Petgraph,
 };
-use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{instrument, trace};
 
 use super::graph::{edge::Edge, node::Node};
@@ -43,9 +43,9 @@ struct SelectionCacheKey<'a> {
 
 #[derive(Debug, Default)]
 struct SelectionCache<'a> {
-    keys: FxHashMap<SelectionCacheKey<'a>, Arc<TypeAwareSelection<'a>>>,
-    requirements: FxHashMap<SelectionCacheKey<'a>, Arc<TypeAwareSelection<'a>>>,
-    selections: FxHashMap<SelectionCacheKey<'a>, Arc<SelectionSet<'static, String>>>,
+    keys: AHashMap<SelectionCacheKey<'a>, Arc<TypeAwareSelection<'a>>>,
+    requirements: AHashMap<SelectionCacheKey<'a>, Arc<TypeAwareSelection<'a>>>,
+    selections: AHashMap<SelectionCacheKey<'a>, Arc<SelectionSet<'static, String>>>,
 }
 
 impl<'a> SelectionCache<'a> {
@@ -226,8 +226,8 @@ impl<'a> From<&Node<'a>> for NodeLookupKey<'a> {
 
 #[derive(Default)]
 struct GraphBuildContext<'a> {
-    subgraph_names: FxHashMap<&'a str, SubgraphName<'a>>,
-    subgraph_nodes: FxHashMap<SubgraphNodeKey<'a>, NodeIndex>,
+    subgraph_names: AHashMap<&'a str, SubgraphName<'a>>,
+    subgraph_nodes: AHashMap<SubgraphNodeKey<'a>, NodeIndex>,
 }
 
 impl<'a> GraphBuildContext<'a> {
@@ -246,13 +246,13 @@ impl<'a> GraphBuildContext<'a> {
     }
 }
 
-type ImplementingObjects<'a> = FxHashMap<&'a str, Vec<(&'a str, &'a SupergraphDefinition)>>;
+type ImplementingObjects<'a> = AHashMap<&'a str, Vec<(&'a str, &'a SupergraphDefinition)>>;
 
 type UnionTypeName<'a> = &'a str;
 type SubgraphKey<'a> = &'a str;
-type UnionMemberTypes<'a> = FxHashSet<&'a str>;
+type UnionMemberTypes<'a> = AHashSet<&'a str>;
 type UnionRegistyHashMap<'a> =
-    FxHashMap<UnionTypeName<'a>, FxHashMap<SubgraphKey<'a>, UnionMemberTypes<'a>>>;
+    AHashMap<UnionTypeName<'a>, AHashMap<SubgraphKey<'a>, UnionMemberTypes<'a>>>;
 
 #[derive(Debug, Default)]
 struct UnionDefinitions<'a> {
@@ -268,8 +268,8 @@ impl<'a> UnionDefinitions<'a> {
             .iter()
             .filter(|(_, d)| matches!(d, SupergraphDefinition::Union(_)))
         {
-            let mut in_subgraphs: FxHashMap<SubgraphKey<'a>, UnionMemberTypes<'a>> =
-                FxHashMap::default();
+            let mut in_subgraphs: AHashMap<SubgraphKey<'a>, UnionMemberTypes<'a>> =
+                AHashMap::default();
 
             for join_member in definition.join_union_members() {
                 in_subgraphs
@@ -278,7 +278,7 @@ impl<'a> UnionDefinitions<'a> {
                         e.insert(&join_member.member);
                     })
                     .or_insert_with(|| {
-                        let mut set: UnionMemberTypes<'a> = FxHashSet::default();
+                        let mut set: UnionMemberTypes<'a> = AHashSet::default();
                         set.insert(&join_member.member);
                         set
                     });
@@ -339,8 +339,8 @@ pub struct Graph<'a> {
     pub mutation_root: Option<NodeIndex>,
     pub subscription_root: Option<NodeIndex>,
     pub node_display_name_to_index: HashMap<String, NodeIndex>,
-    node_to_index: FxHashMap<NodeLookupKey<'a>, NodeIndex>,
-    edge_index: FxHashMap<EdgeLookupKey<'a>, EdgeIndex>,
+    node_to_index: AHashMap<NodeLookupKey<'a>, NodeIndex>,
+    edge_index: AHashMap<EdgeLookupKey<'a>, EdgeIndex>,
 }
 
 impl<'a> Graph<'a> {
@@ -351,8 +351,8 @@ impl<'a> Graph<'a> {
         let (node_capacity, edge_capacity) = Self::estimate_capacity(supergraph_state);
         let mut instance = Graph {
             node_display_name_to_index: HashMap::new(),
-            node_to_index: FxHashMap::default(),
-            edge_index: FxHashMap::default(),
+            node_to_index: AHashMap::default(),
+            edge_index: AHashMap::default(),
             graph: Petgraph::with_capacity(node_capacity, edge_capacity),
             ..Default::default()
         };
@@ -577,7 +577,7 @@ impl<'a> Graph<'a> {
         build_context: &mut GraphBuildContext<'a>,
         selection_cache: &mut SelectionCache<'a>,
     ) -> Result<(), GraphError> {
-        let mut implementing_objects: ImplementingObjects<'_> = FxHashMap::default();
+        let mut implementing_objects: ImplementingObjects<'_> = AHashMap::default();
         for (object_type_name, object_type_definition) in state
             .definitions
             .iter()
