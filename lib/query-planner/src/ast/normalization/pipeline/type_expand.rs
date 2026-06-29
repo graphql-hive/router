@@ -183,11 +183,13 @@ fn handle_type_expansion_candidate<'schema, 'sel>(
 
     let field_def = field_def.unwrap();
 
-    let possible_object_types = state
-        .abstract_possible_types(interface_type.name.as_str(), subgraph_name)
-        .ok_or_else(|| NormalizationError::PossibleTypesNotFound {
-            type_name: interface_type.name.clone(),
-        })?;
+    let possible_object_types = match subgraph_name {
+        Some(sn) => state.possible_types_in_subgraph(interface_type.name.as_str(), sn),
+        None => state.all_possible_types(interface_type.name.as_str()),
+    }
+    .ok_or_else(|| NormalizationError::PossibleTypesNotFound {
+        type_name: interface_type.name.clone(),
+    })?;
 
     let should_expand = possible_object_types.iter().any(|obj| {
         let Some(SupergraphDefinition::Object(obj_def)) = state.definitions.get(obj.as_str())

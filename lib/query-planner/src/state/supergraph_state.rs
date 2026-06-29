@@ -62,11 +62,13 @@ pub struct ProgressiveOverrides {
     pub percentages: HashSet<Percentage>,
 }
 
-type InterfaceObjectToSubgraphsMap = HashMap<String, HashSet<String>>;
-type InterfaceToObjectTypesMap = HashMap<String, BTreeSet<String>>;
-type AbstractPossibleTypesMap = HashMap<String, HashSet<String>>;
-type AbstractPossibleTypesBySubgraphMap = HashMap<String, HashMap<String, HashSet<String>>>;
-type DefinitionMap = HashMap<String, SupergraphDefinition>;
+type TypeName = String;
+type GraphId = String;
+type InterfaceObjectToSubgraphsMap = HashMap<TypeName, HashSet<GraphId>>;
+type InterfaceToObjectTypesMap = HashMap<TypeName, BTreeSet<TypeName>>;
+type AbstractPossibleTypesMap = HashMap<TypeName, HashSet<TypeName>>;
+type AbstractPossibleTypesBySubgraphMap = HashMap<GraphId, HashMap<TypeName, HashSet<TypeName>>>;
+type DefinitionMap = HashMap<TypeName, SupergraphDefinition>;
 
 /// Information about linked specifications used in the supergraph
 /// (e.g., authenticated, requiresScopes)
@@ -192,9 +194,9 @@ pub struct SupergraphState {
     pub interface_object_types_in_subgraphs: InterfaceObjectToSubgraphsMap,
     /// Holds a map of interface names to all object types implementing them.
     pub interface_to_object_types: InterfaceToObjectTypesMap,
-    /// Prebuilt abstract type -> possible concrete types across the whole supergraph.
+    /// Abstract type -> possible concrete types across the whole supergraph.
     pub abstract_possible_types: AbstractPossibleTypesMap,
-    /// Prebuilt abstract type -> possible concrete types for a subgraph-specific normalization view.
+    /// Abstract type -> possible concrete types for a subgraph
     pub abstract_possible_types_by_subgraph: AbstractPossibleTypesBySubgraphMap,
     /// A pre-computed set of all progressive override labels in the supergraph
     pub progressive_overrides: ProgressiveOverrides,
@@ -286,22 +288,21 @@ impl SupergraphState {
         self.interface_to_object_types.get(interface_name)
     }
 
-    pub fn abstract_possible_types(
+    /// Possible concrete types for `type_name` across the entire supergraph
+    pub fn all_possible_types(&self, type_name: &str) -> Option<&HashSet<String>> {
+        self.abstract_possible_types.get(type_name)
+    }
+
+    /// Possible concrete types for `type_name` within a specific subgraph.
+    pub fn possible_types_in_subgraph(
         &self,
         type_name: &str,
-        subgraph_name: Option<&str>,
+        subgraph_name: &str,
     ) -> Option<&HashSet<String>> {
-        match subgraph_name {
-            Some(subgraph_name) => self
-                .abstract_possible_types_by_subgraph
-                .get(subgraph_name)
-                .and_then(|types| types.get(type_name))
-                // Normalization can ask for possible types of a concrete type condition such as
-                // `... on Account`, or for an abstract type that simply has no dedicated
-                // subgraph-scoped filtered view. In those cases, we fall back to the global map.
-                .or_else(|| self.abstract_possible_types.get(type_name)),
-            None => self.abstract_possible_types.get(type_name),
-        }
+        self.abstract_possible_types_by_subgraph
+            .get(subgraph_name)
+            .and_then(|types| types.get(type_name))
+            .or_else(|| self.abstract_possible_types.get(type_name))
     }
 
     pub fn field_return_type_name(&self, type_name: &str, field_name: &str) -> Option<&str> {

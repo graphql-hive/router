@@ -253,19 +253,25 @@ fn expand_abstract_fragment(
             .expect("type condition should exist"),
     );
 
-    let object_types_of_type_cond = state
-        .abstract_possible_types(type_condition_name, subgraph_name)
-        .ok_or_else(|| NormalizationError::PossibleTypesNotFound {
-            type_name: type_condition_name.to_string(),
-        })?;
+    let object_types_of_type_cond = match subgraph_name {
+        Some(sn) => state.possible_types_in_subgraph(type_condition_name, sn),
+        None => state.all_possible_types(type_condition_name),
+    }
+    .ok_or_else(|| NormalizationError::PossibleTypesNotFound {
+        type_name: type_condition_name.to_string(),
+    })?;
 
     let owned_parent_set: HashSet<String>;
     let object_types_of_parent_type = match parent_type_def {
-        SupergraphDefinition::Union(_) | SupergraphDefinition::Interface(_) => state
-            .abstract_possible_types(parent_type_def.name(), subgraph_name)
+        SupergraphDefinition::Union(_) | SupergraphDefinition::Interface(_) => {
+            match subgraph_name {
+                Some(sn) => state.possible_types_in_subgraph(parent_type_def.name(), sn),
+                None => state.all_possible_types(parent_type_def.name()),
+            }
             .ok_or_else(|| NormalizationError::PossibleTypesNotFound {
                 type_name: parent_type_def.name().to_string(),
-            })?,
+            })?
+        }
         _ => {
             owned_parent_set = HashSet::from([parent_type_def.name().to_string()]);
             &owned_parent_set
@@ -452,9 +458,11 @@ fn fragment_applies_to_object(
 ) -> bool {
     match fragment.type_condition.as_ref().map(extract_type_condition) {
         Some(type_condition) if type_condition == obj_type_name => true,
-        Some(type_condition) => state
-            .abstract_possible_types(type_condition, subgraph_name)
-            .is_some_and(|possible_types| possible_types.contains(obj_type_name)),
+        Some(type_condition) => (match subgraph_name {
+            Some(sn) => state.possible_types_in_subgraph(type_condition, sn),
+            None => state.all_possible_types(type_condition),
+        })
+        .is_some_and(|possible_types| possible_types.contains(obj_type_name)),
         None => true,
     }
 }

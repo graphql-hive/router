@@ -49,7 +49,7 @@ pub enum PlannerError {
     #[error("walker failed to locate path: {0}")]
     PathLocatorError(#[from] WalkOperationError),
     #[error("failed to build fetch graph: {0}")]
-    FailedToConstructFetchGraph(Box<FetchGraphError>),
+    FailedToConstructFetchGraph(#[from] FetchGraphError),
     #[error("failed to build plan: {0}")]
     QueryPlanBuildFailed(#[from] QueryPlanError),
     #[error(transparent)]
@@ -119,8 +119,7 @@ impl<'a> Planner<'a> {
                 .unwrap_or(OperationKind::Query),
             &self.options,
             cancellation_token,
-        )
-        .map_err(|e| PlannerError::FailedToConstructFetchGraph(Box::new(e)))?;
+        )?;
         add_variables_to_fetch_steps(&mut fetch_graph, &normalized_operation.variable_definitions)?;
         let query_plan =
             build_query_plan_from_fetch_graph(fetch_graph, self.supergraph, cancellation_token)?;
@@ -153,9 +152,7 @@ pub fn add_variables_to_fetch_steps<'a>(
         }
 
         for (node_index, relevant_variables) in nodes_to_patch {
-            let step = graph
-                .get_step_data_mut(node_index)
-                .map_err(|e| PlannerError::FailedToConstructFetchGraph(Box::new(e)))?;
+            let step = graph.get_step_data_mut(node_index)?;
             step.variable_definitions = Some(relevant_variables);
         }
     }
