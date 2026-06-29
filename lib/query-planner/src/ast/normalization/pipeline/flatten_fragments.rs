@@ -14,7 +14,7 @@ use crate::{
 struct PossibleTypesResolver<'a> {
     state: &'a SupergraphState,
     subgraph_name: Option<&'a str>,
-    cache: HashMap<String, HashSet<&'a str>>,
+    cache: HashMap<&'a str, HashSet<&'a str>>,
 }
 
 impl<'a> PossibleTypesResolver<'a> {
@@ -27,15 +27,16 @@ impl<'a> PossibleTypesResolver<'a> {
     }
 
     fn possible_types(&mut self, type_name: &str) -> Result<HashSet<&'a str>, NormalizationError> {
-        if let Some(types) = self.cache.get(type_name) {
-            return Ok(types.clone());
-        }
-
         let type_def = self.state.definitions.get(type_name).ok_or_else(|| {
             NormalizationError::SchemaTypeNotFound {
                 type_name: type_name.to_string(),
             }
         })?;
+        let canonical_type_name = type_def.name();
+
+        if let Some(types) = self.cache.get(canonical_type_name) {
+            return Ok(types.clone());
+        }
 
         let possible_types: HashSet<&'a str> = match type_def {
             SupergraphDefinition::Union(union_type) => union_type
@@ -64,7 +65,7 @@ impl<'a> PossibleTypesResolver<'a> {
                             Some(subgraph_name) => j.graph_id.as_str() == subgraph_name,
                             None => true,
                         };
-                        belongs_to_subgraph && j.interface == type_name
+                        belongs_to_subgraph && j.interface == canonical_type_name
                     });
 
                     belongs.then_some(obj_type_name.as_str())
@@ -78,7 +79,7 @@ impl<'a> PossibleTypesResolver<'a> {
         };
 
         self.cache
-            .insert(type_name.to_string(), possible_types.clone());
+            .insert(canonical_type_name, possible_types.clone());
         Ok(possible_types)
     }
 }
