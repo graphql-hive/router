@@ -2,6 +2,7 @@ use std::{
     collections::HashSet,
     fmt::{Debug, Display},
     hash::Hash,
+    sync::Arc,
 };
 
 use petgraph::graph::EdgeReference as GraphEdgeReference;
@@ -14,14 +15,14 @@ use crate::{
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct EntityMove<'a> {
     pub key: &'a str,
-    pub requirements: std::sync::Arc<TypeAwareSelection<'a>>,
+    pub requirements: Arc<TypeAwareSelection<'a>>,
     pub is_interface: bool,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct InterfaceObjectTypeMove<'a> {
     pub object_type_name: &'a str,
-    pub requirements: std::sync::Arc<TypeAwareSelection<'a>>,
+    pub requirements: Arc<TypeAwareSelection<'a>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -31,7 +32,7 @@ pub struct FieldMove<'a> {
     pub is_leaf: bool,
     pub is_list: bool,
     pub join_field: Option<JoinFieldDirective>,
-    pub requirements: Option<std::sync::Arc<TypeAwareSelection<'a>>>,
+    pub requirements: Option<Arc<TypeAwareSelection<'a>>>,
     pub override_from: Option<String>,
     pub override_label: Option<OverrideLabel>,
     pub overridden_by: Option<(String, Option<OverrideLabel>)>,
@@ -39,15 +40,20 @@ pub struct FieldMove<'a> {
 
 impl FieldMove<'_> {
     pub fn satisfies_override_rules(&self, ctx: &PlannerOverrideContext) -> bool {
+        // Field is being progressively overridden by another subgraph
         if let Some((_, Some(label))) = &self.overridden_by {
             return self.check_progressive_override(label, ctx, false);
         }
+        // Field is being fully overridden, so it's not resolvable
         if self.overridden_by.is_some() {
             return false;
         }
+        // Field is progressively overriding another subgraph
         if let Some(label) = &self.override_label {
             return self.check_progressive_override(label, ctx, true);
         }
+
+        // The field is not involved in an override, so it's always resolvable.
         true
     }
 
@@ -107,6 +113,14 @@ impl PlannerOverrideContext {
     }
 }
 
+/// Represents a percentage value
+/// as I.F multiplied by 100_000_000
+/// Where I is a number between 0 and 100
+/// and F represents 8 fraction digits.
+/// Min 000.00000000
+/// Max 100.00000000
+///
+/// Why 8? That's the maximum precision composition allows.
 pub type Percentage = u64;
 pub const PERCENTAGE_SCALE_FACTOR: u64 = 100_000_000;
 
@@ -129,14 +143,30 @@ impl Display for OverrideLabel {
 
 #[derive(Clone)]
 pub enum Edge<'a> {
+    /// A special edge between the root Node and then root entry point to the graph
+    /// With this helper, you can jump from Query::RootQuery --SomeSubgraph-> Query/SomeSubgraph --> --field--> SomeType/SomeSubgraph
     SubgraphEntrypoint {
         field_names: Vec<&'a str>,
         name: SubgraphName<'a>,
     },
     FieldMove(Box<FieldMove<'a>>),
     EntityMove(EntityMove<'a>),
+    /// join__implements
     AbstractMove(&'a str),
+    /// A special edge representing a case where an inline fragment is used with a condition,
+    /// and we don't really move anywhere, but we need to ensure that
+    /// the condition is preserved when planning the query.
     Selfie(&'a str),
+    /// Represents a special case where going from @interfaceObject
+    /// to an object type due to the `__typename` field usage,
+    /// or usage of a type condition (fragment),
+    /// is not possible as the interface is fake, it's an object type,
+    /// so there's no subgraph-level information about object types
+    /// implementing the interface,
+    /// and resolving the `__typename` in the subgraph
+    /// would result in a incorrect value (name of the @interfaceObject type).
+    /// This enum variant tells the Query Planner to do an entity call,
+    /// to verify the type condition or resolve the __typename.
     InterfaceObjectTypeMove(InterfaceObjectTypeMove<'a>),
 }
 
@@ -145,7 +175,7 @@ pub type EdgeReference<'a> = GraphEdgeReference<'a, Edge<'a>>;
 impl<'a> Edge<'a> {
     pub fn create_entity_move(
         key: &'a str,
-        selection: std::sync::Arc<TypeAwareSelection<'a>>,
+        selection: Arc<TypeAwareSelection<'a>>,
         is_interface: bool,
     ) -> Self {
         Self::EntityMove(EntityMove {
@@ -157,7 +187,7 @@ impl<'a> Edge<'a> {
 
     pub fn create_interface_object_type_move(
         object_type_name: &'a str,
-        selection: std::sync::Arc<TypeAwareSelection<'a>>,
+        selection: Arc<TypeAwareSelection<'a>>,
     ) -> Self {
         Self::InterfaceObjectTypeMove(InterfaceObjectTypeMove {
             object_type_name,
@@ -171,7 +201,7 @@ impl<'a> Edge<'a> {
         is_leaf: bool,
         is_list: bool,
         join_field: Option<JoinFieldDirective>,
-        requirements: Option<std::sync::Arc<TypeAwareSelection<'a>>>,
+        requirements: Option<Arc<TypeAwareSelection<'a>>>,
         overridden_by: Option<(String, Option<OverrideLabel>)>,
     ) -> Self {
         let override_from = join_field.as_ref().and_then(|jf| jf.override_value.clone());
@@ -247,14 +277,19 @@ impl Debug for Edge<'_> {
         match self {
             Edge::SubgraphEntrypoint { name, .. } => write!(f, "subgraph({})", name.0),
             Edge::FieldMove(fm) => {
+                // Start with the field name
                 let mut result = write!(f, "{}", &fm.name);
+
                 if let Some(jf) = &fm.join_field {
+                    // Add requires directive if present
                     if let Some(req) = &jf.requires {
                         result = result.and_then(|_| write!(f, " @requires({})", req));
                     }
+                    // Add provides directive if present
                     if jf.provides.is_some() {
                         result = result.and_then(|_| write!(f, " @provides"));
                     }
+                    // Add other relevant directives like external, override, etc.
                     if jf.external {
                         result = result.and_then(|_| write!(f, " @external"));
                     }

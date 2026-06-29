@@ -1,18 +1,26 @@
-use std::fmt::{Debug, Display};
+use std::{
+    fmt::{Debug, Display},
+    sync::Arc,
+};
 
 use crate::state::supergraph_state::SubgraphName;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct UnionMembersData<'a> {
+    /// Represents the type owning the field
     pub type_name: &'a str,
+    /// Represents the field resolving a union type
     pub field_name: &'a str,
+    /// Represents a union member
     pub object_type_name: &'a str,
-    pub possible_members: std::sync::Arc<Vec<&'a str>>,
+    /// Represents all union members reachable for the same field in this subgraph.
+    pub possible_members: Arc<Vec<&'a str>>,
     pub provides: Option<u64>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum SubgraphTypeSpecialization<'a> {
+    /// Node was created due to @provides path.
     Provides(u64),
     UnionMembers(UnionMembersData<'a>),
 }
@@ -39,6 +47,7 @@ pub enum Node<'a> {
     QueryRoot(&'a str),
     MutationRoot(&'a str),
     SubscriptionRoot(&'a str),
+    /// Represent an entity type or a scalar living in a specific subgraph
     SubgraphType(SubgraphType<'a>),
 }
 
