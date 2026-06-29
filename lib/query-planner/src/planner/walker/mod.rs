@@ -5,7 +5,7 @@ pub(crate) mod path;
 pub(crate) mod pathfinder;
 mod utils;
 
-use std::collections::HashSet;
+use ahash::HashSet;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
@@ -575,6 +575,31 @@ fn process_field<'graph, 'op: 'graph>(
         }
 
         if !found_direct_paths_to_leaf {
+            let has_indirect_candidates = graph.edges_from(path.tail()).any(|edge| {
+                matches!(
+                    edge.weight(),
+                    Edge::EntityMove(_) | Edge::InterfaceObjectTypeMove(_)
+                )
+            });
+
+            if !has_indirect_candidates {
+                trace!(
+                    "Skipping indirect lookup for '{}' at tail {} because there are no entity/interface-object outgoing edges",
+                    field.name,
+                    path.tail().index()
+                );
+                trace!(
+                    "{}: {}",
+                    if advanced {
+                        "advanced"
+                    } else {
+                        "failed to advance"
+                    },
+                    path.pretty_print(graph)
+                );
+                continue;
+            }
+
             if target_subgraph_ids_cache.is_none() {
                 target_subgraph_ids_cache =
                     Some(field_target_subgraph_ids(supergraph, field, paths, graph)?);
@@ -761,14 +786,14 @@ fn field_target_subgraph_ids(
     paths: &[OperationPath<'_>],
     graph: &Graph<'_>,
 ) -> Result<Option<HashSet<String>>, WalkOperationError> {
-    let mut parent_type_names = HashSet::new();
+    let mut parent_type_names = HashSet::default();
 
     for path in paths {
         let parent_node = graph.node(path.tail())?;
         parent_type_names.insert(parent_node.name_str());
     }
 
-    let mut target_subgraph_ids = HashSet::new();
+    let mut target_subgraph_ids = HashSet::default();
 
     for parent_type_name in parent_type_names {
         let Some(parent_def) = supergraph.definitions.get(parent_type_name) else {
