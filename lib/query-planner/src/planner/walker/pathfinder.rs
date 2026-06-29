@@ -32,59 +32,39 @@ pub type VisitedGraphs<'graph> = HashSet<&'graph str>;
 type ActiveEdgeChecks = HashSet<(NodeIndex, EdgeIndex)>;
 type UnsatisfiedRequirementCache = HashSet<UnsatisfiedRequirementFingerprint>;
 
-// =============================================================================
-//   OPTIMIZATION: Unsatisfied Requirement Cache
-// =============================================================================
+// Requirement checks are expensive.
 //
-//  PROBLEM
+// Before the planner can follow an entity-move edge, it must prove that the
+// edge's requirements can be resolved from the current path tail.
 //
-//  When the planner follows an entity-move edge, it checks:
-//    "Can the requirements on this edge be satisfied?"
+// Book/products --(🔑🧩{field1 field2})-> Book/inventory
 //
-//  For example, Book/inventory has an edge with requirement {field1, field2}.
-//  The planner must find a path to both fields before using this edge.
+// QP asks: Can we resolve both fields first?
 //
-//  The same check happens again and again from different starting positions:
+// The planner may reach the same type/subgraph through
+// many different paths and repeat the same failing requirement check:
 //
-//       Path A:  Book/products ──🔑──▶ Book/inventory
-//                      │      check requirements → NO
-//                      ▼
-//       Path B:  Book/reviews ──🔑──▶ Book/inventory
-//                      │      check requirements → NO   (same answer!)
-//                      ▼
-//       Path C:  Book/stats   ──🔑──▶ Book/inventory
-//                             check requirements → NO   (same answer!)
+//  ❌ Book/products -(🔑🧩{field1 field2})-> Book/inventory
+//  ❌ Book/reviews  -(🔑🧩{field1 field2})-> Book/inventory
+//  ❌ Book/stats    -(🔑🧩{field1 field2})-> Book/inventory
 //
-//  Each path does expensive search work before reaching the same "NO".
-//  On large schemas this repeats hundreds of times.
+// Once we know that a requirement cannot be satisfied for a given search state,
+// repeating the same search is wasted work.
 //
+// PathSearch keeps a local cache of negative requirement checks.
+// Each entry is a fingerprint of the state that affects the answer:
+//  - current tail type
+//  - current tail subgraph
+//  - edge requirement selection
+//  - requirements already excluded / visited
+//  - whether this check is restricted to direct edges
 //
-//  HOW IT WORKS
+// Before running the expensive requirement search, we check the cache.
+// If the fingerprint is present, the edge is treated as unsatisfied immediately.
+// If the search returns Ok(None), we store the fingerprint.
 //
-//  We keep a simple memory inside each PathSearch:
-//    "For type T in subgraph G, with requirement R, the answer was NO."
-//
-//  This memory is a HashSet of fingerprints. Each fingerprint remembers:
-//    - which type we are on            (Book)
-//    - which subgraph we are in        (inventory)
-//    - what the requirement looks like ({field1, field2})
-//    - which items are already excluded
-//
-//  Before doing expensive work, we check: "Do we already know this fails?"
-//  If yes -> skip immediately.   If no → do the work and record the result.
-//
-//
-//  WHY IT IS SAFE
-//
-//  As the planner explores deeper, the list of "excluded items" only grows.
-//
-//  If a requirement cannot be met with a set of 3 excluded items,
-//  it certainly cannot be met with a set of 5 excluded items.
-//
-//  So a "NO" recorded early stays valid. It can never turn into a "YES" later.
-//
-//  Also, each search operation creates a fresh PathSearch, so cache from
-//  one search does not accidentally leak into another.
+// This is safe because the cache only stores negative results and is scoped to a
+// single PathSearch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct UnsatisfiedRequirementFingerprint {
     tail_type_hash: u64,
@@ -94,61 +74,59 @@ struct UnsatisfiedRequirementFingerprint {
     use_only_direct_edges: bool,
 }
 
-#[inline]
-fn item_hash<T: Hash>(item: &T) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    item.hash(&mut hasher);
-    hasher.finish()
-}
+impl UnsatisfiedRequirementFingerprint {
+    fn new<'graph>(
+        graph: &'graph Graph<'graph>,
+        path: &OperationPath<'graph>,
+        edge: &Edge<'graph>,
+        excluded: &ExcludedFromLookup<'graph>,
+        use_only_direct_edges: bool,
+    ) -> Self {
+        let tail_node = graph
+            .node(path.tail())
+            .expect("tail node should exist while pathfinding");
 
-fn unordered_hash<T: Hash>(items: impl Iterator<Item = T>) -> u64 {
-    let mut hashes: Vec<u64> = items.map(|item| item_hash(&item)).collect();
-    hashes.sort_unstable();
-    hashes.dedup();
+        let mut type_hasher = DefaultHasher::new();
+        tail_node.name_str().hash(&mut type_hasher);
 
-    let mut hasher = DefaultHasher::new();
-    hashes.len().hash(&mut hasher);
-    for h in hashes {
-        h.hash(&mut hasher);
+        let mut graph_hasher = DefaultHasher::new();
+        tail_node.graph_id().hash(&mut graph_hasher);
+
+        Self {
+            tail_type_hash: type_hasher.finish(),
+            tail_graph_hash: graph_hasher.finish(),
+            requirement_hash: Self::edge_requirements_hash(edge),
+            excluded_requirements_hash: Self::unordered_hash(excluded.requirement.iter()),
+            use_only_direct_edges,
+        }
     }
-    hasher.finish()
-}
 
-fn unsatisfied_requirement_fingerprint<'graph>(
-    graph: &'graph Graph<'graph>,
-    path: &OperationPath<'graph>,
-    edge: &Edge<'graph>,
-    excluded: &ExcludedFromLookup<'graph>,
-    use_only_direct_edges: bool,
-) -> UnsatisfiedRequirementFingerprint {
-    let (tail_type_hash, tail_graph_hash) = tail_identity_hashes(graph, path.tail());
-    UnsatisfiedRequirementFingerprint {
-        tail_type_hash,
-        tail_graph_hash,
-        requirement_hash: edge_requirements_hash(edge),
-        excluded_requirements_hash: unordered_hash(excluded.requirement.iter()),
-        use_only_direct_edges,
+    #[inline]
+    fn item_hash<T: Hash>(item: &T) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        item.hash(&mut hasher);
+        hasher.finish()
     }
-}
 
-fn tail_identity_hashes<'graph>(graph: &'graph Graph<'graph>, tail: NodeIndex) -> (u64, u64) {
-    let tail_node = graph
-        .node(tail)
-        .expect("tail node should exist while pathfinding");
+    #[inline]
+    fn unordered_hash<T: Hash>(items: impl Iterator<Item = T>) -> u64 {
+        let mut hashes: Vec<u64> = items.map(|item| Self::item_hash(&item)).collect();
+        hashes.sort_unstable();
+        hashes.dedup();
 
-    let mut type_hasher = DefaultHasher::new();
-    tail_node.name_str().hash(&mut type_hasher);
+        let mut hasher = DefaultHasher::new();
+        hashes.len().hash(&mut hasher);
+        for h in hashes {
+            h.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
 
-    let mut graph_hasher = DefaultHasher::new();
-    tail_node.graph_id().hash(&mut graph_hasher);
-
-    (type_hasher.finish(), graph_hasher.finish())
-}
-
-fn edge_requirements_hash(edge: &Edge<'_>) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    edge.requirements().hash(&mut hasher);
-    hasher.finish()
+    fn edge_requirements_hash(edge: &Edge<'_>) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        edge.requirements().hash(&mut hasher);
+        hasher.finish()
+    }
 }
 
 struct IndirectPathsLookupQueue<'graph> {
@@ -178,57 +156,47 @@ impl<'graph> RequirementTargetResolver<'graph> {
         }
     }
 
-    // =============================================================================
-    //   OPTIMIZATION: Requirement Target-Subgraph Narrowing
-    // =============================================================================
+    // Requirement lookup can waste a lot of time walking through subgraphs that
+    // cannot possibly satisfy the field we are looking for.
     //
-    //  PROBLEM
+    // We are on Book/products and need to satisfy a requirement for `delivery`.
     //
-    //  A type like "Book" can live in many subgraphs at once:
+    // Book/products -🔑-> Book/inventory   has Book.delivery
+    //               -🔑-> Book/reporting   no  Book.delivery
+    //               -🔑-> Book/archive     no  Book.delivery
+    //               -🔑-> ...              no  Book.delivery
     //
-    //          Book/products ───🔑 id───▶  Book/inventory  ✔ has "delivery"
-    //                        │  (entity    Book/reporting  ✗ no "delivery"
-    //                        │   move)     Book/archive    ✗ no "delivery"
-    //                        │
-    //                        ▼
-    //               We need to resolve the "delivery" field.
-    //
-    //  The planner used to try ALL these subgraphs, one by one.
-    //  Most of them fail — they do not have "delivery" at all.
-    //  This is slow when there are many subgraphs.
+    // Without narrowing, indirect lookup may try each entity-move edge and only
+    // discover later that most target subgraphs do not even expose the requested
+    // field. On large supergraphs this creates a lot of obvious dead-end work.
     //
     //
-    //  HOW IT WORKS
+    // For each requirement field, we inspect the built planner graph and ask:
+    // "For this parent type, which subgraphs have an outgoing field edge with this field name?"
+    // The result is cached per.
     //
-    //  Before any search, we look at the built graph and ask a simple question:
+    // Then, during indirect lookup for that field, we only follow entity-move edges
+    // whose target subgraph is in that candidate set.
     //
-    //    "Which subgraphs have a node of type Book
-    //     with an outgoing edge named delivery?"
+    //  Before:
+    //   try inventory   -> might work
+    //   try reporting   -> cannot resolve field
+    //   try archive     -> cannot resolve field
+    //   try ...         -> cannot resolve field
     //
-    //  We scan the whole graph once per (type, field) pair, and we cache
-    //  the answer so future lookups are instant.
+    //  After:
+    //   try inventory   -> might work
+    //   reporting       -> skipped
+    //   archive         -> skipped
+    //   ...more         -> skipped
     //
-    //  Then, when we need to search for "delivery" on Book,
-    //  we only search the subgraphs that actually have it.
+    //  If the planner graph has no `Book.delivery` field edge in subgraph X, then
+    //  moving to `Book` in subgraph X cannot be the final step that satisfies the
+    //  `delivery` requirement.
     //
-    //         Before (without optimization):       After (with optimization):
-    //
-    //           Try inventory   → might work        Try inventory → might work
-    //           Try reporting   → fails             reporting    → skipped!
-    //           Try archive     → fails             archive      → skipped!
-    //           Try ... 700 more → all fail
-    //
-    //
-    //  WHY IT IS SAFE
-    //
-    //  An entity move (🔑) changes WHICH COPY of a type we hold.
-    //  It does NOT create a new field in a subgraph.
-    //
-    //  If subgraph X does not have field F on type T,
-    //  then no number of hops THROUGH subgraph X will make F appear.
-    //
-    //  So skipping subgraphs without F cannot hide a valid solution.
-    //  It only removes dead ends.
+    //  So, when we already know the set of subgraphs that expose the requested field,
+    //  skipping entity moves to the other subgraphs cannot hide a valid solution.
+    //  It only removes dead ends from the indirect search.
     fn target_subgraph_ids(
         &mut self,
         field: &FieldSelection,
@@ -819,8 +787,13 @@ impl<'graph> PathSearch<'graph> {
             return Ok(Some(vec![]));
         }
 
-        let unsatisfied_key =
-            unsatisfied_requirement_fingerprint(graph, path, edge, excluded, use_only_direct_edges);
+        let unsatisfied_key = UnsatisfiedRequirementFingerprint::new(
+            graph,
+            path,
+            edge,
+            excluded,
+            use_only_direct_edges,
+        );
         if self.unsatisfied_requirements.contains(&unsatisfied_key) {
             trace!(
                 "Ignoring. Requirement already known unsatisfied for edge '{}' from path tail: {}",
