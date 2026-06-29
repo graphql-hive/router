@@ -37,12 +37,7 @@ pub fn type_expand(ctx: &mut NormalizationContext) -> Result<(), NormalizationEr
                             .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
                                 type_name: "Query".to_string(),
                             })?;
-                    handle_selection_set(
-                        ctx.supergraph,
-                        ctx.subgraph_name,
-                        root,
-                        selection_set,
-                    )?;
+                    handle_selection_set(ctx.supergraph, ctx.subgraph_name, root, selection_set)?;
                 }
                 OperationDefinition::Query(Query { selection_set, .. }) => {
                     let root =
@@ -52,12 +47,7 @@ pub fn type_expand(ctx: &mut NormalizationContext) -> Result<(), NormalizationEr
                             .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
                                 type_name: "Query".to_string(),
                             })?;
-                    handle_selection_set(
-                        ctx.supergraph,
-                        ctx.subgraph_name,
-                        root,
-                        selection_set,
-                    )?;
+                    handle_selection_set(ctx.supergraph, ctx.subgraph_name, root, selection_set)?;
                 }
                 OperationDefinition::Mutation(Mutation { selection_set, .. }) => {
                     let root = ctx
@@ -67,12 +57,7 @@ pub fn type_expand(ctx: &mut NormalizationContext) -> Result<(), NormalizationEr
                         .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
                             type_name: "Mutation".to_string(),
                         })?;
-                    handle_selection_set(
-                        ctx.supergraph,
-                        ctx.subgraph_name,
-                        root,
-                        selection_set,
-                    )?;
+                    handle_selection_set(ctx.supergraph, ctx.subgraph_name, root, selection_set)?;
                 }
                 OperationDefinition::Subscription(Subscription { selection_set, .. }) => {
                     let root = ctx
@@ -82,12 +67,7 @@ pub fn type_expand(ctx: &mut NormalizationContext) -> Result<(), NormalizationEr
                         .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
                             type_name: "Subscription".to_string(),
                         })?;
-                    handle_selection_set(
-                        ctx.supergraph,
-                        ctx.subgraph_name,
-                        root,
-                        selection_set,
-                    )?;
+                    handle_selection_set(ctx.supergraph, ctx.subgraph_name, root, selection_set)?;
                 }
             },
             Definition::Fragment(_) => {}
@@ -163,12 +143,7 @@ fn handle_selection_set<'schema, 'sel>(
                         )?;
                     }
                 } else {
-                    handle_selection_set(
-                        state,
-                        subgraph_name,
-                        type_def,
-                        &mut frag.selection_set,
-                    )?;
+                    handle_selection_set(state, subgraph_name, type_def, &mut frag.selection_set)?;
                 }
                 new_items.push(Selection::InlineFragment(frag));
             }
@@ -215,7 +190,8 @@ fn handle_type_expansion_candidate<'schema, 'sel>(
         })?;
 
     let should_expand = possible_object_types.iter().any(|obj| {
-        let Some(SupergraphDefinition::Object(obj_def)) = state.definitions.get(obj.as_str()) else {
+        let Some(SupergraphDefinition::Object(obj_def)) = state.definitions.get(obj.as_str())
+        else {
             return true;
         };
         // Expand if any object type implementing the interface:

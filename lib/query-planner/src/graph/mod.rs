@@ -1249,6 +1249,7 @@ impl<'a> Graph<'a> {
     }
 
     #[instrument(level = "trace",skip(self, state, build_context, selection_cache, parent_type_def, head), fields(selection_set, parent_type_name = parent_type_def.name()))]
+    #[allow(clippy::too_many_arguments)]
     fn handle_viewed_selection_set(
         &mut self,
         state: &'a SupergraphState,

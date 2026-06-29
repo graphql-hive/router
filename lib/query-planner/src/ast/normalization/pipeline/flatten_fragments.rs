@@ -261,13 +261,11 @@ fn expand_abstract_fragment(
 
     let owned_parent_set: HashSet<String>;
     let object_types_of_parent_type = match parent_type_def {
-        SupergraphDefinition::Union(_) | SupergraphDefinition::Interface(_) => {
-            state
-                .abstract_possible_types(parent_type_def.name(), subgraph_name)
-                .ok_or_else(|| NormalizationError::PossibleTypesNotFound {
-                    type_name: parent_type_def.name().to_string(),
-                })?
-        }
+        SupergraphDefinition::Union(_) | SupergraphDefinition::Interface(_) => state
+            .abstract_possible_types(parent_type_def.name(), subgraph_name)
+            .ok_or_else(|| NormalizationError::PossibleTypesNotFound {
+                type_name: parent_type_def.name().to_string(),
+            })?,
         _ => {
             owned_parent_set = HashSet::from([parent_type_def.name().to_string()]);
             &owned_parent_set
@@ -300,13 +298,13 @@ fn expand_abstract_fragment(
         let specific_sub_fragments: Vec<&InlineFragment<'static, String>> = fragment
             .selection_set
             .items
-                .iter()
-                .filter_map(|s| {
-                    if let Selection::InlineFragment(f) = s {
-                        if fragment_applies_to_object(state, subgraph_name, f, obj_type_name) {
-                            return Some(f);
-                        }
+            .iter()
+            .filter_map(|s| {
+                if let Selection::InlineFragment(f) = s {
+                    if fragment_applies_to_object(state, subgraph_name, f, obj_type_name) {
+                        return Some(f);
                     }
+                }
                 None
             })
             .collect();

@@ -86,7 +86,11 @@ impl<'a> Node<'a> {
         }
     }
 
-    pub fn new_node(name: &'a str, subgraph: SubgraphName<'a>, is_interface_object: bool) -> Node<'a> {
+    pub fn new_node(
+        name: &'a str,
+        subgraph: SubgraphName<'a>,
+        is_interface_object: bool,
+    ) -> Node<'a> {
         Node::SubgraphType(SubgraphType {
             name,
             subgraph,

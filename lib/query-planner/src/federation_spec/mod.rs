@@ -105,7 +105,8 @@ impl FederationRules {
         type_name: &'a str,
         key: &str,
     ) -> TypeAwareSelection<'a> {
-        let selection_set = normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, key).into();
+        let selection_set =
+            normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, key).into();
         TypeAwareSelection {
             type_name,
             selection_set,

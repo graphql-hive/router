@@ -339,21 +339,11 @@ mod tests {
         let supergraph = SupergraphState::new(&schema);
 
         assert_eq!(supergraph.subgraphs_state.keys().count(), 5);
-        assert!(supergraph
-            .subgraphs_state
-            .contains_key("pandas"));
-        assert!(supergraph
-            .subgraphs_state
-            .contains_key("users"));
-        assert!(supergraph
-            .subgraphs_state
-            .contains_key("reviews"));
-        assert!(supergraph
-            .subgraphs_state
-            .contains_key("products"));
-        assert!(supergraph
-            .subgraphs_state
-            .contains_key("inventory"));
+        assert!(supergraph.subgraphs_state.contains_key("pandas"));
+        assert!(supergraph.subgraphs_state.contains_key("users"));
+        assert!(supergraph.subgraphs_state.contains_key("reviews"));
+        assert!(supergraph.subgraphs_state.contains_key("products"));
+        assert!(supergraph.subgraphs_state.contains_key("inventory"));
 
         let types = supergraph
             .subgraph_state(&SubgraphName("pandas".into()))

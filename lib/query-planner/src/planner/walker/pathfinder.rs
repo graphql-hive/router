@@ -774,6 +774,7 @@ pub fn find_direct_path<'graph>(
   path = path.pretty_print(graph),
   edge = edge_ref.weight().display_name(),
 ))]
+#[allow(clippy::too_many_arguments)]
 pub fn can_satisfy_edge<'graph>(
     graph: &'graph Graph<'graph>,
     override_context: &'graph PlannerOverrideContext,
