@@ -17,6 +17,8 @@ pub struct UnionMembersData {
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum SubgraphTypeSpecialization {
+    /// Root/entrypoint type for a subgraph.
+    Root,
     /// Node was created due to @provides path.
     Provides(u64),
     /// Node represents a union member tail for a specific subgraph.
@@ -62,6 +64,9 @@ impl Node {
             Node::SubscriptionRoot(name) => format!("root({})", name),
             Node::SubgraphType(st) => match &st.specialization {
                 Some(spec) => match spec {
+                    SubgraphTypeSpecialization::Root => {
+                        format!("{}/{}", st.name, st.subgraph.0)
+                    }
                     SubgraphTypeSpecialization::Provides(provides_id) => {
                         format!("{}/{}/{}", st.name, st.subgraph.0, provides_id)
                     }
@@ -106,6 +111,15 @@ impl Node {
             subgraph,
             is_interface_object,
             specialization: None,
+        })
+    }
+
+    pub fn new_root_node(name: &str, subgraph: SubgraphName) -> Node {
+        Node::SubgraphType(SubgraphType {
+            name: name.to_string(),
+            subgraph,
+            is_interface_object: false,
+            specialization: Some(SubgraphTypeSpecialization::Root),
         })
     }
 

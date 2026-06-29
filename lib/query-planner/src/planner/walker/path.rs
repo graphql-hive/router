@@ -201,7 +201,7 @@ impl<'graph> OperationPath<'graph> {
                 .union_context
                 .as_ref()
                 .map(|scope| scope.narrow_to_member(member_type_name)),
-            Edge::EntityMove(_) | Edge::InterfaceObjectTypeMove(_) => None,
+            Edge::EntityMove(_) | Edge::InterfaceObjectTypeMove(_) | Edge::ReentryMove(_) => None,
             _ => self.union_context.clone(),
         };
 

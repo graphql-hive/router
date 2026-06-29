@@ -494,9 +494,10 @@ impl<'graph> PathSearch<'graph> {
 
         let edges_iter: Box<dyn Iterator<Item = _>> = match target {
             NavigationTarget::Field(field) => {
-                Box::new(graph.edges_from(path_tail_index).filter(
-                    move |e| matches!(e.weight(), Edge::FieldMove(f) if f.name == field.name),
-                ))
+                Box::new(graph.edges_from(path_tail_index).filter(move |e| {
+                    matches!(e.weight(), Edge::FieldMove(f) if f.name == field.name)
+                        || matches!(e.weight(), Edge::ReentryMove(r) if r.name == field.name)
+                }))
             }
             NavigationTarget::ConcreteType(type_name, _condition) => Box::new(
                 graph

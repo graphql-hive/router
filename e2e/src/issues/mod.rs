@@ -3213,4 +3213,167 @@ mod issues_e2e_tests {
         }
         "#);
     }
+
+    #[ntex::test]
+    /// https://github.com/graphql-hive/router/issues/1164
+    ///
+    /// Root re-entry that lands on a union (`Viewer = User | Error`).
+    /// This test verifies that cross-subgraph root re-entry works correctly, even after making the "jump".
+    async fn issue_1164_root_re_entry_into_union() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+
+        async fn run(viewer: serde_json::Value) -> String {
+            let subgraphs = TestSubgraphs::builder()
+                .with_on_request(mock_subgraphs(json!({
+                    "A": {
+                        "query": { "viewer": viewer }
+                    },
+                    "B": {
+                        "mutation": { "test": { "query": { "__typename": "Query" } } },
+                    }
+                })))
+                .build()
+                .start()
+                .await;
+
+            let url = subgraphs.url();
+
+            let router = TestRouter::builder()
+                .with_subgraphs(&subgraphs)
+                .inline_config(format!(
+                    r#"
+                         supergraph:
+                           source: file
+                           path: src/issues/supergraph.1164-with-union.graphql
+                         override_subgraph_urls:
+                           subgraphs:
+                             A:
+                               url: "{url}/A"
+                             B:
+                               url: "{url}/B"
+                         "#,
+                ))
+                .build()
+                .start()
+                .await;
+
+            let res = router
+                .send_graphql_request(
+                    r#"
+                       mutation {
+                         test {
+                           query {
+                             viewer {
+                               ... on User {
+                                 id
+                                 name
+                               }
+                               ... on Error {
+                                 message
+                               }
+                             }
+                           }
+                         }
+                       }
+                       "#,
+                    None,
+                    None,
+                )
+                .await;
+            assert!(res.status().is_success(), "Expected 200 OK");
+            res.json_body_string_pretty().await
+        }
+
+        insta::assert_snapshot!(run(json!({ "__typename": "User", "id": "1", "name": "Jane" })).await, @r#"
+           {
+             "data": {
+               "test": {
+                 "query": {
+                   "viewer": {
+                     "id": "1",
+                     "name": "Jane"
+                   }
+                 }
+               }
+             }
+           }
+           "#);
+
+        // `viewer` resolves to an `Error`: `message` from A.
+        insta::assert_snapshot!(run(json!({ "__typename": "Error", "message": "boom" })).await, @r#"
+           {
+             "data": {
+               "test": {
+                 "query": {
+                   "viewer": {
+                     "message": "boom"
+                   }
+                 }
+               }
+             }
+           }
+           "#);
+    }
+
+    #[ntex::test]
+    /// https://github.com/graphql-hive/router/issues/1164
+    ///
+    /// In this edge-case, we perform a mutation to "PRODUCTS" subgraph, and then do query re-entry for `me` which lives
+    /// in another subgraph.
+    /// No other fields from "Query/PRODUCTS" are included in the response.
+    ///
+    /// In this edge-case, we need to ensure to fetch the re-entry field from the current subgraph, even if it's empty, by
+    /// including it in the `query { __typename }` explicitly.
+    async fn issue_1164_root_re_entry_empty_current_subgraph() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: supergraph.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                mutation {
+                  reentryTest { # Nothing from "Query/PRODUCTS" is included in the response
+                    query {
+                      me {
+                        id
+                        name
+                      }
+                    }
+                  }
+                }
+                "#,
+                None,
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "reentryTest": {
+              "query": {
+                "me": {
+                  "id": "1",
+                  "name": "Uri Goldshtein"
+                }
+              }
+            }
+          }
+        }
+        "#);
+    }
 }

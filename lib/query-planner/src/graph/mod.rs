@@ -13,6 +13,8 @@ use std::{
 };
 
 use super::ast::normalization::utils::extract_type_condition;
+use super::graph::{edge::Edge, node::Node};
+use crate::planner::walker::utils::get_entrypoints;
 use crate::{
     ast::type_aware_selection::TypeAwareSelection,
     federation_spec::FederationRules,
@@ -30,8 +32,6 @@ use petgraph::{
     Directed, Direction, Graph as Petgraph,
 };
 use tracing::{instrument, trace};
-
-use super::graph::{edge::Edge, node::Node};
 
 type InnerGraph = Petgraph<Node, Edge, Directed>;
 
@@ -195,9 +195,9 @@ impl Graph {
         let edge = self.edge(edge_index).unwrap();
 
         if without_source {
-            format!("-({})- {}", edge, to.display_name())
+            format!("-({})- {}", edge, to)
         } else {
-            format!("{} -({})- {}", from.display_name(), edge, to.display_name())
+            format!("{} -({})- {}", from, edge, to)
         }
     }
 
@@ -541,17 +541,15 @@ impl Graph {
                         }
                         .ok_or(GraphError::MissingRootType(root_type.clone()))?;
 
-                        let tail = self.upsert_node(Node::new_node(
+                        let tail = self.upsert_node(Node::new_root_node(
                             def_name,
                             state.resolve_graph_id(graph_id)?,
-                            state.is_interface_object_in_subgraph(def_name, graph_id),
                         ));
 
                         self.upsert_edge(
                             head,
                             tail,
                             Edge::SubgraphEntrypoint {
-                                field_names: relevant_fields,
                                 name: state.resolve_graph_id(graph_id)?,
                             },
                         );
@@ -850,24 +848,18 @@ impl Graph {
                         target_type
                     );
 
+                    let current_subgraph_resolved_id = state.resolve_graph_id(graph_id)?;
+
                     let head = self.upsert_node(Node::new_node(
                         def_name,
-                        state.resolve_graph_id(graph_id)?,
+                        current_subgraph_resolved_id.clone(),
                         state.is_interface_object_in_subgraph(def_name, graph_id),
                     ));
                     let tail = self.upsert_node(Node::new_node(
                         target_type,
-                        state.resolve_graph_id(graph_id)?,
+                        current_subgraph_resolved_id.clone(),
                         state.is_interface_object_in_subgraph(target_type, graph_id),
                     ));
-
-                    trace!(
-                        "[x] Creating field move edge '{}.{}/{}' (type: {})",
-                        def_name,
-                        field_name,
-                        graph_id,
-                        target_type
-                    );
 
                     self.upsert_edge(
                         head,
@@ -889,10 +881,53 @@ impl Graph {
                                 }
                                 None => join_field.clone(),
                             }),
-                            requirements,
+                            requirements.clone(),
                             overridden_by.clone(),
                         ),
                     );
+
+                    // If the target type is a root type, we handle it differently and checking if a re-entry is needed.
+                    // Our goal is to find all "Query/subgraph" entrypoints
+                    if let Some(root_entrypoints) = state
+                        .maybe_root_type(target_type)
+                        .and_then(|root_kind| get_entrypoints(self, &root_kind).ok())
+                        .map(|edge_references| {
+                            edge_references
+                                .iter()
+                                .map(|edge_ref| edge_ref.target())
+                                .collect::<Vec<_>>()
+                        })
+                    {
+                        for target_node_index in root_entrypoints {
+                            let target_node = self.graph.node_weight(target_node_index).unwrap(); // safe because we know it's already there
+
+                            let Some(graph_id) = target_node.graph_id() else {
+                                continue;
+                            };
+
+                            if graph_id == current_subgraph_resolved_id.0 {
+                                continue;
+                            }
+
+                            trace!(
+                                "[x] Creating root re-entry field move edge '{}.{}/{}' (type: {})",
+                                def_name,
+                                field_name,
+                                graph_id,
+                                target_node.display_name()
+                            );
+
+                            self.upsert_edge(
+                                head,
+                                target_node_index,
+                                Edge::create_reentry_move(
+                                    field_name.clone(),
+                                    def_name.clone(),
+                                    field_definition.field_type.is_list(),
+                                ),
+                            );
+                        }
+                    }
                 }
             }
         }

@@ -3,7 +3,7 @@ pub(crate) mod error;
 mod excluded;
 pub(crate) mod path;
 pub(crate) mod pathfinder;
-mod utils;
+pub(crate) mod utils;
 
 use std::collections::VecDeque;
 
