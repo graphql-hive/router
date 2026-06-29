@@ -1,4 +1,4 @@
-use std::{collections::HashMap, vec};
+use std::vec;
 
 use graphql_tools::parser::query::{
     Definition, Field, InlineFragment, Mutation, OperationDefinition, Query, Selection,
@@ -7,10 +7,8 @@ use graphql_tools::parser::query::{
 
 use crate::{
     ast::normalization::{context::NormalizationContext, error::NormalizationError},
-    state::supergraph_state::{SupergraphDefinition, SupergraphObjectType, SupergraphState},
+    state::supergraph_state::{SupergraphDefinition, SupergraphState},
 };
-
-type InterfacePossibleObjectsCache<'a> = HashMap<&'a str, Vec<&'a SupergraphObjectType>>;
 
 /// A selection set may target an interface type.
 /// However, not all implementing object types may resolve all interface fields
@@ -24,8 +22,6 @@ type InterfacePossibleObjectsCache<'a> = HashMap<&'a str, Vec<&'a SupergraphObje
 /// the Query Planner will look for Object.Field.
 #[inline]
 pub fn type_expand(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
-    let mut interface_possible_objects_cache = InterfacePossibleObjectsCache::default();
-
     let query_type_name = ctx.query_type_name();
     let mutation_type_name = ctx.mutation_type_name();
     let subscription_type_name = ctx.subscription_type_name();
@@ -43,7 +39,7 @@ pub fn type_expand(ctx: &mut NormalizationContext) -> Result<(), NormalizationEr
                             })?;
                     handle_selection_set(
                         ctx.supergraph,
-                        &mut interface_possible_objects_cache,
+                        ctx.subgraph_name,
                         root,
                         selection_set,
                     )?;
@@ -58,7 +54,7 @@ pub fn type_expand(ctx: &mut NormalizationContext) -> Result<(), NormalizationEr
                             })?;
                     handle_selection_set(
                         ctx.supergraph,
-                        &mut interface_possible_objects_cache,
+                        ctx.subgraph_name,
                         root,
                         selection_set,
                     )?;
@@ -73,7 +69,7 @@ pub fn type_expand(ctx: &mut NormalizationContext) -> Result<(), NormalizationEr
                         })?;
                     handle_selection_set(
                         ctx.supergraph,
-                        &mut interface_possible_objects_cache,
+                        ctx.subgraph_name,
                         root,
                         selection_set,
                     )?;
@@ -88,7 +84,7 @@ pub fn type_expand(ctx: &mut NormalizationContext) -> Result<(), NormalizationEr
                         })?;
                     handle_selection_set(
                         ctx.supergraph,
-                        &mut interface_possible_objects_cache,
+                        ctx.subgraph_name,
                         root,
                         selection_set,
                     )?;
@@ -104,7 +100,7 @@ pub fn type_expand(ctx: &mut NormalizationContext) -> Result<(), NormalizationEr
 #[inline]
 fn handle_selection_set<'schema, 'sel>(
     state: &'schema SupergraphState,
-    interface_possible_objects_cache: &mut InterfacePossibleObjectsCache<'schema>,
+    subgraph_name: Option<&'schema str>,
     type_def: &'schema SupergraphDefinition,
     selection_set: &mut SelectionSet<'sel, String>,
 ) -> Result<(), NormalizationError> {
@@ -130,7 +126,7 @@ fn handle_selection_set<'schema, 'sel>(
 
                 if handle_type_expansion_candidate(
                     state,
-                    interface_possible_objects_cache,
+                    subgraph_name,
                     type_def,
                     &field,
                     &mut new_items,
@@ -148,7 +144,7 @@ fn handle_selection_set<'schema, 'sel>(
                         })?;
                     handle_selection_set(
                         state,
-                        interface_possible_objects_cache,
+                        subgraph_name,
                         inner_type_def,
                         &mut field.selection_set,
                     )?;
@@ -161,7 +157,7 @@ fn handle_selection_set<'schema, 'sel>(
                     if let Some(type_def) = state.definitions.get(type_name) {
                         handle_selection_set(
                             state,
-                            interface_possible_objects_cache,
+                            subgraph_name,
                             type_def,
                             &mut frag.selection_set,
                         )?;
@@ -169,7 +165,7 @@ fn handle_selection_set<'schema, 'sel>(
                 } else {
                     handle_selection_set(
                         state,
-                        interface_possible_objects_cache,
+                        subgraph_name,
                         type_def,
                         &mut frag.selection_set,
                     )?;
@@ -190,7 +186,7 @@ type ShouldContinue = bool;
 #[inline]
 fn handle_type_expansion_candidate<'schema, 'sel>(
     state: &'schema SupergraphState,
-    interface_possible_objects_cache: &mut InterfacePossibleObjectsCache<'schema>,
+    subgraph_name: Option<&'schema str>,
     type_def: &'schema SupergraphDefinition,
     field: &Field<'sel, String>,
     new_items: &mut Vec<Selection<'sel, String>>,
@@ -272,32 +268,20 @@ fn handle_type_expansion_candidate<'schema, 'sel>(
         return Ok(false);
     }
 
-    let possible_object_types = interface_possible_objects_cache
-        .entry(interface_type.name.as_str())
-        .or_insert_with(|| {
-            state
-                .definitions
-                .values()
-                .filter_map(|definition| match definition {
-                    SupergraphDefinition::Object(object_type)
-                        if object_type
-                            .join_implements
-                            .iter()
-                            .any(|j| j.interface == interface_type.name) =>
-                    {
-                        Some(object_type)
-                    }
-                    _ => None,
-                })
-                .collect()
-        })
-        .clone();
+    let possible_object_types = state
+        .abstract_possible_types(interface_type.name.as_str(), subgraph_name)
+        .ok_or_else(|| NormalizationError::PossibleTypesNotFound {
+            type_name: interface_type.name.clone(),
+        })?;
 
     let should_expand = possible_object_types.iter().any(|obj| {
+        let Some(SupergraphDefinition::Object(obj_def)) = state.definitions.get(obj.as_str()) else {
+            return true;
+        };
         // Expand if any object type implementing the interface:
         // 1. Does not have the field.
         // 2. Has the field, but it's marked as external or is overridden.
-        match obj.fields.get(&field.name) {
+        match obj_def.fields.get(&field.name) {
             None => true,
             Some(obj_field) => obj_field.join_field.iter().any(|jf| {
                 jf.external
@@ -316,11 +300,21 @@ fn handle_type_expansion_candidate<'schema, 'sel>(
 
     // Sort object_types by name for deterministic fragment order
     let mut sorted_object_types: Vec<_> = possible_object_types.iter().collect();
-    sorted_object_types.sort_by(|a, b| a.name.cmp(&b.name));
+    sorted_object_types.sort_unstable();
 
     let mut fragments = Vec::with_capacity(sorted_object_types.len());
     for obj in sorted_object_types {
         let mut new_field = field.clone();
+        let obj_def = state.definitions.get(obj.as_str()).ok_or_else(|| {
+            NormalizationError::SchemaTypeNotFound {
+                type_name: obj.to_string(),
+            }
+        })?;
+        let SupergraphDefinition::Object(obj) = obj_def else {
+            return Err(NormalizationError::SchemaTypeNotFound {
+                type_name: obj_def.name().to_string(),
+            });
+        };
         if !new_field.selection_set.items.is_empty() {
             if let Some(obj_field) = obj.fields.get(&new_field.name) {
                 let inner_type_name = obj_field.field_type.inner_type();
@@ -331,7 +325,7 @@ fn handle_type_expansion_candidate<'schema, 'sel>(
                 })?;
                 handle_selection_set(
                     state,
-                    interface_possible_objects_cache,
+                    subgraph_name,
                     inner_type_def,
                     &mut new_field.selection_set,
                 )?;

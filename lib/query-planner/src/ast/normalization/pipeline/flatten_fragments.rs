@@ -2,7 +2,7 @@ use graphql_tools::parser::query::{
     Definition, Field, InlineFragment, Mutation, OperationDefinition, Query, Selection,
     SelectionSet, Subscription, TypeCondition,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use crate::{
     ast::normalization::{
@@ -10,79 +10,6 @@ use crate::{
     },
     state::supergraph_state::{SupergraphDefinition, SupergraphState},
 };
-
-struct PossibleTypesResolver<'a> {
-    state: &'a SupergraphState,
-    subgraph_name: Option<&'a str>,
-    cache: HashMap<&'a str, HashSet<&'a str>>,
-}
-
-impl<'a> PossibleTypesResolver<'a> {
-    fn new(state: &'a SupergraphState, subgraph_name: Option<&'a str>) -> Self {
-        Self {
-            state,
-            subgraph_name,
-            cache: HashMap::new(),
-        }
-    }
-
-    fn possible_types(&mut self, type_name: &str) -> Result<HashSet<&'a str>, NormalizationError> {
-        let type_def = self.state.definitions.get(type_name).ok_or_else(|| {
-            NormalizationError::SchemaTypeNotFound {
-                type_name: type_name.to_string(),
-            }
-        })?;
-        let canonical_type_name = type_def.name();
-
-        if let Some(types) = self.cache.get(canonical_type_name) {
-            return Ok(types.clone());
-        }
-
-        let possible_types: HashSet<&'a str> = match type_def {
-            SupergraphDefinition::Union(union_type) => union_type
-                .union_members
-                .iter()
-                .filter_map(|m| {
-                    if let Some(subgraph_name) = self.subgraph_name {
-                        if m.graph.as_str() == subgraph_name {
-                            return None;
-                        }
-                    }
-                    Some(m.member.as_str())
-                })
-                .collect(),
-            SupergraphDefinition::Interface(_) => self
-                .state
-                .definitions
-                .iter()
-                .filter_map(|(obj_type_name, obj_type_def)| {
-                    let SupergraphDefinition::Object(object_type) = obj_type_def else {
-                        return None;
-                    };
-
-                    let belongs = object_type.join_implements.iter().any(|j| {
-                        let belongs_to_subgraph = match self.subgraph_name {
-                            Some(subgraph_name) => j.graph_id.as_str() == subgraph_name,
-                            None => true,
-                        };
-                        belongs_to_subgraph && j.interface == canonical_type_name
-                    });
-
-                    belongs.then_some(obj_type_name.as_str())
-                })
-                .collect(),
-            _ => {
-                return Err(NormalizationError::PossibleTypesNotFound {
-                    type_name: type_name.to_string(),
-                });
-            }
-        };
-
-        self.cache
-            .insert(canonical_type_name, possible_types.clone());
-        Ok(possible_types)
-    }
-}
 
 /// This normalization step flattens fragment spreads and expands inline fragments on abstract types
 /// (unions and interfaces) into a series of inline fragments on concrete object types.
@@ -96,7 +23,6 @@ impl<'a> PossibleTypesResolver<'a> {
 ///    the correct semantics are maintained.
 #[inline]
 pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
-    let mut possible_types = PossibleTypesResolver::new(ctx.supergraph, ctx.subgraph_name);
     let query_type_name = ctx.query_type_name();
     let mutation_type_name = ctx.mutation_type_name();
     let subscription_type_name = ctx.subscription_type_name();
@@ -126,7 +52,7 @@ pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), Normaliza
 
             handle_selection_set(
                 ctx.supergraph,
-                &mut possible_types,
+                ctx.subgraph_name,
                 root_type_def,
                 selection_set,
             )?;
@@ -139,7 +65,7 @@ pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), Normaliza
 #[inline]
 fn handle_selection_set(
     state: &SupergraphState,
-    possible_types: &mut PossibleTypesResolver<'_>,
+    subgraph_name: Option<&str>,
     parent_type_def: &SupergraphDefinition,
     selection_set: &mut SelectionSet<'static, String>,
 ) -> Result<(), NormalizationError> {
@@ -149,13 +75,13 @@ fn handle_selection_set(
     for selection in old_items {
         match selection {
             Selection::Field(mut field) => {
-                process_field(state, possible_types, parent_type_def, &mut field)?;
+                process_field(state, subgraph_name, parent_type_def, &mut field)?;
                 new_items.push(Selection::Field(field));
             }
             Selection::InlineFragment(current_fragment) => {
                 let processed_fragments = process_inline_fragment(
                     state,
-                    possible_types,
+                    subgraph_name,
                     parent_type_def,
                     current_fragment,
                 )?;
@@ -174,7 +100,7 @@ fn handle_selection_set(
 #[inline]
 fn process_field(
     state: &SupergraphState,
-    possible_types: &mut PossibleTypesResolver<'_>,
+    subgraph_name: Option<&str>,
     parent_type_def: &SupergraphDefinition,
     field: &mut Field<'static, String>,
 ) -> Result<(), NormalizationError> {
@@ -198,7 +124,7 @@ fn process_field(
 
     handle_selection_set(
         state,
-        possible_types,
+        subgraph_name,
         inner_type_def,
         &mut field.selection_set,
     )
@@ -207,7 +133,7 @@ fn process_field(
 #[inline]
 fn process_inline_fragment(
     state: &SupergraphState,
-    possible_types: &mut PossibleTypesResolver<'_>,
+    subgraph_name: Option<&str>,
     parent_type_def: &SupergraphDefinition,
     mut fragment: InlineFragment<'static, String>,
 ) -> Result<Vec<Selection<'static, String>>, NormalizationError> {
@@ -223,7 +149,7 @@ fn process_inline_fragment(
         if fragment.directives.is_empty() {
             handle_selection_set(
                 state,
-                possible_types,
+                subgraph_name,
                 parent_type_def,
                 &mut fragment.selection_set,
             )?;
@@ -231,7 +157,7 @@ fn process_inline_fragment(
         } else {
             handle_selection_set(
                 state,
-                possible_types,
+                subgraph_name,
                 parent_type_def,
                 &mut fragment.selection_set,
             )?;
@@ -246,7 +172,7 @@ fn process_inline_fragment(
                 ) {
                     return expand_abstract_fragment(
                         state,
-                        possible_types,
+                        subgraph_name,
                         parent_type_def,
                         fragment,
                     );
@@ -257,7 +183,7 @@ fn process_inline_fragment(
         }
     } else {
         // The fragment has a different type condition from its parent, so we must expand it.
-        expand_fragment_with_type_condition(state, possible_types, parent_type_def, fragment)
+        expand_fragment_with_type_condition(state, subgraph_name, parent_type_def, fragment)
     }
 }
 
@@ -265,7 +191,7 @@ fn process_inline_fragment(
 #[inline]
 fn expand_fragment_with_type_condition(
     state: &SupergraphState,
-    possible_types: &mut PossibleTypesResolver<'_>,
+    subgraph_name: Option<&str>,
     parent_type_def: &SupergraphDefinition,
     mut fragment: InlineFragment<'static, String>,
 ) -> Result<Vec<Selection<'static, String>>, NormalizationError> {
@@ -283,7 +209,7 @@ fn expand_fragment_with_type_condition(
 
     match type_condition_def {
         SupergraphDefinition::Interface(_) | SupergraphDefinition::Union(_) => {
-            expand_abstract_fragment(state, possible_types, parent_type_def, fragment)
+            expand_abstract_fragment(state, subgraph_name, parent_type_def, fragment)
         }
         SupergraphDefinition::Object(_) => {
             // This fragment is on a concrete object type. It's only valid if the parent
@@ -297,7 +223,7 @@ fn expand_fragment_with_type_condition(
 
             handle_selection_set(
                 state,
-                possible_types,
+                subgraph_name,
                 type_condition_def,
                 &mut fragment.selection_set,
             )?;
@@ -315,7 +241,7 @@ fn expand_fragment_with_type_condition(
 #[inline]
 fn expand_abstract_fragment(
     state: &SupergraphState,
-    possible_types: &mut PossibleTypesResolver<'_>,
+    subgraph_name: Option<&str>,
     parent_type_def: &SupergraphDefinition,
     fragment: InlineFragment<'static, String>,
 ) -> Result<Vec<Selection<'static, String>>, NormalizationError> {
@@ -327,23 +253,30 @@ fn expand_abstract_fragment(
             .expect("type condition should exist"),
     );
 
-    let object_types_of_type_cond = possible_types.possible_types(type_condition_name)?;
+    let object_types_of_type_cond = state
+        .abstract_possible_types(type_condition_name, subgraph_name)
+        .ok_or_else(|| NormalizationError::PossibleTypesNotFound {
+            type_name: type_condition_name.to_string(),
+        })?;
 
-    let owned_parent_set;
+    let owned_parent_set: HashSet<String>;
     let object_types_of_parent_type = match parent_type_def {
         SupergraphDefinition::Union(_) | SupergraphDefinition::Interface(_) => {
-            owned_parent_set = possible_types.possible_types(parent_type_def.name())?;
-            &owned_parent_set
+            state
+                .abstract_possible_types(parent_type_def.name(), subgraph_name)
+                .ok_or_else(|| NormalizationError::PossibleTypesNotFound {
+                    type_name: parent_type_def.name().to_string(),
+                })?
         }
         _ => {
-            owned_parent_set = HashSet::from([parent_type_def.name()]);
+            owned_parent_set = HashSet::from([parent_type_def.name().to_string()]);
             &owned_parent_set
         }
     };
 
     let mut intersecting_types: Vec<&str> = object_types_of_type_cond
         .intersection(object_types_of_parent_type)
-        .copied()
+        .map(|name| name.as_str())
         .collect();
     intersecting_types.sort_unstable();
 
@@ -367,13 +300,13 @@ fn expand_abstract_fragment(
         let specific_sub_fragments: Vec<&InlineFragment<'static, String>> = fragment
             .selection_set
             .items
-            .iter()
-            .filter_map(|s| {
-                if let Selection::InlineFragment(f) = s {
-                    if fragment_applies_to_object(possible_types, f, obj_type_name) {
-                        return Some(f);
+                .iter()
+                .filter_map(|s| {
+                    if let Selection::InlineFragment(f) = s {
+                        if fragment_applies_to_object(state, subgraph_name, f, obj_type_name) {
+                            return Some(f);
+                        }
                     }
-                }
                 None
             })
             .collect();
@@ -395,7 +328,7 @@ fn expand_abstract_fragment(
             };
             handle_selection_set(
                 state,
-                possible_types,
+                subgraph_name,
                 obj_type_def,
                 &mut inherited_fragment.selection_set,
             )?;
@@ -448,7 +381,7 @@ fn expand_abstract_fragment(
 
                 handle_selection_set(
                     state,
-                    possible_types,
+                    subgraph_name,
                     obj_type_def,
                     &mut specific_fragment.selection_set,
                 )?;
@@ -500,7 +433,7 @@ fn expand_abstract_fragment(
 
         handle_selection_set(
             state,
-            possible_types,
+            subgraph_name,
             obj_type_def,
             &mut new_fragment.selection_set,
         )?;
@@ -514,15 +447,16 @@ fn expand_abstract_fragment(
 }
 
 fn fragment_applies_to_object(
-    possible_types: &mut PossibleTypesResolver<'_>,
+    state: &SupergraphState,
+    subgraph_name: Option<&str>,
     fragment: &InlineFragment<'static, String>,
     obj_type_name: &str,
 ) -> bool {
     match fragment.type_condition.as_ref().map(extract_type_condition) {
         Some(type_condition) if type_condition == obj_type_name => true,
-        Some(type_condition) => possible_types
-            .possible_types(type_condition)
-            .is_ok_and(|possible_types| possible_types.contains(obj_type_name)),
+        Some(type_condition) => state
+            .abstract_possible_types(type_condition, subgraph_name)
+            .is_some_and(|possible_types| possible_types.contains(obj_type_name)),
         None => true,
     }
 }

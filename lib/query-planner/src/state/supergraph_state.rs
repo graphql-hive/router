@@ -1,4 +1,7 @@
-use std::{collections::{BTreeSet, HashMap, HashSet}, fmt::{Debug, Display}};
+use std::{
+    collections::{BTreeSet, HashMap, HashSet},
+    fmt::{Debug, Display},
+};
 
 use graphql_tools::parser::query::Directive;
 use graphql_tools::parser::schema as input;
@@ -61,6 +64,8 @@ pub struct ProgressiveOverrides {
 
 type InterfaceObjectToSubgraphsMap = HashMap<String, HashSet<String>>;
 type InterfaceToObjectTypesMap = HashMap<String, BTreeSet<String>>;
+type AbstractPossibleTypesMap = HashMap<String, HashSet<String>>;
+type AbstractPossibleTypesBySubgraphMap = HashMap<String, HashMap<String, HashSet<String>>>;
 type DefinitionMap = HashMap<String, SupergraphDefinition>;
 
 /// Information about linked specifications used in the supergraph
@@ -187,6 +192,10 @@ pub struct SupergraphState {
     pub interface_object_types_in_subgraphs: InterfaceObjectToSubgraphsMap,
     /// Holds a map of interface names to all object types implementing them.
     pub interface_to_object_types: InterfaceToObjectTypesMap,
+    /// Prebuilt abstract type -> possible concrete types across the whole supergraph.
+    pub abstract_possible_types: AbstractPossibleTypesMap,
+    /// Prebuilt abstract type -> possible concrete types for a subgraph-specific normalization view.
+    pub abstract_possible_types_by_subgraph: AbstractPossibleTypesBySubgraphMap,
     /// A pre-computed set of all progressive override labels in the supergraph
     pub progressive_overrides: ProgressiveOverrides,
 }
@@ -201,12 +210,16 @@ impl SupergraphState {
         let interface_object_types_in_subgraphs =
             Self::create_interface_object_in_subgraph(&definitions);
         let interface_to_object_types = Self::create_interface_to_object_types(&definitions);
+        let (abstract_possible_types, abstract_possible_types_by_subgraph) =
+            Self::create_abstract_possible_types(&definitions);
         let progressive_overrides = Self::extract_progressive_overrides(&definitions);
 
         let mut instance = Self {
             definitions,
             interface_object_types_in_subgraphs,
             interface_to_object_types,
+            abstract_possible_types,
+            abstract_possible_types_by_subgraph,
             progressive_overrides,
             known_subgraphs,
             subgraph_endpoint_map,
@@ -228,7 +241,10 @@ impl SupergraphState {
         instance
     }
 
-    pub fn resolve_graph_id(&self, graph_id: &str) -> Result<SubgraphName<'_>, SupergraphStateError> {
+    pub fn resolve_graph_id(
+        &self,
+        graph_id: &str,
+    ) -> Result<SubgraphName<'_>, SupergraphStateError> {
         self.known_subgraphs
             .get(graph_id)
             .map(|subgraph_name| SubgraphName(subgraph_name.as_str()))
@@ -268,6 +284,20 @@ impl SupergraphState {
 
     pub fn interface_members(&self, interface_name: &str) -> Option<&BTreeSet<String>> {
         self.interface_to_object_types.get(interface_name)
+    }
+
+    pub fn abstract_possible_types(
+        &self,
+        type_name: &str,
+        subgraph_name: Option<&str>,
+    ) -> Option<&HashSet<String>> {
+        match subgraph_name {
+            Some(subgraph_name) => self
+                .abstract_possible_types_by_subgraph
+                .get(subgraph_name)
+                .and_then(|types| types.get(type_name)),
+            None => self.abstract_possible_types.get(type_name),
+        }
     }
 
     pub fn field_return_type_name(&self, type_name: &str, field_name: &str) -> Option<&str> {
@@ -323,6 +353,89 @@ impl SupergraphState {
         }
 
         interface_to_object_types
+    }
+
+    fn create_abstract_possible_types(
+        definitions: &DefinitionMap,
+    ) -> (AbstractPossibleTypesMap, AbstractPossibleTypesBySubgraphMap) {
+        let mut all = AbstractPossibleTypesMap::new();
+        let mut by_subgraph = AbstractPossibleTypesBySubgraphMap::new();
+
+        for (type_name, definition) in definitions {
+            match definition {
+                SupergraphDefinition::Union(union_type) => {
+                    let mut global_members = HashSet::new();
+                    let mut members_by_graph: HashMap<String, HashSet<String>> = HashMap::new();
+
+                    for union_member in &union_type.union_members {
+                        global_members.insert(union_member.member.clone());
+                        members_by_graph
+                            .entry(union_member.graph.clone())
+                            .or_default()
+                            .insert(union_member.member.clone());
+                    }
+
+                    all.insert(type_name.clone(), global_members.clone());
+
+                    for join_type in &union_type.join_type {
+                        let filtered = global_members
+                            .difference(
+                                members_by_graph
+                                    .get(&join_type.graph_id)
+                                    .unwrap_or(&HashSet::new()),
+                            )
+                            .cloned()
+                            .collect();
+                        by_subgraph
+                            .entry(join_type.graph_id.clone())
+                            .or_default()
+                            .insert(type_name.clone(), filtered);
+                    }
+                }
+                SupergraphDefinition::Interface(interface_type) => {
+                    let mut global_implementors = HashSet::new();
+                    let mut implementors_by_graph: HashMap<String, HashSet<String>> =
+                        HashMap::new();
+
+                    for object_definition in definitions.values() {
+                        let SupergraphDefinition::Object(object_type) = object_definition else {
+                            continue;
+                        };
+
+                        for join_implements in &object_type.join_implements {
+                            if join_implements.interface == *type_name {
+                                global_implementors.insert(object_type.name.clone());
+                                implementors_by_graph
+                                    .entry(join_implements.graph_id.clone())
+                                    .or_default()
+                                    .insert(object_type.name.clone());
+                            }
+                        }
+                    }
+
+                    all.insert(type_name.clone(), global_implementors);
+
+                    for join_type in &interface_type.join_type {
+                        if join_type.is_interface_object {
+                            continue;
+                        }
+                        by_subgraph
+                            .entry(join_type.graph_id.clone())
+                            .or_default()
+                            .insert(
+                                type_name.clone(),
+                                implementors_by_graph
+                                    .get(&join_type.graph_id)
+                                    .cloned()
+                                    .unwrap_or_default(),
+                            );
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        (all, by_subgraph)
     }
 
     fn extract_progressive_overrides(definitions: &DefinitionMap) -> ProgressiveOverrides {
