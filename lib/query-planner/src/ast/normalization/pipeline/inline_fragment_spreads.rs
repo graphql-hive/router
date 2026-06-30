@@ -66,11 +66,60 @@ fn handle_selection_set<'a>(
                 new_items.push(Selection::Field(field));
             }
             Selection::FragmentSpread(spread) => {
-                let fragment_def = fragment_map.get(&spread.fragment_name).ok_or_else(|| {
-                    NormalizationError::FragmentDefinitionNotFound {
-                        fragment_name: spread.fragment_name.clone(),
+                // walk the spread chain iteratively so a long acyclic chain (...F1 -> ...F2 -> ...)
+                // can't blow the stack. we only recurse on a fragment body that has real content.
+                // `spread` stays a borrow throughout, retargeting into `fragment_map` per link so
+                // no FragmentSpread gets cloned while advancing.
+                let mut spread = &spread;
+                // each chain step follows exactly one spread into one fragment, so a single walk
+                // can visit each fragment at most once before it must either terminate or revisit -
+                // if chain_len exceeds the number of known fragments, a name must have repeated,
+                // which means we're in a cycle.
+                //
+                // example - acyclic chain (chain_len reaches 2, fragment_map.len() == 3, ok):
+                //   fragment A on T { ...B }  fragment B on T { ...C }  fragment C on T { field }
+                //
+                // example - self-cycle (chain_len reaches 2, fragment_map.len() == 1, err):
+                //   fragment A on T { ...A }
+                //
+                // example - mutual cycle (chain_len reaches 3, fragment_map.len() == 2, err):
+                //   fragment A on T { ...B }  fragment B on T { ...A }
+                //
+                // spreading the same fragment multiple times does not break the check because each
+                // spread site starts its own independent walk with its own chain_len reset to 0 -
+                // the counter is local to one chain traversal, not shared across the selection set:
+                //   query { ...A ...A }  fragment A on T { field }  <- two walks, each chain_len=0
+                let max_chain = fragment_map.len();
+                let mut chain_len = 0usize;
+                let fragment_def = loop {
+                    let def = fragment_map.get(&spread.fragment_name).ok_or_else(|| {
+                        NormalizationError::FragmentDefinitionNotFound {
+                            fragment_name: spread.fragment_name.clone(),
+                        }
+                    })?;
+
+                    // can only inline (vs wrap) when the type matches and there are no directives
+                    // that would otherwise be lost.
+                    let inlineable = parent_type_condition == Some(&def.type_condition)
+                        && spread.directives.is_empty();
+
+                    // pure chain link `fragment F on T { ...G }`: advance instead of recursing.
+                    if inlineable {
+                        if let [Selection::FragmentSpread(next)] =
+                            def.selection_set.items.as_slice()
+                        {
+                            chain_len += 1;
+                            if chain_len > max_chain {
+                                return Err(NormalizationError::CyclicFragmentSpread {
+                                    fragment_name: spread.fragment_name.clone(),
+                                });
+                            }
+                            spread = next;
+                            continue;
+                        }
                     }
-                })?;
+                    break def;
+                };
 
                 if parent_type_condition == Some(&fragment_def.type_condition)
                     // `...Frag @include(...)` stores `@include` on the spread itself.
@@ -80,23 +129,22 @@ fn handle_selection_set<'a>(
                 {
                     // If the fragment's type condition matches the top type condition,
                     // we can inline its selections directly.
-                    let mut selection_set = fragment_def.selection_set.clone();
-                    handle_selection_set(&mut selection_set, fragment_map, parent_type_condition)?;
-                    new_items.extend(selection_set.items);
+                    let mut inlined = fragment_def.selection_set.clone();
+                    handle_selection_set(&mut inlined, fragment_map, parent_type_condition)?;
+                    new_items.extend(inlined.items);
                 } else {
+                    // type mismatch or has directives: wrap in an inline fragment.
                     let mut inline_fragment = InlineFragment {
                         position: spread.position,
                         type_condition: Some(fragment_def.type_condition.clone()),
                         directives: spread.directives.clone(),
                         selection_set: fragment_def.selection_set.clone(),
                     };
-
                     handle_selection_set(
                         &mut inline_fragment.selection_set,
                         fragment_map,
                         inline_fragment.type_condition.as_ref(),
                     )?;
-
                     new_items.push(Selection::InlineFragment(inline_fragment));
                 }
             }

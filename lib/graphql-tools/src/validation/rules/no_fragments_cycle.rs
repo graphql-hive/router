@@ -33,73 +33,103 @@ impl NoFragmentsCycle {
     /// the graph to find all possible cycles.
     fn detect_cycles<'a>(
         &mut self,
-        fragment: &'a FragmentDefinition,
+        root: &'a FragmentDefinition,
         spread_paths: &mut Vec<&'a FragmentSpread>,
-        spread_path_index_by_name: &mut HashMap<String, usize>,
+        spread_path_index_by_name: &mut HashMap<&'a str, usize>,
         known_fragments: &'a HashMap<&'a str, &'a FragmentDefinition>,
         error_context: &mut ValidationErrorContext,
     ) {
-        if self.visited_fragments.contains(&fragment.name) {
-            return;
+        // iterative DFS to avoid stack overflow on deep acyclic chains.
+        // Frame::EnterSpread pushes one spread onto spread_paths then either recurses into the
+        // target fragment or reports a cycle, Frame::PopSpread undoes that push on the way back.
+        enum Frame<'a> {
+            EnterFragment(&'a FragmentDefinition),
+            ExitFragment(&'a str), // removes fragment from spread_path_index_by_name
+            EnterSpread(&'a FragmentSpread), // push spread onto spread_paths
+            PopSpread,             // pop spread from spread_paths
         }
 
-        self.visited_fragments.insert(fragment.name.clone());
+        let mut stack: Vec<Frame<'a>> = vec![Frame::EnterFragment(root)];
 
-        let spread_nodes = fragment.selection_set.get_recursive_fragment_spreads();
+        while let Some(frame) = stack.pop() {
+            match frame {
+                Frame::ExitFragment(name) => {
+                    spread_path_index_by_name.remove(name);
+                }
+                Frame::PopSpread => {
+                    spread_paths.pop();
+                }
+                Frame::EnterFragment(fragment) => {
+                    if self.visited_fragments.contains(&fragment.name) {
+                        continue;
+                    }
+                    self.visited_fragments.insert(fragment.name.clone());
 
-        if spread_nodes.is_empty() {
-            return;
-        }
+                    let spread_nodes = fragment.selection_set.get_recursive_fragment_spreads();
+                    if spread_nodes.is_empty() {
+                        continue;
+                    }
 
-        spread_path_index_by_name.insert(fragment.name.clone(), spread_paths.len());
+                    spread_path_index_by_name.insert(fragment.name.as_str(), spread_paths.len());
+                    stack.push(Frame::ExitFragment(fragment.name.as_str()));
 
-        for spread_node in spread_nodes {
-            let spread_name = spread_node.fragment_name.clone();
-            spread_paths.push(spread_node);
-
-            match spread_path_index_by_name.get(&spread_name) {
-                None => {
-                    if let Some(spread_def) = known_fragments.get(spread_name.as_str()) {
-                        self.detect_cycles(
-                            spread_def,
-                            spread_paths,
-                            spread_path_index_by_name,
-                            known_fragments,
-                            error_context,
-                        );
+                    // push spreads in reverse so they execute left-to-right
+                    for spread_node in spread_nodes.into_iter().rev() {
+                        stack.push(Frame::EnterSpread(spread_node));
                     }
                 }
-                Some(cycle_index) => {
-                    let cycle_path = &spread_paths[*cycle_index..];
-                    let via_path = match cycle_path.len() {
-                        0 => vec![],
-                        _ => cycle_path[0..cycle_path.len() - 1]
-                            .iter()
-                            .map(|s| format!("\"{}\"", s.node_name().unwrap()))
-                            .collect::<Vec<String>>(),
-                    };
+                Frame::EnterSpread(spread_node) => {
+                    let spread_name = &spread_node.fragment_name;
 
-                    error_context.report_error(ValidationError {
-                        error_code: self.error_code(),
-                        locations: cycle_path.iter().map(|f| f.position).collect(),
-                        message: match via_path.len() {
-                            0 => {
-                                format!("Cannot spread fragment \"{}\" within itself.", spread_name)
+                    match spread_path_index_by_name.get(spread_name.as_str()) {
+                        None => {
+                            if let Some(spread_def) = known_fragments.get(spread_name.as_str()) {
+                                // descend into the target; PopSpread restores spread_paths once the
+                                // whole child subtree is explored.
+                                spread_paths.push(spread_node);
+                                stack.push(Frame::PopSpread);
+                                stack.push(Frame::EnterFragment(spread_def));
                             }
-                            _ => format!(
-                                "Cannot spread fragment \"{}\" within itself via {}.",
-                                spread_name,
-                                via_path.join(", ")
-                            ),
-                        },
-                    })
+                        }
+                        Some(cycle_index) => {
+                            // include the closing spread so the reported path ends where it loops.
+                            spread_paths.push(spread_node);
+                            let cycle_path = &spread_paths[*cycle_index..];
+                            let via_path = match cycle_path.len() {
+                                0 => vec![],
+                                _ => cycle_path[0..cycle_path.len() - 1]
+                                    .iter()
+                                    .map(|s| {
+                                        format!(
+                                            "\"{}\"",
+                                            s.node_name()
+                                                .expect("fragment spread must have a name")
+                                        )
+                                    })
+                                    .collect::<Vec<String>>(),
+                            };
+
+                            error_context.report_error(ValidationError {
+                                error_code: self.error_code(),
+                                locations: cycle_path.iter().map(|f| f.position).collect(),
+                                message: match via_path.len() {
+                                    0 => format!(
+                                        "Cannot spread fragment \"{}\" within itself.",
+                                        spread_name
+                                    ),
+                                    _ => format!(
+                                        "Cannot spread fragment \"{}\" within itself via {}.",
+                                        spread_name,
+                                        via_path.join(", ")
+                                    ),
+                                },
+                            });
+                            spread_paths.pop();
+                        }
+                    }
                 }
             }
-
-            spread_paths.pop();
         }
-
-        spread_path_index_by_name.remove(&fragment.name);
     }
 }
 
@@ -111,7 +141,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for NoFragmentsCycle {
         fragment: &FragmentDefinition,
     ) {
         let mut spread_paths: Vec<&FragmentSpread> = vec![];
-        let mut spread_path_index_by_name: HashMap<String, usize> = HashMap::new();
+        let mut spread_path_index_by_name: HashMap<&str, usize> = HashMap::new();
 
         self.detect_cycles(
             fragment,
@@ -429,6 +459,25 @@ fn no_spreading_itself_deeply_two_paths_alt_traverse_order() {
             "Cannot spread fragment \"fragC\" within itself via \"fragB\".",
         ]
     );
+}
+
+#[test]
+fn acyclic_fragment_chain_does_not_overflow_stack() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(NoFragmentsCycle::new()));
+
+    let n = 10_000;
+    let mut doc = String::from("");
+    for i in 1..n {
+        doc.push_str(&format!("fragment F{i} on Dog {{ ...F{} }}\n", i + 1));
+    }
+    doc.push_str(&format!("fragment F{n} on Dog {{ name }}\n"));
+
+    // must return without overflowing the stack
+    let errors = test_operation_with_schema(&doc, TEST_SCHEMA, &mut plan);
+    let mes = get_messages(&errors);
+    assert_eq!(mes.len(), 0);
 }
 
 #[test]

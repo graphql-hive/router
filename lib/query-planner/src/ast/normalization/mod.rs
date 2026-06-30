@@ -2723,4 +2723,102 @@ mod tests {
         "
         );
     }
+
+    #[test]
+    fn acyclic_fragment_chain_does_not_overflow_stack() {
+        let schema = parse_schema(
+            r#"
+            type Query {
+              field: String
+            }
+            "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+
+        // very long acyclic fragment chain that would overflow the stack if protections were not in place
+        let n = 10_000;
+        let mut doc = String::from("query { ...F1 }\n");
+        for i in 1..n {
+            doc.push_str(&format!("fragment F{i} on Query {{ ...F{} }}\n", i + 1));
+        }
+        doc.push_str(&format!("fragment F{n} on Query {{ __typename }}\n"));
+
+        let parsed = parse_query::<String>(&doc)
+            .expect("valid graphql")
+            .into_static();
+
+        // must return without overflowing; Ok or Err (i.e. no crash) both mean we survived
+        let _ = normalize_operation(&supergraph, &parsed, None);
+    }
+
+    #[test]
+    fn cyclic_fragment_self_reference_returns_error() {
+        // fragment A on Query { ...A } — inlineable single-spread self-cycle
+        let schema = parse_schema(
+            r#"
+            type Query {
+              field: String
+            }
+            "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+        let parsed = parse_query::<String>(
+            r#"
+            query { ...A }
+            fragment A on Query { ...A }
+            "#,
+        )
+        .expect("to parse")
+        .into_static();
+
+        // run in a thread with a deadline so an infinite loop fails fast
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = normalize_operation(&supergraph, &parsed, None);
+            let _ = tx.send(result);
+        });
+        let result = rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("normalize_operation hung on a self-referential fragment cycle");
+        assert!(
+            result.is_err(),
+            "expected an error for a cyclic fragment, got Ok"
+        );
+    }
+
+    #[test]
+    fn cyclic_fragment_mutual_reference_returns_error() {
+        // fragment A on Query { ...B }, fragment B on Query { ...A } — mutual inlineable cycle
+        let schema = parse_schema(
+            r#"
+            type Query {
+              field: String
+            }
+            "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+        let parsed = parse_query::<String>(
+            r#"
+            query { ...A }
+            fragment A on Query { ...B }
+            fragment B on Query { ...A }
+            "#,
+        )
+        .expect("to parse")
+        .into_static();
+
+        // run in a thread with a deadline so an infinite loop fails fast
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = normalize_operation(&supergraph, &parsed, None);
+            let _ = tx.send(result);
+        });
+        let result = rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("normalize_operation hung on a mutual fragment cycle");
+        assert!(
+            result.is_err(),
+            "expected an error for a cyclic fragment, got Ok"
+        );
+    }
 }
