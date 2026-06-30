@@ -12,9 +12,9 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct EntityMove {
+pub struct EntityMove<'graph> {
     pub key: String,
-    pub requirements: TypeAwareSelection,
+    pub requirements: TypeAwareSelection<'graph>,
     /// Indicates whether the move is to an interface entity.
     ///
     /// Object @key -> Object @key (@interfaceObject)
@@ -24,26 +24,26 @@ pub struct EntityMove {
 }
 
 #[derive(Debug)]
-pub struct InterfaceObjectTypeMove {
+pub struct InterfaceObjectTypeMove<'graph> {
     pub object_type_name: String,
-    pub requirements: TypeAwareSelection,
+    pub requirements: TypeAwareSelection<'graph>,
 }
 
 /// Represent a simple file move
 #[derive(Debug, PartialEq)]
-pub struct FieldMove {
+pub struct FieldMove<'graph> {
     pub name: String,
     pub type_name: String,
     pub is_leaf: bool,
     pub is_list: bool,
     pub join_field: Option<JoinFieldDirective>,
-    pub requirements: Option<TypeAwareSelection>,
+    pub requirements: Option<TypeAwareSelection<'graph>>,
     pub override_from: Option<String>,
     pub override_label: Option<OverrideLabel>,
     pub overridden_by: Option<(String, Option<OverrideLabel>)>,
 }
 
-impl FieldMove {
+impl<'graph> FieldMove<'graph> {
     pub fn satisfies_override_rules(&self, ctx: &PlannerOverrideContext) -> bool {
         // Field is being progressively overridden by another subgraph
         if let Some((_, Some(label))) = &self.overridden_by {
@@ -148,15 +148,15 @@ impl Display for OverrideLabel {
     }
 }
 
-pub enum Edge {
+pub enum Edge<'graph> {
     /// A special edge between the root Node and then root entry point to the graph
     /// With this helper, you can jump from Query::RootQuery --SomeSubgraph-> Query/SomeSubgraph --> --field--> SomeType/SomeSubgraph
     SubgraphEntrypoint {
         field_names: Vec<String>,
         name: SubgraphName,
     },
-    FieldMove(Box<FieldMove>),
-    EntityMove(EntityMove),
+    FieldMove(Box<FieldMove<'graph>>),
+    EntityMove(EntityMove<'graph>),
     /// join__implements
     AbstractMove(String),
     /// A special edge representing a case where an inline fragment is used with a condition,
@@ -173,15 +173,15 @@ pub enum Edge {
     /// would result in a incorrect value (name of the @interfaceObject type).
     /// This enum variant tells the Query Planner to do an entity call,
     /// to verify the type condition or resolve the __typename.
-    InterfaceObjectTypeMove(InterfaceObjectTypeMove),
+    InterfaceObjectTypeMove(InterfaceObjectTypeMove<'graph>),
 }
 
-pub type EdgeReference<'a> = GraphEdgeReference<'a, Edge>;
+pub type EdgeReference<'a> = GraphEdgeReference<'a, Edge<'a>>;
 
-impl Edge {
+impl<'graph> Edge<'graph> {
     pub fn create_entity_move(
         key: &str,
-        selection: TypeAwareSelection,
+        selection: TypeAwareSelection<'graph>,
         is_interface: bool,
     ) -> Self {
         Self::EntityMove(EntityMove {
@@ -193,7 +193,7 @@ impl Edge {
 
     pub fn create_interface_object_type_move(
         object_type_name: &str,
-        selection: TypeAwareSelection,
+        selection: TypeAwareSelection<'graph>,
     ) -> Self {
         Self::InterfaceObjectTypeMove(InterfaceObjectTypeMove {
             object_type_name: object_type_name.to_string(),
@@ -207,7 +207,7 @@ impl Edge {
         is_leaf: bool,
         is_list: bool,
         join_field: Option<JoinFieldDirective>,
-        requirements: Option<TypeAwareSelection>,
+        requirements: Option<TypeAwareSelection<'graph>>,
         overridden_by: Option<(String, Option<OverrideLabel>)>,
     ) -> Self {
         let override_from = join_field.as_ref().and_then(|jf| jf.override_value.clone());
@@ -239,7 +239,7 @@ impl Edge {
         }
     }
 
-    pub fn requirements(&self) -> Option<&TypeAwareSelection> {
+    pub fn requirements(&self) -> Option<&TypeAwareSelection<'_>> {
         match self {
             Self::EntityMove(entity_move) => Some(&entity_move.requirements),
             Self::InterfaceObjectTypeMove(m) => Some(&m.requirements),
@@ -263,7 +263,7 @@ impl Edge {
     }
 }
 
-impl Display for Edge {
+impl Display for Edge<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Edge::SubgraphEntrypoint { name, .. } => write!(f, "{}", name.0),
@@ -282,7 +282,7 @@ impl Display for Edge {
     }
 }
 
-impl Debug for Edge {
+impl Debug for Edge<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Edge::SubgraphEntrypoint { name, .. } => write!(f, "subgraph({})", name.0),
@@ -330,7 +330,7 @@ impl Debug for Edge {
     }
 }
 
-impl PartialEq for Edge {
+impl PartialEq for Edge<'_> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (

@@ -33,7 +33,7 @@ use tracing::{instrument, trace};
 
 use super::graph::{edge::Edge, node::Node};
 
-type InnerGraph = Petgraph<Node, Edge, Directed>;
+type InnerGraph<'graph> = Petgraph<Node, Edge<'graph>, Directed>;
 
 type UnionTypeName<'a> = &'a str;
 type SubgraphName<'a> = &'a str;
@@ -117,18 +117,18 @@ impl<'a> UnionDefinitions<'a> {
 }
 
 #[derive(Debug, Default)]
-pub struct Graph {
-    pub graph: InnerGraph,
+pub struct Graph<'graph> {
+    pub graph: InnerGraph<'graph>,
     pub query_root: NodeIndex,
     pub mutation_root: Option<NodeIndex>,
     pub subscription_root: Option<NodeIndex>,
     pub node_display_name_to_index: HashMap<String, NodeIndex>,
 }
 
-impl Graph {
+impl<'graph> Graph<'graph> {
     #[instrument(level = "trace", skip(supergraph_state))]
     pub fn graph_from_supergraph_state(
-        supergraph_state: &SupergraphState,
+        supergraph_state: &'graph SupergraphState,
     ) -> Result<Self, GraphError> {
         let mut instance = Graph {
             node_display_name_to_index: HashMap::new(),
@@ -147,7 +147,7 @@ impl Graph {
             .ok_or(GraphError::NodeNotFound(node_index))
     }
 
-    pub fn edge(&self, edge_index: EdgeIndex) -> Result<&Edge, GraphError> {
+    pub fn edge(&self, edge_index: EdgeIndex) -> Result<&Edge<'graph>, GraphError> {
         self.graph
             .edge_weight(edge_index)
             .ok_or(GraphError::EdgeNotFound(edge_index))
@@ -168,7 +168,7 @@ impl Graph {
     }
 
     #[instrument(level = "trace", skip(self, state))]
-    fn build_graph(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
+    fn build_graph(&mut self, state: &'graph SupergraphState) -> Result<(), GraphError> {
         trace!(
             "Building graph for supergraph with {} definitions",
             state.definitions.len()
@@ -231,7 +231,12 @@ impl Graph {
         index
     }
 
-    pub fn upsert_edge(&mut self, head: NodeIndex, tail: NodeIndex, edge: Edge) -> EdgeIndex {
+    pub fn upsert_edge(
+        &mut self,
+        head: NodeIndex,
+        tail: NodeIndex,
+        edge: Edge<'graph>,
+    ) -> EdgeIndex {
         let existing_edge = self
             .graph
             .edges_connecting(head, tail)
@@ -253,7 +258,10 @@ impl Graph {
     }
 
     #[instrument(level = "trace", skip(self, state))]
-    fn build_entity_reference_edges(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
+    fn build_entity_reference_edges(
+        &mut self,
+        state: &'graph SupergraphState,
+    ) -> Result<(), GraphError> {
         for (def_name, definition) in state.definitions.iter() {
             let is_interface = definition.is_interface_type();
             for join_type1 in definition.join_types() {
@@ -501,11 +509,11 @@ impl Graph {
         }
     }
 
-    pub fn edges_to(&self, node_index: NodeIndex) -> Edges<'_, Edge, Directed> {
+    pub fn edges_to(&self, node_index: NodeIndex) -> Edges<'_, Edge<'graph>, Directed> {
         self.graph.edges_directed(node_index, Direction::Incoming)
     }
 
-    pub fn edges_from(&self, node_index: NodeIndex) -> Edges<'_, Edge, Directed> {
+    pub fn edges_from(&self, node_index: NodeIndex) -> Edges<'_, Edge<'graph>, Directed> {
         self.graph.edges_directed(node_index, Direction::Outgoing)
     }
 
@@ -564,7 +572,7 @@ impl Graph {
     }
 
     #[instrument(level = "trace", skip(self, state))]
-    fn build_field_edges(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
+    fn build_field_edges(&mut self, state: &'graph SupergraphState) -> Result<(), GraphError> {
         let unions = UnionDefinitions::new(state);
 
         for (def_name, definition) in state.definitions.iter() {
@@ -690,7 +698,7 @@ impl Graph {
                           (requires_str, join_field.graph_id.as_ref().expect("join__field(graph:) should exist when join__field(requires:) exists"))
                         })
                     }).map(|(requires_str, graph_id)| TypeAwareSelection {
-                              type_name: def_name.to_string(),
+                              type_name: def_name,
                               selection_set: FederationRules::parse_requires(
                                 state,
                                 graph_id,
@@ -903,10 +911,10 @@ impl Graph {
     #[instrument(level = "trace",skip(self, state, parent_type_def, head), fields(selection_set, parent_type_name = parent_type_def.name()))]
     fn handle_viewed_selection_set(
         &mut self,
-        state: &SupergraphState,
+        state: &'graph SupergraphState,
         selection_set: &SelectionSet<'static, String>,
         graph_id: &str,
-        parent_type_def: &SupergraphDefinition,
+        parent_type_def: &'graph SupergraphDefinition,
         head: NodeIndex,
         view_id: u64,
     ) -> Result<(), GraphError> {
@@ -1064,7 +1072,10 @@ impl Graph {
     }
 
     #[instrument(level = "trace", skip(self, state))]
-    fn build_viewed_field_edges(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
+    fn build_viewed_field_edges(
+        &mut self,
+        state: &'graph SupergraphState,
+    ) -> Result<(), GraphError> {
         for (def_name, definition) in state.definitions.iter() {
             for join_type in definition.join_types().iter() {
                 let mut view_id = 0;
@@ -1126,7 +1137,7 @@ impl Graph {
                                 let requirements =
                                     join_field.requires.as_ref().map(|requires_str| {
                                         TypeAwareSelection {
-                                            type_name: def_name.to_string(),
+                                            type_name: def_name,
                                             selection_set: FederationRules::parse_requires(
                                                 state,
                                                 join_field.graph_id.as_ref().unwrap(),
@@ -1213,7 +1224,7 @@ impl Graph {
 }
 
 /// Print me with `println!("{}", graph);` to see the graph in DOT/digraph format.
-impl Display for Graph {
+impl Display for Graph<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", Dot::with_config(&self.graph, &[]))
     }

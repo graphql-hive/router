@@ -78,7 +78,7 @@ fn build_possible_types_map<'a>(ctx: &NormalizationContext<'a>) -> PossibleTypes
             SupergraphDefinition::Union(_) | SupergraphDefinition::Interface(_)
                 if (maybe_subgraph_name.is_none()
                     || maybe_subgraph_name.is_some_and(|subgraph_name| {
-                        def.is_defined_in_subgraph(subgraph_name.as_str())
+                        def.is_defined_in_subgraph(subgraph_name)
                     })) =>
             {
                 abstract_types_list.push((name, def));
@@ -86,7 +86,7 @@ fn build_possible_types_map<'a>(ctx: &NormalizationContext<'a>) -> PossibleTypes
             SupergraphDefinition::Object(_)
                 if (maybe_subgraph_name.is_none()
                     || maybe_subgraph_name.is_some_and(|subgraph_name| {
-                        def.is_defined_in_subgraph(subgraph_name.as_str())
+                        def.is_defined_in_subgraph(subgraph_name)
                     })) =>
             {
                 object_types_list.push((name, def));

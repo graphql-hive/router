@@ -711,7 +711,7 @@ fn process_entity_move_edge(
         Edge::EntityMove(em) => (
             TypeAwareSelection {
                 selection_set: em.requirements.selection_set.clone(),
-                type_name: em.requirements.type_name.clone(),
+                type_name: em.requirements.type_name,
             },
             em.is_interface,
         ),
@@ -852,7 +852,7 @@ fn process_interface_object_type_move_edge(
     let requirement = match edge {
         Edge::InterfaceObjectTypeMove(m) => TypeAwareSelection {
             selection_set: m.requirements.selection_set.clone(),
-            type_name: m.requirements.type_name.clone(),
+            type_name: m.requirements.type_name,
         },
         _ => {
             return Err(FetchGraphError::UnexpectedEdgeMove(
@@ -1633,7 +1633,7 @@ fn find_satisfiable_key<'a>(
     supergraph: &'a SupergraphState,
     override_context: &'a PlannerOverrideContext,
     query_node: &QueryTreeNode,
-) -> Result<&'a TypeAwareSelection, FetchGraphError> {
+) -> Result<&'a TypeAwareSelection<'a>, FetchGraphError> {
     // This could be improved...
     // We added a flag to `can_satisfy_edge` and increased the complexity.
 

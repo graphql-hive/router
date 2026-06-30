@@ -1,4 +1,5 @@
-use std::collections::{HashSet, VecDeque};
+use ahash::HashSet;
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 use petgraph::graph::{EdgeIndex, NodeIndex};
@@ -33,7 +34,7 @@ type ActiveEdgeChecks = HashSet<(NodeIndex, EdgeIndex)>;
 struct IndirectPathsLookupQueue<'graph> {
     queue: Vec<(
         VisitedGraphs<'graph>,
-        HashSet<TypeAwareSelection>,
+        HashSet<TypeAwareSelection<'graph>>,
         OperationPath<'graph>,
     )>,
 }
@@ -59,7 +60,7 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
     pub fn add(
         &mut self,
         visited_graphs: VisitedGraphs<'graph>,
-        selections: HashSet<TypeAwareSelection>,
+        selections: HashSet<TypeAwareSelection<'graph>>,
         path: OperationPath<'graph>,
     ) {
         self.queue.push((visited_graphs, selections, path));
@@ -69,7 +70,7 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
         &mut self,
     ) -> Option<(
         VisitedGraphs<'graph>,
-        HashSet<TypeAwareSelection>,
+        HashSet<TypeAwareSelection<'graph>>,
         OperationPath<'graph>,
     )> {
         self.queue.pop()
@@ -103,7 +104,7 @@ impl<'op> From<&'op NavigationTarget<'op>> for NavigationTargetKey<'op> {
 }
 
 struct PathSearch<'graph> {
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     cancellation_token: &'graph CancellationToken,
@@ -124,7 +125,7 @@ impl<'graph> PathSearch<'graph> {
             supergraph,
             override_context,
             cancellation_token,
-            active_edge_checks: ActiveEdgeChecks::new(),
+            active_edge_checks: ActiveEdgeChecks::default(),
         }
     }
 }
@@ -198,7 +199,7 @@ impl<'graph> PathSearch<'graph> {
         let graph = self.graph;
         let cancellation_token = self.cancellation_token;
         let mut tracker = BestPathTracker::new(graph);
-        let mut seen = HashSet::new();
+        let mut seen = HashSet::default();
         let target_key = NavigationTargetKey::from(target);
         let tail_node_index = path.tail();
         let tail_node = graph.node(tail_node_index)?;
@@ -515,7 +516,7 @@ impl<'graph> PathSearch<'graph> {
                 graph
                     .edges_from(path_tail_index)
                     .filter(move |e| match e.weight() {
-                        Edge::AbstractMove(t) => t == type_name,
+                        Edge::AbstractMove(t) => &t == type_name,
                         Edge::InterfaceObjectTypeMove(t) => &t.object_type_name == type_name,
                         _ => false,
                     }),
@@ -561,7 +562,7 @@ impl<'graph> PathSearch<'graph> {
                 graph
                     .edges_from(path_tail_index)
                     .filter(move |e| match e.weight() {
-                        Edge::AbstractMove(t) => t == type_name,
+                        Edge::AbstractMove(t) => &t == type_name,
                         Edge::InterfaceObjectTypeMove(t) => &t.object_type_name == type_name,
                         _ => false,
                     }),

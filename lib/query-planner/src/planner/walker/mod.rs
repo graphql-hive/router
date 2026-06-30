@@ -5,10 +5,8 @@ pub(crate) mod path;
 pub(crate) mod pathfinder;
 mod utils;
 
-use std::{
-    collections::{HashSet, VecDeque},
-    rc::Rc,
-};
+use ahash::HashSet;
+use std::{collections::VecDeque, rc::Rc};
 
 use crate::{
     ast::{
@@ -794,14 +792,14 @@ fn field_target_subgraph_ids(
     paths: &[OperationPath<'_>],
     graph: &Graph,
 ) -> Result<Option<HashSet<String>>, WalkOperationError> {
-    let mut parent_type_names = HashSet::new();
+    let mut parent_type_names = HashSet::default();
 
     for path in paths {
         let parent_node = graph.node(path.tail())?;
         parent_type_names.insert(parent_node.name_str());
     }
 
-    let mut target_subgraph_ids = HashSet::new();
+    let mut target_subgraph_ids = HashSet::default();
 
     for parent_type_name in parent_type_names {
         let Some(parent_def) = supergraph.definitions.get(parent_type_name) else {

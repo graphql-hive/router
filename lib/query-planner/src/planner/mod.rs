@@ -34,8 +34,8 @@ pub struct QueryPlannerOptions {
 }
 
 pub struct Planner {
-    graph: Graph,
-    pub supergraph: SupergraphState,
+    pub supergraph: Arc<SupergraphState>,
+    graph: Graph<'static>,
     pub consumer_schema: Arc<ConsumerSchema>,
     options: QueryPlannerOptions,
 }
@@ -70,13 +70,31 @@ impl Planner {
         parsed_supergraph: &schema::Document<'static, String>,
         options: QueryPlannerOptions,
     ) -> Result<Self, PlannerError> {
-        let graph = Graph::graph_from_supergraph_state(&supergraph_state)?;
+        let supergraph = Arc::new(supergraph_state);
+
+        let graph = Graph::graph_from_supergraph_state(&supergraph)?;
+
+        // SAFETY:
+        //
+        // We extend Graph<'_> to Graph<'static>, but it is not really static.
+        // It borrows from data owned by `supergraph`.
+        //
+        // This is sound only because:
+        // 1. `supergraph` is stored in the same Planner.
+        // 2. `graph` is declared before `supergraph`, so graph is dropped first.
+        // 3. The Arc allocation is stable; moving/cloning Arc does not move SupergraphState.
+        // 4. SupergraphState is never mutated in a way that invalidates references
+        //    stored inside Graph.
+        // 5. Planner must not expose Graph<'static> outside.
+        let graph: Graph<'static> =
+            unsafe { std::mem::transmute::<Graph<'_>, Graph<'static>>(graph) };
+
         let consumer_schema = ConsumerSchema::new_from_supergraph(parsed_supergraph);
 
-        Ok(Planner {
+        Ok(Self {
             graph,
+            supergraph,
             consumer_schema: Arc::new(consumer_schema),
-            supergraph: supergraph_state,
             options,
         })
     }

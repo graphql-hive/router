@@ -31,7 +31,7 @@ pub fn type_expand(ctx: &mut NormalizationContext) -> Result<(), NormalizationEr
     // Build possible_types map (same as flatten_fragments)
     for (type_name, type_def) in ctx.supergraph.definitions.iter().filter(|(_, def)| {
         if let Some(subgraph_name) = maybe_subgraph_name {
-            def.is_defined_in_subgraph(subgraph_name.as_str())
+            def.is_defined_in_subgraph(subgraph_name)
         } else {
             true
         }

@@ -31,8 +31,8 @@ pub(crate) mod join_union;
 fn normalize_fields_argument_value_mut(
     supergraph: &SupergraphState,
     type_name: &str,
-    subgraph_name: &String,
-    fields_str: &String,
+    subgraph_name: &str,
+    fields_str: &str,
 ) -> SelectionSet<'static, String> {
     let selection_set_str = format!("{{{fields_str}}}");
     // TODO: Far from ideal, but we can use the graphql_parser here to get it parsed for us
@@ -99,16 +99,16 @@ fn collect_sized_field_path(
 pub struct FederationRules;
 
 impl FederationRules {
-    pub fn parse_key(
+    pub fn parse_key<'a>(
         supergraph: &SupergraphState,
-        subgraph_name: &String,
-        type_name: &str,
-        key: &String,
-    ) -> TypeAwareSelection {
+        subgraph_name: &'a str,
+        type_name: &'a str,
+        key: &str,
+    ) -> TypeAwareSelection<'a> {
         let selection_set =
             normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, key);
         TypeAwareSelection {
-            type_name: type_name.to_string(),
+            type_name: type_name,
             selection_set: selection_set.into(),
         }
     }
@@ -133,7 +133,7 @@ impl FederationRules {
 
     pub fn parse_requires(
         supergraph: &SupergraphState,
-        subgraph_name: &String,
+        subgraph_name: &str,
         type_name: &str,
         requires: &String,
     ) -> SelectionSet<'static, String> {
