@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use ahash::AHashMap;
 use directives::JoinFieldDirective;
 use graphql_tools::parser::{
     parse_query,
@@ -99,45 +102,13 @@ fn collect_sized_field_path(
 pub struct FederationRules;
 
 impl FederationRules {
-    pub fn parse_key<'a>(
-        supergraph: &SupergraphState,
-        subgraph_name: &'a str,
-        type_name: &'a str,
-        key: &str,
-    ) -> TypeAwareSelection<'a> {
-        let selection_set =
-            normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, key);
-        TypeAwareSelection {
-            type_name: type_name,
-            selection_set: selection_set.into(),
-        }
-    }
-
-    pub fn parse_provides(
-        supergraph: &SupergraphState,
-        join_field: &JoinFieldDirective,
-        subgraph_name: &String,
-        type_name: &str,
-    ) -> Option<SelectionSet<'static, String>> {
-        if let Some(provides) = &join_field.provides {
-            return Some(normalize_fields_argument_value_mut(
-                supergraph,
-                type_name,
-                subgraph_name,
-                provides,
-            ));
-        }
-
-        None
-    }
-
-    pub fn parse_requires(
+    pub(crate) fn parse_selection(
         supergraph: &SupergraphState,
         subgraph_name: &str,
         type_name: &str,
-        requires: &String,
+        selection: &str,
     ) -> SelectionSet<'static, String> {
-        normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, requires)
+        normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, selection)
     }
 
     /// Parses a single `@listSize(sizedFields: [...])` entry, written in
@@ -197,5 +168,115 @@ impl FederationRules {
         }
 
         (false, None)
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq)]
+struct SelectionCacheKey<'a> {
+    subgraph_name: &'a str,
+    type_name: &'a str,
+    selection: &'a str,
+}
+
+#[derive(Debug, Default)]
+struct SelectionCache<'a> {
+    keys: AHashMap<SelectionCacheKey<'a>, Arc<TypeAwareSelection<'a>>>,
+    requirements: AHashMap<SelectionCacheKey<'a>, Arc<TypeAwareSelection<'a>>>,
+    selections: AHashMap<SelectionCacheKey<'a>, Arc<SelectionSet<'static, String>>>,
+}
+
+#[derive(Debug)]
+pub struct CachedFederationRules<'supergraph> {
+    cache: SelectionCache<'supergraph>,
+}
+
+impl<'supergraph> CachedFederationRules<'supergraph> {
+    pub fn new() -> Self {
+        Self {
+            cache: SelectionCache::default(),
+        }
+    }
+
+    fn parse_selection(
+        &mut self,
+        supergraph: &'supergraph SupergraphState,
+        subgraph_name: &'supergraph str,
+        type_name: &'supergraph str,
+        selection: &'supergraph str,
+    ) -> Arc<SelectionSet<'static, String>> {
+        let key = SelectionCacheKey {
+            subgraph_name,
+            type_name,
+            selection,
+        };
+        if let Some(selection) = self.cache.selections.get(&key) {
+            return selection.clone();
+        }
+        let selection = Arc::new(FederationRules::parse_selection(
+            supergraph,
+            subgraph_name,
+            type_name,
+            selection,
+        ));
+        self.cache.selections.insert(key, selection.clone());
+        selection
+    }
+
+    pub fn parse_key(
+        &mut self,
+        supergraph: &'supergraph SupergraphState,
+        subgraph_name: &'supergraph str,
+        type_name: &'supergraph str,
+        selection: &'supergraph str,
+    ) -> Arc<TypeAwareSelection<'supergraph>> {
+        let key = SelectionCacheKey {
+            subgraph_name,
+            type_name,
+            selection,
+        };
+        if let Some(selection) = self.cache.keys.get(&key) {
+            return selection.clone();
+        }
+        let selection_set = self.parse_selection(supergraph, subgraph_name, type_name, selection);
+        let selection = Arc::new(TypeAwareSelection {
+            type_name,
+            selection_set: selection_set.as_ref().clone().into(),
+        });
+        self.cache.keys.insert(key, selection.clone());
+        selection
+    }
+
+    pub fn parse_requires(
+        &mut self,
+        supergraph: &'supergraph SupergraphState,
+        subgraph_name: &'supergraph str,
+        type_name: &'supergraph str,
+        selection: &'supergraph str,
+    ) -> Arc<TypeAwareSelection<'supergraph>> {
+        let key = SelectionCacheKey {
+            subgraph_name,
+            type_name,
+            selection,
+        };
+        if let Some(selection) = self.cache.requirements.get(&key) {
+            return selection.clone();
+        }
+        let selection_set = self.parse_selection(supergraph, subgraph_name, type_name, selection);
+        let selection = Arc::new(TypeAwareSelection {
+            type_name,
+            selection_set: selection_set.as_ref().clone().into(),
+        });
+        self.cache.requirements.insert(key, selection.clone());
+        selection
+    }
+
+    pub fn parse_provides(
+        &mut self,
+        supergraph: &'supergraph SupergraphState,
+        subgraph_name: &'supergraph str,
+        type_name: &'supergraph str,
+        selection: &'supergraph str,
+    ) -> Arc<SelectionSet<'static, String>> {
+        self.parse_selection(supergraph, subgraph_name, type_name, selection)
     }
 }

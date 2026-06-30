@@ -14,8 +14,7 @@ use std::{
 
 use super::ast::normalization::utils::extract_type_condition;
 use crate::{
-    ast::type_aware_selection::TypeAwareSelection,
-    federation_spec::FederationRules,
+    federation_spec::{CachedFederationRules, FederationRules},
     graph::node::{SubgraphTypeSpecialization, UnionMembersData},
     state::supergraph_state::{
         OperationKind, SupergraphDefinition, SupergraphField, SupergraphState,
@@ -174,12 +173,14 @@ impl<'graph> Graph<'graph> {
             state.definitions.len()
         );
 
+        let mut cached_rules = CachedFederationRules::new();
+
         self.build_root_nodes(state)?;
         self.link_root_edges(state)?;
-        self.build_field_edges(state)?;
+        self.build_field_edges(state, &mut cached_rules)?;
         self.build_interface_implementation_edges(state)?;
-        self.build_entity_reference_edges(state)?;
-        self.build_viewed_field_edges(state)?;
+        self.build_entity_reference_edges(state, &mut cached_rules)?;
+        self.build_viewed_field_edges(state, &mut cached_rules)?;
 
         Ok(())
     }
@@ -261,6 +262,7 @@ impl<'graph> Graph<'graph> {
     fn build_entity_reference_edges(
         &mut self,
         state: &'graph SupergraphState,
+        cached_rules: &mut CachedFederationRules<'graph>,
     ) -> Result<(), GraphError> {
         for (def_name, definition) in state.definitions.iter() {
             let is_interface = definition.is_interface_type();
@@ -280,11 +282,11 @@ impl<'graph> Graph<'graph> {
                                 state.resolve_graph_id(&join_type2.graph_id)?,
                                 join_type2.is_interface_object,
                             ));
-                            let key_selection = FederationRules::parse_key(
+                            let key_selection = cached_rules.parse_key(
                                 state,
-                                &join_type2.graph_id,
+                                join_type2.graph_id.as_str(),
                                 def_name,
-                                key,
+                                key.as_str(),
                             );
 
                             trace!(
@@ -299,12 +301,16 @@ impl<'graph> Graph<'graph> {
                             self.upsert_edge(
                                 head,
                                 tail,
-                                Edge::create_entity_move(key, key_selection, is_interface),
+                                Edge::create_entity_move(key.as_str(), key_selection, is_interface),
                             );
                         }
                     } else if let (true, Some(key)) = (&join_type1.resolvable, &join_type1.key) {
-                        let key_selection =
-                            FederationRules::parse_key(state, &join_type1.graph_id, def_name, key);
+                        let key_selection = cached_rules.parse_key(
+                            state,
+                            join_type1.graph_id.as_str(),
+                            def_name,
+                            key.as_str(),
+                        );
 
                         trace!(
                             "Creating self-referencing entity move edge in '{}/{}' via key '{}'",
@@ -316,7 +322,7 @@ impl<'graph> Graph<'graph> {
                         self.upsert_edge(
                             head,
                             head,
-                            Edge::create_entity_move(key, key_selection, is_interface),
+                            Edge::create_entity_move(key.as_str(), key_selection, is_interface),
                         );
                     }
                 }
@@ -343,11 +349,11 @@ impl<'graph> Graph<'graph> {
                     join_type1.is_interface_object,
                 ));
 
-                let typename_selection = FederationRules::parse_key(
+                let typename_selection = cached_rules.parse_key(
                     state,
-                    &join_type1.graph_id,
+                    join_type1.graph_id.as_str(),
                     interface_object_name,
-                    &"__typename".to_string(),
+                    "__typename",
                 );
 
                 for (object_type_name, object_type_definition) in state
@@ -401,11 +407,11 @@ impl<'graph> Graph<'graph> {
                         .as_ref()
                         .expect("@interfaceObject to have a key");
 
-                    let key_selection = FederationRules::parse_key(
+                    let key_selection = cached_rules.parse_key(
                         state,
-                        &join_type1.graph_id,
+                        join_type1.graph_id.as_str(),
                         interface_object_name,
-                        key,
+                        key.as_str(),
                     );
 
                     for join_type2 in object_type_definition.join_types() {
@@ -434,7 +440,11 @@ impl<'graph> Graph<'graph> {
                         self.upsert_edge(
                             head,
                             tail,
-                            Edge::create_entity_move(key, key_selection.clone(), is_interface),
+                            Edge::create_entity_move(
+                                key.as_str(),
+                                key_selection.clone(),
+                                is_interface,
+                            ),
                         );
                     }
                 }
@@ -572,7 +582,11 @@ impl<'graph> Graph<'graph> {
     }
 
     #[instrument(level = "trace", skip(self, state))]
-    fn build_field_edges(&mut self, state: &'graph SupergraphState) -> Result<(), GraphError> {
+    fn build_field_edges(
+        &mut self,
+        state: &'graph SupergraphState,
+        cached_rules: &mut CachedFederationRules<'graph>,
+    ) -> Result<(), GraphError> {
         let unions = UnionDefinitions::new(state);
 
         for (def_name, definition) in state.definitions.iter() {
@@ -691,16 +705,14 @@ impl<'graph> Graph<'graph> {
                         join_field.requires.as_ref().map(|requires_str| {
                           (requires_str, join_field.graph_id.as_ref().expect("join__field(graph:) should exist when join__field(requires:) exists"))
                         })
-                    }).map(|(requires_str, graph_id)| TypeAwareSelection {
-                              type_name: def_name,
-                              selection_set: FederationRules::parse_requires(
-                                state,
-                                graph_id,
-                                def_name,
-                                requires_str,
-                              )
-                              .into(),
-                          });
+                    }).map(|(requires_str, graph_id)| {
+                        cached_rules.parse_requires(
+                            state,
+                            graph_id.as_str(),
+                            def_name,
+                            requires_str.as_str(),
+                        )
+                    });
 
                     // If a field points to a union type:
                     //
@@ -906,6 +918,7 @@ impl<'graph> Graph<'graph> {
     fn handle_viewed_selection_set(
         &mut self,
         state: &'graph SupergraphState,
+        cached_rules: &mut CachedFederationRules<'graph>,
         selection_set: &SelectionSet<'static, String>,
         graph_id: &str,
         parent_type_def: &'graph SupergraphDefinition,
@@ -922,11 +935,11 @@ impl<'graph> Graph<'graph> {
                 state.resolve_graph_id(&jt.graph_id)?,
                 jt.is_interface_object,
             ));
-            let key_selection = FederationRules::parse_key(
+            let key_selection = cached_rules.parse_key(
                 state,
-                &jt.graph_id,
+                jt.graph_id.as_str(),
                 parent_type_def.name(),
-                jt.key.as_ref().unwrap(),
+                jt.key.as_ref().unwrap().as_str(),
             );
             trace!(
                 "Creating entity move edge from '{}/{}' to '{}/{}' via key '{}'",
@@ -1005,6 +1018,7 @@ impl<'graph> Graph<'graph> {
 
                         self.handle_viewed_selection_set(
                             state,
+                            cached_rules,
                             &field.selection_set,
                             graph_id,
                             return_type,
@@ -1044,11 +1058,12 @@ impl<'graph> Graph<'graph> {
                     );
 
                     // use object type (tail) when handling selection sets
-                    self.handle_viewed_selection_set(
-                        state,
-                        &fragment.selection_set,
-                        graph_id,
-                        type_def_from_cond,
+                        self.handle_viewed_selection_set(
+                            state,
+                            cached_rules,
+                            &fragment.selection_set,
+                            graph_id,
+                            type_def_from_cond,
                         tail,
                         view_id,
                     )?;
@@ -1069,6 +1084,7 @@ impl<'graph> Graph<'graph> {
     fn build_viewed_field_edges(
         &mut self,
         state: &'graph SupergraphState,
+        cached_rules: &mut CachedFederationRules<'graph>,
     ) -> Result<(), GraphError> {
         for (def_name, definition) in state.definitions.iter() {
             for join_type in definition.join_types().iter() {
@@ -1086,12 +1102,13 @@ impl<'graph> Graph<'graph> {
                             .is_some_and(|v| v == &join_type.graph_id)
                             && join_field.provides.is_some()
                         {
-                            if let Some(selection_set) = FederationRules::parse_provides(
-                                state,
-                                join_field,
-                                &join_type.graph_id,
-                                field_definition.field_type.inner_type(),
-                            ) {
+                            if let Some(provides) = &join_field.provides {
+                                let selection_set = cached_rules.parse_provides(
+                                    state,
+                                    join_type.graph_id.as_str(),
+                                    field_definition.field_type.inner_type(),
+                                    provides.as_str(),
+                                );
                                 view_id += 1;
 
                                 let head = self.upsert_node(Node::new_node(
@@ -1128,19 +1145,14 @@ impl<'graph> Graph<'graph> {
                                     view_id, def_name, field_name, join_type.graph_id, return_type_name
                                 );
 
-                                let requirements =
-                                    join_field.requires.as_ref().map(|requires_str| {
-                                        TypeAwareSelection {
-                                            type_name: def_name,
-                                            selection_set: FederationRules::parse_requires(
-                                                state,
-                                                join_field.graph_id.as_ref().unwrap(),
-                                                def_name,
-                                                requires_str,
-                                            )
-                                            .into(),
-                                        }
-                                    });
+                                let requirements = join_field.requires.as_ref().map(|requires_str| {
+                                    cached_rules.parse_requires(
+                                        state,
+                                        join_field.graph_id.as_ref().unwrap().as_str(),
+                                        def_name,
+                                        requires_str.as_str(),
+                                    )
+                                });
 
                                 self.upsert_edge(
                                     head,
@@ -1165,7 +1177,8 @@ impl<'graph> Graph<'graph> {
 
                                 self.handle_viewed_selection_set(
                                     state,
-                                    &selection_set,
+                                    cached_rules,
+                                    selection_set.as_ref(),
                                     &join_type.graph_id,
                                     return_type,
                                     tail,
@@ -1185,11 +1198,11 @@ impl<'graph> Graph<'graph> {
                             state.resolve_graph_id(&jt.graph_id)?,
                             jt.is_interface_object,
                         ));
-                        let key_selection = FederationRules::parse_key(
+                        let key_selection = cached_rules.parse_key(
                             state,
-                            &jt.graph_id,
+                            jt.graph_id.as_str(),
                             def_name,
-                            jt.key.as_ref().unwrap(),
+                            jt.key.as_ref().unwrap().as_str(),
                         );
                         trace!(
                             "Creating entity move edge from '{}/{}' to '{}/{}' via key '{}'",
@@ -1203,7 +1216,7 @@ impl<'graph> Graph<'graph> {
                             head,
                             tail,
                             Edge::create_entity_move(
-                                jt.key.as_ref().unwrap(),
+                                jt.key.as_ref().unwrap().as_str(),
                                 key_selection,
                                 definition.is_interface_type(),
                             ),

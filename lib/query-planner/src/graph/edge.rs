@@ -2,6 +2,7 @@ use std::{
     collections::HashSet,
     fmt::{Debug, Display},
     hash::Hash,
+    sync::Arc,
 };
 
 use petgraph::graph::EdgeReference as GraphEdgeReference;
@@ -14,7 +15,7 @@ use crate::{
 #[derive(Debug)]
 pub struct EntityMove<'graph> {
     pub key: &'graph str,
-    pub requirements: TypeAwareSelection<'graph>,
+    pub requirements: Arc<TypeAwareSelection<'graph>>,
     /// Indicates whether the move is to an interface entity.
     ///
     /// Object @key -> Object @key (@interfaceObject)
@@ -26,7 +27,7 @@ pub struct EntityMove<'graph> {
 #[derive(Debug)]
 pub struct InterfaceObjectTypeMove<'graph> {
     pub object_type_name: &'graph str,
-    pub requirements: TypeAwareSelection<'graph>,
+    pub requirements: Arc<TypeAwareSelection<'graph>>,
 }
 
 /// Represent a simple file move
@@ -37,7 +38,7 @@ pub struct FieldMove<'graph> {
     pub is_leaf: bool,
     pub is_list: bool,
     pub join_field: Option<JoinFieldDirective>,
-    pub requirements: Option<TypeAwareSelection<'graph>>,
+    pub requirements: Option<Arc<TypeAwareSelection<'graph>>>,
     pub override_from: Option<String>,
     pub override_label: Option<OverrideLabel>,
     pub overridden_by: Option<(String, Option<OverrideLabel>)>,
@@ -181,7 +182,7 @@ pub type EdgeReference<'a> = GraphEdgeReference<'a, Edge<'a>>;
 impl<'graph> Edge<'graph> {
     pub fn create_entity_move(
         key: &'graph str,
-        selection: TypeAwareSelection<'graph>,
+        selection: Arc<TypeAwareSelection<'graph>>,
         is_interface: bool,
     ) -> Self {
         Self::EntityMove(EntityMove {
@@ -193,7 +194,7 @@ impl<'graph> Edge<'graph> {
 
     pub fn create_interface_object_type_move(
         object_type_name: &'graph str,
-        selection: TypeAwareSelection<'graph>,
+        selection: Arc<TypeAwareSelection<'graph>>,
     ) -> Self {
         Self::InterfaceObjectTypeMove(InterfaceObjectTypeMove {
             object_type_name,
@@ -207,7 +208,7 @@ impl<'graph> Edge<'graph> {
         is_leaf: bool,
         is_list: bool,
         join_field: Option<JoinFieldDirective>,
-        requirements: Option<TypeAwareSelection<'graph>>,
+        requirements: Option<Arc<TypeAwareSelection<'graph>>>,
         overridden_by: Option<(String, Option<OverrideLabel>)>,
     ) -> Self {
         let override_from = join_field.as_ref().and_then(|jf| jf.override_value.clone());
@@ -243,7 +244,7 @@ impl<'graph> Edge<'graph> {
         match self {
             Self::EntityMove(entity_move) => Some(&entity_move.requirements),
             Self::InterfaceObjectTypeMove(m) => Some(&m.requirements),
-            Self::FieldMove(field_move) => field_move.requirements.as_ref(),
+            Self::FieldMove(field_move) => field_move.requirements.as_deref(),
             _ => None,
         }
     }
