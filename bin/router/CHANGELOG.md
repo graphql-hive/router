@@ -116,6 +116,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.75 (2026-06-30)
+
+### Features
+
+#### Propagate subgraph `extensions` to the client response
+
+Subgraph GraphQL responses can carry an `extensions` object that can now be forwarded to the final client response, controlled by config.
+
+Extension keys set by the router or plugins take precedence over subgraph-propagated values at all times.
+
+`first`/`last` ordering matches processing order, which is deterministic for sequential plan nodes and non-deterministic for parallel fetches (same behaviour as response header propagation).
+
+### Configuration
+
+```yaml
+response_extensions:
+  propagate:
+    algorithm: last # first | last | append. default: last
+    allow: # optional key whitelist. omit to allow all keys
+      - foo
+      - bar
+```
+
+`algorithm` controls how the same key is merged when multiple subgraphs return it:
+
+- `first` - keep the first subgraph's value, ignore later ones.
+- `last` - overwrite with the last subgraph's value (default).
+- `append` - collect every value into an array, always an array even for a single value.
+
+`allow` is an optional whitelist of top-level extension keys. When omitted, all keys propagate.
+
+The key `queryPlan` is always blocked regardless of config.
+
+### Examples
+
+Two subgraphs both return `extensions.foo`:
+
+```
+subgraph a: { "extensions": { "foo": { "some": ["array"] } } }
+subgraph b: { "extensions": { "foo": { "some": "object" } } }
+```
+
+With `algorithm: first`:
+
+```json
+{ "extensions": { "foo": { "some": ["array"] } } }
+```
+
+With `algorithm: last`:
+
+```json
+{ "extensions": { "foo": { "some": "object" } } }
+```
+
+With `algorithm: append`:
+
+```json
+{ "extensions": { "foo": [{ "some": ["array"] }, { "some": "object" }] } }
+```
+
+### Fixes
+
+#### Prevent @requires creating a circular dependency across subgraphs
+
+The Query Planner could hit a timeout when a field with `@requires` needed to move to another subgraph, and the move required the same fields.
+
+#### Fix: Traverse fragments linearly during cycle validation and inlining
+
+GraphQL fragments can spread other fragments, e.g. `fragment A on T { ...B }`. When fragments form a long acyclic chain (A spreads B, B spreads C, and so on for thousands of links), we walked that chain with plain recursion. 
+
+This change prevents the stack from being filled in such cases.
+
 ## 0.0.74 (2026-06-25)
 
 ### Fixes

@@ -1,4 +1,18 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.36 (2026-06-30)
+
+### Fixes
+
+#### Prevent @requires creating a circular dependency across subgraphs
+
+The Query Planner could hit a timeout when a field with `@requires` needed to move to another subgraph, and the move required the same fields.
+
+#### Fix: Traverse fragments linearly during cycle validation and inlining
+
+GraphQL fragments can spread other fragments, e.g. `fragment A on T { ...B }`. When fragments form a long acyclic chain (A spreads B, B spreads C, and so on for thousands of links), we walked that chain with plain recursion. 
+
+This change prevents the stack from being filled in such cases.
+
 ## 0.0.35 (2026-06-24)
 
 ### Fixes
