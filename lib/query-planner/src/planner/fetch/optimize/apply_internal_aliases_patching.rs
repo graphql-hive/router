@@ -10,7 +10,7 @@ use crate::{
     planner::fetch::{error::FetchGraphError, fetch_graph::FetchGraph, state::MultiTypeFetchStep},
 };
 
-impl FetchGraph<MultiTypeFetchStep> {
+impl<'a> FetchGraph<'a, MultiTypeFetchStep> {
     /// This method applies internal aliasing for fields in the fetch graph.
     /// In case a fetch step contains a record of alias made to an output field, it needs to be propagated to all descendants steps that depends on this
     /// output field, in multiple locations:

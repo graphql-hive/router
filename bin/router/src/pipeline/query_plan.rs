@@ -81,7 +81,7 @@ pub async fn plan_operation_with_cache(
         let plan_cache_capture = metrics.cache.plan.capture_request();
 
         let stable_override_context =
-            StableOverrideContext::new(&supergraph.planner.supergraph, request_override_context);
+            StableOverrideContext::new(supergraph.planner.supergraph, request_override_context);
         let operation_for_plan_hash = if std::ptr::eq(
             filtered_operation_for_plan,
             normalized_operation.operation_for_plan.as_ref(),

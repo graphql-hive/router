@@ -16,7 +16,7 @@ use crate::{
     state::supergraph_state::SupergraphState,
 };
 
-impl FetchGraph<MultiTypeFetchStep> {
+impl<'a> FetchGraph<'a, MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
     pub(crate) fn fix_conflicting_type_mismatches(
         &mut self,

@@ -24,9 +24,9 @@ impl QueryTree {
     #[instrument(level = "trace",skip(graph), fields(
         root_node = graph.pretty_print_node(&path.root_node)
     ))]
-    pub fn from_path(
-        graph: &Graph,
-        path: &OperationPath,
+    pub fn from_path<'a>(
+        graph: &Graph<'a>,
+        path: &OperationPath<'_>,
         mutation_field_position: MutationFieldPosition,
     ) -> Result<Self, GraphError> {
         let segments = path.get_segments();

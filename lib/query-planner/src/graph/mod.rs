@@ -8,8 +8,9 @@ pub use self::edge::PERCENTAGE_SCALE_FACTOR;
 mod tests;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fmt::{Debug, Display},
+    sync::Arc,
 };
 
 use super::ast::normalization::utils::extract_type_condition;
@@ -18,28 +19,240 @@ use crate::{
     federation_spec::FederationRules,
     graph::node::{SubgraphTypeSpecialization, UnionMembersData},
     state::supergraph_state::{
-        OperationKind, SupergraphDefinition, SupergraphField, SupergraphState,
+        OperationKind, SubgraphName, SupergraphDefinition, SupergraphField, SupergraphState,
     },
 };
+use ahash::{AHashMap, AHashSet};
 use error::GraphError;
 use graphql_tools::parser::query::{Selection, SelectionSet};
 use petgraph::{
     dot::Dot,
     graph::{EdgeIndex, Edges, NodeIndex},
-    visit::EdgeRef,
     Directed, Direction, Graph as Petgraph,
 };
 use tracing::{instrument, trace};
 
 use super::graph::{edge::Edge, node::Node};
 
-type InnerGraph = Petgraph<Node, Edge, Directed>;
+#[derive(Debug, Hash, PartialEq, Eq)]
+struct SelectionCacheKey<'a> {
+    subgraph_id: &'a str,
+    type_name: &'a str,
+    selection: &'a str,
+}
+
+#[derive(Debug, Default)]
+struct SelectionCache<'a> {
+    keys: AHashMap<SelectionCacheKey<'a>, Arc<TypeAwareSelection<'a>>>,
+    requirements: AHashMap<SelectionCacheKey<'a>, Arc<TypeAwareSelection<'a>>>,
+    selections: AHashMap<SelectionCacheKey<'a>, Arc<SelectionSet<'static, String>>>,
+}
+
+impl<'a> SelectionCache<'a> {
+    fn parse_key(
+        &mut self,
+        state: &'a SupergraphState,
+        subgraph_id: &'a str,
+        type_name: &'a str,
+        key: &'a str,
+    ) -> Arc<TypeAwareSelection<'a>> {
+        let cache_key = SelectionCacheKey {
+            subgraph_id,
+            type_name,
+            selection: key,
+        };
+
+        if let Some(selection) = self.keys.get(&cache_key) {
+            return selection.clone();
+        }
+
+        let selection = Arc::new(FederationRules::parse_key(
+            state,
+            cache_key.subgraph_id,
+            type_name,
+            cache_key.selection,
+        ));
+        self.keys.insert(cache_key, selection.clone());
+        selection
+    }
+
+    fn parse_requires(
+        &mut self,
+        state: &'a SupergraphState,
+        subgraph_id: &'a str,
+        type_name: &'a str,
+        requires: &'a str,
+    ) -> Arc<TypeAwareSelection<'a>> {
+        let cache_key = SelectionCacheKey {
+            subgraph_id,
+            type_name,
+            selection: requires,
+        };
+
+        if let Some(selection) = self.requirements.get(&cache_key) {
+            return selection.clone();
+        }
+
+        let selection_set = self.parse_selection(state, subgraph_id, type_name, requires);
+        let selection = Arc::new(TypeAwareSelection {
+            type_name,
+            selection_set: selection_set.as_ref().clone().into(),
+        });
+        self.requirements.insert(cache_key, selection.clone());
+        selection
+    }
+
+    fn parse_provides(
+        &mut self,
+        state: &'a SupergraphState,
+        subgraph_id: &'a str,
+        type_name: &'a str,
+        provides: &'a str,
+    ) -> Arc<SelectionSet<'static, String>> {
+        self.parse_selection(state, subgraph_id, type_name, provides)
+    }
+
+    fn parse_selection(
+        &mut self,
+        state: &'a SupergraphState,
+        subgraph_id: &'a str,
+        type_name: &'a str,
+        selection: &'a str,
+    ) -> Arc<SelectionSet<'static, String>> {
+        let cache_key = SelectionCacheKey {
+            subgraph_id,
+            type_name,
+            selection,
+        };
+
+        if let Some(selection_set) = self.selections.get(&cache_key) {
+            return selection_set.clone();
+        }
+
+        let selection_set = Arc::new(FederationRules::parse_requires(
+            state,
+            cache_key.subgraph_id,
+            cache_key.type_name,
+            cache_key.selection,
+        ));
+        self.selections.insert(cache_key, selection_set.clone());
+        selection_set
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq)]
+enum EdgeLookupValue<'a> {
+    SubgraphEntrypoint(SubgraphName<'a>),
+    FieldMove(Box<edge::FieldMove<'a>>),
+    EntityMove(&'a str),
+    AbstractMove(&'a str),
+    InterfaceObjectTypeMove(&'a str),
+}
+
+impl<'a> From<&Edge<'a>> for EdgeLookupValue<'a> {
+    fn from(edge: &Edge<'a>) -> Self {
+        match edge {
+            Edge::SubgraphEntrypoint { name, .. } => Self::SubgraphEntrypoint(name.clone()),
+            Edge::FieldMove(field_move) => Self::FieldMove(field_move.clone()),
+            Edge::EntityMove(entity_move) => Self::EntityMove(entity_move.key),
+            Edge::AbstractMove(name) => Self::AbstractMove(name),
+            Edge::Selfie(_) => unreachable!("Selfie edges are intentionally not deduplicated"),
+            Edge::InterfaceObjectTypeMove(m) => Self::InterfaceObjectTypeMove(m.object_type_name),
+        }
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq)]
+struct EdgeLookupKey<'a> {
+    head: NodeIndex,
+    tail: NodeIndex,
+    value: EdgeLookupValue<'a>,
+}
+
+#[derive(Debug, Hash, PartialEq, Eq)]
+struct SubgraphNodeKey<'a> {
+    type_name: &'a str,
+    graph_id: &'a str,
+    is_interface_object: bool,
+}
+
+#[derive(Debug, Hash, PartialEq, Eq)]
+enum NodeSpecializationLookupKey<'a> {
+    Provides(u64),
+    UnionMembers {
+        type_name: &'a str,
+        field_name: &'a str,
+        possible_members: Arc<Vec<&'a str>>,
+    },
+}
+
+#[derive(Debug, Hash, PartialEq, Eq)]
+enum NodeLookupKey<'a> {
+    Root(&'a str),
+    SubgraphType {
+        name: &'a str,
+        subgraph: SubgraphName<'a>,
+        specialization: Option<NodeSpecializationLookupKey<'a>>,
+    },
+}
+
+impl<'a> From<&Node<'a>> for NodeLookupKey<'a> {
+    fn from(node: &Node<'a>) -> Self {
+        match node {
+            Node::QueryRoot(name) | Node::MutationRoot(name) | Node::SubscriptionRoot(name) => {
+                Self::Root(name)
+            }
+            Node::SubgraphType(subgraph_type) => Self::SubgraphType {
+                name: subgraph_type.name,
+                subgraph: subgraph_type.subgraph.clone(),
+                specialization: subgraph_type.specialization.as_ref().map(|specialization| {
+                    match specialization {
+                        SubgraphTypeSpecialization::Provides(provides_id) => {
+                            NodeSpecializationLookupKey::Provides(*provides_id)
+                        }
+                        SubgraphTypeSpecialization::UnionMembers(data) => {
+                            NodeSpecializationLookupKey::UnionMembers {
+                                type_name: data.type_name,
+                                field_name: data.field_name,
+                                possible_members: Arc::clone(&data.possible_members),
+                            }
+                        }
+                    }
+                }),
+            },
+        }
+    }
+}
+
+#[derive(Default)]
+struct GraphBuildContext<'a> {
+    subgraph_names: AHashMap<&'a str, SubgraphName<'a>>,
+    subgraph_nodes: AHashMap<SubgraphNodeKey<'a>, NodeIndex>,
+}
+
+impl<'a> GraphBuildContext<'a> {
+    fn resolve_graph_id(
+        &mut self,
+        state: &'a SupergraphState,
+        graph_id: &'a str,
+    ) -> Result<SubgraphName<'a>, GraphError> {
+        if let Some(name) = self.subgraph_names.get(graph_id) {
+            return Ok(name.clone());
+        }
+
+        let name = state.resolve_graph_id(graph_id)?;
+        self.subgraph_names.insert(graph_id, name.clone());
+        Ok(name)
+    }
+}
+
+type ImplementingObjects<'a> = AHashMap<&'a str, Vec<(&'a str, &'a SupergraphDefinition)>>;
 
 type UnionTypeName<'a> = &'a str;
-type SubgraphName<'a> = &'a str;
-type UnionMemberTypes<'a> = HashSet<&'a str>;
+type SubgraphKey<'a> = &'a str;
+type UnionMemberTypes<'a> = AHashSet<&'a str>;
 type UnionRegistyHashMap<'a> =
-    HashMap<UnionTypeName<'a>, HashMap<SubgraphName<'a>, UnionMemberTypes<'a>>>;
+    AHashMap<UnionTypeName<'a>, AHashMap<SubgraphKey<'a>, UnionMemberTypes<'a>>>;
 
 #[derive(Debug, Default)]
 struct UnionDefinitions<'a> {
@@ -48,14 +261,15 @@ struct UnionDefinitions<'a> {
 
 impl<'a> UnionDefinitions<'a> {
     pub fn new(state: &'a SupergraphState) -> Self {
-        let mut registry: UnionRegistyHashMap<'a> = UnionRegistyHashMap::new();
+        let mut registry: UnionRegistyHashMap<'a> = UnionRegistyHashMap::default();
 
         for (def_name, definition) in state
             .definitions
             .iter()
             .filter(|(_, d)| matches!(d, SupergraphDefinition::Union(_)))
         {
-            let mut in_subgraphs: HashMap<SubgraphName<'a>, UnionMemberTypes<'a>> = HashMap::new();
+            let mut in_subgraphs: AHashMap<SubgraphKey<'a>, UnionMemberTypes<'a>> =
+                AHashMap::default();
 
             for join_member in definition.join_union_members() {
                 in_subgraphs
@@ -64,7 +278,7 @@ impl<'a> UnionDefinitions<'a> {
                         e.insert(&join_member.member);
                     })
                     .or_insert_with(|| {
-                        let mut set: UnionMemberTypes<'a> = HashSet::new();
+                        let mut set: UnionMemberTypes<'a> = AHashSet::default();
                         set.insert(&join_member.member);
                         set
                     });
@@ -91,7 +305,7 @@ impl<'a> UnionDefinitions<'a> {
         &self,
         field_def: &'a SupergraphField,
         field_type: &str,
-        graph_id: &str,
+        graph_id: &'a str,
     ) -> UnionMemberTypes<'a> {
         // Collect subgraphs the field was defined in.
         // First, look for join__field(graph:),
@@ -105,7 +319,9 @@ impl<'a> UnionDefinitions<'a> {
             if let Some(type_in_graph) = join_field.type_in_graph.as_ref().map(|t| t.inner_type()) {
                 // join__field(type:) can narrow a union-returning field to one concrete member.
                 if type_in_graph != field_type {
-                    return UnionMemberTypes::from([type_in_graph]);
+                    let mut members = UnionMemberTypes::default();
+                    members.insert(type_in_graph);
+                    return members;
                 }
             }
         }
@@ -117,37 +333,94 @@ impl<'a> UnionDefinitions<'a> {
 }
 
 #[derive(Debug, Default)]
-pub struct Graph {
-    pub graph: InnerGraph,
+pub struct Graph<'a> {
+    pub graph: Petgraph<Node<'a>, Edge<'a>, Directed>,
     pub query_root: NodeIndex,
     pub mutation_root: Option<NodeIndex>,
     pub subscription_root: Option<NodeIndex>,
     pub node_display_name_to_index: HashMap<String, NodeIndex>,
+    node_to_index: AHashMap<NodeLookupKey<'a>, NodeIndex>,
+    edge_index: AHashMap<EdgeLookupKey<'a>, EdgeIndex>,
 }
 
-impl Graph {
+impl<'a> Graph<'a> {
     #[instrument(level = "trace", skip(supergraph_state))]
     pub fn graph_from_supergraph_state(
-        supergraph_state: &SupergraphState,
+        supergraph_state: &'a SupergraphState,
     ) -> Result<Self, GraphError> {
+        let (node_capacity, edge_capacity) = Self::estimate_capacity(supergraph_state);
         let mut instance = Graph {
             node_display_name_to_index: HashMap::new(),
-            graph: InnerGraph::new(),
+            node_to_index: AHashMap::default(),
+            edge_index: AHashMap::default(),
+            graph: Petgraph::with_capacity(node_capacity, edge_capacity),
             ..Default::default()
         };
+        instance.node_to_index.reserve(node_capacity);
+        instance.edge_index.reserve(edge_capacity);
 
         instance.build_graph(supergraph_state)?;
 
         Ok(instance)
     }
 
-    pub fn node(&self, node_index: NodeIndex) -> Result<&Node, GraphError> {
+    fn estimate_capacity(state: &SupergraphState) -> (usize, usize) {
+        let mut nodes = 3;
+        let mut edges = 0;
+
+        for definition in state.definitions.values() {
+            if !Self::needs_output_traversal(definition) {
+                continue;
+            }
+
+            let join_type_count = definition.join_types().len();
+            let field_count = definition.fields().len();
+
+            nodes += join_type_count.max(1);
+            edges += join_type_count; // selfies and root-ish edges
+            edges += join_type_count * field_count.max(1);
+            edges += join_type_count * join_type_count;
+
+            if matches!(definition, SupergraphDefinition::Union(_)) {
+                nodes += definition.join_union_members().len();
+                edges += definition.join_union_members().len();
+            }
+        }
+
+        (nodes, edges)
+    }
+
+    fn needs_output_traversal(definition: &SupergraphDefinition) -> bool {
+        matches!(
+            definition,
+            SupergraphDefinition::Object(_)
+                | SupergraphDefinition::Interface(_)
+                | SupergraphDefinition::Union(_)
+        )
+    }
+
+    fn can_have_entity_moves(definition: &SupergraphDefinition) -> bool {
+        matches!(
+            definition,
+            SupergraphDefinition::Object(_) | SupergraphDefinition::Interface(_)
+        )
+    }
+
+    fn is_leaf_output_type(state: &SupergraphState, type_name: &str) -> bool {
+        state.is_scalar_type(type_name)
+            || state
+                .definitions
+                .get(type_name)
+                .is_some_and(|definition| matches!(definition, SupergraphDefinition::Enum(_)))
+    }
+
+    pub fn node(&self, node_index: NodeIndex) -> Result<&Node<'a>, GraphError> {
         self.graph
             .node_weight(node_index)
             .ok_or(GraphError::NodeNotFound(node_index))
     }
 
-    pub fn edge(&self, edge_index: EdgeIndex) -> Result<&Edge, GraphError> {
+    pub fn edge(&self, edge_index: EdgeIndex) -> Result<&Edge<'a>, GraphError> {
         self.graph
             .edge_weight(edge_index)
             .ok_or(GraphError::EdgeNotFound(edge_index))
@@ -168,18 +441,27 @@ impl Graph {
     }
 
     #[instrument(level = "trace", skip(self, state))]
-    fn build_graph(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
+    fn build_graph(&mut self, state: &'a SupergraphState) -> Result<(), GraphError> {
         trace!(
             "Building graph for supergraph with {} definitions",
             state.definitions.len()
         );
 
+        let mut build_context = GraphBuildContext::default();
+        let mut selection_cache = SelectionCache::default();
+
         self.build_root_nodes(state)?;
-        self.link_root_edges(state)?;
-        self.build_field_edges(state)?;
-        self.build_interface_implementation_edges(state)?;
-        self.build_entity_reference_edges(state)?;
-        self.build_viewed_field_edges(state)?;
+        self.link_root_edges(state, &mut build_context)?;
+        self.build_field_edges(state, &mut build_context, &mut selection_cache)?;
+        self.build_interface_implementation_edges(state, &mut build_context)?;
+        self.build_entity_reference_edges(state, &mut build_context, &mut selection_cache)?;
+        self.build_viewed_field_edges(state, &mut build_context, &mut selection_cache)?;
+
+        self.node_display_name_to_index = self
+            .graph
+            .node_indices()
+            .map(|ni| (self.graph[ni].display_name(), ni))
+            .collect();
 
         Ok(())
     }
@@ -202,83 +484,152 @@ impl Graph {
     }
 
     #[instrument(level = "trace", skip(self, state))]
-    fn build_root_nodes(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
-        self.query_root = self.upsert_node(Node::QueryRoot(state.query_type.clone()));
+    fn build_root_nodes(&mut self, state: &'a SupergraphState) -> Result<(), GraphError> {
+        self.query_root = self.upsert_node(Node::QueryRoot(&state.query_type));
         trace!("added root type for queries: {}", state.query_type);
         self.mutation_root = state.mutation_type.as_ref().map(|mutation_type| {
             trace!("added root type for mutations: {}", mutation_type);
-            self.upsert_node(Node::MutationRoot(mutation_type.clone()))
+            self.upsert_node(Node::MutationRoot(mutation_type))
         });
         self.subscription_root = state.subscription_type.as_ref().map(|subscription_type| {
             trace!("added root type for subscriptions: {}", subscription_type);
-            self.upsert_node(Node::SubscriptionRoot(subscription_type.clone()))
+            self.upsert_node(Node::SubscriptionRoot(subscription_type))
         });
 
         Ok(())
     }
 
-    pub fn upsert_node(&mut self, node: Node) -> NodeIndex {
-        let display_identifier = node.display_name();
-
-        if let Some(index) = self.node_display_name_to_index.get(&display_identifier) {
+    pub fn upsert_node(&mut self, node: Node<'a>) -> NodeIndex {
+        let lookup_key = NodeLookupKey::from(&node);
+        if let Some(index) = self.node_to_index.get(&lookup_key) {
             return *index;
         }
 
         let index = self.graph.add_node(node);
-        self.node_display_name_to_index
-            .insert(display_identifier, index);
+        self.node_to_index.insert(lookup_key, index);
 
         index
     }
 
-    pub fn upsert_edge(&mut self, head: NodeIndex, tail: NodeIndex, edge: Edge) -> EdgeIndex {
-        let existing_edge = self
-            .graph
-            .edges_connecting(head, tail)
-            .find_map(|edge_ref| {
-                let edge_weight = edge_ref.weight();
+    fn upsert_subgraph_node(
+        &mut self,
+        build_context: &mut GraphBuildContext<'a>,
+        state: &'a SupergraphState,
+        type_name: &'a str,
+        graph_id: &'a str,
+        is_interface_object: bool,
+    ) -> Result<NodeIndex, GraphError> {
+        let key = SubgraphNodeKey {
+            type_name,
+            graph_id,
+            is_interface_object,
+        };
 
-                if edge_weight == &edge {
-                    Some(edge_ref.id())
-                } else {
-                    None
-                }
-            });
-
-        if let Some(edge) = existing_edge {
-            edge
-        } else {
-            self.graph.add_edge(head, tail, edge)
+        if let Some(index) = build_context.subgraph_nodes.get(&key) {
+            return Ok(*index);
         }
+
+        let subgraph_name = build_context.resolve_graph_id(state, graph_id)?;
+
+        let node = Node::new_node(type_name, subgraph_name, is_interface_object);
+        let lookup_key = NodeLookupKey::from(&node);
+
+        if let Some(index) = self.node_to_index.get(&lookup_key) {
+            build_context.subgraph_nodes.insert(key, *index);
+            return Ok(*index);
+        }
+
+        let index = self.graph.add_node(node);
+        self.node_to_index.insert(lookup_key, index);
+        build_context.subgraph_nodes.insert(key, index);
+
+        Ok(index)
     }
 
-    #[instrument(level = "trace", skip(self, state))]
-    fn build_entity_reference_edges(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
-        for (def_name, definition) in state.definitions.iter() {
+    pub fn upsert_edge(&mut self, head: NodeIndex, tail: NodeIndex, edge: Edge<'a>) -> EdgeIndex {
+        if matches!(edge, Edge::Selfie(_)) {
+            return self.graph.add_edge(head, tail, edge);
+        }
+
+        let lookup_key = EdgeLookupKey {
+            head,
+            tail,
+            value: EdgeLookupValue::from(&edge),
+        };
+
+        if let Some(edge_index) = self.edge_index.get(&lookup_key) {
+            return *edge_index;
+        }
+
+        let edge_index = self.graph.add_edge(head, tail, edge);
+        self.edge_index.insert(lookup_key, edge_index);
+        edge_index
+    }
+
+    fn push_edge(&mut self, head: NodeIndex, tail: NodeIndex, edge: Edge<'a>) -> EdgeIndex {
+        self.graph.add_edge(head, tail, edge)
+    }
+
+    #[instrument(level = "trace", skip(self, state, build_context, selection_cache))]
+    fn build_entity_reference_edges(
+        &mut self,
+        state: &'a SupergraphState,
+        build_context: &mut GraphBuildContext<'a>,
+        selection_cache: &mut SelectionCache<'a>,
+    ) -> Result<(), GraphError> {
+        let mut implementing_objects: ImplementingObjects<'_> = AHashMap::default();
+        for (object_type_name, object_type_definition) in state
+            .definitions
+            .iter()
+            .filter(|(_name, def)| matches!(def, SupergraphDefinition::Object(..)))
+        {
+            for join_implements in object_type_definition.join_implements() {
+                implementing_objects
+                    .entry(join_implements.interface.as_str())
+                    .or_default()
+                    .push((object_type_name.as_str(), object_type_definition));
+            }
+        }
+
+        for (def_name, definition) in state
+            .definitions
+            .iter()
+            .filter(|(_, definition)| Self::can_have_entity_moves(definition))
+        {
             let is_interface = definition.is_interface_type();
-            for join_type1 in definition.join_types() {
-                // Connects object and interface entities of the same name by @key
-                for join_type2 in definition.join_types() {
-                    let head = self.upsert_node(Node::new_node(
+            let join_nodes = definition
+                .join_types()
+                .iter()
+                .map(|join_type| {
+                    let node = self.upsert_subgraph_node(
+                        build_context,
+                        state,
                         def_name,
-                        state.resolve_graph_id(&join_type1.graph_id)?,
-                        join_type1.is_interface_object,
-                    ));
-
-                    if join_type1.graph_id != join_type2.graph_id {
-                        if let (true, Some(key)) = (&join_type2.resolvable, &join_type2.key) {
-                            let tail = self.upsert_node(Node::new_node(
-                                def_name,
-                                state.resolve_graph_id(&join_type2.graph_id)?,
-                                join_type2.is_interface_object,
-                            ));
-                            let key_selection = FederationRules::parse_key(
+                        join_type.graph_id.as_str(),
+                        join_type.is_interface_object,
+                    )?;
+                    let key_selection = join_type.key.as_ref().and_then(|key| {
+                        join_type.resolvable.then(|| {
+                            selection_cache.parse_key(
                                 state,
-                                &join_type2.graph_id,
+                                join_type.graph_id.as_str(),
                                 def_name,
-                                key,
-                            );
+                                key.as_str(),
+                            )
+                        })
+                    });
 
+                    Ok((join_type, node, key_selection))
+                })
+                .collect::<Result<Vec<_>, GraphError>>()?;
+
+            for (join_type1, head, key_selection1) in &join_nodes {
+                // Connects object and interface entities of the same name by @key
+                for (join_type2, tail, key_selection2) in &join_nodes {
+                    if join_type1.graph_id != join_type2.graph_id {
+                        if let (Some(key), Some(key_selection)) =
+                            (&join_type2.key, key_selection2.as_ref())
+                        {
                             trace!(
                                 "Creating entity move edge from '{}/{}' to '{}/{}' via key '{}'",
                                 def_name,
@@ -289,15 +640,14 @@ impl Graph {
                             );
 
                             self.upsert_edge(
-                                head,
-                                tail,
-                                Edge::create_entity_move(key, key_selection, is_interface),
+                                *head,
+                                *tail,
+                                Edge::create_entity_move(key, key_selection.clone(), is_interface),
                             );
                         }
-                    } else if let (true, Some(key)) = (&join_type1.resolvable, &join_type1.key) {
-                        let key_selection =
-                            FederationRules::parse_key(state, &join_type1.graph_id, def_name, key);
-
+                    } else if let (Some(key), Some(key_selection)) =
+                        (&join_type1.key, key_selection1.as_ref())
+                    {
                         trace!(
                             "Creating self-referencing entity move edge in '{}/{}' via key '{}'",
                             def_name,
@@ -306,9 +656,9 @@ impl Graph {
                         );
 
                         self.upsert_edge(
-                            head,
-                            head,
-                            Edge::create_entity_move(key, key_selection, is_interface),
+                            *head,
+                            *head,
+                            Edge::create_entity_move(key, key_selection.clone(), is_interface),
                         );
                     }
                 }
@@ -329,37 +679,26 @@ impl Graph {
                 }
 
                 let interface_object_name = def_name;
-                let tail = self.upsert_node(Node::new_node(
-                    interface_object_name,
-                    state.resolve_graph_id(&join_type1.graph_id)?,
-                    join_type1.is_interface_object,
-                ));
-
-                let typename_selection = FederationRules::parse_key(
+                let tail = self.upsert_subgraph_node(
+                    build_context,
                     state,
-                    &join_type1.graph_id,
                     interface_object_name,
-                    &"__typename".to_string(),
+                    join_type1.graph_id.as_str(),
+                    join_type1.is_interface_object,
+                )?;
+
+                let typename_selection = selection_cache.parse_key(
+                    state,
+                    join_type1.graph_id.as_str(),
+                    interface_object_name,
+                    "__typename",
                 );
 
-                for (object_type_name, object_type_definition) in state
-                    .definitions
-                    .iter()
-                    .filter(|(_name, def)| matches!(def, SupergraphDefinition::Object(..)))
+                for &(object_type_name, object_type_definition) in implementing_objects
+                    .get(interface_object_name.as_str())
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
                 {
-                    let SupergraphDefinition::Object(object_type) = object_type_definition else {
-                        panic!("Expected to get an Object type after filtering");
-                    };
-
-                    // Ignore if the object type does not implement the matching interface
-                    if !object_type
-                        .join_implements
-                        .iter()
-                        .any(|j| &j.interface == interface_object_name)
-                    {
-                        continue;
-                    }
-
                     // In order to support fragments with type conditions
                     // or `__typename` on @interfaceObject
                     // we need tell the Query Planner that this action occured,
@@ -393,11 +732,11 @@ impl Graph {
                         .as_ref()
                         .expect("@interfaceObject to have a key");
 
-                    let key_selection = FederationRules::parse_key(
+                    let key_selection = selection_cache.parse_key(
                         state,
-                        &join_type1.graph_id,
+                        join_type1.graph_id.as_str(),
                         interface_object_name,
-                        key,
+                        key.as_str(),
                     );
 
                     for join_type2 in object_type_definition.join_types() {
@@ -408,11 +747,13 @@ impl Graph {
                             continue;
                         }
 
-                        let head = self.upsert_node(Node::new_node(
+                        let head = self.upsert_subgraph_node(
+                            build_context,
+                            state,
                             object_type_name,
-                            state.resolve_graph_id(&join_type2.graph_id)?,
+                            join_type2.graph_id.as_str(),
                             join_type2.is_interface_object,
-                        ));
+                        )?;
 
                         trace!(
                             "Creating entity move edge from '{}/{}' to '{}/{}' via key '{}'",
@@ -436,10 +777,11 @@ impl Graph {
         Ok(())
     }
 
-    #[instrument(level = "trace", skip(self, state))]
+    #[instrument(level = "trace", skip(self, state, build_context))]
     fn build_interface_implementation_edges(
         &mut self,
-        state: &SupergraphState,
+        state: &'a SupergraphState,
+        build_context: &mut GraphBuildContext<'a>,
     ) -> Result<(), GraphError> {
         for (def_name, definition) in state
             .definitions
@@ -447,20 +789,24 @@ impl Graph {
             .filter(|(_, d)| matches!(d, SupergraphDefinition::Object(_)))
         {
             for join_implements in definition.join_implements() {
-                let tail = self.upsert_node(Node::new_node(
+                let tail = self.upsert_subgraph_node(
+                    build_context,
+                    state,
                     def_name,
-                    state.resolve_graph_id(&join_implements.graph_id)?,
+                    join_implements.graph_id.as_str(),
                     // The definition are object types,
                     // so it can't be @interfaceObject (it'd has be Interface).
                     false,
-                ));
-                let head = self.upsert_node(Node::new_node(
+                )?;
+                let head = self.upsert_subgraph_node(
+                    build_context,
+                    state,
                     &join_implements.interface,
-                    state.resolve_graph_id(&join_implements.graph_id)?,
+                    join_implements.graph_id.as_str(),
                     // The definition are object types,
                     // so it can't be @interfaceObject (it'd has be Interface).
                     false,
-                ));
+                )?;
 
                 trace!(
                     "Building interface implementation edge from '{}/{}' to '{}/{}'",
@@ -470,22 +816,18 @@ impl Graph {
                     join_implements.graph_id
                 );
 
-                self.upsert_edge(
-                    head,
-                    tail,
-                    Edge::AbstractMove(definition.name().to_string()),
-                );
+                self.push_edge(head, tail, Edge::AbstractMove(definition.name()));
             }
         }
 
         Ok(())
     }
 
-    pub fn root_query_node(&self) -> &Node {
+    pub fn root_query_node(&self) -> &Node<'a> {
         &self.graph[self.query_root]
     }
 
-    pub fn root_mutation_node(&self) -> Option<&Node> {
+    pub fn root_mutation_node(&self) -> Option<&Node<'a>> {
         if let Some(mutation_root) = self.mutation_root {
             Some(&self.graph[mutation_root])
         } else {
@@ -493,7 +835,7 @@ impl Graph {
         }
     }
 
-    pub fn root_subscription_node(&self) -> Option<&Node> {
+    pub fn root_subscription_node(&self) -> Option<&Node<'a>> {
         if let Some(subscription_root) = self.subscription_root {
             Some(&self.graph[subscription_root])
         } else {
@@ -501,19 +843,28 @@ impl Graph {
         }
     }
 
-    pub fn edges_to(&self, node_index: NodeIndex) -> Edges<'_, Edge, Directed> {
+    pub fn edges_to(&self, node_index: NodeIndex) -> Edges<'_, Edge<'a>, Directed> {
         self.graph.edges_directed(node_index, Direction::Incoming)
     }
 
-    pub fn edges_from(&self, node_index: NodeIndex) -> Edges<'_, Edge, Directed> {
+    pub fn edges_from(&self, node_index: NodeIndex) -> Edges<'_, Edge<'a>, Directed> {
         self.graph.edges_directed(node_index, Direction::Outgoing)
     }
 
-    #[instrument(level = "trace", skip(self, state))]
-    fn link_root_edges(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
-        for (def_name, definition) in state.definitions.iter() {
+    #[instrument(level = "trace", skip(self, state, build_context))]
+    fn link_root_edges(
+        &mut self,
+        state: &'a SupergraphState,
+        build_context: &mut GraphBuildContext<'a>,
+    ) -> Result<(), GraphError> {
+        for (def_name, definition) in state
+            .definitions
+            .iter()
+            .filter(|(_, definition)| Self::needs_output_traversal(definition))
+        {
             if let Some(root_type) = definition.try_into_root_type() {
-                for graph_id in definition.subgraphs().iter() {
+                for join_type in definition.join_types().iter() {
+                    let graph_id = join_type.graph_id.as_str();
                     let relevant_fields = definition
                         .fields()
                         .iter()
@@ -526,7 +877,7 @@ impl Graph {
                                 );
 
                             if is_available {
-                                Some(field_name.to_string())
+                                Some(&**field_name)
                             } else {
                                 None
                             }
@@ -541,18 +892,21 @@ impl Graph {
                         }
                         .ok_or(GraphError::MissingRootType(root_type.clone()))?;
 
-                        let tail = self.upsert_node(Node::new_node(
+                        let tail = self.upsert_subgraph_node(
+                            build_context,
+                            state,
                             def_name,
-                            state.resolve_graph_id(graph_id)?,
+                            graph_id,
                             state.is_interface_object_in_subgraph(def_name, graph_id),
-                        ));
+                        )?;
+                        let graph_name = build_context.resolve_graph_id(state, graph_id)?;
 
-                        self.upsert_edge(
+                        self.push_edge(
                             head,
                             tail,
                             Edge::SubgraphEntrypoint {
                                 field_names: relevant_fields,
-                                name: state.resolve_graph_id(graph_id)?,
+                                name: graph_name,
                             },
                         );
                     }
@@ -563,21 +917,26 @@ impl Graph {
         Ok(())
     }
 
-    #[instrument(level = "trace", skip(self, state))]
-    fn build_field_edges(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
+    #[instrument(level = "trace", skip(self, state, build_context, selection_cache))]
+    fn build_field_edges(
+        &mut self,
+        state: &'a SupergraphState,
+        build_context: &mut GraphBuildContext<'a>,
+        selection_cache: &mut SelectionCache<'a>,
+    ) -> Result<(), GraphError> {
         let unions = UnionDefinitions::new(state);
 
-        for (def_name, definition) in state.definitions.iter() {
-            for graph_id in definition.subgraphs().iter() {
-                let graph_name = state.resolve_graph_id(graph_id)?;
-                if !definition.is_defined_in_subgraph(graph_id) {
-                    continue;
-                }
+        for (def_name, definition) in state
+            .definitions
+            .iter()
+            .filter(|(_, definition)| Self::can_have_entity_moves(definition))
+        {
+            // TODO: join_types can be repeated for the same graph, when there are multiple `@key`.
+            for join_type in definition.join_types().iter() {
+                let graph_id = join_type.graph_id.as_str();
+                let graph_name = build_context.resolve_graph_id(state, graph_id)?;
 
-                let is_interface_object = definition
-                    .extract_join_types_for(graph_id)
-                    .iter()
-                    .any(|j| j.is_interface_object);
+                let is_interface_object = join_type.is_interface_object;
                 let has_resolvable_typename = matches!(
                     definition,
                     SupergraphDefinition::Object(_)
@@ -585,37 +944,36 @@ impl Graph {
                         | SupergraphDefinition::Interface(_)
                 ) && !is_interface_object;
 
+                let head = self.upsert_subgraph_node(
+                    build_context,
+                    state,
+                    def_name,
+                    graph_id,
+                    state.is_interface_object_in_subgraph(def_name, graph_id),
+                )?;
+
                 if has_resolvable_typename {
-                    let field_name = "__typename".to_string();
+                    let field_name = "__typename";
                     trace!(
                         "[x] Creating owned field move edge '{}.__typename/{}' (type: String)",
                         def_name,
                         graph_id
                     );
-                    let head = self.upsert_node(Node::new_node(
+                    let typename_head = self.upsert_subgraph_node(
+                        build_context,
+                        state,
                         def_name,
-                        state.resolve_graph_id(graph_id)?,
+                        graph_id,
                         // __typename is not resolable for @interfaceObject so it's not it
                         false,
-                    ));
-                    let tail = self.upsert_node(Node::new_node(
-                        "String",
-                        state.resolve_graph_id(graph_id)?,
-                        // String is not an @interfaceObject
-                        false,
-                    ));
+                    )?;
+                    let tail = typename_head;
 
-                    self.upsert_edge(
-                        head,
+                    self.push_edge(
+                        typename_head,
                         tail,
                         Edge::create_field_move(
-                            field_name,
-                            def_name.clone(),
-                            true,
-                            false,
-                            None,
-                            None,
-                            None,
+                            field_name, def_name, true, false, None, None, None,
                         ),
                     );
                 }
@@ -625,12 +983,7 @@ impl Graph {
                     def_name,
                     graph_id
                 );
-                let head = self.upsert_node(Node::new_node(
-                    def_name,
-                    state.resolve_graph_id(graph_id)?,
-                    state.is_interface_object_in_subgraph(def_name, graph_id),
-                ));
-                self.upsert_edge(head, head, Edge::Selfie(def_name.clone()));
+                self.push_edge(head, head, Edge::Selfie(def_name));
 
                 for (field_name, field_definition) in definition.fields().iter() {
                     let (is_available, maybe_join_field) =
@@ -655,14 +1008,14 @@ impl Graph {
                     // This prevents the current subgraph from creating a resolvable edge for a field it no longer owns.
                     let overridden_by = field_definition.join_field.iter().find_map(|jf| {
                         if let Some(override_from) = &jf.override_value {
-                            if override_from == &graph_name.0 {
+                            if override_from.as_str() == graph_name.0 {
                                 let overriding_subgraph_name = state
                                     .resolve_graph_id(jf.graph_id.as_ref().expect(
                                         "@override must be on a @join__field with a graph argument",
                                     ))
                                     .unwrap();
                                 return Some((
-                                    overriding_subgraph_name.0,
+                                    overriding_subgraph_name.0.to_string(),
                                     jf.override_label.clone(),
                                 ));
                             }
@@ -685,20 +1038,20 @@ impl Graph {
                         continue;
                     }
 
-                    let requirements = maybe_join_field.and_then(|join_field| {
-                        join_field.requires.as_ref().map(|requires_str| {
-                          (requires_str, join_field.graph_id.as_ref().expect("join__field(graph:) should exist when join__field(requires:) exists"))
+                    let requirements = maybe_join_field
+                        .and_then(|join_field| {
+                            join_field.requires.as_ref().map(|requires_str| {
+                                (requires_str, join_field.graph_id.as_ref().expect("join__field(graph:) should exist when join__field(requires:) exists"))
+                            })
                         })
-                    }).map(|(requires_str, graph_id)| TypeAwareSelection {
-                              type_name: def_name.to_string(),
-                              selection_set: FederationRules::parse_requires(
+                        .map(|(requires_str, graph_id)| {
+                            selection_cache.parse_requires(
                                 state,
                                 graph_id,
                                 def_name,
-                                requires_str,
-                              )
-                              .into(),
-                          });
+                                requires_str.as_str(),
+                            )
+                        });
 
                     // If a field points to a union type:
                     //
@@ -732,17 +1085,12 @@ impl Graph {
                     // Viewer.song   (A)     = Book | Sing     (no intersection - it lives in a single subgraph)
                     //
                     // We need to point it to a subset of object types.
-                    // We do it by creating a new Node for each edge's tail,
-                    // and from the tail we create abstract-move edges to the object types.
+                    // We do it by creating a specialized tail for this field's reachable
+                    // member set, and from the tail we create abstract-move edges to the
+                    // object types.
                     //
                     let target_type_is_union = unions.contains(target_type);
                     if target_type_is_union {
-                        let head = self.upsert_node(Node::new_node(
-                            def_name,
-                            state.resolve_graph_id(graph_id)?,
-                            state.is_interface_object_in_subgraph(def_name, graph_id),
-                        ));
-
                         // Build union-member edges for the current subgraph only. Doing a global
                         // intersection here strips valid members from pinned paths such as
                         // Query.getResponse -> Response/A -> actions, where A knows the full union.
@@ -751,10 +1099,13 @@ impl Graph {
                             .into_iter()
                             .collect::<Vec<_>>();
                         member_types.sort_unstable();
-                        let possible_members: Vec<String> = member_types
-                            .iter()
-                            .map(|member| member.to_string())
-                            .collect::<Vec<_>>();
+                        if member_types.is_empty() {
+                            continue;
+                        }
+
+                        let possible_members = Arc::new(member_types.to_vec());
+                        let representative_member =
+                            *possible_members.first().expect("member_types is not empty");
 
                         trace!(
                             "Handling a field {}.{}/{} resolving a union type {}",
@@ -764,79 +1115,74 @@ impl Graph {
                             target_type
                         );
 
-                        for member in member_types {
-                            let tail = self.upsert_node(Node::new_specialized_node(
-                                target_type,
-                                state.resolve_graph_id(graph_id)?,
-                                state.is_interface_object_in_subgraph(target_type, graph_id),
-                                SubgraphTypeSpecialization::UnionMembers(UnionMembersData {
-                                    type_name: def_name.clone(),
-                                    field_name: field_name.clone(),
-                                    object_type_name: member.to_string(),
-                                    possible_members: possible_members.clone(),
-                                    provides: None,
-                                }),
-                            ));
-                            let abstract_tail = self.upsert_node(Node::new_node(
-                                member,
-                                state.resolve_graph_id(graph_id)?,
-                                state.is_interface_object_in_subgraph(member, graph_id),
-                            ));
-                            // because we duplicate tails, we need to add __typename to all of them
-                            let typename_tail = self.upsert_node(Node::new_node(
-                                "String",
-                                state.resolve_graph_id(graph_id)?,
-                                false,
-                            ));
-
-                            trace!(
-                                "  [x] Creating field move edge '{}.__typename/{}' (type: String)",
-                                def_name,
-                                graph_id
-                            );
-                            self.upsert_edge(
-                                tail,
-                                typename_tail,
-                                Edge::create_field_move(
-                                    "__typename".to_string(),
-                                    target_type.to_string(),
-                                    true,
-                                    false,
-                                    None,
-                                    None,
-                                    None,
-                                ),
-                            );
-
-                            trace!(
-                                "  [x] Creating field move edge '{}.{}/{}' (type: String)",
-                                def_name,
+                        let tail = self.upsert_node(Node::new_specialized_node(
+                            target_type,
+                            graph_name.clone(),
+                            state.is_interface_object_in_subgraph(target_type, graph_id),
+                            SubgraphTypeSpecialization::UnionMembers(UnionMembersData {
+                                type_name: def_name,
                                 field_name,
-                                graph_id
-                            );
-                            self.upsert_edge(
-                                head,
-                                tail,
-                                Edge::create_field_move(
-                                    field_name.clone(),
-                                    def_name.clone(),
-                                    state.is_scalar_type(target_type),
-                                    field_definition.field_type.is_list(),
-                                    None,
-                                    requirements.clone(),
-                                    overridden_by.clone(),
-                                ),
-                            );
+                                object_type_name: representative_member,
+                                possible_members: possible_members.clone(),
+                                provides: None,
+                            }),
+                        ));
+
+                        let typename_tail = tail;
+
+                        trace!(
+                            "  [x] Creating field move edge '{}.__typename/{}' (type: String)",
+                            def_name,
+                            graph_id
+                        );
+                        self.push_edge(
+                            tail,
+                            typename_tail,
+                            Edge::create_field_move(
+                                "__typename",
+                                target_type,
+                                true,
+                                false,
+                                None,
+                                None,
+                                None,
+                            ),
+                        );
+
+                        trace!(
+                            "  [x] Creating field move edge '{}.{}/{}' (type: String)",
+                            def_name,
+                            field_name,
+                            graph_id
+                        );
+                        self.push_edge(
+                            head,
+                            tail,
+                            Edge::create_field_move(
+                                field_name,
+                                def_name,
+                                state.is_scalar_type(target_type),
+                                field_definition.field_type.is_list(),
+                                None,
+                                requirements.clone(),
+                                overridden_by.clone(),
+                            ),
+                        );
+
+                        for member in member_types {
+                            let abstract_tail = self.upsert_subgraph_node(
+                                build_context,
+                                state,
+                                member,
+                                graph_id,
+                                state.is_interface_object_in_subgraph(member, graph_id),
+                            )?;
 
                             trace!(
                                 "  [x] Creating abstract move edge for '{}.{}/{}' (union member: {})",
                                 def_name, field_name, graph_id, member
                             );
-                            self.upsert_edge(
-                                tail,
-                                abstract_tail,
-                                Edge::AbstractMove(member.to_string()),
-                            );
+                            self.push_edge(tail, abstract_tail, Edge::AbstractMove(member));
                         }
 
                         continue;
@@ -850,16 +1196,18 @@ impl Graph {
                         target_type
                     );
 
-                    let head = self.upsert_node(Node::new_node(
-                        def_name,
-                        state.resolve_graph_id(graph_id)?,
-                        state.is_interface_object_in_subgraph(def_name, graph_id),
-                    ));
-                    let tail = self.upsert_node(Node::new_node(
-                        target_type,
-                        state.resolve_graph_id(graph_id)?,
-                        state.is_interface_object_in_subgraph(target_type, graph_id),
-                    ));
+                    let is_leaf = Self::is_leaf_output_type(state, target_type);
+                    let tail = if is_leaf {
+                        head
+                    } else {
+                        self.upsert_subgraph_node(
+                            build_context,
+                            state,
+                            target_type,
+                            graph_id,
+                            state.is_interface_object_in_subgraph(target_type, graph_id),
+                        )?
+                    };
 
                     trace!(
                         "[x] Creating field move edge '{}.{}/{}' (type: {})",
@@ -873,9 +1221,9 @@ impl Graph {
                         head,
                         tail,
                         Edge::create_field_move(
-                            field_name.clone(),
-                            def_name.clone(),
-                            state.is_scalar_type(target_type),
+                            field_name,
+                            def_name,
+                            is_leaf,
                             field_definition.field_type.is_list(),
                             maybe_join_field.map(|join_field| match join_field.provides {
                                 Some(_) => {
@@ -900,13 +1248,16 @@ impl Graph {
         Ok(())
     }
 
-    #[instrument(level = "trace",skip(self, state, parent_type_def, head), fields(selection_set, parent_type_name = parent_type_def.name()))]
+    #[instrument(level = "trace",skip(self, state, build_context, selection_cache, parent_type_def, head), fields(selection_set, parent_type_name = parent_type_def.name()))]
+    #[allow(clippy::too_many_arguments)]
     fn handle_viewed_selection_set(
         &mut self,
-        state: &SupergraphState,
+        state: &'a SupergraphState,
+        build_context: &mut GraphBuildContext<'a>,
+        selection_cache: &mut SelectionCache<'a>,
         selection_set: &SelectionSet<'static, String>,
-        graph_id: &str,
-        parent_type_def: &SupergraphDefinition,
+        graph_id: &'a str,
+        parent_type_def: &'a SupergraphDefinition,
         head: NodeIndex,
         view_id: u64,
     ) -> Result<(), GraphError> {
@@ -915,16 +1266,18 @@ impl Graph {
             .iter()
             .filter(|jt| jt.resolvable && jt.key.is_some() && jt.graph_id != graph_id)
         {
-            let tail = self.upsert_node(Node::new_node(
-                parent_type_def.name(),
-                state.resolve_graph_id(&jt.graph_id)?,
-                jt.is_interface_object,
-            ));
-            let key_selection = FederationRules::parse_key(
+            let tail = self.upsert_subgraph_node(
+                build_context,
                 state,
-                &jt.graph_id,
                 parent_type_def.name(),
-                jt.key.as_ref().unwrap(),
+                jt.graph_id.as_str(),
+                jt.is_interface_object,
+            )?;
+            let key_selection = selection_cache.parse_key(
+                state,
+                jt.graph_id.as_str(),
+                parent_type_def.name(),
+                jt.key.as_ref().unwrap().as_str(),
             );
             trace!(
                 "Creating entity move edge from '{}/{}' to '{}/{}' via key '{}'",
@@ -949,8 +1302,10 @@ impl Graph {
             match selection {
                 Selection::Field(field) => {
                     let is_leaf = field.selection_set.items.is_empty();
-                    let field_in_parent =
-                        parent_type_def.fields().get(&field.name).ok_or_else(|| {
+                    let (field_name, field_in_parent) = parent_type_def
+                        .fields()
+                        .get_key_value(&field.name)
+                        .ok_or_else(|| {
                             GraphError::FieldDefinitionNotFound(
                                 field.name.clone(),
                                 parent_type_def.name().to_string(),
@@ -964,14 +1319,20 @@ impl Graph {
                         graph_id,
                     );
 
-                    let tail = self.upsert_node(Node::new_specialized_node(
-                        return_type_name,
-                        state.resolve_graph_id(graph_id)?,
-                        state.is_interface_object_in_subgraph(return_type_name, graph_id),
-                        SubgraphTypeSpecialization::Provides(view_id),
-                    ));
+                    let tail = if is_leaf {
+                        head
+                    } else {
+                        self.upsert_node(Node::new_specialized_node(
+                            return_type_name,
+                            build_context.resolve_graph_id(state, graph_id)?,
+                            state.is_interface_object_in_subgraph(return_type_name, graph_id),
+                            SubgraphTypeSpecialization::Provides(view_id),
+                        ))
+                    };
 
-                    self.upsert_edge(tail, tail, Edge::Selfie(return_type_name.to_string()));
+                    if !is_leaf {
+                        self.upsert_edge(tail, tail, Edge::Selfie(return_type_name));
+                    }
 
                     trace!(
                         "Creating viewed (#{}) field edge for '{}.{}' (type: {})",
@@ -985,9 +1346,9 @@ impl Graph {
                         head,
                         tail,
                         Edge::create_field_move(
-                            field.name.to_string(),
-                            parent_type_def.name().to_string(),
-                            state.is_scalar_type(parent_type_def.name()),
+                            field_name,
+                            parent_type_def.name(),
+                            is_leaf,
                             field_in_parent.field_type.is_list(),
                             None,
                             None,
@@ -1003,6 +1364,8 @@ impl Graph {
 
                         self.handle_viewed_selection_set(
                             state,
+                            build_context,
+                            selection_cache,
                             &field.selection_set,
                             graph_id,
                             return_type,
@@ -1022,28 +1385,27 @@ impl Graph {
                         state.definitions.get(type_name_from_cond).ok_or_else(|| {
                             GraphError::DefinitionNotFound(type_name_from_cond.to_string())
                         })?;
+                    let canonical_type_name = type_def_from_cond.name();
 
                     // head is either an interface or a union
                     // tail is a type from a type condition (it's an object type - after normalization)
                     let tail = self.upsert_node(Node::new_specialized_node(
-                        type_name_from_cond,
-                        state.resolve_graph_id(graph_id)?,
-                        state.is_interface_object_in_subgraph(type_name_from_cond, graph_id),
+                        canonical_type_name,
+                        build_context.resolve_graph_id(state, graph_id)?,
+                        state.is_interface_object_in_subgraph(canonical_type_name, graph_id),
                         SubgraphTypeSpecialization::Provides(view_id),
                     ));
 
-                    self.upsert_edge(tail, tail, Edge::Selfie(type_name_from_cond.to_string()));
+                    self.upsert_edge(tail, tail, Edge::Selfie(canonical_type_name));
 
                     // because it's abstract -> object move, add an abstract move edge
-                    self.upsert_edge(
-                        head,
-                        tail,
-                        Edge::AbstractMove(type_name_from_cond.to_string()),
-                    );
+                    self.upsert_edge(head, tail, Edge::AbstractMove(canonical_type_name));
 
                     // use object type (tail) when handling selection sets
                     self.handle_viewed_selection_set(
                         state,
+                        build_context,
+                        selection_cache,
                         &fragment.selection_set,
                         graph_id,
                         type_def_from_cond,
@@ -1063,8 +1425,13 @@ impl Graph {
         Ok(())
     }
 
-    #[instrument(level = "trace", skip(self, state))]
-    fn build_viewed_field_edges(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
+    #[instrument(level = "trace", skip(self, state, build_context, selection_cache))]
+    fn build_viewed_field_edges(
+        &mut self,
+        state: &'a SupergraphState,
+        build_context: &mut GraphBuildContext<'a>,
+        selection_cache: &mut SelectionCache<'a>,
+    ) -> Result<(), GraphError> {
         for (def_name, definition) in state.definitions.iter() {
             for join_type in definition.join_types().iter() {
                 let mut view_id = 0;
@@ -1081,22 +1448,25 @@ impl Graph {
                             .is_some_and(|v| v == &join_type.graph_id)
                             && join_field.provides.is_some()
                         {
-                            if let Some(selection_set) = FederationRules::parse_provides(
-                                state,
-                                join_field,
-                                &join_type.graph_id,
-                                field_definition.field_type.inner_type(),
-                            ) {
+                            if let Some(provides) = join_field.provides.as_ref() {
+                                let selection_set = selection_cache.parse_provides(
+                                    state,
+                                    join_type.graph_id.as_str(),
+                                    field_definition.field_type.inner_type(),
+                                    provides.as_str(),
+                                );
                                 view_id += 1;
 
-                                let head = self.upsert_node(Node::new_node(
+                                let head = self.upsert_subgraph_node(
+                                    build_context,
+                                    state,
                                     definition.name(),
-                                    state.resolve_graph_id(&join_type.graph_id)?,
+                                    join_type.graph_id.as_str(),
                                     state.is_interface_object_in_subgraph(
                                         definition.name(),
                                         &join_type.graph_id,
                                     ),
-                                ));
+                                )?;
 
                                 connection_to_build.insert(head, join_type.graph_id.clone());
 
@@ -1104,7 +1474,7 @@ impl Graph {
 
                                 let tail = self.upsert_node(Node::new_specialized_node(
                                     return_type_name,
-                                    state.resolve_graph_id(&join_type.graph_id)?,
+                                    build_context.resolve_graph_id(state, &join_type.graph_id)?,
                                     state.is_interface_object_in_subgraph(
                                         return_type_name,
                                         &join_type.graph_id,
@@ -1112,11 +1482,7 @@ impl Graph {
                                     SubgraphTypeSpecialization::Provides(view_id),
                                 ));
 
-                                self.upsert_edge(
-                                    tail,
-                                    tail,
-                                    Edge::Selfie(return_type_name.to_string()),
-                                );
+                                self.upsert_edge(tail, tail, Edge::Selfie(return_type_name));
 
                                 trace!(
                                     "Creating viewed (#{}) link for provided field '{}.{}/{:?}' (type: {})",
@@ -1125,24 +1491,20 @@ impl Graph {
 
                                 let requirements =
                                     join_field.requires.as_ref().map(|requires_str| {
-                                        TypeAwareSelection {
-                                            type_name: def_name.to_string(),
-                                            selection_set: FederationRules::parse_requires(
-                                                state,
-                                                join_field.graph_id.as_ref().unwrap(),
-                                                def_name,
-                                                requires_str,
-                                            )
-                                            .into(),
-                                        }
+                                        selection_cache.parse_requires(
+                                            state,
+                                            join_field.graph_id.as_ref().unwrap().as_str(),
+                                            def_name,
+                                            requires_str.as_str(),
+                                        )
                                     });
 
-                                self.upsert_edge(
+                                self.push_edge(
                                     head,
                                     tail,
                                     Edge::create_field_move(
-                                        field_name.to_string(),
-                                        def_name.clone(),
+                                        field_name,
+                                        def_name,
                                         state.is_scalar_type(
                                             field_definition.field_type.inner_type(),
                                         ),
@@ -1160,7 +1522,9 @@ impl Graph {
 
                                 self.handle_viewed_selection_set(
                                     state,
-                                    &selection_set,
+                                    build_context,
+                                    selection_cache,
+                                    selection_set.as_ref(),
                                     &join_type.graph_id,
                                     return_type,
                                     tail,
@@ -1175,16 +1539,18 @@ impl Graph {
                     for jt in definition.join_types().iter().filter(|jt| {
                         jt.resolvable && jt.key.is_some() && jt.graph_id != from_graph_id
                     }) {
-                        let tail = self.upsert_node(Node::new_node(
-                            def_name,
-                            state.resolve_graph_id(&jt.graph_id)?,
-                            jt.is_interface_object,
-                        ));
-                        let key_selection = FederationRules::parse_key(
+                        let tail = self.upsert_subgraph_node(
+                            build_context,
                             state,
-                            &jt.graph_id,
                             def_name,
-                            jt.key.as_ref().unwrap(),
+                            jt.graph_id.as_str(),
+                            jt.is_interface_object,
+                        )?;
+                        let key_selection = selection_cache.parse_key(
+                            state,
+                            jt.graph_id.as_str(),
+                            def_name,
+                            jt.key.as_ref().unwrap().as_str(),
                         );
                         trace!(
                             "Creating entity move edge from '{}/{}' to '{}/{}' via key '{}'",
@@ -1213,7 +1579,7 @@ impl Graph {
 }
 
 /// Print me with `println!("{}", graph);` to see the graph in DOT/digraph format.
-impl Display for Graph {
+impl Display for Graph<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", Dot::with_config(&self.graph, &[]))
     }

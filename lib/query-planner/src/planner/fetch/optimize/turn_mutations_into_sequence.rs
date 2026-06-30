@@ -8,7 +8,7 @@ use crate::planner::fetch::{
     error::FetchGraphError, fetch_graph::FetchGraph, state::MultiTypeFetchStep,
 };
 
-impl FetchGraph<MultiTypeFetchStep> {
+impl<'a> FetchGraph<'a, MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
     pub(crate) fn turn_mutations_into_sequence(&mut self) -> Result<(), FetchGraphError> {
         let root_index = self

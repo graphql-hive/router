@@ -2,6 +2,7 @@ use std::{
     collections::HashSet,
     fmt::{Debug, Display},
     hash::Hash,
+    sync::Arc,
 };
 
 use petgraph::graph::EdgeReference as GraphEdgeReference;
@@ -11,50 +12,42 @@ use crate::{
     state::supergraph_state::SubgraphName,
 };
 
-#[derive(Debug)]
-pub struct EntityMove {
-    pub key: String,
-    pub requirements: TypeAwareSelection,
-    /// Indicates whether the move is to an interface entity.
-    ///
-    /// Object @key -> Object @key (@interfaceObject)
-    ///
-    /// Interface @key -> Interface @key
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct EntityMove<'a> {
+    pub key: &'a str,
+    pub requirements: Arc<TypeAwareSelection<'a>>,
     pub is_interface: bool,
 }
 
-#[derive(Debug)]
-pub struct InterfaceObjectTypeMove {
-    pub object_type_name: String,
-    pub requirements: TypeAwareSelection,
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct InterfaceObjectTypeMove<'a> {
+    pub object_type_name: &'a str,
+    pub requirements: Arc<TypeAwareSelection<'a>>,
 }
 
-/// Represent a simple file move
-#[derive(Debug, PartialEq)]
-pub struct FieldMove {
-    pub name: String,
-    pub type_name: String,
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FieldMove<'a> {
+    pub name: &'a str,
+    pub type_name: &'a str,
     pub is_leaf: bool,
     pub is_list: bool,
     pub join_field: Option<JoinFieldDirective>,
-    pub requirements: Option<TypeAwareSelection>,
+    pub requirements: Option<Arc<TypeAwareSelection<'a>>>,
     pub override_from: Option<String>,
     pub override_label: Option<OverrideLabel>,
     pub overridden_by: Option<(String, Option<OverrideLabel>)>,
 }
 
-impl FieldMove {
+impl FieldMove<'_> {
     pub fn satisfies_override_rules(&self, ctx: &PlannerOverrideContext) -> bool {
         // Field is being progressively overridden by another subgraph
         if let Some((_, Some(label))) = &self.overridden_by {
             return self.check_progressive_override(label, ctx, false);
         }
-
         // Field is being fully overridden, so it's not resolvable
         if self.overridden_by.is_some() {
             return false;
         }
-
         // Field is progressively overriding another subgraph
         if let Some(label) = &self.override_label {
             return self.check_progressive_override(label, ctx, true);
@@ -148,21 +141,22 @@ impl Display for OverrideLabel {
     }
 }
 
-pub enum Edge {
+#[derive(Clone)]
+pub enum Edge<'a> {
     /// A special edge between the root Node and then root entry point to the graph
     /// With this helper, you can jump from Query::RootQuery --SomeSubgraph-> Query/SomeSubgraph --> --field--> SomeType/SomeSubgraph
     SubgraphEntrypoint {
-        field_names: Vec<String>,
-        name: SubgraphName,
+        field_names: Vec<&'a str>,
+        name: SubgraphName<'a>,
     },
-    FieldMove(Box<FieldMove>),
-    EntityMove(EntityMove),
+    FieldMove(Box<FieldMove<'a>>),
+    EntityMove(EntityMove<'a>),
     /// join__implements
-    AbstractMove(String),
+    AbstractMove(&'a str),
     /// A special edge representing a case where an inline fragment is used with a condition,
     /// and we don't really move anywhere, but we need to ensure that
     /// the condition is preserved when planning the query.
-    Selfie(String),
+    Selfie(&'a str),
     /// Represents a special case where going from @interfaceObject
     /// to an object type due to the `__typename` field usage,
     /// or usage of a type condition (fragment),
@@ -173,49 +167,49 @@ pub enum Edge {
     /// would result in a incorrect value (name of the @interfaceObject type).
     /// This enum variant tells the Query Planner to do an entity call,
     /// to verify the type condition or resolve the __typename.
-    InterfaceObjectTypeMove(InterfaceObjectTypeMove),
+    InterfaceObjectTypeMove(InterfaceObjectTypeMove<'a>),
 }
 
-pub type EdgeReference<'a> = GraphEdgeReference<'a, Edge>;
+pub type EdgeReference<'a> = GraphEdgeReference<'a, Edge<'a>>;
 
-impl Edge {
+impl<'a> Edge<'a> {
     pub fn create_entity_move(
-        key: &str,
-        selection: TypeAwareSelection,
+        key: &'a str,
+        selection: Arc<TypeAwareSelection<'a>>,
         is_interface: bool,
     ) -> Self {
         Self::EntityMove(EntityMove {
-            key: key.to_string(),
+            key,
             requirements: selection,
             is_interface,
         })
     }
 
     pub fn create_interface_object_type_move(
-        object_type_name: &str,
-        selection: TypeAwareSelection,
+        object_type_name: &'a str,
+        selection: Arc<TypeAwareSelection<'a>>,
     ) -> Self {
         Self::InterfaceObjectTypeMove(InterfaceObjectTypeMove {
-            object_type_name: object_type_name.to_string(),
+            object_type_name,
             requirements: selection,
         })
     }
 
     pub fn create_field_move(
-        name: String,
-        type_name: String,
+        name: &'a str,
+        type_name: &'a str,
         is_leaf: bool,
         is_list: bool,
         join_field: Option<JoinFieldDirective>,
-        requirements: Option<TypeAwareSelection>,
+        requirements: Option<Arc<TypeAwareSelection<'a>>>,
         overridden_by: Option<(String, Option<OverrideLabel>)>,
     ) -> Self {
         let override_from = join_field.as_ref().and_then(|jf| jf.override_value.clone());
         let override_label = join_field.as_ref().and_then(|jf| jf.override_label.clone());
 
         Self::FieldMove(Box::new(FieldMove {
-            name: name.clone(),
-            type_name: type_name.clone(),
+            name,
+            type_name,
             is_leaf,
             is_list,
             join_field,
@@ -228,22 +222,22 @@ impl Edge {
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::FieldMove(fm) => &fm.name,
+            Self::FieldMove(fm) => fm.name,
             Self::EntityMove(EntityMove { key, .. }) => key,
             Self::AbstractMove(id) => id,
             Self::Selfie(_) => "selfie",
-            Self::SubgraphEntrypoint { name, .. } => &name.0,
+            Self::SubgraphEntrypoint { name, .. } => name.0,
             Self::InterfaceObjectTypeMove(InterfaceObjectTypeMove {
                 object_type_name, ..
             }) => object_type_name,
         }
     }
 
-    pub fn requirements(&self) -> Option<&TypeAwareSelection> {
+    pub fn requirements(&self) -> Option<&TypeAwareSelection<'_>> {
         match self {
-            Self::EntityMove(entity_move) => Some(&entity_move.requirements),
-            Self::InterfaceObjectTypeMove(m) => Some(&m.requirements),
-            Self::FieldMove(field_move) => field_move.requirements.as_ref(),
+            Self::EntityMove(entity_move) => Some(entity_move.requirements.as_ref()),
+            Self::InterfaceObjectTypeMove(m) => Some(m.requirements.as_ref()),
+            Self::FieldMove(field_move) => field_move.requirements.as_deref(),
             _ => None,
         }
     }
@@ -253,17 +247,15 @@ impl Edge {
             Self::FieldMove(_) => 1,
             _ => 1000,
         };
-
         let requirement_cost = match self.requirements() {
             Some(selection) => selection.selection_set.cost(),
             None => 0,
         };
-
         move_cost + requirement_cost
     }
 }
 
-impl Display for Edge {
+impl Display for Edge<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Edge::SubgraphEntrypoint { name, .. } => write!(f, "{}", name.0),
@@ -273,16 +265,14 @@ impl Display for Edge {
             Edge::FieldMove(field_move) => write!(f, "{}", field_move.name),
             Edge::InterfaceObjectTypeMove(m) => write!(f, "🔎 {}", m.object_type_name),
         }?;
-
         if let Some(reqs) = self.requirements() {
             write!(f, "🧩{}", reqs.selection_set)?
         };
-
         Ok(())
     }
 }
 
-impl Debug for Edge {
+impl Debug for Edge<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Edge::SubgraphEntrypoint { name, .. } => write!(f, "subgraph({})", name.0),
@@ -290,34 +280,29 @@ impl Debug for Edge {
                 // Start with the field name
                 let mut result = write!(f, "{}", &fm.name);
 
-                // Add requires directive if present
                 if let Some(jf) = &fm.join_field {
+                    // Add requires directive if present
                     if let Some(req) = &jf.requires {
                         result = result.and_then(|_| write!(f, " @requires({})", req));
                     }
-
                     // Add provides directive if present
                     if jf.provides.is_some() {
                         result = result.and_then(|_| write!(f, " @provides"));
                     }
-
                     // Add other relevant directives like external, override, etc.
                     if jf.external {
                         result = result.and_then(|_| write!(f, " @external"));
                     }
-
                     if let Some(override_from) = &jf.override_value {
                         let label = jf
                             .override_label
                             .as_ref()
                             .map_or("".to_string(), |label| format!(", label: {}", label));
-
                         result = result.and_then(|_| {
                             write!(f, " @override(from: {}{})", override_from, label)
                         });
                     }
                 }
-
                 result
             }
             Edge::EntityMove(EntityMove { key, .. }) => {
@@ -330,7 +315,7 @@ impl Debug for Edge {
     }
 }
 
-impl PartialEq for Edge {
+impl PartialEq for Edge<'_> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (
@@ -345,13 +330,13 @@ impl PartialEq for Edge {
                 Edge::EntityMove(EntityMove { key, .. }),
                 Edge::EntityMove(EntityMove { key: other_key, .. }),
             ) => key == other_key,
-
             (Edge::AbstractMove(name), Edge::AbstractMove(other_name)) => name == other_name,
             (Edge::InterfaceObjectTypeMove(st), Edge::InterfaceObjectTypeMove(ot)) => {
                 st.object_type_name == ot.object_type_name
             }
-
             _ => false,
         }
     }
 }
+
+impl Eq for Edge<'_> {}

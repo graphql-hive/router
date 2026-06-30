@@ -2785,6 +2785,7 @@ dependencies = [
 name = "hive-router-query-planner"
 version = "2.10.1"
 dependencies = [
+ "ahash",
  "bitflags 2.13.0",
  "criterion",
  "graphql-tools",

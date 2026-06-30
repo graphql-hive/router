@@ -112,7 +112,7 @@ impl DemandControlRuntime {
                     query_plan,
                     operation_for_plan,
                     root_type_name,
-                    &supergraph.planner.supergraph,
+                    supergraph.planner.supergraph,
                 ))
             })
             .await
@@ -120,7 +120,7 @@ impl DemandControlRuntime {
 
         let evaluation = evaluate_formula_plan(
             compiled_plan.as_ref(),
-            &supergraph.planner.supergraph,
+            supergraph.planner.supergraph,
             variable_payload,
         )?;
 

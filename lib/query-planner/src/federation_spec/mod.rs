@@ -31,8 +31,8 @@ pub(crate) mod join_union;
 fn normalize_fields_argument_value_mut(
     supergraph: &SupergraphState,
     type_name: &str,
-    subgraph_name: &String,
-    fields_str: &String,
+    subgraph_name: &str,
+    fields_str: &str,
 ) -> SelectionSet<'static, String> {
     let selection_set_str = format!("{{{fields_str}}}");
     // TODO: Far from ideal, but we can use the graphql_parser here to get it parsed for us
@@ -99,25 +99,25 @@ fn collect_sized_field_path(
 pub struct FederationRules;
 
 impl FederationRules {
-    pub fn parse_key(
-        supergraph: &SupergraphState,
-        subgraph_name: &String,
-        type_name: &str,
-        key: &String,
-    ) -> TypeAwareSelection {
+    pub fn parse_key<'a>(
+        supergraph: &'a SupergraphState,
+        subgraph_name: &str,
+        type_name: &'a str,
+        key: &str,
+    ) -> TypeAwareSelection<'a> {
         let selection_set =
-            normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, key);
+            normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, key).into();
         TypeAwareSelection {
-            type_name: type_name.to_string(),
-            selection_set: selection_set.into(),
+            type_name,
+            selection_set,
         }
     }
 
-    pub fn parse_provides(
-        supergraph: &SupergraphState,
+    pub fn parse_provides<'a>(
+        supergraph: &'a SupergraphState,
         join_field: &JoinFieldDirective,
-        subgraph_name: &String,
-        type_name: &str,
+        subgraph_name: &str,
+        type_name: &'a str,
     ) -> Option<SelectionSet<'static, String>> {
         if let Some(provides) = &join_field.provides {
             return Some(normalize_fields_argument_value_mut(
@@ -131,11 +131,11 @@ impl FederationRules {
         None
     }
 
-    pub fn parse_requires(
-        supergraph: &SupergraphState,
-        subgraph_name: &String,
-        type_name: &str,
-        requires: &String,
+    pub fn parse_requires<'a>(
+        supergraph: &'a SupergraphState,
+        subgraph_name: &str,
+        type_name: &'a str,
+        requires: &str,
     ) -> SelectionSet<'static, String> {
         normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, requires)
     }
@@ -171,12 +171,14 @@ impl FederationRules {
         current_subgraph_id: &str,
         parent_definition: &SupergraphDefinition,
     ) -> (bool, Option<&'a JoinFieldDirective>) {
-        let involved_subgraphs = parent_definition.subgraphs();
-
         // A field i available if: it has no @join__field directives at all
         if field.join_field.is_empty() {
             // AND its parent type is available in the subgraph
-            if involved_subgraphs.contains(&current_subgraph_id) {
+            if parent_definition
+                .join_types()
+                .iter()
+                .any(|join_type| join_type.graph_id == current_subgraph_id)
+            {
                 return (true, None);
             }
 

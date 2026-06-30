@@ -5,7 +5,7 @@ pub(crate) mod path;
 pub(crate) mod pathfinder;
 mod utils;
 
-use std::collections::HashSet;
+use ahash::HashSet;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
@@ -49,7 +49,7 @@ type ResolutionStack<'graph, 'op> = Vec<WorkItem<'graph, 'op>>;
 
 #[instrument(level = "trace", skip_all)]
 pub fn walk_operation<'graph, 'op: 'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     operation: &'op OperationDefinition,
@@ -109,7 +109,7 @@ pub fn walk_operation<'graph, 'op: 'graph>(
 }
 
 fn process_selection<'graph, 'op: 'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     selection_item: &'op SelectionItem,
@@ -163,7 +163,7 @@ fn process_selection<'graph, 'op: 'graph>(
 
 #[instrument(level = "trace", skip_all)]
 fn process_selection_set<'graph, 'op: 'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     selection_set: &'op SelectionSet,
@@ -201,7 +201,7 @@ fn process_selection_set<'graph, 'op: 'graph>(
   type_condition = fragment.type_condition,
 ))]
 fn process_inline_fragment<'graph, 'op: 'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     fragment: &'op InlineFragmentSelection,
@@ -284,6 +284,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
             let direct_path = find_self_referencing_direct_path(
                 graph,
                 override_context,
+                supergraph,
                 path,
                 &fragment.type_condition,
                 condition.as_ref().expect("Condition should be present"),
@@ -324,6 +325,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
         let direct_path = find_direct_path(
             graph,
             override_context,
+            supergraph,
             path,
             &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
             cancellation_token,
@@ -340,6 +342,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
             let mut indirect_paths = find_indirect_paths(
                 graph,
                 override_context,
+                supergraph,
                 path,
                 &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
                 &ExcludedFromLookup::new(),
@@ -378,6 +381,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
             let direct_paths = find_direct_paths(
                 graph,
                 override_context,
+                supergraph,
                 path,
                 &NavigationTarget::Field {
                     field: &FieldSelection::new_typename(),
@@ -493,14 +497,19 @@ fn narrow_partial_union_paths<'graph>(paths: &mut Vec<OperationPath<'graph>>) {
             .as_mut()
             .expect("union context should exist at this point");
 
-        // Keep only paths whose current member is shared
-        if !shared_members.contains(&context.member_name) {
-            return false;
+        if context.is_narrowed_to_one_member() {
+            // Keep only paths whose current member is shared.
+            if !shared_members.contains(&context.member_name) {
+                return false;
+            }
+
+            // At this point, the path leads to only one possible member,
+            // no need to store the shared members set.
+            context.set_possible_member(context.member_name);
+        } else {
+            context.set_possible_members(shared_members.clone());
         }
 
-        // At this point, the path leads to only one possible member,
-        // not need to store the shared members set.
-        context.set_possible_member(context.member_name);
         true
     });
 }
@@ -510,7 +519,7 @@ fn narrow_partial_union_paths<'graph>(paths: &mut Vec<OperationPath<'graph>>) {
   leaf = field.is_leaf()
 ))]
 fn process_field<'graph, 'op: 'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     field: &'op FieldSelection,
@@ -552,6 +561,7 @@ fn process_field<'graph, 'op: 'graph>(
         let direct_paths = find_direct_paths(
             graph,
             override_context,
+            supergraph,
             path,
             &NavigationTarget::Field {
                 field,
@@ -570,6 +580,31 @@ fn process_field<'graph, 'op: 'graph>(
         }
 
         if !found_direct_paths_to_leaf {
+            let has_indirect_candidates = graph.edges_from(path.tail()).any(|edge| {
+                matches!(
+                    edge.weight(),
+                    Edge::EntityMove(_) | Edge::InterfaceObjectTypeMove(_)
+                )
+            });
+
+            if !has_indirect_candidates {
+                trace!(
+                    "Skipping indirect lookup for '{}' at tail {} because there are no entity/interface-object outgoing edges",
+                    field.name,
+                    path.tail().index()
+                );
+                trace!(
+                    "{}: {}",
+                    if advanced {
+                        "advanced"
+                    } else {
+                        "failed to advance"
+                    },
+                    path.pretty_print(graph)
+                );
+                continue;
+            }
+
             if target_subgraph_ids_cache.is_none() {
                 target_subgraph_ids_cache =
                     Some(field_target_subgraph_ids(supergraph, field, paths, graph)?);
@@ -581,6 +616,7 @@ fn process_field<'graph, 'op: 'graph>(
             let indirect_paths = find_indirect_paths(
                 graph,
                 override_context,
+                supergraph,
                 path,
                 &NavigationTarget::Field {
                     field,
@@ -754,16 +790,16 @@ fn field_target_subgraph_ids(
     supergraph: &SupergraphState,
     field: &FieldSelection,
     paths: &[OperationPath<'_>],
-    graph: &Graph,
+    graph: &Graph<'_>,
 ) -> Result<Option<HashSet<String>>, WalkOperationError> {
-    let mut parent_type_names = HashSet::new();
+    let mut parent_type_names = HashSet::default();
 
     for path in paths {
         let parent_node = graph.node(path.tail())?;
         parent_type_names.insert(parent_node.name_str());
     }
 
-    let mut target_subgraph_ids = HashSet::new();
+    let mut target_subgraph_ids = HashSet::default();
 
     for parent_type_name in parent_type_names {
         let Some(parent_def) = supergraph.definitions.get(parent_type_name) else {
@@ -775,7 +811,7 @@ fn field_target_subgraph_ids(
 
         for graph_id in field_def.resolvable_in_graphs(parent_def) {
             if let Ok(subgraph_id) = supergraph.resolve_graph_id(&graph_id) {
-                target_subgraph_ids.insert(subgraph_id.0);
+                target_subgraph_ids.insert(subgraph_id.0.to_string());
             }
         }
     }

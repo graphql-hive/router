@@ -37,7 +37,7 @@ pub struct OnQueryPlanStartHookPayload<'exec> {
     /// The cancellation token that can be used to check if the request has been cancelled by the client or not.
     pub cancellation_token: &'exec CancellationToken,
     /// The query planner instance that will be used to generate the query plan for the incoming GraphQL request.
-    pub planner: &'exec Planner,
+    pub planner: &'exec Planner<'static>,
 }
 
 impl<'exec> StartHookPayload<OnQueryPlanEndHookPayload, PlanExecutionOutput>

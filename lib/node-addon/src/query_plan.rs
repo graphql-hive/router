@@ -28,7 +28,7 @@ impl From<QueryPlanError> for napi::Error {
 }
 
 pub fn query_plan(
-    planner: &Planner,
+    planner: &Planner<'_>,
     query: &str,
     operation_name: Option<&str>,
     active_labels: HashSet<String>,
@@ -38,7 +38,7 @@ pub fn query_plan(
     let parsed_operation = safe_parse_operation(query)?;
 
     let normalized_operation =
-        normalize_operation(&planner.supergraph, &parsed_operation, operation_name)?;
+        normalize_operation(planner.supergraph, &parsed_operation, operation_name)?;
 
     let request_override_context = PlannerOverrideContext::new(
         active_labels,
@@ -53,7 +53,7 @@ pub fn query_plan(
 }
 
 pub struct QueryPlanTask<'a> {
-    pub planner: &'a Planner,
+    pub planner: &'a Planner<'static>,
     pub query: String,
     pub operation_name: Option<String>,
     pub active_labels: HashSet<String>,

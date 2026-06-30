@@ -33,9 +33,9 @@ pub struct QueryPlannerOptions {
     pub experimental_abstract_type_folding: bool,
 }
 
-pub struct Planner {
-    graph: Graph,
-    pub supergraph: SupergraphState,
+pub struct Planner<'a> {
+    graph: Graph<'a>,
+    pub supergraph: &'a SupergraphState,
     pub consumer_schema: Arc<ConsumerSchema>,
     options: QueryPlannerOptions,
 }
@@ -56,27 +56,38 @@ pub enum PlannerError {
     CancellationError(#[from] CancellationError),
 }
 
-impl Planner {
+impl Planner<'static> {
     pub fn new_from_supergraph(
         parsed_supergraph: &schema::Document<'static, String>,
         options: QueryPlannerOptions,
     ) -> Result<Self, PlannerError> {
-        let supergraph_state = SupergraphState::new(parsed_supergraph);
-        Self::new_from_supergraph_state(supergraph_state, parsed_supergraph, options)
-    }
-
-    pub fn new_from_supergraph_state(
-        supergraph_state: SupergraphState,
-        parsed_supergraph: &schema::Document<'static, String>,
-        options: QueryPlannerOptions,
-    ) -> Result<Self, PlannerError> {
-        let graph = Graph::graph_from_supergraph_state(&supergraph_state)?;
-        let consumer_schema = ConsumerSchema::new_from_supergraph(parsed_supergraph);
+        let supergraph_ref: &'static SupergraphState =
+            Box::leak(Box::new(SupergraphState::new(parsed_supergraph)));
+        let graph = Graph::graph_from_supergraph_state(supergraph_ref)?;
+        let consumer_schema = Arc::new(ConsumerSchema::new_from_supergraph(parsed_supergraph));
 
         Ok(Planner {
             graph,
-            consumer_schema: Arc::new(consumer_schema),
+            supergraph: supergraph_ref,
+            consumer_schema,
+            options,
+        })
+    }
+}
+
+impl<'a> Planner<'a> {
+    pub fn new_from_supergraph_state(
+        supergraph_state: &'a SupergraphState,
+        parsed_supergraph: &schema::Document<'static, String>,
+        options: QueryPlannerOptions,
+    ) -> Result<Self, PlannerError> {
+        let graph = Graph::graph_from_supergraph_state(supergraph_state)?;
+        let consumer_schema = Arc::new(ConsumerSchema::new_from_supergraph(parsed_supergraph));
+
+        Ok(Planner {
+            graph,
             supergraph: supergraph_state,
+            consumer_schema,
             options,
         })
     }
@@ -90,7 +101,7 @@ impl Planner {
     ) -> Result<QueryPlan, PlannerError> {
         let best_paths_per_leaf = walk_operation(
             &self.graph,
-            &self.supergraph,
+            self.supergraph,
             &override_context,
             normalized_operation,
             cancellation_token,
@@ -99,7 +110,7 @@ impl Planner {
             find_best_combination(&self.graph, best_paths_per_leaf, cancellation_token)?;
         let mut fetch_graph = build_fetch_graph_from_query_tree(
             &self.graph,
-            &self.supergraph,
+            self.supergraph,
             &override_context,
             query_tree,
             normalized_operation
@@ -111,14 +122,14 @@ impl Planner {
         )?;
         add_variables_to_fetch_steps(&mut fetch_graph, &normalized_operation.variable_definitions)?;
         let query_plan =
-            build_query_plan_from_fetch_graph(fetch_graph, &self.supergraph, cancellation_token)?;
+            build_query_plan_from_fetch_graph(fetch_graph, self.supergraph, cancellation_token)?;
 
         Ok(query_plan)
     }
 }
 
-pub fn add_variables_to_fetch_steps(
-    graph: &mut FetchGraph<MultiTypeFetchStep>,
+pub fn add_variables_to_fetch_steps<'a>(
+    graph: &mut FetchGraph<'a, MultiTypeFetchStep>,
     variables: &Option<Vec<VariableDefinition>>,
 ) -> Result<(), PlannerError> {
     if let Some(variables) = variables {

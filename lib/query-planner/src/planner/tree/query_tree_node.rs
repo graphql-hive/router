@@ -107,9 +107,9 @@ impl QueryTreeNode {
         merge_query_tree_node_list(&mut self.requirements, &other.requirements);
     }
 
-    pub fn from_paths(
-        graph: &Graph,
-        paths: &[OperationPath],
+    pub fn from_paths<'a>(
+        graph: &Graph<'a>,
+        paths: &[OperationPath<'_>],
         mutation_field_position: MutationFieldPosition,
     ) -> Result<Option<Rc<Self>>, GraphError> {
         if paths.is_empty() {
@@ -135,8 +135,8 @@ impl QueryTreeNode {
     #[instrument(level = "trace",skip(graph, segments), fields(
       total_segments = segments.len()
     ))]
-    fn from_path_segment_sequences(
-        graph: &Graph,
+    fn from_path_segment_sequences<'a>(
+        graph: &Graph<'a>,
         segments: &[Rc<PathSegment>],
         current_index: usize,
         mutation_field_position: MutationFieldPosition,
@@ -194,8 +194,8 @@ impl QueryTreeNode {
       root_node = graph.pretty_print_node(root_node_index),
       segments_count = segments.len()
     ))]
-    pub fn create_root_for_path_sequences(
-        graph: &Graph,
+    pub fn create_root_for_path_sequences<'a>(
+        graph: &Graph<'a>,
         root_node_index: &NodeIndex,
         segments: &Vec<Rc<PathSegment>>,
         mutation_field_position: MutationFieldPosition,

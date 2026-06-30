@@ -31,9 +31,9 @@ bitflags! {
 }
 
 #[derive(Debug, Clone)]
-pub struct FetchStepData<State> {
+pub struct FetchStepData<'a, State> {
     pub id: i64,
-    pub service_name: SubgraphName,
+    pub service_name: SubgraphName<'a>,
     pub response_path: MergePath,
     pub input: FetchStepSelections<State>,
     pub output: FetchStepSelections<State>,
@@ -54,7 +54,7 @@ pub enum FetchStepKind {
     Root,
 }
 
-impl<State> Display for FetchStepData<State> {
+impl<State> Display for FetchStepData<'_, State> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "[{}]: ", self.service_name)?;
 
@@ -92,7 +92,7 @@ impl<State> Display for FetchStepData<State> {
     }
 }
 
-impl<State> FetchStepData<State> {
+impl<State> FetchStepData<'_, State> {
     pub fn pretty_write(
         &self,
         writer: &mut std::fmt::Formatter<'_>,
@@ -122,7 +122,7 @@ impl<State> FetchStepData<State> {
     }
 }
 
-impl<State> FetchStepData<State> {
+impl<State> FetchStepData<'_, State> {
     pub fn is_fetching_multiple_types(&self) -> bool {
         self.input.is_fetching_multiple_types() || self.output.is_fetching_multiple_types()
     }
@@ -150,7 +150,7 @@ pub(crate) fn type_condition_types_from_response_path(
     }
 }
 
-impl FetchStepData<MultiTypeFetchStep> {
+impl FetchStepData<'_, MultiTypeFetchStep> {
     // Moves a fetch-level condition down into this step's output selections.
     // A fetch-level condition means "the whole HTTP request can be skipped".
     // That is only correct while every output selection in the fetch has the same condition.
@@ -213,8 +213,8 @@ impl FetchStepData<MultiTypeFetchStep> {
     }
 }
 
-impl FetchStepData<SingleTypeFetchStep> {
-    pub fn into_multi_type(self) -> FetchStepData<MultiTypeFetchStep> {
+impl<'a> FetchStepData<'a, SingleTypeFetchStep> {
+    pub fn into_multi_type(self) -> FetchStepData<'a, MultiTypeFetchStep> {
         FetchStepData::<MultiTypeFetchStep> {
             id: self.id,
             service_name: self.service_name,

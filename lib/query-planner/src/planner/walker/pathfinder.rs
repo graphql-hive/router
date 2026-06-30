@@ -1,5 +1,8 @@
-use std::collections::{HashSet, VecDeque};
+use ahash::{HashMap, HashSet};
+use std::collections::VecDeque;
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
+use xxhash_rust::xxh3::Xxh3;
 
 use petgraph::graph::{EdgeIndex, NodeIndex};
 use petgraph::visit::{EdgeRef, NodeRef};
@@ -22,19 +25,234 @@ use crate::{
         tree::query_tree_node::QueryTreeNode,
         walker::best_path::{find_best_paths, BestPathTracker},
     },
+    state::supergraph_state::SupergraphState,
 };
 
 use super::{error::WalkOperationError, excluded::ExcludedFromLookup, path::OperationPath};
 
 pub type VisitedGraphs<'graph> = HashSet<&'graph str>;
 type ActiveEdgeChecks = HashSet<(NodeIndex, EdgeIndex)>;
+type UnsatisfiedRequirementCache = HashSet<UnsatisfiedRequirementFingerprint>;
+
+// Requirement checks are expensive.
+//
+// Before the planner can follow an entity-move edge, it must prove that the
+// edge's requirements can be resolved from the current path tail.
+//
+// Book/products --(🔑🧩{field1 field2})-> Book/inventory
+//
+// QP asks: Can we resolve both fields first?
+//
+// The planner may reach the same type/subgraph through
+// many different paths and repeat the same failing requirement check:
+//
+//  ❌ Book/products -(🔑🧩{field1 field2})-> Book/inventory
+//  ❌ Book/reviews  -(🔑🧩{field1 field2})-> Book/inventory
+//  ❌ Book/stats    -(🔑🧩{field1 field2})-> Book/inventory
+//
+// Once we know that a requirement cannot be satisfied for a given search state,
+// repeating the same search is wasted work.
+//
+// PathSearch keeps a local cache of negative requirement checks.
+// Each entry is a fingerprint of the state that affects the answer:
+//  - current tail type
+//  - current tail subgraph
+//  - edge requirement selection
+//  - requirements already excluded / visited
+//  - whether this check is restricted to direct edges
+//
+// Before running the expensive requirement search, we check the cache.
+// If the fingerprint is present, the edge is treated as unsatisfied immediately.
+// If the search returns Ok(None), we store the fingerprint.
+//
+// This is safe because the cache only stores negative results and is scoped to a
+// single PathSearch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct UnsatisfiedRequirementFingerprint {
+    tail_type_hash: u64,
+    tail_graph_hash: u64,
+    requirement_hash: u64,
+    excluded_requirements_hash: u64,
+    use_only_direct_edges: bool,
+}
+
+impl UnsatisfiedRequirementFingerprint {
+    fn new<'graph>(
+        graph: &'graph Graph<'graph>,
+        path: &OperationPath<'graph>,
+        edge: &Edge<'graph>,
+        excluded: &ExcludedFromLookup<'graph>,
+        use_only_direct_edges: bool,
+    ) -> Self {
+        let tail_node = graph
+            .node(path.tail())
+            .expect("tail node should exist while pathfinding");
+
+        let mut type_hasher = Xxh3::new();
+        tail_node.name_str().hash(&mut type_hasher);
+
+        let mut graph_hasher = Xxh3::new();
+        tail_node.graph_id().hash(&mut graph_hasher);
+
+        let mut requirement_hasher = Xxh3::new();
+        edge.requirements().hash(&mut requirement_hasher);
+
+        Self {
+            tail_type_hash: type_hasher.finish(),
+            tail_graph_hash: graph_hasher.finish(),
+            requirement_hash: requirement_hasher.finish(),
+            excluded_requirements_hash: Self::unordered_hash(excluded.requirement.iter()),
+            use_only_direct_edges,
+        }
+    }
+
+    #[inline]
+    fn unordered_hash<T: Hash>(items: impl Iterator<Item = T>) -> u64 {
+        let mut hashes: Vec<u64> = items
+            .map(|item| {
+                let mut hasher = Xxh3::new();
+                item.hash(&mut hasher);
+                hasher.finish()
+            })
+            .collect();
+        hashes.sort_unstable();
+        hashes.dedup();
+
+        let mut hasher = Xxh3::new();
+        hashes.len().hash(&mut hasher);
+        for h in hashes {
+            h.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+}
 
 struct IndirectPathsLookupQueue<'graph> {
     queue: Vec<(
         VisitedGraphs<'graph>,
-        HashSet<TypeAwareSelection>,
+        HashSet<TypeAwareSelection<'graph>>,
         OperationPath<'graph>,
     )>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+struct RequirementFieldKey {
+    parent_type: String,
+    field_name: String,
+}
+
+// Requirement lookup can waste a lot of time walking through subgraphs that
+// cannot possibly satisfy the field we are looking for.
+//
+// We are on Book/products and need to satisfy a requirement for `delivery`.
+//
+// Book/products -🔑-> Book/inventory   has Book.delivery
+//               -🔑-> Book/reporting   no  Book.delivery
+//               -🔑-> Book/archive     no  Book.delivery
+//               -🔑-> ...              no  Book.delivery
+//
+// Without narrowing, indirect lookup may try each entity-move edge and only
+// discover later that most target subgraphs do not even expose the requested
+// field. On large supergraphs this creates a lot of obvious dead-end work.
+//
+//
+// For each requirement field, we inspect the built planner graph and ask:
+// "For this parent type, which subgraphs have an outgoing field edge with this field name?"
+// The result is cached per.
+//
+// Then, during indirect lookup for that field, we only follow entity-move edges
+// whose target subgraph is in that candidate set.
+//
+//  Before:
+//   try inventory   -> might work
+//   try reporting   -> cannot resolve field
+//   try archive     -> cannot resolve field
+//   try ...         -> cannot resolve field
+//
+//  After:
+//   try inventory   -> might work
+//   reporting       -> skipped
+//   archive         -> skipped
+//   ...more         -> skipped
+//
+//  If the planner graph has no `Book.delivery` field edge in subgraph X, then
+//  moving to `Book` in subgraph X cannot be the final step that satisfies the
+//  `delivery` requirement.
+//
+//  So, when we already know the set of subgraphs that expose the requested field,
+//  skipping entity moves to the other subgraphs cannot hide a valid solution.
+//  It only removes dead ends from the indirect search.
+struct SubgraphFilter<'graph> {
+    graph: &'graph Graph<'graph>,
+    supergraph_state: &'graph SupergraphState,
+    cache: HashMap<RequirementFieldKey, Option<HashSet<String>>>,
+}
+
+impl<'graph> SubgraphFilter<'graph> {
+    fn new(graph: &'graph Graph<'graph>, supergraph_state: &'graph SupergraphState) -> Self {
+        Self {
+            graph,
+            supergraph_state,
+            cache: HashMap::default(),
+        }
+    }
+
+    fn target_subgraph_ids(
+        &mut self,
+        field: &FieldSelection,
+        paths: &[OperationPath<'graph>],
+    ) -> Result<Option<HashSet<String>>, WalkOperationError> {
+        let graph = self.graph;
+        let mut result = HashSet::default();
+
+        for path in paths {
+            let parent_type_name = graph.node(path.tail())?.name_str().to_string();
+            let cache_key = RequirementFieldKey {
+                parent_type: parent_type_name.clone(),
+                field_name: field.name.clone(),
+            };
+
+            let cached = if let Some(cached) = self.cache.get(&cache_key) {
+                cached.clone()
+            } else {
+                let targets = self.lookup_from_supergraph(&parent_type_name, &field.name);
+
+                self.cache.insert(cache_key, targets.clone());
+                targets
+            };
+
+            if let Some(cached) = cached {
+                result.extend(cached);
+            }
+        }
+
+        if result.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(result))
+    }
+
+    fn lookup_from_supergraph(
+        &self,
+        parent_type_name: &str,
+        field_name: &str,
+    ) -> Option<HashSet<String>> {
+        let supergraph = self.supergraph_state;
+        let type_def = supergraph.definitions.get(parent_type_name)?;
+        let field_def = type_def.fields().get(field_name)?;
+        let mut targets = HashSet::default();
+        for graph_enum_value in field_def.resolvable_in_graphs(type_def) {
+            if let Ok(subgraph_name) = supergraph.resolve_graph_id(&graph_enum_value) {
+                targets.insert(subgraph_name.0.to_string());
+            }
+        }
+        if targets.is_empty() {
+            None
+        } else {
+            Some(targets)
+        }
+    }
 }
 
 impl<'graph> IndirectPathsLookupQueue<'graph> {
@@ -58,7 +276,7 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
     pub fn add(
         &mut self,
         visited_graphs: VisitedGraphs<'graph>,
-        selections: HashSet<TypeAwareSelection>,
+        selections: HashSet<TypeAwareSelection<'graph>>,
         path: OperationPath<'graph>,
     ) {
         self.queue.push((visited_graphs, selections, path));
@@ -68,7 +286,7 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
         &mut self,
     ) -> Option<(
         VisitedGraphs<'graph>,
-        HashSet<TypeAwareSelection>,
+        HashSet<TypeAwareSelection<'graph>>,
         OperationPath<'graph>,
     )> {
         self.queue.pop()
@@ -102,25 +320,31 @@ impl<'op> From<&'op NavigationTarget<'op>> for NavigationTargetKey<'op> {
 }
 
 struct PathSearch<'graph> {
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     override_context: &'graph PlannerOverrideContext,
     cancellation_token: &'graph CancellationToken,
     /// Edges currently being checked in this path search.
     /// Used to stop recursive loops when an edge depends on itself.
     active_edge_checks: ActiveEdgeChecks,
+    unsatisfied_requirements: UnsatisfiedRequirementCache,
+    subgraph_filter: SubgraphFilter<'graph>,
 }
 
 impl<'graph> PathSearch<'graph> {
     fn new(
-        graph: &'graph Graph,
+        graph: &'graph Graph<'graph>,
         override_context: &'graph PlannerOverrideContext,
+        supergraph_state: &'graph SupergraphState,
         cancellation_token: &'graph CancellationToken,
     ) -> Self {
+        let subgraph_filter = SubgraphFilter::new(graph, supergraph_state);
         Self {
             graph,
             override_context,
             cancellation_token,
-            active_edge_checks: ActiveEdgeChecks::new(),
+            active_edge_checks: ActiveEdgeChecks::default(),
+            unsatisfied_requirements: UnsatisfiedRequirementCache::default(),
+            subgraph_filter,
         }
     }
 }
@@ -130,15 +354,21 @@ impl<'graph> PathSearch<'graph> {
   current_cost = path.cost
 ))]
 pub fn find_indirect_paths<'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     override_context: &'graph PlannerOverrideContext,
+    supergraph_state: &'graph SupergraphState,
     path: &OperationPath<'graph>,
     target: &NavigationTarget<'_>,
     excluded: &ExcludedFromLookup<'graph>,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
-    PathSearch::new(graph, override_context, cancellation_token)
-        .find_indirect_paths(path, target, excluded)
+    PathSearch::new(
+        graph,
+        override_context,
+        supergraph_state,
+        cancellation_token,
+    )
+    .find_indirect_paths(path, target, excluded)
 }
 
 impl<'graph> PathSearch<'graph> {
@@ -151,7 +381,7 @@ impl<'graph> PathSearch<'graph> {
         let graph = self.graph;
         let cancellation_token = self.cancellation_token;
         let mut tracker = BestPathTracker::new(graph);
-        let mut seen = HashSet::new();
+        let mut seen = HashSet::default();
         let target_key = NavigationTargetKey::from(target);
         let tail_node_index = path.tail();
         let tail_node = graph.node(tail_node_index)?;
@@ -305,9 +535,8 @@ impl<'graph> PathSearch<'graph> {
                                 }
                                 None => visited_key_fields.clone(),
                             };
-
+                            let _ = target_key;
                             queue.add(new_visited_graphs, next_requirements, next_resolution_path);
-
                             trace!("going deeper");
                         }
                     }
@@ -371,20 +600,26 @@ impl<'graph> PathSearch<'graph> {
 }
 
 pub fn find_self_referencing_direct_path<'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     override_context: &'graph PlannerOverrideContext,
+    supergraph_state: &'graph SupergraphState,
     path: &OperationPath<'graph>,
     type_name: &'graph str,
     condition: &Condition,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<OperationPath<'graph>, WalkOperationError> {
     let path_tail_index = path.tail();
-    let mut path_search = PathSearch::new(graph, override_context, cancellation_token);
+    let mut path_search = PathSearch::new(
+        graph,
+        override_context,
+        supergraph_state,
+        cancellation_token,
+    );
 
     for edge_ref in graph
         .edges_from(path_tail_index)
         .filter(move |e| match e.weight() {
-            Edge::Selfie(t) => t == type_name,
+            Edge::Selfie(t) => *t == type_name,
             _ => false,
         })
     {
@@ -408,13 +643,20 @@ pub fn find_self_referencing_direct_path<'graph>(
     current_cost = path.cost,
 ))]
 pub fn find_direct_paths<'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     override_context: &'graph PlannerOverrideContext,
+    supergraph_state: &'graph SupergraphState,
     path: &OperationPath<'graph>,
     target: &NavigationTarget<'_>,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
-    PathSearch::new(graph, override_context, cancellation_token).find_direct_paths(path, target)
+    PathSearch::new(
+        graph,
+        override_context,
+        supergraph_state,
+        cancellation_token,
+    )
+    .find_direct_paths(path, target)
 }
 
 impl<'graph> PathSearch<'graph> {
@@ -512,34 +754,44 @@ impl<'graph> PathSearch<'graph> {
     current_cost = path.cost,
 ))]
 pub fn find_direct_path<'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     override_context: &'graph PlannerOverrideContext,
+    supergraph_state: &'graph SupergraphState,
     path: &OperationPath<'graph>,
     target: &NavigationTarget<'_>,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<Option<OperationPath<'graph>>, WalkOperationError> {
-    PathSearch::new(graph, override_context, cancellation_token).find_direct_path(path, target)
+    PathSearch::new(
+        graph,
+        override_context,
+        supergraph_state,
+        cancellation_token,
+    )
+    .find_direct_path(path, target)
 }
 
 #[instrument(level = "trace", skip_all, fields(
   path = path.pretty_print(graph),
   edge = edge_ref.weight().display_name(),
 ))]
+#[allow(clippy::too_many_arguments)]
 pub fn can_satisfy_edge<'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     override_context: &'graph PlannerOverrideContext,
+    supergraph_state: &'graph SupergraphState,
     edge_ref: &EdgeReference<'graph>,
     path: &OperationPath<'graph>,
     excluded: &ExcludedFromLookup<'graph>,
     use_only_direct_edges: bool,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<Option<Vec<OperationPath<'graph>>>, WalkOperationError> {
-    PathSearch::new(graph, override_context, cancellation_token).can_satisfy_edge(
-        edge_ref,
-        path,
-        excluded,
-        use_only_direct_edges,
+    PathSearch::new(
+        graph,
+        override_context,
+        supergraph_state,
+        cancellation_token,
     )
+    .can_satisfy_edge(edge_ref, path, excluded, use_only_direct_edges)
 }
 
 impl<'graph> PathSearch<'graph> {
@@ -563,6 +815,22 @@ impl<'graph> PathSearch<'graph> {
             return Ok(Some(vec![]));
         }
 
+        let unsatisfied_key = UnsatisfiedRequirementFingerprint::new(
+            graph,
+            path,
+            edge,
+            excluded,
+            use_only_direct_edges,
+        );
+        if self.unsatisfied_requirements.contains(&unsatisfied_key) {
+            trace!(
+                "Ignoring. Requirement already known unsatisfied for edge '{}' from path tail: {}",
+                graph.pretty_print_edge(edge_ref.id(), false),
+                path.pretty_print(graph)
+            );
+            return Ok(None);
+        }
+
         let active_key = (path.tail(), edge_ref.id());
         if !self.active_edge_checks.insert(active_key) {
             trace!(
@@ -576,6 +844,10 @@ impl<'graph> PathSearch<'graph> {
         let result = self.check_edge_requirements(edge_ref, path, excluded, use_only_direct_edges);
 
         self.active_edge_checks.remove(&active_key);
+
+        if matches!(result, Ok(None)) {
+            self.unsatisfied_requirements.insert(unsatisfied_key);
+        }
 
         result
     }
@@ -716,6 +988,9 @@ impl<'graph> PathSearch<'graph> {
         use_only_direct_edges: bool,
     ) -> Result<FieldRequirementsResult<'graph>, WalkOperationError> {
         let mut next_paths: Vec<OperationPath<'graph>> = Vec::new();
+        let target_subgraph_ids = self
+            .subgraph_filter
+            .target_subgraph_ids(field, move_requirement.paths.as_ref())?;
 
         for path in move_requirement.paths.iter() {
             let direct_paths = self.find_direct_paths(
@@ -735,7 +1010,7 @@ impl<'graph> PathSearch<'graph> {
                     path,
                     &NavigationTarget::Field {
                         field,
-                        target_subgraph_ids: None,
+                        target_subgraph_ids: target_subgraph_ids.as_ref(),
                     },
                     excluded,
                 )?);

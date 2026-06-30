@@ -23,9 +23,9 @@ use crate::{
 /// Handles the "target is non-entity, source has step-level condition" case.
 /// When merging an entity fetch into a non-entity target, the condition must
 /// stay attached to the source branch data, not to the whole target step.
-fn merge_source_condition_into_non_entity_target(
-    target: &FetchStepData<MultiTypeFetchStep>,
-    source: &mut FetchStepData<MultiTypeFetchStep>,
+fn merge_source_condition_into_non_entity_target<'a>(
+    target: &FetchStepData<'a, MultiTypeFetchStep>,
+    source: &mut FetchStepData<'a, MultiTypeFetchStep>,
 ) -> Result<bool, FetchGraphError> {
     let Some(condition) = source.condition.clone() else {
         return Ok(false);
@@ -67,10 +67,10 @@ fn merge_source_condition_into_non_entity_target(
 
 // Return true in case an alias was applied during the merge process.
 #[instrument(level = "trace", skip_all)]
-pub(crate) fn perform_fetch_step_merge(
+pub(crate) fn perform_fetch_step_merge<'a>(
     target_index: NodeIndex,
     source_index: NodeIndex,
-    fetch_graph: &mut FetchGraph<MultiTypeFetchStep>,
+    fetch_graph: &mut FetchGraph<'a, MultiTypeFetchStep>,
     force_merge_inputs: bool,
 ) -> Result<(), FetchGraphError> {
     let (target, source) = fetch_graph.get_pair_of_steps_mut(target_index, source_index)?;
@@ -170,8 +170,8 @@ pub(crate) fn perform_fetch_step_merge(
 /// This is implemented as an iterative Breadth-First Search (BFS).
 /// The search starts from all direct parents of `child_index` *except*
 /// `target_ancestor_index`, and follows incoming edges from there.
-pub fn is_reachable_via_alternative_upstream_path(
-    graph: &FetchGraph<MultiTypeFetchStep>,
+pub fn is_reachable_via_alternative_upstream_path<'a>(
+    graph: &FetchGraph<'a, MultiTypeFetchStep>,
     child_index: NodeIndex,
     target_ancestor_index: NodeIndex,
 ) -> Result<bool, FetchGraphError> {
@@ -213,13 +213,13 @@ pub fn is_reachable_via_alternative_upstream_path(
     Ok(false)
 }
 
-impl FetchStepData<MultiTypeFetchStep> {
+impl FetchStepData<'_, MultiTypeFetchStep> {
     pub fn can_merge(
         &self,
         self_index: NodeIndex,
         other_index: NodeIndex,
         other: &Self,
-        fetch_graph: &FetchGraph<MultiTypeFetchStep>,
+        fetch_graph: &FetchGraph<'_, MultiTypeFetchStep>,
     ) -> bool {
         if self_index == other_index {
             return false;
