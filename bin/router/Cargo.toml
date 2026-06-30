@@ -49,10 +49,20 @@ xxhash-rust = { workspace = true }
 rand = { workspace = true }
 ntex = { workspace = true }
 ntex-http = { workspace = true }
-ntex-bytes = { workspace = true }
+ntex-codec = { workspace = true }
 ntex-io = { workspace = true }
 ntex-net = { workspace = true }
-ntex-codec = { workspace = true }
+ntex-router = { workspace = true }
+ntex-bytes = { workspace = true }
+ntex-dispatcher = { workspace = true }
+ntex-error = { workspace = true }
+ntex-h2 = { workspace = true }
+ntex-rt = { workspace = true }
+ntex-macros = { workspace = true }
+ntex-server = { workspace = true }
+ntex-service = { workspace = true }
+ntex-tls = { workspace = true }
+ntex-util = { workspace = true }
 jsonwebtoken = { workspace = true }
 retry-policies = { workspace = true}
 reqwest-retry = { workspace = true }
