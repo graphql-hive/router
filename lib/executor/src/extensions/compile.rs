@@ -1,5 +1,5 @@
 use ahash::HashSet;
-use hive_router_config::extensions::{ExtensionsConfig, ExtensionsMergeAlgo};
+use hive_router_config::response_extensions::{ExtensionsConfig, ExtensionsMergeAlgo};
 
 use super::plan::{ExtensionsMergeStrategy, ExtensionsPlan, ExtensionsPropagatePlan};
 
@@ -21,7 +21,7 @@ pub fn compile_extensions_plan(cfg: &ExtensionsConfig) -> ExtensionsPlan {
 
 #[cfg(test)]
 mod tests {
-    use hive_router_config::extensions::{
+    use hive_router_config::response_extensions::{
         ExtensionsConfig, ExtensionsMergeAlgo, ExtensionsPropagateConfig,
     };
 
