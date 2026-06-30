@@ -132,7 +132,7 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1.16.1 # v1
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0 # v1
         with:
           target: ${{ matrix.rust_target }}
           rust-src-dir: ./apollo-router-workspace
@@ -334,7 +334,7 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1.16.1 # v1
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0 # v1
         with:
           rust-src-dir: ./apollo-router-workspace
 
@@ -378,7 +378,7 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1.16.1 # v1
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0 # v1
         with:
           target: ${{ matrix.target }}
           rust-src-dir: ./apollo-router-workspace

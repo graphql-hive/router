@@ -39,7 +39,7 @@ jobs:
         with:
           token: ${{ github.ref == 'refs/heads/main' && secrets.BOT_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
       - name: setup rust
-        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
       - name: generate config schema
         run: cargo router-config
       - name: setup node
@@ -114,7 +114,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         name: checkout
       - name: setup rust (${{ matrix.rust_target }})
-        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
         with:
           target: ${{ matrix.rust_target }}
           cache-key: ${{ matrix.name }}
