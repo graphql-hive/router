@@ -722,3 +722,58 @@ fn recursion_bomb_test() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+#[test]
+fn requires_circular_keys_test() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let (tx, rx) = mpsc::channel();
+
+    thread::spawn(move || {
+        let queries = [
+            r#"
+            {
+              list {
+                items {
+                  value
+                  valueRequiresObjectFragment
+                  valueRequiresInterfaceFragment
+                  valueRequiresInlineFragment
+                  valueNestedField
+                }
+              }
+            }
+            "#,
+            r#"
+            {
+              list {
+                taggedItems {
+                  ... on Item {
+                    valueInterfaceKey
+                  }
+                }
+              }
+            }
+            "#,
+        ];
+
+        let result = queries.iter().try_for_each(|query| {
+            let document = parse_operation(query);
+            build_query_plan_with_defaults(
+                "fixture/issues/requires-circular-keys.supergraph.graphql",
+                document,
+            )
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+        });
+
+        let _ = tx.send(result);
+    });
+
+    let result = rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("query planner timed out");
+
+    assert!(result.is_ok(), "{}", result.unwrap_err());
+
+    Ok(())
+}
