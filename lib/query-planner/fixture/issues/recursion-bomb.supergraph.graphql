@@ -114,8 +114,6 @@ type Group
     @join__field(graph: S7)
     @join__field(graph: S8)
     @join__field(graph: S9)
-    @join__field(graph: S54)
-    @join__field(graph: S56)
     @join__field(graph: S10)
 }
 
