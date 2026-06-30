@@ -66,6 +66,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(hive-router)* fix docker image issues  ([#394](https://github.com/graphql-hive/router/pull/394))
+## 0.1.6 (2026-06-30)
+
+### Fixes
+
+- Upgrade `ntex` to latest and pin versions
+
 ## 0.1.5 (2026-06-25)
 
 ### Fixes

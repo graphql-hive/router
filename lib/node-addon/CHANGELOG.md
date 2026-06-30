@@ -1,4 +1,10 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.37 (2026-06-30)
+
+### Fixes
+
+- Upgrade `ntex` to latest and pin versions
+
 ## 0.0.36 (2026-06-30)
 
 ### Fixes
