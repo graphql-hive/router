@@ -797,6 +797,9 @@ impl<'graph> PathSearch<'graph> {
             Vec::with_capacity(requirement.paths.len());
         for path in requirement.paths.iter() {
             let current_type_name = self.graph.node(path.tail())?.name_str();
+            // If the current type already matches the fragment condition, we can keep
+            // using the same path. For example, `Item` matches `... on Tagged` when
+            // `Item implements Tagged`, so there is no need to find an edge to `Tagged`.
             if self.type_condition_matches(current_type_name, type_name) {
                 direct_path_results.push(vec![path.clone()]);
             } else {
