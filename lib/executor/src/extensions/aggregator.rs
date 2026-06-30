@@ -48,7 +48,7 @@ impl<'a> ExtensionsAggregator<'a> {
         for (key, (strategy, values)) in self.entries {
             let sonic_val = match strategy {
                 ExtensionsMergeStrategy::Append => {
-                    let arr: sonic_rs::Array = values.iter().map(|v| SonicValue::from(v)).collect();
+                    let arr: sonic_rs::Array = values.iter().map(SonicValue::from).collect();
                     SonicValue::from(arr)
                 }
                 ExtensionsMergeStrategy::First | ExtensionsMergeStrategy::Last => {
