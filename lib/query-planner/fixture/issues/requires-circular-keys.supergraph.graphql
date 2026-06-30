@@ -1,0 +1,150 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.5", for: EXECUTION) {
+  query: Query
+}
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__field(
+  graph: join__Graph
+  requires: join__FieldSet
+  provides: join__FieldSet
+  type: String
+  external: Boolean
+  override: String
+  usedOverridden: Boolean
+  overrideLabel: String
+) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__implements(
+  graph: join__Graph!
+  interface: String!
+) repeatable on OBJECT | INTERFACE
+
+directive @join__type(
+  graph: join__Graph!
+  key: join__FieldSet
+  extension: Boolean! = false
+  resolvable: Boolean! = true
+  isInterfaceObject: Boolean! = false
+) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @link(
+  url: String
+  as: String
+  for: link__Purpose
+  import: [link__Import]
+) repeatable on SCHEMA
+
+scalar join__FieldSet
+scalar link__Import
+
+enum link__Purpose {
+  SECURITY
+  EXECUTION
+}
+
+enum join__Graph {
+  SOURCE @join__graph(name: "source", url: "")
+  VALUE @join__graph(name: "value", url: "")
+  DIRECT_KEY @join__graph(name: "direct-key", url: "")
+  OBJECT_FRAGMENT_KEY @join__graph(name: "object-fragment-key", url: "")
+  INTERFACE_FRAGMENT_KEY @join__graph(name: "interface-fragment-key", url: "")
+  INTERFACE_KEY @join__graph(name: "interface-key", url: "")
+  NESTED_FIELD_KEY @join__graph(name: "nested-field-key", url: "")
+}
+
+type Query @join__type(graph: SOURCE) {
+  list: List @join__field(graph: SOURCE)
+}
+
+type List @join__type(graph: SOURCE) {
+  items: [Item!]! @join__field(graph: SOURCE)
+  taggedItems: [Tagged!]! @join__field(graph: SOURCE)
+}
+
+interface Tagged
+  @join__type(graph: SOURCE, key: "group { id }")
+  @join__type(graph: VALUE, key: "group { id }")
+  @join__type(graph: DIRECT_KEY)
+  @join__type(graph: OBJECT_FRAGMENT_KEY)
+  @join__type(graph: INTERFACE_FRAGMENT_KEY)
+  @join__type(graph: INTERFACE_KEY, key: "tag { id }") {
+  group: Group!
+    @join__field(graph: SOURCE)
+    @join__field(graph: VALUE)
+  tag: Tag!
+    @join__field(graph: SOURCE)
+    @join__field(graph: VALUE)
+    @join__field(graph: INTERFACE_KEY, external: true)
+}
+
+type Item implements Tagged
+  @join__implements(graph: SOURCE, interface: "Tagged")
+  @join__implements(graph: VALUE, interface: "Tagged")
+  @join__implements(graph: DIRECT_KEY, interface: "Tagged")
+  @join__implements(graph: OBJECT_FRAGMENT_KEY, interface: "Tagged")
+  @join__implements(graph: INTERFACE_FRAGMENT_KEY, interface: "Tagged")
+  @join__implements(graph: INTERFACE_KEY, interface: "Tagged")
+  @join__implements(graph: NESTED_FIELD_KEY, interface: "Tagged")
+  @join__type(graph: SOURCE, key: "group { id }")
+  @join__type(graph: VALUE, key: "group { id }")
+  @join__type(graph: DIRECT_KEY, key: "tag { id }")
+  @join__type(graph: OBJECT_FRAGMENT_KEY, key: "... on Item { tag { id } }")
+  @join__type(graph: INTERFACE_FRAGMENT_KEY, key: "... on Tagged { tag { id } }")
+  @join__type(graph: INTERFACE_KEY)
+  @join__type(graph: NESTED_FIELD_KEY, key: "group { tag }") {
+  group: Group!
+    @join__field(graph: SOURCE)
+    @join__field(graph: VALUE)
+    @join__field(graph: NESTED_FIELD_KEY)
+  tag: Tag!
+    @join__field(graph: SOURCE)
+    @join__field(graph: VALUE, external: true)
+    @join__field(graph: DIRECT_KEY, external: true)
+    @join__field(graph: OBJECT_FRAGMENT_KEY, external: true)
+    @join__field(graph: INTERFACE_FRAGMENT_KEY, external: true)
+    @join__field(graph: INTERFACE_KEY, external: true)
+    @join__field(graph: NESTED_FIELD_KEY, external: true)
+  value: String @join__field(graph: VALUE, requires: "tag { id }")
+  valueRequiresObjectFragment: String
+    @join__field(graph: VALUE, requires: "... on Item { tag { id } }")
+  valueRequiresInterfaceFragment: String
+    @join__field(graph: VALUE, requires: "... on Tagged { tag { id } }")
+  valueRequiresInlineFragment: String
+    @join__field(graph: VALUE, requires: "... { tag { id } }")
+  valueInterfaceKey: String @join__field(graph: VALUE, requires: "tag { id }")
+  valueNestedField: String @join__field(graph: NESTED_FIELD_KEY, requires: "tag { id }")
+}
+
+type Group
+  @join__type(graph: SOURCE)
+  @join__type(graph: VALUE)
+  @join__type(graph: NESTED_FIELD_KEY) {
+  id: ID!
+    @join__field(graph: SOURCE)
+    @join__field(graph: VALUE)
+    @join__field(graph: NESTED_FIELD_KEY)
+  tag: String!
+    @join__field(graph: SOURCE)
+    @join__field(graph: NESTED_FIELD_KEY)
+}
+
+type Tag
+  @join__type(graph: SOURCE)
+  @join__type(graph: VALUE)
+  @join__type(graph: DIRECT_KEY)
+  @join__type(graph: OBJECT_FRAGMENT_KEY)
+  @join__type(graph: INTERFACE_FRAGMENT_KEY)
+  @join__type(graph: INTERFACE_KEY)
+  @join__type(graph: NESTED_FIELD_KEY) {
+  id: ID!
+    @join__field(graph: SOURCE)
+    @join__field(graph: VALUE)
+    @join__field(graph: DIRECT_KEY)
+    @join__field(graph: OBJECT_FRAGMENT_KEY)
+    @join__field(graph: INTERFACE_FRAGMENT_KEY)
+    @join__field(graph: INTERFACE_KEY)
+    @join__field(graph: NESTED_FIELD_KEY)
+}

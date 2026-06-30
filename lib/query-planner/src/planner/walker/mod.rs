@@ -279,6 +279,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
             // Find a direct path that references the same type as the current tail,
             let direct_path = find_self_referencing_direct_path(
                 graph,
+                supergraph,
                 override_context,
                 path,
                 &fragment.type_condition,
@@ -320,6 +321,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
 
         let mut direct_paths = find_direct_paths(
             graph,
+            supergraph,
             override_context,
             path,
             &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
@@ -335,6 +337,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
         if fields_to_resolve_locally.is_empty() {
             let mut indirect_paths = find_indirect_paths(
                 graph,
+                supergraph,
                 override_context,
                 path,
                 &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
@@ -373,6 +376,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
             let _enter = path_span.enter();
             let direct_paths = find_direct_paths(
                 graph,
+                supergraph,
                 override_context,
                 path,
                 &NavigationTarget::Field(&FieldSelection::new_typename()),
@@ -551,6 +555,7 @@ fn process_field<'graph, 'op: 'graph>(
         let excluded = ExcludedFromLookup::new();
         let direct_paths = find_direct_paths(
             graph,
+            supergraph,
             override_context,
             path,
             &NavigationTarget::Field(field),
@@ -570,6 +575,7 @@ fn process_field<'graph, 'op: 'graph>(
         if !fields_to_resolve_locally.contains(&field.name) && !found_direct_paths_to_leaf {
             let indirect_paths = find_indirect_paths(
                 graph,
+                supergraph,
                 override_context,
                 path,
                 &NavigationTarget::Field(field),

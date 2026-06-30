@@ -1,0 +1,127 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.5", for: EXECUTION) {
+  query: Query
+}
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__field(
+  graph: join__Graph
+  requires: join__FieldSet
+  provides: join__FieldSet
+  type: String
+  external: Boolean
+  override: String
+  usedOverridden: Boolean
+  overrideLabel: String
+) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__type(
+  graph: join__Graph!
+  key: join__FieldSet
+  extension: Boolean! = false
+  resolvable: Boolean! = true
+  isInterfaceObject: Boolean! = false
+) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+scalar join__FieldSet
+
+directive @link(
+  url: String
+  as: String
+  for: link__Purpose
+  import: [link__Import]
+) repeatable on SCHEMA
+
+scalar link__Import
+
+enum link__Purpose {
+  SECURITY
+  EXECUTION
+}
+
+enum join__Graph {
+  S1 @join__graph(name: "s1", url: "")
+  S2 @join__graph(name: "s2", url: "")
+  S3 @join__graph(name: "s3", url: "")
+  S4 @join__graph(name: "s4", url: "")
+  S5 @join__graph(name: "s5", url: "")
+  S6 @join__graph(name: "s6", url: "")
+  S7 @join__graph(name: "s7", url: "")
+  S8 @join__graph(name: "s8", url: "")
+  S9 @join__graph(name: "s9", url: "")
+  S10 @join__graph(name: "s10", url: "")
+}
+
+type Query @join__type(graph: S3) {
+  list: List @join__field(graph: S3)
+}
+
+type Item
+  @join__type(graph: S1, key: "group { id } id")
+  @join__type(graph: S2, key: "group { id } id")
+  @join__type(graph: S3, key: "group { id }")
+  @join__type(graph: S4, key: "group { id } id")
+  @join__type(graph: S5, key: "group { id }")
+  @join__type(graph: S6, key: "group { id } id")
+  @join__type(graph: S7, key: "group { id } id")
+  @join__type(graph: S8, key: "group { id }")
+  @join__type(graph: S9, key: "group { id } id")
+  @join__type(graph: S10, key: "group { id } id") {
+  group: Group!
+    @join__field(graph: S1)
+    @join__field(graph: S2)
+    @join__field(graph: S3)
+    @join__field(graph: S4)
+    @join__field(graph: S5)
+    @join__field(graph: S6)
+    @join__field(graph: S7)
+    @join__field(graph: S8)
+    @join__field(graph: S9)
+    @join__field(graph: S10)
+  id: String!
+    @join__field(graph: S1)
+    @join__field(graph: S2)
+    @join__field(graph: S3)
+    @join__field(graph: S4)
+    @join__field(graph: S6)
+    @join__field(graph: S7)
+    @join__field(graph: S9)
+    @join__field(graph: S10)
+  tag: Tag! @join__field(graph: S3) @join__field(graph: S5, external: true)
+  value: String @join__field(graph: S5, requires: "tag{id}")
+}
+
+type Group
+  @join__type(graph: S1)
+  @join__type(graph: S2)
+  @join__type(graph: S3)
+  @join__type(graph: S4)
+  @join__type(graph: S5)
+  @join__type(graph: S6)
+  @join__type(graph: S7)
+  @join__type(graph: S8)
+  @join__type(graph: S9)
+  @join__type(graph: S10) {
+  id: String!
+    @join__field(graph: S1)
+    @join__field(graph: S2)
+    @join__field(graph: S3)
+    @join__field(graph: S4)
+    @join__field(graph: S5)
+    @join__field(graph: S6)
+    @join__field(graph: S7)
+    @join__field(graph: S8)
+    @join__field(graph: S9)
+    @join__field(graph: S10)
+}
+
+type List @join__type(graph: S3) {
+  group: Group!
+  items: [Item!]!
+}
+
+type Tag @join__type(graph: S3) {
+  id: String! @join__field(graph: S3)
+}

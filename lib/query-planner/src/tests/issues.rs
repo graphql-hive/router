@@ -4,6 +4,9 @@ use crate::{
     utils::parsing::parse_operation,
 };
 use std::error::Error;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 #[test]
 fn issue_281_test() -> Result<(), Box<dyn Error>> {
@@ -101,35 +104,36 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Flatten(path: "viewer.review|[UserReview].product") {
-          Fetch(service: "c") {
-            {
-              ... on Product {
-                __typename
-                pid
+        Parallel {
+          Flatten(path: "viewer.review|[UserReview].product") {
+            Fetch(service: "c") {
+              {
+                ... on Product {
+                  __typename
+                  pid
+                }
+              } =>
+              {
+                ... on Product {
+                  c
+                }
               }
-            } =>
-            {
-              ... on Product {
-                c
-                pid
-              }
-            }
+            },
           },
-        },
-        Flatten(path: "viewer.review|[UserReview].product") {
-          Fetch(service: "d") {
-            {
-              ... on Product {
-                __typename
-                pid
+          Flatten(path: "viewer.review|[UserReview].product") {
+            Fetch(service: "d") {
+              {
+                ... on Product {
+                  __typename
+                  pid
+                }
+              } =>
+              {
+                ... on Product {
+                  d
+                }
               }
-            } =>
-            {
-              ... on Product {
-                d
-              }
-            }
+            },
           },
         },
       },
@@ -680,6 +684,96 @@ fn issue_interface_object_typename() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
+
+    Ok(())
+}
+
+#[test]
+fn recursion_bomb_test() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          list {
+            items {
+              value
+            }
+          }
+        }
+        "#,
+    );
+    let (tx, rx) = mpsc::channel();
+
+    thread::spawn(move || {
+        let ok = build_query_plan_with_defaults(
+            "fixture/issues/recursion-bomb.supergraph.graphql",
+            document,
+        )
+        .is_ok();
+
+        let _ = tx.send(ok);
+    });
+
+    let ok = rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("query planner timed out");
+
+    assert!(ok);
+
+    Ok(())
+}
+
+#[test]
+fn requires_circular_keys_test() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let (tx, rx) = mpsc::channel();
+
+    thread::spawn(move || {
+        let queries = [
+            r#"
+            {
+              list {
+                items {
+                  value
+                  valueRequiresObjectFragment
+                  valueRequiresInterfaceFragment
+                  valueRequiresInlineFragment
+                  valueNestedField
+                }
+              }
+            }
+            "#,
+            r#"
+            {
+              list {
+                taggedItems {
+                  ... on Item {
+                    valueInterfaceKey
+                  }
+                }
+              }
+            }
+            "#,
+        ];
+
+        let result = queries.iter().try_for_each(|query| {
+            let document = parse_operation(query);
+            build_query_plan_with_defaults(
+                "fixture/issues/requires-circular-keys.supergraph.graphql",
+                document,
+            )
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+        });
+
+        let _ = tx.send(result);
+    });
+
+    let result = rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("query planner timed out");
+
+    assert!(result.is_ok(), "{}", result.unwrap_err());
 
     Ok(())
 }
