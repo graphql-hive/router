@@ -48,7 +48,7 @@ impl From<&FieldSelection> for FieldPathSegment {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash)]
 pub enum Condition {
     Skip(String),
     Include(String),

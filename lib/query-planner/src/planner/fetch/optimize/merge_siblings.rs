@@ -1,12 +1,24 @@
-use std::collections::{HashMap, VecDeque};
+use std::{
+    collections::{HashMap, VecDeque},
+    hash::{Hash, Hasher},
+};
 
 use petgraph::{graph::NodeIndex, Direction};
-use tracing::{instrument, trace};
+use tracing::instrument;
 
-use crate::planner::fetch::{
-    error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
-    optimize::utils::perform_fetch_step_merge, state::MultiTypeFetchStep,
+use crate::{
+    ast::merge_path::{Condition, Segment},
+    planner::fetch::{
+        error::FetchGraphError,
+        fetch_graph::FetchGraph,
+        fetch_step_data::{FetchStepData, FetchStepKind},
+        optimize::utils::perform_fetch_step_merge,
+        state::MultiTypeFetchStep,
+    },
+    state::supergraph_state::SubgraphName,
 };
+
+type SiblingGroupKey = (SubgraphName, u64, Option<Condition>, FetchStepKind);
 
 impl FetchGraph<MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
@@ -18,15 +30,6 @@ impl FetchGraph<MultiTypeFetchStep> {
         let mut queue = VecDeque::from([root_index]);
 
         while let Some(parent_index) = queue.pop_front() {
-            // Store pairs of sibling nodes that can be merged.
-            // The additional Vec<usize> is an indicator for conflicting field indexes in the 2nd sibling.
-            // If the Vec is empty, it means there are no conflicts.
-            let mut merges_to_perform = Vec::<(NodeIndex, NodeIndex)>::new();
-
-            // HashMap to keep track of node index mappings, especially after merges.
-            // Key: original index, Value: potentially updated index after merges.
-            let mut node_indexes: HashMap<NodeIndex, NodeIndex> = HashMap::new();
-
             // Sort fetch steps by mutation's field position,
             // to execute mutations in correct order.
             let mut siblings_with_pos: Vec<(NodeIndex, Option<usize>)> = self
@@ -45,68 +48,92 @@ impl FetchGraph<MultiTypeFetchStep> {
             let siblings: Vec<NodeIndex> =
                 siblings_with_pos.into_iter().map(|(idx, _)| idx).collect();
 
-            for (i, sibling_index) in siblings.iter().enumerate() {
-                // Add the current node to the queue for further processing (BFS).
+            for sibling_index in &siblings {
                 queue.push_back(*sibling_index);
-                let current = self.get_step_data(*sibling_index)?;
+            }
 
-                // Iterate through the remaining children (siblings) to check for merge possibilities.
-                for other_sibling_index in siblings.iter().skip(i + 1) {
-                    let other_sibling = self.get_step_data(*other_sibling_index)?;
+            let mut groups: HashMap<SiblingGroupKey, Vec<NodeIndex>> = HashMap::new();
+            for sibling_index in siblings {
+                if self.graph.node_weight(sibling_index).is_none() {
+                    continue;
+                }
 
-                    trace!(
-                        "checking if [{}] and [{}] can be merged",
-                        sibling_index.index(),
-                        other_sibling_index.index()
-                    );
+                let step = self.get_step_data(sibling_index)?;
+                groups
+                    .entry((
+                        step.service_name.clone(),
+                        response_path_shape_hash(step),
+                        if matches!(step.kind, FetchStepKind::Entity) {
+                            step.condition.clone()
+                        } else {
+                            None
+                        },
+                        step.kind.clone(),
+                    ))
+                    .or_default()
+                    .push(sibling_index);
+            }
 
-                    if current.can_merge_siblings(
-                        *sibling_index,
-                        *other_sibling_index,
-                        other_sibling,
-                        self,
-                    ) {
-                        trace!(
-                            "Found siblings optimization: {} <- {}",
-                            sibling_index.index(),
-                            other_sibling_index.index()
-                        );
-                        // Register their original indexes in the map.
-                        node_indexes.insert(*sibling_index, *sibling_index);
-                        node_indexes.insert(*other_sibling_index, *other_sibling_index);
+            for group in groups.into_values() {
+                let mut targets: Vec<NodeIndex> = Vec::new();
 
-                        merges_to_perform.push((*sibling_index, *other_sibling_index));
+                for source_index in group {
+                    if self.graph.node_weight(source_index).is_none() {
+                        continue;
+                    }
 
-                        // Since a merge is possible, move to the next child to avoid redundant checks.
-                        break;
+                    let mut merged = false;
+                    for &target_index in &targets {
+                        if self.graph.node_weight(target_index).is_none() {
+                            continue;
+                        }
+
+                        let can_merge = {
+                            let target = self.get_step_data(target_index)?;
+                            let source = self.get_step_data(source_index)?;
+                            target.can_merge_siblings(target_index, source_index, source, self)
+                        };
+
+                        if can_merge {
+                            perform_fetch_step_merge(target_index, source_index, self, false)?;
+                            merged = true;
+                            break;
+                        }
+                    }
+
+                    if !merged {
+                        targets.push(source_index);
                     }
                 }
             }
-
-            for (child_index, other_child_index) in merges_to_perform {
-                // Get the latest indexes for the nodes, accounting for previous merges.
-                let child_index_latest = node_indexes
-                    .get(&child_index)
-                    .ok_or(FetchGraphError::IndexMappingLost)?;
-                let other_child_index_latest = node_indexes
-                    .get(&other_child_index)
-                    .ok_or(FetchGraphError::IndexMappingLost)?;
-
-                perform_fetch_step_merge(
-                    *child_index_latest,
-                    *other_child_index_latest,
-                    self,
-                    false,
-                )?;
-
-                // Because `other_child` was merged into `child`,
-                // then everything that was pointing to `other_child`
-                // has to point to the `child`.
-                node_indexes.insert(*other_child_index_latest, *child_index_latest);
-            }
         }
+
         Ok(())
     }
+}
+
+fn response_path_shape_hash(step: &FetchStepData<MultiTypeFetchStep>) -> u64 {
+    let mut hasher = rustc_hash::FxHasher::default();
+
+    for segment in step.response_path.inner.iter() {
+        match segment {
+            Segment::Field(fp, _, cond) => {
+                0u8.hash(&mut hasher);
+                fp.hash(&mut hasher);
+                cond.hash(&mut hasher);
+            }
+            Segment::List => 1u8.hash(&mut hasher),
+            Segment::TypeCondition(types, cond) => {
+                2u8.hash(&mut hasher);
+                for t in types {
+                    t.hash(&mut hasher);
+                }
+                cond.hash(&mut hasher);
+            }
+        }
+    }
+
+    hasher.finish()
 }
 
 impl FetchStepData<MultiTypeFetchStep> {

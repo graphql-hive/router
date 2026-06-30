@@ -5,7 +5,10 @@ pub(crate) mod path;
 pub(crate) mod pathfinder;
 mod utils;
 
-use std::collections::VecDeque;
+use std::{
+    collections::{HashSet, VecDeque},
+    rc::Rc,
+};
 
 use crate::{
     ast::{
@@ -19,7 +22,10 @@ use crate::{
         node::Node,
         Graph,
     },
-    planner::walker::pathfinder::{find_self_referencing_direct_path, NavigationTarget},
+    planner::walker::{
+        path::UnionContext,
+        pathfinder::{find_direct_path, find_self_referencing_direct_path, NavigationTarget},
+    },
     state::supergraph_state::{OperationKind, SupergraphState},
     utils::cancellation::CancellationToken,
 };
@@ -42,7 +48,7 @@ pub type BestPathsPerLeaf<'graph> = Vec<Vec<OperationPath<'graph>>>;
 // TODO: Consider to use VecDeque(fixed_size) if we can predict it?
 // TODO: Consider to drop this IR layer and just go with QTP directly.
 
-type WorkItem<'graph, 'op> = (&'op SelectionItem, Vec<OperationPath<'graph>>);
+type WorkItem<'graph, 'op> = (&'op SelectionItem, Rc<Vec<OperationPath<'graph>>>);
 type ResolutionStack<'graph, 'op> = Vec<WorkItem<'graph, 'op>>;
 
 #[instrument(level = "trace", skip_all)]
@@ -61,10 +67,12 @@ pub fn walk_operation<'graph, 'op: 'graph>(
     trace!("operation is of type {:?}", op_type);
 
     let root_entrypoints = get_entrypoints(graph, op_type)?;
-    let initial_paths: Vec<OperationPath<'graph>> = root_entrypoints
-        .iter()
-        .map(|edge| OperationPath::new_entrypoint(edge))
-        .collect();
+    let initial_paths: Rc<Vec<OperationPath<'graph>>> = Rc::new(
+        root_entrypoints
+            .iter()
+            .map(|edge| OperationPath::new_entrypoint(edge))
+            .collect(),
+    );
 
     let mut paths_grouped_by_root_field: Vec<BestPathsPerLeaf> =
         Vec::with_capacity(operation.selection_set.items.len());
@@ -73,7 +81,7 @@ pub fn walk_operation<'graph, 'op: 'graph>(
     for selection_item in selection_set.items.iter() {
         let mut stack_to_resolve: VecDeque<WorkItem> = VecDeque::new();
 
-        stack_to_resolve.push_back((selection_item, initial_paths.to_vec()));
+        stack_to_resolve.push_back((selection_item, Rc::clone(&initial_paths)));
 
         let mut paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
 
@@ -319,7 +327,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
         );
         let _enter = path_span.enter();
 
-        let mut direct_paths = find_direct_paths(
+        let direct_path = find_direct_path(
             graph,
             supergraph,
             override_context,
@@ -328,10 +336,11 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
             cancellation_token,
         )?;
 
-        trace!("Direct paths found: {}", direct_paths.len());
-        if !direct_paths.is_empty() {
+        let found_direct_path = direct_path.is_some();
+        trace!("Direct path found: {}", found_direct_path);
+        if let Some(direct_path) = direct_path {
             trace!("advanced: {}", path.pretty_print(graph));
-            next_paths.push(direct_paths.remove(0));
+            next_paths.push(direct_path);
         }
 
         if fields_to_resolve_locally.is_empty() {
@@ -350,7 +359,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
                 next_paths.push(indirect_paths.remove(0));
             }
 
-            if indirect_paths.is_empty() && direct_paths.is_empty() {
+            if indirect_paths.is_empty() && !found_direct_path {
                 // Looks like a union member or an interface implementation is not resolvable.
                 // The fact the fragment for that object type passed GraphQL validations,
                 // means that it's a child of the abstract type,
@@ -379,7 +388,10 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
                 supergraph,
                 override_context,
                 path,
-                &NavigationTarget::Field(&FieldSelection::new_typename()),
+                &NavigationTarget::Field {
+                    field: &FieldSelection::new_typename(),
+                    target_subgraph_ids: None,
+                },
                 cancellation_token,
             )?;
 
@@ -434,37 +446,27 @@ fn narrow_partial_union_paths<'graph>(paths: &mut Vec<OperationPath<'graph>>) {
         return;
     };
 
-    let all_same_field = paths.iter().all(|path| {
-        path.union_context
-            .as_ref()
-            .is_some_and(|ctx| ctx.eq_field(union_context))
-    });
-
-    if !all_same_field {
-        return;
-    }
-
     // Collect the union members that each subgraph can return.
     //
     // All paths through the same graph share the same `possible_members` because they originate
     // from the same `UnionMembersData` (one per graph). We only need to record each graph's member
     // set once — no accumulation is required.
-    type GraphId<'graph> = &'graph str;
-    type MembersPerGraph<'graph> = Vec<(GraphId<'graph>, Vec<&'graph str>)>;
-    let mut members_per_graph: MembersPerGraph<'graph> = Vec::new();
+    let mut members_per_graph: Vec<&UnionContext<'graph>> = Vec::new();
 
     for path in paths.iter() {
-        let context = path
-            .union_context
-            .as_ref()
-            // It's safe to unwrap as `all_same_field` checked that all paths have the same context
-            .expect("union member context should exist at this point");
+        let Some(context) = path.union_context.as_ref() else {
+            return;
+        };
+
+        if !context.eq_field(union_context) {
+            return;
+        }
 
         if !members_per_graph
             .iter()
-            .any(|(graph_id, _)| graph_id == &context.graph_id)
+            .any(|existing_context| existing_context.graph_id == context.graph_id)
         {
-            members_per_graph.push((context.graph_id, context.possible_members.clone()));
+            members_per_graph.push(context);
         }
     }
 
@@ -472,18 +474,18 @@ fn narrow_partial_union_paths<'graph>(paths: &mut Vec<OperationPath<'graph>>) {
         return;
     }
 
-    let (_, least_members_set) = members_per_graph
+    let least_members_context = members_per_graph
         .iter()
-        .min_by_key(|(_, members)| members.len())
+        .min_by_key(|context| context.possible_members_len())
         // It's safe as we checked that `members_per_graph` has at least two entries above
         .expect("members_per_graph has at least two entries");
 
     // Start from the smallest member list.
     // Then shrink it with each graph until only shared members remain.
-    let mut shared_members: Vec<&'graph str> = least_members_set.clone();
+    let mut shared_members = least_members_context.possible_members();
 
-    for (_, members) in &members_per_graph {
-        shared_members.retain(|member| members.contains(member));
+    for context in &members_per_graph {
+        shared_members.retain(|member| context.possible_members_contains(member));
 
         if shared_members.is_empty() {
             // No union member exists in every candidate subgraph.
@@ -505,8 +507,9 @@ fn narrow_partial_union_paths<'graph>(paths: &mut Vec<OperationPath<'graph>>) {
             return false;
         }
 
-        // Update the possible members to the shared members set.
-        context.possible_members = shared_members.clone();
+        // At this point, the path leads to only one possible member,
+        // not need to store the shared members set.
+        context.set_possible_member(context.member_name);
         true
     });
 }
@@ -521,7 +524,7 @@ fn process_field<'graph, 'op: 'graph>(
     override_context: &'graph PlannerOverrideContext,
     field: &'op FieldSelection,
     paths: &[OperationPath<'graph>],
-    fields_to_resolve_locally: &[String],
+    _fields_to_resolve_locally: &[String],
     cancellation_token: &'graph CancellationToken,
 ) -> Result<
     (
@@ -542,6 +545,8 @@ fn process_field<'graph, 'op: 'graph>(
 
     cancellation_token.bail_if_cancelled()?;
 
+    let mut target_subgraph_ids_cache = None;
+
     for path in paths {
         let path_span = span!(
             Level::TRACE,
@@ -558,7 +563,10 @@ fn process_field<'graph, 'op: 'graph>(
             supergraph,
             override_context,
             path,
-            &NavigationTarget::Field(field),
+            &NavigationTarget::Field {
+                field: field,
+                target_subgraph_ids: None,
+            },
             cancellation_token,
         )?;
         trace!("Direct paths found: {}", direct_paths.len());
@@ -572,13 +580,49 @@ fn process_field<'graph, 'op: 'graph>(
             }
         }
 
-        if !fields_to_resolve_locally.contains(&field.name) && !found_direct_paths_to_leaf {
+        if !found_direct_paths_to_leaf {
+            let has_indirect_candidates = graph.edges_from(path.tail()).any(|edge| {
+                matches!(
+                    edge.weight(),
+                    Edge::EntityMove(_) | Edge::InterfaceObjectTypeMove(_)
+                )
+            });
+
+            if !has_indirect_candidates {
+                trace!(
+                              "Skipping indirect lookup for '{}' at tail {} because there are no entity/interface-object outgoing edges",
+                              field.name,
+                              path.tail().index()
+                          );
+                trace!(
+                    "{}: {}",
+                    if advanced {
+                        "advanced"
+                    } else {
+                        "failed to advance"
+                    },
+                    path.pretty_print(graph)
+                );
+                continue;
+            }
+
+            if target_subgraph_ids_cache.is_none() {
+                target_subgraph_ids_cache =
+                    Some(field_target_subgraph_ids(supergraph, field, paths, graph)?);
+            }
+            let target_subgraph_ids = target_subgraph_ids_cache
+                .as_ref()
+                .and_then(|ids| ids.as_ref());
+
             let indirect_paths = find_indirect_paths(
                 graph,
                 supergraph,
                 override_context,
                 path,
-                &NavigationTarget::Field(field),
+                &NavigationTarget::Field {
+                    field: field,
+                    target_subgraph_ids,
+                },
                 &excluded,
                 cancellation_token,
             )?;
@@ -590,6 +634,10 @@ fn process_field<'graph, 'op: 'graph>(
                     tracker.add(&indirect_path)?;
                 }
             }
+        }
+
+        if found_direct_paths_to_leaf {
+            trace!("Skipping indirect paths for leaf direct hit");
         }
 
         trace!(
@@ -731,10 +779,48 @@ fn process_field<'graph, 'op: 'graph>(
         paths_per_leaf.push(find_best_paths(next_paths));
     } else {
         trace!("Found {} paths", next_paths.len());
+        let next_paths = Rc::new(next_paths);
         for next_selection_items in &field.selections.items {
-            next_stack_to_resolve.push((next_selection_items, next_paths.clone()));
+            next_stack_to_resolve.push((next_selection_items, Rc::clone(&next_paths)));
         }
     }
 
     Ok((next_stack_to_resolve, paths_per_leaf))
+}
+
+fn field_target_subgraph_ids(
+    supergraph: &SupergraphState,
+    field: &FieldSelection,
+    paths: &[OperationPath<'_>],
+    graph: &Graph,
+) -> Result<Option<HashSet<String>>, WalkOperationError> {
+    let mut parent_type_names = HashSet::new();
+
+    for path in paths {
+        let parent_node = graph.node(path.tail())?;
+        parent_type_names.insert(parent_node.name_str());
+    }
+
+    let mut target_subgraph_ids = HashSet::new();
+
+    for parent_type_name in parent_type_names {
+        let Some(parent_def) = supergraph.definitions.get(parent_type_name) else {
+            continue;
+        };
+        let Some(field_def) = parent_def.fields().get(&field.name) else {
+            continue;
+        };
+
+        for graph_id in field_def.resolvable_in_graphs(parent_def) {
+            if let Ok(subgraph_id) = supergraph.resolve_graph_id(&graph_id) {
+                target_subgraph_ids.insert(subgraph_id.0);
+            }
+        }
+    }
+
+    if target_subgraph_ids.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(target_subgraph_ids))
+    }
 }
