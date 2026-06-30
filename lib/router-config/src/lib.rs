@@ -85,9 +85,9 @@ pub struct HiveRouterConfig {
     #[serde(default)]
     pub headers: headers::HeadersConfig,
 
-    /// Configuration for propagating subgraph response extensions to the client.
+    /// Configuration for propagating subgraph response's `extensions` to the client.
     #[serde(default)]
-    pub extensions: response_extensions::ExtensionsConfig,
+    pub response_extensions: response_extensions::ResponseExtensionsConfig,
 
     /// Configuration for CSRF prevention.
     #[serde(default)]

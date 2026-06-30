@@ -41,7 +41,7 @@ mod extensions_propagation_e2e_tests {
                 supergraph:
                   source: file
                   path: supergraph.graphql
-                extensions:
+                response_extensions:
                   propagate:
                     algorithm: last
                 "#,
@@ -96,7 +96,7 @@ mod extensions_propagation_e2e_tests {
                 supergraph:
                   source: file
                   path: supergraph.graphql
-                extensions:
+                response_extensions:
                   propagate:
                     algorithm: first
                 "#,
@@ -141,7 +141,7 @@ mod extensions_propagation_e2e_tests {
                 supergraph:
                   source: file
                   path: supergraph.graphql
-                extensions:
+                response_extensions:
                   propagate:
                     algorithm: append
                 "#,
@@ -231,7 +231,7 @@ mod extensions_propagation_e2e_tests {
                 supergraph:
                   source: file
                   path: supergraph.graphql
-                extensions:
+                response_extensions:
                   propagate:
                     algorithm: last
                     allow: [allowed]
@@ -281,7 +281,7 @@ mod extensions_propagation_e2e_tests {
                 supergraph:
                   source: file
                   path: supergraph.graphql
-                extensions:
+                response_extensions:
                   propagate:
                     algorithm: last
                     allow: [queryPlan] # even if explicitly allowed

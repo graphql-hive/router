@@ -333,7 +333,7 @@ impl RouterSharedState {
         Ok(Self {
             validation_plan: Arc::new(validation_plan),
             headers_plan: Arc::new(compile_headers_plan(&router_config.headers).map_err(Box::new)?),
-            extensions_plan: Arc::new(compile_extensions_plan(&router_config.extensions)),
+            extensions_plan: Arc::new(compile_extensions_plan(&router_config.response_extensions)),
             parse_cache,
             persisted_documents_runtime,
             cors_runtime: Cors::from_config(&router_config.cors).map_err(Box::new)?,

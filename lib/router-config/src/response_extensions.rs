@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Configuration for propagating `extensions` from subgraph responses to the
 /// client response.
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
-pub struct ExtensionsConfig {
+pub struct ResponseExtensionsConfig {
     /// Rules for propagating subgraph response `extensions` to the client.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub propagate: Option<ExtensionsPropagateConfig>,

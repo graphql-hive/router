@@ -1,9 +1,9 @@
 use ahash::HashSet;
-use hive_router_config::response_extensions::{ExtensionsConfig, ExtensionsMergeAlgo};
+use hive_router_config::response_extensions::{ExtensionsMergeAlgo, ResponseExtensionsConfig};
 
 use super::plan::{ExtensionsMergeStrategy, ExtensionsPlan, ExtensionsPropagatePlan};
 
-pub fn compile_extensions_plan(cfg: &ExtensionsConfig) -> ExtensionsPlan {
+pub fn compile_extensions_plan(cfg: &ResponseExtensionsConfig) -> ExtensionsPlan {
     let propagate = cfg.propagate.as_ref().map(|p| ExtensionsPropagatePlan {
         strategy: match p.algorithm {
             ExtensionsMergeAlgo::First => ExtensionsMergeStrategy::First,
@@ -22,7 +22,7 @@ pub fn compile_extensions_plan(cfg: &ExtensionsConfig) -> ExtensionsPlan {
 #[cfg(test)]
 mod tests {
     use hive_router_config::response_extensions::{
-        ExtensionsConfig, ExtensionsMergeAlgo, ExtensionsPropagateConfig,
+        ExtensionsMergeAlgo, ExtensionsPropagateConfig, ResponseExtensionsConfig,
     };
 
     use super::*;
@@ -30,7 +30,7 @@ mod tests {
 
     #[test]
     fn test_compile_last() {
-        let cfg = ExtensionsConfig {
+        let cfg = ResponseExtensionsConfig {
             propagate: Some(ExtensionsPropagateConfig {
                 algorithm: ExtensionsMergeAlgo::Last,
                 allow: None,
@@ -44,7 +44,7 @@ mod tests {
 
     #[test]
     fn test_compile_first() {
-        let cfg = ExtensionsConfig {
+        let cfg = ResponseExtensionsConfig {
             propagate: Some(ExtensionsPropagateConfig {
                 algorithm: ExtensionsMergeAlgo::First,
                 allow: None,
@@ -59,7 +59,7 @@ mod tests {
 
     #[test]
     fn test_compile_append() {
-        let cfg = ExtensionsConfig {
+        let cfg = ResponseExtensionsConfig {
             propagate: Some(ExtensionsPropagateConfig {
                 algorithm: ExtensionsMergeAlgo::Append,
                 allow: None,
@@ -74,7 +74,7 @@ mod tests {
 
     #[test]
     fn test_compile_allow_list() {
-        let cfg = ExtensionsConfig {
+        let cfg = ResponseExtensionsConfig {
             propagate: Some(ExtensionsPropagateConfig {
                 algorithm: ExtensionsMergeAlgo::Last,
                 allow: Some(vec!["foo".to_string(), "bar".to_string()]),
@@ -90,7 +90,7 @@ mod tests {
 
     #[test]
     fn test_compile_no_propagate() {
-        let cfg = ExtensionsConfig { propagate: None };
+        let cfg = ResponseExtensionsConfig { propagate: None };
         let plan = compile_extensions_plan(&cfg);
         assert!(plan.propagate.is_none());
     }
