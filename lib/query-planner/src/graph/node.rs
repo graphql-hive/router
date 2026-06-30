@@ -2,7 +2,7 @@ use std::fmt::{Debug, Display};
 
 use crate::state::supergraph_state::SubgraphName;
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UnionMembersData {
     /// Represents the type owning the field
     pub type_name: String,

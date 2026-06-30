@@ -22,8 +22,9 @@ use crate::{
         node::Node,
         Graph,
     },
-    planner::walker::pathfinder::{
-        find_direct_path, find_self_referencing_direct_path, NavigationTarget,
+    planner::walker::{
+        path::UnionContext,
+        pathfinder::{find_direct_path, find_self_referencing_direct_path, NavigationTarget},
     },
     state::supergraph_state::{OperationKind, SupergraphState},
     utils::cancellation::CancellationToken,
@@ -445,37 +446,27 @@ fn narrow_partial_union_paths<'graph>(paths: &mut Vec<OperationPath<'graph>>) {
         return;
     };
 
-    let all_same_field = paths.iter().all(|path| {
-        path.union_context
-            .as_ref()
-            .is_some_and(|ctx| ctx.eq_field(union_context))
-    });
-
-    if !all_same_field {
-        return;
-    }
-
     // Collect the union members that each subgraph can return.
     //
     // All paths through the same graph share the same `possible_members` because they originate
     // from the same `UnionMembersData` (one per graph). We only need to record each graph's member
     // set once — no accumulation is required.
-    type GraphId<'graph> = &'graph str;
-    type MembersPerGraph<'graph> = Vec<(GraphId<'graph>, Vec<&'graph str>)>;
-    let mut members_per_graph: MembersPerGraph<'graph> = Vec::new();
+    let mut members_per_graph: Vec<&UnionContext<'graph>> = Vec::new();
 
     for path in paths.iter() {
-        let context = path
-            .union_context
-            .as_ref()
-            // It's safe to unwrap as `all_same_field` checked that all paths have the same context
-            .expect("union member context should exist at this point");
+        let Some(context) = path.union_context.as_ref() else {
+            return;
+        };
+
+        if !context.eq_field(union_context) {
+            return;
+        }
 
         if !members_per_graph
             .iter()
-            .any(|(graph_id, _)| graph_id == &context.graph_id)
+            .any(|existing_context| existing_context.graph_id == context.graph_id)
         {
-            members_per_graph.push((context.graph_id, context.possible_members.clone()));
+            members_per_graph.push(context);
         }
     }
 
@@ -483,18 +474,18 @@ fn narrow_partial_union_paths<'graph>(paths: &mut Vec<OperationPath<'graph>>) {
         return;
     }
 
-    let (_, least_members_set) = members_per_graph
+    let least_members_context = members_per_graph
         .iter()
-        .min_by_key(|(_, members)| members.len())
+        .min_by_key(|context| context.possible_members_len())
         // It's safe as we checked that `members_per_graph` has at least two entries above
         .expect("members_per_graph has at least two entries");
 
     // Start from the smallest member list.
     // Then shrink it with each graph until only shared members remain.
-    let mut shared_members: Vec<&'graph str> = least_members_set.clone();
+    let mut shared_members = least_members_context.possible_members();
 
-    for (_, members) in &members_per_graph {
-        shared_members.retain(|member| members.contains(member));
+    for context in &members_per_graph {
+        shared_members.retain(|member| context.possible_members_contains(member));
 
         if shared_members.is_empty() {
             // No union member exists in every candidate subgraph.
@@ -516,8 +507,9 @@ fn narrow_partial_union_paths<'graph>(paths: &mut Vec<OperationPath<'graph>>) {
             return false;
         }
 
-        // Update the possible members to the shared members set.
-        context.possible_members = shared_members.clone();
+        // At this point, the path leads to only one possible member,
+        // not need to store the shared members set.
+        context.set_possible_member(context.member_name);
         true
     });
 }
