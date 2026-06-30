@@ -213,6 +213,28 @@ impl<'graph> PathSearch<'graph> {
                     continue;
                 }
 
+                // If we're searching for a field and this edge's
+                // requirements include the same field,
+                // the edge cannot help us, we skip it.
+                // We allow other entity-move edge to be used instead,
+                // that will be used to collect the required fields.
+                if let NavigationTarget::Field(FieldSelection {
+                    name: target_field_name,
+                    ..
+                }) = target
+                {
+                    if let Some(requirements) = edge.requirements() {
+                        if requirements
+                            .selection_set
+                            .items
+                            .iter()
+                            .any(|item| matches!(item, SelectionItem::Field(f) if &f.name == target_field_name))
+                        {
+                            continue;
+                        }
+                    }
+                }
+
                 // A huge win for performance, is when you do less work :D
                 // We can ignore an edge that has already been visited with the same key fields / requirements.
                 // The way entity-move edges are created, where every graph points to every other graph:

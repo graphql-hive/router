@@ -4,6 +4,9 @@ use crate::{
     utils::parsing::parse_operation,
 };
 use std::error::Error;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 #[test]
 fn issue_281_test() -> Result<(), Box<dyn Error>> {
@@ -680,6 +683,41 @@ fn issue_interface_object_typename() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
+
+    Ok(())
+}
+
+#[test]
+fn recursion_bomb_test() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          list {
+            items {
+              value
+            }
+          }
+        }
+        "#,
+    );
+    let (tx, rx) = mpsc::channel();
+
+    thread::spawn(move || {
+        let ok = build_query_plan_with_defaults(
+            "fixture/issues/recursion-bomb.supergraph.graphql",
+            document,
+        )
+        .is_ok();
+
+        let _ = tx.send(ok);
+    });
+
+    let ok = rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("query planner timed out");
+
+    assert!(ok);
 
     Ok(())
 }
