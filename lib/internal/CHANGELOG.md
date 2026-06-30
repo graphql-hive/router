@@ -1,3 +1,9 @@
+## 0.0.34 (2026-06-30)
+
+### Fixes
+
+- Upgrade `ntex` to latest and pin versions
+
 ## 0.0.33 (2026-06-30)
 
 ### Fixes
