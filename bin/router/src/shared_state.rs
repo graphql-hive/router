@@ -10,6 +10,9 @@ use hive_router_internal::inflight::{InFlightCleanupGuard, InFlightMap};
 use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::coprocessor::{CoprocessorError, CoprocessorRuntime};
 use hive_router_plan_executor::execution::plan::FailedExecutionResult;
+use hive_router_plan_executor::extensions::{
+    compile::compile_extensions_plan, plan::ExtensionsPlan,
+};
 use hive_router_plan_executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
 };
@@ -275,6 +278,7 @@ pub struct RouterSharedState {
     pub persisted_documents_runtime: PersistedDocumentsRuntime,
     pub router_config: Arc<HiveRouterConfig>,
     pub headers_plan: Arc<HeaderRulesPlan>,
+    pub extensions_plan: Arc<ExtensionsPlan>,
     pub override_labels_evaluator: OverrideLabelsEvaluator,
     pub cors_runtime: Option<Cors>,
     /// Cache for validated JWT claims to avoid re-parsing on every request.
@@ -329,6 +333,7 @@ impl RouterSharedState {
         Ok(Self {
             validation_plan: Arc::new(validation_plan),
             headers_plan: Arc::new(compile_headers_plan(&router_config.headers).map_err(Box::new)?),
+            extensions_plan: Arc::new(compile_extensions_plan(&router_config.response_extensions)),
             parse_cache,
             persisted_documents_runtime,
             cors_runtime: Cors::from_config(&router_config.cors).map_err(Box::new)?,

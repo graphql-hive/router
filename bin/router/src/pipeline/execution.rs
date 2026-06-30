@@ -127,6 +127,7 @@ pub async fn execute_plan<'exec>(
                 .clone(),
             projection_plan: planned_request.normalized_payload.projection_plan.clone(),
             headers_plan: app_state.headers_plan.clone(),
+            extensions_plan: app_state.extensions_plan.clone(),
             variable_values: planned_request.variable_payload.clone(),
             extensions,
             client_request: planned_request.client_request_details,

@@ -2,6 +2,7 @@ pub mod coprocessor;
 pub mod execution;
 pub mod execution_context;
 pub mod executors;
+pub mod extensions;
 pub mod headers;
 pub mod introspection;
 pub mod json_writer;

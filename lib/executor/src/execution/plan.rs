@@ -45,6 +45,7 @@ use crate::{
     },
     execution_context::ExecutionContext,
     executors::{common::SubgraphExecutionRequest, map::SubgraphExecutorMap},
+    extensions::{aggregator::apply_subgraph_extensions, plan::ExtensionsPlan},
     headers::{
         plan::HeaderRulesPlan,
         request::modify_subgraph_request_headers,
@@ -117,6 +118,7 @@ pub struct QueryPlanExecutionOpts<'exec> {
     pub operation_for_plan: Arc<OperationDefinition>,
     pub projection_plan: Arc<Vec<FieldProjectionPlan>>,
     pub headers_plan: Arc<HeaderRulesPlan>,
+    pub extensions_plan: Arc<ExtensionsPlan>,
     pub variable_values: Arc<CoerceVariablesPayload>,
     pub extensions: ExecutionResultExtensions<'exec>,
     pub client_request: Arc<ClientRequestDetails<'exec>>,
@@ -362,6 +364,7 @@ pub async fn execute_query_plan<'exec>(
                     operation_for_plan: opts.operation_for_plan.clone(),
                     projection_plan: opts.projection_plan.clone(),
                     headers_plan: opts.headers_plan.clone(),
+                    extensions_plan: opts.extensions_plan.clone(),
                     variable_values: opts.variable_values.clone(),
                     extensions: ExecutionResultExtensions::default(),
                     client_request: ClientRequestDetails {
@@ -493,6 +496,7 @@ async fn execute_query_plan_with_data<'exec>(
         executors: &opts.executors,
         client_request: &opts.client_request,
         headers_plan: &opts.headers_plan,
+        extensions_plan: &opts.extensions_plan,
         jwt_forwarding_plan: opts.jwt_auth_forwarding,
         dedupe_subgraph_requests,
         demand_control_context: opts.demand_control_context.clone(),
@@ -571,6 +575,11 @@ async fn execute_query_plan_with_data<'exec>(
 
     opts.response_header_sink
         .store(std::mem::take(&mut exec_ctx.response_headers_aggregator));
+
+    // merge_into takes ownership of the aggregator to drain it in one pass; mem::take
+    // gives us ownership while leaving a default (empty) aggregator in place, since
+    // exec_ctx is still borrowed and we cannot move out of it directly
+    std::mem::take(&mut exec_ctx.extensions_aggregator).merge_into(&mut opts.extensions.extensions);
 
     // TODO: coprocessor.on_execution_response
     if !on_end_callbacks.is_empty() {
@@ -656,6 +665,7 @@ pub struct Executor<'exec> {
     pub executors: &'exec SubgraphExecutorMap,
     pub client_request: &'exec ClientRequestDetails<'exec>,
     pub headers_plan: &'exec HeaderRulesPlan,
+    pub extensions_plan: &'exec ExtensionsPlan,
     pub jwt_forwarding_plan: Option<Arc<JwtAuthForwardingPlan>>,
     pub dedupe_subgraph_requests: bool,
     pub demand_control_context: Option<Arc<DemandControlExecutionContext>>,
@@ -1052,6 +1062,14 @@ impl<'exec> Executor<'exec> {
                         self.log_error(err);
                         ctx.errors.push(err.into());
                     }
+                }
+
+                if let Some(ref subgraph_extensions) = job.response_ref().extensions {
+                    apply_subgraph_extensions(
+                        self.extensions_plan,
+                        subgraph_extensions,
+                        &mut ctx.extensions_aggregator,
+                    );
                 }
 
                 match job {
@@ -1626,6 +1644,7 @@ mod tests {
             plan::Executor,
         },
         execution_context::ExecutionContext,
+        extensions::plan::ExtensionsPlan,
         headers::plan::HeaderRulesPlan,
         introspection::schema::SchemaMetadata,
         response::{
@@ -1828,6 +1847,7 @@ mod tests {
                 path_params: Default::default(),
             },
             headers_plan: &HeaderRulesPlan::default(),
+            extensions_plan: &ExtensionsPlan::default(),
             jwt_forwarding_plan: None,
             dedupe_subgraph_requests: false,
             demand_control_context: None,
@@ -1943,6 +1963,7 @@ mod tests {
                 path_params: Default::default(),
             },
             headers_plan: &HeaderRulesPlan::default(),
+            extensions_plan: &ExtensionsPlan::default(),
             jwt_forwarding_plan: None,
             dedupe_subgraph_requests: false,
             demand_control_context: None,

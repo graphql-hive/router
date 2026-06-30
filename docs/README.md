@@ -21,6 +21,7 @@
 |[**persisted\_documents**](#persisted_documents)|`object`|Configuration for persisted documents extraction and resolution.<br/>Default: `{"enabled":false,"log_missing_id":false,"require_id":false,"selectors":null,"storage":null}`<br/>||
 |[**plugins**](#plugins)|`object`|Configuration for custom plugins<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"experimental_abstract_type_folding":false,"timeout":"10s"}`<br/>||
+|[**response\_extensions**](#response_extensions)|`object`|Configuration for propagating subgraph response's `extensions` to the client.<br/>Default: `{}`<br/>||
 |[**storages**](#storages)|`object`|Configuration for storage sources.<br/>||
 |[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"broadcast_capacity":0,"enabled":false,"subgraph_buffer_capacity":0}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
@@ -135,6 +136,7 @@ query_planner:
   allow_expose: false
   experimental_abstract_type_folding: false
   timeout: 10s
+response_extensions: {}
 storages: {}
 subscriptions:
   broadcast_capacity: 0
@@ -2555,6 +2557,44 @@ timeout: 10s
 
 ```
 
+<a name="response_extensions"></a>
+## response\_extensions: object
+
+Configuration for propagating subgraph response's `extensions` to the client.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**propagate**](#response_extensionspropagate)|`object`, `null`|Rules for propagating subgraph response `extensions` to the client.<br/>||
+
+<a name="response_extensionspropagate"></a>
+### response\_extensions\.propagate: object,null
+
+Rules for propagating subgraph response `extensions` to the client.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**algorithm**||How to merge an extension key seen across multiple subgraph responses.<br/>Default: `last`.<br/>Default: `"last"`<br/>||
+|[**allow**](#response_extensionspropagateallow)|`string[]`|Top-level extension keys allowed to propagate. When omitted, all keys<br/>||
+
+<a name="response_extensionspropagateallow"></a>
+#### response\_extensions\.propagate\.allow\[\]: array,null
+
+Top-level extension keys allowed to propagate. When omitted, all keys
+are propagated. Any key not in this list is ignored.
+
+NOTE: `queryPlan` is a reserved key used by the router itself and will
+never be propagated from subgraphs regardless of this list.
+
+
+**Items**
+
+**Item Type:** `string`  
 <a name="storages"></a>
 ## storages: object
 

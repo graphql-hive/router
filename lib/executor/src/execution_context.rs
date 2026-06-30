@@ -4,6 +4,7 @@ use hive_router_query_planner::planner::plan_nodes::FlattenNodePath;
 
 use crate::{
     execution::demand_control::subgraph_response_tracker::SubgraphResponseCostTracker,
+    extensions::aggregator::ExtensionsAggregator,
     headers::response::ResponseHeaderAggregator,
     response::{
         graphql_error::{GraphQLError, GraphQLErrorPath},
@@ -17,6 +18,7 @@ pub struct ExecutionContext<'a> {
     pub data: Value<'a>,
     pub errors: Vec<GraphQLError>,
     pub response_headers_aggregator: ResponseHeaderAggregator,
+    pub extensions_aggregator: ExtensionsAggregator<'a>,
     pub subgraph_response_cost_tracker: SubgraphResponseCostTracker<'a>,
 }
 
@@ -27,6 +29,7 @@ impl<'a> Default for ExecutionContext<'a> {
             errors: Vec::new(),
             data: Value::Null,
             response_headers_aggregator: Default::default(),
+            extensions_aggregator: Default::default(),
             subgraph_response_cost_tracker: SubgraphResponseCostTracker::new(),
         }
     }

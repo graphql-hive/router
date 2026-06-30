@@ -16,6 +16,7 @@ pub mod override_subgraph_urls;
 pub mod persisted_documents;
 pub mod primitives;
 pub mod query_planner;
+pub mod response_extensions;
 pub mod storage;
 pub mod subscriptions;
 pub mod supergraph;
@@ -83,6 +84,10 @@ pub struct HiveRouterConfig {
     /// Configuration for the headers.
     #[serde(default)]
     pub headers: headers::HeadersConfig,
+
+    /// Configuration for propagating subgraph response's `extensions` to the client.
+    #[serde(default)]
+    pub response_extensions: response_extensions::ResponseExtensionsConfig,
 
     /// Configuration for CSRF prevention.
     #[serde(default)]
