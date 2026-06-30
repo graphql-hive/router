@@ -13,7 +13,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct EntityMove<'graph> {
-    pub key: String,
+    pub key: &'graph str,
     pub requirements: TypeAwareSelection<'graph>,
     /// Indicates whether the move is to an interface entity.
     ///
@@ -25,15 +25,15 @@ pub struct EntityMove<'graph> {
 
 #[derive(Debug)]
 pub struct InterfaceObjectTypeMove<'graph> {
-    pub object_type_name: String,
+    pub object_type_name: &'graph str,
     pub requirements: TypeAwareSelection<'graph>,
 }
 
 /// Represent a simple file move
 #[derive(Debug, PartialEq)]
 pub struct FieldMove<'graph> {
-    pub name: String,
-    pub type_name: String,
+    pub name: &'graph str,
+    pub type_name: &'graph str,
     pub is_leaf: bool,
     pub is_list: bool,
     pub join_field: Option<JoinFieldDirective>,
@@ -180,30 +180,30 @@ pub type EdgeReference<'a> = GraphEdgeReference<'a, Edge<'a>>;
 
 impl<'graph> Edge<'graph> {
     pub fn create_entity_move(
-        key: &str,
+        key: &'graph str,
         selection: TypeAwareSelection<'graph>,
         is_interface: bool,
     ) -> Self {
         Self::EntityMove(EntityMove {
-            key: key.to_string(),
+            key,
             requirements: selection,
             is_interface,
         })
     }
 
     pub fn create_interface_object_type_move(
-        object_type_name: &str,
+        object_type_name: &'graph str,
         selection: TypeAwareSelection<'graph>,
     ) -> Self {
         Self::InterfaceObjectTypeMove(InterfaceObjectTypeMove {
-            object_type_name: object_type_name.to_string(),
+            object_type_name,
             requirements: selection,
         })
     }
 
     pub fn create_field_move(
-        name: String,
-        type_name: String,
+        name: &'graph str,
+        type_name: &'graph str,
         is_leaf: bool,
         is_list: bool,
         join_field: Option<JoinFieldDirective>,
@@ -214,8 +214,8 @@ impl<'graph> Edge<'graph> {
         let override_label = join_field.as_ref().and_then(|jf| jf.override_label.clone());
 
         Self::FieldMove(Box::new(FieldMove {
-            name: name.clone(),
-            type_name: type_name.clone(),
+            name,
+            type_name,
             is_leaf,
             is_list,
             join_field,

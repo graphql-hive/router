@@ -594,7 +594,7 @@ impl<'graph> Graph<'graph> {
                 ) && !is_interface_object;
 
                 if has_resolvable_typename {
-                    let field_name = "__typename".to_string();
+                    let field_name = "__typename";
                     trace!(
                         "[x] Creating owned field move edge '{}.__typename/{}' (type: String)",
                         def_name,
@@ -617,13 +617,7 @@ impl<'graph> Graph<'graph> {
                         head,
                         tail,
                         Edge::create_field_move(
-                            field_name,
-                            def_name.clone(),
-                            true,
-                            false,
-                            None,
-                            None,
-                            None,
+                            field_name, def_name, true, false, None, None, None,
                         ),
                     );
                 }
@@ -806,8 +800,8 @@ impl<'graph> Graph<'graph> {
                                 tail,
                                 typename_tail,
                                 Edge::create_field_move(
-                                    "__typename".to_string(),
-                                    target_type.to_string(),
+                                    "__typename",
+                                    target_type,
                                     true,
                                     false,
                                     None,
@@ -826,8 +820,8 @@ impl<'graph> Graph<'graph> {
                                 head,
                                 tail,
                                 Edge::create_field_move(
-                                    field_name.clone(),
-                                    def_name.clone(),
+                                    field_name,
+                                    def_name,
                                     state.is_scalar_type(target_type),
                                     field_definition.field_type.is_list(),
                                     None,
@@ -881,8 +875,8 @@ impl<'graph> Graph<'graph> {
                         head,
                         tail,
                         Edge::create_field_move(
-                            field_name.clone(),
-                            def_name.clone(),
+                            field_name,
+                            def_name,
                             state.is_scalar_type(target_type),
                             field_definition.field_type.is_list(),
                             maybe_join_field.map(|join_field| match join_field.provides {
@@ -993,8 +987,8 @@ impl<'graph> Graph<'graph> {
                         head,
                         tail,
                         Edge::create_field_move(
-                            field.name.to_string(),
-                            parent_type_def.name().to_string(),
+                            field_in_parent.name.as_str(),
+                            parent_type_def.name(),
                             state.is_scalar_type(parent_type_def.name()),
                             field_in_parent.field_type.is_list(),
                             None,
@@ -1152,8 +1146,8 @@ impl<'graph> Graph<'graph> {
                                     head,
                                     tail,
                                     Edge::create_field_move(
-                                        field_name.to_string(),
-                                        def_name.clone(),
+                                        field_name,
+                                        def_name,
                                         state.is_scalar_type(
                                             field_definition.field_type.inner_type(),
                                         ),
