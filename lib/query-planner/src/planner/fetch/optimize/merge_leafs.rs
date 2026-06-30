@@ -1,9 +1,22 @@
-use petgraph::graph::NodeIndex;
-use tracing::{instrument, trace};
+use std::{
+    collections::HashMap,
+    hash::{Hash, Hasher},
+};
 
-use crate::planner::fetch::{
-    error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
-    optimize::utils::perform_fetch_step_merge, state::MultiTypeFetchStep,
+use petgraph::graph::NodeIndex;
+use rustc_hash::FxHasher;
+use tracing::instrument;
+
+use crate::{
+    ast::merge_path::{Condition, Segment},
+    planner::{
+        fetch::{
+            error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
+            optimize::utils::perform_fetch_step_merge, state::MultiTypeFetchStep,
+        },
+        tree::query_tree_node::MutationFieldPosition,
+    },
+    state::supergraph_state::SubgraphName,
 };
 
 impl FetchStepData<MultiTypeFetchStep> {
@@ -39,8 +52,8 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
-        // `other` must be a leaf node (no children).
-        if fetch_graph.children_of(other_index).count() != 0 {
+        // `other` must still be a leaf node (no children).
+        if fetch_graph.children_of(other_index).next().is_some() {
             return false;
         }
 
@@ -61,6 +74,15 @@ impl FetchStepData<MultiTypeFetchStep> {
     }
 }
 
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct GroupKey {
+    service_name: SubgraphName,
+    response_path_hash: u64,
+    input_types_hash: u64,
+    condition: Option<Condition>,
+    mutation_field_position: MutationFieldPosition,
+}
+
 impl FetchGraph<MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
     /// This optimization is about merging leaf nodes in the fetch nodes with other nodes.
@@ -68,36 +90,96 @@ impl FetchGraph<MultiTypeFetchStep> {
     /// The query performance is not degraded, because the leaf node has no children,
     /// meaning the overall depth (amount of parallel layers) is not increased.
     pub(crate) fn merge_leafs(&mut self) -> Result<(), FetchGraphError> {
-        while let Some((target_idx, leaf_idx)) = self.find_merge_candidate()? {
-            perform_fetch_step_merge(target_idx, leaf_idx, self, false)?;
+        let mut groups: HashMap<GroupKey, Vec<(NodeIndex, bool)>> = HashMap::new();
+
+        for node_index in self.graph.node_indices() {
+            if self.root_index == Some(node_index) {
+                continue;
+            }
+
+            let step = self.get_step_data(node_index)?;
+
+            let is_leaf = self.children_of(node_index).next().is_none();
+            groups
+                .entry(GroupKey {
+                    service_name: step.service_name.clone(),
+                    response_path_hash: response_path_hash(step),
+                    input_types_hash: input_types_hash(step),
+                    condition: step.condition.clone(),
+                    mutation_field_position: step.mutation_field_position,
+                })
+                .or_default()
+                .push((node_index, is_leaf));
         }
 
-        Ok(())
-    }
+        for group in groups.into_values() {
+            // Every item in the group can be a target, but only leaf nodes can be
+            // merged into another step. Keep one list instead of separate target
+            // and leaf lists, so we allocate less.
+            //
+            // Keep the target-first order. It makes the output stable because
+            // merge order affects selection order in the final printed plan.
+            for (target_index, _) in &group {
+                if self.graph.node_weight(*target_index).is_none() {
+                    continue;
+                }
 
-    fn find_merge_candidate(&self) -> Result<Option<(NodeIndex, NodeIndex)>, FetchGraphError> {
-        let all_nodes: Vec<NodeIndex> = self
-            .graph
-            .node_indices()
-            .filter(|&idx| self.root_index != Some(idx))
-            .collect();
+                for (leaf_index, _) in group.iter().filter(|(_, is_leaf)| *is_leaf) {
+                    if target_index == leaf_index
+                        || self.graph.node_weight(*target_index).is_none()
+                        || self.graph.node_weight(*leaf_index).is_none()
+                    {
+                        continue;
+                    }
 
-        for &target_idx in &all_nodes {
-            for &leaf_idx in &all_nodes {
-                let target_data = self.get_step_data(target_idx)?;
-                let leaf_data = self.get_step_data(leaf_idx)?;
+                    let can_merge = {
+                        let target_step = self.get_step_data(*target_index)?;
+                        let leaf_step = self.get_step_data(*leaf_index)?;
+                        target_step.can_merge_leafs(*target_index, *leaf_index, leaf_step, self)
+                    };
 
-                if target_data.can_merge_leafs(target_idx, leaf_idx, leaf_data, self) {
-                    trace!(
-                        "optimization found: merge leaf [{}] with [{}]",
-                        leaf_idx.index(),
-                        target_idx.index(),
-                    );
-                    return Ok(Some((target_idx, leaf_idx)));
+                    if can_merge {
+                        perform_fetch_step_merge(*target_index, *leaf_index, self, false)?;
+                    }
                 }
             }
         }
 
-        Ok(None)
+        Ok(())
     }
+}
+
+fn input_types_hash(step: &FetchStepData<MultiTypeFetchStep>) -> u64 {
+    let mut hasher = FxHasher::default();
+
+    for (type_name, _) in step.input.iter_selections() {
+        type_name.hash(&mut hasher);
+    }
+
+    hasher.finish()
+}
+
+fn response_path_hash(step: &FetchStepData<MultiTypeFetchStep>) -> u64 {
+    let mut hasher = FxHasher::default();
+
+    for segment in step.response_path.inner.iter() {
+        match segment {
+            Segment::Field(fp, hash, cond) => {
+                0u8.hash(&mut hasher);
+                fp.hash(&mut hasher);
+                hash.hash(&mut hasher);
+                cond.hash(&mut hasher);
+            }
+            Segment::List => 1u8.hash(&mut hasher),
+            Segment::TypeCondition(types, cond) => {
+                2u8.hash(&mut hasher);
+                for t in types {
+                    t.hash(&mut hasher);
+                }
+                cond.hash(&mut hasher);
+            }
+        }
+    }
+
+    hasher.finish()
 }
