@@ -18,7 +18,7 @@ pub struct ExecutionContext<'a> {
     pub data: Value<'a>,
     pub errors: Vec<GraphQLError>,
     pub response_headers_aggregator: ResponseHeaderAggregator,
-    pub extensions_aggregator: ExtensionsAggregator,
+    pub extensions_aggregator: ExtensionsAggregator<'a>,
     pub subgraph_response_cost_tracker: SubgraphResponseCostTracker<'a>,
 }
 

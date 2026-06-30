@@ -9,11 +9,11 @@ use super::plan::{ExtensionsMergeStrategy, ExtensionsPlan};
 
 const RESERVED_KEY: &str = "queryPlan";
 
-pub struct ExtensionsAggregator {
-    entries: AHashMap<String, (ExtensionsMergeStrategy, Vec<SonicValue>)>,
+pub struct ExtensionsAggregator<'a> {
+    entries: AHashMap<&'a str, (ExtensionsMergeStrategy, Vec<Value<'a>>)>,
 }
 
-impl Default for ExtensionsAggregator {
+impl Default for ExtensionsAggregator<'_> {
     fn default() -> Self {
         Self {
             entries: AHashMap::new(),
@@ -21,12 +21,11 @@ impl Default for ExtensionsAggregator {
     }
 }
 
-impl ExtensionsAggregator {
-    fn write(&mut self, key: &str, value: SonicValue, strategy: ExtensionsMergeStrategy) {
+impl<'a> ExtensionsAggregator<'a> {
+    fn write(&mut self, key: &'a str, value: Value<'a>, strategy: ExtensionsMergeStrategy) {
         match self.entries.get_mut(key) {
             None => {
-                self.entries
-                    .insert(key.to_string(), (strategy, vec![value]));
+                self.entries.insert(key, (strategy, vec![value]));
             }
             Some((_, values)) => match strategy {
                 ExtensionsMergeStrategy::First => {
@@ -49,24 +48,28 @@ impl ExtensionsAggregator {
         for (key, (strategy, values)) in self.entries {
             let sonic_val = match strategy {
                 ExtensionsMergeStrategy::Append => {
-                    SonicValue::from(values.into_iter().collect::<sonic_rs::Array>())
+                    let arr: sonic_rs::Array = values.iter().map(|v| SonicValue::from(v)).collect();
+                    SonicValue::from(arr)
                 }
-                ExtensionsMergeStrategy::First | ExtensionsMergeStrategy::Last => values
-                    .into_iter()
-                    .next()
-                    .expect("First/Last entry guaranteed non-empty by write()"),
+                ExtensionsMergeStrategy::First | ExtensionsMergeStrategy::Last => {
+                    let v = values
+                        .into_iter()
+                        .next()
+                        .expect("First/Last entry guaranteed non-empty by write()");
+                    SonicValue::from(&v)
+                }
             };
-            target.entry(key).or_insert(sonic_val);
+            target.entry(key.to_string()).or_insert(sonic_val);
         }
     }
 }
 
 /// Apply top-level keys from `subgraph_extensions` into the aggregator,
 /// filtered and merged per the plan.
-pub fn apply_subgraph_extensions(
+pub fn apply_subgraph_extensions<'a>(
     plan: &ExtensionsPlan,
-    subgraph_extensions: &Value<'_>,
-    agg: &mut ExtensionsAggregator,
+    subgraph_extensions: &Value<'a>,
+    agg: &mut ExtensionsAggregator<'a>,
 ) {
     let Some(ref propagate) = plan.propagate else {
         return;
@@ -85,8 +88,7 @@ pub fn apply_subgraph_extensions(
                 continue;
             }
         }
-        let sonic_val = SonicValue::from(val);
-        agg.write(key, sonic_val, propagate.strategy);
+        agg.write(key, val.clone(), propagate.strategy);
     }
 }
 
