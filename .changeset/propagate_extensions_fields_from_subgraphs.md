@@ -14,7 +14,7 @@ Extension keys set by the router or plugins take precedence over subgraph-propag
 ## Configuration
 
 ```yaml
-extensions:
+response_extensions:
   propagate:
     algorithm: last # first | last | append. default: last
     allow: # optional key whitelist. omit to allow all keys
