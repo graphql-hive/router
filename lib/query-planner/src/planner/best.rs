@@ -1,52 +1,27 @@
-//! This module solves the problem of finding the "best" execution plan for a
-//! query that can be satisfied in many different ways by various subgraphs.
+//! # Best Plan Finder
 //!
-//! The "best" plan is defined by a cost model that penalizes crossing
-//! subgraph boundaries, and favors plans that are "local" to a single subgraph.
+//! This module finds the best execution plan for a GraphQL query.
 //!
-//! A naive search to find the best combination would be exponentially slow (we were there...),
-//! as the number of possible plans is the product of the number of choices for each part of
-//! the query. This module implements a search algorithm to make this problem solved.
+//! A single query can be resolved by many different combinations of subgraphs.
+//! For example, a query with 3 fields might be satisfied by:
+//! - All fields from subgraph A (1 subgraph, good)
+//! - Field 1 from A, fields 2+3 from B (2 subgraphs, worse)
+//! - Each field from a different subgraph (3 subgraphs, worst)
 //!
-//! The core of the solution is a Branch and Bound algorithm implemented over a
-//! Depth-First Search (DFS). This approach explores all possible
-//! combinations while aggressively pruning entire branches of the search space that
-//! are guaranteed to not contain the optimal solution.
+//! More subgraph crossings mean more network requests and slower responses.
+//! This module picks the combination with the lowest "cost".
 //!
-//! The key components are:
+//! 1. Group all possible candidates for each field into "alternatives".
+//!    Each candidate is one way to resolve a field.
 //!
-//! 1.  The query is broken down into independent decision points.
-//!     For each point, there is a set of `Alternatives`, and each alternative is a
-//!     `Candidate` plan fragment. The goal is to pick exactly one `Candidate` from
-//!     each set of `Alternatives`.
+//! 2. If a field has only one candidate, merge it right away.
+//!    This reduces the number of candidates we need to consider later.
 //!
-//! 2.  Before the main search, a fast Greedy Algorithm (`find_initial_plan`)
-//!     is run to find a "good enough" initial plan.
-//!     This provides a strong `best_cost` value, which is critical for making the
-//!     pruning in the main search much more effective.
-//!
-//! 3.  The Bounding Function (`min_remaining_costs`) - this is the most important
-//!     optimization. We pre-compute a vector that contains an optimistic,
-//!     "best-case" cost for completing the plan from any given step to the end.
-//!     It never overestimates the true cost, which allows
-//!     for the pruning check: if a partial plan's cost plus the optimistic
-//!     remaining cost is already worse than our best-found solution, we can safely
-//!     abandon the entire branch.
-//!
-//! 4.  To find good solutions faster, we sort both the
-//!     decision points and the choices themselves:
-//!     -   Sets of `Alternatives` are sorted by size (fewest choices first) to reduce
-//!         the branching factor and find a complete plan sooner.
-//!     -   `Candidates` within each set are sorted by their individual cost to explore
-//!         the most promising options first.
-//!
-//! 5.  The `Candidate` struct uses `OnceCell` to ensure that the
-//!     potentially expensive work of building and costing a `QueryTree` is only ever
-//!     done if a candidate is actually evaluated, and never more
-//!     than once.
+//! 3. For each remaining group of alternatives, pick the candidate that adds
+//!    the lowest cost to the plan we already have.
 
 use lazy_init::LazyTransform;
-use std::{cell::OnceCell, rc::Rc};
+use std::rc::Rc;
 
 use crate::{
     graph::{edge::Edge, error::GraphError, Graph},
@@ -77,19 +52,16 @@ const FIELD_COST: u64 = 1;
 struct Candidate<'graph> {
     /// The actual `QueryTree` for this candiate, computed only when first needed.
     tree: LazyQueryTree<'graph>,
-    /// The cached cost of this tree, computed only once.
-    cost: OnceCell<u64>,
 }
 
-/// Represents a set of alternative Candidates to satisfy a single leaf in the query.
-/// The final plan must choose exactly one fragment from each ChoiceGroup.
+/// A group of alternatives - all possible ways to resolve one field.
+/// The final plan must pick exactly one Candidate from each group.
 type Alternatives<'graph> = Vec<Candidate<'graph>>;
 
 impl<'graph> Candidate<'graph> {
     fn new(path: OperationPath<'graph>, mutation_pos: MutationFieldPosition) -> Self {
         Self {
             tree: LazyTransform::new((path, mutation_pos)),
-            cost: OnceCell::new(),
         }
     }
 
@@ -100,84 +72,70 @@ impl<'graph> Candidate<'graph> {
             .get_or_create(|(p, mp)| QueryTree::from_path(graph, &p, mp))
             .clone()?)
     }
-
-    #[inline]
-    fn get_cost(&self, graph: &Graph) -> Result<u64, QueryPlanError> {
-        if let Some(v) = self.cost.get() {
-            return Ok(*v);
-        }
-        let tree = self.get_tree(graph)?;
-        let cost = calculate_cost_of_tree(graph, &tree.root);
-        let _ = self.cost.set(cost);
-        Ok(cost)
-    }
 }
 
-/// Each `Alternatives` group represents a set of possible ways to satisfy one leaf of the query.
+/// Build the list of alternatives for each field in the query.
+/// Returns a list where each entry is all the ways to resolve one field.
 fn prepare_alternatives<'graph>(operation: ResolvedOperation<'graph>) -> Vec<Alternatives<'graph>> {
     let is_mutation = matches!(operation.operation_kind, OperationKind::Mutation);
-    let mut per_leaf_alternatives_asc: Vec<Alternatives<'graph>> = Vec::new();
 
-    for (index, root_field_options) in operation.root_field_groups.into_iter().enumerate() {
-        let mutation_field_position: MutationFieldPosition = is_mutation.then_some(index);
+    let mut per_leaf_alternatives: Vec<Alternatives<'graph>> = operation
+        .root_field_groups
+        .into_iter()
+        .enumerate()
+        .flat_map(|(index, root_field_options)| {
+            // For mutations, we need to track the position of each field
+            // because mutation fields must be executed in order.
+            let mutation_field_position: MutationFieldPosition = is_mutation.then_some(index);
 
-        let leaf_alternatives: Vec<Alternatives<'graph>> = root_field_options
-            .into_iter()
-            .map(|paths_to_leaf| {
+            root_field_options.into_iter().map(move |paths_to_leaf| {
                 paths_to_leaf
                     .into_iter()
                     .map(|op| Candidate::new(op, mutation_field_position))
                     .collect::<Alternatives>()
             })
-            .collect();
-
-        per_leaf_alternatives_asc.extend(leaf_alternatives);
-    }
-
-    // Sort alternatives by length in ascending order.
-    per_leaf_alternatives_asc.sort_by_key(|alternatives| alternatives.len());
-
-    per_leaf_alternatives_asc
-}
-
-fn calculate_min_remaining_costs(
-    graph: &Graph,
-    per_leaf_alternatives_asc: &[Alternatives],
-) -> Result<Vec<u64>, QueryPlanError> {
-    // Pre-compute a lower bound for pruning.
-    // Finds the absolute best-case cost for each set of alternatives.
-    let best_case_cost_per_leaf = per_leaf_alternatives_asc
-        .iter()
-        .map(|alternatives| {
-            alternatives
-                .iter()
-                .map(|candidate| candidate.get_cost(graph))
-                .try_fold(u64::MAX, |acc, cost_result| {
-                    Ok::<u64, QueryPlanError>(acc.min(cost_result?))
-                })
         })
-        .collect::<Result<Vec<u64>, _>>()?;
+        .collect();
 
-    // Pre-compute a "suffix lower bound" (LB) to enable effective pruning.
-    // `min_remaining_costs[i]` stores an optimistic "best-case" cost for completing the
-    // plan from alternatives `i` to the end.
-    // In the `explore_plan_combinations`, we can then check:
-    // `cost_so_far + min_remaining_costs[depth] >= best_cost_so_far`.
-    // If this is true, we know the current path is a dead end and can be abandoned.
-    let mut min_remaining_costs = vec![0; per_leaf_alternatives_asc.len() + 1];
-    for i in (0..per_leaf_alternatives_asc.len()).rev() {
-        min_remaining_costs[i] = min_remaining_costs[i + 1] + best_case_cost_per_leaf[i];
-    }
-    Ok(min_remaining_costs)
+    // Sort by number of alternatives (fewest first).
+    // Fields with only 1 candidate are fixed and easy.
+    // Processing them first means fewer candidates to consider later.
+    per_leaf_alternatives.sort_by_key(|alternatives| alternatives.len());
+
+    per_leaf_alternatives
 }
 
-fn sort_candidates_by_cost(graph: &Graph, per_leaf_alternatives_asc: &mut [Alternatives]) {
-    // Within each set of alternatives, sort choices by their cost.
-    // Trying cheaper options first
-    // is more likely to lead to better solutions sooner.
-    for paths in per_leaf_alternatives_asc {
-        paths.sort_by_key(|c| c.get_cost(graph).unwrap_or(u64::MAX));
+/// Merge fields that have only one possible resolution.
+///
+/// Returns:
+/// - The merged base tree, if any singletons were found.
+/// - The remaining alternatives, which still have more than one candidate.
+fn merge_singleton_alternatives<'graph>(
+    graph: &Graph,
+    per_leaf_alternatives: Vec<Alternatives<'graph>>,
+) -> Result<(Option<QueryTree>, Vec<Alternatives<'graph>>), QueryPlanError> {
+    // Split into singletons (1 candidate) and non-singletons (2+ candidates).
+    let (singletons, remaining): (Vec<_>, Vec<_>) = per_leaf_alternatives
+        .into_iter()
+        .partition(|a| a.len() == 1);
+
+    // Merge all singletons into one base tree.
+    let mut base_tree: Option<QueryTree> = None;
+    for alternatives in singletons {
+        let candidate = alternatives
+            .into_iter()
+            .next()
+            .expect("singleton has one candidate");
+        let candidate_tree = candidate.get_tree(graph)?;
+        match base_tree.as_mut() {
+            // Merge into the existing base tree.
+            Some(tree) => Rc::make_mut(&mut tree.root).merge_nodes(&candidate_tree.root),
+            // This is the first singleton - it becomes the base tree.
+            None => base_tree = Some(candidate_tree),
+        }
     }
+
+    Ok((base_tree, remaining))
 }
 
 pub fn find_best_combination(
@@ -194,174 +152,128 @@ pub fn find_best_combination(
         return Err(QueryPlanError::EmptyPlan);
     }
 
-    let mut per_leaf_alternatives_asc = prepare_alternatives(operation);
-    if per_leaf_alternatives_asc.is_empty() {
+    let per_leaf_alternatives = prepare_alternatives(operation);
+    if per_leaf_alternatives.is_empty() {
         return Err(QueryPlanError::EmptyPlan);
     }
 
-    let min_remaining_costs = calculate_min_remaining_costs(graph, &per_leaf_alternatives_asc)?;
-    sort_candidates_by_cost(graph, &mut per_leaf_alternatives_asc);
+    // Merge fields with only one candidate
+    let (base_tree, per_leaf_alternatives) =
+        merge_singleton_alternatives(graph, per_leaf_alternatives)?;
 
-    let mut best_cost = u64::MAX;
-    let mut best_tree: Option<QueryTree> = None;
-
-    // Runs a fast, greedy search to find a good-enough initial solution.
-    // A strong initial `best_cost` is critical for effective pruning.
-    if let Some((cost, tree)) = find_initial_plan(graph, &per_leaf_alternatives_asc) {
-        if cost < best_cost {
-            best_cost = cost;
-            best_tree = Some(tree);
-        }
+    // If all fields were singletons, we are done.
+    if per_leaf_alternatives.is_empty() {
+        return base_tree.ok_or(QueryPlanError::EmptyPlan);
     }
 
-    let mut state = ExplorationState {
-        best_cost,
-        best_tree,
-    };
+    let mut current_tree = base_tree;
+    let mut current_cost = current_tree
+        .as_ref()
+        .map(|tree| calculate_cost_of_tree(graph, &tree.root))
+        .unwrap_or(0);
 
-    // Performs the search for the optimal solution
-    explore_plan_combinations(
-        graph,
-        &per_leaf_alternatives_asc,
-        0,
-        None,
-        0,
-        &min_remaining_costs,
-        cancellation_token,
-        &mut state,
-    )?;
+    // For each group, choose the candidate that adds the lowest cost.
+    //
+    // This is fast because we do not build a temporary merged tree for every
+    // candidate. That is too expensive for large queries.
+    // Instead, we compare the current tree with the candidate tree
+    // and calculate only the cost that is missing from the current tree.
+    for alternatives in &per_leaf_alternatives {
+        cancellation_token.bail_if_cancelled()?;
 
-    state.best_tree.ok_or(QueryPlanError::EmptyPlan)
-}
-
-/// A fast search that finds a good, but not best plan.
-/// It works by making the "locally best" choice at each step.
-fn find_initial_plan(
-    graph: &Graph,
-    alternatives_list: &[Alternatives],
-) -> Option<(u64, QueryTree)> {
-    let mut current_tree: Option<QueryTree> = None;
-    let mut current_cost: u64 = 0;
-
-    for alternatives in alternatives_list {
-        let mut best_delta = u64::MAX;
         let mut best_next: Option<(u64, QueryTree)> = None;
 
-        // At each step, pick the candidate that adds the smallest cost to the current plan
         for candidate in alternatives {
-            let cand_tree = match candidate.get_tree(graph) {
-                Ok(t) => t,
+            let candidate_tree = match candidate.get_tree(graph) {
+                Ok(tree) => tree,
                 Err(_) => continue,
             };
-            let next_tree = match current_tree.as_ref() {
-                Some(t) => {
-                    let mut merged = t.clone();
-                    Rc::make_mut(&mut merged.root).merge_nodes(&cand_tree.root);
-                    merged
+
+            let added_cost = match current_tree.as_ref() {
+                Some(tree) => {
+                    calculate_added_cost_of_merge(graph, &tree.root, &candidate_tree.root)
                 }
-                None => cand_tree.clone(),
+                None => calculate_cost_of_tree(graph, &candidate_tree.root),
             };
-            let next_cost = calculate_cost_of_tree(graph, &next_tree.root);
-            let delta = next_cost.saturating_sub(current_cost);
-            if delta < best_delta {
-                best_delta = delta;
-                best_next = Some((next_cost, next_tree));
+            let next_cost = current_cost + added_cost;
+
+            if best_next
+                .as_ref()
+                .is_none_or(|(best_cost, _)| next_cost < *best_cost)
+            {
+                best_next = Some((next_cost, candidate_tree));
             }
         }
 
-        if let Some((next_cost, next_tree)) = best_next {
-            current_cost = next_cost;
-            current_tree = Some(next_tree);
-        } else {
-            return None;
+        let (next_cost, next_tree) = best_next.ok_or(QueryPlanError::EmptyPlan)?;
+
+        // Merge only the selected candidate. Rejected candidates were only read.
+        match current_tree.as_mut() {
+            Some(tree) => Rc::make_mut(&mut tree.root).merge_nodes(&next_tree.root),
+            None => current_tree = Some(next_tree),
         }
+        current_cost = next_cost;
     }
 
-    current_tree.map(|t| (current_cost, t))
+    current_tree.ok_or(QueryPlanError::EmptyPlan)
 }
 
-struct ExplorationState {
-    best_cost: u64,
-    best_tree: Option<QueryTree>,
-}
-
-#[allow(clippy::too_many_arguments)]
-/// Performs branch-and-bound (to prune early) depth-first search to find the best combination
-fn explore_plan_combinations(
+/// Calculate how much cost `source` would add to `target`.
+///
+/// `target` is the query tree we already selected.
+/// `source` is a candidate tree we may select next.
+///
+/// We only count nodes that are missing from `target`. If a node already exists,
+/// we go deeper and check its children and requirements. This gives the same
+/// cost as a full merge followed by a full cost calculation, but it avoids the
+/// expensive temporary merge.
+fn calculate_added_cost_of_merge(
     graph: &Graph,
-    groups: &[Alternatives],
-    group_index: usize,
-    tree_so_far: Option<QueryTree>,
-    cost_so_far: u64,
-    min_remaining_costs: &[u64],
-    cancellation_token: &CancellationToken,
-    state: &mut ExplorationState,
-) -> Result<(), QueryPlanError> {
-    cancellation_token.bail_if_cancelled()?;
-
-    // This is the most critical optimization.
-    // If the current path's cost + the absolute best-case cost
-    // for all remaining choices is already worse than our
-    // best solution, we can abandon this entire search branch.
-    if cost_so_far + min_remaining_costs[group_index] >= state.best_cost {
-        return Ok(());
-    }
-
-    // If we've made a choice for every set of alternatives,
-    // we have a complete plan.
-    // If it's the best one we've seen, we save it.
-    if group_index == groups.len() {
-        if cost_so_far < state.best_cost {
-            state.best_cost = cost_so_far;
-            state.best_tree = tree_so_far;
-        }
-        return Ok(());
-    }
-
-    // Explore each possible candidate for the current set of alternatives.
-    for cand in groups[group_index].iter() {
-        let cand_tree = cand.get_tree(graph)?;
-        let next_tree = match tree_so_far.as_ref() {
-            Some(t) => {
-                let mut merged = t.clone();
-                Rc::make_mut(&mut merged.root).merge_nodes(&cand_tree.root);
-                merged
-            }
-            None => cand_tree.clone(),
-        };
-
-        let next_cost = calculate_cost_of_tree(graph, &next_tree.root);
-        // If the next step alone is too expensive, skip it.
-        if next_cost >= state.best_cost {
-            continue;
-        }
-
-        explore_plan_combinations(
+    target: &QueryTreeNode,
+    source: &QueryTreeNode,
+) -> u64 {
+    calculate_added_cost_for_node_list(graph, &target.children, &source.children, false)
+        + calculate_added_cost_for_node_list(
             graph,
-            groups,
-            group_index + 1,
-            Some(next_tree),
-            next_cost,
-            min_remaining_costs,
-            cancellation_token,
-            state,
-        )?;
-    }
-
-    Ok(())
+            &target.requirements,
+            &source.requirements,
+            true,
+        )
 }
 
+fn calculate_added_cost_for_node_list(
+    graph: &Graph,
+    target_list: &[Rc<QueryTreeNode>],
+    source_list: &[Rc<QueryTreeNode>],
+    is_requirement: bool,
+) -> u64 {
+    source_list
+        .iter()
+        .map(|source_node| {
+            // If the node already exists, only its missing nested parts add cost.
+            if let Some(target_node) = target_list
+                .iter()
+                .find(|target_node| target_node.as_ref() == source_node.as_ref())
+            {
+                calculate_added_cost_of_merge(graph, target_node, source_node)
+            } else if is_requirement {
+                CROSS_SUBGRAPH_COST + calculate_cost_of_tree(graph, source_node)
+            } else {
+                edge_cost(graph, source_node) + calculate_cost_of_tree(graph, source_node)
+            }
+        })
+        .sum()
+}
+
+/// Calculate the total cost of a query tree node and all its children.
 #[inline(always)]
 fn calculate_cost_of_tree(graph: &Graph, node: &QueryTreeNode) -> u64 {
     let mut current_cost = FIELD_COST;
 
+    // Add cost for each child node
     for child in &node.children {
-        if child.edge_from_parent.is_some_and(|edge_index| {
-            matches!(
-                graph.edge(edge_index).expect("edge should exist"),
-                Edge::SubgraphEntrypoint { .. }
-            )
-        }) {
+        if edge_cost(graph, child) > 0 {
+            // If this child crosses into a different subgraph
             current_cost += CROSS_SUBGRAPH_COST;
         }
 
@@ -374,4 +286,18 @@ fn calculate_cost_of_tree(graph: &Graph, node: &QueryTreeNode) -> u64 {
     }
 
     current_cost
+}
+
+#[inline(always)]
+fn edge_cost(graph: &Graph, node: &QueryTreeNode) -> u64 {
+    if node.edge_from_parent.is_some_and(|edge_index| {
+        matches!(
+            graph.edge(edge_index).expect("edge should exist"),
+            Edge::SubgraphEntrypoint { .. }
+        )
+    }) {
+        CROSS_SUBGRAPH_COST
+    } else {
+        0
+    }
 }
