@@ -104,35 +104,36 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Flatten(path: "viewer.review|[UserReview].product") {
-          Fetch(service: "c") {
-            {
-              ... on Product {
-                __typename
-                pid
+        Parallel {
+          Flatten(path: "viewer.review|[UserReview].product") {
+            Fetch(service: "c") {
+              {
+                ... on Product {
+                  __typename
+                  pid
+                }
+              } =>
+              {
+                ... on Product {
+                  c
+                }
               }
-            } =>
-            {
-              ... on Product {
-                c
-                pid
-              }
-            }
+            },
           },
-        },
-        Flatten(path: "viewer.review|[UserReview].product") {
-          Fetch(service: "d") {
-            {
-              ... on Product {
-                __typename
-                pid
+          Flatten(path: "viewer.review|[UserReview].product") {
+            Fetch(service: "d") {
+              {
+                ... on Product {
+                  __typename
+                  pid
+                }
+              } =>
+              {
+                ... on Product {
+                  d
+                }
               }
-            } =>
-            {
-              ... on Product {
-                d
-              }
-            }
+            },
           },
         },
       },
