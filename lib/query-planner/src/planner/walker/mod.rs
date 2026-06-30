@@ -581,6 +581,31 @@ fn process_field<'graph, 'op: 'graph>(
         }
 
         if !found_direct_paths_to_leaf {
+            let has_indirect_candidates = graph.edges_from(path.tail()).any(|edge| {
+                matches!(
+                    edge.weight(),
+                    Edge::EntityMove(_) | Edge::InterfaceObjectTypeMove(_)
+                )
+            });
+
+            if !has_indirect_candidates {
+                trace!(
+                              "Skipping indirect lookup for '{}' at tail {} because there are no entity/interface-object outgoing edges",
+                              field.name,
+                              path.tail().index()
+                          );
+                trace!(
+                    "{}: {}",
+                    if advanced {
+                        "advanced"
+                    } else {
+                        "failed to advance"
+                    },
+                    path.pretty_print(graph)
+                );
+                continue;
+            }
+
             if target_subgraph_ids_cache.is_none() {
                 target_subgraph_ids_cache =
                     Some(field_target_subgraph_ids(supergraph, field, paths, graph)?);
