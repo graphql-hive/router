@@ -22,6 +22,7 @@ use crate::{
         tree::query_tree_node::QueryTreeNode,
         walker::best_path::{find_best_paths, BestPathTracker},
     },
+    state::supergraph_state::SupergraphState,
 };
 
 use super::{error::WalkOperationError, excluded::ExcludedFromLookup, path::OperationPath};
@@ -100,6 +101,7 @@ impl<'op> From<&'op NavigationTarget<'op>> for NavigationTargetKey<'op> {
 
 struct PathSearch<'graph> {
     graph: &'graph Graph,
+    supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     cancellation_token: &'graph CancellationToken,
     /// Edges currently being checked in this path search.
@@ -110,11 +112,13 @@ struct PathSearch<'graph> {
 impl<'graph> PathSearch<'graph> {
     fn new(
         graph: &'graph Graph,
+        supergraph: &'graph SupergraphState,
         override_context: &'graph PlannerOverrideContext,
         cancellation_token: &'graph CancellationToken,
     ) -> Self {
         Self {
             graph,
+            supergraph,
             override_context,
             cancellation_token,
             active_edge_checks: ActiveEdgeChecks::new(),
@@ -128,17 +132,60 @@ impl<'graph> PathSearch<'graph> {
 ))]
 pub fn find_indirect_paths<'graph>(
     graph: &'graph Graph,
+    supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
     target: &NavigationTarget<'_>,
     excluded: &ExcludedFromLookup<'graph>,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
-    PathSearch::new(graph, override_context, cancellation_token)
+    PathSearch::new(graph, supergraph, override_context, cancellation_token)
         .find_indirect_paths(path, target, excluded)
 }
 
 impl<'graph> PathSearch<'graph> {
+    fn type_condition_matches(&self, current_type_name: &str, type_condition: &str) -> bool {
+        // ... on Item { tag { id } }
+        // when current type is Item.
+        if current_type_name == type_condition {
+            return true;
+        }
+
+        // ... on Tagged { tag { id } }
+        // when current type is object type Item, and Item implements Tagged
+        self.supergraph
+            .interface_to_object_types
+            .get(type_condition)
+            .is_some_and(|object_types| object_types.contains(current_type_name))
+    }
+
+    fn requirements_includes_field(
+        &self,
+        requirements: &TypeAwareSelection,
+        current_type_name: &str,
+        target_field_name: &str,
+    ) -> bool {
+        if !self.type_condition_matches(current_type_name, &requirements.type_name) {
+            return false;
+        }
+
+        requirements.selection_set.items.iter().any(|item| {
+            match item {
+                SelectionItem::Field(field) => field.name == target_field_name,
+                SelectionItem::InlineFragment(fragment) => {
+                    if !self.type_condition_matches(current_type_name, &fragment.type_condition) {
+                        return false;
+                    }
+                    fragment.selections.items.iter().any(|item| {
+                        matches!(item, SelectionItem::Field(field) if field.name == target_field_name)
+                    })
+                }
+                // Fragment spreads are inlined by normalization
+                SelectionItem::FragmentSpread(_) => false,
+          }
+        })
+    }
+
     fn find_indirect_paths(
         &mut self,
         path: &OperationPath<'graph>,
@@ -224,12 +271,11 @@ impl<'graph> PathSearch<'graph> {
                 }) = target
                 {
                     if let Some(requirements) = edge.requirements() {
-                        if requirements
-                            .selection_set
-                            .items
-                            .iter()
-                            .any(|item| matches!(item, SelectionItem::Field(f) if &f.name == target_field_name))
-                        {
+                        if self.requirements_includes_field(
+                            requirements,
+                            tail_node.name_str(),
+                            target_field_name,
+                        ) {
                             continue;
                         }
                     }
@@ -381,6 +427,7 @@ impl<'graph> PathSearch<'graph> {
 
 pub fn find_self_referencing_direct_path<'graph>(
     graph: &'graph Graph,
+    supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
     type_name: &'graph str,
@@ -388,7 +435,7 @@ pub fn find_self_referencing_direct_path<'graph>(
     cancellation_token: &'graph CancellationToken,
 ) -> Result<OperationPath<'graph>, WalkOperationError> {
     let path_tail_index = path.tail();
-    let mut path_search = PathSearch::new(graph, override_context, cancellation_token);
+    let mut path_search = PathSearch::new(graph, supergraph, override_context, cancellation_token);
 
     for edge_ref in graph
         .edges_from(path_tail_index)
@@ -418,12 +465,14 @@ pub fn find_self_referencing_direct_path<'graph>(
 ))]
 pub fn find_direct_paths<'graph>(
     graph: &'graph Graph,
+    supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
     target: &NavigationTarget<'_>,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
-    PathSearch::new(graph, override_context, cancellation_token).find_direct_paths(path, target)
+    PathSearch::new(graph, supergraph, override_context, cancellation_token)
+        .find_direct_paths(path, target)
 }
 
 impl<'graph> PathSearch<'graph> {
@@ -479,8 +528,10 @@ impl<'graph> PathSearch<'graph> {
   path = path.pretty_print(graph),
   edge = edge_ref.weight().display_name(),
 ))]
+#[allow(clippy::too_many_arguments)]
 pub fn can_satisfy_edge<'graph>(
     graph: &'graph Graph,
+    supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     edge_ref: &EdgeReference<'graph>,
     path: &OperationPath<'graph>,
@@ -488,7 +539,7 @@ pub fn can_satisfy_edge<'graph>(
     use_only_direct_edges: bool,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<Option<Vec<OperationPath<'graph>>>, WalkOperationError> {
-    PathSearch::new(graph, override_context, cancellation_token).can_satisfy_edge(
+    PathSearch::new(graph, supergraph, override_context, cancellation_token).can_satisfy_edge(
         edge_ref,
         path,
         excluded,
@@ -745,12 +796,17 @@ impl<'graph> PathSearch<'graph> {
         let mut direct_path_results: Vec<Vec<OperationPath<'graph>>> =
             Vec::with_capacity(requirement.paths.len());
         for path in requirement.paths.iter() {
-            direct_path_results.push(self.find_direct_paths(
-                path,
-                // @skip/@include can't be used in @requires and @provides,
-                // that's why we pass no condition
-                &NavigationTarget::ConcreteType(type_name, None),
-            )?);
+            let current_type_name = self.graph.node(path.tail())?.name_str();
+            if self.type_condition_matches(current_type_name, type_name) {
+                direct_path_results.push(vec![path.clone()]);
+            } else {
+                direct_path_results.push(self.find_direct_paths(
+                    path,
+                    // @skip/@include can't be used in @requires and @provides,
+                    // that's why we pass no condition
+                    &NavigationTarget::ConcreteType(type_name, None),
+                )?);
+            }
         }
 
         // Collect all Vec<OperationPath<'graph>> results from find_indirect_paths

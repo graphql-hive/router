@@ -575,6 +575,7 @@ fn ensure_fetch_step_for_requirement(
 fn process_children_for_fetch_steps(
     graph: &Graph,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: NodeIndex,
@@ -593,6 +594,7 @@ fn process_children_for_fetch_steps(
         leaf_fetch_step_indexes.extend(process_query_node(
             graph,
             fetch_graph,
+            supergraph,
             override_context,
             sub_step,
             Some(parent_fetch_step_index),
@@ -617,6 +619,7 @@ fn process_children_for_fetch_steps(
 fn process_requirements_for_fetch_steps(
     graph: &Graph,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: NodeIndex,
@@ -633,6 +636,7 @@ fn process_requirements_for_fetch_steps(
         process_query_node(
             graph,
             fetch_graph,
+            supergraph,
             override_context,
             req_query_node,
             Some(parent_fetch_step_index),
@@ -652,6 +656,7 @@ fn process_requirements_for_fetch_steps(
 fn process_noop_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: Option<NodeIndex>,
@@ -668,6 +673,7 @@ fn process_noop_edge(
     process_children_for_fetch_steps(
         graph,
         fetch_graph,
+        supergraph,
         override_context,
         query_node,
         fetch_step_index,
@@ -689,6 +695,7 @@ fn process_noop_edge(
 fn process_entity_move_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: NodeIndex,
@@ -789,6 +796,7 @@ fn process_entity_move_edge(
     process_requirements_for_fetch_steps(
         graph,
         fetch_graph,
+        supergraph,
         override_context,
         query_node,
         parent_fetch_step_index,
@@ -801,6 +809,7 @@ fn process_entity_move_edge(
     process_children_for_fetch_steps(
         graph,
         fetch_graph,
+        supergraph,
         override_context,
         query_node,
         fetch_step_index,
@@ -822,6 +831,7 @@ fn process_entity_move_edge(
 fn process_interface_object_type_move_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: NodeIndex,
@@ -888,6 +898,7 @@ fn process_interface_object_type_move_edge(
     step_for_children.input.add(&requirement.selection_set)?;
     let key_to_reenter_subgraph = find_satisfiable_key(
         graph,
+        supergraph,
         override_context,
         query_node.requirements.first().unwrap(),
     )?;
@@ -958,6 +969,7 @@ fn process_interface_object_type_move_edge(
     let leaf_fetch_step_indexes = process_query_node(
         graph,
         fetch_graph,
+        supergraph,
         override_context,
         query_node.requirements.first().unwrap(),
         Some(step_for_requirements_index),
@@ -980,6 +992,7 @@ fn process_interface_object_type_move_edge(
     process_children_for_fetch_steps(
         graph,
         fetch_graph,
+        supergraph,
         override_context,
         query_node,
         step_for_children_index,
@@ -1001,6 +1014,7 @@ fn process_interface_object_type_move_edge(
 fn process_subgraph_entrypoint_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: NodeIndex,
@@ -1021,6 +1035,7 @@ fn process_subgraph_entrypoint_edge(
     process_children_for_fetch_steps(
         graph,
         fetch_graph,
+        supergraph,
         override_context,
         query_node,
         fetch_step_index,
@@ -1044,6 +1059,7 @@ fn process_subgraph_entrypoint_edge(
 fn process_selfie_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: NodeIndex,
@@ -1105,6 +1121,7 @@ fn process_selfie_edge(
     process_children_for_fetch_steps(
         graph,
         fetch_graph,
+        supergraph,
         override_context,
         query_node,
         parent_fetch_step_index,
@@ -1128,6 +1145,7 @@ fn process_selfie_edge(
 fn process_abstract_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: NodeIndex,
@@ -1171,6 +1189,7 @@ fn process_abstract_edge(
     process_children_for_fetch_steps(
         graph,
         fetch_graph,
+        supergraph,
         override_context,
         query_node,
         parent_fetch_step_index,
@@ -1199,6 +1218,7 @@ fn process_abstract_edge(
 fn process_plain_field_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: NodeIndex,
@@ -1303,6 +1323,7 @@ fn process_plain_field_edge(
     process_children_for_fetch_steps(
         graph,
         fetch_graph,
+        supergraph,
         override_context,
         query_node,
         parent_fetch_step_index,
@@ -1322,6 +1343,7 @@ fn process_plain_field_edge(
 fn process_requires_field_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: NodeIndex,
@@ -1358,6 +1380,7 @@ fn process_requires_field_edge(
 
     let key_to_reenter_subgraph = find_satisfiable_key(
         graph,
+        supergraph,
         override_context,
         query_node.requirements.first().unwrap(),
     )?;
@@ -1523,6 +1546,7 @@ fn process_requires_field_edge(
     let leaf_fetch_step_indexes = process_query_node(
         graph,
         fetch_graph,
+        supergraph,
         override_context,
         query_node.requirements.first().unwrap(),
         Some(step_for_requirements_index),
@@ -1565,6 +1589,7 @@ fn process_requires_field_edge(
     process_children_for_fetch_steps(
         graph,
         fetch_graph,
+        supergraph,
         override_context,
         query_node,
         step_for_children_index,
@@ -1605,6 +1630,7 @@ fn process_requires_field_edge(
 ))]
 fn find_satisfiable_key<'a>(
     graph: &'a Graph,
+    supergraph: &'a SupergraphState,
     override_context: &'a PlannerOverrideContext,
     query_node: &QueryTreeNode,
 ) -> Result<&'a TypeAwareSelection, FetchGraphError> {
@@ -1623,6 +1649,7 @@ fn find_satisfiable_key<'a>(
     for edge_ref in entity_moves_edges_to_self {
         if can_satisfy_edge(
             graph,
+            supergraph,
             override_context,
             &edge_ref,
             &OperationPath {
@@ -1660,6 +1687,7 @@ fn find_satisfiable_key<'a>(
 fn process_query_node(
     graph: &Graph,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: Option<NodeIndex>,
@@ -1688,6 +1716,7 @@ fn process_query_node(
                 process_subgraph_entrypoint_edge(
                     graph,
                     fetch_graph,
+                    supergraph,
                     override_context,
                     query_node,
                     parent_fetch_step_index,
@@ -1699,6 +1728,7 @@ fn process_query_node(
             Edge::EntityMove(_) => process_entity_move_edge(
                 graph,
                 fetch_graph,
+                supergraph,
                 override_context,
                 query_node,
                 parent_fetch_step_index,
@@ -1713,6 +1743,7 @@ fn process_query_node(
                 true => process_requires_field_edge(
                     graph,
                     fetch_graph,
+                    supergraph,
                     override_context,
                     query_node,
                     parent_fetch_step_index,
@@ -1726,6 +1757,7 @@ fn process_query_node(
                 false => process_plain_field_edge(
                     graph,
                     fetch_graph,
+                    supergraph,
                     override_context,
                     query_node,
                     parent_fetch_step_index,
@@ -1740,6 +1772,7 @@ fn process_query_node(
             Edge::Selfie(type_name) => process_selfie_edge(
                 graph,
                 fetch_graph,
+                supergraph,
                 override_context,
                 query_node,
                 parent_fetch_step_index,
@@ -1752,6 +1785,7 @@ fn process_query_node(
             Edge::AbstractMove(type_name) => process_abstract_edge(
                 graph,
                 fetch_graph,
+                supergraph,
                 override_context,
                 query_node,
                 parent_fetch_step_index,
@@ -1766,6 +1800,7 @@ fn process_query_node(
             }) => process_interface_object_type_move_edge(
                 graph,
                 fetch_graph,
+                supergraph,
                 override_context,
                 query_node,
                 parent_fetch_step_index,
@@ -1782,6 +1817,7 @@ fn process_query_node(
         process_noop_edge(
             graph,
             fetch_graph,
+            supergraph,
             override_context,
             query_node,
             parent_fetch_step_index,
@@ -1827,6 +1863,7 @@ pub fn build_fetch_graph_from_query_tree(
     process_query_node(
         graph,
         &mut fetch_graph,
+        supergraph,
         override_context,
         &query_tree.root,
         None,
