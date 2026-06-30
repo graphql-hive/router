@@ -1,0 +1,665 @@
+query Query1($var1: ID!, $var2: Int = 10, $var3: Enum1739 = VALUE_1) {
+  field4(arg1: [$var1]) {
+    ...Fragment1
+    field5 {
+      field6 {
+        ...Fragment27
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+}
+
+fragment Fragment1 on Type1990 {
+  field7
+  field8 {
+    ...Fragment2
+    __typename
+  }
+  __typename
+}
+
+fragment Fragment2 on Type1990 {
+  field2
+  field9
+  field10
+  field11
+  field12
+  field13
+  field14
+  field7
+  field15
+  field16
+  field17 {
+    field18
+    field19
+    __typename
+  }
+  field20 {
+    field12
+    field2
+    field21
+    field7
+    field11
+    field22
+    field23
+    field24 {
+      field2
+      field11
+      field21
+      __typename
+    }
+    field25 {
+      field11
+      field2
+      field26
+      field21
+      field27
+      field28 {
+        field11
+        field2
+        field29 {
+          field2
+          field11
+          __typename
+        }
+        __typename
+      }
+      field30 {
+        field31
+        field24 {
+          field2
+          field21
+          field32 {
+            field33
+            __typename
+          }
+          field31
+          __typename
+        }
+        field21
+        field34 {
+          field2
+          field11
+          __typename
+        }
+        __typename
+      }
+      __typename
+    }
+    field35 {
+      field36 {
+        field37
+        field38
+        field39
+        __typename
+      }
+      field40
+      field41
+      __typename
+    }
+    field31
+    field42 {
+      field43 {
+        field44
+        field45 {
+          field39
+          field38
+          field37
+          __typename
+        }
+        __typename
+      }
+      field46 {
+        field47
+        field48
+        field49
+        __typename
+      }
+      field50 {
+        field44
+        __typename
+      }
+      __typename
+    }
+    field34 {
+      field2
+      field11
+      field51
+      __typename
+    }
+    field52 {
+      field53
+      field54
+      field55
+      __typename
+    }
+    field56
+    __typename
+  }
+  field21
+  field57
+  field58
+  field7
+  field22
+  field59
+  field60
+  field31
+  field61
+  field62
+  field32 {
+    ...Fragment3
+    __typename
+  }
+  field42 {
+    ...Fragment15
+    __typename
+  }
+  field63 {
+    field2
+    __typename
+  }
+  ...Fragment16
+  field64 {
+    field65
+    field66
+    __typename
+  }
+  field67 {
+    field68 {
+      ...Fragment20
+      __typename
+    }
+    __typename
+  }
+  field35 {
+    field69
+    field36 {
+      field38
+      field39
+      field37
+      __typename
+    }
+    __typename
+  }
+  field52 {
+    ...Fragment21
+    __typename
+  }
+  field26
+  field70 {
+    ...Fragment22
+    __typename
+  }
+  field71 {
+    ...Fragment24
+    __typename
+  }
+  field72 {
+    ...Fragment19
+    __typename
+  }
+  field73 {
+    ...Fragment25
+    __typename
+  }
+  field74 {
+    ...Fragment18
+    __typename
+  }
+  field75 {
+    field76
+    field77
+    __typename
+  }
+  field78
+  __typename
+}
+
+fragment Fragment3 on Type8586 {
+  field33
+  field79 {
+    ...Fragment4
+    __typename
+  }
+  __typename
+}
+
+fragment Fragment4 on Type1946 {
+  field2
+  field11
+  field80
+  field22
+  field81 {
+    field21
+    field82 {
+      field83
+      field67 {
+        field2
+        __typename
+      }
+      __typename
+    }
+    field84 {
+      field85 {
+        field11
+        field86
+        __typename
+      }
+      field21
+      __typename
+    }
+    __typename
+  }
+  field87
+  field88 {
+    ...Fragment5
+    __typename
+  }
+  field89 {
+    ...Fragment6
+    __typename
+  }
+  field90 {
+    ... on Type9937 {
+      ...Fragment8
+      __typename
+    }
+    ... on Type9938 {
+      ...Fragment10
+      __typename
+    }
+    __typename
+  }
+  field91 {
+    ...Fragment11
+    __typename
+  }
+  field92 {
+    ...Fragment12
+    __typename
+  }
+  field93 {
+    ...Fragment13
+    __typename
+  }
+  field94 {
+    ...Fragment14
+    __typename
+  }
+  field95 {
+    field96 {
+      field2
+      __typename
+    }
+    __typename
+  }
+  field97 {
+    field98 {
+      field99 {
+        field100
+        field101 {
+          field102
+          field67 {
+            field2
+            __typename
+          }
+          field103
+          __typename
+        }
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+  __typename
+}
+
+fragment Fragment5 on Type1935 {
+  field2
+  field11
+  __typename
+}
+
+fragment Fragment6 on Type9947 {
+  field104 {
+    ...Fragment7
+    __typename
+  }
+  __typename
+}
+
+fragment Fragment7 on Type1950 {
+  field2
+  field11
+  field105 {
+    field37
+    __typename
+  }
+  __typename
+}
+
+fragment Fragment8 on Type9937 {
+  field2
+  field106
+  field107 {
+    ...Fragment9
+    __typename
+  }
+  __typename
+}
+
+fragment Fragment9 on Type1940 {
+  field2
+  field108 {
+    field109
+    __typename
+  }
+  field110 {
+    field2
+    __typename
+  }
+  __typename
+}
+
+fragment Fragment10 on Type9938 {
+  field111 {
+    __typename
+    ... on Type9940 {
+      field2
+      field106
+      field112
+      field113
+      __typename
+    }
+    ... on Type9942 {
+      field2
+      __typename
+    }
+    ... on Type9941 {
+      field2
+      __typename
+    }
+    ... on Type9946 {
+      field2
+      __typename
+    }
+    ... on Type9945 {
+      field2
+      __typename
+    }
+  }
+  __typename
+}
+
+fragment Fragment11 on Type1936 {
+  field2
+  field11
+  __typename
+}
+
+fragment Fragment12 on Type1937 {
+  field2
+  field11
+  __typename
+}
+
+fragment Fragment13 on Type1934 {
+  field2
+  field11
+  __typename
+}
+
+fragment Fragment14 on Type1000 {
+  field114
+  field115
+  __typename
+}
+
+fragment Fragment15 on Type8591 {
+  field46 {
+    field49
+    field47
+    field48
+    __typename
+  }
+  field43 {
+    field44
+    field45 {
+      field39
+      field38
+      field37
+      __typename
+    }
+    field49
+    field116
+    field117
+    __typename
+  }
+  field50 {
+    field44
+    __typename
+  }
+  __typename
+}
+
+fragment Fragment16 on Type1990 {
+  field5 {
+    field11
+    field2
+    field118
+    field44
+    field52 {
+      field53
+      field54
+      field55
+      __typename
+    }
+    field119 {
+      field11
+      field2
+      field58
+      field9
+      field10
+      field22
+      __typename
+    }
+    field120 {
+      field2
+      field11
+      field121
+      field58
+      field9
+      field10
+      field22
+      __typename
+    }
+    field80
+    field122 {
+      field123
+      field124 {
+        ...Fragment17
+        __typename
+      }
+      __typename
+    }
+    field58
+    field22
+    field9
+    field10
+    field24 {
+      field2
+      field11
+      __typename
+    }
+    field74 {
+      ...Fragment18
+      __typename
+    }
+    field6 {
+      field125 {
+        field126
+        __typename
+      }
+      field127 {
+        field126
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+  __typename
+}
+
+fragment Fragment17 on Type5348 {
+  field39
+  field38
+  field37
+  __typename
+}
+
+fragment Fragment18 on Type2012 {
+  field128 {
+    ...Fragment19
+    __typename
+  }
+  field129 {
+    ...Fragment19
+    __typename
+  }
+  field58
+  field102
+  field130
+  __typename
+}
+
+fragment Fragment19 on Type26 {
+  field131
+  field132
+  field133
+  field134
+  __typename
+}
+
+fragment Fragment20 on Type22 {
+  field2
+  field114
+  field135
+  field136
+  field137
+  __typename
+}
+
+fragment Fragment21 on Type8595 {
+  field53
+  field54
+  field138
+  field55
+  __typename
+}
+
+fragment Fragment22 on Type2003 {
+  field2
+  field11
+  field139 {
+    ...Fragment23
+    __typename
+  }
+  __typename
+}
+
+fragment Fragment23 on Type8608 {
+  field140
+  field141
+  field142
+  field143
+  __typename
+}
+
+fragment Fragment24 on Type2000 {
+  field2
+  field144
+  field145 {
+    field2
+    field11
+    field146
+    field147
+    __typename
+  }
+  field148 {
+    field2
+    field11
+    field146
+    field147
+    __typename
+  }
+  __typename
+}
+
+fragment Fragment25 on Type2004 {
+  field2
+  field149
+  field150
+  field151
+  field152
+  field153
+  field154 {
+    ...Fragment26
+    __typename
+  }
+  field9
+  field10
+  field58
+  __typename
+}
+
+fragment Fragment26 on Type1998 {
+  field2
+  field11
+  field155
+  field156
+  field157
+  field158
+  __typename
+}
+
+fragment Fragment27 on Type7219 {
+  field125 {
+    field126
+    __typename
+  }
+  field127 {
+    field126
+    __typename
+  }
+  field159(arg2: $var3) {
+    ...Fragment28
+    __typename
+  }
+  field160
+  field161
+  field162(arg3: $var2) {
+    field163 {
+      ...Fragment29
+      __typename
+    }
+    __typename
+  }
+  __typename
+}
+
+fragment Fragment28 on Type1868 {
+  field38
+  field37
+  __typename
+}
+
+fragment Fragment29 on Type7211 {
+  field164
+  field126
+  __typename
+}
