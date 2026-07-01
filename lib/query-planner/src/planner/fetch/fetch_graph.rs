@@ -1858,7 +1858,7 @@ pub fn build_fetch_graph_from_query_tree(
     options: &QueryPlannerOptions,
     cancellation_token: &CancellationToken,
 ) -> Result<FetchGraph<MultiTypeFetchStep>, FetchGraphError> {
-    let mut fetch_graph = FetchGraph::new(operation_kind.clone());
+    let mut fetch_graph = FetchGraph::new(operation_kind);
 
     process_query_node(
         graph,
@@ -1894,7 +1894,7 @@ pub fn build_fetch_graph_from_query_tree(
     // fine to unwrap as we have already checked the length
     fetch_graph.root_index = Some(*root_indexes.first().unwrap());
     let mut fetch_graph = fetch_graph.to_multi_type();
-    fetch_graph.optimize(supergraph, options, &operation_kind, cancellation_token)?;
+    fetch_graph.optimize(supergraph, options, cancellation_token)?;
     fetch_graph.collect_variable_usages()?;
 
     trace!("fetch graph after optimizations:");

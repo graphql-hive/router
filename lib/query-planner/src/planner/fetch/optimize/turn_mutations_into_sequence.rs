@@ -11,15 +11,12 @@ use crate::{
 
 impl FetchGraph<MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
-    pub(crate) fn turn_mutations_into_sequence(
-        &mut self,
-        operation_kind: &OperationKind,
-    ) -> Result<(), FetchGraphError> {
+    pub(crate) fn turn_mutations_into_sequence(&mut self) -> Result<(), FetchGraphError> {
         let root_index = self
             .root_index
             .ok_or(FetchGraphError::NonSingleRootStep(0))?;
 
-        if operation_kind != &OperationKind::Mutation {
+        if self.operation_kind != OperationKind::Mutation {
             return Ok(());
         }
 
