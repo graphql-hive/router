@@ -776,6 +776,16 @@ impl<'graph> PathSearch<'graph> {
         let graph = self.graph;
         let edge = edge_ref.weight();
 
+        if let Edge::FieldMove(field_move) = edge {
+            if !field_move.satisfies_override_rules(self.override_context) {
+                return Ok(None);
+            }
+        }
+
+        if edge.requirements().is_none() {
+            return Ok(Some(vec![]));
+        }
+
         let unsatisfied_key = UnsatisfiedRequirementFingerprint::new(
             graph,
             path,
@@ -821,18 +831,6 @@ impl<'graph> PathSearch<'graph> {
         use_only_direct_edges: bool,
     ) -> Result<Option<Vec<OperationPath<'graph>>>, WalkOperationError> {
         let graph = self.graph;
-        let edge = edge_ref.weight();
-
-        if let Edge::FieldMove(field_move) = edge {
-            if !field_move.satisfies_override_rules(self.override_context) {
-                return Ok(None);
-            }
-        }
-
-        if edge.requirements().is_none() {
-            return Ok(Some(vec![]));
-        }
-
         let cancellation_token = self.cancellation_token;
         let edge = edge_ref.weight();
 
