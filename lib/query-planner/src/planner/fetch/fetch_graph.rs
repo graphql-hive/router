@@ -1066,7 +1066,7 @@ fn process_selfie_edge<'graph>(
     requiring_fetch_step_index: Option<NodeIndex>,
     response_path: &MergePath,
     fetch_path: &MergePath,
-    target_type_name: &String,
+    target_type_name: &str,
     condition: Option<&Condition>,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     let is_ancestor_of_condition = match condition {
@@ -1084,7 +1084,7 @@ fn process_selfie_edge<'graph>(
         fetch_path,
         SelectionSet {
             items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-                type_condition: target_type_name.clone(),
+                type_condition: target_type_name.to_string(),
                 selections: SelectionSet::default(),
                 skip_if: condition.and_then(|c| {
                     if is_ancestor_of_condition {
@@ -1110,11 +1110,11 @@ fn process_selfie_edge<'graph>(
         condition.cloned()
     };
     let child_response_path = response_path.push(Segment::TypeCondition(
-        BTreeSet::from([target_type_name.clone()]),
+        BTreeSet::from([target_type_name.to_string()]),
         segment_condition.clone(),
     ));
     let child_fetch_path = fetch_path.push(Segment::TypeCondition(
-        BTreeSet::from([target_type_name.clone()]),
+        BTreeSet::from([target_type_name.to_string()]),
         segment_condition,
     ));
 
@@ -1152,7 +1152,7 @@ fn process_abstract_edge<'graph>(
     requiring_fetch_step_index: Option<NodeIndex>,
     response_path: &MergePath,
     fetch_path: &MergePath,
-    target_type_name: &String,
+    target_type_name: &str,
     condition: Option<&Condition>,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
@@ -1168,7 +1168,7 @@ fn process_abstract_edge<'graph>(
             items: vec![
                 SelectionItem::Field(FieldSelection::new_typename()),
                 SelectionItem::InlineFragment(InlineFragmentSelection {
-                    type_condition: target_type_name.clone(),
+                    type_condition: target_type_name.to_string(),
                     selections: SelectionSet::default(),
                     skip_if: None,
                     include_if: None,
@@ -1178,11 +1178,11 @@ fn process_abstract_edge<'graph>(
     )?;
 
     let child_response_path = response_path.push(Segment::TypeCondition(
-        BTreeSet::from([target_type_name.clone()]),
+        BTreeSet::from([target_type_name.to_string()]),
         None,
     ));
     let child_fetch_path = fetch_path.push(Segment::TypeCondition(
-        BTreeSet::from([target_type_name.clone()]),
+        BTreeSet::from([target_type_name.to_string()]),
         None,
     ));
 
@@ -1778,7 +1778,7 @@ fn process_query_node<'graph>(
                 requiring_fetch_step_index,
                 response_path,
                 fetch_path,
-                type_name,
+                *type_name,
                 condition,
             ),
             Edge::AbstractMove(type_name) => process_abstract_edge(
@@ -1791,7 +1791,7 @@ fn process_query_node<'graph>(
                 requiring_fetch_step_index,
                 response_path,
                 fetch_path,
-                type_name,
+                *type_name,
                 condition,
             ),
             Edge::InterfaceObjectTypeMove(InterfaceObjectTypeMove {

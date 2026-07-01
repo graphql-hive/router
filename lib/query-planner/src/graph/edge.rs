@@ -159,11 +159,11 @@ pub enum Edge<'graph> {
     FieldMove(Box<FieldMove<'graph>>),
     EntityMove(EntityMove<'graph>),
     /// join__implements
-    AbstractMove(String),
+    AbstractMove(&'graph str),
     /// A special edge representing a case where an inline fragment is used with a condition,
     /// and we don't really move anywhere, but we need to ensure that
     /// the condition is preserved when planning the query.
-    Selfie(String),
+    Selfie(&'graph str),
     /// Represents a special case where going from @interfaceObject
     /// to an object type due to the `__typename` field usage,
     /// or usage of a type condition (fragment),

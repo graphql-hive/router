@@ -601,7 +601,7 @@ pub fn find_self_referencing_direct_path<'graph>(
     for edge_ref in graph
         .edges_from(path_tail_index)
         .filter(move |e| match e.weight() {
-            Edge::Selfie(t) => t == type_name,
+            Edge::Selfie(t) => *t == type_name,
             _ => false,
         })
     {
@@ -663,7 +663,7 @@ impl<'graph> PathSearch<'graph> {
                 graph
                     .edges_from(path_tail_index)
                     .filter(move |e| match e.weight() {
-                        Edge::AbstractMove(t) => &t == type_name,
+                        Edge::AbstractMove(t) => t == type_name,
                         Edge::InterfaceObjectTypeMove(t) => &t.object_type_name == type_name,
                         _ => false,
                     }),
@@ -709,7 +709,7 @@ impl<'graph> PathSearch<'graph> {
                 graph
                     .edges_from(path_tail_index)
                     .filter(move |e| match e.weight() {
-                        Edge::AbstractMove(t) => &t == type_name,
+                        Edge::AbstractMove(t) => t == type_name,
                         Edge::InterfaceObjectTypeMove(t) => &t.object_type_name == type_name,
                         _ => false,
                     }),

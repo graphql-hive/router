@@ -616,7 +616,7 @@ impl<'graph> Graph<'graph> {
                 self.push_edge(
                     head,
                     tail,
-                    Edge::AbstractMove(definition.name().to_string()),
+                    Edge::AbstractMove(definition.name()),
                 );
             }
         }
@@ -776,7 +776,7 @@ impl<'graph> Graph<'graph> {
                     graph_id,
                     state.is_interface_object_in_subgraph(def_name, graph_id),
                 )?;
-                self.push_edge(head, head, Edge::Selfie(def_name.clone()));
+                self.push_edge(head, head, Edge::Selfie(def_name.as_str()));
 
                 for (field_name, field_definition) in definition.fields().iter() {
                     let (is_available, maybe_join_field) =
@@ -989,7 +989,7 @@ impl<'graph> Graph<'graph> {
                             self.push_edge(
                                 tail,
                                 abstract_tail,
-                                Edge::AbstractMove(member.to_string()),
+                                Edge::AbstractMove(member),
                             );
                         }
 
@@ -1133,7 +1133,7 @@ impl<'graph> Graph<'graph> {
                         SubgraphTypeSpecialization::Provides(view_id),
                     ));
 
-                    self.push_edge(tail, tail, Edge::Selfie(return_type_name.to_string()));
+                    self.push_edge(tail, tail, Edge::Selfie(return_type_name));
 
                     trace!(
                         "Creating viewed (#{}) field edge for '{}.{}' (type: {})",
@@ -1197,13 +1197,13 @@ impl<'graph> Graph<'graph> {
                         SubgraphTypeSpecialization::Provides(view_id),
                     ));
 
-                    self.push_edge(tail, tail, Edge::Selfie(type_name_from_cond.to_string()));
+                    self.push_edge(tail, tail, Edge::Selfie(type_name_from_cond));
 
                     // because it's abstract -> object move, add an abstract move edge
                     self.push_edge(
                         head,
                         tail,
-                        Edge::AbstractMove(type_name_from_cond.to_string()),
+                        Edge::AbstractMove(type_name_from_cond),
                     );
 
                     // use object type (tail) when handling selection sets
@@ -1291,7 +1291,7 @@ impl<'graph> Graph<'graph> {
                                 self.push_edge(
                                     tail,
                                     tail,
-                                    Edge::Selfie(return_type_name.to_string()),
+                                    Edge::Selfie(return_type_name),
                                 );
 
                                 trace!(
