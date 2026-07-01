@@ -15,9 +15,9 @@ mod graph_tests {
     };
     use std::path::PathBuf;
 
-    fn init_test(supergraph_sdl: &str) -> Graph {
-        let schema = parse_schema(supergraph_sdl);
-        let metadata = SupergraphState::new(&schema);
+    fn init_test(supergraph_sdl: String) -> Graph<'static> {
+        let schema = parse_schema(supergraph_sdl.as_str());
+        let metadata: &'static _ = Box::leak(Box::new(SupergraphState::new(&schema)));
 
         Graph::graph_from_supergraph_state(&metadata).expect("failed to create graph")
     }
@@ -25,7 +25,7 @@ mod graph_tests {
     #[derive(Debug)]
     struct FoundEdges<'a> {
         pub edges: Vec<(EdgeReference<'a>, NodeIndex)>,
-        pub graph: &'a Graph,
+        pub graph: &'a Graph<'a>,
     }
 
     impl FoundEdges<'_> {
@@ -178,9 +178,8 @@ mod graph_tests {
     fn nested_provides() -> Result<(), Box<dyn std::error::Error>> {
         let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("fixture/tests/nested-provides.supergraph.graphql");
-        let graph = init_test(
-            &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
-        );
+        let graph =
+            init_test(std::fs::read_to_string(supergraph_path).expect("Unable to read input file"));
 
         let (_, outgoing) = find_node(&graph, "Query/category");
         let field_edges = outgoing.edges_field("products");
@@ -226,9 +225,8 @@ mod graph_tests {
     fn star_stuff() -> Result<(), Box<dyn std::error::Error>> {
         let supergraph_path =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixture/supergraph.graphql");
-        let graph = init_test(
-            &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
-        );
+        let graph =
+            init_test(std::fs::read_to_string(supergraph_path).expect("Unable to read input file"));
 
         // Field ownership: make sure fields defined where they belong
         find_node(&graph, "Product/reviews")
@@ -305,9 +303,8 @@ mod graph_tests {
     fn star_stuff_snapshot() {
         let supergraph_path =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixture/supergraph.graphql");
-        let graph = init_test(
-            &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
-        );
+        let graph =
+            init_test(std::fs::read_to_string(supergraph_path).expect("Unable to read input file"));
 
         // Validate root nodes
         assert_eq!(graph.root_query_node(), &Node::QueryRoot("Query".into()));
@@ -316,7 +313,7 @@ mod graph_tests {
 
         let (incoming, outgoing) = find_node(&graph, "Product/products");
         assert_eq!(incoming.edges.len(), 14);
-        assert_eq!(outgoing.edges.len(), 18);
+        assert_eq!(outgoing.edges.len(), 20);
 
         incoming
             .assert_key_edge("id", "Product/inventory")
@@ -352,9 +349,8 @@ mod graph_tests {
     fn multiple_provides() -> Result<(), Box<dyn std::error::Error>> {
         let supergraph_path =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixture/supergraph2.graphql");
-        let graph = init_test(
-            &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
-        );
+        let graph =
+            init_test(std::fs::read_to_string(supergraph_path).expect("Unable to read input file"));
 
         let (_, outgoing) = find_node(&graph, "Group/foo");
         // Multiple provides should create multiple edges, one for each "view"

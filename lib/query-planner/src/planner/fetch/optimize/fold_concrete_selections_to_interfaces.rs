@@ -45,7 +45,7 @@ use crate::{
     },
 };
 
-impl FetchGraph<MultiTypeFetchStep> {
+impl FetchGraph<'_, MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
     pub(crate) fn fold_concrete_selections_to_interfaces(
         &mut self,
@@ -121,7 +121,7 @@ struct FoldCandidate<'a> {
 impl<'a> StepConverter<'a> {
     fn rewrite_step(
         &self,
-        step: &mut FetchStepData<MultiTypeFetchStep>,
+        step: &mut FetchStepData<'_, MultiTypeFetchStep>,
     ) -> Result<bool, FetchGraphError> {
         let mut changed = false;
         changed |= self.rewrite_root_output(step)?;
@@ -140,7 +140,7 @@ impl<'a> StepConverter<'a> {
     ///   `{ Media: { id } }`
     fn rewrite_root_output(
         &self,
-        step: &mut FetchStepData<MultiTypeFetchStep>,
+        step: &mut FetchStepData<'_, MultiTypeFetchStep>,
     ) -> Result<bool, FetchGraphError> {
         // Only rewrite if the step is at the root (no response path).
         if !step.response_path.inner.is_empty() {
@@ -183,7 +183,7 @@ impl<'a> StepConverter<'a> {
     /// `{ media { id } }`
     fn rewrite_nested_output(
         &self,
-        step: &mut FetchStepData<MultiTypeFetchStep>,
+        step: &mut FetchStepData<'_, MultiTypeFetchStep>,
     ) -> Result<bool, FetchGraphError> {
         let mut changed = false;
 

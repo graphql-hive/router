@@ -11,7 +11,7 @@ use crate::{
     planner::fetch::{selections::FetchStepSelections, state::MultiTypeFetchStep},
     state::{
         subgraph_state::{SubgraphDefinition, SubgraphState},
-        supergraph_state::{SubgraphName, SupergraphState, TypeNode},
+        supergraph_state::{SupergraphState, TypeNode},
     },
 };
 
@@ -30,7 +30,7 @@ impl<'a> SelectionMismatchFinder<'a> {
     #[instrument(level = "trace", skip_all, fields(subgraph_name,))]
     pub fn find_mismatches_in_node(
         &self,
-        subgraph_name: &SubgraphName,
+        subgraph_name: &str,
         selections: &FetchStepSelections<MultiTypeFetchStep>,
     ) -> MismatchesFound {
         let mut mismtaches_found = MismatchesFound::new();

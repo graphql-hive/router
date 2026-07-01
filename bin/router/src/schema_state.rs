@@ -33,6 +33,7 @@ use hive_router_query_planner::{
     utils::parsing::safe_parse_schema,
 };
 use moka::future::Cache;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -293,8 +294,14 @@ impl SchemaState {
             &router_config.traffic_shaping,
             planner.supergraph.known_subgraphs.values(),
         ));
+        let subgraph_endpoint_map: HashMap<String, String> = planner
+            .supergraph
+            .subgraph_endpoint_map
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
         let subgraph_executor_map = Arc::new(SubgraphExecutorMap::from_http_endpoint_map(
-            &planner.supergraph.subgraph_endpoint_map,
+            &subgraph_endpoint_map,
             router_config,
             telemetry_context,
             callback_subscriptions,

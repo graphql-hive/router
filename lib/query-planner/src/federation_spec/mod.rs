@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use ahash::AHashMap;
 use directives::JoinFieldDirective;
 use graphql_tools::parser::{
     parse_query,
@@ -31,8 +34,8 @@ pub(crate) mod join_union;
 fn normalize_fields_argument_value_mut(
     supergraph: &SupergraphState,
     type_name: &str,
-    subgraph_name: &String,
-    fields_str: &String,
+    subgraph_name: &str,
+    fields_str: &str,
 ) -> SelectionSet<'static, String> {
     let selection_set_str = format!("{{{fields_str}}}");
     // TODO: Far from ideal, but we can use the graphql_parser here to get it parsed for us
@@ -99,45 +102,13 @@ fn collect_sized_field_path(
 pub struct FederationRules;
 
 impl FederationRules {
-    pub fn parse_key(
+    pub(crate) fn parse_selection(
         supergraph: &SupergraphState,
-        subgraph_name: &String,
+        subgraph_name: &str,
         type_name: &str,
-        key: &String,
-    ) -> TypeAwareSelection {
-        let selection_set =
-            normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, key);
-        TypeAwareSelection {
-            type_name: type_name.to_string(),
-            selection_set: selection_set.into(),
-        }
-    }
-
-    pub fn parse_provides(
-        supergraph: &SupergraphState,
-        join_field: &JoinFieldDirective,
-        subgraph_name: &String,
-        type_name: &str,
-    ) -> Option<SelectionSet<'static, String>> {
-        if let Some(provides) = &join_field.provides {
-            return Some(normalize_fields_argument_value_mut(
-                supergraph,
-                type_name,
-                subgraph_name,
-                provides,
-            ));
-        }
-
-        None
-    }
-
-    pub fn parse_requires(
-        supergraph: &SupergraphState,
-        subgraph_name: &String,
-        type_name: &str,
-        requires: &String,
+        selection: &str,
     ) -> SelectionSet<'static, String> {
-        normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, requires)
+        normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, selection)
     }
 
     /// Parses a single `@listSize(sizedFields: [...])` entry, written in
@@ -171,12 +142,14 @@ impl FederationRules {
         current_subgraph_id: &str,
         parent_definition: &SupergraphDefinition,
     ) -> (bool, Option<&'a JoinFieldDirective>) {
-        let involved_subgraphs = parent_definition.subgraphs();
-
         // A field i available if: it has no @join__field directives at all
         if field.join_field.is_empty() {
             // AND its parent type is available in the subgraph
-            if involved_subgraphs.contains(&current_subgraph_id) {
+            if parent_definition
+                .join_types()
+                .iter()
+                .any(|join_type| join_type.graph_id == current_subgraph_id)
+            {
                 return (true, None);
             }
 
@@ -197,5 +170,113 @@ impl FederationRules {
         }
 
         (false, None)
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq)]
+struct SelectionCacheKey<'a> {
+    subgraph_name: &'a str,
+    type_name: &'a str,
+    selection: &'a str,
+}
+
+#[derive(Debug, Default)]
+struct SelectionCache<'a> {
+    keys: AHashMap<SelectionCacheKey<'a>, Arc<TypeAwareSelection<'a>>>,
+    requirements: AHashMap<SelectionCacheKey<'a>, Arc<TypeAwareSelection<'a>>>,
+    selections: AHashMap<SelectionCacheKey<'a>, Arc<SelectionSet<'static, String>>>,
+}
+
+#[derive(Debug)]
+pub struct CachedFederationRules<'supergraph> {
+    cache: SelectionCache<'supergraph>,
+    supergraph: &'supergraph SupergraphState,
+}
+
+impl<'supergraph> CachedFederationRules<'supergraph> {
+    pub fn new(supergraph: &'supergraph SupergraphState) -> Self {
+        Self {
+            cache: SelectionCache::default(),
+            supergraph,
+        }
+    }
+
+    fn parse_selection(
+        &mut self,
+        subgraph_name: &'supergraph str,
+        type_name: &'supergraph str,
+        selection: &'supergraph str,
+    ) -> Arc<SelectionSet<'static, String>> {
+        let key = SelectionCacheKey {
+            subgraph_name,
+            type_name,
+            selection,
+        };
+        if let Some(selection) = self.cache.selections.get(&key) {
+            return selection.clone();
+        }
+        let selection = Arc::new(FederationRules::parse_selection(
+            self.supergraph,
+            subgraph_name,
+            type_name,
+            selection,
+        ));
+        self.cache.selections.insert(key, selection.clone());
+        selection
+    }
+
+    pub fn parse_key(
+        &mut self,
+        subgraph_name: &'supergraph str,
+        type_name: &'supergraph str,
+        selection: &'supergraph str,
+    ) -> Arc<TypeAwareSelection<'supergraph>> {
+        let key = SelectionCacheKey {
+            subgraph_name,
+            type_name,
+            selection,
+        };
+        if let Some(selection) = self.cache.keys.get(&key) {
+            return selection.clone();
+        }
+        let selection_set = self.parse_selection(subgraph_name, type_name, selection);
+        let selection = Arc::new(TypeAwareSelection {
+            type_name,
+            selection_set: selection_set.as_ref().clone().into(),
+        });
+        self.cache.keys.insert(key, selection.clone());
+        selection
+    }
+
+    pub fn parse_requires(
+        &mut self,
+        subgraph_name: &'supergraph str,
+        type_name: &'supergraph str,
+        selection: &'supergraph str,
+    ) -> Arc<TypeAwareSelection<'supergraph>> {
+        let key = SelectionCacheKey {
+            subgraph_name,
+            type_name,
+            selection,
+        };
+        if let Some(selection) = self.cache.requirements.get(&key) {
+            return selection.clone();
+        }
+        let selection_set = self.parse_selection(subgraph_name, type_name, selection);
+        let selection = Arc::new(TypeAwareSelection {
+            type_name,
+            selection_set: selection_set.as_ref().clone().into(),
+        });
+        self.cache.requirements.insert(key, selection.clone());
+        selection
+    }
+
+    pub fn parse_provides(
+        &mut self,
+        subgraph_name: &'supergraph str,
+        type_name: &'supergraph str,
+        selection: &'supergraph str,
+    ) -> Arc<SelectionSet<'static, String>> {
+        self.parse_selection(subgraph_name, type_name, selection)
     }
 }

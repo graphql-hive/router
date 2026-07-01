@@ -28,7 +28,7 @@ pub fn normalize_operation_mut(
     query: &mut query_ast::Document<'static, String>,
     operation_name: Option<&str>,
     root_types_overwrite: Option<RootTypes>,
-    subgraph_name: Option<&String>,
+    subgraph_name: Option<&str>,
 ) -> Result<(), NormalizationError> {
     let mut ctx = NormalizationContext {
         supergraph,

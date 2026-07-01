@@ -16,7 +16,7 @@ use crate::{
     state::supergraph_state::SupergraphState,
 };
 
-impl FetchGraph<MultiTypeFetchStep> {
+impl FetchGraph<'_, MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
     pub(crate) fn fix_conflicting_type_mismatches(
         &mut self,
@@ -35,7 +35,8 @@ impl FetchGraph<MultiTypeFetchStep> {
             );
 
             let finder = SelectionMismatchFinder::new(supergraph);
-            let mismatches_paths = finder.find_mismatches_in_node(&node.service_name, &node.output);
+            let mismatches_paths =
+                finder.find_mismatches_in_node(node.service_name.0, &node.output);
 
             if !mismatches_paths.is_empty() {
                 pending_patches.push((node_index, mismatches_paths));

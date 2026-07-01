@@ -16,16 +16,15 @@ use crate::{
         },
         tree::query_tree_node::MutationFieldPosition,
     },
-    state::supergraph_state::SubgraphName,
 };
 
-impl FetchStepData<MultiTypeFetchStep> {
+impl FetchStepData<'_, MultiTypeFetchStep> {
     pub fn can_merge_leafs(
         &self,
         self_index: NodeIndex,
         other_index: NodeIndex,
         other: &Self,
-        fetch_graph: &FetchGraph<MultiTypeFetchStep>,
+        fetch_graph: &FetchGraph<'_, MultiTypeFetchStep>,
     ) -> bool {
         if self_index == other_index {
             return false;
@@ -76,14 +75,14 @@ impl FetchStepData<MultiTypeFetchStep> {
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct GroupKey {
-    service_name: SubgraphName,
+    service_name: String,
     response_path_hash: u64,
     input_types_hash: u64,
     condition: Option<Condition>,
     mutation_field_position: MutationFieldPosition,
 }
 
-impl FetchGraph<MultiTypeFetchStep> {
+impl FetchGraph<'_, MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
     /// This optimization is about merging leaf nodes in the fetch nodes with other nodes.
     /// It reduces the number of fetch steps, without degrading the query performance.
@@ -102,7 +101,7 @@ impl FetchGraph<MultiTypeFetchStep> {
             let is_leaf = self.children_of(node_index).next().is_none();
             groups
                 .entry(GroupKey {
-                    service_name: step.service_name.clone(),
+                    service_name: step.service_name.to_string(),
                     response_path_hash: response_path_hash(step),
                     input_types_hash: input_types_hash(step),
                     condition: step.condition.clone(),
@@ -149,7 +148,7 @@ impl FetchGraph<MultiTypeFetchStep> {
     }
 }
 
-fn input_types_hash(step: &FetchStepData<MultiTypeFetchStep>) -> u64 {
+fn input_types_hash(step: &FetchStepData<'_, MultiTypeFetchStep>) -> u64 {
     let mut hasher = FxHasher::default();
 
     for (type_name, _) in step.input.iter_selections() {
@@ -159,7 +158,7 @@ fn input_types_hash(step: &FetchStepData<MultiTypeFetchStep>) -> u64 {
     hasher.finish()
 }
 
-fn response_path_hash(step: &FetchStepData<MultiTypeFetchStep>) -> u64 {
+fn response_path_hash(step: &FetchStepData<'_, MultiTypeFetchStep>) -> u64 {
     let mut hasher = FxHasher::default();
 
     for segment in step.response_path.inner.iter() {

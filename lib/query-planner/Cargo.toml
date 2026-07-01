@@ -19,6 +19,7 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 tokio-util = { workspace = true }
 xxhash-rust = { workspace = true }
+ahash = { workspace = true }
 
 petgraph = "0.8.2"
 bitflags = "2.12.1"
@@ -34,4 +35,8 @@ lazy_static = { workspace = true }
 
 [[bench]]
 name = "qp_benches"
+harness = false
+
+[[bench]]
+name = "graph_benches"
 harness = false

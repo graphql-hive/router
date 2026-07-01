@@ -14,13 +14,12 @@ use crate::{
         error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
         optimize::utils::perform_fetch_step_merge, state::MultiTypeFetchStep,
     },
-    state::supergraph_state::SubgraphName,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct BatchKey {
     kind: FetchStepKind,
-    service_name: SubgraphName,
+    service_name: String,
     normalized_path_hash: u64,
     response_path_len: usize,
     type_condition_layout_hash: u64,
@@ -30,7 +29,7 @@ struct BatchKey {
 impl BatchKey {
     // Coarse grouping only; can_be_batched_with remains the correctness check.
     fn from_step(
-        step: &FetchStepData<MultiTypeFetchStep>,
+        step: &FetchStepData<'_, MultiTypeFetchStep>,
         normalized_path_hash: u64,
         type_condition_layout_hash: u64,
     ) -> Option<Self> {
@@ -40,7 +39,7 @@ impl BatchKey {
 
         Some(Self {
             kind: step.kind.clone(),
-            service_name: step.service_name.clone(),
+            service_name: step.service_name.to_string(),
             normalized_path_hash,
             response_path_len: step.response_path.len(),
             type_condition_layout_hash,
@@ -49,7 +48,7 @@ impl BatchKey {
     }
 }
 
-impl FetchGraph<MultiTypeFetchStep> {
+impl FetchGraph<'_, MultiTypeFetchStep> {
     /// Batches sibling entity fetches that only differ by type conditions.
     ///
     /// 1. Find compatible sibling fetches
@@ -487,7 +486,7 @@ fn same_path_without_type_conditions(left: &MergePath, right: &MergePath) -> boo
             .filter(|segment| !matches!(segment, Segment::TypeCondition(_, _))))
 }
 
-impl FetchStepData<MultiTypeFetchStep> {
+impl FetchStepData<'_, MultiTypeFetchStep> {
     pub fn can_be_batched_with(&self, other: &Self) -> bool {
         // Both steps must be the same fetch kind.
         if self.kind != other.kind {
