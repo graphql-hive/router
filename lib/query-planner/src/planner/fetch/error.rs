@@ -1,5 +1,5 @@
 use crate::{
-    graph::{error::GraphError, node::Node},
+    graph::error::GraphError,
     planner::fetch::selections::FetchStepSelectionsError,
     planner::walker::error::WalkOperationError,
     utils::cancellation::CancellationError,
@@ -20,7 +20,7 @@ pub enum FetchGraphError {
     #[error("Expected a single parent, but the FetchStep [{0}] has many")]
     NonSingleParent(usize),
     #[error("Subgraph name: {0}")]
-    MissingSubgraphName(Box<Node>),
+    MissingSubgraphName(Box<str>),
     #[error("Missing requirement tree for @requires")]
     MissingRequirement,
     #[error("Expected a single children of the @requires query tree node")]

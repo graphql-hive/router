@@ -7,6 +7,7 @@ pub use self::edge::PERCENTAGE_SCALE_FACTOR;
 
 mod tests;
 
+use std::sync::Arc;
 use std::{
     collections::{HashMap, HashSet},
     fmt::{Debug, Display},
@@ -32,7 +33,7 @@ use tracing::{instrument, trace};
 
 use super::graph::{edge::Edge, node::Node};
 
-type InnerGraph<'graph> = Petgraph<Node, Edge<'graph>, Directed>;
+type InnerGraph<'graph> = Petgraph<Node<'graph>, Edge<'graph>, Directed>;
 
 type UnionTypeName<'a> = &'a str;
 type SubgraphName<'a> = &'a str;
@@ -164,7 +165,7 @@ impl<'graph> Graph<'graph> {
                 .is_some_and(|definition| matches!(definition, SupergraphDefinition::Enum(_)))
     }
 
-    pub fn node(&self, node_index: NodeIndex) -> Result<&Node, GraphError> {
+    pub fn node(&self, node_index: NodeIndex) -> Result<&Node<'_>, GraphError> {
         self.graph
             .node_weight(node_index)
             .ok_or(GraphError::NodeNotFound(node_index))
@@ -197,7 +198,7 @@ impl<'graph> Graph<'graph> {
             state.definitions.len()
         );
 
-        let mut cached_rules = CachedFederationRules::new();
+        let mut cached_rules = CachedFederationRules::new(state);
 
         self.build_root_nodes(state)?;
         self.link_root_edges(state)?;
@@ -227,22 +228,22 @@ impl<'graph> Graph<'graph> {
     }
 
     #[instrument(level = "trace", skip(self, state))]
-    fn build_root_nodes(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
-        self.query_root = self.upsert_node(Node::QueryRoot(state.query_type.clone()));
+    fn build_root_nodes(&mut self, state: &'graph SupergraphState) -> Result<(), GraphError> {
+        self.query_root = self.upsert_node(Node::QueryRoot(state.query_type.as_str()));
         trace!("added root type for queries: {}", state.query_type);
         self.mutation_root = state.mutation_type.as_ref().map(|mutation_type| {
             trace!("added root type for mutations: {}", mutation_type);
-            self.upsert_node(Node::MutationRoot(mutation_type.clone()))
+            self.upsert_node(Node::MutationRoot(mutation_type.as_str()))
         });
         self.subscription_root = state.subscription_type.as_ref().map(|subscription_type| {
             trace!("added root type for subscriptions: {}", subscription_type);
-            self.upsert_node(Node::SubscriptionRoot(subscription_type.clone()))
+            self.upsert_node(Node::SubscriptionRoot(subscription_type.as_str()))
         });
 
         Ok(())
     }
 
-    pub fn upsert_node(&mut self, node: Node) -> NodeIndex {
+    pub fn upsert_node(&mut self, node: Node<'graph>) -> NodeIndex {
         let display_identifier = node.display_name();
 
         if let Some(index) = self.node_display_name_to_index.get(&display_identifier) {
@@ -311,7 +312,6 @@ impl<'graph> Graph<'graph> {
                                 join_type2.is_interface_object,
                             ));
                             let key_selection = cached_rules.parse_key(
-                                state,
                                 join_type2.graph_id.as_str(),
                                 def_name,
                                 key.as_str(),
@@ -334,7 +334,6 @@ impl<'graph> Graph<'graph> {
                         }
                     } else if let (true, Some(key)) = (&join_type1.resolvable, &join_type1.key) {
                         let key_selection = cached_rules.parse_key(
-                            state,
                             join_type1.graph_id.as_str(),
                             def_name,
                             key.as_str(),
@@ -378,7 +377,6 @@ impl<'graph> Graph<'graph> {
                 ));
 
                 let typename_selection = cached_rules.parse_key(
-                    state,
                     join_type1.graph_id.as_str(),
                     interface_object_name,
                     "__typename",
@@ -436,7 +434,6 @@ impl<'graph> Graph<'graph> {
                         .expect("@interfaceObject to have a key");
 
                     let key_selection = cached_rules.parse_key(
-                        state,
                         join_type1.graph_id.as_str(),
                         interface_object_name,
                         key.as_str(),
@@ -485,7 +482,7 @@ impl<'graph> Graph<'graph> {
     #[instrument(level = "trace", skip(self, state))]
     fn build_interface_implementation_edges(
         &mut self,
-        state: &SupergraphState,
+        state: &'graph SupergraphState,
     ) -> Result<(), GraphError> {
         for (def_name, definition) in state
             .definitions
@@ -527,11 +524,11 @@ impl<'graph> Graph<'graph> {
         Ok(())
     }
 
-    pub fn root_query_node(&self) -> &Node {
+    pub fn root_query_node(&self) -> &Node<'_> {
         &self.graph[self.query_root]
     }
 
-    pub fn root_mutation_node(&self) -> Option<&Node> {
+    pub fn root_mutation_node(&self) -> Option<&Node<'_>> {
         if let Some(mutation_root) = self.mutation_root {
             Some(&self.graph[mutation_root])
         } else {
@@ -539,7 +536,7 @@ impl<'graph> Graph<'graph> {
         }
     }
 
-    pub fn root_subscription_node(&self) -> Option<&Node> {
+    pub fn root_subscription_node(&self) -> Option<&Node<'_>> {
         if let Some(subscription_root) = self.subscription_root {
             Some(&self.graph[subscription_root])
         } else {
@@ -556,7 +553,7 @@ impl<'graph> Graph<'graph> {
     }
 
     #[instrument(level = "trace", skip(self, state))]
-    fn link_root_edges(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
+    fn link_root_edges(&mut self, state: &'graph SupergraphState) -> Result<(), GraphError> {
         for (def_name, definition) in state
             .definitions
             .iter()
@@ -743,7 +740,6 @@ impl<'graph> Graph<'graph> {
                         })
                     }).map(|(requires_str, graph_id)| {
                         cached_rules.parse_requires(
-                            state,
                             graph_id.as_str(),
                             def_name,
                             requires_str.as_str(),
@@ -801,10 +797,7 @@ impl<'graph> Graph<'graph> {
                             .into_iter()
                             .collect::<Vec<_>>();
                         member_types.sort_unstable();
-                        let possible_members: Vec<String> = member_types
-                            .iter()
-                            .map(|member| member.to_string())
-                            .collect::<Vec<_>>();
+                        let possible_members = Arc::new(member_types.clone());
 
                         trace!(
                             "Handling a field {}.{}/{} resolving a union type {}",
@@ -814,15 +807,15 @@ impl<'graph> Graph<'graph> {
                             target_type
                         );
 
-                        for member in member_types {
+                        for member in member_types.iter() {
                             let tail = self.upsert_node(Node::new_specialized_node(
                                 target_type,
                                 state.resolve_graph_id(graph_id)?,
                                 state.is_interface_object_in_subgraph(target_type, graph_id),
                                 SubgraphTypeSpecialization::UnionMembers(UnionMembersData {
-                                    type_name: def_name.clone(),
-                                    field_name: field_name.clone(),
-                                    object_type_name: member.to_string(),
+                                    type_name: def_name.as_str(),
+                                    field_name: field_name.as_str(),
+                                    object_type_name: member,
                                     possible_members: possible_members.clone(),
                                     provides: None,
                                 }),
@@ -973,7 +966,6 @@ impl<'graph> Graph<'graph> {
                 jt.is_interface_object,
             ));
             let key_selection = cached_rules.parse_key(
-                state,
                 jt.graph_id.as_str(),
                 parent_type_def.name(),
                 jt.key.as_ref().unwrap().as_str(),
@@ -1075,6 +1067,7 @@ impl<'graph> Graph<'graph> {
                         state.definitions.get(type_name_from_cond).ok_or_else(|| {
                             GraphError::DefinitionNotFound(type_name_from_cond.to_string())
                         })?;
+                    let type_name_from_cond = type_def_from_cond.name();
 
                     // head is either an interface or a union
                     // tail is a type from a type condition (it's an object type - after normalization)
@@ -1141,7 +1134,6 @@ impl<'graph> Graph<'graph> {
                         {
                             if let Some(provides) = &join_field.provides {
                                 let selection_set = cached_rules.parse_provides(
-                                    state,
                                     join_type.graph_id.as_str(),
                                     field_definition.field_type.inner_type(),
                                     provides.as_str(),
@@ -1185,7 +1177,6 @@ impl<'graph> Graph<'graph> {
                                 let requirements =
                                     join_field.requires.as_ref().map(|requires_str| {
                                         cached_rules.parse_requires(
-                                            state,
                                             join_field.graph_id.as_ref().unwrap().as_str(),
                                             def_name,
                                             requires_str.as_str(),
@@ -1237,7 +1228,6 @@ impl<'graph> Graph<'graph> {
                             jt.is_interface_object,
                         ));
                         let key_selection = cached_rules.parse_key(
-                            state,
                             jt.graph_id.as_str(),
                             def_name,
                             jt.key.as_ref().unwrap().as_str(),

@@ -490,7 +490,7 @@ fn ensure_fetch_step_for_requirement(
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     parent_fetch_step_index: NodeIndex,
     subgraph_name: &SubgraphName,
-    type_name: &String,
+    type_name: &str,
     response_path: &MergePath,
     condition: Option<&Condition>,
     requirement: &TypeAwareSelection,
@@ -508,7 +508,7 @@ fn ensure_fetch_step_for_requirement(
                         return None;
                     }
 
-                    if fetch_step.input.definition_name() != *type_name {
+                    if fetch_step.input.definition_name() != type_name {
                         return None;
                     }
 
@@ -772,7 +772,7 @@ fn process_entity_move_edge(
                 FetchNodePathSegment::typename_equals_from_type(output_type_name.to_string()),
                 FetchNodePathSegment::Key("__typename".to_string()),
             ],
-            set_value_to: output_type_name.clone(),
+            set_value_to: output_type_name.to_string(),
         }));
 
         fetch_step
@@ -922,7 +922,7 @@ fn process_interface_object_type_move_edge(
             FetchNodePathSegment::typename_equals_from_type(interface_type_name.to_string()),
             FetchNodePathSegment::Key("__typename".to_string()),
         ],
-        set_value_to: interface_type_name.clone(),
+        set_value_to: interface_type_name.to_string(),
     }));
 
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
@@ -1454,7 +1454,7 @@ fn process_requires_field_edge(
                 FetchNodePathSegment::typename_equals_from_type(head_type_name.to_string()),
                 FetchNodePathSegment::Key("__typename".to_string()),
             ],
-            set_value_to: head_type_name.clone(),
+            set_value_to: head_type_name.to_string(),
         }));
     }
 

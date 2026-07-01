@@ -188,18 +188,19 @@ struct SelectionCache<'a> {
 #[derive(Debug)]
 pub struct CachedFederationRules<'supergraph> {
     cache: SelectionCache<'supergraph>,
+    supergraph: &'supergraph SupergraphState,
 }
 
 impl<'supergraph> CachedFederationRules<'supergraph> {
-    pub fn new() -> Self {
+    pub fn new(supergraph: &'supergraph SupergraphState) -> Self {
         Self {
             cache: SelectionCache::default(),
+            supergraph,
         }
     }
 
     fn parse_selection(
         &mut self,
-        supergraph: &'supergraph SupergraphState,
         subgraph_name: &'supergraph str,
         type_name: &'supergraph str,
         selection: &'supergraph str,
@@ -213,7 +214,7 @@ impl<'supergraph> CachedFederationRules<'supergraph> {
             return selection.clone();
         }
         let selection = Arc::new(FederationRules::parse_selection(
-            supergraph,
+            self.supergraph,
             subgraph_name,
             type_name,
             selection,
@@ -224,7 +225,6 @@ impl<'supergraph> CachedFederationRules<'supergraph> {
 
     pub fn parse_key(
         &mut self,
-        supergraph: &'supergraph SupergraphState,
         subgraph_name: &'supergraph str,
         type_name: &'supergraph str,
         selection: &'supergraph str,
@@ -237,7 +237,7 @@ impl<'supergraph> CachedFederationRules<'supergraph> {
         if let Some(selection) = self.cache.keys.get(&key) {
             return selection.clone();
         }
-        let selection_set = self.parse_selection(supergraph, subgraph_name, type_name, selection);
+        let selection_set = self.parse_selection(subgraph_name, type_name, selection);
         let selection = Arc::new(TypeAwareSelection {
             type_name,
             selection_set: selection_set.as_ref().clone().into(),
@@ -248,7 +248,6 @@ impl<'supergraph> CachedFederationRules<'supergraph> {
 
     pub fn parse_requires(
         &mut self,
-        supergraph: &'supergraph SupergraphState,
         subgraph_name: &'supergraph str,
         type_name: &'supergraph str,
         selection: &'supergraph str,
@@ -261,7 +260,7 @@ impl<'supergraph> CachedFederationRules<'supergraph> {
         if let Some(selection) = self.cache.requirements.get(&key) {
             return selection.clone();
         }
-        let selection_set = self.parse_selection(supergraph, subgraph_name, type_name, selection);
+        let selection_set = self.parse_selection(subgraph_name, type_name, selection);
         let selection = Arc::new(TypeAwareSelection {
             type_name,
             selection_set: selection_set.as_ref().clone().into(),
@@ -272,11 +271,10 @@ impl<'supergraph> CachedFederationRules<'supergraph> {
 
     pub fn parse_provides(
         &mut self,
-        supergraph: &'supergraph SupergraphState,
         subgraph_name: &'supergraph str,
         type_name: &'supergraph str,
         selection: &'supergraph str,
     ) -> Arc<SelectionSet<'static, String>> {
-        self.parse_selection(supergraph, subgraph_name, type_name, selection)
+        self.parse_selection(subgraph_name, type_name, selection)
     }
 }
