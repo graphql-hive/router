@@ -14,8 +14,10 @@ mod utils;
 use tracing::instrument;
 
 use crate::{
-    planner::fetch::{error::FetchGraphError, fetch_graph::FetchGraph, state::MultiTypeFetchStep},
-    planner::QueryPlannerOptions,
+    planner::{
+        fetch::{error::FetchGraphError, fetch_graph::FetchGraph, state::MultiTypeFetchStep},
+        QueryPlannerOptions,
+    },
     state::supergraph_state::SupergraphState,
     utils::cancellation::CancellationToken,
 };
