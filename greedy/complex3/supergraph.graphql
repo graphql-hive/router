@@ -1,0 +1,75 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
+  query: Query
+}
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+directive @join__field(graph: join__Graph, requires: join__FieldSet, provides: join__FieldSet, type: String, external: Boolean, override: String, usedOverridden: Boolean) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+directive @join__type(graph: join__Graph!, key: join__FieldSet, extension: Boolean! = false, resolvable: Boolean! = true) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+directive @link(url: String, as: String, for: link__Purpose, import: [link__Import]) repeatable on SCHEMA
+
+scalar join__FieldSet
+
+enum join__Graph {
+  AUTH @join__graph(name: "auth", url: "http://localhost:4200/auth")
+  PROFILES @join__graph(name: "profiles", url: "http://localhost:4200/profiles")
+  ACTIVITY @join__graph(name: "activity", url: "http://localhost:4200/activity")
+  NOTIFICATIONS @join__graph(name: "notifications", url: "http://localhost:4200/notifications")
+  MESSAGING @join__graph(name: "messaging", url: "http://localhost:4200/messaging")
+  ANALYTICS @join__graph(name: "analytics", url: "http://localhost:4200/analytics")
+}
+
+scalar link__Import
+enum link__Purpose { SECURITY EXECUTION }
+
+type Query
+  @join__type(graph: AUTH)
+  @join__type(graph: PROFILES)
+  @join__type(graph: ACTIVITY)
+  @join__type(graph: NOTIFICATIONS)
+  @join__type(graph: MESSAGING)
+  @join__type(graph: ANALYTICS) {
+  me: User @join__field(graph: AUTH) @join__field(graph: PROFILES)
+  users: [User!]! @join__field(graph: PROFILES) @join__field(graph: ACTIVITY)
+  notifications: [Notification!]! @join__field(graph: NOTIFICATIONS) @join__field(graph: MESSAGING)
+  messages: [Message!]! @join__field(graph: MESSAGING) @join__field(graph: ANALYTICS)
+}
+
+type User
+  @join__type(graph: AUTH, key: "id")
+  @join__type(graph: PROFILES, key: "id")
+  @join__type(graph: ACTIVITY, key: "id")
+  @join__type(graph: NOTIFICATIONS, key: "id")
+  @join__type(graph: MESSAGING, key: "id")
+  @join__type(graph: ANALYTICS, key: "id") {
+  id: ID!
+  username: String @join__field(graph: AUTH)
+  email: String @join__field(graph: AUTH) @join__field(graph: PROFILES)
+  bio: String @join__field(graph: PROFILES)
+  avatar: String @join__field(graph: PROFILES) @join__field(graph: ACTIVITY)
+  lastSeen: String @join__field(graph: ACTIVITY)
+  postCount: Int @join__field(graph: ACTIVITY) @join__field(graph: NOTIFICATIONS)
+  unreadNotifications: Int @join__field(graph: NOTIFICATIONS)
+  unreadMessages: Int @join__field(graph: MESSAGING)
+  loginCount: Int @join__field(graph: ANALYTICS)
+}
+
+type Notification
+  @join__type(graph: NOTIFICATIONS, key: "id")
+  @join__type(graph: MESSAGING, key: "id") {
+  id: ID!
+  title: String @join__field(graph: NOTIFICATIONS)
+  message: String @join__field(graph: NOTIFICATIONS) @join__field(graph: MESSAGING)
+  read: Boolean @join__field(graph: MESSAGING)
+}
+
+type Message
+  @join__type(graph: MESSAGING, key: "id")
+  @join__type(graph: ANALYTICS, key: "id") {
+  id: ID!
+  content: String @join__field(graph: MESSAGING)
+  sentAt: String @join__field(graph: MESSAGING) @join__field(graph: ANALYTICS)
+  read: Boolean @join__field(graph: ANALYTICS)
+}

@@ -1,0 +1,63 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
+  query: Query
+}
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+directive @join__field(graph: join__Graph, requires: join__FieldSet, provides: join__FieldSet, type: String, external: Boolean, override: String, usedOverridden: Boolean) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+directive @join__type(graph: join__Graph!, key: join__FieldSet, extension: Boolean! = false, resolvable: Boolean! = true) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+directive @join__implements(graph: join__Graph!, interface: String!) repeatable on OBJECT | INTERFACE
+directive @link(url: String, as: String, for: link__Purpose, import: [link__Import]) repeatable on SCHEMA
+
+scalar join__FieldSet
+
+enum join__Graph {
+  USERS @join__graph(name: "users", url: "http://localhost:4200/users")
+  POSTS @join__graph(name: "posts", url: "http://localhost:4200/posts")
+  COMMENTS @join__graph(name: "comments", url: "http://localhost:4200/comments")
+  LIKES @join__graph(name: "likes", url: "http://localhost:4200/likes")
+}
+
+scalar link__Import
+enum link__Purpose { SECURITY EXECUTION }
+
+type Query
+  @join__type(graph: USERS)
+  @join__type(graph: POSTS)
+  @join__type(graph: COMMENTS)
+  @join__type(graph: LIKES) {
+  user(id: ID!): User @join__field(graph: USERS) @join__field(graph: POSTS)
+  post(id: ID!): Post @join__field(graph: POSTS) @join__field(graph: COMMENTS)
+  comment(id: ID!): Comment @join__field(graph: COMMENTS) @join__field(graph: LIKES)
+}
+
+type User
+  @join__type(graph: USERS, key: "id")
+  @join__type(graph: POSTS, key: "id") {
+  id: ID!
+  name: String @join__field(graph: USERS)
+  email: String @join__field(graph: USERS) @join__field(graph: POSTS)
+  posts: [Post!]! @join__field(graph: POSTS)
+}
+
+type Post
+  @join__type(graph: POSTS, key: "id")
+  @join__type(graph: COMMENTS, key: "id")
+  @join__type(graph: LIKES, key: "id") {
+  id: ID!
+  title: String @join__field(graph: POSTS)
+  content: String @join__field(graph: POSTS) @join__field(graph: COMMENTS)
+  comments: [Comment!]! @join__field(graph: COMMENTS)
+  likes: Int @join__field(graph: LIKES)
+}
+
+type Comment
+  @join__type(graph: COMMENTS, key: "id")
+  @join__type(graph: LIKES, key: "id") {
+  id: ID!
+  text: String @join__field(graph: COMMENTS)
+  author: String @join__field(graph: COMMENTS) @join__field(graph: LIKES)
+  likes: Int @join__field(graph: LIKES)
+}

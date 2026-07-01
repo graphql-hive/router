@@ -1,0 +1,29 @@
+query {
+  user(id: "1") {
+    name
+    email
+    posts {
+      title
+      content
+      comments {
+        text
+        author
+        likes
+      }
+    }
+  }
+  post(id: "1") {
+    title
+    content
+    comments {
+      text
+      author
+    }
+    likes
+  }
+  comment(id: "1") {
+    text
+    author
+    likes
+  }
+}

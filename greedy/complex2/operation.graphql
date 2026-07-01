@@ -1,0 +1,31 @@
+query {
+  products {
+    id
+    name
+    description
+    sku
+    price
+    currency
+    rating
+    reviewCount
+    similarProducts {
+      id
+      name
+      price
+      rating
+    }
+  }
+  featured {
+    id
+    name
+    description
+    sku
+    price
+    rating
+  }
+  categories {
+    id
+    name
+    discount
+  }
+}

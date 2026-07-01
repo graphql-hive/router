@@ -1,0 +1,33 @@
+query {
+  me {
+    username
+    email
+    bio
+    avatar
+    lastSeen
+    postCount
+    unreadNotifications
+    unreadMessages
+    loginCount
+  }
+  users {
+    id
+    username
+    email
+    bio
+    lastSeen
+    postCount
+  }
+  notifications {
+    id
+    title
+    message
+    read
+  }
+  messages {
+    id
+    content
+    sentAt
+    read
+  }
+}
