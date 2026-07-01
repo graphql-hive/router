@@ -154,7 +154,7 @@ pub enum Edge<'graph> {
     /// With this helper, you can jump from Query::RootQuery --SomeSubgraph-> Query/SomeSubgraph --> --field--> SomeType/SomeSubgraph
     SubgraphEntrypoint {
         field_names: Vec<String>,
-        name: SubgraphName,
+        name: SubgraphName<'graph>,
     },
     FieldMove(Box<FieldMove<'graph>>),
     EntityMove(EntityMove<'graph>),

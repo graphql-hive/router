@@ -44,6 +44,7 @@ fn query_plan_pipeline(c: &mut Criterion) {
         get_executable_operation(&parsed_document, &supergraph_state, Some("TestQuery"));
     let override_context = PlannerOverrideContext::default();
     let cancellation_token = CancellationToken::new();
+    let options = QueryPlannerOptions::default();
 
     c.bench_function("query_plan", |b| {
         b.iter(|| {
@@ -69,7 +70,7 @@ fn query_plan_pipeline(c: &mut Criterion) {
                 bb_override_context,
                 query_tree,
                 bb_kind,
-                &QueryPlannerOptions::default(),
+                &options,
                 &cancellation_token,
             )
             .unwrap();
@@ -120,7 +121,7 @@ fn query_plan_pipeline(c: &mut Criterion) {
                 bb_override_context,
                 query_tree,
                 bb_kind,
-                &QueryPlannerOptions::default(),
+                &options,
                 &cancellation_token,
             )
             .unwrap();
@@ -174,7 +175,7 @@ fn query_plan_pipeline(c: &mut Criterion) {
                 bb_override_context,
                 query_tree,
                 bb_kind,
-                &QueryPlannerOptions::default(),
+                &options,
                 &cancellation_token,
             )
             .unwrap();
@@ -224,7 +225,7 @@ fn query_plan_pipeline(c: &mut Criterion) {
                 bb_override_context,
                 query_tree,
                 bb_kind,
-                &QueryPlannerOptions::default(),
+                &options,
                 &cancellation_token,
             )
             .unwrap();
@@ -274,7 +275,7 @@ fn query_plan_pipeline(c: &mut Criterion) {
                 bb_override_context,
                 query_tree,
                 bb_kind,
-                &QueryPlannerOptions::default(),
+                &options,
                 &cancellation_token,
             )
             .unwrap();
@@ -324,7 +325,7 @@ fn query_plan_pipeline(c: &mut Criterion) {
                 bb_override_context,
                 query_tree,
                 bb_kind,
-                &QueryPlannerOptions::default(),
+                &options,
                 &cancellation_token,
             )
             .unwrap();

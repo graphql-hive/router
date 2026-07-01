@@ -15,12 +15,11 @@ use crate::{
         optimize::utils::perform_fetch_step_merge,
         state::MultiTypeFetchStep,
     },
-    state::supergraph_state::SubgraphName,
 };
 
-type SiblingGroupKey = (SubgraphName, u64, Option<Condition>, FetchStepKind);
+type SiblingGroupKey = (String, u64, Option<Condition>, FetchStepKind);
 
-impl FetchGraph<MultiTypeFetchStep> {
+impl FetchGraph<'_, MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
     pub(crate) fn merge_siblings(&mut self) -> Result<(), FetchGraphError> {
         let root_index = self
@@ -61,7 +60,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                 let step = self.get_step_data(sibling_index)?;
                 groups
                     .entry((
-                        step.service_name.clone(),
+                        step.service_name.to_string(),
                         response_path_shape_hash(step),
                         if matches!(step.kind, FetchStepKind::Entity) {
                             step.condition.clone()
@@ -112,7 +111,7 @@ impl FetchGraph<MultiTypeFetchStep> {
     }
 }
 
-fn response_path_shape_hash(step: &FetchStepData<MultiTypeFetchStep>) -> u64 {
+fn response_path_shape_hash(step: &FetchStepData<'_, MultiTypeFetchStep>) -> u64 {
     let mut hasher = rustc_hash::FxHasher::default();
 
     for segment in step.response_path.inner.iter() {
@@ -136,13 +135,13 @@ fn response_path_shape_hash(step: &FetchStepData<MultiTypeFetchStep>) -> u64 {
     hasher.finish()
 }
 
-impl FetchStepData<MultiTypeFetchStep> {
+impl FetchStepData<'_, MultiTypeFetchStep> {
     pub(crate) fn can_merge_siblings(
         &self,
         self_index: NodeIndex,
         other_index: NodeIndex,
         other: &Self,
-        fetch_graph: &FetchGraph<MultiTypeFetchStep>,
+        fetch_graph: &FetchGraph<'_, MultiTypeFetchStep>,
     ) -> bool {
         // First, check if the base conditions for merging are met.
         let can_merge_base = self.can_merge(self_index, other_index, other, fetch_graph);

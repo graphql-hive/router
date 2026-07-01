@@ -811,7 +811,7 @@ fn field_target_subgraph_ids(
 
         for graph_id in field_def.resolvable_in_graphs(parent_def) {
             if let Ok(subgraph_id) = supergraph.resolve_graph_id(&graph_id) {
-                target_subgraph_ids.insert(subgraph_id.0);
+                target_subgraph_ids.insert(subgraph_id.0.to_string());
             }
         }
     }

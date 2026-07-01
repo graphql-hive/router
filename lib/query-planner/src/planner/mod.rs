@@ -136,7 +136,7 @@ impl Planner {
 }
 
 pub fn add_variables_to_fetch_steps(
-    graph: &mut FetchGraph<MultiTypeFetchStep>,
+    graph: &mut FetchGraph<'_, MultiTypeFetchStep>,
     variables: &Option<Vec<VariableDefinition>>,
 ) -> Result<(), PlannerError> {
     if let Some(variables) = variables {

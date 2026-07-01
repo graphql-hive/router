@@ -43,7 +43,7 @@ impl<'graph> SubgraphTypeSpecialization<'graph> {
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct SubgraphType<'graph> {
     pub name: &'graph str,
-    pub subgraph: SubgraphName,
+    pub subgraph: SubgraphName<'graph>,
     pub is_interface_object: bool,
     specialization: Option<SubgraphTypeSpecialization<'graph>>,
 }
@@ -103,7 +103,11 @@ impl<'graph> Node<'graph> {
         }
     }
 
-    pub fn new_node(name: &str, subgraph: SubgraphName, is_interface_object: bool) -> Node<'_> {
+    pub fn new_node(
+        name: &'graph str,
+        subgraph: SubgraphName<'graph>,
+        is_interface_object: bool,
+    ) -> Node<'graph> {
         Node::SubgraphType(SubgraphType {
             name,
             subgraph,
@@ -114,7 +118,7 @@ impl<'graph> Node<'graph> {
 
     pub fn new_specialized_node(
         name: &'graph str,
-        subgraph: SubgraphName,
+        subgraph: SubgraphName<'graph>,
         is_interface_object: bool,
         specialization: SubgraphTypeSpecialization<'graph>,
     ) -> Node<'graph> {
