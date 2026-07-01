@@ -864,7 +864,7 @@ impl<'graph> Graph<'graph> {
                     // Viewer.song   (A)     = Book | Sing     (no intersection - it lives in a single subgraph)
                     //
                     // We need to point it to a subset of object types.
-                    // We do it by creating a new Node for each edge's tail,
+                    // We do it by creating one specialized tail carrying member set,
                     // and from the tail we create abstract-move edges to the object types.
                     //
                     let target_type_is_union = unions.contains(target_type);
@@ -885,7 +885,15 @@ impl<'graph> Graph<'graph> {
                             .into_iter()
                             .collect::<Vec<_>>();
                         member_types.sort_unstable();
+
+                        if member_types.is_empty() {
+                            continue;
+                        }
+
                         let possible_members = Arc::new(member_types.clone());
+                        let representative_member = *possible_members
+                            .first()
+                            .expect("union member list should not be empty");
 
                         trace!(
                             "Handling a field {}.{}/{} resolving a union type {}",
@@ -895,19 +903,66 @@ impl<'graph> Graph<'graph> {
                             target_type
                         );
 
-                        for member in member_types.iter() {
-                            let tail = self.upsert_node(Node::new_specialized_node(
+                        let tail = self.upsert_node(Node::new_specialized_node(
+                            target_type,
+                            build_context.resolve_graph_id(state, graph_id)?,
+                            state.is_interface_object_in_subgraph(target_type, graph_id),
+                            SubgraphTypeSpecialization::UnionMembers(UnionMembersData {
+                                type_name: def_name.as_str(),
+                                field_name: field_name.as_str(),
+                                object_type_name: representative_member,
+                                possible_members: possible_members.clone(),
+                                provides: None,
+                            }),
+                        ));
+                        let typename_tail = self.upsert_subgraph_node(
+                            build_context,
+                            state,
+                            "String",
+                            graph_id,
+                            false,
+                        )?;
+
+                        trace!(
+                            "  [x] Creating field move edge '{}.__typename/{}' (type: String)",
+                            def_name,
+                            graph_id
+                        );
+                        self.upsert_edge(
+                            tail,
+                            typename_tail,
+                            Edge::create_field_move(
+                                "__typename",
                                 target_type,
-                                build_context.resolve_graph_id(state, graph_id)?,
-                                state.is_interface_object_in_subgraph(target_type, graph_id),
-                                SubgraphTypeSpecialization::UnionMembers(UnionMembersData {
-                                    type_name: def_name.as_str(),
-                                    field_name: field_name.as_str(),
-                                    object_type_name: member,
-                                    possible_members: possible_members.clone(),
-                                    provides: None,
-                                }),
-                            ));
+                                true,
+                                false,
+                                None,
+                                None,
+                                None,
+                            ),
+                        );
+
+                        trace!(
+                            "  [x] Creating field move edge '{}.{}/{}' (type: String)",
+                            def_name,
+                            field_name,
+                            graph_id
+                        );
+                        self.upsert_edge(
+                            head,
+                            tail,
+                            Edge::create_field_move(
+                                field_name,
+                                def_name,
+                                state.is_scalar_type(target_type),
+                                field_definition.field_type.is_list(),
+                                None,
+                                requirements.clone(),
+                                overridden_by.clone(),
+                            ),
+                        );
+
+                        for member in member_types.iter() {
                             let abstract_tail = self.upsert_subgraph_node(
                                 build_context,
                                 state,
@@ -915,53 +970,6 @@ impl<'graph> Graph<'graph> {
                                 graph_id,
                                 state.is_interface_object_in_subgraph(member, graph_id),
                             )?;
-                            // because we duplicate tails, we need to add __typename to all of them
-                            let typename_tail = self.upsert_subgraph_node(
-                                build_context,
-                                state,
-                                "String",
-                                graph_id,
-                                false,
-                            )?;
-
-                            trace!(
-                                "  [x] Creating field move edge '{}.__typename/{}' (type: String)",
-                                def_name,
-                                graph_id
-                            );
-                            self.upsert_edge(
-                                tail,
-                                typename_tail,
-                                Edge::create_field_move(
-                                    "__typename",
-                                    target_type,
-                                    true,
-                                    false,
-                                    None,
-                                    None,
-                                    None,
-                                ),
-                            );
-
-                            trace!(
-                                "  [x] Creating field move edge '{}.{}/{}' (type: String)",
-                                def_name,
-                                field_name,
-                                graph_id
-                            );
-                            self.upsert_edge(
-                                head,
-                                tail,
-                                Edge::create_field_move(
-                                    field_name,
-                                    def_name,
-                                    state.is_scalar_type(target_type),
-                                    field_definition.field_type.is_list(),
-                                    None,
-                                    requirements.clone(),
-                                    overridden_by.clone(),
-                                ),
-                            );
 
                             trace!(
                                 "  [x] Creating abstract move edge for '{}.{}/{}' (union member: {})",

@@ -11,7 +11,8 @@ pub struct UnionMembersData<'graph> {
     pub type_name: &'graph str,
     /// Represents the field resolving a union type
     pub field_name: &'graph str,
-    /// Represents a union member
+    /// Represents one concrete member used when a path is narrowed to a single member.
+    /// Full reachable member set lives in `possible_members`.
     pub object_type_name: &'graph str,
     /// Represents all union members reachable for the same field in this subgraph.
     pub possible_members: Arc<Vec<&'graph str>>,
@@ -22,12 +23,12 @@ pub struct UnionMembersData<'graph> {
 pub enum SubgraphTypeSpecialization<'graph> {
     /// Node was created due to @provides path.
     Provides(u64),
-    /// Node represents a union member tail for a specific subgraph.
+    /// Node represents union tail for a specific field in a specific subgraph.
     ///
     /// For union-returning field moves, we may need a tail that only exposes the
     /// members reachable in the current subgraph. We model that by creating
-    /// per-member specialized nodes and then abstract-move edges from those tails
-    /// to the concrete member types.
+    /// one specialized tail carrying full member set, then abstract-move edges
+    /// from that tail to the concrete member types.
     UnionMembers(UnionMembersData<'graph>),
 }
 
@@ -68,14 +69,10 @@ impl<'graph> Node<'graph> {
                     SubgraphTypeSpecialization::Provides(provides_id) => {
                         format!("{}/{}/{}", st.name, st.subgraph.0, provides_id)
                     }
-                    SubgraphTypeSpecialization::UnionMembers(u) => {
-                        // we rely on display_name when it comes to deduplicating nodes (upsert_node),
-                        // that's why the string produced here should "mimic" hashing
-                        format!(
-                            "{}/{} for {}.{}:{}",
-                            st.name, st.subgraph.0, u.type_name, u.field_name, u.object_type_name
-                        )
-                    }
+                    SubgraphTypeSpecialization::UnionMembers(u) => format!(
+                        "{}/{} for {}.{}:{:?}",
+                        st.name, st.subgraph.0, u.type_name, u.field_name, u.possible_members
+                    ),
                 },
                 None => format!("{}/{}", st.name, st.subgraph.0),
             },
