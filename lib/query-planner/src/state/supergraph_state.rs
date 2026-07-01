@@ -67,8 +67,7 @@ type GraphId = String;
 type InterfaceObjectToSubgraphsMap = AHashMap<TypeName, AHashSet<GraphId>>;
 type InterfaceToObjectTypesMap = AHashMap<TypeName, BTreeSet<TypeName>>;
 type AbstractPossibleTypesMap = AHashMap<TypeName, AHashSet<TypeName>>;
-type AbstractPossibleTypesBySubgraphMap =
-    AHashMap<GraphId, AHashMap<TypeName, AHashSet<TypeName>>>;
+type AbstractPossibleTypesBySubgraphMap = AHashMap<GraphId, AHashMap<TypeName, AHashSet<TypeName>>>;
 type DefinitionMap = AHashMap<TypeName, SupergraphDefinition>;
 
 /// Information about linked specifications used in the supergraph
@@ -534,10 +533,7 @@ impl SupergraphState {
     }
 
     #[instrument(level = "trace", skip_all)]
-    fn build_map(
-        schema: &SchemaDocument,
-        linked_specs: LinkedSpecifications,
-    ) -> DefinitionMap {
+    fn build_map(schema: &SchemaDocument, linked_specs: LinkedSpecifications) -> DefinitionMap {
         schema
             .definitions
             .iter()

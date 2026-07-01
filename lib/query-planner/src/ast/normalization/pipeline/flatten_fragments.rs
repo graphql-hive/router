@@ -1,8 +1,8 @@
+use ahash::AHashSet;
 use graphql_tools::parser::query::{
     Definition, Field, InlineFragment, Mutation, OperationDefinition, Query, Selection,
     SelectionSet, Subscription, TypeCondition,
 };
-use ahash::AHashSet;
 
 use crate::{
     ast::normalization::{
@@ -273,9 +273,7 @@ fn expand_abstract_fragment(
             })?
         }
         _ => {
-            owned_parent_set = [parent_type_def.name().to_string()]
-                .into_iter()
-                .collect();
+            owned_parent_set = [parent_type_def.name().to_string()].into_iter().collect();
             &owned_parent_set
         }
     };
