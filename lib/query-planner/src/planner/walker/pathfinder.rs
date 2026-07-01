@@ -1,6 +1,8 @@
 use ahash::HashSet;
 use std::collections::VecDeque;
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
+use xxhash_rust::xxh3::Xxh3;
 
 use petgraph::graph::{EdgeIndex, NodeIndex};
 use petgraph::visit::{EdgeRef, NodeRef};
@@ -30,6 +32,67 @@ use super::{error::WalkOperationError, excluded::ExcludedFromLookup, path::Opera
 
 pub type VisitedGraphs<'graph> = HashSet<&'graph str>;
 type ActiveEdgeChecks = HashSet<(NodeIndex, EdgeIndex)>;
+type UnsatisfiedRequirementCache = HashSet<UnsatisfiedRequirementFingerprint>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct UnsatisfiedRequirementFingerprint {
+    tail_type_hash: u64,
+    tail_graph_hash: u64,
+    requirement_hash: u64,
+    excluded_requirements_hash: u64,
+    use_only_direct_edges: bool,
+}
+
+impl UnsatisfiedRequirementFingerprint {
+    fn new<'graph>(
+        graph: &'graph Graph<'graph>,
+        path: &OperationPath<'graph>,
+        edge: &Edge<'graph>,
+        excluded: &ExcludedFromLookup<'graph>,
+        use_only_direct_edges: bool,
+    ) -> Self {
+        let tail_node = graph
+            .node(path.tail())
+            .expect("tail node should exist while pathfinding");
+
+        let mut type_hasher = Xxh3::new();
+        tail_node.name_str().hash(&mut type_hasher);
+
+        let mut graph_hasher = Xxh3::new();
+        tail_node.graph_id().hash(&mut graph_hasher);
+
+        let mut requirement_hasher = Xxh3::new();
+        edge.requirements().hash(&mut requirement_hasher);
+
+        Self {
+            tail_type_hash: type_hasher.finish(),
+            tail_graph_hash: graph_hasher.finish(),
+            requirement_hash: requirement_hasher.finish(),
+            excluded_requirements_hash: Self::unordered_hash(excluded.requirement.iter()),
+            use_only_direct_edges,
+        }
+    }
+
+    #[inline]
+    fn unordered_hash<T: Hash>(items: impl Iterator<Item = T>) -> u64 {
+        let mut hashes: Vec<u64> = items
+            .map(|item| {
+                let mut hasher = Xxh3::new();
+                item.hash(&mut hasher);
+                hasher.finish()
+            })
+            .collect();
+        hashes.sort_unstable();
+        hashes.dedup();
+
+        let mut hasher = Xxh3::new();
+        hashes.len().hash(&mut hasher);
+        for hash in hashes {
+            hash.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+}
 
 struct IndirectPathsLookupQueue<'graph> {
     queue: Vec<(
@@ -111,6 +174,7 @@ struct PathSearch<'graph> {
     /// Edges currently being checked in this path search.
     /// Used to stop recursive loops when an edge depends on itself.
     active_edge_checks: ActiveEdgeChecks,
+    unsatisfied_requirements: UnsatisfiedRequirementCache,
 }
 
 impl<'graph> PathSearch<'graph> {
@@ -126,6 +190,7 @@ impl<'graph> PathSearch<'graph> {
             override_context,
             cancellation_token,
             active_edge_checks: ActiveEdgeChecks::default(),
+            unsatisfied_requirements: UnsatisfiedRequirementCache::default(),
         }
     }
 }
@@ -627,6 +692,24 @@ impl<'graph> PathSearch<'graph> {
         use_only_direct_edges: bool,
     ) -> Result<Option<Vec<OperationPath<'graph>>>, WalkOperationError> {
         let graph = self.graph;
+        let edge = edge_ref.weight();
+
+        let unsatisfied_key = UnsatisfiedRequirementFingerprint::new(
+            graph,
+            path,
+            edge,
+            excluded,
+            use_only_direct_edges,
+        );
+        if self.unsatisfied_requirements.contains(&unsatisfied_key) {
+            trace!(
+                "Ignoring. Requirement already known unsatisfied for edge '{}' from path tail: {}",
+                graph.pretty_print_edge(edge_ref.id(), false),
+                path.pretty_print(graph)
+            );
+            return Ok(None);
+        }
+
         let active_key = (path.tail(), edge_ref.id());
         if !self.active_edge_checks.insert(active_key) {
             trace!(
@@ -638,6 +721,10 @@ impl<'graph> PathSearch<'graph> {
         }
 
         let result = self.check_edge_requirements(edge_ref, path, excluded, use_only_direct_edges);
+
+        if matches!(result, Ok(None)) {
+            self.unsatisfied_requirements.insert(unsatisfied_key);
+        }
 
         self.active_edge_checks.remove(&active_key);
 

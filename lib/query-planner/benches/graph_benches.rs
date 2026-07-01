@@ -44,6 +44,18 @@ fn graph_building(c: &mut Criterion) {
             black_box(graph);
         })
     });
+
+    c.bench_function("graph_bfg", |b| {
+        let supergraph_sdl = std::fs::read_to_string("./fixture/bfg/supergraph.graphql")
+            .expect("Unable to read input file");
+        let parsed_schema = parse_schema(&supergraph_sdl);
+        let supergraph_state = SupergraphState::new(&parsed_schema);
+        b.iter(|| {
+            let graph = Graph::graph_from_supergraph_state(&supergraph_state)
+                .expect("failed to create graph");
+            black_box(graph);
+        })
+    });
 }
 
 fn all_benchmarks(c: &mut Criterion) {
