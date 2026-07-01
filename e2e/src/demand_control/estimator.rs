@@ -1001,7 +1001,7 @@ mod estimator_tests {
         let blocked_products = requires_json["errors"].as_array().map_or(false, |errors| {
             errors.iter().any(|e| {
                 e["extensions"]["code"].as_str() == Some("SUBGRAPH_COST_ESTIMATED_TOO_EXPENSIVE")
-                    && e["extensions"]["serviceName"].as_str() == Some("products")
+                    && e["extensions"]["service"].as_str() == Some("products")
             })
         });
         assert!(

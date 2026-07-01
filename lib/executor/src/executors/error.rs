@@ -33,7 +33,7 @@ pub enum SubgraphExecutorError {
     #[strum(serialize = "SUBGRAPH_REQUEST_BUILD_FAILURE")]
     RequestBuildFailure(#[from] http::Error),
     #[error("Failed to send request to subgraph: {0}")]
-    #[strum(serialize = "SUBGRAPH_REQUEST_FAILURE")]
+    #[strum(serialize = "SUBREQUEST_HTTP_ERROR")]
     RequestFailure(#[from] hyper_util::client::legacy::Error),
     #[error("Failed to receive response: {0}")]
     #[strum(serialize = "SUBGRAPH_RESPONSE_FAILURE")]
@@ -57,8 +57,14 @@ pub enum SubgraphExecutorError {
     #[strum(serialize = "SUBGRAPH_RESPONSE_BODY_EMPTY")]
     EmptyResponseBody(String, Arc<HeaderMap>),
     #[error("Failed to deserialize subgraph response: {0}")]
-    #[strum(serialize = "SUBGRAPH_RESPONSE_DESERIALIZATION_FAILURE")]
+    #[strum(serialize = "SUBREQUEST_MALFORMED_RESPONSE")]
     ResponseDeserializationFailure(sonic_rs::Error, Option<Arc<HeaderMap>>),
+    #[error("Subgraph returned malformed response")]
+    #[strum(serialize = "SUBREQUEST_MALFORMED_RESPONSE")]
+    MalformedResponse(Option<Arc<HeaderMap>>),
+    #[error("Invalid content type returned from subgraph '{0}': '{1}'")]
+    #[strum(serialize = "SUBREQUEST_MALFORMED_RESPONSE")]
+    InvalidContentType(String, String, Arc<HeaderMap>),
     #[error(transparent)]
     #[strum(serialize = "SUBGRAPH_HTTPS_CERTS_FAILURE")]
     TlsCertificatesError(#[from] TlsCertificatesError),
@@ -131,6 +137,8 @@ impl SubgraphExecutorError {
             Self::EmptyResponseBody(_, headers) => Some(headers.as_ref()),
             Self::ResponseBodyReadFailure(_, _, headers) => Some(headers.as_ref()),
             Self::ResponseDeserializationFailure(_, headers) => headers.as_deref(),
+            Self::MalformedResponse(headers) => headers.as_deref(),
+            Self::InvalidContentType(_, _, headers) => Some(headers.as_ref()),
             _ => None,
         }
     }

@@ -120,7 +120,7 @@ mod timeout_per_subgraph_e2e_tests {
                       "message": "Request to subgraph timed out",
                       "extensions": {
                         "code": "SUBGRAPH_REQUEST_TIMEOUT",
-                        "serviceName": "accounts"
+                        "service": "accounts"
                       }
                     }
                   ]

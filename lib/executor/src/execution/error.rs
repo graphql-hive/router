@@ -104,9 +104,11 @@ impl From<&PlanExecutionError> for GraphQLError {
         if let Some(subgraph_name) = &val.context.subgraph_name {
             error = error.add_subgraph_name(subgraph_name);
         }
+
         if let Some(affected_path) = &val.context.affected_path {
             error = error.add_affected_path(affected_path);
         }
+
         error
     }
 }

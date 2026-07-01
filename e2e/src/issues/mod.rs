@@ -1323,7 +1323,7 @@ mod issues_e2e_tests {
               ],
               "extensions": {
                 "code": "DOWNSTREAM_SERVICE_ERROR",
-                "serviceName": "accounts"
+                "service": "accounts"
               }
             }
           ]
@@ -1348,7 +1348,7 @@ mod issues_e2e_tests {
               "message": "NullableNested.fieldThatErrors always fails",
               "extensions": {
                 "code": "DOWNSTREAM_SERVICE_ERROR",
-                "serviceName": "accounts"
+                "service": "accounts"
               }
             }
           ]
@@ -1378,7 +1378,7 @@ mod issues_e2e_tests {
               ],
               "extensions": {
                 "code": "DOWNSTREAM_SERVICE_ERROR",
-                "serviceName": "accounts"
+                "service": "accounts"
               }
             }
           ]
@@ -1408,7 +1408,7 @@ mod issues_e2e_tests {
               ],
               "extensions": {
                 "code": "DOWNSTREAM_SERVICE_ERROR",
-                "serviceName": "accounts"
+                "service": "accounts"
               }
             }
           ]
@@ -1496,7 +1496,7 @@ mod issues_e2e_tests {
               ],
               "extensions": {
                 "code": "DOWNSTREAM_SERVICE_ERROR",
-                "serviceName": "accounts"
+                "service": "accounts"
               }
             }
           ]
@@ -1521,7 +1521,7 @@ mod issues_e2e_tests {
               ],
               "extensions": {
                 "code": "DOWNSTREAM_SERVICE_ERROR",
-                "serviceName": "accounts"
+                "service": "accounts"
               }
             }
           ]
@@ -1550,7 +1550,7 @@ mod issues_e2e_tests {
               ],
               "extensions": {
                 "code": "DOWNSTREAM_SERVICE_ERROR",
-                "serviceName": "accounts"
+                "service": "accounts"
               }
             }
           ]
@@ -1724,7 +1724,7 @@ mod issues_e2e_tests {
               ],
               "extensions": {
                 "code": "DOWNSTREAM_SERVICE_ERROR",
-                "serviceName": "accounts"
+                "service": "accounts"
               }
             }
           ]
@@ -2862,7 +2862,7 @@ mod issues_e2e_tests {
               ],
               "extensions": {
                 "code": "DOWNSTREAM_SERVICE_ERROR",
-                "serviceName": "a"
+                "service": "a"
               }
             }
           ]
@@ -2951,7 +2951,7 @@ mod issues_e2e_tests {
               ],
               "extensions": {
                 "code": "DOWNSTREAM_SERVICE_ERROR",
-                "serviceName": "a"
+                "service": "a"
               }
             }
           ]

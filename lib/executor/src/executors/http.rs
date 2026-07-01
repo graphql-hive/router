@@ -495,8 +495,20 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             response = end_payload.response;
         }
 
+        let (is_content_type_valid, content_type) =
+            validate_response_content_type(&response.headers);
+
+        if !is_content_type_valid {
+            return Err(SubgraphExecutorError::InvalidContentType(
+                self.subgraph_name.clone(),
+                content_type.unwrap_or("").to_string(),
+                response.headers,
+            ));
+        }
+
         let response_result =
             response.deserialize_http_response(execution_request.custom_scalar_paths);
+
         if let Some(mut http_request_capture) = http_request_capture {
             finish_capture_from_subgraph_result(
                 &mut http_request_capture.capture,
@@ -690,6 +702,39 @@ pub struct SubgraphHttpResponse {
     pub status: StatusCode,
     pub headers: Arc<HeaderMap>,
     pub body: Bytes,
+}
+
+const VALID_GRAPHQL_CONTENT_TYPES: [&str; 2] =
+    ["application/json", "application/graphql-response+json"];
+
+#[inline]
+fn is_valid_graphql_content_type(header_value: &str) -> bool {
+    // Split by `;` to remove any charset or boundary parameters
+    // and then take the first one.
+    // We can't rely on simple string comparison because of additianal attributes (like charset),
+    // and we can't rely on starts_with because there are valid values that start with `application/json` and can confuse our check.
+    let essence = header_value.split(';').next().unwrap_or("").trim();
+
+    VALID_GRAPHQL_CONTENT_TYPES
+        .iter()
+        .any(|valid| valid.eq_ignore_ascii_case(essence))
+}
+
+#[inline]
+fn validate_response_content_type(headers: &HeaderMap) -> (bool, Option<&str>) {
+    let content_type = headers
+        .get(http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok());
+
+    let Some(content_type) = content_type else {
+        return (false, None);
+    };
+
+    if !is_valid_graphql_content_type(content_type) {
+        return (false, Some(content_type));
+    }
+
+    (true, Some(content_type))
 }
 
 impl SubgraphHttpResponse {

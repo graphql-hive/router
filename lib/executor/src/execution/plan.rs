@@ -1610,7 +1610,7 @@ impl<'exec> Executor<'exec> {
                 );
             }
 
-            let response = self
+            let mut response = self
                 .executors
                 .execute(
                     opts.subgraph_name,
@@ -1630,6 +1630,15 @@ impl<'exec> Executor<'exec> {
                     subgraph_operation_span.record_error_count(errors.len());
                     subgraph_operation_span
                         .record_errors(|| errors.iter().map(|e| e.into()).collect());
+                }
+            }
+
+            if let Some(status) = &response.status {
+                if !status.is_success() {
+                    response.append_error(GraphQLError::create_from_status_code(
+                        status,
+                        opts.subgraph_name,
+                    ));
                 }
             }
 
