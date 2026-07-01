@@ -22,6 +22,7 @@ use crate::{
         OperationKind, SupergraphDefinition, SupergraphField, SupergraphState,
     },
 };
+use ahash::AHashMap;
 use error::GraphError;
 use graphql_tools::parser::query::{Selection, SelectionSet};
 use petgraph::{
@@ -365,38 +366,61 @@ impl<'graph> Graph<'graph> {
         build_context: &mut GraphBuildContext<'graph>,
         cached_rules: &mut CachedFederationRules<'graph>,
     ) -> Result<(), GraphError> {
+        let mut implementing_objects: AHashMap<
+            &'graph str,
+            Vec<(&'graph str, &'graph SupergraphDefinition)>,
+        > = AHashMap::default();
+        for (object_type_name, object_type_definition) in state
+            .definitions
+            .iter()
+            .filter(|(_name, def)| matches!(def, SupergraphDefinition::Object(..)))
+        {
+            for join_implements in object_type_definition.join_implements() {
+                implementing_objects
+                    .entry(join_implements.interface.as_str())
+                    .or_default()
+                    .push((object_type_name.as_str(), object_type_definition));
+            }
+        }
+
         for (def_name, definition) in state
             .definitions
             .iter()
             .filter(|(_, definition)| Self::can_have_entity_moves(definition))
         {
             let is_interface = definition.is_interface_type();
-            for join_type1 in definition.join_types() {
-                // Connects object and interface entities of the same name by @key
-                for join_type2 in definition.join_types() {
-                    let head = self.upsert_subgraph_node(
+            let join_nodes = definition
+                .join_types()
+                .iter()
+                .map(|join_type| {
+                    let node = self.upsert_subgraph_node(
                         build_context,
                         state,
                         def_name,
-                        &join_type1.graph_id,
-                        join_type1.is_interface_object,
+                        join_type.graph_id.as_str(),
+                        join_type.is_interface_object,
                     )?;
-
-                    if join_type1.graph_id != join_type2.graph_id {
-                        if let (true, Some(key)) = (&join_type2.resolvable, &join_type2.key) {
-                            let tail = self.upsert_subgraph_node(
-                                build_context,
-                                state,
-                                def_name,
-                                &join_type2.graph_id,
-                                join_type2.is_interface_object,
-                            )?;
-                            let key_selection = cached_rules.parse_key(
-                                join_type2.graph_id.as_str(),
+                    let key_selection = join_type.key.as_ref().and_then(|key| {
+                        join_type.resolvable.then(|| {
+                            cached_rules.parse_key(
+                                join_type.graph_id.as_str(),
                                 def_name,
                                 key.as_str(),
-                            );
+                            )
+                        })
+                    });
 
+                    Ok((join_type, node, key_selection))
+                })
+                .collect::<Result<Vec<_>, GraphError>>()?;
+
+            for (join_type1, head, key_selection1) in &join_nodes {
+                // Connects object and interface entities of the same name by @key
+                for (join_type2, tail, key_selection2) in &join_nodes {
+                    if join_type1.graph_id != join_type2.graph_id {
+                        if let (Some(key), Some(key_selection)) =
+                            (&join_type2.key, key_selection2.as_ref())
+                        {
                             trace!(
                                 "Creating entity move edge from '{}/{}' to '{}/{}' via key '{}'",
                                 def_name,
@@ -407,18 +431,18 @@ impl<'graph> Graph<'graph> {
                             );
 
                             self.upsert_edge(
-                                head,
-                                tail,
-                                Edge::create_entity_move(key.as_str(), key_selection, is_interface),
+                                *head,
+                                *tail,
+                                Edge::create_entity_move(
+                                    key.as_str(),
+                                    key_selection.clone(),
+                                    is_interface,
+                                ),
                             );
                         }
-                    } else if let (true, Some(key)) = (&join_type1.resolvable, &join_type1.key) {
-                        let key_selection = cached_rules.parse_key(
-                            join_type1.graph_id.as_str(),
-                            def_name,
-                            key.as_str(),
-                        );
-
+                    } else if let (Some(key), Some(key_selection)) =
+                        (&join_type1.key, key_selection1.as_ref())
+                    {
                         trace!(
                             "Creating self-referencing entity move edge in '{}/{}' via key '{}'",
                             def_name,
@@ -427,9 +451,13 @@ impl<'graph> Graph<'graph> {
                         );
 
                         self.upsert_edge(
-                            head,
-                            head,
-                            Edge::create_entity_move(key.as_str(), key_selection, is_interface),
+                            *head,
+                            *head,
+                            Edge::create_entity_move(
+                                key.as_str(),
+                                key_selection.clone(),
+                                is_interface,
+                            ),
                         );
                     }
                 }
@@ -464,24 +492,11 @@ impl<'graph> Graph<'graph> {
                     "__typename",
                 );
 
-                for (object_type_name, object_type_definition) in state
-                    .definitions
-                    .iter()
-                    .filter(|(_name, def)| matches!(def, SupergraphDefinition::Object(..)))
+                for &(object_type_name, object_type_definition) in implementing_objects
+                    .get(interface_object_name.as_str())
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
                 {
-                    let SupergraphDefinition::Object(object_type) = object_type_definition else {
-                        panic!("Expected to get an Object type after filtering");
-                    };
-
-                    // Ignore if the object type does not implement the matching interface
-                    if !object_type
-                        .join_implements
-                        .iter()
-                        .any(|j| &j.interface == interface_object_name)
-                    {
-                        continue;
-                    }
-
                     // In order to support fragments with type conditions
                     // or `__typename` on @interfaceObject
                     // we need tell the Query Planner that this action occured,
@@ -735,20 +750,10 @@ impl<'graph> Graph<'graph> {
                         def_name,
                         graph_id
                     );
-                    let head = self.upsert_subgraph_node(
-                        build_context,
-                        state,
-                        def_name,
-                        graph_id,
-                        false,
-                    )?;
-                    let tail = self.upsert_subgraph_node(
-                        build_context,
-                        state,
-                        "String",
-                        graph_id,
-                        false,
-                    )?;
+                    let head =
+                        self.upsert_subgraph_node(build_context, state, def_name, graph_id, false)?;
+                    let tail =
+                        self.upsert_subgraph_node(build_context, state, "String", graph_id, false)?;
 
                     self.push_edge(
                         head,
@@ -1334,10 +1339,10 @@ impl<'graph> Graph<'graph> {
                                     tail,
                                     view_id,
                                 )?;
+                            }
+                        }
+                    }
                 }
-            }
-        }
-            }
 
                 for (head, from_graph_id) in connection_to_build {
                     for jt in definition.join_types().iter().filter(|jt| {

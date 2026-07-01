@@ -1,4 +1,4 @@
-use ahash::HashSet;
+use ahash::{HashMap, HashSet};
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
@@ -140,6 +140,85 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
     }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+struct RequirementFieldKey {
+    parent_type: String,
+    field_name: String,
+}
+
+struct SubgraphFilter<'graph> {
+    graph: &'graph Graph<'graph>,
+    supergraph_state: &'graph SupergraphState,
+    cache: HashMap<RequirementFieldKey, Option<HashSet<String>>>,
+}
+
+impl<'graph> SubgraphFilter<'graph> {
+    fn new(graph: &'graph Graph<'graph>, supergraph_state: &'graph SupergraphState) -> Self {
+        Self {
+            graph,
+            supergraph_state,
+            cache: HashMap::default(),
+        }
+    }
+
+    fn target_subgraph_ids(
+        &mut self,
+        field: &FieldSelection,
+        paths: &[OperationPath<'graph>],
+    ) -> Result<Option<HashSet<String>>, WalkOperationError> {
+        let graph = self.graph;
+        let mut result = HashSet::default();
+
+        for path in paths {
+            let parent_type_name = graph.node(path.tail())?.name_str().to_string();
+            let cache_key = RequirementFieldKey {
+                parent_type: parent_type_name.clone(),
+                field_name: field.name.clone(),
+            };
+
+            let cached = if let Some(cached) = self.cache.get(&cache_key) {
+                cached.clone()
+            } else {
+                let targets = self.lookup_from_supergraph(&parent_type_name, &field.name);
+
+                self.cache.insert(cache_key, targets.clone());
+                targets
+            };
+
+            if let Some(cached) = cached {
+                result.extend(cached);
+            }
+        }
+
+        if result.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(result))
+    }
+
+    fn lookup_from_supergraph(
+        &self,
+        parent_type_name: &str,
+        field_name: &str,
+    ) -> Option<HashSet<String>> {
+        let supergraph = self.supergraph_state;
+        let type_def = supergraph.definitions.get(parent_type_name)?;
+        let field_def = type_def.fields().get(field_name)?;
+        let mut targets = HashSet::default();
+        for graph_enum_value in field_def.resolvable_in_graphs(type_def) {
+            if let Ok(subgraph_name) = supergraph.resolve_graph_id(&graph_enum_value) {
+                targets.insert(subgraph_name.0.to_string());
+            }
+        }
+        if targets.is_empty() {
+            None
+        } else {
+            Some(targets)
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum NavigationTarget<'op> {
     Field {
@@ -175,15 +254,17 @@ struct PathSearch<'graph> {
     /// Used to stop recursive loops when an edge depends on itself.
     active_edge_checks: ActiveEdgeChecks,
     unsatisfied_requirements: UnsatisfiedRequirementCache,
+    subgraph_filter: SubgraphFilter<'graph>,
 }
 
 impl<'graph> PathSearch<'graph> {
     fn new(
-        graph: &'graph Graph,
+        graph: &'graph Graph<'graph>,
         supergraph: &'graph SupergraphState,
         override_context: &'graph PlannerOverrideContext,
         cancellation_token: &'graph CancellationToken,
     ) -> Self {
+        let subgraph_filter = SubgraphFilter::new(graph, supergraph);
         Self {
             graph,
             supergraph,
@@ -191,6 +272,7 @@ impl<'graph> PathSearch<'graph> {
             cancellation_token,
             active_edge_checks: ActiveEdgeChecks::default(),
             unsatisfied_requirements: UnsatisfiedRequirementCache::default(),
+            subgraph_filter,
         }
     }
 }
@@ -200,7 +282,7 @@ impl<'graph> PathSearch<'graph> {
   current_cost = path.cost
 ))]
 pub fn find_indirect_paths<'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
@@ -505,7 +587,7 @@ impl<'graph> PathSearch<'graph> {
 }
 
 pub fn find_self_referencing_direct_path<'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
@@ -543,7 +625,7 @@ pub fn find_self_referencing_direct_path<'graph>(
     current_cost = path.cost,
 ))]
 pub fn find_direct_paths<'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
@@ -649,7 +731,7 @@ impl<'graph> PathSearch<'graph> {
         current_cost = path.cost,
     ))]
 pub fn find_direct_path<'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
@@ -666,7 +748,7 @@ pub fn find_direct_path<'graph>(
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn can_satisfy_edge<'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     edge_ref: &EdgeReference<'graph>,
@@ -879,6 +961,9 @@ impl<'graph> PathSearch<'graph> {
         use_only_direct_edges: bool,
     ) -> Result<FieldRequirementsResult<'graph>, WalkOperationError> {
         let mut next_paths: Vec<OperationPath<'graph>> = Vec::new();
+        let target_subgraph_ids = self
+            .subgraph_filter
+            .target_subgraph_ids(field, move_requirement.paths.as_ref())?;
 
         for path in move_requirement.paths.iter() {
             let direct_paths = self.find_direct_paths(
@@ -898,7 +983,7 @@ impl<'graph> PathSearch<'graph> {
                     path,
                     &NavigationTarget::Field {
                         field,
-                        target_subgraph_ids: None,
+                        target_subgraph_ids: target_subgraph_ids.as_ref(),
                     },
                     excluded,
                 )?);
