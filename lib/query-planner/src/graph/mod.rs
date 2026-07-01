@@ -156,6 +156,7 @@ pub struct Graph<'graph> {
     pub query_root: NodeIndex,
     pub mutation_root: Option<NodeIndex>,
     pub subscription_root: Option<NodeIndex>,
+    node_to_index: HashMap<Node<'graph>, NodeIndex>,
     pub node_display_name_to_index: HashMap<String, NodeIndex>,
 }
 
@@ -165,6 +166,7 @@ impl<'graph> Graph<'graph> {
         supergraph_state: &'graph SupergraphState,
     ) -> Result<Self, GraphError> {
         let mut instance = Graph {
+            node_to_index: HashMap::new(),
             node_display_name_to_index: HashMap::new(),
             graph: InnerGraph::new(),
             ..Default::default()
@@ -279,13 +281,13 @@ impl<'graph> Graph<'graph> {
     }
 
     pub fn upsert_node(&mut self, node: Node<'graph>) -> NodeIndex {
-        let display_identifier = node.display_name();
-
-        if let Some(index) = self.node_display_name_to_index.get(&display_identifier) {
+        if let Some(index) = self.node_to_index.get(&node) {
             return *index;
         }
 
+        let display_identifier = node.display_name();
         let index = self.graph.add_node(node);
+        self.node_to_index.insert(self.graph[index].clone(), index);
         self.node_display_name_to_index
             .insert(display_identifier, index);
 
