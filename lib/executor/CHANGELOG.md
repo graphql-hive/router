@@ -94,6 +94,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 6.20.2 (2026-07-01)
+
+### Fixes
+
+#### Better detection of mutations in query-planner
+
+When a mutation is encountered in an operation (e.g. `mutation { ... }`), the query planner needs to use `Sequence` instead of `Parallel` to ensure the mutation is executed in the correct order.
+
+Previuosly, Hive Router was checking if `type Mutation` was used in the root step to determine if a mutation was present.
+
+This change uses the actual incoming operation type (`mutation { ... }`) to determine if a mutation is present in a specific plan.
+
+#### Fix root type re-entry
+
+When a field re-exposes a root type from a nested position (e.g. a mutation field
+returning a type with a `query: Query` field), the query planner could not resolve
+selections that live in a different subgraph, and the executor merged whatever it
+did fetch at the response root instead of the nested path — so those fields
+resolved to `null`, or failed to resolve fully. 
+
+Fixes [#1164](https://github.com/graphql-hive/router/issues/1164)
+
 ## 6.20.1 (2026-06-30)
 
 ### Fixes
