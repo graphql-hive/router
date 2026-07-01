@@ -562,7 +562,7 @@ fn process_field<'graph, 'op: 'graph>(
             override_context,
             path,
             &NavigationTarget::Field {
-                field: field,
+                field,
                 target_subgraph_ids: None,
             },
             cancellation_token,
@@ -618,7 +618,7 @@ fn process_field<'graph, 'op: 'graph>(
                 override_context,
                 path,
                 &NavigationTarget::Field {
-                    field: field,
+                    field,
                     target_subgraph_ids,
                 },
                 &excluded,

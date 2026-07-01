@@ -797,7 +797,7 @@ impl<'graph> Graph<'graph> {
                     // This prevents the current subgraph from creating a resolvable edge for a field it no longer owns.
                     let overridden_by = field_definition.join_field.iter().find_map(|jf| {
                         if let Some(override_from) = &jf.override_value {
-                            if override_from == &graph_name.0 {
+                            if override_from == graph_name.0 {
                                 let overriding_subgraph_name = state
                                     .resolve_graph_id(jf.graph_id.as_ref().expect(
                                         "@override must be on a @join__field with a graph argument",
@@ -1052,6 +1052,7 @@ impl<'graph> Graph<'graph> {
     }
 
     #[instrument(level = "trace",skip(self, state, build_context, cached_rules, parent_type_def, head), fields(selection_set, parent_type_name = parent_type_def.name()))]
+    #[allow(clippy::too_many_arguments)]
     fn handle_viewed_selection_set(
         &mut self,
         state: &'graph SupergraphState,
@@ -1266,9 +1267,7 @@ impl<'graph> Graph<'graph> {
 
                                 let tail = self.upsert_node(Node::new_specialized_node(
                                     return_type_name,
-                                    build_context
-                                        .resolve_graph_id(state, &join_type.graph_id)?
-                                        .clone(),
+                                    build_context.resolve_graph_id(state, &join_type.graph_id)?,
                                     state.is_interface_object_in_subgraph(
                                         return_type_name,
                                         &join_type.graph_id,

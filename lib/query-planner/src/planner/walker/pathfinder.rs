@@ -316,7 +316,7 @@ impl<'graph> PathSearch<'graph> {
         current_type_name: &str,
         target_field_name: &str,
     ) -> bool {
-        if !self.type_condition_matches(current_type_name, &requirements.type_name) {
+        if !self.type_condition_matches(current_type_name, requirements.type_name) {
             return false;
         }
 

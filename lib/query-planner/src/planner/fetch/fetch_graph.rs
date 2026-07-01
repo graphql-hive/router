@@ -518,7 +518,7 @@ fn ensure_fetch_step_for_requirement<'graph>(
 
                     if !fetch_step
                         .input
-                        .contains(&requirement.type_name, &requirement.selection_set)
+                        .contains(requirement.type_name, &requirement.selection_set)
                     {
                         return None;
                     }
@@ -1778,7 +1778,7 @@ fn process_query_node<'graph>(
                 requiring_fetch_step_index,
                 response_path,
                 fetch_path,
-                *type_name,
+                type_name,
                 condition,
             ),
             Edge::AbstractMove(type_name) => process_abstract_edge(
@@ -1791,7 +1791,7 @@ fn process_query_node<'graph>(
                 requiring_fetch_step_index,
                 response_path,
                 fetch_path,
-                *type_name,
+                type_name,
                 condition,
             ),
             Edge::InterfaceObjectTypeMove(InterfaceObjectTypeMove {
