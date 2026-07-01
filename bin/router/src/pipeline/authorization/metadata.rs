@@ -1,4 +1,4 @@
-use ahash::{HashMap, HashSet};
+use ahash::{AHashMap, HashMap, HashSet};
 use hive_router_internal::authorization::metadata::{
     AuthorizationMetadata, AuthorizationRule, FieldRulesMap, RequiredScopes, ScopeAndGroup,
     ScopeId, ScopeInterner, TypeFieldRulesMap, TypeRulesMap,
@@ -60,7 +60,7 @@ where
 
     /// Computes whether each type has auth rules in its subtree.
     fn compute_type_auth_metadata(
-        definitions: &std::collections::HashMap<String, SupergraphDefinition>,
+        definitions: &AHashMap<String, SupergraphDefinition>,
         schema_metadata: &SchemaMetadata,
         type_rules: &TypeRulesMap,
         field_rules: &TypeFieldRulesMap,
@@ -172,7 +172,7 @@ impl AuthorizationMetadataExt for AuthorizationMetadata {
 
     /// Computes whether each type has auth rules in its subtree.
     fn compute_type_auth_metadata(
-        definitions: &std::collections::HashMap<String, SupergraphDefinition>,
+        definitions: &AHashMap<String, SupergraphDefinition>,
         schema_metadata: &SchemaMetadata,
         type_rules: &TypeRulesMap,
         field_rules: &TypeFieldRulesMap,

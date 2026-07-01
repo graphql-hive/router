@@ -4,6 +4,7 @@ use crate::storage::StorageManager;
 use arc_swap::{ArcSwap, Guard};
 use async_trait::async_trait;
 use dashmap::DashMap;
+use std::collections::HashMap;
 use graphql_tools::static_graphql::schema::Document;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
@@ -293,8 +294,14 @@ impl SchemaState {
             &router_config.traffic_shaping,
             planner.supergraph.known_subgraphs.values(),
         ));
+        let subgraph_endpoint_map: HashMap<String, String> = planner
+            .supergraph
+            .subgraph_endpoint_map
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
         let subgraph_executor_map = Arc::new(SubgraphExecutorMap::from_http_endpoint_map(
-            &planner.supergraph.subgraph_endpoint_map,
+            &subgraph_endpoint_map,
             router_config,
             telemetry_context,
             callback_subscriptions,
