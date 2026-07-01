@@ -2,7 +2,7 @@ use graphql_tools::parser::query::{
     Definition, Field, InlineFragment, Mutation, OperationDefinition, Query, Selection,
     SelectionSet, Subscription, TypeCondition,
 };
-use std::collections::HashSet;
+use ahash::AHashSet;
 
 use crate::{
     ast::normalization::{
@@ -261,7 +261,7 @@ fn expand_abstract_fragment(
         type_name: type_condition_name.to_string(),
     })?;
 
-    let owned_parent_set: HashSet<String>;
+    let owned_parent_set: AHashSet<String>;
     let object_types_of_parent_type = match parent_type_def {
         SupergraphDefinition::Union(_) | SupergraphDefinition::Interface(_) => {
             match subgraph_name {
@@ -273,7 +273,9 @@ fn expand_abstract_fragment(
             })?
         }
         _ => {
-            owned_parent_set = HashSet::from([parent_type_def.name().to_string()]);
+            owned_parent_set = [parent_type_def.name().to_string()]
+                .into_iter()
+                .collect();
             &owned_parent_set
         }
     };

@@ -1,3 +1,4 @@
+use ahash::{AHashMap, AHashSet};
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fmt::{Debug, Display},
@@ -63,11 +64,12 @@ pub struct ProgressiveOverrides {
 }
 type TypeName = String;
 type GraphId = String;
-type InterfaceObjectToSubgraphsMap = HashMap<TypeName, HashSet<GraphId>>;
-type InterfaceToObjectTypesMap = HashMap<TypeName, BTreeSet<TypeName>>;
-type AbstractPossibleTypesMap = HashMap<TypeName, HashSet<TypeName>>;
-type AbstractPossibleTypesBySubgraphMap = HashMap<GraphId, HashMap<TypeName, HashSet<TypeName>>>;
-type DefinitionMap = HashMap<TypeName, SupergraphDefinition>;
+type InterfaceObjectToSubgraphsMap = AHashMap<TypeName, AHashSet<GraphId>>;
+type InterfaceToObjectTypesMap = AHashMap<TypeName, BTreeSet<TypeName>>;
+type AbstractPossibleTypesMap = AHashMap<TypeName, AHashSet<TypeName>>;
+type AbstractPossibleTypesBySubgraphMap =
+    AHashMap<GraphId, AHashMap<TypeName, AHashSet<TypeName>>>;
+type DefinitionMap = AHashMap<TypeName, SupergraphDefinition>;
 
 /// Information about linked specifications used in the supergraph
 /// (e.g., authenticated, requiresScopes)
@@ -177,13 +179,13 @@ pub struct SupergraphState {
     /// A map all of definitions (def_name, def) that exists in the schema.
     pub definitions: DefinitionMap,
     /// A map of (SUBGRAPH_ID, subgraph_name) to make it easy to resolve
-    pub known_subgraphs: HashMap<String, String>,
+    pub known_subgraphs: AHashMap<String, String>,
     /// A set of all known scalars in this schema, including built-ins
-    pub known_scalars: HashSet<String>,
+    pub known_scalars: AHashSet<String>,
     /// A map from subgraph name to a subgraph state
-    pub subgraphs_state: HashMap<String, SubgraphState>,
+    pub subgraphs_state: AHashMap<String, SubgraphState>,
     /// A map of (subgraph_name, endpoint) to make it easy to resolve
-    pub subgraph_endpoint_map: HashMap<String, String>,
+    pub subgraph_endpoint_map: AHashMap<String, String>,
     /// The root entrypoints
     pub query_type: String,
     pub mutation_type: Option<String>,
@@ -225,7 +227,7 @@ impl SupergraphState {
             known_subgraphs,
             subgraph_endpoint_map,
             known_scalars: Self::extract_known_scalars(schema),
-            subgraphs_state: HashMap::new(),
+            subgraphs_state: AHashMap::default(),
             query_type: schema.query_type().name.to_string(),
             mutation_type: schema.mutation_type().map(|t| t.name.to_string()),
             subscription_type: schema.subscription_type().map(|t| t.name.to_string()),
@@ -288,7 +290,7 @@ impl SupergraphState {
     }
 
     /// Possible concrete types for `type_name` across the entire supergraph
-    pub fn all_possible_types(&self, type_name: &str) -> Option<&HashSet<String>> {
+    pub fn all_possible_types(&self, type_name: &str) -> Option<&AHashSet<String>> {
         self.abstract_possible_types.get(type_name)
     }
 
@@ -297,7 +299,7 @@ impl SupergraphState {
         &self,
         type_name: &str,
         subgraph_name: &str,
-    ) -> Option<&HashSet<String>> {
+    ) -> Option<&AHashSet<String>> {
         self.abstract_possible_types_by_subgraph
             .get(subgraph_name)
             .and_then(|types| types.get(type_name))
@@ -318,7 +320,7 @@ impl SupergraphState {
     fn create_interface_object_in_subgraph(
         definitions: &DefinitionMap,
     ) -> InterfaceObjectToSubgraphsMap {
-        let mut interface_object_types_in_subgraphs = InterfaceObjectToSubgraphsMap::new();
+        let mut interface_object_types_in_subgraphs = InterfaceObjectToSubgraphsMap::default();
 
         for (name, definition) in definitions
             .iter()
@@ -342,7 +344,7 @@ impl SupergraphState {
     }
 
     fn create_interface_to_object_types(definitions: &DefinitionMap) -> InterfaceToObjectTypesMap {
-        let mut interface_to_object_types = InterfaceToObjectTypesMap::new();
+        let mut interface_to_object_types = InterfaceToObjectTypesMap::default();
 
         for definition in definitions.values() {
             let SupergraphDefinition::Object(object_type) = definition else {
@@ -363,13 +365,14 @@ impl SupergraphState {
     fn create_abstract_possible_types(
         definitions: &DefinitionMap,
     ) -> (AbstractPossibleTypesMap, AbstractPossibleTypesBySubgraphMap) {
-        let mut all = AbstractPossibleTypesMap::new();
-        let mut by_subgraph = AbstractPossibleTypesBySubgraphMap::new();
+        let mut all = AbstractPossibleTypesMap::default();
+        let mut by_subgraph = AbstractPossibleTypesBySubgraphMap::default();
 
         for (type_name, definition) in definitions {
             match definition {
                 SupergraphDefinition::Object(object_type) => {
-                    let singleton = HashSet::from([type_name.clone()]);
+                    let mut singleton = AHashSet::default();
+                    singleton.insert(type_name.clone());
                     all.insert(type_name.clone(), singleton.clone());
 
                     for join_type in &object_type.join_type {
@@ -380,8 +383,9 @@ impl SupergraphState {
                     }
                 }
                 SupergraphDefinition::Union(union_type) => {
-                    let mut global_members = HashSet::new();
-                    let mut members_by_graph: HashMap<String, HashSet<String>> = HashMap::new();
+                    let mut global_members = AHashSet::default();
+                    let mut members_by_graph: AHashMap<String, AHashSet<String>> =
+                        AHashMap::default();
 
                     for union_member in &union_type.union_members {
                         global_members.insert(union_member.member.clone());
@@ -398,7 +402,7 @@ impl SupergraphState {
                             .difference(
                                 members_by_graph
                                     .get(&join_type.graph_id)
-                                    .unwrap_or(&HashSet::new()),
+                                    .unwrap_or(&AHashSet::default()),
                             )
                             .cloned()
                             .collect();
@@ -409,9 +413,9 @@ impl SupergraphState {
                     }
                 }
                 SupergraphDefinition::Interface(interface_type) => {
-                    let mut global_implementors = HashSet::new();
-                    let mut implementors_by_graph: HashMap<String, HashSet<String>> =
-                        HashMap::new();
+                    let mut global_implementors = AHashSet::default();
+                    let mut implementors_by_graph: AHashMap<String, AHashSet<String>> =
+                        AHashMap::default();
 
                     for object_definition in definitions.values() {
                         let SupergraphDefinition::Object(object_type) = object_definition else {
@@ -476,8 +480,8 @@ impl SupergraphState {
         overrides
     }
 
-    fn extract_known_scalars(schema: &SchemaDocument) -> HashSet<String> {
-        let mut set = HashSet::new();
+    fn extract_known_scalars(schema: &SchemaDocument) -> AHashSet<String> {
+        let mut set = AHashSet::default();
 
         for def in schema.definitions.iter() {
             if let input::Definition::TypeDefinition(input::TypeDefinition::Scalar(scalar_type)) =
@@ -496,9 +500,9 @@ impl SupergraphState {
 
     fn extract_subgraph_names_and_endpoints(
         schema: &SchemaDocument,
-    ) -> (HashMap<String, String>, HashMap<String, String>) {
-        let mut subgraph_names_map = HashMap::new();
-        let mut subgraph_endpoints_map = HashMap::new();
+    ) -> (AHashMap<String, String>, AHashMap<String, String>) {
+        let mut subgraph_names_map = AHashMap::default();
+        let mut subgraph_endpoints_map = AHashMap::default();
         let join_graph_enum = schema.definitions.iter().find_map(|d| match d {
             input::Definition::TypeDefinition(input::TypeDefinition::Enum(e)) => {
                 if e.name == "join__Graph" {
@@ -533,7 +537,7 @@ impl SupergraphState {
     fn build_map(
         schema: &SchemaDocument,
         linked_specs: LinkedSpecifications,
-    ) -> HashMap<String, SupergraphDefinition> {
+    ) -> DefinitionMap {
         schema
             .definitions
             .iter()
@@ -657,7 +661,7 @@ impl SupergraphState {
     fn build_fields(
         fields: &[input::Field<'static, String>],
         linked_specs: &LinkedSpecifications,
-    ) -> HashMap<String, SupergraphField> {
+    ) -> AHashMap<String, SupergraphField> {
         fields
             .iter()
             .map(|field| {
@@ -703,7 +707,7 @@ impl SupergraphState {
     #[instrument(level = "trace",skip(fields), fields(fields_count = fields.len()))]
     fn build_input_fields(
         fields: &[input::InputValue<'static, String>],
-    ) -> HashMap<String, SupergraphField> {
+    ) -> AHashMap<String, SupergraphField> {
         fields
             .iter()
             .map(|field| {
@@ -799,9 +803,9 @@ impl SupergraphState {
     }
 
     fn build_subgraph_usage_from_fields(
-        fields: &HashMap<String, SupergraphField>,
-    ) -> HashSet<String> {
-        let mut subgraphs = HashSet::new();
+        fields: &AHashMap<String, SupergraphField>,
+    ) -> AHashSet<String> {
+        let mut subgraphs = AHashSet::default();
 
         // Add subgraphs from join_field directives
         for (_field_name, field) in fields.iter() {
@@ -902,11 +906,11 @@ pub enum SupergraphDefinition {
 #[derive(Debug)]
 pub struct SupergraphObjectType {
     pub name: String,
-    pub fields: HashMap<String, SupergraphField>,
+    pub fields: AHashMap<String, SupergraphField>,
     pub join_type: Vec<JoinTypeDirective>,
     pub join_implements: Vec<JoinImplementsDirective>,
     pub root_type: Option<OperationKind>,
-    pub used_in_subgraphs: HashSet<String>,
+    pub used_in_subgraphs: AHashSet<String>,
     pub requires_scopes: Vec<RequiresScopesDirective>,
     pub authenticated: Vec<AuthenticatedDirective>,
     pub cost: Option<CostDirective>,
@@ -916,7 +920,7 @@ impl SupergraphObjectType {
     pub fn fields_of_subgraph(
         &self,
         graph_id: &str,
-    ) -> HashMap<&String, (&SupergraphField, Option<JoinFieldDirective>)> {
+    ) -> AHashMap<&String, (&SupergraphField, Option<JoinFieldDirective>)> {
         self.fields
             .iter()
             .filter_map(|(_field_name, field_def)| {
@@ -942,7 +946,7 @@ impl SupergraphInterfaceType {
     pub fn fields_of_subgraph(
         &self,
         graph_id: &str,
-    ) -> HashMap<&String, (&SupergraphField, Option<JoinFieldDirective>)> {
+    ) -> AHashMap<&String, (&SupergraphField, Option<JoinFieldDirective>)> {
         self.fields
             .iter()
             .filter_map(|(_field_name, field_def)| {
@@ -966,10 +970,10 @@ impl SupergraphInterfaceType {
 #[derive(Debug)]
 pub struct SupergraphInterfaceType {
     pub name: String,
-    pub fields: HashMap<String, SupergraphField>,
+    pub fields: AHashMap<String, SupergraphField>,
     pub join_type: Vec<JoinTypeDirective>,
     pub join_implements: Vec<JoinImplementsDirective>,
-    pub used_in_subgraphs: HashSet<String>,
+    pub used_in_subgraphs: AHashSet<String>,
     pub requires_scopes: Vec<RequiresScopesDirective>,
     pub authenticated: Vec<AuthenticatedDirective>,
 }
@@ -983,7 +987,7 @@ pub struct SupergraphEnumValueType {
 #[derive(Debug)]
 pub struct SupergraphInputObjectType {
     pub name: String,
-    pub fields: HashMap<String, SupergraphField>,
+    pub fields: AHashMap<String, SupergraphField>,
     pub join_type: Vec<JoinTypeDirective>,
 }
 
@@ -1082,9 +1086,9 @@ impl SupergraphDefinition {
         }
     }
 
-    pub fn fields(&self) -> &HashMap<String, SupergraphField> {
-        static EMPTY: std::sync::LazyLock<HashMap<String, SupergraphField>> =
-            std::sync::LazyLock::new(HashMap::<String, SupergraphField>::new);
+    pub fn fields(&self) -> &AHashMap<String, SupergraphField> {
+        static EMPTY: std::sync::LazyLock<AHashMap<String, SupergraphField>> =
+            std::sync::LazyLock::new(AHashMap::<String, SupergraphField>::default);
 
         match self {
             SupergraphDefinition::Object(object_type) => &object_type.fields,
@@ -1158,14 +1162,14 @@ pub struct SupergraphField {
 }
 
 impl SupergraphField {
-    pub fn resolvable_in_graphs(&self, type_def: &SupergraphDefinition) -> HashSet<String> {
+    pub fn resolvable_in_graphs(&self, type_def: &SupergraphDefinition) -> AHashSet<String> {
         // A field is resolvable in all defining subgraph when it has no @join__field
         if self.join_field.is_empty() {
             return type_def
                 .join_types()
                 .iter()
                 .map(|j| j.graph_id.to_string())
-                .collect::<HashSet<_>>();
+                .collect::<AHashSet<_>>();
         }
 
         // A field is resolvable when it has @join__field and it's not external or overriden
@@ -1179,7 +1183,7 @@ impl SupergraphField {
                 }
                 None
             })
-            .collect::<HashSet<_>>()
+            .collect::<AHashSet<_>>()
     }
 }
 
