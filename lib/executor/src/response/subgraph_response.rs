@@ -272,6 +272,11 @@ impl<'a> SubgraphResponse<'a> {
                 .end()
                 .map_err(|e| SubgraphExecutorError::ResponseDeserializationFailure(e, None))?;
             resp.bytes = Some(bytes);
+
+            if resp.data.is_null() && resp.errors.is_none() {
+                return Err(SubgraphExecutorError::MalformedResponse(None));
+            }
+
             Ok(resp)
         })
     }

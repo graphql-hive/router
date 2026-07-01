@@ -117,8 +117,8 @@ mod override_subgraph_urls_e2e_tests {
             {
               "message": "Failed to send request to subgraph: client error (Connect)",
               "extensions": {
-                "code": "SUBGRAPH_REQUEST_FAILURE",
-                "serviceName": "accounts"
+                "code": "SUBREQUEST_HTTP_ERROR",
+                "service": "accounts"
               }
             }
           ]
