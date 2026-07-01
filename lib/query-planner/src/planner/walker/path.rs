@@ -233,7 +233,7 @@ impl<'graph> OperationPath<'graph> {
             Edge::AbstractMove(member_type_name) => self
                 .union_context
                 .as_ref()
-                .map(|scope| scope.narrow_to_member(member_type_name)),
+                .map(|scope| scope.narrow_to_member(*member_type_name)),
             Edge::EntityMove(_) | Edge::InterfaceObjectTypeMove(_) => None,
             _ => self.union_context.clone(),
         };
