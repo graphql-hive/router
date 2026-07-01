@@ -140,6 +140,30 @@ impl<'graph> Graph<'graph> {
         Ok(instance)
     }
 
+    fn needs_output_traversal(definition: &SupergraphDefinition) -> bool {
+        matches!(
+            definition,
+            SupergraphDefinition::Object(_)
+                | SupergraphDefinition::Interface(_)
+                | SupergraphDefinition::Union(_)
+        )
+    }
+
+    fn can_have_entity_moves(definition: &SupergraphDefinition) -> bool {
+        matches!(
+            definition,
+            SupergraphDefinition::Object(_) | SupergraphDefinition::Interface(_)
+        )
+    }
+
+    fn is_leaf_output_type(state: &SupergraphState, type_name: &str) -> bool {
+        state.is_scalar_type(type_name)
+            || state
+                .definitions
+                .get(type_name)
+                .is_some_and(|definition| matches!(definition, SupergraphDefinition::Enum(_)))
+    }
+
     pub fn node(&self, node_index: NodeIndex) -> Result<&Node, GraphError> {
         self.graph
             .node_weight(node_index)
@@ -264,7 +288,11 @@ impl<'graph> Graph<'graph> {
         state: &'graph SupergraphState,
         cached_rules: &mut CachedFederationRules<'graph>,
     ) -> Result<(), GraphError> {
-        for (def_name, definition) in state.definitions.iter() {
+        for (def_name, definition) in state
+            .definitions
+            .iter()
+            .filter(|(_, definition)| Self::can_have_entity_moves(definition))
+        {
             let is_interface = definition.is_interface_type();
             for join_type1 in definition.join_types() {
                 // Connects object and interface entities of the same name by @key
@@ -529,7 +557,11 @@ impl<'graph> Graph<'graph> {
 
     #[instrument(level = "trace", skip(self, state))]
     fn link_root_edges(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
-        for (def_name, definition) in state.definitions.iter() {
+        for (def_name, definition) in state
+            .definitions
+            .iter()
+            .filter(|(_, definition)| Self::needs_output_traversal(definition))
+        {
             if let Some(root_type) = definition.try_into_root_type() {
                 for graph_id in definition.subgraphs().iter() {
                     let relevant_fields = definition
@@ -589,7 +621,11 @@ impl<'graph> Graph<'graph> {
     ) -> Result<(), GraphError> {
         let unions = UnionDefinitions::new(state);
 
-        for (def_name, definition) in state.definitions.iter() {
+        for (def_name, definition) in state
+            .definitions
+            .iter()
+            .filter(|(_, definition)| Self::can_have_entity_moves(definition))
+        {
             for graph_id in definition.subgraphs().iter() {
                 let graph_name = state.resolve_graph_id(graph_id)?;
                 if !definition.is_defined_in_subgraph(graph_id) {
@@ -864,6 +900,7 @@ impl<'graph> Graph<'graph> {
                         target_type
                     );
 
+                    let is_leaf = Self::is_leaf_output_type(state, target_type);
                     let head = self.upsert_node(Node::new_node(
                         def_name,
                         state.resolve_graph_id(graph_id)?,
@@ -889,7 +926,7 @@ impl<'graph> Graph<'graph> {
                         Edge::create_field_move(
                             field_name,
                             def_name,
-                            state.is_scalar_type(target_type),
+                            is_leaf,
                             field_definition.field_type.is_list(),
                             maybe_join_field.map(|join_field| match join_field.provides {
                                 Some(_) => {
@@ -1058,12 +1095,12 @@ impl<'graph> Graph<'graph> {
                     );
 
                     // use object type (tail) when handling selection sets
-                        self.handle_viewed_selection_set(
-                            state,
-                            cached_rules,
-                            &fragment.selection_set,
-                            graph_id,
-                            type_def_from_cond,
+                    self.handle_viewed_selection_set(
+                        state,
+                        cached_rules,
+                        &fragment.selection_set,
+                        graph_id,
+                        type_def_from_cond,
                         tail,
                         view_id,
                     )?;
@@ -1145,14 +1182,15 @@ impl<'graph> Graph<'graph> {
                                     view_id, def_name, field_name, join_type.graph_id, return_type_name
                                 );
 
-                                let requirements = join_field.requires.as_ref().map(|requires_str| {
-                                    cached_rules.parse_requires(
-                                        state,
-                                        join_field.graph_id.as_ref().unwrap().as_str(),
-                                        def_name,
-                                        requires_str.as_str(),
-                                    )
-                                });
+                                let requirements =
+                                    join_field.requires.as_ref().map(|requires_str| {
+                                        cached_rules.parse_requires(
+                                            state,
+                                            join_field.graph_id.as_ref().unwrap().as_str(),
+                                            def_name,
+                                            requires_str.as_str(),
+                                        )
+                                    });
 
                                 self.upsert_edge(
                                     head,
