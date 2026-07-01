@@ -43,6 +43,14 @@ pub struct FieldMove {
     pub overridden_by: Option<(String, Option<OverrideLabel>)>,
 }
 
+/// Represent a simple file move
+#[derive(Debug, PartialEq)]
+pub struct ReentryMove {
+    pub name: String,
+    pub type_name: String,
+    pub is_list: bool,
+}
+
 impl FieldMove {
     pub fn satisfies_override_rules(&self, ctx: &PlannerOverrideContext) -> bool {
         // Field is being progressively overridden by another subgraph
@@ -149,13 +157,11 @@ impl Display for OverrideLabel {
 }
 
 pub enum Edge {
-    /// A special edge between the root Node and then root entry point to the graph
-    /// With this helper, you can jump from Query::RootQuery --SomeSubgraph-> Query/SomeSubgraph --> --field--> SomeType/SomeSubgraph
     SubgraphEntrypoint {
-        field_names: Vec<String>,
         name: SubgraphName,
     },
     FieldMove(Box<FieldMove>),
+    ReentryMove(ReentryMove),
     EntityMove(EntityMove),
     /// join__implements
     AbstractMove(String),
@@ -226,9 +232,18 @@ impl Edge {
         }))
     }
 
+    pub fn create_reentry_move(name: String, type_name: String, is_list: bool) -> Self {
+        Self::ReentryMove(ReentryMove {
+            name: name.clone(),
+            type_name: type_name.clone(),
+            is_list,
+        })
+    }
+
     pub fn display_name(&self) -> &str {
         match self {
             Self::FieldMove(fm) => &fm.name,
+            Self::ReentryMove(fm) => &fm.name,
             Self::EntityMove(EntityMove { key, .. }) => key,
             Self::AbstractMove(id) => id,
             Self::Selfie(_) => "selfie",
@@ -272,6 +287,7 @@ impl Display for Edge {
             Edge::Selfie(_) => write!(f, "🤳"),
             Edge::FieldMove(field_move) => write!(f, "{}", field_move.name),
             Edge::InterfaceObjectTypeMove(m) => write!(f, "🔎 {}", m.object_type_name),
+            Edge::ReentryMove(fm) => write!(f, "🔁 {}", fm.name),
         }?;
 
         if let Some(reqs) = self.requirements() {
@@ -285,7 +301,8 @@ impl Display for Edge {
 impl Debug for Edge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Edge::SubgraphEntrypoint { name, .. } => write!(f, "subgraph({})", name.0),
+            Edge::SubgraphEntrypoint { name, .. } => write!(f, "🚪 subgraph({})", name.0),
+            Edge::ReentryMove(fm) => write!(f, "🔁 {}", fm.name),
             Edge::FieldMove(fm) => {
                 // Start with the field name
                 let mut result = write!(f, "{}", &fm.name);
@@ -341,6 +358,7 @@ impl PartialEq for Edge {
                 },
             ) => graph_id == other_graph_id,
             (Edge::FieldMove(fm1), Edge::FieldMove(fm2)) => fm1 == fm2,
+            (Edge::ReentryMove(rm1), Edge::ReentryMove(rm2)) => rm1 == rm2,
             (
                 Edge::EntityMove(EntityMove { key, .. }),
                 Edge::EntityMove(EntityMove { key: other_key, .. }),

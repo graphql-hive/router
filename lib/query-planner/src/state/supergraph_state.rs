@@ -223,6 +223,18 @@ impl SupergraphState {
         instance
     }
 
+    pub fn maybe_root_type(&self, type_name: &str) -> Option<OperationKind> {
+        if self.query_type == type_name {
+            Some(OperationKind::Query)
+        } else if self.mutation_type.as_deref() == Some(type_name) {
+            Some(OperationKind::Mutation)
+        } else if self.subscription_type.as_deref() == Some(type_name) {
+            Some(OperationKind::Subscription)
+        } else {
+            None
+        }
+    }
+
     pub fn resolve_graph_id(&self, graph_id: &str) -> Result<SubgraphName, SupergraphStateError> {
         self.known_subgraphs
             .get(graph_id)

@@ -95,6 +95,21 @@ pub struct Query;
 
 pub struct Mutation;
 
+pub struct ReentryTestPayload {
+    pub ok: bool,
+}
+
+#[Object]
+impl ReentryTestPayload {
+    async fn ok(&self) -> bool {
+        self.ok
+    }
+
+    async fn query(&self) -> Query {
+        Query
+    }
+}
+
 #[Object(extends = true)]
 impl Query {
     async fn top_products(
@@ -145,6 +160,11 @@ impl Mutation {
         tmp_file_on_disk.write_all(&buf).await.unwrap();
         path
     }
+
+    async fn reentry_test(&self) -> ReentryTestPayload {
+        ReentryTestPayload { ok: true }
+    }
+
     async fn oneof_test(&self, input: OneOfTestInput) -> OneOfTestResult {
         OneOfTestResult {
             string: input.string,
