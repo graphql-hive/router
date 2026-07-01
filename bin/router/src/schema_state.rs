@@ -4,7 +4,6 @@ use crate::storage::StorageManager;
 use arc_swap::{ArcSwap, Guard};
 use async_trait::async_trait;
 use dashmap::DashMap;
-use std::collections::HashMap;
 use graphql_tools::static_graphql::schema::Document;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
@@ -34,6 +33,7 @@ use hive_router_query_planner::{
     utils::parsing::safe_parse_schema,
 };
 use moka::future::Cache;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
