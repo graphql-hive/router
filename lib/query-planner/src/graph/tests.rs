@@ -313,7 +313,7 @@ mod graph_tests {
 
         let (incoming, outgoing) = find_node(&graph, "Product/products");
         assert_eq!(incoming.edges.len(), 14);
-        assert_eq!(outgoing.edges.len(), 18);
+        assert_eq!(outgoing.edges.len(), 20);
 
         incoming
             .assert_key_edge("id", "Product/inventory")

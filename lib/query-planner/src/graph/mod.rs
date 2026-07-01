@@ -244,6 +244,12 @@ impl<'graph> Graph<'graph> {
         self.build_entity_reference_edges(state, &mut build_context, &mut cached_rules)?;
         self.build_viewed_field_edges(state, &mut build_context, &mut cached_rules)?;
 
+        self.node_display_name_to_index = self
+            .graph
+            .node_indices()
+            .map(|node_index| (self.graph[node_index].display_name(), node_index))
+            .collect();
+
         Ok(())
     }
 
@@ -346,6 +352,10 @@ impl<'graph> Graph<'graph> {
         } else {
             self.graph.add_edge(head, tail, edge)
         }
+    }
+
+    fn push_edge(&mut self, head: NodeIndex, tail: NodeIndex, edge: Edge<'graph>) -> EdgeIndex {
+        self.graph.add_edge(head, tail, edge)
     }
 
     #[instrument(level = "trace", skip(self, state, build_context, cached_rules))]
@@ -588,7 +598,7 @@ impl<'graph> Graph<'graph> {
                     join_implements.graph_id
                 );
 
-                self.upsert_edge(
+                self.push_edge(
                     head,
                     tail,
                     Edge::AbstractMove(definition.name().to_string()),
@@ -639,7 +649,8 @@ impl<'graph> Graph<'graph> {
             .filter(|(_, definition)| Self::needs_output_traversal(definition))
         {
             if let Some(root_type) = definition.try_into_root_type() {
-                for graph_id in definition.subgraphs().iter() {
+                for join_type in definition.join_types().iter() {
+                    let graph_id = join_type.graph_id.as_str();
                     let relevant_fields = definition
                         .fields()
                         .iter()
@@ -675,7 +686,7 @@ impl<'graph> Graph<'graph> {
                             state.is_interface_object_in_subgraph(def_name, graph_id),
                         )?;
 
-                        self.upsert_edge(
+                        self.push_edge(
                             head,
                             tail,
                             Edge::SubgraphEntrypoint {
@@ -705,16 +716,11 @@ impl<'graph> Graph<'graph> {
             .iter()
             .filter(|(_, definition)| Self::can_have_entity_moves(definition))
         {
-            for graph_id in definition.subgraphs().iter() {
+            for join_type in definition.join_types().iter() {
+                let graph_id = join_type.graph_id.as_str();
                 let graph_name = build_context.resolve_graph_id(state, graph_id)?;
-                if !definition.is_defined_in_subgraph(graph_id) {
-                    continue;
-                }
 
-                let is_interface_object = definition
-                    .extract_join_types_for(graph_id)
-                    .iter()
-                    .any(|j| j.is_interface_object);
+                let is_interface_object = join_type.is_interface_object;
                 let has_resolvable_typename = matches!(
                     definition,
                     SupergraphDefinition::Object(_)
@@ -744,7 +750,7 @@ impl<'graph> Graph<'graph> {
                         false,
                     )?;
 
-                    self.upsert_edge(
+                    self.push_edge(
                         head,
                         tail,
                         Edge::create_field_move(
@@ -765,7 +771,7 @@ impl<'graph> Graph<'graph> {
                     graph_id,
                     state.is_interface_object_in_subgraph(def_name, graph_id),
                 )?;
-                self.upsert_edge(head, head, Edge::Selfie(def_name.clone()));
+                self.push_edge(head, head, Edge::Selfie(def_name.clone()));
 
                 for (field_name, field_definition) in definition.fields().iter() {
                     let (is_available, maybe_join_field) =
@@ -928,7 +934,7 @@ impl<'graph> Graph<'graph> {
                             def_name,
                             graph_id
                         );
-                        self.upsert_edge(
+                        self.push_edge(
                             tail,
                             typename_tail,
                             Edge::create_field_move(
@@ -948,7 +954,7 @@ impl<'graph> Graph<'graph> {
                             field_name,
                             graph_id
                         );
-                        self.upsert_edge(
+                        self.push_edge(
                             head,
                             tail,
                             Edge::create_field_move(
@@ -975,7 +981,7 @@ impl<'graph> Graph<'graph> {
                                 "  [x] Creating abstract move edge for '{}.{}/{}' (union member: {})",
                                 def_name, field_name, graph_id, member
                             );
-                            self.upsert_edge(
+                            self.push_edge(
                                 tail,
                                 abstract_tail,
                                 Edge::AbstractMove(member.to_string()),
@@ -1122,7 +1128,7 @@ impl<'graph> Graph<'graph> {
                         SubgraphTypeSpecialization::Provides(view_id),
                     ));
 
-                    self.upsert_edge(tail, tail, Edge::Selfie(return_type_name.to_string()));
+                    self.push_edge(tail, tail, Edge::Selfie(return_type_name.to_string()));
 
                     trace!(
                         "Creating viewed (#{}) field edge for '{}.{}' (type: {})",
@@ -1132,7 +1138,7 @@ impl<'graph> Graph<'graph> {
                         return_type_name
                     );
 
-                    self.upsert_edge(
+                    self.push_edge(
                         head,
                         tail,
                         Edge::create_field_move(
@@ -1186,10 +1192,10 @@ impl<'graph> Graph<'graph> {
                         SubgraphTypeSpecialization::Provides(view_id),
                     ));
 
-                    self.upsert_edge(tail, tail, Edge::Selfie(type_name_from_cond.to_string()));
+                    self.push_edge(tail, tail, Edge::Selfie(type_name_from_cond.to_string()));
 
                     // because it's abstract -> object move, add an abstract move edge
-                    self.upsert_edge(
+                    self.push_edge(
                         head,
                         tail,
                         Edge::AbstractMove(type_name_from_cond.to_string()),
@@ -1277,7 +1283,7 @@ impl<'graph> Graph<'graph> {
                                     SubgraphTypeSpecialization::Provides(view_id),
                                 ));
 
-                                self.upsert_edge(
+                                self.push_edge(
                                     tail,
                                     tail,
                                     Edge::Selfie(return_type_name.to_string()),
@@ -1297,7 +1303,7 @@ impl<'graph> Graph<'graph> {
                                         )
                                     });
 
-                                self.upsert_edge(
+                                self.push_edge(
                                     head,
                                     tail,
                                     Edge::create_field_move(
@@ -1328,10 +1334,10 @@ impl<'graph> Graph<'graph> {
                                     tail,
                                     view_id,
                                 )?;
-                            }
-                        }
-                    }
                 }
+            }
+        }
+            }
 
                 for (head, from_graph_id) in connection_to_build {
                     for jt in definition.join_types().iter().filter(|jt| {
