@@ -14,9 +14,11 @@ mod utils;
 use tracing::instrument;
 
 use crate::{
-    planner::fetch::{error::FetchGraphError, fetch_graph::FetchGraph, state::MultiTypeFetchStep},
-    planner::QueryPlannerOptions,
-    state::supergraph_state::SupergraphState,
+    planner::{
+        fetch::{error::FetchGraphError, fetch_graph::FetchGraph, state::MultiTypeFetchStep},
+        QueryPlannerOptions,
+    },
+    state::supergraph_state::{OperationKind, SupergraphState},
     utils::cancellation::CancellationToken,
 };
 
@@ -26,6 +28,7 @@ impl FetchGraph<MultiTypeFetchStep> {
         &mut self,
         supergraph_state: &SupergraphState,
         options: &QueryPlannerOptions,
+        operation_kind: &OperationKind,
         cancellation_token: &CancellationToken,
     ) -> Result<(), FetchGraphError> {
         // Run optimization passes repeatedly until the graph stabilizes, as one optimization can create
@@ -55,7 +58,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                 break;
             }
         }
-        self.turn_mutations_into_sequence()?;
+        self.turn_mutations_into_sequence(operation_kind)?;
         self.fix_conflicting_type_mismatches(supergraph_state)?;
 
         // We call this last, because it should be done after all other optimizations/merging are done
