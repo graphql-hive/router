@@ -1,4 +1,4 @@
-use ahash::{HashMap, HashSet};
+use ahash::HashSet;
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
@@ -140,81 +140,40 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-struct RequirementFieldKey {
-    parent_type: String,
-    field_name: String,
-}
-
 struct SubgraphFilter<'graph> {
     graph: &'graph Graph<'graph>,
-    supergraph_state: &'graph SupergraphState,
-    cache: HashMap<RequirementFieldKey, Option<HashSet<String>>>,
 }
 
 impl<'graph> SubgraphFilter<'graph> {
-    fn new(graph: &'graph Graph<'graph>, supergraph_state: &'graph SupergraphState) -> Self {
-        Self {
-            graph,
-            supergraph_state,
-            cache: HashMap::default(),
-        }
+    fn new(graph: &'graph Graph<'graph>, _supergraph_state: &'graph SupergraphState) -> Self {
+        Self { graph }
     }
 
     fn target_subgraph_ids(
-        &mut self,
+        &self,
         field: &FieldSelection,
         paths: &[OperationPath<'graph>],
-    ) -> Result<Option<HashSet<String>>, WalkOperationError> {
-        let graph = self.graph;
+    ) -> Option<HashSet<&'graph str>> {
         let mut result = HashSet::default();
+        let field_name = field.name.as_str();
+        let mut seen_tails = HashSet::default();
 
         for path in paths {
-            let parent_type_name = graph.node(path.tail())?.name_str().to_string();
-            let cache_key = RequirementFieldKey {
-                parent_type: parent_type_name.clone(),
-                field_name: field.name.clone(),
-            };
+            if !seen_tails.insert(path.tail()) {
+                continue;
+            }
+            let parent_type_name = self.graph.node(path.tail()).ok()?.name_str();
+            let cache_key = (parent_type_name, field_name);
 
-            let cached = if let Some(cached) = self.cache.get(&cache_key) {
-                cached.clone()
-            } else {
-                let targets = self.lookup_from_supergraph(&parent_type_name, &field.name);
-
-                self.cache.insert(cache_key, targets.clone());
-                targets
-            };
-
-            if let Some(cached) = cached {
-                result.extend(cached);
+            if let Some(cached) = self.graph.field_entity_subgraph_cache.get(&cache_key) {
+                result.extend(cached.iter().cloned());
             }
         }
 
         if result.is_empty() {
-            return Ok(None);
-        }
-
-        Ok(Some(result))
-    }
-
-    fn lookup_from_supergraph(
-        &self,
-        parent_type_name: &str,
-        field_name: &str,
-    ) -> Option<HashSet<String>> {
-        let supergraph = self.supergraph_state;
-        let type_def = supergraph.definitions.get(parent_type_name)?;
-        let field_def = type_def.fields().get(field_name)?;
-        let mut targets = HashSet::default();
-        for graph_enum_value in field_def.resolvable_in_graphs(type_def) {
-            if let Ok(subgraph_name) = supergraph.resolve_graph_id(&graph_enum_value) {
-                targets.insert(subgraph_name.0.to_string());
-            }
-        }
-        if targets.is_empty() {
             None
         } else {
-            Some(targets)
+            Some(result)
         }
     }
 }
@@ -223,7 +182,7 @@ impl<'graph> SubgraphFilter<'graph> {
 pub enum NavigationTarget<'op> {
     Field {
         field: &'op FieldSelection,
-        target_subgraph_ids: Option<&'op HashSet<String>>,
+        target_subgraph_ids: Option<&'op HashSet<&'op str>>,
     },
     ConcreteType(&'op str, Option<Condition>),
 }
@@ -959,9 +918,16 @@ impl<'graph> PathSearch<'graph> {
         use_only_direct_edges: bool,
     ) -> Result<FieldRequirementsResult<'graph>, WalkOperationError> {
         let mut next_paths: Vec<OperationPath<'graph>> = Vec::new();
-        let target_subgraph_ids = self
-            .subgraph_filter
-            .target_subgraph_ids(field, move_requirement.paths.as_ref())?;
+        let has_entity_candidates = move_requirement
+            .paths
+            .iter()
+            .any(|path| self.graph.node_has_entity_edges.contains(&path.tail()));
+        let target_subgraph_ids = if has_entity_candidates {
+            self.subgraph_filter
+                .target_subgraph_ids(field, move_requirement.paths.as_ref())
+        } else {
+            None
+        };
 
         for path in move_requirement.paths.iter() {
             let direct_paths = self.find_direct_paths(

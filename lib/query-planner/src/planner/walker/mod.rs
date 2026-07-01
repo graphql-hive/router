@@ -786,12 +786,12 @@ fn process_field<'graph, 'op: 'graph>(
     Ok((next_stack_to_resolve, paths_per_leaf))
 }
 
-fn field_target_subgraph_ids(
-    supergraph: &SupergraphState,
+fn field_target_subgraph_ids<'graph>(
+    supergraph: &'graph SupergraphState,
     field: &FieldSelection,
     paths: &[OperationPath<'_>],
     graph: &Graph,
-) -> Result<Option<HashSet<String>>, WalkOperationError> {
+) -> Result<Option<HashSet<&'graph str>>, WalkOperationError> {
     let mut parent_type_names = HashSet::default();
 
     for path in paths {
@@ -811,7 +811,7 @@ fn field_target_subgraph_ids(
 
         for graph_id in field_def.resolvable_in_graphs(parent_def) {
             if let Ok(subgraph_id) = supergraph.resolve_graph_id(&graph_id) {
-                target_subgraph_ids.insert(subgraph_id.0.to_string());
+                target_subgraph_ids.insert(subgraph_id.0);
             }
         }
     }

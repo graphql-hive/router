@@ -7,11 +7,8 @@ pub use self::edge::PERCENTAGE_SCALE_FACTOR;
 
 mod tests;
 
+use std::fmt::{Debug, Display};
 use std::sync::Arc;
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::{Debug, Display},
-};
 
 use super::ast::normalization::utils::extract_type_condition;
 use crate::state::supergraph_state::SubgraphName;
@@ -22,7 +19,8 @@ use crate::{
         OperationKind, SupergraphDefinition, SupergraphField, SupergraphState,
     },
 };
-use ahash::AHashMap;
+use ahash::HashMap;
+use ahash::HashSet;
 use error::GraphError;
 use graphql_tools::parser::query::{Selection, SelectionSet};
 use petgraph::{
@@ -82,7 +80,7 @@ struct UnionDefinitions<'a> {
 
 impl<'a> UnionDefinitions<'a> {
     pub fn new(state: &'a SupergraphState) -> Self {
-        let mut registry: UnionRegistyHashMap<'a> = UnionRegistyHashMap::new();
+        let mut registry: UnionRegistyHashMap<'a> = UnionRegistyHashMap::default();
 
         for (def_name, definition) in state
             .definitions
@@ -90,7 +88,7 @@ impl<'a> UnionDefinitions<'a> {
             .filter(|(_, d)| matches!(d, SupergraphDefinition::Union(_)))
         {
             let mut in_subgraphs: HashMap<SubgraphNameStr<'a>, UnionMemberTypes<'a>> =
-                HashMap::new();
+                HashMap::default();
 
             for join_member in definition.join_union_members() {
                 in_subgraphs
@@ -99,7 +97,7 @@ impl<'a> UnionDefinitions<'a> {
                         e.insert(&join_member.member);
                     })
                     .or_insert_with(|| {
-                        let mut set: UnionMemberTypes<'a> = HashSet::new();
+                        let mut set: UnionMemberTypes<'a> = HashSet::default();
                         set.insert(&join_member.member);
                         set
                     });
@@ -140,7 +138,7 @@ impl<'a> UnionDefinitions<'a> {
             if let Some(type_in_graph) = join_field.type_in_graph.as_ref().map(|t| t.inner_type()) {
                 // join__field(type:) can narrow a union-returning field to one concrete member.
                 if type_in_graph != field_type {
-                    return UnionMemberTypes::from([type_in_graph]);
+                    return UnionMemberTypes::from_iter([type_in_graph]);
                 }
             }
         }
@@ -159,6 +157,8 @@ pub struct Graph<'graph> {
     pub subscription_root: Option<NodeIndex>,
     node_to_index: HashMap<Node<'graph>, NodeIndex>,
     pub node_display_name_to_index: HashMap<String, NodeIndex>,
+    pub node_has_entity_edges: HashSet<NodeIndex>,
+    pub field_entity_subgraph_cache: HashMap<(&'graph str, &'graph str), HashSet<&'graph str>>,
 }
 
 impl<'graph> Graph<'graph> {
@@ -167,8 +167,10 @@ impl<'graph> Graph<'graph> {
         supergraph_state: &'graph SupergraphState,
     ) -> Result<Self, GraphError> {
         let mut instance = Graph {
-            node_to_index: HashMap::new(),
-            node_display_name_to_index: HashMap::new(),
+            node_to_index: HashMap::default(),
+            node_display_name_to_index: HashMap::default(),
+            node_has_entity_edges: HashSet::default(),
+            field_entity_subgraph_cache: HashMap::default(),
             graph: InnerGraph::new(),
             ..Default::default()
         };
@@ -250,6 +252,33 @@ impl<'graph> Graph<'graph> {
             .node_indices()
             .map(|node_index| (self.graph[node_index].display_name(), node_index))
             .collect();
+
+        for node_index in self.graph.node_indices() {
+            let has_entity = self.graph.edges(node_index).any(|e| {
+                matches!(
+                    e.weight(),
+                    Edge::EntityMove(_) | Edge::InterfaceObjectTypeMove(_)
+                )
+            });
+            if has_entity {
+                self.node_has_entity_edges.insert(node_index);
+            }
+        }
+
+        for (type_name, definition) in state.definitions.iter() {
+            for (field_name, field_def) in definition.fields().iter() {
+                let mut targets = HashSet::default();
+                for graph_enum_value in field_def.resolvable_in_graphs(definition) {
+                    if let Ok(subgraph_name) = state.resolve_graph_id(&graph_enum_value) {
+                        targets.insert(subgraph_name.0);
+                    }
+                }
+                if !targets.is_empty() {
+                    self.field_entity_subgraph_cache
+                        .insert((type_name, field_name), targets);
+                }
+            }
+        }
 
         Ok(())
     }
@@ -366,10 +395,10 @@ impl<'graph> Graph<'graph> {
         build_context: &mut GraphBuildContext<'graph>,
         cached_rules: &mut CachedFederationRules<'graph>,
     ) -> Result<(), GraphError> {
-        let mut implementing_objects: AHashMap<
+        let mut implementing_objects: HashMap<
             &'graph str,
             Vec<(&'graph str, &'graph SupergraphDefinition)>,
-        > = AHashMap::default();
+        > = HashMap::default();
         for (object_type_name, object_type_definition) in state
             .definitions
             .iter()
@@ -1232,7 +1261,7 @@ impl<'graph> Graph<'graph> {
 
                 // A map of provided types to graph ids that
                 // we need to create edges to their matching entity types.
-                let mut connection_to_build: HashMap<NodeIndex, String> = HashMap::new();
+                let mut connection_to_build: HashMap<NodeIndex, String> = HashMap::default();
 
                 for (field_name, field_definition) in definition.fields().iter() {
                     for join_field in field_definition.join_field.iter() {
