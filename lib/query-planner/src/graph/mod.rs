@@ -613,11 +613,7 @@ impl<'graph> Graph<'graph> {
                     join_implements.graph_id
                 );
 
-                self.push_edge(
-                    head,
-                    tail,
-                    Edge::AbstractMove(definition.name()),
-                );
+                self.push_edge(head, tail, Edge::AbstractMove(definition.name()));
             }
         }
 
@@ -986,11 +982,7 @@ impl<'graph> Graph<'graph> {
                                 "  [x] Creating abstract move edge for '{}.{}/{}' (union member: {})",
                                 def_name, field_name, graph_id, member
                             );
-                            self.push_edge(
-                                tail,
-                                abstract_tail,
-                                Edge::AbstractMove(member),
-                            );
+                            self.push_edge(tail, abstract_tail, Edge::AbstractMove(member));
                         }
 
                         continue;
@@ -1200,11 +1192,7 @@ impl<'graph> Graph<'graph> {
                     self.push_edge(tail, tail, Edge::Selfie(type_name_from_cond));
 
                     // because it's abstract -> object move, add an abstract move edge
-                    self.push_edge(
-                        head,
-                        tail,
-                        Edge::AbstractMove(type_name_from_cond),
-                    );
+                    self.push_edge(head, tail, Edge::AbstractMove(type_name_from_cond));
 
                     // use object type (tail) when handling selection sets
                     self.handle_viewed_selection_set(
@@ -1288,11 +1276,7 @@ impl<'graph> Graph<'graph> {
                                     SubgraphTypeSpecialization::Provides(view_id),
                                 ));
 
-                                self.push_edge(
-                                    tail,
-                                    tail,
-                                    Edge::Selfie(return_type_name),
-                                );
+                                self.push_edge(tail, tail, Edge::Selfie(return_type_name));
 
                                 trace!(
                                     "Creating viewed (#{}) link for provided field '{}.{}/{:?}' (type: {})",

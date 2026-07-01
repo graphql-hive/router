@@ -30,7 +30,9 @@ pub struct InDegree<'a> {
 }
 
 impl<'a> InDegree<'a> {
-    pub fn new(fetch_graph: &'a FetchGraph<'a, MultiTypeFetchStep>) -> Result<Self, QueryPlanError> {
+    pub fn new(
+        fetch_graph: &'a FetchGraph<'a, MultiTypeFetchStep>,
+    ) -> Result<Self, QueryPlanError> {
         let mut state: HashMap<NodeIndex, usize> = HashMap::new();
         let root_index = fetch_graph.root_index.ok_or(QueryPlanError::NoRoot)?;
 

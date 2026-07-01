@@ -1,8 +1,6 @@
 use crate::{
-    graph::error::GraphError,
-    planner::fetch::selections::FetchStepSelectionsError,
-    planner::walker::error::WalkOperationError,
-    utils::cancellation::CancellationError,
+    graph::error::GraphError, planner::fetch::selections::FetchStepSelectionsError,
+    planner::walker::error::WalkOperationError, utils::cancellation::CancellationError,
 };
 
 #[derive(Debug, Clone, thiserror::Error)]
