@@ -1,5 +1,6 @@
 use super::domains::authentication::AuthenticationContext;
 use super::domains::operation::OperationContext;
+use super::domains::persisted_documents::PersistedDocumentsContext;
 use super::domains::progressive_override::ProgressiveOverrideContext;
 use super::domains::telemetry::TelemetryContext;
 use super::RequestContextError;
@@ -13,6 +14,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 mod authentication;
 mod operation;
+pub(crate) mod persisted_documents;
 mod progressive_override;
 mod telemetry;
 
@@ -178,6 +180,7 @@ reserved_domains! {
     progressive_override: ProgressiveOverrideContext,
     authentication: AuthenticationContext,
     telemetry: TelemetryContext,
+    persisted_documents: PersistedDocumentsContext,
 }
 
 #[derive(Debug, Clone, Default)]
