@@ -2,8 +2,12 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 
+use hive_console_sdk::expressions::{CompileExpression, ProgramHints};
+use hive_router_config::primitives::value_or_expression::ValueOrExpression;
+use hive_router_internal::expressions::{ToVrlValue, ValueOrProgram};
 use hive_router_internal::json::MapAccessSerdeExt;
 use hive_router_internal::telemetry::metrics::Metrics;
+use hive_router_plan_executor::execution::client_request_details::ntex_header_map_to_vrl_value;
 use hive_router_plan_executor::hooks::on_graphql_params::{
     GraphQLParams, OnGraphQLParamsEndHookPayload, OnGraphQLParamsStartHookPayload,
 };
@@ -305,7 +309,7 @@ pub struct OperationPreparation<'a> {
     persisted_documents_runtime: &'a PersistedDocumentsRuntime,
     plugin_req_state: &'a Option<PluginRequestState<'a>>,
     body: Bytes,
-    require_id: bool,
+    require_id: ValueOrProgram<bool>,
     persisted_documents_enabled: bool,
     log_missing_id_requests: bool,
     client_identity: ClientIdentity<'a>,
@@ -327,7 +331,16 @@ impl<'a> OperationPreparation<'a> {
             persisted_documents_runtime: &shared_state.persisted_documents_runtime,
             plugin_req_state,
             body,
-            require_id: shared_state.router_config.persisted_documents.require_id,
+            require_id: match &shared_state.router_config.persisted_documents.require_id {
+                ValueOrExpression::Value(value) => ValueOrProgram::Value(value.clone()),
+                ValueOrExpression::Expression { expression } => {
+                    let program = expression
+                        .compile_expression(None)
+                        .map_err(|err| PipelineError::PersistedDocumentIdExpressionError(err))?;
+                    let hints = ProgramHints::from_program(&program);
+                    ValueOrProgram::Program(Box::new(program), hints)
+                }
+            },
             persisted_documents_enabled: shared_state.router_config.persisted_documents.enabled,
             log_missing_id_requests: shared_state
                 .router_config
@@ -391,7 +404,6 @@ impl<'a> OperationPreparation<'a> {
                 event = "persisted_documents.missing_id_request",
                 method = %self.req.method(),
                 path = %self.req.uri().path(),
-                require_id = self.require_id,
                 operation_name = operation.graphql_params.operation_name.as_deref().unwrap_or(""),
                 operation_body = operation.graphql_params.query.as_deref().unwrap_or(""),
                 client_name = self.client_identity.name.unwrap_or(""),
@@ -534,7 +546,22 @@ impl<'a> OperationPreparation<'a> {
             return Ok(());
         }
 
-        if self.require_id {
+        let require_id = self
+            .require_id
+            .resolve_with_hints(|hints| {
+                hints.context_builder(|root| {
+                    root.insert_object("request", |req| {
+                        req.insert_lazy("method", || self.req.method().as_str().into())
+                            .insert_lazy("headers", || {
+                                ntex_header_map_to_vrl_value(self.req.headers())
+                            })
+                            .insert_lazy("url", || self.req.uri().to_vrl_value());
+                    });
+                })
+            })
+            .map_err(|err| PipelineError::PersistedDocumentIdExpressionEvaluationError(err))?;
+
+        if require_id {
             let skip_enforcement = self
                 .req
                 .read_request_context()
@@ -609,6 +636,7 @@ mod tests {
 
     use async_trait::async_trait;
     use hive_router_config::persisted_documents::PersistedDocumentsConfig;
+    use hive_router_internal::expressions::ValueOrProgram;
     use hive_router_internal::telemetry::metrics::Metrics;
     use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
     use hive_router_plan_executor::plugin_context::{PluginContext, PluginRequestState};
@@ -681,7 +709,7 @@ mod tests {
             persisted_documents_runtime: &persisted_documents_runtime,
             plugin_req_state: &plugin_req_state,
             body: Bytes::new(),
-            require_id: false,
+            require_id: ValueOrProgram::Value(false),
             persisted_documents_enabled: true,
             log_missing_id_requests: false,
             client_identity: ClientIdentity::default(),
@@ -721,7 +749,7 @@ mod tests {
             persisted_documents_runtime: &persisted_documents_runtime,
             plugin_req_state: &plugin_req_state,
             body: Bytes::new(),
-            require_id: true,
+            require_id: ValueOrProgram::Value(true),
             persisted_documents_enabled: true,
             log_missing_id_requests: false,
             client_identity: ClientIdentity::default(),
@@ -750,7 +778,7 @@ mod tests {
             persisted_documents_runtime: &persisted_documents_runtime,
             plugin_req_state: &plugin_req_state,
             body: Bytes::new(),
-            require_id: true,
+            require_id: ValueOrProgram::Value(true),
             persisted_documents_enabled: true,
             log_missing_id_requests: false,
             client_identity: ClientIdentity::default(),
@@ -779,7 +807,7 @@ mod tests {
             persisted_documents_runtime: &persisted_documents_runtime,
             plugin_req_state: &plugin_req_state,
             body: Bytes::new(),
-            require_id: false,
+            require_id: ValueOrProgram::Value(false),
             persisted_documents_enabled: true,
             log_missing_id_requests: false,
             client_identity: ClientIdentity::default(),
@@ -808,7 +836,7 @@ mod tests {
             persisted_documents_runtime: &persisted_documents_runtime,
             plugin_req_state: &plugin_req_state,
             body: Bytes::new(),
-            require_id: true,
+            require_id: ValueOrProgram::Value(true),
             persisted_documents_enabled: false,
             log_missing_id_requests: false,
             client_identity: ClientIdentity::default(),
@@ -837,7 +865,7 @@ mod tests {
             persisted_documents_runtime: &persisted_documents_runtime,
             plugin_req_state: &plugin_req_state,
             body: Bytes::new(),
-            require_id: false,
+            require_id: ValueOrProgram::Value(false),
             persisted_documents_enabled: true,
             log_missing_id_requests: false,
             client_identity: ClientIdentity::default(),
@@ -878,7 +906,7 @@ mod tests {
             persisted_documents_runtime: &persisted_documents_runtime,
             plugin_req_state: &plugin_req_state,
             body: Bytes::new(),
-            require_id: true,
+            require_id: ValueOrProgram::Value(true),
             persisted_documents_enabled: true,
             log_missing_id_requests: false,
             client_identity: ClientIdentity::default(),
@@ -914,7 +942,7 @@ mod tests {
             persisted_documents_runtime: &persisted_documents_runtime,
             plugin_req_state: &plugin_req_state,
             body: Bytes::new(),
-            require_id: true,
+            require_id: ValueOrProgram::Value(true),
             persisted_documents_enabled: true,
             log_missing_id_requests: false,
             client_identity: ClientIdentity::default(),

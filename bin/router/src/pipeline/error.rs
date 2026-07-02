@@ -2,6 +2,9 @@ use std::{sync::Arc, vec};
 
 use futures_util::stream;
 use graphql_tools::validation::utils::ValidationError;
+use hive_console_sdk::expressions::{
+    values::boolean::BooleanConversionError, ExpressionCompileError, ProgramResolutionError,
+};
 use hive_router_internal::http::ReadBodyStreamError;
 use hive_router_plan_executor::{
     coprocessor::CoprocessorError,
@@ -93,6 +96,12 @@ pub enum PipelineError {
     #[error("{0}")]
     #[strum(serialize = "PERSISTED_DOCUMENT_RESOLUTION_FAILED")]
     PersistedDocumentResolution(String),
+    #[error("Failed to compile persisted document require_id expression: {0}")]
+    #[strum(serialize = "PERSISTED_DOCUMENT_ID_EXPRESSION_FAILED")]
+    PersistedDocumentIdExpressionError(ExpressionCompileError),
+    #[error("Failed to evaluate persisted document require_id expression: {0}")]
+    #[strum(serialize = "PERSISTED_DOCUMENT_ID_EXPRESSION_EVALUATION_ERROR")]
+    PersistedDocumentIdExpressionEvaluationError(ProgramResolutionError<BooleanConversionError>),
     #[error("Failed to minify parsed GraphQL operation: {0}")]
     #[strum(serialize = "GRAPHQL_PARSE_MINIFY_FAILED")]
     FailedToMinifyParsedOperation(String),
@@ -260,6 +269,10 @@ impl PipelineError {
             (Self::PersistedDocumentExtraction(_), false) => StatusCode::BAD_REQUEST,
             (Self::PersistedDocumentExtraction(_), true) => StatusCode::OK,
             (Self::PersistedDocumentResolution(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+            (Self::PersistedDocumentIdExpressionError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+            (Self::PersistedDocumentIdExpressionEvaluationError(_), _) => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
             (Self::FailedToParseOperation(_), false) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseOperation(_), true) => StatusCode::OK,
             (Self::FailedToMinifyParsedOperation(_), false) => StatusCode::BAD_REQUEST,
