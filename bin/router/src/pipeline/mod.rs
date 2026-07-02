@@ -430,7 +430,7 @@ pub async fn graphql_request_handler(
             },
         );
 
-        shared_response.into_response(response_mode)
+        shared_response.into_response(response_mode, &shared_state.telemetry_context.metrics)
     }
     .instrument(span_clone)
     .await

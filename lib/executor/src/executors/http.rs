@@ -621,6 +621,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 buffer_capacity,
                 self.subgraph_name.clone(),
                 self.endpoint.to_string(),
+                self.telemetry_context.metrics.clone(),
             ))
         } else {
             debug!(
@@ -654,6 +655,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 buffer_capacity,
                 self.subgraph_name.clone(),
                 self.endpoint.to_string(),
+                self.telemetry_context.metrics.clone(),
             ))
         }
     }

@@ -98,6 +98,10 @@ async fn ws_service(
     request_context: SharedRequestContext,
 ) -> Result<impl Service<ws::Frame, Response = Option<ws::Message>, Error = io::Error>, web::Error>
 {
+    // Tracks the active WebSocket connection in metrics; only set for accepted connections so
+    // rejected handshakes are not counted. Moved into `on_shutdown` so it is dropped (and the
+    // gauge decremented) when the connection closes.
+    let mut connection_metrics_guard = None;
     if !has_accepted_subprotocol {
         debug!("WebSocket connection rejecting due to unacceptable subprotocol");
         let _ = sink.send(CloseCode::SubprotocolNotAcceptable.into()).await;
@@ -106,6 +110,13 @@ async fn ws_service(
         // would result in an abrupt termination of the connection
     } else {
         debug!("WebSocket connection accepted");
+        connection_metrics_guard = Some(
+            shared_state
+                .telemetry_context
+                .metrics
+                .subscriptions
+                .track_connection(),
+        );
     }
 
     let ws_uri: Rc<http::Uri> = Rc::new(
@@ -166,6 +177,8 @@ async fn ws_service(
     });
 
     let on_shutdown = fn_shutdown(async move || {
+        // drop the connection metrics guard, decrementing the active-connections gauge
+        drop(connection_metrics_guard);
         // stop heartbeat and handshake timeout tasks on shutdown
         let _ = heartbeat_tx.send(());
         if let Some(tx) = state.borrow_mut().acknowledged_tx.take() {
@@ -569,6 +582,14 @@ async fn handle_text_frame(
                             id: id.clone(),
                         };
 
+                        // tracks the active subscription in metrics (active gauge +
+                        // subscribe/unsubscribe counters); lives as long as the spawned task.
+                        let metrics_guard = shared_state
+                            .telemetry_context
+                            .metrics
+                            .subscriptions
+                            .track_subscription();
+
                         let mut receiver = response
                             .receiver
                             .unwrap_or_else(|| response.body.subscribe());
@@ -582,6 +603,7 @@ async fn handle_text_frame(
                         // making cancellation impossible
                         rt::spawn(async move {
                             let _guard = guard;
+                            let _metrics_guard = metrics_guard;
                             let mut cancelled = false;
 
                             loop {

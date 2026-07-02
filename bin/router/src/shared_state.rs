@@ -7,6 +7,7 @@ use hive_router_config::traffic_shaping::{
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::expressions::{BooleanOrProgram, ExpressionCompileError};
 use hive_router_internal::inflight::{InFlightCleanupGuard, InFlightMap};
+use hive_router_internal::telemetry::metrics::Metrics;
 use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::coprocessor::{CoprocessorError, CoprocessorRuntime};
 use hive_router_plan_executor::execution::plan::FailedExecutionResult;
@@ -109,6 +110,7 @@ impl SharedRouterResponse {
     pub fn into_response(
         self,
         response_mode: &ResponseMode,
+        metrics: &Metrics,
     ) -> Result<web::HttpResponse, PipelineError> {
         match self {
             SharedRouterResponse::Single(single) => Ok(single.into()),
@@ -116,7 +118,7 @@ impl SharedRouterResponse {
                 let stream_content_type = response_mode
                     .stream_content_type()
                     .ok_or(PipelineError::SubscriptionsTransportNotSupported)?;
-                Ok(stream.into_response(stream_content_type))
+                Ok(stream.into_response(stream_content_type, metrics))
             }
         }
     }
@@ -166,12 +168,21 @@ impl Clone for SharedRouterStreamResponse {
 }
 
 impl SharedRouterStreamResponse {
-    pub fn into_response(self, stream_content_type: &StreamContentType) -> web::HttpResponse {
+    pub fn into_response(
+        self,
+        stream_content_type: &StreamContentType,
+        metrics: &Metrics,
+    ) -> web::HttpResponse {
         // leader already has a pre-subscribed receiver to avoid missing
         // any potential events emitted. joiners, on the other hand, subscribe
         let mut receiver = self.receiver.unwrap_or_else(|| self.body.subscribe());
 
+        // tracks the active subscription in metrics (active gauge + subscribe/unsubscribe
+        // counters); moved into the stream so it is dropped when the client stream ends.
+        let metrics_guard = metrics.subscriptions.track_subscription();
+
         let stream = Box::pin(async_stream::stream! {
+            let _metrics_guard = metrics_guard;
             loop {
                 match receiver.recv().await {
                     Ok(SubscriptionEvent::Raw(data)) => {
