@@ -2,7 +2,7 @@ use futures::stream::{BoxStream, Stream};
 use futures_util::StreamExt;
 use ntex::rt;
 use tokio::sync::mpsc;
-use tracing::{error, warn};
+use tracing::{debug, warn};
 
 use crate::executors::error::SubgraphExecutorError;
 use crate::response::subgraph_response::SubgraphResponse;
@@ -36,8 +36,11 @@ pub async fn drain_into<S>(
                 );
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
-                error!(
-                    "Consumer for subgraph {} at {} dropped the receiver",
+                // expected teardown path: fires once all downstream clients have
+                // unsubscribed/disconnected and the buffer's receiver was dropped.
+                // not an error, just means there's nothing left to forward to.
+                debug!(
+                    "Subscription buffer for subgraph {} at {} has no more receivers, all consumers disconnected or unsubscribed; stopping upstream drain",
                     subgraph_name, endpoint
                 );
                 break;
