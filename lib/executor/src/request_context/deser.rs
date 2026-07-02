@@ -11,6 +11,11 @@ pub trait RequestContextValueExt {
         key: &'static str,
         expected: &'static str,
     ) -> Result<&'a str, RequestContextError>;
+    fn expect_bool(
+        &self,
+        key: &'static str,
+        expected: &'static str,
+    ) -> Result<bool, RequestContextError>;
     fn expect_array<'a>(
         &'a self,
         key: &'static str,
@@ -29,6 +34,21 @@ impl RequestContextValueExt for Value {
             .ok_or_else(|| RequestContextError::ReservedKeyTypeMismatch {
                 key: key.to_string(),
                 expected: allowed_types,
+            })?;
+
+        Ok(value)
+    }
+
+    fn expect_bool(
+        &self,
+        key: &'static str,
+        expected: &'static str,
+    ) -> Result<bool, RequestContextError> {
+        let value = self
+            .as_bool()
+            .ok_or_else(|| RequestContextError::ReservedKeyTypeMismatch {
+                key: key.to_string(),
+                expected,
             })?;
 
         Ok(value)
