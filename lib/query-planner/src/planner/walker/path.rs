@@ -163,14 +163,14 @@ impl<'graph> OperationPath<'graph> {
             cumulative_cost: new_cost,
             requirement_tree: requirement,
             selection_attributes: match target {
-                NavigationTarget::Field(f) => Some(SelectionAttributes {
-                    alias: f.alias.clone(),
-                    arguments: f.arguments.clone(),
+                NavigationTarget::Field { field, .. } => Some(SelectionAttributes {
+                    alias: field.alias.clone(),
+                    arguments: field.arguments.clone(),
                 }),
                 NavigationTarget::ConcreteType(_, _) => None,
             },
             condition: match target {
-                NavigationTarget::Field(f) => (*f).into(),
+                NavigationTarget::Field { field, .. } => (*field).into(),
                 NavigationTarget::ConcreteType(_, condition) => condition.clone(),
             },
         };

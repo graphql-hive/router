@@ -5,7 +5,7 @@ pub(crate) mod path;
 pub(crate) mod pathfinder;
 pub(crate) mod utils;
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use crate::{
     ast::{
@@ -379,7 +379,10 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
                 supergraph,
                 override_context,
                 path,
-                &NavigationTarget::Field(&FieldSelection::new_typename()),
+                &NavigationTarget::Field {
+                    field: &FieldSelection::new_typename(),
+                    target_subgraph_ids: None,
+                },
                 cancellation_token,
             )?;
 
@@ -542,6 +545,13 @@ fn process_field<'graph, 'op: 'graph>(
 
     cancellation_token.bail_if_cancelled()?;
 
+    let target_subgraph_ids =
+        if !paths.is_empty() && !fields_to_resolve_locally.contains(&field.name) {
+            field_target_subgraph_ids(supergraph, field, paths, graph)?
+        } else {
+            None
+        };
+
     for path in paths {
         let path_span = span!(
             Level::TRACE,
@@ -558,7 +568,10 @@ fn process_field<'graph, 'op: 'graph>(
             supergraph,
             override_context,
             path,
-            &NavigationTarget::Field(field),
+            &NavigationTarget::Field {
+                field,
+                target_subgraph_ids: None,
+            },
             cancellation_token,
         )?;
         trace!("Direct paths found: {}", direct_paths.len());
@@ -578,7 +591,10 @@ fn process_field<'graph, 'op: 'graph>(
                 supergraph,
                 override_context,
                 path,
-                &NavigationTarget::Field(field),
+                &NavigationTarget::Field {
+                    field,
+                    target_subgraph_ids: target_subgraph_ids.as_ref(),
+                },
                 &excluded,
                 cancellation_token,
             )?;
@@ -737,4 +753,41 @@ fn process_field<'graph, 'op: 'graph>(
     }
 
     Ok((next_stack_to_resolve, paths_per_leaf))
+}
+
+fn field_target_subgraph_ids<'graph>(
+    supergraph: &SupergraphState,
+    field: &FieldSelection,
+    paths: &[OperationPath<'graph>],
+    graph: &'graph Graph,
+) -> Result<Option<HashSet<String>>, WalkOperationError> {
+    let mut parent_type_names = HashSet::new();
+
+    for path in paths {
+        let parent_node = graph.node(path.tail())?;
+        parent_type_names.insert(parent_node.name_str());
+    }
+
+    let mut target_subgraph_ids = HashSet::new();
+
+    for parent_type_name in parent_type_names {
+        let Some(parent_def) = supergraph.definitions.get(parent_type_name) else {
+            continue;
+        };
+        let Some(field_def) = parent_def.fields().get(&field.name) else {
+            continue;
+        };
+
+        for graph_id in field_def.resolvable_in_graphs(parent_def) {
+            if let Ok(subgraph_id) = supergraph.resolve_graph_id(&graph_id) {
+                target_subgraph_ids.insert(subgraph_id.0.to_string());
+            }
+        }
+    }
+
+    if target_subgraph_ids.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(target_subgraph_ids))
+    }
 }

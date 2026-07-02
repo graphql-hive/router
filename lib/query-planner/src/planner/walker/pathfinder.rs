@@ -33,7 +33,7 @@ type ActiveEdgeChecks = HashSet<(NodeIndex, EdgeIndex)>;
 struct IndirectPathsLookupQueue<'graph> {
     queue: Vec<(
         VisitedGraphs<'graph>,
-        HashSet<TypeAwareSelection>,
+        HashSet<&'graph TypeAwareSelection>,
         OperationPath<'graph>,
     )>,
 }
@@ -59,7 +59,7 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
     pub fn add(
         &mut self,
         visited_graphs: VisitedGraphs<'graph>,
-        selections: HashSet<TypeAwareSelection>,
+        selections: HashSet<&'graph TypeAwareSelection>,
         path: OperationPath<'graph>,
     ) {
         self.queue.push((visited_graphs, selections, path));
@@ -69,7 +69,7 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
         &mut self,
     ) -> Option<(
         VisitedGraphs<'graph>,
-        HashSet<TypeAwareSelection>,
+        HashSet<&'graph TypeAwareSelection>,
         OperationPath<'graph>,
     )> {
         self.queue.pop()
@@ -78,7 +78,10 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
 
 #[derive(Debug)]
 pub enum NavigationTarget<'op> {
-    Field(&'op FieldSelection),
+    Field {
+        field: &'op FieldSelection,
+        target_subgraph_ids: Option<&'op HashSet<String>>,
+    },
     ConcreteType(&'op str, Option<Condition>),
 }
 
@@ -91,7 +94,7 @@ enum NavigationTargetKey<'op> {
 impl<'op> From<&'op NavigationTarget<'op>> for NavigationTargetKey<'op> {
     fn from(target: &'op NavigationTarget<'op>) -> Self {
         match target {
-            NavigationTarget::Field(field) => NavigationTargetKey::Field(&field.name),
+            NavigationTarget::Field { field, .. } => NavigationTargetKey::Field(&field.name),
             NavigationTarget::ConcreteType(type_name, _) => {
                 NavigationTargetKey::ConcreteType(type_name)
             }
@@ -239,6 +242,19 @@ impl<'graph> PathSearch<'graph> {
 
                 let edge_tail_graph_id = graph.node(edge_ref.target().id())?.graph_id().unwrap();
 
+                let is_resolvable = match target {
+                    NavigationTarget::Field {
+                        target_subgraph_ids: Some(ids),
+                        ..
+                    } => ids.contains(edge_tail_graph_id),
+                    _ => true,
+                };
+
+                if !is_resolvable {
+                    trace!("Ignoring. Target field is not resolvable in this graph");
+                    continue;
+                }
+
                 if visited_graphs.contains(edge_tail_graph_id) {
                     trace!(
                     "Ignoring, graph is excluded and already visited (current: {}, visited: {:?})",
@@ -248,7 +264,6 @@ impl<'graph> PathSearch<'graph> {
                     continue;
                 }
 
-                let edge_tail_graph_id = graph.node(edge_ref.target().id())?.graph_id().unwrap();
                 let edge = edge_ref.weight();
 
                 if edge_tail_graph_id == source_graph_id
@@ -265,16 +280,16 @@ impl<'graph> PathSearch<'graph> {
                 // the edge cannot help us, we skip it.
                 // We allow other entity-move edge to be used instead,
                 // that will be used to collect the required fields.
-                if let NavigationTarget::Field(FieldSelection {
-                    name: target_field_name,
+                if let NavigationTarget::Field {
+                    field: target_field,
                     ..
-                }) = target
+                } = target
                 {
                     if let Some(requirements) = edge.requirements() {
                         if self.requirements_includes_field(
                             requirements,
                             tail_node.name_str(),
-                            target_field_name,
+                            target_field.name.as_str(),
                         ) {
                             continue;
                         }
@@ -355,7 +370,7 @@ impl<'graph> PathSearch<'graph> {
                             let next_requirements = match edge.requirements() {
                                 Some(requirements) => {
                                     let mut new_visited_key_fields = visited_key_fields.clone();
-                                    new_visited_key_fields.insert(requirements.clone());
+                                    new_visited_key_fields.insert(requirements);
                                     new_visited_key_fields
                                 }
                                 None => visited_key_fields.clone(),
@@ -493,7 +508,7 @@ impl<'graph> PathSearch<'graph> {
         }
 
         let edges_iter: Box<dyn Iterator<Item = _>> = match target {
-            NavigationTarget::Field(field) => {
+            NavigationTarget::Field { field, .. } => {
                 Box::new(graph.edges_from(path_tail_index).filter(move |e| {
                     matches!(e.weight(), Edge::FieldMove(f) if f.name == field.name)
                         || matches!(e.weight(), Edge::ReentryMove(r) if r.name == field.name)
@@ -722,16 +737,35 @@ impl<'graph> PathSearch<'graph> {
             Vec::with_capacity(move_requirement.paths.len());
         let mut indirect_path_results: Vec<Vec<OperationPath<'graph>>> =
             Vec::with_capacity(move_requirement.paths.len());
+        let target_subgraph_ids = super::field_target_subgraph_ids(
+            self.supergraph,
+            field,
+            move_requirement.paths.as_ref(),
+            self.graph,
+        )?;
 
         for path in move_requirement.paths.iter() {
-            let direct_paths = self.find_direct_paths(path, &NavigationTarget::Field(field))?;
+            let direct_paths = self.find_direct_paths(
+                path,
+                &NavigationTarget::Field {
+                    field,
+                    target_subgraph_ids: None,
+                },
+            )?;
             // Skip looking for indirect paths if we already found direct paths to a leaf
             let found_direct_paths_to_leaf = !direct_paths.is_empty() && field.is_leaf();
             direct_path_results.push(direct_paths);
 
             let needs_indirect = !use_only_direct_edges && !found_direct_paths_to_leaf;
             let indirect_paths = if needs_indirect {
-                self.find_indirect_paths(path, &NavigationTarget::Field(field), excluded)?
+                self.find_indirect_paths(
+                    path,
+                    &NavigationTarget::Field {
+                        field,
+                        target_subgraph_ids: target_subgraph_ids.as_ref(),
+                    },
+                    excluded,
+                )?
             } else {
                 Vec::new()
             };
