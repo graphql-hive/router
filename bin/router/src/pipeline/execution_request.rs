@@ -534,10 +534,22 @@ impl<'a> OperationPreparation<'a> {
         }
 
         if self.require_id {
-            // If require_id is set, clear the query to make the document ID-based resolution mandatory.
-            prepared_operation.graphql_params.query = None;
-            if prepared_operation.resolved_document_id.is_none() {
-                return Err(PipelineError::PersistedDocumentIdRequired);
+            let skip_enforcement = self
+                .plugin_req_state
+                .as_ref()
+                .and_then(|state| state.request_context.read_lock().ok())
+                .and_then(|ctx| ctx.persisted_documents.skip_enforcement)
+                // If the lock (read_lock()) fails to be acquired,
+                // treat it as skip_enforcement = false, to avoid failing the request.
+                // When skip_enforcement is None, treat it as `false`.
+                .unwrap_or(false);
+
+            if !skip_enforcement {
+                // If require_id is set, clear the query to make the document ID-based resolution mandatory.
+                prepared_operation.graphql_params.query = None;
+                if prepared_operation.resolved_document_id.is_none() {
+                    return Err(PipelineError::PersistedDocumentIdRequired);
+                }
             }
             return Ok(());
         }
@@ -595,6 +607,7 @@ mod tests {
     use hive_router_internal::telemetry::metrics::Metrics;
     use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
     use hive_router_plan_executor::plugin_context::PluginRequestState;
+    use hive_router_plan_executor::request_context::SharedRequestContext;
     use ntex::util::Bytes;
     use ntex::web::test::TestRequest;
     use ntex::web::HttpRequest;
@@ -832,5 +845,79 @@ mod tests {
 
         assert!(op.graphql_params.query.is_none());
         assert!(op.resolved_document_id.is_some());
+    }
+
+    #[test]
+    fn skip_enforcement_bypasses_require_id() {
+        let req = request();
+        let resolver = Arc::new(document_id_resolver());
+        let persisted_documents_runtime = PersistedDocumentsRuntime {
+            document_id_resolver: resolver,
+            persisted_document_resolver: None,
+        };
+        // Set skip_enforcement to true to bypass require_id enforcement.
+        let request_context = SharedRequestContext::default();
+        request_context
+            .update(|ctx| {
+                ctx.persisted_documents.skip_enforcement = Some(true);
+            })
+            .unwrap();
+        let plugin_req_state: Option<PluginRequestState<'_>> = None;
+        let prep = OperationPreparation {
+            req: &req,
+            persisted_documents_runtime: &persisted_documents_runtime,
+            plugin_req_state: &plugin_req_state,
+            body: Bytes::new(),
+            require_id: true,
+            persisted_documents_enabled: true,
+            log_missing_id_requests: false,
+            client_identity: ClientIdentity::default(),
+            metrics: Arc::new(Metrics::new(None)),
+        };
+        // No ID in the operation, should be blocked by require_id enforcement,
+        // but skip_enforcement should bypass it.
+        let mut op = operation(Some("query { me { id } }"), None);
+
+        assert!(
+            prep.enforce_require_id_policy(&mut op).is_ok(),
+            "skip_enforcement should bypass require_id"
+        );
+    }
+
+    #[test]
+    fn skip_enforcement_false_still_enforces_require_id() {
+        let req = request();
+        let resolver = Arc::new(document_id_resolver());
+        let persisted_documents_runtime = PersistedDocumentsRuntime {
+            document_id_resolver: resolver,
+            persisted_document_resolver: None,
+        };
+        let request_context = SharedRequestContext::default();
+        request_context
+            .update(|ctx| {
+                ctx.persisted_documents.skip_enforcement = Some(false);
+            })
+            .unwrap();
+        let plugin_req_state: Option<PluginRequestState<'_>> = None;
+        let prep = OperationPreparation {
+            req: &req,
+            persisted_documents_runtime: &persisted_documents_runtime,
+            plugin_req_state: &plugin_req_state,
+            body: Bytes::new(),
+            require_id: true,
+            persisted_documents_enabled: true,
+            log_missing_id_requests: false,
+            client_identity: ClientIdentity::default(),
+            metrics: Arc::new(Metrics::new(None)),
+        };
+        // No ID in the operation, should be blocked by require_id enforcement,
+        // and skip_enforcement=false should not bypass it.
+        let mut op = operation(Some("query { me { id } }"), None);
+
+        let err = prep
+            .enforce_require_id_policy(&mut op)
+            .expect_err("skip_enforcement=false should still enforce require_id");
+
+        assert!(matches!(err, PipelineError::PersistedDocumentIdRequired));
     }
 }
