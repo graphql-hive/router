@@ -2,12 +2,8 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 
-use hive_console_sdk::expressions::{CompileExpression, ProgramHints};
-use hive_router_config::primitives::value_or_expression::ValueOrExpression;
-use hive_router_internal::expressions::{ToVrlValue, ValueOrProgram};
 use hive_router_internal::json::MapAccessSerdeExt;
 use hive_router_internal::telemetry::metrics::Metrics;
-use hive_router_plan_executor::execution::client_request_details::ntex_header_map_to_vrl_value;
 use hive_router_plan_executor::hooks::on_graphql_params::{
     GraphQLParams, OnGraphQLParamsEndHookPayload, OnGraphQLParamsStartHookPayload,
 };
@@ -309,7 +305,6 @@ pub struct OperationPreparation<'a> {
     persisted_documents_runtime: &'a PersistedDocumentsRuntime,
     plugin_req_state: &'a Option<PluginRequestState<'a>>,
     body: Bytes,
-    require_id: ValueOrProgram<bool>,
     persisted_documents_enabled: bool,
     log_missing_id_requests: bool,
     client_identity: ClientIdentity<'a>,
@@ -331,16 +326,6 @@ impl<'a> OperationPreparation<'a> {
             persisted_documents_runtime: &shared_state.persisted_documents_runtime,
             plugin_req_state,
             body,
-            require_id: match &shared_state.router_config.persisted_documents.require_id {
-                ValueOrExpression::Value(value) => ValueOrProgram::Value(value.clone()),
-                ValueOrExpression::Expression { expression } => {
-                    let program = expression
-                        .compile_expression(None)
-                        .map_err(|err| PipelineError::PersistedDocumentIdExpressionError(err))?;
-                    let hints = ProgramHints::from_program(&program);
-                    ValueOrProgram::Program(Box::new(program), hints)
-                }
-            },
             persisted_documents_enabled: shared_state.router_config.persisted_documents.enabled,
             log_missing_id_requests: shared_state
                 .router_config
@@ -546,21 +531,7 @@ impl<'a> OperationPreparation<'a> {
             return Ok(());
         }
 
-        let require_id = self
-            .require_id
-            .resolve_with_hints(|hints| {
-                hints.context_builder(|root| {
-                    root.insert_object("request", |req| {
-                        req.insert_lazy("method", || self.req.method().as_str().into())
-                            .insert_lazy("headers", || {
-                                ntex_header_map_to_vrl_value(self.req.headers())
-                            })
-                            .insert_lazy("url", || self.req.uri().to_vrl_value());
-                    });
-                })
-            })
-            .map_err(|err| PipelineError::PersistedDocumentIdExpressionEvaluationError(err))?;
-
+        let require_id = self.persisted_documents_runtime.require_id(self.req)?;
         if require_id {
             let skip_enforcement = self
                 .req
@@ -576,12 +547,14 @@ impl<'a> OperationPreparation<'a> {
                 // When skip_enforcement is None, treat it as `false`.
                 .unwrap_or(false);
 
-            if !skip_enforcement {
-                // If require_id is set, clear the query to make the document ID-based resolution mandatory.
-                prepared_operation.graphql_params.query = None;
-                if prepared_operation.resolved_document_id.is_none() {
-                    return Err(PipelineError::PersistedDocumentIdRequired);
-                }
+            if skip_enforcement {
+                return Ok(());
+            }
+
+            // If require_id is set, clear the query to make the document ID-based resolution mandatory.
+            prepared_operation.graphql_params.query = None;
+            if prepared_operation.resolved_document_id.is_none() {
+                return Err(PipelineError::PersistedDocumentIdRequired);
             }
             return Ok(());
         }
@@ -702,6 +675,7 @@ mod tests {
         let persisted_documents_runtime = PersistedDocumentsRuntime {
             document_id_resolver: resolver,
             persisted_document_resolver: Some(persisted_resolver.clone()),
+            require_id: ValueOrProgram::Value(false),
         };
         let plugin_req_state: Option<PluginRequestState<'_>> = None;
         let prep = OperationPreparation {
@@ -709,7 +683,6 @@ mod tests {
             persisted_documents_runtime: &persisted_documents_runtime,
             plugin_req_state: &plugin_req_state,
             body: Bytes::new(),
-            require_id: ValueOrProgram::Value(false),
             persisted_documents_enabled: true,
             log_missing_id_requests: false,
             client_identity: ClientIdentity::default(),
@@ -742,6 +715,7 @@ mod tests {
         let persisted_documents_runtime = PersistedDocumentsRuntime {
             document_id_resolver: resolver,
             persisted_document_resolver: None,
+            require_id: ValueOrProgram::Value(true),
         };
         let plugin_req_state: Option<PluginRequestState<'_>> = None;
         let prep = OperationPreparation {
@@ -749,7 +723,6 @@ mod tests {
             persisted_documents_runtime: &persisted_documents_runtime,
             plugin_req_state: &plugin_req_state,
             body: Bytes::new(),
-            require_id: ValueOrProgram::Value(true),
             persisted_documents_enabled: true,
             log_missing_id_requests: false,
             client_identity: ClientIdentity::default(),
@@ -771,6 +744,7 @@ mod tests {
         let persisted_documents_runtime = PersistedDocumentsRuntime {
             document_id_resolver: resolver,
             persisted_document_resolver: None,
+            require_id: ValueOrProgram::Value(true),
         };
         let plugin_req_state: Option<PluginRequestState<'_>> = None;
         let prep = OperationPreparation {
@@ -778,7 +752,6 @@ mod tests {
             persisted_documents_runtime: &persisted_documents_runtime,
             plugin_req_state: &plugin_req_state,
             body: Bytes::new(),
-            require_id: ValueOrProgram::Value(true),
             persisted_documents_enabled: true,
             log_missing_id_requests: false,
             client_identity: ClientIdentity::default(),
@@ -800,6 +773,7 @@ mod tests {
         let persisted_documents_runtime = PersistedDocumentsRuntime {
             document_id_resolver: resolver,
             persisted_document_resolver: None,
+            require_id: ValueOrProgram::Value(false),
         };
         let plugin_req_state: Option<PluginRequestState<'_>> = None;
         let prep = OperationPreparation {
@@ -807,7 +781,6 @@ mod tests {
             persisted_documents_runtime: &persisted_documents_runtime,
             plugin_req_state: &plugin_req_state,
             body: Bytes::new(),
-            require_id: ValueOrProgram::Value(false),
             persisted_documents_enabled: true,
             log_missing_id_requests: false,
             client_identity: ClientIdentity::default(),
@@ -829,6 +802,7 @@ mod tests {
         let persisted_documents_runtime = PersistedDocumentsRuntime {
             document_id_resolver: resolver,
             persisted_document_resolver: None,
+            require_id: ValueOrProgram::Value(true),
         };
         let plugin_req_state: Option<PluginRequestState<'_>> = None;
         let prep = OperationPreparation {
@@ -836,7 +810,6 @@ mod tests {
             persisted_documents_runtime: &persisted_documents_runtime,
             plugin_req_state: &plugin_req_state,
             body: Bytes::new(),
-            require_id: ValueOrProgram::Value(true),
             persisted_documents_enabled: false,
             log_missing_id_requests: false,
             client_identity: ClientIdentity::default(),
@@ -858,6 +831,7 @@ mod tests {
         let persisted_documents_runtime = PersistedDocumentsRuntime {
             document_id_resolver: resolver,
             persisted_document_resolver: None,
+            require_id: ValueOrProgram::Value(false),
         };
         let plugin_req_state: Option<PluginRequestState<'_>> = None;
         let prep = OperationPreparation {
@@ -865,7 +839,6 @@ mod tests {
             persisted_documents_runtime: &persisted_documents_runtime,
             plugin_req_state: &plugin_req_state,
             body: Bytes::new(),
-            require_id: ValueOrProgram::Value(false),
             persisted_documents_enabled: true,
             log_missing_id_requests: false,
             client_identity: ClientIdentity::default(),
@@ -887,6 +860,7 @@ mod tests {
         let persisted_documents_runtime = PersistedDocumentsRuntime {
             document_id_resolver: resolver,
             persisted_document_resolver: None,
+            require_id: ValueOrProgram::Value(true),
         };
         // Set skip_enforcement to true to bypass require_id enforcement.
         let request_context = SharedRequestContext::default();
@@ -906,7 +880,6 @@ mod tests {
             persisted_documents_runtime: &persisted_documents_runtime,
             plugin_req_state: &plugin_req_state,
             body: Bytes::new(),
-            require_id: ValueOrProgram::Value(true),
             persisted_documents_enabled: true,
             log_missing_id_requests: false,
             client_identity: ClientIdentity::default(),
@@ -929,6 +902,7 @@ mod tests {
         let persisted_documents_runtime = PersistedDocumentsRuntime {
             document_id_resolver: resolver,
             persisted_document_resolver: None,
+            require_id: ValueOrProgram::Value(true),
         };
         let request_context = SharedRequestContext::default();
         request_context
@@ -942,7 +916,6 @@ mod tests {
             persisted_documents_runtime: &persisted_documents_runtime,
             plugin_req_state: &plugin_req_state,
             body: Bytes::new(),
-            require_id: ValueOrProgram::Value(true),
             persisted_documents_enabled: true,
             log_missing_id_requests: false,
             client_identity: ClientIdentity::default(),

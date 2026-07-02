@@ -1,10 +1,16 @@
 use std::sync::Arc;
 
+use hive_console_sdk::expressions::{CompileExpression, ProgramHints};
 use hive_router_config::persisted_documents::{
     PersistedDocumentsConfig, PersistedDocumentsStorageConfig,
 };
+use hive_router_config::primitives::value_or_expression::ValueOrExpression;
 use hive_router_internal::background_tasks::BackgroundTasksManager;
+use hive_router_internal::expressions::{ToVrlValue, ValueOrProgram};
+use hive_router_plan_executor::execution::client_request_details::ntex_header_map_to_vrl_value;
+use ntex::web::HttpRequest;
 
+use crate::pipeline::error::PipelineError;
 use crate::pipeline::persisted_documents::extract::DocumentIdResolver;
 use crate::pipeline::persisted_documents::resolve::storage::{
     StorageManifestReloadTask, StorageResolver,
@@ -22,6 +28,7 @@ pub mod types;
 pub struct PersistedDocumentsRuntime {
     pub document_id_resolver: Arc<DocumentIdResolver>,
     pub persisted_document_resolver: Option<Arc<dyn PersistedDocumentResolver>>,
+    pub(crate) require_id: ValueOrProgram<bool>,
 }
 
 impl PersistedDocumentsRuntime {
@@ -38,6 +45,20 @@ impl PersistedDocumentsRuntime {
                 ))
             })?,
         );
+
+        let require_id = match &config.require_id {
+            ValueOrExpression::Value(value) => ValueOrProgram::Value(*value),
+            ValueOrExpression::Expression { expression } => {
+                let program = expression.compile_expression(None).map_err(|err| {
+                    PersistedDocumentResolverError::Configuration(format!(
+                        "
+                      Failed to compile persisted document require_id expression: {err}"
+                    ))
+                })?;
+                let hints = ProgramHints::from_program(&program);
+                ValueOrProgram::Program(Box::new(program), hints)
+            }
+        };
 
         let persisted_document_resolver = if config.enabled {
             let storage = config
@@ -89,6 +110,7 @@ impl PersistedDocumentsRuntime {
         Ok(Self {
             document_id_resolver,
             persisted_document_resolver,
+            require_id,
         })
     }
 
@@ -106,5 +128,21 @@ impl PersistedDocumentsRuntime {
         // `/` can't be used as it would conflict with the path param extractor.
         // The `/:id` would match `/health` endpoint for example.
         !is_root_endpoint
+    }
+
+    pub fn require_id(&self, request: &HttpRequest) -> Result<bool, PipelineError> {
+        self.require_id
+            .resolve_with_hints(|hints| {
+                hints.context_builder(|root| {
+                    root.insert_object("request", |req| {
+                        req.insert_lazy("method", || request.method().as_str().into())
+                            .insert_lazy("headers", || {
+                                ntex_header_map_to_vrl_value(request.headers())
+                            })
+                            .insert_lazy("url", || request.uri().to_vrl_value());
+                    });
+                })
+            })
+            .map_err(PipelineError::PersistedDocumentIdExpressionEvaluationError)
     }
 }
