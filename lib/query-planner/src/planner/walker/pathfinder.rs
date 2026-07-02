@@ -242,15 +242,17 @@ impl<'graph> PathSearch<'graph> {
 
                 let edge_tail_graph_id = graph.node(edge_ref.target().id())?.graph_id().unwrap();
 
-                if let NavigationTarget::Field {
-                    target_subgraph_ids: Some(target_subgraph_ids),
-                    ..
-                } = target
-                {
-                    if !target_subgraph_ids.contains(edge_tail_graph_id) {
-                        trace!("Ignoring. Target field is not resolvable in this graph");
-                        continue;
-                    }
+                let is_resolvable = match target {
+                    NavigationTarget::Field {
+                        target_subgraph_ids: Some(ids),
+                        ..
+                    } => ids.contains(edge_tail_graph_id),
+                    _ => true,
+                };
+
+                if !is_resolvable {
+                    trace!("Ignoring. Target field is not resolvable in this graph");
+                    continue;
                 }
 
                 if visited_graphs.contains(edge_tail_graph_id) {

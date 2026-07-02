@@ -545,6 +545,13 @@ fn process_field<'graph, 'op: 'graph>(
 
     cancellation_token.bail_if_cancelled()?;
 
+    let target_subgraph_ids =
+        if !paths.is_empty() && !fields_to_resolve_locally.contains(&field.name) {
+            field_target_subgraph_ids(supergraph, field, paths, graph)?
+        } else {
+            None
+        };
+
     for path in paths {
         let path_span = span!(
             Level::TRACE,
@@ -579,8 +586,6 @@ fn process_field<'graph, 'op: 'graph>(
         }
 
         if !fields_to_resolve_locally.contains(&field.name) && !found_direct_paths_to_leaf {
-            let target_subgraph_ids = field_target_subgraph_ids(supergraph, field, paths, graph)?;
-
             let indirect_paths = find_indirect_paths(
                 graph,
                 supergraph,
@@ -750,23 +755,23 @@ fn process_field<'graph, 'op: 'graph>(
     Ok((next_stack_to_resolve, paths_per_leaf))
 }
 
-fn field_target_subgraph_ids(
+fn field_target_subgraph_ids<'graph>(
     supergraph: &SupergraphState,
     field: &FieldSelection,
-    paths: &[OperationPath<'_>],
-    graph: &Graph,
+    paths: &[OperationPath<'graph>],
+    graph: &'graph Graph,
 ) -> Result<Option<HashSet<String>>, WalkOperationError> {
     let mut parent_type_names = HashSet::new();
 
     for path in paths {
         let parent_node = graph.node(path.tail())?;
-        parent_type_names.insert(parent_node.name_str().to_string());
+        parent_type_names.insert(parent_node.name_str());
     }
 
     let mut target_subgraph_ids = HashSet::new();
 
     for parent_type_name in parent_type_names {
-        let Some(parent_def) = supergraph.definitions.get(parent_type_name.as_str()) else {
+        let Some(parent_def) = supergraph.definitions.get(parent_type_name) else {
             continue;
         };
         let Some(field_def) = parent_def.fields().get(&field.name) else {
