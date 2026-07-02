@@ -1,3 +1,6 @@
+use std::collections::BTreeMap;
+
+use sonic_rs::Value;
 use strum::IntoStaticStr;
 
 use crate::{
@@ -85,6 +88,15 @@ impl PlanExecutionError {
             _ => None,
         }
     }
+
+    pub fn error_extensions(&self) -> Option<BTreeMap<String, Value>> {
+        match &self.kind {
+            PlanExecutionErrorKind::SubgraphExecutor(subgraph_error) => {
+                subgraph_error.error_extensions()
+            }
+            _ => None,
+        }
+    }
 }
 
 // This is needed for individual fetch node error handling
@@ -107,6 +119,11 @@ impl From<&PlanExecutionError> for GraphQLError {
         if let Some(affected_path) = &val.context.affected_path {
             error = error.add_affected_path(affected_path);
         }
+
+        if let Some(error_extensions) = val.error_extensions() {
+            error.append_extensions(error_extensions);
+        }
+
         error
     }
 }

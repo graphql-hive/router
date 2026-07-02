@@ -69,6 +69,10 @@ impl GraphQLError {
         self.path.as_ref().and_then(|p| p.entity_index_and_path())
     }
 
+    pub fn append_extensions(&mut self, extensions: BTreeMap<String, Value>) {
+        self.extensions.extensions.extend(extensions);
+    }
+
     pub fn normalize_entity_error(
         self,
         entity_index_error_map: &HashMap<&usize, Vec<GraphQLErrorPath>>,
@@ -165,7 +169,7 @@ impl GraphQLError {
     /// assert_eq!(json!(error), json!({
     ///     "message": "An error occurred",
     ///     "extensions": {
-    ///         "serviceName": "users",
+    ///         "service": "users",
     ///         "code": "DOWNSTREAM_SERVICE_ERROR"
     ///     }
     /// }));
@@ -287,7 +291,7 @@ impl GraphQLErrorPath {
 pub struct GraphQLErrorExtensions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "service", skip_serializing_if = "Option::is_none")]
     pub service_name: Option<String>,
     /// Corresponds to a path of a Flatten(Fetch) node that caused the error.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -329,9 +333,9 @@ impl<'de> Deserialize<'de> for GraphQLErrorExtensions {
                             }
                             code = Some(map.next_value()?);
                         }
-                        "serviceName" => {
+                        "service" => {
                             if service_name.is_some() {
-                                return Err(de::Error::duplicate_field("serviceName"));
+                                return Err(de::Error::duplicate_field("service"));
                             }
                             service_name = Some(map.next_value()?);
                         }

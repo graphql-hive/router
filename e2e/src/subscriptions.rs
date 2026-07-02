@@ -1155,16 +1155,16 @@ mod subscriptions_e2e_tests {
 
         assert_snapshot!(body_str, @r#"
         event: next
-        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","serviceName":"products","affectedPath":"reviewAddedForProduct.product"}}]}
+        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","service":"products","affectedPath":"reviewAddedForProduct.product"}},{"message":"Subgraph responded with a non-successful HTTP status code '500 Internal Server Error'","extensions":{"code":"SUBREQUEST_HTTP_ERROR","service":"products","affectedPath":"reviewAddedForProduct.product","http":{"status":500}}}]}
 
         event: next
-        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","serviceName":"products","affectedPath":"reviewAddedForProduct.product"}}]}
+        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","service":"products","affectedPath":"reviewAddedForProduct.product"}},{"message":"Subgraph responded with a non-successful HTTP status code '500 Internal Server Error'","extensions":{"code":"SUBREQUEST_HTTP_ERROR","service":"products","affectedPath":"reviewAddedForProduct.product","http":{"status":500}}}]}
 
         event: next
-        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","serviceName":"products","affectedPath":"reviewAddedForProduct.product"}}]}
+        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","service":"products","affectedPath":"reviewAddedForProduct.product"}},{"message":"Subgraph responded with a non-successful HTTP status code '500 Internal Server Error'","extensions":{"code":"SUBREQUEST_HTTP_ERROR","service":"products","affectedPath":"reviewAddedForProduct.product","http":{"status":500}}}]}
 
         event: next
-        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","serviceName":"products","affectedPath":"reviewAddedForProduct.product"}}]}
+        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","service":"products","affectedPath":"reviewAddedForProduct.product"}},{"message":"Subgraph responded with a non-successful HTTP status code '500 Internal Server Error'","extensions":{"code":"SUBREQUEST_HTTP_ERROR","service":"products","affectedPath":"reviewAddedForProduct.product","http":{"status":500}}}]}
 
         event: complete
         "#);
@@ -1389,7 +1389,7 @@ mod subscriptions_e2e_tests {
         data: {"data":{"reviewAdded":{"id":"3"}}}
 
         event: next
-        data: {"errors":[{"message":"Error reading SSE subscription stream: Stream read error: error reading a body from connection","extensions":{"code":"SUBGRAPH_SUBSCRIPTION_SSE_STREAM_ERROR","serviceName":"reviews"}}]}
+        data: {"errors":[{"message":"Error reading SSE subscription stream: Stream read error: error reading a body from connection","extensions":{"code":"SUBGRAPH_SUBSCRIPTION_SSE_STREAM_ERROR","service":"reviews"}}]}
 
         event: complete
         "#);
