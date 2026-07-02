@@ -10,6 +10,7 @@ use hive_router_plan_executor::hooks::on_graphql_params::{
 use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_plan_executor::plugin_trait::{EndControlFlow, StartControlFlow};
 use hive_router_plan_executor::plugins::hooks;
+use hive_router_plan_executor::request_context::RequestContextExt;
 use http::{header::CONTENT_TYPE, Method};
 use ntex::util::Bytes;
 use ntex::web::types::Query;
@@ -535,11 +536,15 @@ impl<'a> OperationPreparation<'a> {
 
         if self.require_id {
             let skip_enforcement = self
-                .plugin_req_state
-                .as_ref()
-                .and_then(|state| state.request_context.read_lock().ok())
-                .and_then(|ctx| ctx.persisted_documents.skip_enforcement)
-                // If the lock (read_lock()) fails to be acquired,
+                .req
+                .read_request_context()
+                .ok()
+                .and_then(|ctx| {
+                    ctx.read_lock()
+                        .ok()
+                        .and_then(|guard| guard.persisted_documents.skip_enforcement)
+                })
+                // If the read_lock() fails to be acquired,
                 // treat it as skip_enforcement = false, to avoid failing the request.
                 // When skip_enforcement is None, treat it as `false`.
                 .unwrap_or(false);
@@ -606,7 +611,7 @@ mod tests {
     use hive_router_config::persisted_documents::PersistedDocumentsConfig;
     use hive_router_internal::telemetry::metrics::Metrics;
     use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
-    use hive_router_plan_executor::plugin_context::PluginRequestState;
+    use hive_router_plan_executor::plugin_context::{PluginContext, PluginRequestState};
     use hive_router_plan_executor::request_context::SharedRequestContext;
     use ntex::util::Bytes;
     use ntex::web::test::TestRequest;
@@ -862,7 +867,12 @@ mod tests {
                 ctx.persisted_documents.skip_enforcement = Some(true);
             })
             .unwrap();
-        let plugin_req_state: Option<PluginRequestState<'_>> = None;
+        let plugin_req_state = Some(PluginRequestState {
+            plugins: Arc::new(Vec::new()),
+            router_http_request: (&req).into(),
+            context: Arc::new(PluginContext::default()),
+            request_context,
+        });
         let prep = OperationPreparation {
             req: &req,
             persisted_documents_runtime: &persisted_documents_runtime,
