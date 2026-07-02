@@ -382,6 +382,11 @@ pub enum AggregationAlgo {
     /// - `max-age` takes the minimum across all subgraphs that provide it.
     /// - `public` is only kept if every provided `Cache-Control` value carries it.
     /// - `must-revalidate` is set if any subgraph carries it.
+    /// - A value with a malformed directive (e.g. `max-age=abc`) or a directive
+    ///   the router does not model (such as `s-maxage`, `immutable`,
+    ///   `no-transform` or `stale-while-revalidate`) also poisons the result to
+    ///   `no-store, no-cache`, since the unrecognized directive may have been
+    ///   restrictive.
     ///
     /// The following conditions force `no-store, no-cache, must-revalidate`
     /// regardless of subgraph values:

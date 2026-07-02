@@ -15,9 +15,45 @@ struct CacheControl {
     no_store: bool,
     no_cache: bool,
     must_revalidate: bool,
+    proxy_revalidate: bool,
+    must_understand: bool,
+    no_transform: bool,
+    immutable: bool,
     is_private: bool,
     is_public: bool,
     max_age: Option<u32>,
+    s_maxage: Option<u32>,
+    stale_while_revalidate: Option<u32>,
+    stale_if_error: Option<u32>,
+}
+
+fn poison() -> CacheControl {
+    CacheControl {
+        no_store: true,
+        no_cache: true,
+        ..Default::default()
+    }
+}
+
+// directives like max-age require a numeric value; anything else
+// (missing or non-numeric) makes the whole header untrustworthy
+fn parse_u32(token: &str, value: Option<&str>) -> Result<u32, ()> {
+    match value {
+        Some(v) => v.parse::<u32>().map_err(|_| {
+            warn!(
+                directive = token,
+                value = v,
+                "cache-control directive has non-numeric value"
+            );
+        }),
+        None => {
+            warn!(
+                directive = token,
+                "cache-control directive is missing a value"
+            );
+            Err(())
+        }
+    }
 }
 
 fn parse(header: &str) -> Option<CacheControl> {
@@ -37,33 +73,37 @@ fn parse(header: &str) -> Option<CacheControl> {
             Some((t, v)) => (t.trim(), Some(v.trim())),
             None => (part, None),
         };
-        match token.to_ascii_lowercase().as_str() {
+        let token_lower = token.to_ascii_lowercase();
+        match token_lower.as_str() {
             "no-store" => p.no_store = true,
+            // note: no-cache may carry a field list (no-cache="set-cookie"); we treat the
+            // qualified form as the unqualified, more restrictive one. same for private below.
+            // a quoted list containing a comma splits into garbage parts which then hit the
+            // unknown-directive arm and poison - still safe, just noisier than necessary.
             "no-cache" => p.no_cache = true,
-            "must-revalidate" => p.must_revalidate = true,
             "private" => p.is_private = true,
             "public" => p.is_public = true,
-            "max-age" => {
-                let max_age = match value {
-                    Some(v) => match v.parse::<u32>() {
-                        Ok(n) => Some(n),
-                        Err(_) => {
-                            warn!(target: targets::CACHE_CONTROL, value = v, "cache-control max-age has non-numeric value");
-                            return None;
-                        }
-                    },
-                    None => {
-                        warn!(target: targets::CACHE_CONTROL, "cache-control max-age is missing a value");
-
-                        return None;
-                    }
+            "must-revalidate" => p.must_revalidate = true,
+            "proxy-revalidate" => p.proxy_revalidate = true,
+            "must-understand" => p.must_understand = true,
+            "no-transform" => p.no_transform = true,
+            "immutable" => p.immutable = true,
+            "max-age" | "s-maxage" | "stale-while-revalidate" | "stale-if-error" => {
+                let Ok(n) = parse_u32(&token_lower, value) else {
+                    return Some(poison());
                 };
-                p.max_age = max_age;
+                match token_lower.as_str() {
+                    "max-age" => p.max_age = Some(n),
+                    "s-maxage" => p.s_maxage = Some(n),
+                    "stale-while-revalidate" => p.stale_while_revalidate = Some(n),
+                    _ => p.stale_if_error = Some(n),
+                }
             }
             v => {
-                // one invalid part is enough to stop parsing and discard the header
+                // a directive we don't model may be restrictive, so dropping the
+                // value would be unsecure - poison the merge instead
                 warn!(target: targets::CACHE_CONTROL, directive = v, "cache-control has unrecognized directive");
-                return None;
+                return Some(poison());
             }
         }
     }
@@ -92,14 +132,31 @@ fn merge_into(acc: &mut Option<CacheControl>, incoming: CacheControl) {
         return;
     }
 
+    // grants (public, immutable) hold only if every side grants them: AND.
+    // restrictions (must-revalidate & friends, no-transform) hold if any side asks: OR.
+    // durations (max-age & friends) take the shortest present value: min.
     existing.is_public = existing.is_public && incoming.is_public;
+    existing.immutable = existing.immutable && incoming.immutable;
     existing.must_revalidate = existing.must_revalidate || incoming.must_revalidate;
-    existing.max_age = match (existing.max_age, incoming.max_age) {
+    existing.proxy_revalidate = existing.proxy_revalidate || incoming.proxy_revalidate;
+    existing.must_understand = existing.must_understand || incoming.must_understand;
+    existing.no_transform = existing.no_transform || incoming.no_transform;
+    existing.max_age = min_opt(existing.max_age, incoming.max_age);
+    existing.s_maxage = min_opt(existing.s_maxage, incoming.s_maxage);
+    existing.stale_while_revalidate = min_opt(
+        existing.stale_while_revalidate,
+        incoming.stale_while_revalidate,
+    );
+    existing.stale_if_error = min_opt(existing.stale_if_error, incoming.stale_if_error);
+}
+
+// a side without the duration doesn't pull the min down, it just abstains
+fn min_opt(a: Option<u32>, b: Option<u32>) -> Option<u32> {
+    match (a, b) {
         (Some(a), Some(b)) => Some(a.min(b)),
-        (Some(a), None) => Some(a),
-        (None, Some(b)) => Some(b),
-        (None, None) => None,
-    };
+        (a, None) => a,
+        (None, b) => b,
+    }
 }
 
 fn to_header_value(p: &CacheControl) -> String {
@@ -117,8 +174,36 @@ fn to_header_value(p: &CacheControl) -> String {
         parts.push(format!("max-age={age}"));
     }
 
+    if let Some(age) = p.s_maxage {
+        parts.push(format!("s-maxage={age}"));
+    }
+
+    if let Some(age) = p.stale_while_revalidate {
+        parts.push(format!("stale-while-revalidate={age}"));
+    }
+
+    if let Some(age) = p.stale_if_error {
+        parts.push(format!("stale-if-error={age}"));
+    }
+
     if p.must_revalidate {
         parts.push("must-revalidate".to_string());
+    }
+
+    if p.proxy_revalidate {
+        parts.push("proxy-revalidate".to_string());
+    }
+
+    if p.must_understand {
+        parts.push("must-understand".to_string());
+    }
+
+    if p.no_transform {
+        parts.push("no-transform".to_string());
+    }
+
+    if p.immutable {
+        parts.push("immutable".to_string());
     }
 
     parts.join(", ")
@@ -151,17 +236,20 @@ fn to_header_value(p: &CacheControl) -> String {
 ///
 /// 1. Poison check - if any value contains `no-store`, `no-cache`, or `private`, the
 ///    accumulated result is immediately locked to `no-store, no-cache` and all remaining
-///    directives (`public`, `max-age`, `must-revalidate`) are discarded. Further
-///    incoming values cannot "un-poison" this state.
-/// 2. max-age - the minimum of all present `max-age` values is kept. A subgraph that
-///    omits `max-age` entirely does not pull the min down; it is simply ignored for
-///    this field, letting a shorter age set by another subgraph win.
-/// 3. public - preserved only when every subgraph that returned a response also sent
-///    `public`. A subgraph that returned bytes but omitted `Cache-Control` entirely is
-///    counted through `total_responses` (the number of all subgraphs whose response
-///    counts) and is enough to strip `public` from the result, because silence is
-///    not consent.
-/// 4. must-revalidate - set if any subgraph sets it (logical OR). Cleared on poison.
+///    directives are discarded. Further incoming values cannot "un-poison" this state.
+/// 2. Durations (`max-age`, `s-maxage`, `stale-while-revalidate`, `stale-if-error`) -
+///    the minimum of all present values is kept, per directive. A subgraph that omits
+///    a duration entirely does not pull the min down; it is simply ignored for that
+///    field, letting a shorter value set by another subgraph win.
+/// 3. Grants (`public`, `immutable`) - preserved only when every subgraph that
+///    returned a response also sent them. A subgraph that returned bytes but omitted
+///    `Cache-Control` entirely is counted through `total_responses` (the number of
+///    all subgraphs whose response counts) and is enough to strip the grant from the
+///    result, because silence is not consent.
+/// 4. Restrictions (`must-revalidate`, `proxy-revalidate`, `must-understand`,
+///    `no-transform`) - set if any subgraph sets them (logical OR). Cleared on poison.
+/// 5. A value with a malformed directive, or a directive the router does not model,
+///    is treated like poison (rule 1), since it may have been restrictive.
 ///
 /// The merged result is serialised back to a `HeaderValue` and re-inserted into the
 /// aggregator under `Last` strategy so that any subsequent header-flush loop sees
@@ -199,10 +287,12 @@ pub fn finalize(
     }
 
     if let Some(mut merged) = acc {
-        // a silent subgraph (no cache-control header at all) did not assert public,
-        // so public cannot hold when not every contacted subgraph sent it
+        // a silent subgraph (no cache-control header at all) did not assert public
+        // or immutable, so these grants cannot hold when not every contacted subgraph
+        // sent them
         if total_responses > values.len() {
             merged.is_public = false;
+            merged.immutable = false;
         }
         let serialized = to_header_value(&merged);
         // safety: to_header_value only produces ASCII
@@ -737,24 +827,129 @@ mod tests {
     }
 
     #[test]
-    fn finalize_unrecognized_value_removes_header() {
+    fn finalize_unrecognized_value_poisons() {
         let mut agg = make_aggregator(&["bogus-directive"]);
         finalize(&mut agg, false, 1);
-        assert_eq!(cc_value(&agg).as_deref(), None);
+        assert_eq!(cc_value(&agg).as_deref(), Some("no-store, no-cache"));
     }
 
     #[test]
-    fn finalize_single_unrecognized_directive_removes_header() {
+    fn finalize_single_unrecognized_directive_poisons() {
         let mut agg = make_aggregator(&["public, max-age=300, huh"]);
         finalize(&mut agg, false, 1);
-        assert_eq!(cc_value(&agg).as_deref(), None);
+        assert_eq!(cc_value(&agg).as_deref(), Some("no-store, no-cache"));
     }
 
     #[test]
-    fn finalize_malformed_max_age_removes_header() {
+    fn finalize_malformed_max_age_poisons() {
         let mut agg = make_aggregator(&["public, max-age=woof"]);
         finalize(&mut agg, false, 1);
-        assert_eq!(cc_value(&agg).as_deref(), None);
+        assert_eq!(cc_value(&agg).as_deref(), Some("no-store, no-cache"));
+    }
+
+    // the exact #1172 scenario: no-store next to s-maxage, sibling says public -
+    // result must not be cacheable
+    #[test]
+    fn finalize_no_store_with_s_maxage_not_dropped() {
+        let mut agg = make_aggregator(&["no-store, s-maxage=0", "public, max-age=300"]);
+        finalize(&mut agg, false, 2);
+        assert_eq!(cc_value(&agg).as_deref(), Some("no-store, no-cache"));
+    }
+
+    // standard directives are modeled and no longer poison a clean merge
+    #[test]
+    fn finalize_standard_directives_pass_through() {
+        let mut agg = make_aggregator(&[
+            "public, max-age=300, s-maxage=600, stale-while-revalidate=30, stale-if-error=60, no-transform, immutable",
+        ]);
+        finalize(&mut agg, false, 1);
+        assert_eq!(
+            cc_value(&agg).as_deref(),
+            Some("public, max-age=300, s-maxage=600, stale-while-revalidate=30, stale-if-error=60, no-transform, immutable")
+        );
+    }
+
+    // durations take the min across subgraphs, independently per directive
+    #[test]
+    fn finalize_durations_take_min() {
+        let mut agg = make_aggregator(&[
+            "s-maxage=600, stale-while-revalidate=10, stale-if-error=120",
+            "s-maxage=60, stale-while-revalidate=30, stale-if-error=15",
+        ]);
+        finalize(&mut agg, false, 2);
+        assert_eq!(
+            cc_value(&agg).as_deref(),
+            Some("s-maxage=60, stale-while-revalidate=10, stale-if-error=15")
+        );
+    }
+
+    // a subgraph without a duration abstains instead of pulling the min down
+    #[test]
+    fn finalize_missing_duration_abstains() {
+        let mut agg = make_aggregator(&["s-maxage=600", "max-age=100"]);
+        finalize(&mut agg, false, 2);
+        assert_eq!(cc_value(&agg).as_deref(), Some("max-age=100, s-maxage=600"));
+    }
+
+    // restrictions are OR: one subgraph asking is enough
+    #[test]
+    fn finalize_restrictions_are_or() {
+        let mut agg = make_aggregator(&[
+            "max-age=100, no-transform",
+            "max-age=200, proxy-revalidate, must-understand",
+        ]);
+        finalize(&mut agg, false, 2);
+        assert_eq!(
+            cc_value(&agg).as_deref(),
+            Some("max-age=100, proxy-revalidate, must-understand, no-transform")
+        );
+    }
+
+    // immutable is a grant: dropped unless every subgraph sends it
+    #[test]
+    fn finalize_immutable_requires_all() {
+        let mut agg = make_aggregator(&["max-age=100, immutable", "max-age=100"]);
+        finalize(&mut agg, false, 2);
+        assert_eq!(cc_value(&agg).as_deref(), Some("max-age=100"));
+
+        let mut agg = make_aggregator(&["max-age=100, immutable", "max-age=100, immutable"]);
+        finalize(&mut agg, false, 2);
+        assert_eq!(cc_value(&agg).as_deref(), Some("max-age=100, immutable"));
+    }
+
+    // a silent subgraph strips immutable, same as public
+    #[test]
+    fn finalize_immutable_stripped_when_silent_subgraph() {
+        let mut agg = make_aggregator(&["public, max-age=100, immutable"]);
+        finalize(&mut agg, false, 2);
+        assert_eq!(cc_value(&agg).as_deref(), Some("max-age=100"));
+    }
+
+    // poison clears the new fields too
+    #[test]
+    fn finalize_poison_clears_new_fields() {
+        let mut agg = make_aggregator(&[
+            "s-maxage=600, stale-while-revalidate=30, no-transform, immutable",
+            "private",
+        ]);
+        finalize(&mut agg, false, 2);
+        assert_eq!(cc_value(&agg).as_deref(), Some("no-store, no-cache"));
+    }
+
+    // malformed duration values on the new directives still poison
+    #[test]
+    fn finalize_malformed_s_maxage_poisons() {
+        let mut agg = make_aggregator(&["public, s-maxage=woof"]);
+        finalize(&mut agg, false, 1);
+        assert_eq!(cc_value(&agg).as_deref(), Some("no-store, no-cache"));
+    }
+
+    // qualified no-cache/private forms are treated as the unqualified restrictive form
+    #[test]
+    fn finalize_qualified_no_cache_poisons() {
+        let mut agg = make_aggregator(&["no-cache=\"set-cookie\", max-age=300"]);
+        finalize(&mut agg, false, 1);
+        assert_eq!(cc_value(&agg).as_deref(), Some("no-store, no-cache"));
     }
 
     #[test]
