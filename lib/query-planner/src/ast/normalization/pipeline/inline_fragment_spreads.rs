@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use graphql_tools::parser::query::{
     Definition, FragmentDefinition, InlineFragment, Mutation, OperationDefinition, Query,
@@ -20,7 +20,7 @@ pub fn inline_fragment_spreads(ctx: &mut NormalizationContext) -> Result<(), Nor
         // fresh per top-level definition: tracks fragment names currently being expanded on
         // the active inline/wrap path, so any cyclic expansion - regardless of shape - is
         // caught before it recurses forever.
-        let mut active_fragments = HashSet::new();
+        let mut active_fragments = Vec::new();
         match definition {
             Definition::Operation(op_def) => match op_def {
                 OperationDefinition::SelectionSet(selection_set) => {
@@ -72,12 +72,12 @@ pub fn inline_fragment_spreads(ctx: &mut NormalizationContext) -> Result<(), Nor
 
 #[inline]
 // active_fragments borrows names out of fragment_map ('f) instead of cloning strings -
-// insert/remove per expansion is then just a hash of a &str.
+// push/pop per expansion is then just a pointer compare over a handful of entries.
 fn handle_selection_set<'a, 'f>(
     selection_set: &mut SelectionSet<'a, String>,
     fragment_map: &'f HashMap<String, FragmentDefinition<'a, String>>,
     parent_type_condition: Option<&TypeCondition<'a, String>>,
-    active_fragments: &mut HashSet<&'f str>,
+    active_fragments: &mut Vec<&'f str>,
 ) -> Result<(), NormalizationError> {
     let old_items = std::mem::take(&mut selection_set.items);
     let mut new_items = Vec::with_capacity(old_items.len());
@@ -153,11 +153,12 @@ fn handle_selection_set<'a, 'f>(
                 // guards every recursive expansion below (inline and wrap alike), not just the
                 // bare-spread fast path above - a sibling field or a directive on the cycling
                 // spread breaks out of that fast path, so this is the backstop that catches it.
-                if !active_fragments.insert(fragment_def.name.as_str()) {
+                if active_fragments.contains(&fragment_def.name.as_str()) {
                     return Err(NormalizationError::CyclicFragmentSpread {
                         fragment_name: spread.fragment_name.clone(),
                     });
                 }
+                active_fragments.push(fragment_def.name.as_str());
 
                 let result = if parent_type_condition == Some(&fragment_def.type_condition)
                     // `...Frag @include(...)` stores `@include` on the spread itself.
@@ -192,7 +193,7 @@ fn handle_selection_set<'a, 'f>(
                     .map(|_| new_items.push(Selection::InlineFragment(inline_fragment)))
                 };
 
-                active_fragments.remove(fragment_def.name.as_str());
+                active_fragments.pop();
                 result?;
             }
             Selection::InlineFragment(mut inline_fragment) => {
