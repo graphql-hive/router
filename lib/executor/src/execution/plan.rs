@@ -34,6 +34,7 @@ use tracing::Instrument;
 
 use crate::execution::client_request_details::OperationDetails;
 use crate::execution::demand_control::DemandControlExecutionContext;
+use crate::execution::error_masking::ErrorMaskingRuntime;
 use crate::execution::operation_name::OperationNameFactory;
 use crate::headers::cache_control;
 use crate::{
@@ -134,6 +135,7 @@ pub struct QueryPlanExecutionOpts<'exec> {
     pub plugin_req_state: Option<PluginRequestState<'exec>>,
     pub operation_name_factory: OperationNameFactory,
     pub response_header_sink: ResponseHeaderSink,
+    pub error_masking_runtime: Arc<ErrorMaskingRuntime>,
 }
 
 pub struct PlanSubscriptionOutput {
@@ -393,6 +395,7 @@ pub async fn execute_query_plan<'exec>(
                     operation_name_factory: operation_name_factory.clone(),
                     demand_control_context: opts.demand_control_context.clone(),
                     response_header_sink: response_header_sink.clone(),
+                    error_masking_runtime: opts.error_masking_runtime.clone(),
                 };
                 match execute_query_plan_with_data(response.data, opts).await {
                     Ok(result) => yield result.body,
@@ -637,6 +640,10 @@ async fn execute_query_plan_with_data<'exec>(
             errors = new_errors;
             status_code = new_status_code;
         }
+    }
+
+    for error in &mut errors {
+        opts.error_masking_runtime.apply(error);
     }
 
     let body = project_by_operation(

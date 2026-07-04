@@ -9,6 +9,7 @@
 |[**cors**](#cors)|`object`|Configuration for CORS (Cross-Origin Resource Sharing).<br/>Default: `{"allow_any_origin":false,"allow_credentials":false,"enabled":false,"policies":[]}`<br/>|yes|
 |[**csrf**](#csrf)|`object`|Configuration for CSRF prevention.<br/>Default: `{"enabled":false,"required_headers":[]}`<br/>||
 |[**demand\_control**](#demand_control)|`object`, `null`||yes|
+|[**error\_masking**](#error_masking)|`object`|Configuration for error masking.<br/>Default: `{"all":{"error_message":true,"extensions":null},"redacted_error_message":"Unexpected error"}`<br/>||
 |[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"graphql_endpoint":"/graphql","host":"0.0.0.0","port":4000}`<br/>||
 |**introspection**||Configuration to enable or disable introspection queries.<br/>||
@@ -57,6 +58,11 @@ csrf:
   enabled: true
   required_headers:
     - x-csrf-token
+error_masking:
+  all:
+    error_message: true
+    extensions: null
+  redacted_error_message: Unexpected error
 headers:
   all:
     request:
@@ -1032,6 +1038,80 @@ Per-subgraph overrides. Keys are subgraph names.
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**Additional Properties**|`integer`|Format: `"uint"`<br/>Minimum: `0`<br/>||
+
+   
+<a name="error_masking"></a>
+## error\_masking: object
+
+Configuration for error masking.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**all**](#error_maskingall)|`object`|Default: `{"error_message":true,"extensions":null}`<br/>||
+|**redacted\_error\_message**|`string`|Default: `"Unexpected error"`<br/>||
+|[**subgraphs**](#error_maskingsubgraphs)|`object`, `null`|||
+
+**Additional Properties:** not allowed   
+**Example**
+
+```yaml
+all:
+  error_message: true
+  extensions: null
+redacted_error_message: Unexpected error
+
+```
+
+   
+<a name="error_maskingall"></a>
+### error\_masking\.all: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**error\_message**|`boolean`, `null`|||
+|**extensions**||||
+
+**Example**
+
+```yaml
+error_message: true
+extensions: null
+
+```
+
+   
+<a name="error_maskingsubgraphs"></a>
+### error\_masking\.subgraphs: object,null
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**Additional Properties**](#error_maskingsubgraphsadditionalproperties)|`object`|||
+
+   
+<a name="error_maskingsubgraphsadditionalproperties"></a>
+#### error\_masking\.subgraphs\.additionalProperties: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**error\_message**|`boolean`, `null`|||
+|**extensions**||||
+
+**Example**
+
+```yaml
+error_message: null
+extensions: null
+
+```
 
    
 <a name="headers"></a>

@@ -4,6 +4,7 @@ pub mod cors;
 pub mod csrf;
 pub mod demand_control;
 mod env_overrides;
+pub mod error_masking;
 pub mod headers;
 pub mod http_server;
 pub mod introspection_policy;
@@ -33,6 +34,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::{collections::HashMap, convert::Infallible};
 
+use crate::error_masking::ErrorMaskingConfig;
 use crate::storage::StorageConfigMap;
 use crate::{
     env_overrides::{EnvVarOverrides, EnvVarOverridesError},
@@ -163,6 +165,10 @@ pub struct HiveRouterConfig {
     /// ```
     #[serde(default, skip_serializing_if = "StorageConfigMap::is_empty")]
     pub storages: StorageConfigMap,
+
+    /// Configuration for error masking.
+    #[serde(default)]
+    pub error_masking: ErrorMaskingConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
