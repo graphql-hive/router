@@ -25,6 +25,8 @@ mod env_vars;
 #[cfg(test)]
 mod error_handling;
 #[cfg(test)]
+mod error_masking;
+#[cfg(test)]
 mod extensions_propagation;
 #[cfg(test)]
 mod file_supergraph;
