@@ -545,12 +545,8 @@ fn process_field<'graph, 'op: 'graph>(
 
     cancellation_token.bail_if_cancelled()?;
 
-    let target_subgraph_ids =
-        if !paths.is_empty() && !fields_to_resolve_locally.contains(&field.name) {
-            field_target_subgraph_ids(supergraph, field, paths, graph)?
-        } else {
-            None
-        };
+    let resolve_locally = fields_to_resolve_locally.contains(&field.name);
+    let mut target_subgraph_ids: Option<Option<HashSet<String>>> = None;
 
     for path in paths {
         let path_span = span!(
@@ -585,7 +581,12 @@ fn process_field<'graph, 'op: 'graph>(
             }
         }
 
-        if !fields_to_resolve_locally.contains(&field.name) && !found_direct_paths_to_leaf {
+        if !resolve_locally && !found_direct_paths_to_leaf {
+            if target_subgraph_ids.is_none() {
+                target_subgraph_ids =
+                    Some(field_target_subgraph_ids(supergraph, field, paths, graph)?);
+            }
+
             let indirect_paths = find_indirect_paths(
                 graph,
                 supergraph,
@@ -593,7 +594,7 @@ fn process_field<'graph, 'op: 'graph>(
                 path,
                 &NavigationTarget::Field {
                     field,
-                    target_subgraph_ids: target_subgraph_ids.as_ref(),
+                    target_subgraph_ids: target_subgraph_ids.as_ref().and_then(|ids| ids.as_ref()),
                 },
                 &excluded,
                 cancellation_token,

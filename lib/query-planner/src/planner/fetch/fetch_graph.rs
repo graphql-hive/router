@@ -14,7 +14,7 @@ use crate::planner::plan_nodes::{FetchNodePathSegment, FetchRewrite, ValueSetter
 use crate::planner::tree::query_tree::QueryTree;
 use crate::planner::tree::query_tree_node::{MutationFieldPosition, QueryTreeNode};
 use crate::planner::walker::path::OperationPath;
-use crate::planner::walker::pathfinder::can_satisfy_edge;
+use crate::planner::walker::pathfinder::{can_satisfy_edge, RequirementSearchMode};
 use crate::planner::QueryPlannerOptions;
 use crate::state::supergraph_state::{OperationKind, SubgraphName, SupergraphState};
 use crate::utils::cancellation::CancellationToken;
@@ -1775,12 +1775,11 @@ fn find_satisfiable_key<'a>(
             &OperationPath {
                 root_node: query_node.node_index,
                 last_segment: None,
-                visited_edge_indices: Default::default(),
                 cost: 0,
                 union_context: None,
             },
             &Default::default(),
-            true,
+            RequirementSearchMode::DirectOnly,
             // It's safe to use a noop CancellationToken here,
             // as the result of this function is guaranteed to be successful,
             // and fast.

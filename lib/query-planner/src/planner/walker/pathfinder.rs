@@ -31,11 +31,65 @@ pub type VisitedGraphs<'graph> = HashSet<&'graph str>;
 type ActiveEdgeChecks = HashSet<(NodeIndex, EdgeIndex)>;
 
 struct IndirectPathsLookupQueue<'graph> {
-    queue: Vec<(
-        VisitedGraphs<'graph>,
-        HashSet<&'graph TypeAwareSelection>,
-        OperationPath<'graph>,
-    )>,
+    queue: Vec<IndirectState<'graph>>,
+}
+
+struct IndirectState<'graph> {
+    path: OperationPath<'graph>,
+    visited_graphs: VisitedGraphs<'graph>,
+    visited_requirements: HashSet<&'graph TypeAwareSelection>,
+}
+
+impl<'graph> IndirectState<'graph> {
+    fn new_from_excluded(
+        excluded: &ExcludedFromLookup<'graph>,
+        path: &OperationPath<'graph>,
+    ) -> Self {
+        Self {
+            path: path.clone(),
+            visited_graphs: excluded.graph_ids.clone(),
+            visited_requirements: excluded.requirement.clone(),
+        }
+    }
+
+    fn has_visited_graph(&self, graph_id: &str) -> bool {
+        self.visited_graphs.contains(graph_id)
+    }
+
+    fn has_visited_requirement(&self, requirement: &'graph TypeAwareSelection) -> bool {
+        self.visited_requirements.contains(requirement)
+    }
+
+    fn excluded_after_visiting_graph(&self, graph_id: &'graph str) -> ExcludedFromLookup<'graph> {
+        let mut graph_ids = self.visited_graphs.clone();
+        graph_ids.insert(graph_id);
+
+        ExcludedFromLookup {
+            graph_ids,
+            requirement: self.visited_requirements.clone(),
+        }
+    }
+
+    fn next(
+        &self,
+        graph_id: &'graph str,
+        requirement: Option<&'graph TypeAwareSelection>,
+        path: OperationPath<'graph>,
+    ) -> Self {
+        let mut visited_graphs = self.visited_graphs.clone();
+        visited_graphs.insert(graph_id);
+
+        let mut visited_requirements = self.visited_requirements.clone();
+        if let Some(requirement) = requirement {
+            visited_requirements.insert(requirement);
+        }
+
+        Self {
+            path,
+            visited_graphs,
+            visited_requirements,
+        }
+    }
 }
 
 impl<'graph> IndirectPathsLookupQueue<'graph> {
@@ -44,34 +98,15 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
         path: &OperationPath<'graph>,
     ) -> Self {
         IndirectPathsLookupQueue {
-            queue: vec![(
-                excluded.graph_ids.clone(),
-                excluded
-                    .requirement
-                    .clone()
-                    .into_iter()
-                    .collect::<HashSet<_>>(),
-                path.clone(),
-            )],
+            queue: vec![IndirectState::new_from_excluded(excluded, path)],
         }
     }
 
-    pub fn add(
-        &mut self,
-        visited_graphs: VisitedGraphs<'graph>,
-        selections: HashSet<&'graph TypeAwareSelection>,
-        path: OperationPath<'graph>,
-    ) {
-        self.queue.push((visited_graphs, selections, path));
+    pub fn add(&mut self, state: IndirectState<'graph>) {
+        self.queue.push(state);
     }
 
-    pub fn pop(
-        &mut self,
-    ) -> Option<(
-        VisitedGraphs<'graph>,
-        HashSet<&'graph TypeAwareSelection>,
-        OperationPath<'graph>,
-    )> {
+    pub fn pop(&mut self) -> Option<IndirectState<'graph>> {
         self.queue.pop()
     }
 }
@@ -83,6 +118,18 @@ pub enum NavigationTarget<'op> {
         target_subgraph_ids: Option<&'op HashSet<String>>,
     },
     ConcreteType(&'op str, Option<Condition>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RequirementSearchMode {
+    DirectOnly,
+    AllowIndirect,
+}
+
+impl RequirementSearchMode {
+    fn allows_indirect(self) -> bool {
+        matches!(self, Self::AllowIndirect)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -179,8 +226,7 @@ impl<'graph> PathSearch<'graph> {
             .graph_id()
             .ok_or(WalkOperationError::TailMissingInfo(tail_node_index))?;
 
-        let requirement_cycle_checker =
-            RequirementCycleChecker::new(self.supergraph, tail_node.name_str());
+        let requirement_cycle_checker = RequirementCycleChecker::new(self.supergraph);
 
         // Respect the path's current union scope when targeting a concrete type.
         if let NavigationTarget::ConcreteType(type_name, _) = target {
@@ -191,19 +237,20 @@ impl<'graph> PathSearch<'graph> {
 
         let mut queue = IndirectPathsLookupQueue::new_from_excluded(excluded, path);
 
-        while let Some(item) = queue.pop() {
+        while let Some(state) = queue.pop() {
             cancellation_token.bail_if_cancelled()?;
-            let (visited_graphs, visited_key_fields, path) = item;
 
-            if !seen.insert((path.tail(), target_key)) {
+            if !seen.insert((state.path.tail(), target_key)) {
                 trace!(
                     "Ignoring. Already searched this path tail for this target: {}",
-                    path.pretty_print(graph)
+                    state.path.pretty_print(graph)
                 );
                 continue;
             }
 
-            let relevant_edges = graph.edges_from(path.tail()).filter(|e| {
+            let current_type_name = graph.node(state.path.tail())?.name_str();
+
+            let relevant_edges = graph.edges_from(state.path.tail()).filter(|e| {
                 matches!(
                     e.weight(),
                     Edge::EntityMove { .. } | Edge::InterfaceObjectTypeMove { .. }
@@ -231,11 +278,11 @@ impl<'graph> PathSearch<'graph> {
                     continue;
                 }
 
-                if visited_graphs.contains(edge_tail_graph_id) {
+                if state.has_visited_graph(edge_tail_graph_id) {
                     trace!(
                     "Ignoring, graph is excluded and already visited (current: {}, visited: {:?})",
                     edge_tail_graph_id,
-                    visited_graphs
+                    state.visited_graphs
                 );
                     continue;
                 }
@@ -257,9 +304,11 @@ impl<'graph> PathSearch<'graph> {
                 } = target
                 {
                     if let Some(requirements) = edge.requirements() {
-                        if requirement_cycle_checker
-                            .requirements_depend_on_target_field(requirements, target_field)
-                        {
+                        if requirement_cycle_checker.requirements_depend_on_target_field(
+                            current_type_name,
+                            requirements,
+                            target_field,
+                        ) {
                             trace!("Ignoring. Edge's requirement depends on search target");
                             continue;
                         }
@@ -279,7 +328,7 @@ impl<'graph> PathSearch<'graph> {
                 // That's because in some other path, we will or already have checked the other edge.
                 let requirements_already_checked = match edge.requirements() {
                     Some(selection_requirements) => {
-                        visited_key_fields.contains(selection_requirements)
+                        state.has_visited_requirement(selection_requirements)
                     }
                     None => false,
                 };
@@ -289,15 +338,14 @@ impl<'graph> PathSearch<'graph> {
                     continue;
                 }
 
-                let mut new_excluded_graph_ids = visited_graphs.clone();
-                new_excluded_graph_ids.insert(edge_tail_graph_id);
-                let new_excluded = ExcludedFromLookup {
-                    graph_ids: new_excluded_graph_ids,
-                    requirement: visited_key_fields.clone(),
-                };
+                let new_excluded = state.excluded_after_visiting_graph(edge_tail_graph_id);
 
-                let can_be_satisfied =
-                    self.can_satisfy_edge(&edge_ref, &path, &new_excluded, false)?;
+                let can_be_satisfied = self.can_satisfy_edge(
+                    &edge_ref,
+                    &state.path,
+                    &new_excluded,
+                    RequirementSearchMode::AllowIndirect,
+                )?;
 
                 match can_be_satisfied {
                     None => {
@@ -310,7 +358,7 @@ impl<'graph> PathSearch<'graph> {
                             graph.pretty_print_edge(edge_ref.id(), false)
                         );
 
-                        let next_resolution_path = path.advance(
+                        let next_resolution_path = state.path.advance(
                             graph,
                             &edge_ref,
                             QueryTreeNode::from_paths(graph, &paths, None)?,
@@ -335,19 +383,11 @@ impl<'graph> PathSearch<'graph> {
                         } else {
                             trace!("No direct paths found");
 
-                            let mut new_visited_graphs = visited_graphs.clone();
-                            new_visited_graphs.insert(edge_tail_graph_id);
-
-                            let next_requirements = match edge.requirements() {
-                                Some(requirements) => {
-                                    let mut new_visited_key_fields = visited_key_fields.clone();
-                                    new_visited_key_fields.insert(requirements);
-                                    new_visited_key_fields
-                                }
-                                None => visited_key_fields.clone(),
-                            };
-
-                            queue.add(new_visited_graphs, next_requirements, next_resolution_path);
+                            queue.add(state.next(
+                                edge_tail_graph_id,
+                                edge.requirements(),
+                                next_resolution_path,
+                            ));
 
                             trace!("going deeper");
                         }
@@ -376,6 +416,7 @@ impl<'graph> PathSearch<'graph> {
         path: &OperationPath<'graph>,
         edge_ref: &EdgeReference<'graph>,
         target: &NavigationTarget<'_>,
+        requirement_search_mode: RequirementSearchMode,
     ) -> Result<Option<OperationPath<'graph>>, WalkOperationError> {
         let graph = self.graph;
         trace!(
@@ -383,8 +424,12 @@ impl<'graph> PathSearch<'graph> {
             graph.pretty_print_edge(edge_ref.id(), false)
         );
 
-        let can_be_satisfied =
-            self.can_satisfy_edge(edge_ref, path, &ExcludedFromLookup::new(), false)?;
+        let can_be_satisfied = self.can_satisfy_edge(
+            edge_ref,
+            path,
+            &ExcludedFromLookup::new(),
+            requirement_search_mode,
+        )?;
 
         match can_be_satisfied {
             Some(paths) => {
@@ -434,6 +479,7 @@ pub fn find_self_referencing_direct_path<'graph>(
             path,
             &edge_ref,
             &NavigationTarget::ConcreteType(type_name, Some(condition.clone())),
+            RequirementSearchMode::AllowIndirect,
         )? {
             trace!("Finished finding direct path, found one",);
             return Ok(new_path);
@@ -467,6 +513,15 @@ impl<'graph> PathSearch<'graph> {
         path: &OperationPath<'graph>,
         target: &NavigationTarget<'_>,
     ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
+        self.find_direct_paths_with_mode(path, target, RequirementSearchMode::AllowIndirect)
+    }
+
+    fn find_direct_paths_with_mode(
+        &mut self,
+        path: &OperationPath<'graph>,
+        target: &NavigationTarget<'_>,
+        requirement_search_mode: RequirementSearchMode,
+    ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
         let graph = self.graph;
         let mut result: Vec<OperationPath<'graph>> = vec![];
         let path_tail_index = path.tail();
@@ -497,7 +552,9 @@ impl<'graph> PathSearch<'graph> {
         };
 
         for edge_ref in edges_iter {
-            if let Some(new_path) = self.try_advance_direct_path(path, &edge_ref, target)? {
+            if let Some(new_path) =
+                self.try_advance_direct_path(path, &edge_ref, target, requirement_search_mode)?
+            {
                 result.push(new_path);
             }
         }
@@ -523,14 +580,14 @@ pub fn can_satisfy_edge<'graph>(
     edge_ref: &EdgeReference<'graph>,
     path: &OperationPath<'graph>,
     excluded: &ExcludedFromLookup<'graph>,
-    use_only_direct_edges: bool,
+    requirement_search_mode: RequirementSearchMode,
     cancellation_token: &'graph CancellationToken,
 ) -> Result<Option<Vec<OperationPath<'graph>>>, WalkOperationError> {
     PathSearch::new(graph, supergraph, override_context, cancellation_token).can_satisfy_edge(
         edge_ref,
         path,
         excluded,
-        use_only_direct_edges,
+        requirement_search_mode,
     )
 }
 
@@ -540,7 +597,7 @@ impl<'graph> PathSearch<'graph> {
         edge_ref: &EdgeReference<'graph>,
         path: &OperationPath<'graph>,
         excluded: &ExcludedFromLookup<'graph>,
-        use_only_direct_edges: bool,
+        requirement_search_mode: RequirementSearchMode,
     ) -> Result<Option<Vec<OperationPath<'graph>>>, WalkOperationError> {
         let graph = self.graph;
         let active_key = (path.tail(), edge_ref.id());
@@ -553,7 +610,8 @@ impl<'graph> PathSearch<'graph> {
             return Ok(None);
         }
 
-        let result = self.check_edge_requirements(edge_ref, path, excluded, use_only_direct_edges);
+        let result =
+            self.check_edge_requirements(edge_ref, path, excluded, requirement_search_mode);
 
         self.active_edge_checks.remove(&active_key);
 
@@ -565,7 +623,7 @@ impl<'graph> PathSearch<'graph> {
         edge_ref: &EdgeReference<'graph>,
         path: &OperationPath<'graph>,
         excluded: &ExcludedFromLookup<'graph>,
-        use_only_direct_edges: bool,
+        requirement_search_mode: RequirementSearchMode,
     ) -> Result<Option<Vec<OperationPath<'graph>>>, WalkOperationError> {
         let graph = self.graph;
         let override_context = self.override_context;
@@ -595,20 +653,20 @@ impl<'graph> PathSearch<'graph> {
                 for selection in selections.selection_set.items.iter() {
                     requirements.push_front(MoveRequirement {
                         paths: Rc::new(vec![path.clone()]),
-                        selection: selection.clone(),
+                        selection,
                     });
                 }
 
                 // it's important to pop from the end as we want to process the last added requirement first
                 while let Some(requirement) = requirements.pop_back() {
                     cancellation_token.bail_if_cancelled()?;
-                    match &requirement.selection {
+                    match requirement.selection {
                         SelectionItem::Field(selection_field_requirement) => {
                             let result = self.validate_field_requirement(
                                 &requirement,
                                 selection_field_requirement,
                                 excluded,
-                                use_only_direct_edges,
+                                requirement_search_mode,
                             )?;
 
                             match result {
@@ -649,6 +707,7 @@ impl<'graph> PathSearch<'graph> {
                                 &requirement,
                                 fragment_selection,
                                 excluded,
+                                requirement_search_mode,
                             )?;
 
                             match fragment_requirements {
@@ -687,7 +746,7 @@ impl<'graph> PathSearch<'graph> {
 #[derive(Debug)]
 pub struct MoveRequirement<'graph> {
     pub paths: Rc<Vec<OperationPath<'graph>>>,
-    pub selection: SelectionItem,
+    pub selection: &'graph SelectionItem,
 }
 
 type FieldRequirementsResult<'graph> =
@@ -702,38 +761,46 @@ impl<'graph> PathSearch<'graph> {
         move_requirement: &MoveRequirement<'graph>,
         field: &FieldSelection,
         excluded: &ExcludedFromLookup<'graph>,
-        use_only_direct_edges: bool,
+        requirement_search_mode: RequirementSearchMode,
     ) -> Result<FieldRequirementsResult<'graph>, WalkOperationError> {
         let mut direct_path_results: Vec<Vec<OperationPath<'graph>>> =
             Vec::with_capacity(move_requirement.paths.len());
         let mut indirect_path_results: Vec<Vec<OperationPath<'graph>>> =
             Vec::with_capacity(move_requirement.paths.len());
-        let target_subgraph_ids = super::field_target_subgraph_ids(
-            self.supergraph,
-            field,
-            move_requirement.paths.as_ref(),
-            self.graph,
-        )?;
+        let mut target_subgraph_ids: Option<Option<HashSet<String>>> = None;
 
         for path in move_requirement.paths.iter() {
-            let direct_paths = self.find_direct_paths(
+            let direct_paths = self.find_direct_paths_with_mode(
                 path,
                 &NavigationTarget::Field {
                     field,
                     target_subgraph_ids: None,
                 },
+                requirement_search_mode,
             )?;
             // Skip looking for indirect paths if we already found direct paths to a leaf
             let found_direct_paths_to_leaf = !direct_paths.is_empty() && field.is_leaf();
             direct_path_results.push(direct_paths);
 
-            let needs_indirect = !use_only_direct_edges && !found_direct_paths_to_leaf;
+            let needs_indirect =
+                requirement_search_mode.allows_indirect() && !found_direct_paths_to_leaf;
             let indirect_paths = if needs_indirect {
+                if target_subgraph_ids.is_none() {
+                    target_subgraph_ids = Some(super::field_target_subgraph_ids(
+                        self.supergraph,
+                        field,
+                        move_requirement.paths.as_ref(),
+                        self.graph,
+                    )?);
+                }
+
                 self.find_indirect_paths(
                     path,
                     &NavigationTarget::Field {
                         field,
-                        target_subgraph_ids: target_subgraph_ids.as_ref(),
+                        target_subgraph_ids: target_subgraph_ids
+                            .as_ref()
+                            .and_then(|ids| ids.as_ref()),
                     },
                     excluded,
                 )?
@@ -754,7 +821,7 @@ impl<'graph> PathSearch<'graph> {
         for paths_vec in direct_path_results {
             next_paths.extend(paths_vec);
         }
-        // No need to check use_only_direct_edges again, indirect_path_results_vecs will be empty if not used.
+        // No need to check the search mode again; indirect result vecs are empty if not used.
         for paths_vec in indirect_path_results {
             next_paths.extend(paths_vec);
         }
@@ -780,7 +847,7 @@ impl<'graph> PathSearch<'graph> {
             .unwrap() // Safe due to the check above
             .iter()
             .map(|selection_item| MoveRequirement {
-                selection: selection_item.clone(),
+                selection: selection_item,
                 paths: Rc::clone(&shared_next_paths_for_subs),
             })
             .collect();
@@ -796,6 +863,7 @@ impl<'graph> PathSearch<'graph> {
         requirement: &MoveRequirement<'graph>,
         fragment_selection: &InlineFragmentSelection,
         excluded: &ExcludedFromLookup<'graph>,
+        requirement_search_mode: RequirementSearchMode,
     ) -> Result<FragmentRequirementsResult<'graph>, WalkOperationError> {
         let type_name = &fragment_selection.type_condition;
         // Collect all Vec<OperationPath<'graph>> results from find_direct_paths
@@ -809,11 +877,12 @@ impl<'graph> PathSearch<'graph> {
             if self.type_condition_matches(current_type_name, type_name) {
                 direct_path_results.push(vec![path.clone()]);
             } else {
-                direct_path_results.push(self.find_direct_paths(
+                direct_path_results.push(self.find_direct_paths_with_mode(
                     path,
                     // @skip/@include can't be used in @requires and @provides,
                     // that's why we pass no condition
                     &NavigationTarget::ConcreteType(type_name, None),
+                    requirement_search_mode,
                 )?);
             }
         }
@@ -821,14 +890,16 @@ impl<'graph> PathSearch<'graph> {
         // Collect all Vec<OperationPath<'graph>> results from find_indirect_paths
         let mut indirect_path_results: Vec<Vec<OperationPath<'graph>>> =
             Vec::with_capacity(requirement.paths.len());
-        for path_from_rc in requirement.paths.iter() {
-            indirect_path_results.push(self.find_indirect_paths(
-                path_from_rc,
-                // @skip/@include can't be used in @requires and @provides,
-                // that's why we pass no condition
-                &NavigationTarget::ConcreteType(type_name, None),
-                excluded,
-            )?);
+        if requirement_search_mode.allows_indirect() {
+            for path_from_rc in requirement.paths.iter() {
+                indirect_path_results.push(self.find_indirect_paths(
+                    path_from_rc,
+                    // @skip/@include can't be used in @requires and @provides,
+                    // that's why we pass no condition
+                    &NavigationTarget::ConcreteType(type_name, None),
+                    excluded,
+                )?);
+            }
         }
 
         // sum of direct and indirect
@@ -866,7 +937,7 @@ impl<'graph> PathSearch<'graph> {
             .unwrap() // Safe due to the check above
             .iter()
             .map(|selection_item| MoveRequirement {
-                selection: selection_item.clone(),
+                selection: selection_item,
                 paths: Rc::clone(&shared_next_paths_for_subs),
             })
             .collect();
@@ -877,15 +948,11 @@ impl<'graph> PathSearch<'graph> {
 
 struct RequirementCycleChecker<'graph> {
     supergraph: &'graph SupergraphState,
-    current_type_name: &'graph str,
 }
 
 impl<'graph> RequirementCycleChecker<'graph> {
-    fn new(supergraph: &'graph SupergraphState, current_type_name: &'graph str) -> Self {
-        Self {
-            supergraph,
-            current_type_name,
-        }
+    fn new(supergraph: &'graph SupergraphState) -> Self {
+        Self { supergraph }
     }
 
     /// If we're searching for a field and edge's
@@ -906,27 +973,26 @@ impl<'graph> RequirementCycleChecker<'graph> {
     ///
     fn requirements_depend_on_target_field(
         &self,
+        current_type_name: &str,
         requirements: &TypeAwareSelection,
         target_field: &FieldSelection,
     ) -> bool {
-        if !self.type_condition_matches(&requirements.type_name) {
+        if !self.type_condition_matches(current_type_name, &requirements.type_name) {
             return false;
         }
-        requirements
-            .selection_set
-            .items
-            .iter()
-            .any(|item| self.requirement_item_depends_on_target_field(item, target_field))
+        requirements.selection_set.items.iter().any(|item| {
+            self.requirement_item_depends_on_target_field(current_type_name, item, target_field)
+        })
     }
 
-    fn type_condition_matches(&self, type_condition: &str) -> bool {
-        if self.current_type_name == type_condition {
+    fn type_condition_matches(&self, current_type_name: &str, type_condition: &str) -> bool {
+        if current_type_name == type_condition {
             return true;
         }
         self.supergraph
             .interface_to_object_types
             .get(type_condition)
-            .is_some_and(|object_types| object_types.contains(self.current_type_name))
+            .is_some_and(|object_types| object_types.contains(current_type_name))
     }
 
     fn same_field_identity(requirement: &FieldSelection, target: &FieldSelection) -> bool {
@@ -935,6 +1001,7 @@ impl<'graph> RequirementCycleChecker<'graph> {
 
     fn requirement_item_depends_on_target_field(
         &self,
+        current_type_name: &str,
         requirement: &SelectionItem,
         target_field: &FieldSelection,
     ) -> bool {
@@ -942,15 +1009,23 @@ impl<'graph> RequirementCycleChecker<'graph> {
             SelectionItem::Field(requirement_field)
                 if Self::same_field_identity(requirement_field, target_field) =>
             {
-                self.selection_sets_overlap(&requirement_field.selections, &target_field.selections)
+                self.selection_sets_overlap(
+                    current_type_name,
+                    &requirement_field.selections,
+                    &target_field.selections,
+                )
             }
             SelectionItem::Field(_) => false,
             SelectionItem::InlineFragment(fragment) => {
-                if !self.type_condition_matches(&fragment.type_condition) {
+                if !self.type_condition_matches(current_type_name, &fragment.type_condition) {
                     return false;
                 }
                 fragment.selections.items.iter().any(|requirement_item| {
-                    self.requirement_item_depends_on_target_field(requirement_item, target_field)
+                    self.requirement_item_depends_on_target_field(
+                        current_type_name,
+                        requirement_item,
+                        target_field,
+                    )
                 })
             }
             // Fragment spreads are inlined by normalization
@@ -958,44 +1033,63 @@ impl<'graph> RequirementCycleChecker<'graph> {
         }
     }
 
-    fn selection_sets_overlap(&self, requirement: &SelectionSet, target: &SelectionSet) -> bool {
+    fn selection_sets_overlap(
+        &self,
+        current_type_name: &str,
+        requirement: &SelectionSet,
+        target: &SelectionSet,
+    ) -> bool {
         if target.is_empty() || requirement.is_empty() {
             return true;
         }
         target.items.iter().any(|target_item| {
-            requirement
-                .items
-                .iter()
-                .any(|requirement_item| self.selection_items_overlap(requirement_item, target_item))
+            requirement.items.iter().any(|requirement_item| {
+                self.selection_items_overlap(current_type_name, requirement_item, target_item)
+            })
         })
     }
 
-    fn selection_items_overlap(&self, requirement: &SelectionItem, target: &SelectionItem) -> bool {
+    fn selection_items_overlap(
+        &self,
+        current_type_name: &str,
+        requirement: &SelectionItem,
+        target: &SelectionItem,
+    ) -> bool {
         use SelectionItem::*;
 
         match (target, requirement) {
             (Field(t), Field(r)) if Self::same_field_identity(t, r) => {
-                return self.selection_sets_overlap(&t.selections, &r.selections);
+                return self.selection_sets_overlap(
+                    current_type_name,
+                    &t.selections,
+                    &r.selections,
+                );
             }
-            (Field(_), InlineFragment(r)) if self.type_condition_matches(&r.type_condition) => {
+            (Field(_), InlineFragment(r))
+                if self.type_condition_matches(current_type_name, &r.type_condition) =>
+            {
                 return r
                     .selections
                     .items
                     .iter()
-                    .any(|inner| self.selection_items_overlap(inner, target));
+                    .any(|inner| self.selection_items_overlap(current_type_name, inner, target));
             }
-            (InlineFragment(t), Field(_)) if self.type_condition_matches(&t.type_condition) => {
-                return t
-                    .selections
-                    .items
-                    .iter()
-                    .any(|target_item| self.selection_items_overlap(requirement, target_item));
+            (InlineFragment(t), Field(_))
+                if self.type_condition_matches(current_type_name, &t.type_condition) =>
+            {
+                return t.selections.items.iter().any(|target_item| {
+                    self.selection_items_overlap(current_type_name, requirement, target_item)
+                });
             }
             (InlineFragment(t), InlineFragment(r))
-                if self.type_condition_matches(&t.type_condition)
-                    && self.type_condition_matches(&r.type_condition) =>
+                if self.type_condition_matches(current_type_name, &t.type_condition)
+                    && self.type_condition_matches(current_type_name, &r.type_condition) =>
             {
-                return self.selection_sets_overlap(&r.selections, &t.selections);
+                return self.selection_sets_overlap(
+                    current_type_name,
+                    &r.selections,
+                    &t.selections,
+                );
             }
             // Fragment spreads are inlined by normalization, so we don't have to compare them.
             _ => {}
