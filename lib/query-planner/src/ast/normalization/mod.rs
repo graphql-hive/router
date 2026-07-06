@@ -2821,4 +2821,76 @@ mod tests {
             "expected an error for a cyclic fragment, got Ok"
         );
     }
+
+    #[test]
+    fn cyclic_fragment_self_reference_with_sibling_field_returns_error() {
+        // fragment A on Query { x ...A } - self-cycle with a sibling field breaks the
+        // single-bare-spread fast path and must still be rejected, not overflow the stack.
+        let schema = parse_schema(
+            r#"
+            type Query {
+              x: String
+            }
+            "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+        let parsed = parse_query::<String>(
+            r#"
+            query { ...A }
+            fragment A on Query { x ...A }
+            "#,
+        )
+        .expect("to parse")
+        .into_static();
+
+        // run in a thread with a deadline so a stack overflow / hang fails as a test failure
+        // instead of aborting the whole test process.
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = normalize_operation(&supergraph, &parsed, None);
+            let _ = tx.send(result);
+        });
+        let result = rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("normalize_operation hung or crashed on a self-cycle with a sibling field");
+        assert!(
+            result.is_err(),
+            "expected an error for a cyclic fragment, got Ok"
+        );
+    }
+
+    #[test]
+    fn cyclic_fragment_self_reference_with_directive_returns_error() {
+        // fragment A on Query { ...A @include(if: $c) } - a directive on the cycling spread
+        // also breaks the single-bare-spread fast path and must still be rejected.
+        let schema = parse_schema(
+            r#"
+            type Query {
+              field: String
+            }
+            "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+        let parsed = parse_query::<String>(
+            r#"
+            query ($c: Boolean!) { ...A }
+            fragment A on Query { ...A @include(if: $c) }
+            "#,
+        )
+        .expect("to parse")
+        .into_static();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = normalize_operation(&supergraph, &parsed, None);
+            let _ = tx.send(result);
+        });
+        let result = rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("normalize_operation hung or crashed on a self-cycle with a directive");
+        assert!(
+            result.is_err(),
+            "expected an error for a cyclic fragment, got Ok"
+        );
+    }
 }
