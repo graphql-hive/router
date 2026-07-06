@@ -974,33 +974,40 @@ impl<'graph> RequirementCycleChecker<'graph> {
         use SelectionItem::*;
 
         match (target, requirement) {
-            (Field(t), Field(r)) if Self::same_field_identity(t, r) => {
-                return self.selection_sets_overlap(&t.selections, &r.selections);
+            (Field(t), Field(r)) => {
+                if Self::same_field_identity(t, r) {
+                    return self.selection_sets_overlap(&t.selections, &r.selections);
+                }
             }
-            (Field(_), InlineFragment(r)) if self.type_condition_matches(&r.type_condition) => {
-                return r
-                    .selections
-                    .items
-                    .iter()
-                    .any(|inner| self.selection_items_overlap(inner, target));
+            (Field(_), InlineFragment(r)) => {
+                if self.type_condition_matches(&r.type_condition) {
+                    return r
+                        .selections
+                        .items
+                        .iter()
+                        .any(|inner| self.selection_items_overlap(inner, target));
+                }
             }
-            (InlineFragment(t), Field(_)) if self.type_condition_matches(&t.type_condition) => {
-                return t
-                    .selections
-                    .items
-                    .iter()
-                    .any(|target_item| self.selection_items_overlap(requirement, target_item));
+            (InlineFragment(t), Field(_)) => {
+                if self.type_condition_matches(&t.type_condition) {
+                    return t
+                        .selections
+                        .items
+                        .iter()
+                        .any(|target_item| self.selection_items_overlap(requirement, target_item));
+                }
             }
-            (InlineFragment(t), InlineFragment(r))
+            (InlineFragment(t), InlineFragment(r)) => {
                 if self.type_condition_matches(&t.type_condition)
-                    && self.type_condition_matches(&r.type_condition) =>
-            {
-                return self.selection_sets_overlap(&r.selections, &t.selections);
+                    && self.type_condition_matches(&r.type_condition)
+                {
+                    return self.selection_sets_overlap(&r.selections, &t.selections);
+                }
             }
             // Fragment spreads are inlined by normalization, so we don't have to compare them.
             _ => {}
         }
 
-        false
+        return false;
     }
 }
