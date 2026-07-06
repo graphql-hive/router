@@ -94,6 +94,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 6.20.4 (2026-07-06)
+
+### Fixes
+
+#### Debug log message when subscription buffer consumer drops before producer stops
+
+"Consumer for subgraph {} at {} dropped the receiver" was logged at `error` level, but it fires on the normal teardown path: once all clients unsubscribe/disconnect from a subscription, the broadcast channel closes, the pump task stops draining, and the mpsc receiver drops. This is expected cleanup, not a failure, so users were seeing noisy error logs for routine subscribe/unsubscribe churn.
+
+Changed to `debug` level with a clearer message explaining it's expected shutdown of the upstream drain, not an actual error.
+
+#### Fix stack overflow on cyclic fragment spreads with sibling fields or directives
+
+A self-referential fragment that also selects a sibling field (`fragment A on Query { x ...A }`) or puts a directive on the cycling spread (`...A @include(if: $c)`) caused unbounded recursion during fragment inlining in normalization, overflowing the stack and crashing the process.
+
+#### Fixed false circular dependency detection in case of `@requires`
+
+We fixed a query planner bug that could make some valid federated queries fail.
+
+The issue happened when planning fields with nested `@requires` data. The planner compared required selection sets using only the top-level field, ignoring the rest of the selection set. For example, `foo { bar }` and `foo { baz { qux } }` could both be treated as overlapping `foo`.
+
+This could make the planner drop a valid way to fetch the required data too early.
+
 ## 6.20.3 (2026-07-02)
 
 ### Fixes
