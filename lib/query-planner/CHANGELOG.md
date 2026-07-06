@@ -30,6 +30,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 2.10.7 (2026-07-06)
+
+### Fixes
+
+#### Fix stack overflow on cyclic fragment spreads with sibling fields or directives
+
+A self-referential fragment that also selects a sibling field (`fragment A on Query { x ...A }`) or puts a directive on the cycling spread (`...A @include(if: $c)`) caused unbounded recursion during fragment inlining in normalization, overflowing the stack and crashing the process.
+
+#### Fixed false circular dependency detection in case of `@requires`
+
+We fixed a query planner bug that could make some valid federated queries fail.
+
+The issue happened when planning fields with nested `@requires` data. The planner compared required selection sets using only the top-level field, ignoring the rest of the selection set. For example, `foo { bar }` and `foo { baz { qux } }` could both be treated as overlapping `foo`.
+
+This could make the planner drop a valid way to fetch the required data too early.
+
 ## 2.10.6 (2026-07-02)
 
 ### Fixes
