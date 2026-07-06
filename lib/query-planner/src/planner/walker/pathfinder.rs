@@ -11,7 +11,7 @@ use crate::graph::edge::PlannerOverrideContext;
 use crate::utils::cancellation::CancellationToken;
 use crate::{
     ast::{
-        selection_item::SelectionItem, selection_set::FieldSelection,
+        selection_item::SelectionItem, selection_set::FieldSelection, selection_set::SelectionSet,
         type_aware_selection::TypeAwareSelection,
     },
     graph::{
@@ -162,33 +162,6 @@ impl<'graph> PathSearch<'graph> {
             .is_some_and(|object_types| object_types.contains(current_type_name))
     }
 
-    fn requirements_includes_field(
-        &self,
-        requirements: &TypeAwareSelection,
-        current_type_name: &str,
-        target_field_name: &str,
-    ) -> bool {
-        if !self.type_condition_matches(current_type_name, &requirements.type_name) {
-            return false;
-        }
-
-        requirements.selection_set.items.iter().any(|item| {
-            match item {
-                SelectionItem::Field(field) => field.name == target_field_name,
-                SelectionItem::InlineFragment(fragment) => {
-                    if !self.type_condition_matches(current_type_name, &fragment.type_condition) {
-                        return false;
-                    }
-                    fragment.selections.items.iter().any(|item| {
-                        matches!(item, SelectionItem::Field(field) if field.name == target_field_name)
-                    })
-                }
-                // Fragment spreads are inlined by normalization
-                SelectionItem::FragmentSpread(_) => false,
-          }
-        })
-    }
-
     fn find_indirect_paths(
         &mut self,
         path: &OperationPath<'graph>,
@@ -205,6 +178,9 @@ impl<'graph> PathSearch<'graph> {
         let source_graph_id = tail_node
             .graph_id()
             .ok_or(WalkOperationError::TailMissingInfo(tail_node_index))?;
+
+        let requirement_cycle_checker =
+            RequirementCycleChecker::new(self.supergraph, tail_node.name_str());
 
         // Respect the path's current union scope when targeting a concrete type.
         if let NavigationTarget::ConcreteType(type_name, _) = target {
@@ -275,22 +251,16 @@ impl<'graph> PathSearch<'graph> {
                     continue;
                 }
 
-                // If we're searching for a field and this edge's
-                // requirements include the same field,
-                // the edge cannot help us, we skip it.
-                // We allow other entity-move edge to be used instead,
-                // that will be used to collect the required fields.
                 if let NavigationTarget::Field {
                     field: target_field,
                     ..
                 } = target
                 {
                     if let Some(requirements) = edge.requirements() {
-                        if self.requirements_includes_field(
-                            requirements,
-                            tail_node.name_str(),
-                            target_field.name.as_str(),
-                        ) {
+                        if requirement_cycle_checker
+                            .requirements_depend_on_target_field(requirements, target_field)
+                        {
+                            trace!("Ignoring. Edge's requirement depends on search target");
                             continue;
                         }
                     }
@@ -360,6 +330,7 @@ impl<'graph> PathSearch<'graph> {
                                 tracker.add(&direct_path)?;
                             }
 
+                            trace!("Continuing to next edge");
                             continue;
                         } else {
                             trace!("No direct paths found");
@@ -901,5 +872,142 @@ impl<'graph> PathSearch<'graph> {
             .collect();
 
         Ok(Some((next_paths, next_requirements)))
+    }
+}
+
+struct RequirementCycleChecker<'graph> {
+    supergraph: &'graph SupergraphState,
+    current_type_name: &'graph str,
+}
+
+impl<'graph> RequirementCycleChecker<'graph> {
+    fn new(supergraph: &'graph SupergraphState, current_type_name: &'graph str) -> Self {
+        Self {
+            supergraph,
+            current_type_name,
+        }
+    }
+
+    /// If we're searching for a field and edge's
+    /// requirements include the same field (with overlapping selections),
+    /// the edge cannot help us, we skip it.
+    /// We allow other entity-move edge to be used instead,
+    /// that will be used to collect the required fields.
+    ///
+    /// Sharing only the top-level field is fine:
+    ///
+    ///   target:      `foo { bar { baz } }`
+    ///   requirement: `foo { qux }`
+    ///
+    /// The edge is only rejected when the requirement overlaps the target:
+    ///
+    ///   target:      `foo { bar { baz } }`
+    ///   requirement: `foo { bar { baz } }`
+    ///
+    fn requirements_depend_on_target_field(
+        &self,
+        requirements: &TypeAwareSelection,
+        target_field: &FieldSelection,
+    ) -> bool {
+        if !self.type_condition_matches(&requirements.type_name) {
+            return false;
+        }
+        requirements
+            .selection_set
+            .items
+            .iter()
+            .any(|item| self.requirement_item_depends_on_target_field(item, target_field))
+    }
+
+    fn type_condition_matches(&self, type_condition: &str) -> bool {
+        if self.current_type_name == type_condition {
+            return true;
+        }
+        self.supergraph
+            .interface_to_object_types
+            .get(type_condition)
+            .is_some_and(|object_types| object_types.contains(self.current_type_name))
+    }
+
+    fn same_field_identity(requirement: &FieldSelection, target: &FieldSelection) -> bool {
+        target.name == requirement.name && target.arguments_hash() == requirement.arguments_hash()
+    }
+
+    fn requirement_item_depends_on_target_field(
+        &self,
+        requirement: &SelectionItem,
+        target_field: &FieldSelection,
+    ) -> bool {
+        match requirement {
+            SelectionItem::Field(requirement_field)
+                if Self::same_field_identity(requirement_field, target_field) =>
+            {
+                self.selection_sets_overlap(&requirement_field.selections, &target_field.selections)
+            }
+            SelectionItem::Field(_) => false,
+            SelectionItem::InlineFragment(fragment) => {
+                if !self.type_condition_matches(&fragment.type_condition) {
+                    return false;
+                }
+                fragment.selections.items.iter().any(|requirement_item| {
+                    self.requirement_item_depends_on_target_field(requirement_item, target_field)
+                })
+            }
+            // Fragment spreads are inlined by normalization
+            SelectionItem::FragmentSpread(_) => false,
+        }
+    }
+
+    fn selection_sets_overlap(&self, requirement: &SelectionSet, target: &SelectionSet) -> bool {
+        if target.is_empty() || requirement.is_empty() {
+            return true;
+        }
+        target.items.iter().any(|target_item| {
+            requirement
+                .items
+                .iter()
+                .any(|requirement_item| self.selection_items_overlap(requirement_item, target_item))
+        })
+    }
+
+    fn selection_items_overlap(&self, requirement: &SelectionItem, target: &SelectionItem) -> bool {
+        use SelectionItem::*;
+
+        match (target, requirement) {
+            (Field(t), Field(r)) => {
+                if Self::same_field_identity(t, r) {
+                    return self.selection_sets_overlap(&t.selections, &r.selections);
+                }
+            }
+            (Field(_), InlineFragment(r)) => {
+                if self.type_condition_matches(&r.type_condition) {
+                    return r
+                        .selections
+                        .items
+                        .iter()
+                        .any(|inner| self.selection_items_overlap(inner, target));
+                }
+            }
+            (InlineFragment(t), Field(_)) => {
+                if self.type_condition_matches(&t.type_condition) {
+                    return t
+                        .selections
+                        .items
+                        .iter()
+                        .any(|target_item| self.selection_items_overlap(requirement, target_item));
+                }
+            }
+            (InlineFragment(t), InlineFragment(r)) => {
+                if self.type_condition_matches(&t.type_condition)
+                    && self.type_condition_matches(&r.type_condition)
+                {
+                    return self.selection_sets_overlap(&r.selections, &t.selections);
+                }
+            }
+            // Fragment spreads are inlined by normalization, so we don't have to compare them.
+            _ => {}
+        }
+
+        return false;
     }
 }
