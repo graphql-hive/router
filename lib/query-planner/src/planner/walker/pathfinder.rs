@@ -1,4 +1,5 @@
-use std::collections::{HashSet, VecDeque};
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
 use petgraph::graph::{EdgeIndex, NodeIndex};
@@ -30,14 +31,106 @@ use super::{error::WalkOperationError, excluded::ExcludedFromLookup, path::Opera
 pub type VisitedGraphs<'graph> = HashSet<&'graph str>;
 type ActiveEdgeChecks = HashSet<(NodeIndex, EdgeIndex)>;
 
+struct QueueEntry<'graph> {
+    state: IndirectState<'graph>,
+    sequence: u64,
+}
+
+impl PartialEq for QueueEntry<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.sequence == other.sequence
+    }
+}
+
+impl Eq for QueueEntry<'_> {}
+
+impl PartialOrd for QueueEntry<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for QueueEntry<'_> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other
+            .state
+            .path
+            .cost
+            .cmp(&self.state.path.cost)
+            .then_with(|| self.sequence.cmp(&other.sequence))
+    }
+}
+
+struct DominanceEntry<'graph> {
+    cost: u64,
+    visited_graphs: VisitedGraphs<'graph>,
+    visited_requirements: HashSet<EdgeIndex>,
+}
+
+struct DominanceTable<'graph, 'op> {
+    entries: HashMap<(NodeIndex, NavigationTargetKey<'op>), DominanceEntry<'graph>>,
+}
+
+impl<'graph, 'op> DominanceTable<'graph, 'op> {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+        }
+    }
+
+    /// Returns true if the state is dominated by a previously processed state.
+    /// A state is dominated if a recorded state has:
+    /// - same tail and target
+    /// - lower or equal cost
+    /// - visited graphs are a subset of this state's visited graphs
+    /// - visited requirements are a subset of this state's visited requirements
+    fn is_dominated(
+        &self,
+        state: &IndirectState<'graph>,
+        target_key: NavigationTargetKey<'op>,
+    ) -> bool {
+        let key = (state.path.tail(), target_key);
+        if let Some(entry) = self.entries.get(&key) {
+            entry.cost <= state.path.cost
+                && entry.visited_graphs.is_subset(&state.visited_graphs)
+                && entry
+                    .visited_requirements
+                    .is_subset(&state.visited_requirements)
+        } else {
+            false
+        }
+    }
+
+    fn insert(&mut self, state: &IndirectState<'graph>, target_key: NavigationTargetKey<'op>) {
+        let key = (state.path.tail(), target_key);
+        self.entries
+            .entry(key)
+            .and_modify(|entry| {
+                if state.path.cost < entry.cost {
+                    entry.cost = state.path.cost;
+                    entry.visited_graphs.clone_from(&state.visited_graphs);
+                    entry
+                        .visited_requirements
+                        .clone_from(&state.visited_requirements);
+                }
+            })
+            .or_insert_with(|| DominanceEntry {
+                cost: state.path.cost,
+                visited_graphs: state.visited_graphs.clone(),
+                visited_requirements: state.visited_requirements.clone(),
+            });
+    }
+}
+
 struct IndirectPathsLookupQueue<'graph> {
-    queue: Vec<IndirectState<'graph>>,
+    heap: BinaryHeap<QueueEntry<'graph>>,
+    sequence: u64,
 }
 
 struct IndirectState<'graph> {
     path: OperationPath<'graph>,
     visited_graphs: VisitedGraphs<'graph>,
-    visited_requirements: HashSet<&'graph TypeAwareSelection>,
+    visited_requirements: HashSet<EdgeIndex>,
 }
 
 impl<'graph> IndirectState<'graph> {
@@ -48,7 +141,7 @@ impl<'graph> IndirectState<'graph> {
         Self {
             path: path.clone(),
             visited_graphs: excluded.graph_ids.clone(),
-            visited_requirements: excluded.requirement.clone(),
+            visited_requirements: HashSet::new(),
         }
     }
 
@@ -56,32 +149,29 @@ impl<'graph> IndirectState<'graph> {
         self.visited_graphs.contains(graph_id)
     }
 
-    fn has_visited_requirement(&self, requirement: &'graph TypeAwareSelection) -> bool {
-        self.visited_requirements.contains(requirement)
+    fn has_visited_requirement(&self, edge_index: EdgeIndex) -> bool {
+        self.visited_requirements.contains(&edge_index)
     }
 
     fn excluded_after_visiting_graph(&self, graph_id: &'graph str) -> ExcludedFromLookup<'graph> {
         let mut graph_ids = self.visited_graphs.clone();
         graph_ids.insert(graph_id);
 
-        ExcludedFromLookup {
-            graph_ids,
-            requirement: self.visited_requirements.clone(),
-        }
+        ExcludedFromLookup { graph_ids }
     }
 
     fn next(
         &self,
         graph_id: &'graph str,
-        requirement: Option<&'graph TypeAwareSelection>,
+        edge_index: Option<EdgeIndex>,
         path: OperationPath<'graph>,
     ) -> Self {
         let mut visited_graphs = self.visited_graphs.clone();
         visited_graphs.insert(graph_id);
 
         let mut visited_requirements = self.visited_requirements.clone();
-        if let Some(requirement) = requirement {
-            visited_requirements.insert(requirement);
+        if let Some(edge_index) = edge_index {
+            visited_requirements.insert(edge_index);
         }
 
         Self {
@@ -97,17 +187,25 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
         excluded: &ExcludedFromLookup<'graph>,
         path: &OperationPath<'graph>,
     ) -> Self {
-        IndirectPathsLookupQueue {
-            queue: vec![IndirectState::new_from_excluded(excluded, path)],
-        }
+        let mut heap = BinaryHeap::new();
+        heap.push(QueueEntry {
+            state: IndirectState::new_from_excluded(excluded, path),
+            sequence: 0,
+        });
+        IndirectPathsLookupQueue { heap, sequence: 1 }
     }
 
     pub fn add(&mut self, state: IndirectState<'graph>) {
-        self.queue.push(state);
+        let seq = self.sequence;
+        self.sequence += 1;
+        self.heap.push(QueueEntry {
+            state,
+            sequence: seq,
+        });
     }
 
     pub fn pop(&mut self) -> Option<IndirectState<'graph>> {
-        self.queue.pop()
+        self.heap.pop().map(|entry| entry.state)
     }
 }
 
@@ -218,7 +316,7 @@ impl<'graph> PathSearch<'graph> {
         let graph = self.graph;
         let cancellation_token = self.cancellation_token;
         let mut tracker = BestPathTracker::new(graph);
-        let mut seen = HashSet::new();
+        let mut dominance = DominanceTable::new();
         let target_key = NavigationTargetKey::from(target);
         let tail_node_index = path.tail();
         let tail_node = graph.node(tail_node_index)?;
@@ -240,22 +338,19 @@ impl<'graph> PathSearch<'graph> {
         while let Some(state) = queue.pop() {
             cancellation_token.bail_if_cancelled()?;
 
-            if !seen.insert((state.path.tail(), target_key)) {
+            if dominance.is_dominated(&state, target_key) {
                 trace!(
-                    "Ignoring. Already searched this path tail for this target: {}",
+                    "Ignoring. Dominated by a previously processed state for this target: {}",
                     state.path.pretty_print(graph)
                 );
                 continue;
             }
 
+            dominance.insert(&state, target_key);
+
             let current_type_name = graph.node(state.path.tail())?.name_str();
 
-            let relevant_edges = graph.edges_from(state.path.tail()).filter(|e| {
-                matches!(
-                    e.weight(),
-                    Edge::EntityMove { .. } | Edge::InterfaceObjectTypeMove { .. }
-                )
-            });
+            let relevant_edges = graph.entity_edges_from(state.path.tail());
 
             for edge_ref in relevant_edges {
                 trace!(
@@ -315,23 +410,8 @@ impl<'graph> PathSearch<'graph> {
                     }
                 }
 
-                // A huge win for performance, is when you do less work :D
                 // We can ignore an edge that has already been visited with the same key fields / requirements.
-                // The way entity-move edges are created, where every graph points to every other graph:
-                //  Graph A: User @key(id) @key(name)
-                //  Graph B: User @key(id)
-                //  Edges in a merged graph:
-                //    - User/A @key(id) -> User/B
-                //    - User/B @key(id) -> User/A
-                //    - User/B @key(name) -> User/A
-                // Allows us to ignore an edge with the same key fields.
-                // That's because in some other path, we will or already have checked the other edge.
-                let requirements_already_checked = match edge.requirements() {
-                    Some(selection_requirements) => {
-                        state.has_visited_requirement(selection_requirements)
-                    }
-                    None => false,
-                };
+                let requirements_already_checked = state.has_visited_requirement(edge_ref.id());
 
                 if requirements_already_checked {
                     trace!("Ignoring. Already visited similar edge");
@@ -385,7 +465,7 @@ impl<'graph> PathSearch<'graph> {
 
                             queue.add(state.next(
                                 edge_tail_graph_id,
-                                edge.requirements(),
+                                Some(edge_ref.id()),
                                 next_resolution_path,
                             ));
 
@@ -533,25 +613,25 @@ impl<'graph> PathSearch<'graph> {
             }
         }
 
-        let edges_iter: Box<dyn Iterator<Item = _>> = match target {
-            NavigationTarget::Field { field, .. } => {
-                Box::new(graph.edges_from(path_tail_index).filter(move |e| {
-                    matches!(e.weight(), Edge::FieldMove(f) if f.name == field.name)
-                        || matches!(e.weight(), Edge::ReentryMove(r) if r.name == field.name)
-                }))
-            }
-            NavigationTarget::ConcreteType(type_name, _condition) => Box::new(
-                graph
-                    .edges_from(path_tail_index)
-                    .filter(move |e| match e.weight() {
-                        Edge::AbstractMove(t) => t == type_name,
-                        Edge::InterfaceObjectTypeMove(t) => &t.object_type_name == type_name,
-                        _ => false,
-                    }),
-            ),
-        };
+        for edge_ref in graph.edges_from(path_tail_index) {
+            let matches_target = match target {
+                NavigationTarget::Field { field, .. } => {
+                    matches!(edge_ref.weight(), Edge::FieldMove(f) if f.name == field.name)
+                        || matches!(edge_ref.weight(), Edge::ReentryMove(r) if r.name == field.name)
+                }
+                NavigationTarget::ConcreteType(type_name, _condition) => {
+                    matches!(edge_ref.weight(), Edge::AbstractMove(t) if t == type_name)
+                        || matches!(
+                            edge_ref.weight(),
+                            Edge::InterfaceObjectTypeMove(t) if t.object_type_name == *type_name
+                        )
+                }
+            };
 
-        for edge_ref in edges_iter {
+            if !matches_target {
+                continue;
+            }
+
             if let Some(new_path) =
                 self.try_advance_direct_path(path, &edge_ref, target, requirement_search_mode)?
             {

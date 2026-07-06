@@ -2,6 +2,7 @@ pub(crate) mod edge;
 pub(crate) mod error;
 pub(crate) mod node;
 
+use self::edge::EdgeReference;
 pub use self::edge::PlannerOverrideContext;
 pub use self::edge::PERCENTAGE_SCALE_FACTOR;
 
@@ -507,6 +508,42 @@ impl Graph {
 
     pub fn edges_from(&self, node_index: NodeIndex) -> Edges<'_, Edge, Directed> {
         self.graph.edges_directed(node_index, Direction::Outgoing)
+    }
+
+    pub fn entity_edges_from(
+        &self,
+        node_index: NodeIndex,
+    ) -> impl Iterator<Item = EdgeReference<'_>> + '_ {
+        self.edges_from(node_index).filter(|e| {
+            matches!(
+                e.weight(),
+                Edge::EntityMove { .. } | Edge::InterfaceObjectTypeMove { .. }
+            )
+        })
+    }
+
+    pub fn field_edges_from<'a>(
+        &'a self,
+        node_index: NodeIndex,
+        field_name: &'a str,
+    ) -> impl Iterator<Item = EdgeReference<'a>> + 'a {
+        self.edges_from(node_index).filter(move |e| {
+            matches!(e.weight(), Edge::FieldMove(f) if f.name == field_name)
+                || matches!(e.weight(), Edge::ReentryMove(r) if r.name == field_name)
+        })
+    }
+
+    pub fn type_edges_from<'a>(
+        &'a self,
+        node_index: NodeIndex,
+        type_name: &'a str,
+    ) -> impl Iterator<Item = EdgeReference<'a>> + 'a {
+        self.edges_from(node_index)
+            .filter(move |e| match e.weight() {
+                Edge::AbstractMove(t) => t == type_name,
+                Edge::InterfaceObjectTypeMove(t) => &t.object_type_name == type_name,
+                _ => false,
+            })
     }
 
     #[instrument(level = "trace", skip(self, state))]
