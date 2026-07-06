@@ -777,3 +777,70 @@ fn requires_circular_keys_test() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+#[test]
+fn requires_self_dependency_false_positive() -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let document = parse_operation(
+        r#"
+        {
+          books {
+            edition {
+              book {
+                catalogId
+              }
+            }
+            isRecommended
+          }
+        }
+        "#,
+    );
+
+    let plan = build_query_plan_with_defaults(
+        "fixture/issues/requires-self-dependency-false-positive.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "library") {
+          {
+            books {
+              __typename
+              edition {
+                book {
+                  catalogId
+                }
+                isbn
+              }
+            }
+          }
+        },
+        Flatten(path: "books.@") {
+          Fetch(service: "recommender") {
+            {
+              ... on BookListing {
+                __typename
+                edition {
+                  book {
+                    catalogId
+                  }
+                  isbn
+                }
+              }
+            } =>
+            {
+              ... on BookListing {
+                isRecommended
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
