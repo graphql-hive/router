@@ -12,19 +12,23 @@ use sonic_rs::json;
 use super::shared::{assert_error_code, assert_resolves_successfully, write_manifest};
 use crate::testkit::{coprocessor::TestCoprocessor, TestRouter, TestSubgraphs};
 
-#[derive(Default)]
-struct TestSkipEnforcementPlugin;
+struct TestSkipEnforcementPlugin {
+    skip_enforcement: bool,
+}
 
 #[async_trait]
 impl RouterPlugin for TestSkipEnforcementPlugin {
-    type Config = ();
+    type Config = bool;
 
     fn plugin_name() -> &'static str {
         "test_skip_enforcement"
     }
 
     fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
-        payload.initialize_plugin_with_defaults()
+        let config = payload.config()?;
+        payload.initialize_plugin(Self {
+            skip_enforcement: config,
+        })
     }
 
     fn on_http_request<'req>(
@@ -36,36 +40,7 @@ impl RouterPlugin for TestSkipEnforcementPlugin {
             .write()
             .unwrap()
             .persisted_documents()
-            .set_skip_enforcement(true);
-        payload.proceed()
-    }
-}
-
-#[derive(Default)]
-struct TestSkipEnforcementFalsePlugin;
-
-#[async_trait]
-impl RouterPlugin for TestSkipEnforcementFalsePlugin {
-    type Config = ();
-
-    fn plugin_name() -> &'static str {
-        "test_skip_enforcement_false"
-    }
-
-    fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
-        payload.initialize_plugin_with_defaults()
-    }
-
-    fn on_http_request<'req>(
-        &self,
-        payload: OnHttpRequestHookPayload<'req>,
-    ) -> OnHttpRequestHookResult<'req> {
-        payload
-            .request_context
-            .write()
-            .unwrap()
-            .persisted_documents()
-            .set_skip_enforcement(false);
+            .set_skip_enforcement(self.skip_enforcement);
         payload.proceed()
     }
 }
@@ -119,6 +94,7 @@ async fn plugin_bypass_via_on_http_request() {
                 plugins:
                   test_skip_enforcement:
                     enabled: true
+                    config: true
                 "#,
             manifest.path().display(),
         ))
@@ -157,6 +133,7 @@ async fn plugin_bypass_via_on_graphql_params() {
                 plugins:
                   test_skip_enforcement_on_graphql_params:
                     enabled: true
+                    config: true
                 "#,
             manifest.path().display(),
         ))
@@ -193,13 +170,14 @@ async fn skip_enforcement_false_still_enforces() {
                     type: file
                     path: "{}"
                 plugins:
-                  test_skip_enforcement_false:
+                  test_skip_enforcement:
                     enabled: true
+                    config: false
                 "#,
             manifest.path().display(),
         ))
-        // Plugin sets skip_enforcement to false via on_graphql_params
-        .register_plugin::<TestSkipEnforcementFalsePlugin>()
+        // Plugin sets skip_enforcement to false via on_http_request
+        .register_plugin::<TestSkipEnforcementPlugin>()
         .build()
         .start()
         .await;
@@ -233,6 +211,7 @@ async fn skip_enforcement_with_valid_document_id() {
                 plugins:
                   test_skip_enforcement:
                     enabled: true
+                    config: true
                 "#,
             manifest.path().display(),
         ))
