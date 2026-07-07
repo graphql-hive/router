@@ -94,17 +94,6 @@ pub async fn drain_into<S>(
     }
 }
 
-/// Wrap a receiver into a stream the consumer reads from.
-pub fn receiver_stream(
-    mut rx: mpsc::Receiver<SubscriptionItem>,
-) -> BoxStream<'static, SubscriptionItem> {
-    Box::pin(async_stream::stream! {
-        while let Some(item) = rx.recv().await {
-            yield item;
-        }
-    })
-}
-
 /// Decouple a Send subscription source from its slow consumer so the emitting subgraph is never
 /// throttled by downstream latency. Spawns a drainer that forwards `source` into a bounded
 /// channel with drop-on-full semantics (see `drain_into`) and returns the consumer-side stream.
@@ -122,7 +111,7 @@ pub fn buffered<S>(
 where
     S: Stream<Item = SubscriptionItem> + Unpin + 'static,
 {
-    let (tx, rx) = mpsc::channel::<SubscriptionItem>(buffer_size);
+    let (tx, mut rx) = mpsc::channel::<SubscriptionItem>(buffer_size);
 
     // ntex::rt::spawn keeps the drainer on the local ntex runtime, matching the rest of the
     // subscription pipeline.
@@ -138,5 +127,9 @@ where
         .await;
     }));
 
-    receiver_stream(rx)
+    Box::pin(async_stream::stream! {
+        while let Some(item) = rx.recv().await {
+            yield item;
+        }
+    })
 }

@@ -15,7 +15,7 @@ use hive_router_internal::telemetry::TelemetryContext;
 use crate::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
 use crate::executors::error::SubgraphExecutorError;
 use crate::executors::graphql_transport_ws::build_subscribe_payload;
-use crate::executors::subscription_buffer::{drain_into, receiver_stream};
+use crate::executors::subscription_buffer::drain_into;
 use crate::executors::websocket_client::{connect, WsClient};
 use crate::response::subgraph_response::SubgraphResponse;
 
@@ -134,7 +134,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
     > {
         // buffer decouples the emitting subgraph from slow downstream consumers, dropping
         // messages under backpressure instead of throttling the subgraph
-        let (tx, rx) = mpsc::channel::<Result<SubgraphResponse<'static>, SubgraphExecutorError>>(
+        let (tx, mut rx) = mpsc::channel::<Result<SubgraphResponse<'static>, SubgraphExecutorError>>(
             self.buffer_capacity,
         );
 
@@ -219,10 +219,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
             .metrics
             .subscriptions
             .active_subgraph_operation(&self.subgraph_name);
-        let mut rx_stream = receiver_stream(rx);
         Ok(Box::pin(async_stream::stream! {
             let _op_guard = op_guard;
-            while let Some(item) = rx_stream.next().await {
+            while let Some(item) = rx.recv().await {
                 yield item;
             }
         }))
