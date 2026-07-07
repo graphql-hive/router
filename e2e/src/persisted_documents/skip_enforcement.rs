@@ -130,13 +130,7 @@ async fn plugin_bypass_via_on_http_request() {
 
     // We send no document id
     let response = router
-        .send_post_request(
-            "/graphql",
-            json!({
-                "query": "{ topProducts { name } }"
-            }),
-            None,
-        )
+        .send_graphql_request("{ topProducts { name } }", None, None)
         .await;
 
     // But it should still resolve successfully, because skip_enforcement is true
@@ -174,13 +168,7 @@ async fn plugin_bypass_via_on_graphql_params() {
 
     // We send no document id
     let response = router
-        .send_post_request(
-            "/graphql",
-            json!({
-                "query": "{ topProducts { name } }"
-            }),
-            None,
-        )
+        .send_graphql_request("{ topProducts { name } }", None, None)
         .await;
 
     // But it should still resolve successfully, because skip_enforcement is true
@@ -218,13 +206,7 @@ async fn skip_enforcement_false_still_enforces() {
 
     // We send no document id
     let response = router
-        .send_post_request(
-            "/graphql",
-            json!({
-                "query": "{ topProducts { name } }"
-            }),
-            None,
-        )
+        .send_graphql_request("{ topProducts { name } }", None, None)
         .await;
 
     // Request should fail as it lacks a document id
@@ -329,13 +311,7 @@ async fn coprocessor_skip_enforcement_via_router_request() {
 
     // Request has no ID
     let response = router
-        .send_post_request(
-            "/graphql",
-            json!({
-                "query": "{ topProducts { name } }"
-            }),
-            None,
-        )
+        .send_graphql_request("{ topProducts { name } }", None, None)
         .await;
 
     // Request should succeed, because we bypassed enforcement
@@ -398,13 +374,7 @@ async fn coprocessor_skip_enforcement_false_still_enforces() {
 
     // Request has no ID
     let response = router
-        .send_post_request(
-            "/graphql",
-            json!({
-                "query": "{ topProducts { name } }"
-            }),
-            None,
-        )
+        .send_graphql_request("{ topProducts { name } }", None, None)
         .await;
 
     // Request should fail, because we did not bypass enforcement

@@ -112,11 +112,9 @@ async fn require_id_expression_basic() {
     assert_error_code(response, "PERSISTED_DOCUMENT_ID_REQUIRED").await;
 
     let response = router
-        .send_post_request(
-            "/graphql",
-            json!({
-                "query": "{ topProducts { name } }"
-            }),
+        .send_graphql_request(
+            "{ topProducts { name } }",
+            None,
             some_header_map! {
                 http::header::HeaderName::from_static("x-require-id") => "false"
             },
