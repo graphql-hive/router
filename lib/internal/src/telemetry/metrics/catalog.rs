@@ -103,6 +103,7 @@ pub mod labels {
     pub const STATUS: &str = "status";
     pub const ERROR_TYPE: &str = "error.type";
     pub const SUBGRAPH_NAME: &str = "subgraph.name";
+    pub const SUBSCRIPTION_TRANSPORT: &str = "subscription.transport";
     pub const HTTP_REQUEST_METHOD: &str = "http.request.method";
     pub const HTTP_RESPONSE_STATUS_CODE: &str = "http.response.status_code";
     pub const HTTP_ROUTE: &str = "http.route";
@@ -167,9 +168,31 @@ pub mod names {
     pub const COPROCESSOR_REQUESTS_TOTAL: &str = "hive.router.coprocessor.requests_total";
     pub const COPROCESSOR_DURATION: &str = "hive.router.coprocessor.duration";
     pub const COPROCESSOR_ERRORS_TOTAL: &str = "hive.router.coprocessor.errors_total";
+    pub const SUBSCRIPTIONS_SUBGRAPHS_ACTIVE: &str = "hive.router.subscriptions.subgraphs.active";
+    pub const SUBSCRIPTIONS_SUBGRAPHS_CONNECTIONS: &str =
+        "hive.router.subscriptions.subgraphs.connections";
+    pub const SUBSCRIPTIONS_CLIENTS_ACTIVE: &str = "hive.router.subscriptions.clients.active";
+    pub const SUBSCRIPTIONS_CLIENTS_CONNECTIONS: &str =
+        "hive.router.subscriptions.clients.connections";
 }
 
 pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
+    (
+        names::SUBSCRIPTIONS_SUBGRAPHS_ACTIVE,
+        &[labels::SUBGRAPH_NAME],
+    ),
+    (
+        names::SUBSCRIPTIONS_SUBGRAPHS_CONNECTIONS,
+        &[labels::SUBGRAPH_NAME, labels::SUBSCRIPTION_TRANSPORT],
+    ),
+    (
+        names::SUBSCRIPTIONS_CLIENTS_ACTIVE,
+        &[labels::SUBSCRIPTION_TRANSPORT],
+    ),
+    (
+        names::SUBSCRIPTIONS_CLIENTS_CONNECTIONS,
+        &[labels::SUBSCRIPTION_TRANSPORT],
+    ),
     (names::GRAPHQL_ERRORS_TOTAL, &[labels::CODE]),
     (
         names::COST_ESTIMATED,

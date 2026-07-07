@@ -9,6 +9,9 @@ use ntex::rt;
 use tokio::sync::mpsc;
 use tracing::debug;
 
+use hive_router_internal::telemetry::metrics::subscription_metrics::SubscriptionTransport;
+use hive_router_internal::telemetry::TelemetryContext;
+
 use crate::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
 use crate::executors::error::SubgraphExecutorError;
 use crate::executors::graphql_transport_ws::build_subscribe_payload;
@@ -21,6 +24,7 @@ pub struct WsSubgraphExecutor {
     endpoint: http::Uri,
     tls_config: Option<Arc<rustls::ClientConfig>>,
     buffer_capacity: usize,
+    telemetry_context: Arc<TelemetryContext>,
 }
 
 impl WsSubgraphExecutor {
@@ -29,12 +33,14 @@ impl WsSubgraphExecutor {
         endpoint: http::Uri,
         tls_config: Option<Arc<rustls::ClientConfig>>,
         buffer_capacity: usize,
+        telemetry_context: Arc<TelemetryContext>,
     ) -> Self {
         Self {
             subgraph_name,
             endpoint,
             tls_config,
             buffer_capacity,
+            telemetry_context,
         }
     }
 }
@@ -144,6 +150,15 @@ impl SubgraphExecutor for WsSubgraphExecutor {
             self.subgraph_name, self.endpoint
         );
 
+        let subgraph_name_for_metrics = self.subgraph_name.clone();
+        let telemetry_context = self.telemetry_context.clone();
+
+        // TODO: op_guard needs to be moved into the receiver stream
+        let op_guard = telemetry_context
+            .metrics
+            .subscriptions
+            .active_subgraph_operation(&self.subgraph_name);
+
         // no await intentionally. the task runs the subscription in the background
         // and sends responses through the channel. The spawned future itself stays local
         // to ntex runtime, so it can hold non-Send websocket client state.
@@ -177,6 +192,14 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 "WebSocket subscription connection to subgraph {} at {} established",
                 subgraph_name, endpoint
             );
+
+            let _conn_guard = telemetry_context
+                .metrics
+                .subscriptions
+                .active_subgraph_connection(
+                    &subgraph_name_for_metrics,
+                    SubscriptionTransport::WebSocket,
+                );
 
             let stream = client
                 .subscribe(subscribe_payload, custom_scalar_paths)

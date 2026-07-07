@@ -19,6 +19,7 @@ use hive_router_config::HiveRouterConfig;
 use hive_router_internal::inflight::InFlightRole;
 use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
 use hive_router_internal::telemetry::metrics::http_client_metrics::HttpClientRequestStateCapture;
+use hive_router_internal::telemetry::metrics::subscription_metrics::SubscriptionTransport;
 use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
 
@@ -610,7 +611,24 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 custom_scalar_paths.clone(),
             );
 
+            let op_guard = self
+                .telemetry_context
+                .metrics
+                .subscriptions
+                .active_subgraph_operation(&self.subgraph_name);
+            let conn_guard = self
+                .telemetry_context
+                .metrics
+                .subscriptions
+                .active_subgraph_connection(
+                    &self.subgraph_name,
+                    SubscriptionTransport::HttpMultipart,
+                );
+
             let mapped = Box::pin(async_stream::stream! {
+                let _op_guard = op_guard;
+                let _conn_guard = conn_guard;
+
                 trace!("multipart subscription stream started");
                 for await result in stream {
                     match result {
@@ -643,7 +661,21 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 
             let stream = sse::parse_to_stream(body_stream, custom_scalar_paths.clone());
 
+            let op_guard = self
+                .telemetry_context
+                .metrics
+                .subscriptions
+                .active_subgraph_operation(&self.subgraph_name);
+            let conn_guard = self
+                .telemetry_context
+                .metrics
+                .subscriptions
+                .active_subgraph_connection(&self.subgraph_name, SubscriptionTransport::HttpSse);
+
             let mapped = Box::pin(async_stream::stream! {
+                let _op_guard = op_guard;
+                let _conn_guard = conn_guard;
+
                 trace!("SSE subscription stream started");
                 for await result in stream {
                     match result {

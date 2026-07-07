@@ -737,6 +737,7 @@ impl SubgraphExecutorMap {
                     ws_endpoint_uri,
                     ws_tls_config,
                     self.config.subscriptions.subgraph_buffer_capacity,
+                    self.telemetry_context.clone(),
                 )
                 .to_boxed_arc();
 
@@ -769,6 +770,7 @@ impl SubgraphExecutorMap {
                     public_url.to_string(),
                     heartbeat_interval_ms,
                     self.callback_subscriptions.clone(),
+                    self.telemetry_context.clone(),
                 )
                 .to_boxed_arc();
 

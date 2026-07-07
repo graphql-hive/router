@@ -7,6 +7,9 @@ use hive_router_config::traffic_shaping::{
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::expressions::{BooleanOrProgram, ExpressionCompileError};
 use hive_router_internal::inflight::{InFlightCleanupGuard, InFlightMap};
+use hive_router_internal::telemetry::metrics::subscription_metrics::{
+    ActiveClientConnectionGuard, ActiveClientOperationGuard,
+};
 use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::coprocessor::{CoprocessorError, CoprocessorRuntime};
 use hive_router_plan_executor::execution::plan::FailedExecutionResult;
@@ -152,6 +155,8 @@ pub struct SharedRouterStreamResponse {
     // there is no window where the channel has zero receivers and events can be lost.
     // joiners get None and subscribe via body.subscribe() when consumed.
     pub receiver: Option<tokio::sync::broadcast::Receiver<SubscriptionEvent>>,
+    // set for subscription responses, None for non-subscription streams
+    pub subscription_metrics: Option<(ActiveClientOperationGuard, ActiveClientConnectionGuard)>,
 }
 
 impl Clone for SharedRouterStreamResponse {
@@ -161,6 +166,8 @@ impl Clone for SharedRouterStreamResponse {
             headers: self.headers.clone(),
             error_count: self.error_count,
             receiver: None,
+            // guards are not cloned - each clone gets its own via into_response
+            subscription_metrics: None,
         }
     }
 }
@@ -170,8 +177,10 @@ impl SharedRouterStreamResponse {
         // leader already has a pre-subscribed receiver to avoid missing
         // any potential events emitted. joiners, on the other hand, subscribe
         let mut receiver = self.receiver.unwrap_or_else(|| self.body.subscribe());
+        let subscription_metrics = self.subscription_metrics;
 
         let stream = Box::pin(async_stream::stream! {
+            let _subscription_metrics = subscription_metrics;
             loop {
                 match receiver.recv().await {
                     Ok(SubscriptionEvent::Raw(data)) => {

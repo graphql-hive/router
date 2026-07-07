@@ -17,6 +17,9 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn, Instrument};
 
+use hive_router_internal::telemetry::metrics::subscription_metrics::{
+    ActiveClientConnectionGuard, SubscriptionTransport,
+};
 use hive_router_internal::telemetry::traces::spans::graphql::GraphQLOperationSpan;
 use hive_router_plan_executor::executors::graphql_transport_ws::{
     ClientMessage, CloseCode, ConnectionInitPayload, ServerMessage, WS_SUBPROTOCOL,
@@ -108,6 +111,18 @@ async fn ws_service(
         debug!("WebSocket connection accepted");
     }
 
+    let conn_guard: Option<ActiveClientConnectionGuard> = if has_accepted_subprotocol {
+        Some(
+            shared_state
+                .telemetry_context
+                .metrics
+                .subscriptions
+                .active_client_connection(SubscriptionTransport::WebSocket),
+        )
+    } else {
+        None
+    };
+
     let ws_uri: Rc<http::Uri> = Rc::new(
         shared_state
             .router_config
@@ -175,6 +190,8 @@ async fn ws_service(
         // in turn cancel all active subscription streams and perform
         // the cleanup in there
         state.borrow_mut().subscriptions.clear();
+        // drop conn_guard here to decrement the connection counter
+        drop(conn_guard);
     });
 
     Ok(chain(service).and_then(on_shutdown))
@@ -573,6 +590,8 @@ async fn handle_text_frame(
                             .receiver
                             .unwrap_or_else(|| response.body.subscribe());
 
+                        let client_op_guard = shared_state.telemetry_context.metrics.subscriptions.active_client_operation(SubscriptionTransport::WebSocket);
+
                         trace!(id = %id, "Subscription started");
 
                         let sink = sink.clone();
@@ -582,6 +601,7 @@ async fn handle_text_frame(
                         // making cancellation impossible
                         rt::spawn(async move {
                             let _guard = guard;
+                            let _client_op_guard = client_op_guard;
                             let mut cancelled = false;
 
                             loop {
