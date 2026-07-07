@@ -136,6 +136,7 @@ pub struct FieldProjectionPlan {
     pub conditions_need_type_name: bool,
     pub needs_type_name: bool,
     pub subtree_needs_type_name: bool,
+    pub simple_projection: bool,
 }
 
 #[cfg(debug_assertions)]
@@ -930,6 +931,7 @@ impl FieldProjectionPlan {
                 conditions_need_type_name: false,
                 needs_type_name: false,
                 subtree_needs_type_name: false,
+                simple_projection: false,
             }
         } else {
             FieldProjectionPlan {
@@ -952,6 +954,7 @@ impl FieldProjectionPlan {
                 conditions_need_type_name: false,
                 needs_type_name: false,
                 subtree_needs_type_name: false,
+                simple_projection: false,
             }
         };
 
@@ -1035,6 +1038,7 @@ impl FieldProjectionPlan {
             conditions_need_type_name: false,
             needs_type_name: false,
             subtree_needs_type_name: false,
+            simple_projection: false,
         };
         plan.refresh_runtime_flags();
         plan
@@ -1064,6 +1068,7 @@ impl FieldProjectionPlan {
             self.is_typename || self.parent_type_guard.is_some() || self.conditions_need_type_name;
 
         self.subtree_needs_type_name = false;
+        let mut children_are_simple = true;
         if let ProjectionValueSource::ResponseData {
             selections: Some(selections),
         } = &mut self.value
@@ -1073,8 +1078,15 @@ impl FieldProjectionPlan {
                 selection.refresh_runtime_flags();
                 self.subtree_needs_type_name |=
                     selection.needs_type_name || selection.subtree_needs_type_name;
+                children_are_simple &= selection.simple_projection;
             }
         }
+
+        self.simple_projection = self.parent_type_guard.is_none()
+            && self.conditions.is_none()
+            && !self.is_typename
+            && matches!(self.value, ProjectionValueSource::ResponseData { .. })
+            && children_are_simple;
     }
 
     fn get_type_guard(condition: &FieldProjectionCondition) -> Option<TypeCondition> {
