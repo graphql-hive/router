@@ -2,7 +2,15 @@ use core::fmt;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
+use hive_router_query_planner::{
+    ast::{
+        fragment::FragmentDefinition,
+        operation::SubgraphFetchOperation,
+        selection_item::SelectionItem,
+        selection_set::{FieldSelection, SelectionSet},
+    },
+    planner::plan_nodes::CustomScalarPaths,
+};
 use http::{HeaderMap, StatusCode};
 use serde::{
     de::{self, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor},
@@ -38,6 +46,152 @@ static EMPTY_CUSTOM_SCALAR_PATHS: CustomScalarPaths = CustomScalarPaths {
     children: std::collections::BTreeMap::new(),
     terminal: false,
 };
+
+#[derive(Debug, Clone)]
+pub struct SubgraphResponseShape {
+    data: SubgraphValueShape,
+}
+
+#[derive(Debug, Clone)]
+enum SubgraphValueShape {
+    Leaf {
+        custom_scalar_paths: Option<CustomScalarPaths>,
+    },
+    Object {
+        fields: Vec<SubgraphFieldShape>,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct SubgraphFieldShape {
+    response_key: String,
+    value: SubgraphValueShape,
+}
+
+impl SubgraphResponseShape {
+    pub fn from_operation(
+        operation: &SubgraphFetchOperation,
+        custom_scalar_paths: Option<&CustomScalarPaths>,
+    ) -> Self {
+        Self {
+            data: SubgraphValueShape::from_selection_set(
+                &operation.document.operation.selection_set,
+                &operation.document.fragments,
+                custom_scalar_paths,
+            ),
+        }
+    }
+}
+
+impl SubgraphValueShape {
+    fn from_selection_set(
+        selection_set: &SelectionSet,
+        fragments: &[FragmentDefinition],
+        custom_scalar_paths: Option<&CustomScalarPaths>,
+    ) -> Self {
+        let mut fields = Vec::with_capacity(selection_set.items.len());
+        collect_selection_set_fields(selection_set, fragments, custom_scalar_paths, &mut fields);
+        SubgraphValueShape::Object { fields }
+    }
+}
+
+fn collect_selection_set_fields(
+    selection_set: &SelectionSet,
+    fragments: &[FragmentDefinition],
+    custom_scalar_paths: Option<&CustomScalarPaths>,
+    fields: &mut Vec<SubgraphFieldShape>,
+) {
+    for selection in &selection_set.items {
+        match selection {
+            SelectionItem::Field(field) => {
+                if field.omit_from_response {
+                    continue;
+                }
+                add_field_shape(fields, field, fragments, custom_scalar_paths);
+            }
+            SelectionItem::InlineFragment(fragment) => {
+                collect_selection_set_fields(
+                    &fragment.selections,
+                    fragments,
+                    custom_scalar_paths,
+                    fields,
+                );
+            }
+            SelectionItem::FragmentSpread(name) => {
+                let fragment = fragments
+                    .iter()
+                    .find(|fragment| fragment.name == *name)
+                    .unwrap_or_else(|| {
+                        panic!("Missing fragment definition `{name}` in subgraph fetch operation")
+                    });
+                collect_selection_set_fields(
+                    &fragment.selection_set,
+                    fragments,
+                    custom_scalar_paths,
+                    fields,
+                );
+            }
+        }
+    }
+}
+
+fn add_field_shape(
+    fields: &mut Vec<SubgraphFieldShape>,
+    field: &FieldSelection,
+    fragments: &[FragmentDefinition],
+    custom_scalar_paths: Option<&CustomScalarPaths>,
+) {
+    let response_key = field.selection_identifier();
+    let field_custom_scalar_paths = custom_scalar_paths
+        .and_then(|paths| paths.children.get(response_key))
+        .cloned();
+    let value = if field.selections.is_empty() {
+        SubgraphValueShape::Leaf {
+            custom_scalar_paths: field_custom_scalar_paths,
+        }
+    } else {
+        SubgraphValueShape::from_selection_set(
+            &field.selections,
+            fragments,
+            field_custom_scalar_paths.as_ref(),
+        )
+    };
+
+    if let Some(existing) = fields
+        .iter_mut()
+        .find(|shape| shape.response_key == response_key)
+    {
+        merge_field_shapes(&mut existing.value, value);
+    } else {
+        fields.push(SubgraphFieldShape {
+            response_key: response_key.to_string(),
+            value,
+        });
+    }
+}
+
+fn merge_field_shapes(left: &mut SubgraphValueShape, right: SubgraphValueShape) {
+    match (left, right) {
+        (
+            SubgraphValueShape::Object { fields: left },
+            SubgraphValueShape::Object { fields: right },
+        ) => {
+            for field in right {
+                if let Some(existing) = left
+                    .iter_mut()
+                    .find(|shape| shape.response_key == field.response_key)
+                {
+                    merge_field_shapes(&mut existing.value, field.value);
+                } else {
+                    left.push(field);
+                }
+            }
+        }
+        (left, right) => {
+            *left = right;
+        }
+    }
+}
 
 struct SubgraphResponseSeed<'a> {
     custom_scalar_paths: &'a CustomScalarPaths,
@@ -123,6 +277,222 @@ impl<'a, 'de> Visitor<'de> for SubgraphResponseVisitor<'a> {
             status: None,
         })
     }
+}
+
+struct ShapedSubgraphResponseSeed<'a> {
+    shape: &'a SubgraphResponseShape,
+}
+
+impl<'a, 'de> DeserializeSeed<'de> for ShapedSubgraphResponseSeed<'a> {
+    type Value = SubgraphResponse<'de>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_map(ShapedSubgraphResponseVisitor { shape: self.shape })
+    }
+}
+
+struct ShapedSubgraphResponseVisitor<'a> {
+    shape: &'a SubgraphResponseShape,
+}
+
+impl<'a, 'de> Visitor<'de> for ShapedSubgraphResponseVisitor<'a> {
+    type Value = SubgraphResponse<'de>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter
+            .write_str("a GraphQL response object with shaped data, errors, and extensions fields")
+    }
+
+    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+    where
+        M: MapAccess<'de>,
+    {
+        let mut data = None;
+        let mut errors = None;
+        let mut extensions = None;
+
+        while let Some(key) = map.next_key::<&str>()? {
+            match key {
+                "data" => {
+                    if data.is_some() {
+                        return Err(de::Error::duplicate_field("data"));
+                    }
+                    data = Some(map.next_value_seed(ShapedValueSeed {
+                        shape: &self.shape.data,
+                    })?);
+                }
+                "errors" => {
+                    if errors.is_some() {
+                        return Err(de::Error::duplicate_field("errors"));
+                    }
+                    errors = Some(map.next_value()?);
+                }
+                "extensions" => {
+                    if extensions.is_some() {
+                        return Err(de::Error::duplicate_field("extensions"));
+                    }
+                    extensions = Some(map.next_value()?);
+                }
+                _ => {
+                    let _ = map.next_value::<de::IgnoredAny>()?;
+                }
+            }
+        }
+
+        Ok(SubgraphResponse {
+            data: data.unwrap_or(Value::Null),
+            errors,
+            extensions,
+            headers: None,
+            bytes: None,
+            status: None,
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ShapedValueSeed<'a> {
+    shape: &'a SubgraphValueShape,
+}
+
+impl<'a, 'de> DeserializeSeed<'de> for ShapedValueSeed<'a> {
+    type Value = Value<'de>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match self.shape {
+            SubgraphValueShape::Leaf {
+                custom_scalar_paths,
+            } => deserialize_value_with_paths(
+                deserializer,
+                custom_scalar_paths
+                    .as_ref()
+                    .unwrap_or(&EMPTY_CUSTOM_SCALAR_PATHS),
+            ),
+            SubgraphValueShape::Object { .. } => {
+                deserializer.deserialize_any(ShapedValueVisitor { shape: self.shape })
+            }
+        }
+    }
+}
+
+struct ShapedValueVisitor<'a> {
+    shape: &'a SubgraphValueShape,
+}
+
+impl<'a, 'de> Visitor<'de> for ShapedValueVisitor<'a> {
+    type Value = Value<'de>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a JSON value matching the compiled subgraph response shape")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
+        Ok(Value::Bool(value))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
+        Ok(Value::I64(value))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E> {
+        Ok(Value::U64(value))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E> {
+        Ok(Value::F64(value))
+    }
+
+    fn visit_borrowed_str<E>(self, value: &'de str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::String(value.into()))
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::String(value.to_owned().into()))
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::String(value.into()))
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+        Ok(Value::Null)
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut elements = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+        let seed = ShapedValueSeed { shape: self.shape };
+        while let Some(elem) = seq.next_element_seed(seed)? {
+            elements.push(elem);
+        }
+        Ok(Value::Array(elements))
+    }
+
+    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+    where
+        M: MapAccess<'de>,
+    {
+        let SubgraphValueShape::Object { fields } = self.shape else {
+            unreachable!("only object shapes use ShapedValueVisitor for maps")
+        };
+
+        let mut entries = Vec::with_capacity(fields.len());
+        let mut cursor = 0;
+
+        while let Some(key) = map.next_key::<&'de str>()? {
+            if let Some(index) = find_field_shape(fields, key, &mut cursor) {
+                let value = map.next_value_seed(ShapedValueSeed {
+                    shape: &fields[index].value,
+                })?;
+                entries.push((key, value));
+            } else {
+                let _ = map.next_value::<de::IgnoredAny>()?;
+            }
+        }
+
+        Ok(Value::Object(entries))
+    }
+}
+
+fn find_field_shape(fields: &[SubgraphFieldShape], key: &str, cursor: &mut usize) -> Option<usize> {
+    let len = fields.len();
+    if len == 0 {
+        return None;
+    }
+
+    let start = (*cursor).min(len);
+    for index in start..len {
+        if fields[index].response_key == key {
+            *cursor = index + 1;
+            return Some(index);
+        }
+    }
+
+    for index in 0..start {
+        if fields[index].response_key == key {
+            *cursor = index + 1;
+            return Some(index);
+        }
+    }
+
+    None
 }
 
 #[derive(Clone, Copy)]
@@ -246,6 +616,29 @@ impl<'a, 'de> Visitor<'de> for PathAwareValueVisitor<'a> {
 }
 
 impl<'a> SubgraphResponse<'a> {
+    pub fn deserialize_from_bytes_with_shape(
+        bytes: Bytes,
+        shape: &SubgraphResponseShape,
+    ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
+        let bytes_ref: &[u8] = &bytes;
+
+        // SAFETY: See `deserialize_from_bytes`. The shaped path has the same ownership model:
+        // the returned response stores `bytes`, keeping all borrowed strings alive.
+        let bytes_ref: &'static [u8] = unsafe { std::mem::transmute(bytes_ref) };
+        let mut deserializer = sonic_rs::Deserializer::from_slice(bytes_ref);
+
+        ShapedSubgraphResponseSeed { shape }
+            .deserialize(&mut deserializer)
+            .map_err(|e| SubgraphExecutorError::ResponseDeserializationFailure(e, None))
+            .and_then(|mut resp: SubgraphResponse<'static>| {
+                deserializer
+                    .end()
+                    .map_err(|e| SubgraphExecutorError::ResponseDeserializationFailure(e, None))?;
+                resp.bytes = Some(bytes);
+                Ok(resp)
+            })
+    }
+
     pub fn deserialize_from_bytes(
         bytes: Bytes,
         custom_scalar_paths: Option<&CustomScalarPaths>,

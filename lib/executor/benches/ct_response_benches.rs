@@ -4,10 +4,11 @@ use hive_router_plan_executor::{
     execution::plan::ExecutionResultExtensions,
     introspection::schema::SchemaWithMetadata,
     projection::{plan::FieldProjectionPlan, response::project_by_operation},
-    response::subgraph_response::SubgraphResponse,
+    response::subgraph_response::{SubgraphResponse, SubgraphResponseShape},
 };
 use hive_router_query_planner::{
     ast::normalization::normalize_operation,
+    ast::operation::SubgraphFetchOperation,
     graph::PlannerOverrideContext,
     planner::{
         plan_nodes::{CustomScalarPaths, PlanNode, QueryPlan},
@@ -24,6 +25,7 @@ use std::{env, hint::black_box, path::PathBuf};
 struct CtBenchFixture {
     payload: Bytes,
     custom_scalar_paths: Option<CustomScalarPaths>,
+    response_shape: SubgraphResponseShape,
     operation_type_name: &'static str,
     projection_plan: Vec<FieldProjectionPlan>,
     schema_metadata: &'static hive_router_plan_executor::introspection::schema::SchemaMetadata,
@@ -37,6 +39,14 @@ impl CtBenchFixture {
             self.custom_scalar_paths.as_ref(),
         )
         .expect("failed to deserialize CT payload")
+    }
+
+    fn deserialize_shaped(&self) -> SubgraphResponse<'static> {
+        SubgraphResponse::deserialize_from_bytes_with_shape(
+            self.payload.clone(),
+            &self.response_shape,
+        )
+        .expect("failed to deserialize shaped CT payload")
     }
 }
 
@@ -78,14 +88,40 @@ fn load_fixture() -> CtBenchFixture {
         )
         .expect("failed to build query plan");
 
+    let custom_scalar_paths = first_custom_scalar_paths(&query_plan).cloned();
+    let fetch_operation = first_fetch_operation(&query_plan).expect("query plan has a fetch node");
+    let response_shape =
+        SubgraphResponseShape::from_operation(fetch_operation, custom_scalar_paths.as_ref());
+
     CtBenchFixture {
         projected_response_size_estimate: payload.len(),
         payload: Bytes::from(payload),
-        custom_scalar_paths: first_custom_scalar_paths(&query_plan).cloned(),
+        custom_scalar_paths,
+        response_shape,
         operation_type_name,
         projection_plan,
         schema_metadata,
     }
+}
+
+fn first_fetch_operation(query_plan: &QueryPlan) -> Option<&SubgraphFetchOperation> {
+    fn visit(node: &PlanNode) -> Option<&SubgraphFetchOperation> {
+        match node {
+            PlanNode::Fetch(fetch) => Some(&fetch.operation),
+            PlanNode::BatchFetch(fetch) => Some(&fetch.operation),
+            PlanNode::Sequence(sequence) => sequence.nodes.iter().find_map(visit),
+            PlanNode::Parallel(parallel) => parallel.nodes.iter().find_map(visit),
+            PlanNode::Flatten(flatten) => visit(&flatten.node),
+            PlanNode::Condition(condition) => condition
+                .if_clause
+                .as_deref()
+                .and_then(visit)
+                .or_else(|| condition.else_clause.as_deref().and_then(visit)),
+            PlanNode::Subscription(_) | PlanNode::Defer(_) => None,
+        }
+    }
+
+    query_plan.node.as_ref().and_then(visit)
 }
 
 fn first_custom_scalar_paths(query_plan: &QueryPlan) -> Option<&CustomScalarPaths> {
@@ -120,6 +156,17 @@ fn ct_response_benches(c: &mut Criterion) {
                 fixture.custom_scalar_paths.as_ref(),
             )
             .expect("failed to deserialize CT payload");
+            black_box(response);
+        });
+    });
+
+    group.bench_function("deserialize_shaped_and_drop", |b| {
+        b.iter(|| {
+            let response = SubgraphResponse::deserialize_from_bytes_with_shape(
+                black_box(fixture.payload.clone()),
+                black_box(&fixture.response_shape),
+            )
+            .expect("failed to deserialize shaped CT payload");
             black_box(response);
         });
     });
@@ -165,9 +212,42 @@ fn ct_response_benches(c: &mut Criterion) {
         });
     });
 
+    group.bench_function("full_shaped_deserialize_project_drop", |b| {
+        b.iter(|| {
+            let response = SubgraphResponse::deserialize_from_bytes_with_shape(
+                black_box(fixture.payload.clone()),
+                black_box(&fixture.response_shape),
+            )
+            .expect("failed to deserialize shaped CT payload");
+            let projected = project_by_operation(
+                black_box(&response.data),
+                vec![],
+                &ExecutionResultExtensions::default(),
+                black_box(fixture.operation_type_name),
+                black_box(&fixture.projection_plan),
+                &None,
+                fixture.projected_response_size_estimate,
+                fixture.schema_metadata,
+            )
+            .expect("failed to project shaped CT payload");
+            black_box(projected);
+            black_box(response);
+        });
+    });
+
     group.bench_function("drop_value_tree", |b| {
         b.iter_batched(
             || fixture.deserialize(),
+            |response| {
+                black_box(response);
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    group.bench_function("drop_shaped_value_tree", |b| {
+        b.iter_batched(
+            || fixture.deserialize_shaped(),
             |response| {
                 black_box(response);
             },
@@ -180,8 +260,8 @@ fn ct_response_benches(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    config = Criterion::default()
-        .with_profiler(PProfProfiler::new(1000, Output::Protobuf));
+    config = Criterion::default();
+        // .with_profiler(PProfProfiler::new(1000, Output::Protobuf));
     targets = ct_response_benches
 }
 criterion_main!(benches);
