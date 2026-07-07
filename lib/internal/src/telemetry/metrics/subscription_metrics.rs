@@ -44,7 +44,7 @@ pub struct SubscriptionMetrics {
     subgraphs_active: Option<UpDownCounter<i64>>,
     subgraphs_connections: Option<UpDownCounter<i64>>,
     subgraphs_operations_total: Option<Counter<u64>>,
-    subgraphs_terminated_total: Option<Counter<u64>>,
+    subgraphs_dropped_messages_total: Option<Counter<u64>>,
     clients_active: Option<UpDownCounter<i64>>,
     clients_connections: Option<UpDownCounter<i64>>,
     clients_operations_total: Option<Counter<u64>>,
@@ -71,10 +71,12 @@ impl SubscriptionMetrics {
                 .with_unit(units::OPERATIONS)
                 .build()
         });
-        let subgraphs_terminated_total = meter.map(|m| {
-            m.u64_counter(names::SUBSCRIPTIONS_SUBGRAPHS_TERMINATED_TOTAL)
-                .with_description("Subgraph subscriptions force-terminated by the router.")
-                .with_unit(units::SUBSCRIPTIONS)
+        let subgraphs_dropped_messages_total = meter.map(|m| {
+            m.u64_counter(names::SUBSCRIPTIONS_SUBGRAPHS_DROPPED_MESSAGES_TOTAL)
+                .with_description(
+                    "Subgraph messages dropped because consumers were too slow to keep up.",
+                )
+                .with_unit(units::MESSAGES)
                 .build()
         });
         let clients_active = meter.map(|m| {
@@ -91,13 +93,17 @@ impl SubscriptionMetrics {
         });
         let clients_operations_total = meter.map(|m| {
             m.u64_counter(names::SUBSCRIPTIONS_CLIENTS_OPERATIONS_TOTAL)
-                .with_description("Total subscribe/unsubscribe operations from clients to the router.")
+                .with_description(
+                    "Total subscribe/unsubscribe operations from clients to the router.",
+                )
                 .with_unit(units::OPERATIONS)
                 .build()
         });
         let clients_lagged_messages_total = meter.map(|m| {
             m.u64_counter(names::SUBSCRIPTIONS_CLIENTS_LAGGED_MESSAGES_TOTAL)
-                .with_description("Messages skipped by slow client subscribers due to broadcast lag.")
+                .with_description(
+                    "Messages skipped by slow client subscribers due to broadcast lag.",
+                )
                 .with_unit(units::MESSAGES)
                 .build()
         });
@@ -105,7 +111,7 @@ impl SubscriptionMetrics {
             subgraphs_active,
             subgraphs_connections,
             subgraphs_operations_total,
-            subgraphs_terminated_total,
+            subgraphs_dropped_messages_total,
             clients_active,
             clients_connections,
             clients_operations_total,
@@ -214,6 +220,22 @@ impl SubscriptionMetrics {
         }
     }
 
+    /// Records a single subgraph message dropped because of a slow consumer.
+    pub fn record_message_dropped(&self, transport: SubscriptionTransport) {
+        let attrs = [KeyValue::new(
+            labels::SUBSCRIPTION_TRANSPORT,
+            transport.as_str(),
+        )];
+        #[cfg(debug_assertions)]
+        debug_assert_attrs(
+            names::SUBSCRIPTIONS_SUBGRAPHS_DROPPED_MESSAGES_TOTAL,
+            &attrs,
+        );
+        if let Some(c) = &self.subgraphs_dropped_messages_total {
+            c.add(1, &attrs);
+        }
+    }
+
     /// Records `n` messages skipped by a slow client subscriber due to broadcast lag.
     pub fn record_client_lag(&self, transport: SubscriptionTransport, n: u64) {
         let attrs = [KeyValue::new(
@@ -224,24 +246,6 @@ impl SubscriptionMetrics {
         debug_assert_attrs(names::SUBSCRIPTIONS_CLIENTS_LAGGED_MESSAGES_TOTAL, &attrs);
         if let Some(c) = &self.clients_lagged_messages_total {
             c.add(n, &attrs);
-        }
-    }
-
-    /// Records a subgraph subscription force-terminated by the router due to a slow consumer.
-    pub fn record_subgraph_termination(
-        &self,
-        subgraph_name: &str,
-        transport: SubscriptionTransport,
-    ) {
-        let attrs = [
-            KeyValue::new(labels::SUBGRAPH_NAME, subgraph_name.to_string()),
-            KeyValue::new(labels::SUBSCRIPTION_TRANSPORT, transport.as_str()),
-            KeyValue::new(labels::ERROR_TYPE, "slow_consumer"),
-        ];
-        #[cfg(debug_assertions)]
-        debug_assert_attrs(names::SUBSCRIPTIONS_SUBGRAPHS_TERMINATED_TOTAL, &attrs);
-        if let Some(c) = &self.subgraphs_terminated_total {
-            c.add(1, &attrs);
         }
     }
 }

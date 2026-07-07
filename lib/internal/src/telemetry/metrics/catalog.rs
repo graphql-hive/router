@@ -183,6 +183,8 @@ pub mod names {
         "hive.router.subscriptions.clients.operations_total";
     pub const SUBSCRIPTIONS_SUBGRAPHS_OPERATIONS_TOTAL: &str =
         "hive.router.subscriptions.subgraphs.operations_total";
+    pub const SUBSCRIPTIONS_SUBGRAPHS_DROPPED_MESSAGES_TOTAL: &str =
+        "hive.router.subscriptions.subgraphs.dropped_messages_total";
     pub const SUBSCRIPTIONS_CLIENTS_LAGGED_MESSAGES_TOTAL: &str =
         "hive.router.subscriptions.clients.lagged_messages_total";
     pub const SUBSCRIPTIONS_SUBGRAPHS_TERMINATED_TOTAL: &str =
@@ -208,11 +210,18 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
     ),
     (
         names::SUBSCRIPTIONS_CLIENTS_OPERATIONS_TOTAL,
-        &[labels::SUBSCRIPTION_TRANSPORT, labels::SUBSCRIPTION_OPERATION],
+        &[
+            labels::SUBSCRIPTION_TRANSPORT,
+            labels::SUBSCRIPTION_OPERATION,
+        ],
     ),
     (
         names::SUBSCRIPTIONS_SUBGRAPHS_OPERATIONS_TOTAL,
         &[labels::SUBGRAPH_NAME, labels::SUBSCRIPTION_OPERATION],
+    ),
+    (
+        names::SUBSCRIPTIONS_SUBGRAPHS_DROPPED_MESSAGES_TOTAL,
+        &[labels::SUBSCRIPTION_TRANSPORT],
     ),
     (
         names::SUBSCRIPTIONS_CLIENTS_LAGGED_MESSAGES_TOTAL,
