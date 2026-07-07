@@ -7,8 +7,9 @@ use http::{HeaderMap, Uri};
 use sonic_rs::Value;
 
 use crate::{
-    executors::error::SubgraphExecutorError, plugin_context::PluginRequestState,
-    response::subgraph_response::SubgraphResponse,
+    executors::error::SubgraphExecutorError,
+    plugin_context::PluginRequestState,
+    response::subgraph_response::{SubgraphResponse, SubgraphResponseShape},
 };
 
 #[async_trait]
@@ -59,6 +60,7 @@ pub struct SubgraphExecutionRequest<'a> {
     pub raw_variable_values: Option<Vec<(&'a str, Vec<u8>)>>,
     pub extensions: Option<SubgraphRequestExtensions>,
     pub custom_scalar_paths: Option<&'a CustomScalarPaths>,
+    pub response_shape: Option<&'a SubgraphResponseShape>,
 }
 
 impl SubgraphExecutionRequest<'_> {

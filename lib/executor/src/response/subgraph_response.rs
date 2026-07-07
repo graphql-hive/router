@@ -9,7 +9,7 @@ use hive_router_query_planner::{
         selection_item::SelectionItem,
         selection_set::{FieldSelection, SelectionSet},
     },
-    planner::plan_nodes::CustomScalarPaths,
+    planner::plan_nodes::{CustomScalarPaths, PlanNode, QueryPlan},
 };
 use http::{HeaderMap, StatusCode};
 use serde::{
@@ -50,6 +50,70 @@ static EMPTY_CUSTOM_SCALAR_PATHS: CustomScalarPaths = CustomScalarPaths {
 #[derive(Debug, Clone)]
 pub struct SubgraphResponseShape {
     data: SubgraphValueShape,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SubgraphResponseShapeRegistry {
+    shapes_by_fetch_id: Vec<(i64, SubgraphResponseShape)>,
+}
+
+impl SubgraphResponseShapeRegistry {
+    pub fn from_query_plan(query_plan: &QueryPlan) -> Self {
+        let mut registry = Self::default();
+        if let Some(node) = &query_plan.node {
+            registry.collect_node(node);
+        }
+        registry
+    }
+
+    pub fn get(&self, fetch_id: i64) -> Option<&SubgraphResponseShape> {
+        self.shapes_by_fetch_id
+            .iter()
+            .find_map(|(id, shape)| (*id == fetch_id).then_some(shape))
+    }
+
+    fn collect_node(&mut self, node: &PlanNode) {
+        match node {
+            PlanNode::Fetch(fetch) => {
+                self.shapes_by_fetch_id.push((
+                    fetch.id,
+                    SubgraphResponseShape::from_operation(
+                        &fetch.operation,
+                        fetch.custom_scalar_paths.as_ref(),
+                    ),
+                ));
+            }
+            PlanNode::BatchFetch(fetch) => {
+                self.shapes_by_fetch_id.push((
+                    fetch.id,
+                    SubgraphResponseShape::from_operation(
+                        &fetch.operation,
+                        fetch.custom_scalar_paths.as_ref(),
+                    ),
+                ));
+            }
+            PlanNode::Sequence(sequence) => {
+                for node in &sequence.nodes {
+                    self.collect_node(node);
+                }
+            }
+            PlanNode::Parallel(parallel) => {
+                for node in &parallel.nodes {
+                    self.collect_node(node);
+                }
+            }
+            PlanNode::Flatten(flatten) => self.collect_node(&flatten.node),
+            PlanNode::Condition(condition) => {
+                if let Some(node) = &condition.if_clause {
+                    self.collect_node(node);
+                }
+                if let Some(node) = &condition.else_clause {
+                    self.collect_node(node);
+                }
+            }
+            PlanNode::Subscription(_) | PlanNode::Defer(_) => {}
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
