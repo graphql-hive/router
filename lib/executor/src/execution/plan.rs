@@ -71,7 +71,9 @@ use crate::{
     response::{
         graphql_error::{GraphQLError, GraphQLErrorPath, GraphQLErrorPathSegment},
         merge::deep_merge,
-        subgraph_response::SubgraphResponse,
+        subgraph_response::{
+            SubgraphResponse, SubgraphResponseShape, SubgraphResponseShapeRegistry,
+        },
         value::Value,
     },
     utils::{
@@ -117,6 +119,7 @@ pub struct QueryPlanExecutionOpts<'exec> {
     pub query_plan: &'exec QueryPlan,
     pub operation_for_plan: Arc<OperationDefinition>,
     pub projection_plan: Arc<Vec<FieldProjectionPlan>>,
+    pub subgraph_response_shapes: Arc<SubgraphResponseShapeRegistry>,
     pub headers_plan: Arc<HeaderRulesPlan>,
     pub extensions_plan: Arc<ExtensionsPlan>,
     pub variable_values: Arc<CoerceVariablesPayload>,
@@ -277,6 +280,7 @@ pub async fn execute_query_plan<'exec>(
             raw_variable_values: None,
             extensions: None,
             custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
+            response_shape: opts.subgraph_response_shapes.get(fetch_node.id),
         };
 
         // TODO: otel instrumentation and stuff
@@ -363,6 +367,7 @@ pub async fn execute_query_plan<'exec>(
                     query_plan: &query_plan,
                     operation_for_plan: opts.operation_for_plan.clone(),
                     projection_plan: opts.projection_plan.clone(),
+                    subgraph_response_shapes: opts.subgraph_response_shapes.clone(),
                     headers_plan: opts.headers_plan.clone(),
                     extensions_plan: opts.extensions_plan.clone(),
                     variable_values: opts.variable_values.clone(),
@@ -497,6 +502,7 @@ async fn execute_query_plan_with_data<'exec>(
         client_request: &opts.client_request,
         headers_plan: &opts.headers_plan,
         extensions_plan: &opts.extensions_plan,
+        subgraph_response_shapes: &opts.subgraph_response_shapes,
         jwt_forwarding_plan: opts.jwt_auth_forwarding,
         dedupe_subgraph_requests,
         demand_control_context: opts.demand_control_context.clone(),
@@ -666,6 +672,7 @@ pub struct Executor<'exec> {
     pub client_request: &'exec ClientRequestDetails<'exec>,
     pub headers_plan: &'exec HeaderRulesPlan,
     pub extensions_plan: &'exec ExtensionsPlan,
+    pub subgraph_response_shapes: &'exec SubgraphResponseShapeRegistry,
     pub jwt_forwarding_plan: Option<Arc<JwtAuthForwardingPlan>>,
     pub dedupe_subgraph_requests: bool,
     pub demand_control_context: Option<Arc<DemandControlExecutionContext>>,
@@ -779,6 +786,7 @@ struct PrepareExecutionJobOpts<'exec> {
     output_rewrites: Option<&'exec [FetchRewrite]>,
     // Response paths whose values should stay raw JSON in `data`
     custom_scalar_paths: Option<&'exec CustomScalarPaths>,
+    response_shape: Option<&'exec SubgraphResponseShape>,
     // If the fetch job is for a flatten node, we pass the filtered representations,
     raw_variable_values: Option<Vec<(&'exec str, Vec<u8>)>>,
     // and the path to the representations in the original response for error handling and normalization
@@ -843,6 +851,7 @@ impl<'exec> Executor<'exec> {
             operation: &fetch_node.operation,
             output_rewrites: fetch_node.output_rewrites.as_deref(),
             custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
+            response_shape: self.subgraph_response_shapes.get(fetch_node.id),
             raw_variable_values: None,
             affected_path: Some(&flatten_node.path),
         })
@@ -874,6 +883,7 @@ impl<'exec> Executor<'exec> {
                     operation: &fetch_node.operation,
                     output_rewrites: fetch_node.output_rewrites.as_deref(),
                     custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
+                    response_shape: self.subgraph_response_shapes.get(fetch_node.id),
                     raw_variable_values: None,
                     affected_path: None,
                 })
@@ -907,6 +917,7 @@ impl<'exec> Executor<'exec> {
                         operation: &batch_fetch_node.operation,
                         output_rewrites: None,
                         custom_scalar_paths: batch_fetch_node.custom_scalar_paths.as_ref(),
+                        response_shape: self.subgraph_response_shapes.get(batch_fetch_node.id),
                         raw_variable_values: Some(raw_variable_values),
                         affected_path: None,
                     })
@@ -1004,6 +1015,7 @@ impl<'exec> Executor<'exec> {
                         operation: &fetch_node.operation,
                         output_rewrites: fetch_node.output_rewrites.as_deref(),
                         custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
+                        response_shape: self.subgraph_response_shapes.get(fetch_node.id),
                         raw_variable_values: Some(vec![(
                             "representations",
                             filtered_representations,
@@ -1590,6 +1602,7 @@ impl<'exec> Executor<'exec> {
                 headers: headers_map,
                 extensions: None,
                 custom_scalar_paths: opts.custom_scalar_paths,
+                response_shape: opts.response_shape,
             };
 
             let client_document_hash_str = opts.operation.hash.to_string();
@@ -1698,6 +1711,7 @@ mod tests {
         introspection::schema::SchemaMetadata,
         response::{
             graphql_error::{GraphQLErrorExtensions, GraphQLErrorPath},
+            subgraph_response::SubgraphResponseShapeRegistry,
             value::Value as ResponseValue,
         },
         SubgraphExecutorMap,
@@ -1878,6 +1892,7 @@ mod tests {
             Arc::new(DashMap::new()),
         )
         .unwrap();
+        let subgraph_response_shapes = SubgraphResponseShapeRegistry::default();
 
         let executor = Executor {
             variable_values: &None,
@@ -1897,6 +1912,7 @@ mod tests {
             },
             headers_plan: &HeaderRulesPlan::default(),
             extensions_plan: &ExtensionsPlan::default(),
+            subgraph_response_shapes: &subgraph_response_shapes,
             jwt_forwarding_plan: None,
             dedupe_subgraph_requests: false,
             demand_control_context: None,
@@ -1987,6 +2003,7 @@ mod tests {
                     .unwrap(),
             ),
         ]);
+        let subgraph_response_shapes = SubgraphResponseShapeRegistry::default();
         let executor = Executor {
             variable_values: &None,
             schema_metadata: &SchemaMetadata::default(),
@@ -2013,6 +2030,7 @@ mod tests {
             },
             headers_plan: &HeaderRulesPlan::default(),
             extensions_plan: &ExtensionsPlan::default(),
+            subgraph_response_shapes: &subgraph_response_shapes,
             jwt_forwarding_plan: None,
             dedupe_subgraph_requests: false,
             demand_control_context: None,

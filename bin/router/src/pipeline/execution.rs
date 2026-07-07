@@ -1,6 +1,7 @@
 use crate::pipeline::authorization::AuthorizationError;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
+use crate::pipeline::query_plan::QueryPlanPayload;
 use crate::shared_state::RouterSharedState;
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLExecuteSpan, GraphQLOperationSpan,
@@ -17,7 +18,6 @@ use hive_router_plan_executor::headers::response::ResponseHeaderSink;
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
-use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use http::HeaderName;
 use sonic_rs::json;
 use std::sync::Arc;
@@ -34,7 +34,7 @@ pub enum ExposeQueryPlanMode {
 
 pub struct PlannedRequest<'req> {
     pub normalized_payload: Arc<GraphQLNormalizationPayload>,
-    pub query_plan_payload: &'req QueryPlan,
+    pub query_plan_payload: &'req QueryPlanPayload,
     pub variable_payload: Arc<CoerceVariablesPayload>,
     pub client_request_details: Arc<ClientRequestDetails<'req>>,
     pub authorization_errors: Vec<AuthorizationError>,
@@ -84,7 +84,7 @@ pub async fn execute_plan<'exec>(
             expose_query_plan,
             ExposeQueryPlanMode::Yes | ExposeQueryPlanMode::DryRun
         ) {
-            extensions.query_plan = Some(planned_request.query_plan_payload);
+            extensions.query_plan = Some(planned_request.query_plan_payload.query_plan.as_ref());
         }
 
         if matches!(expose_query_plan, ExposeQueryPlanMode::DryRun) {
@@ -120,12 +120,16 @@ pub async fn execute_plan<'exec>(
 
         let operation_name = planned_request.client_request_details.operation.name;
         let result = execute_query_plan(QueryPlanExecutionOpts {
-            query_plan: planned_request.query_plan_payload,
+            query_plan: planned_request.query_plan_payload.query_plan.as_ref(),
             operation_for_plan: planned_request
                 .normalized_payload
                 .operation_for_plan
                 .clone(),
             projection_plan: planned_request.normalized_payload.projection_plan.clone(),
+            subgraph_response_shapes: planned_request
+                .query_plan_payload
+                .subgraph_response_shapes
+                .clone(),
             headers_plan: app_state.headers_plan.clone(),
             extensions_plan: app_state.extensions_plan.clone(),
             variable_values: planned_request.variable_payload.clone(),

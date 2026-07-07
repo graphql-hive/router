@@ -697,7 +697,7 @@ pub async fn execute_pipeline<'exec>(
             .evaluate(
                 supergraph,
                 &variable_payload,
-                &query_plan_payload,
+                query_plan_payload.query_plan.as_ref(),
                 normalize_payload.operation_for_plan.as_ref(),
                 normalize_payload.root_type_name,
                 normalize_payload.normalized_operation_hash,

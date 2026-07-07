@@ -15,6 +15,7 @@ use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_plan_executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow};
 use hive_router_plan_executor::plugins::hooks;
+use hive_router_plan_executor::response::subgraph_response::SubgraphResponseShapeRegistry;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use hive_router_query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
@@ -22,9 +23,29 @@ use tracing::Instrument;
 use xxhash_rust::xxh3::Xxh3;
 
 pub enum QueryPlanResult {
-    QueryPlan(Arc<QueryPlan>),
+    QueryPlan(Arc<QueryPlanPayload>),
     EarlyResponse(PlanExecutionOutput),
 }
+
+#[derive(Clone)]
+pub struct QueryPlanPayload {
+    pub query_plan: Arc<QueryPlan>,
+    pub subgraph_response_shapes: Arc<SubgraphResponseShapeRegistry>,
+}
+
+impl QueryPlanPayload {
+    pub fn new(query_plan: Arc<QueryPlan>) -> Self {
+        let subgraph_response_shapes = Arc::new(SubgraphResponseShapeRegistry::from_query_plan(
+            query_plan.as_ref(),
+        ));
+
+        Self {
+            query_plan,
+            subgraph_response_shapes,
+        }
+    }
+}
+
 static EMPTY_QUERY_PLAN: LazyLock<Arc<QueryPlan>> = LazyLock::new(|| {
     Arc::new(QueryPlan {
         kind: QUERY_PLAN_KIND,
@@ -98,12 +119,12 @@ pub async fn plan_operation_with_cache(
 
         let mut cache_hint = CacheHint::Hit;
         plan_span.record_cache_hit(true);
-        let mut plan = schema_state
+        let mut plan_payload = schema_state
             .plan_cache
             .entry(plan_cache_key)
             .or_try_insert_with(async {
                 if is_pure_introspection {
-                    return Ok(EMPTY_QUERY_PLAN.clone());
+                    return Ok(Arc::new(QueryPlanPayload::new(EMPTY_QUERY_PLAN.clone())));
                 }
 
                 // If the operation is empty, but the projection plan is not,,
@@ -119,7 +140,7 @@ pub async fn plan_operation_with_cache(
                 // That's why we return an empty plan,
                 // and allow for response projection to happen later.
                 if is_plan_operation_empty && !is_projection_plan_empty {
-                    return Ok(EMPTY_QUERY_PLAN.clone());
+                    return Ok(Arc::new(QueryPlanPayload::new(EMPTY_QUERY_PLAN.clone())));
                 }
 
                 supergraph
@@ -129,6 +150,8 @@ pub async fn plan_operation_with_cache(
                         (&request_override_context.clone()).into(),
                         cancellation_token,
                     )
+                    .map(Arc::new)
+                    .map(QueryPlanPayload::new)
                     .map(Arc::new)
             })
             .await
@@ -148,7 +171,7 @@ pub async fn plan_operation_with_cache(
 
         if !on_end_callbacks.is_empty() {
             let mut end_payload = OnQueryPlanEndHookPayload {
-                query_plan: plan,
+                query_plan: plan_payload.query_plan.clone(),
                 cache_hint,
                 request_context: plugin_req_state
                     .as_ref()
@@ -168,10 +191,12 @@ pub async fn plan_operation_with_cache(
                 }
             }
             // Give the ownership back to variables
-            plan = end_payload.query_plan;
+            if !Arc::ptr_eq(&plan_payload.query_plan, &end_payload.query_plan) {
+                plan_payload = Arc::new(QueryPlanPayload::new(end_payload.query_plan));
+            }
         }
 
-        Ok(QueryPlanResult::QueryPlan(plan))
+        Ok(QueryPlanResult::QueryPlan(plan_payload))
     }
     .instrument(plan_span.clone())
     .await

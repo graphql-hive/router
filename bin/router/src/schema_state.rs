@@ -29,7 +29,7 @@ use hive_router_plan_executor::{
     SubgraphExecutorMap,
 };
 use hive_router_query_planner::{
-    planner::{plan_nodes::QueryPlan, Planner, PlannerError, QueryPlannerOptions},
+    planner::{Planner, PlannerError, QueryPlannerOptions},
     utils::parsing::safe_parse_schema,
 };
 use moka::future::Cache;
@@ -43,7 +43,7 @@ use crate::{
     cache_state::CacheState,
     pipeline::{
         authorization::AuthorizationMetadataError, demand_control::runtime::DemandControlRuntime,
-        normalize::GraphQLNormalizationPayload,
+        normalize::GraphQLNormalizationPayload, query_plan::QueryPlanPayload,
     },
     supergraph::{
         base::{LoadSupergraphError, ReloadSupergraphResult, SupergraphLoader},
@@ -53,7 +53,7 @@ use crate::{
 
 pub struct SchemaState {
     current_swapable: Arc<ArcSwap<Option<SupergraphData>>>,
-    pub plan_cache: Cache<u64, Arc<QueryPlan>>,
+    pub plan_cache: Cache<u64, Arc<QueryPlanPayload>>,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
     pub demand_control_runtime: Option<DemandControlRuntime>,

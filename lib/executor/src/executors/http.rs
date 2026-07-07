@@ -13,7 +13,7 @@ use crate::json_writer::write_named_operation;
 use crate::plugin_context::PluginRequestState;
 use crate::plugin_trait::{EndControlFlow, StartControlFlow};
 use crate::plugins::hooks;
-use crate::response::subgraph_response::SubgraphResponse;
+use crate::response::subgraph_response::{SubgraphResponse, SubgraphResponseShape};
 use futures::stream::BoxStream;
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::inflight::InFlightRole;
@@ -495,8 +495,10 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             response = end_payload.response;
         }
 
-        let response_result =
-            response.deserialize_http_response(execution_request.custom_scalar_paths);
+        let response_result = response.deserialize_http_response(
+            execution_request.custom_scalar_paths,
+            execution_request.response_shape,
+        );
         if let Some(mut http_request_capture) = http_request_capture {
             finish_capture_from_subgraph_result(
                 &mut http_request_capture.capture,
@@ -696,8 +698,15 @@ impl SubgraphHttpResponse {
     fn deserialize_http_response(
         self,
         custom_scalar_paths: Option<&CustomScalarPaths>,
+        response_shape: Option<&SubgraphResponseShape>,
     ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
-        SubgraphResponse::deserialize_from_bytes(self.body, custom_scalar_paths)
+        let response = if let Some(response_shape) = response_shape {
+            SubgraphResponse::deserialize_from_bytes_with_shape(self.body, response_shape)
+        } else {
+            SubgraphResponse::deserialize_from_bytes(self.body, custom_scalar_paths)
+        };
+
+        response
             .map(|mut resp: SubgraphResponse| {
                 resp.headers = Some(self.headers.clone());
                 resp.status = Some(self.status);
@@ -732,6 +741,7 @@ mod tests {
             raw_variable_values: None,
             extensions: None,
             custom_scalar_paths: None,
+            response_shape: None,
         };
 
         let body = build_request_body(&execution_request).expect("request body should serialize");
