@@ -547,16 +547,14 @@ impl<'a> OperationPreparation<'a> {
                 // When skip_enforcement is None, treat it as `false`.
                 .unwrap_or(false);
 
-            if skip_enforcement {
+            if !skip_enforcement {
+                // If require_id is set, clear the query to make the document ID-based resolution mandatory.
+                prepared_operation.graphql_params.query = None;
+                if prepared_operation.resolved_document_id.is_none() {
+                    return Err(PipelineError::PersistedDocumentIdRequired);
+                }
                 return Ok(());
             }
-
-            // If require_id is set, clear the query to make the document ID-based resolution mandatory.
-            prepared_operation.graphql_params.query = None;
-            if prepared_operation.resolved_document_id.is_none() {
-                return Err(PipelineError::PersistedDocumentIdRequired);
-            }
-            return Ok(());
         }
 
         if prepared_operation.graphql_params.query.is_some() {
