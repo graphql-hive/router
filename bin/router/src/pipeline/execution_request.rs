@@ -611,7 +611,7 @@ mod tests {
     use hive_router_internal::telemetry::metrics::Metrics;
     use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
     use hive_router_plan_executor::plugin_context::{PluginContext, PluginRequestState};
-    use hive_router_plan_executor::request_context::SharedRequestContext;
+    use hive_router_plan_executor::request_context::{RequestContextExt, SharedRequestContext};
     use ntex::util::Bytes;
     use ntex::web::test::TestRequest;
     use ntex::web::HttpRequest;
@@ -853,7 +853,7 @@ mod tests {
 
     #[test]
     fn skip_enforcement_bypasses_require_id() {
-        let req = request();
+        let mut req = request();
         let resolver = Arc::new(document_id_resolver());
         let persisted_documents_runtime = PersistedDocumentsRuntime {
             document_id_resolver: resolver,
@@ -867,6 +867,7 @@ mod tests {
                 ctx.persisted_documents.skip_enforcement = Some(true);
             })
             .unwrap();
+        req.write_request_context(request_context.clone());
         let plugin_req_state = Some(PluginRequestState {
             plugins: Arc::new(Vec::new()),
             router_http_request: (&req).into(),
@@ -887,6 +888,8 @@ mod tests {
         // but skip_enforcement should bypass it.
         let mut op = operation(Some("query { me { id } }"), None);
 
+        println!("{:?}", prep.enforce_require_id_policy(&mut op));
+
         assert!(
             prep.enforce_require_id_policy(&mut op).is_ok(),
             "skip_enforcement should bypass require_id"
@@ -895,7 +898,7 @@ mod tests {
 
     #[test]
     fn skip_enforcement_false_still_enforces_require_id() {
-        let req = request();
+        let mut req = request();
         let resolver = Arc::new(document_id_resolver());
         let persisted_documents_runtime = PersistedDocumentsRuntime {
             document_id_resolver: resolver,
@@ -908,6 +911,7 @@ mod tests {
                 ctx.persisted_documents.skip_enforcement = Some(false);
             })
             .unwrap();
+        req.write_request_context(request_context.clone());
         let plugin_req_state: Option<PluginRequestState<'_>> = None;
         let prep = OperationPreparation {
             req: &req,
