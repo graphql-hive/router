@@ -51,8 +51,7 @@ impl PersistedDocumentsRuntime {
             ValueOrExpression::Expression { expression } => {
                 let program = expression.compile_expression(None).map_err(|err| {
                     PersistedDocumentResolverError::Configuration(format!(
-                        "
-                      Failed to compile persisted document require_id expression: {err}"
+                        "Failed to compile persisted document require_id expression: {err}"
                     ))
                 })?;
                 let hints = ProgramHints::from_program(&program);
