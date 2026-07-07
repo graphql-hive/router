@@ -7,9 +7,8 @@ use hive_router_config::traffic_shaping::{
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::expressions::{BooleanOrProgram, ExpressionCompileError};
 use hive_router_internal::inflight::{InFlightCleanupGuard, InFlightMap};
-use hive_router_internal::telemetry::metrics::subscription_metrics::{
-    ActiveClientConnectionGuard, ActiveClientOperationGuard,
-};
+use hive_router_internal::telemetry::metrics::subscription_metrics::SubscriptionTransport;
+use hive_router_internal::telemetry::metrics::Metrics;
 use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::coprocessor::{CoprocessorError, CoprocessorRuntime};
 use hive_router_plan_executor::execution::plan::FailedExecutionResult;
@@ -112,6 +111,7 @@ impl SharedRouterResponse {
     pub fn into_response(
         self,
         response_mode: &ResponseMode,
+        metrics: &Arc<Metrics>,
     ) -> Result<web::HttpResponse, PipelineError> {
         match self {
             SharedRouterResponse::Single(single) => Ok(single.into()),
@@ -119,7 +119,7 @@ impl SharedRouterResponse {
                 let stream_content_type = response_mode
                     .stream_content_type()
                     .ok_or(PipelineError::SubscriptionsTransportNotSupported)?;
-                Ok(stream.into_response(stream_content_type))
+                Ok(stream.into_response(stream_content_type, metrics))
             }
         }
     }
@@ -155,8 +155,6 @@ pub struct SharedRouterStreamResponse {
     // there is no window where the channel has zero receivers and events can be lost.
     // joiners get None and subscribe via body.subscribe() when consumed.
     pub receiver: Option<tokio::sync::broadcast::Receiver<SubscriptionEvent>>,
-    // set for subscription responses, None for non-subscription streams
-    pub subscription_metrics: Option<(ActiveClientOperationGuard, ActiveClientConnectionGuard)>,
 }
 
 impl Clone for SharedRouterStreamResponse {
@@ -166,21 +164,35 @@ impl Clone for SharedRouterStreamResponse {
             headers: self.headers.clone(),
             error_count: self.error_count,
             receiver: None,
-            // guards are not cloned - each clone gets its own via into_response
-            subscription_metrics: None,
         }
     }
 }
 
 impl SharedRouterStreamResponse {
-    pub fn into_response(self, stream_content_type: &StreamContentType) -> web::HttpResponse {
+    pub fn into_response(
+        self,
+        stream_content_type: &StreamContentType,
+        metrics: &Arc<Metrics>,
+    ) -> web::HttpResponse {
         // leader already has a pre-subscribed receiver to avoid missing
         // any potential events emitted. joiners, on the other hand, subscribe
         let mut receiver = self.receiver.unwrap_or_else(|| self.body.subscribe());
-        let subscription_metrics = self.subscription_metrics;
+
+        let transport = match stream_content_type {
+            StreamContentType::IncrementalDelivery | StreamContentType::ApolloMultipartHTTP => {
+                SubscriptionTransport::HttpMultipart
+            }
+            StreamContentType::SSE => SubscriptionTransport::HttpSse,
+        };
+        // each consumer (leader or joiner) gets its own guards, created here so dedup joiners
+        // are counted too - dropped when the client stream below ends
+        let client_op_guard = metrics.subscriptions.active_client_operation(transport);
+        let client_conn_guard = metrics.subscriptions.active_client_connection(transport);
+        let metrics = metrics.clone();
 
         let stream = Box::pin(async_stream::stream! {
-            let _subscription_metrics = subscription_metrics;
+            let _client_op_guard = client_op_guard;
+            let _client_conn_guard = client_conn_guard;
             loop {
                 match receiver.recv().await {
                     Ok(SubscriptionEvent::Raw(data)) => {
@@ -192,6 +204,7 @@ impl SharedRouterStreamResponse {
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         warn!(lagged = n, "Broadcast receiver lagged, dropping message");
+                        metrics.subscriptions.record_client_lag(transport, n);
                         continue;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {

@@ -206,6 +206,15 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 .await
                 .map(Ok);
 
+            // TODO:
+            // telemetry_context
+            //             .metrics
+            //             .subscriptions
+            //             .record_subgraph_termination(
+            //                 &subgraph_name,
+            //                 SubscriptionTransport::WebSocket,
+            //             );
+
             drain_into(stream, tx, &subgraph_name, &endpoint.to_string()).await;
         }));
 

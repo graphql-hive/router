@@ -54,7 +54,7 @@ use crate::{
         error::PipelineError,
         execution::{execute_plan, PlannedRequest},
         execution_request::{GetQueryStr, OperationPreparation, OperationPreparationResult},
-        header::{RequestAccepts, ResponseMode, StreamContentType, TEXT_HTML_MIME},
+        header::{RequestAccepts, ResponseMode, TEXT_HTML_MIME},
         introspection_policy::handle_introspection_policy,
         normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
         parser::{parse_operation_with_cache, ParseResult},
@@ -74,7 +74,6 @@ use crate::{
 };
 
 use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
-use hive_router_internal::telemetry::metrics::subscription_metrics::SubscriptionTransport;
 
 pub mod active_subscriptions;
 pub mod authorization;
@@ -431,7 +430,7 @@ pub async fn graphql_request_handler(
             },
         );
 
-        shared_response.into_response(response_mode)
+        shared_response.into_response(response_mode, &shared_state.telemetry_context.metrics)
     }
     .instrument(span_clone)
     .await
@@ -543,26 +542,11 @@ pub async fn execute_planned_request<'exec>(
                 &response_header_sink,
             );
 
-            let sub_transport = match stream_content_type {
-                StreamContentType::IncrementalDelivery | StreamContentType::ApolloMultipartHTTP => {
-                    SubscriptionTransport::HttpMultipart
-                }
-                StreamContentType::SSE => SubscriptionTransport::HttpSse,
-            };
-            let subscription_metrics = {
-                let m = &shared_state.telemetry_context.metrics.subscriptions;
-                Some((
-                    m.active_client_operation(sub_transport),
-                    m.active_client_connection(sub_transport),
-                ))
-            };
-
             Ok(SharedRouterResponse::Stream(SharedRouterStreamResponse {
                 body: sender,
                 headers,
                 error_count: result.error_count,
                 receiver: Some(receiver),
-                subscription_metrics,
             }))
         }
         QueryPlanExecutionResult::Single(result) => {

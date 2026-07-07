@@ -29,6 +29,7 @@ pub const SUBSCRIPTION_PROTOCOL_HEADER: &str = "subscription-protocol";
 
 #[derive(Clone)]
 pub struct CallbackSubscription {
+    pub subgraph_name: String,
     pub verifier: String,
     pub sender: mpsc::Sender<CallbackMessage>,
     // the subgraph sends an initial check before responding to the subscription POST, but under
@@ -180,6 +181,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         self.active_subscriptions.insert(
             subscription_id.clone(),
             CallbackSubscription {
+                subgraph_name: self.subgraph_name.clone(),
                 verifier,
                 sender: tx,
                 created_at: Instant::now(),

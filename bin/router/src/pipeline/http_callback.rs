@@ -4,6 +4,8 @@ use hive_router_plan_executor::executors::http_callback::{
     CallbackMessage, CallbackSubscription, CallbackSubscriptionsMap, CALLBACK_PROTOCOL_VERSION,
     SUBSCRIPTION_PROTOCOL_HEADER,
 };
+use hive_router_internal::telemetry::metrics::subscription_metrics::SubscriptionTransport;
+use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use http::StatusCode;
 use ntex::util::Bytes;
@@ -152,6 +154,7 @@ fn handle_next(
     payload: &CallbackPayload<'_>,
     subscription: Ref<'_, String, CallbackSubscription>,
     callback_subscriptions: &CallbackSubscriptionsMap,
+    telemetry_context: &TelemetryContext,
 ) -> Result<(), CallbackError> {
     trace!(subscription_id = %subscription_id, "Received next message");
 
@@ -173,6 +176,10 @@ fn handle_next(
             // if the channel is full it means the consuming client is too slow and unable to keep
             // up. we terminate the subscription without an error message because it anyways cant go through
             warn!(subscription_id = %subscription_id, "Subscription client is too slow");
+            telemetry_context
+                .metrics
+                .subscriptions
+                .record_subgraph_termination(&subscription.subgraph_name, SubscriptionTransport::HttpCallback);
             drop(subscription);
             callback_subscriptions.remove(subscription_id);
             Err(CallbackError::ClientTooSlow {
@@ -211,6 +218,7 @@ pub async fn handler(
     path: Path<String>,
     body: Bytes,
     callback_subscriptions: web::types::State<CallbackSubscriptionsMap>,
+    telemetry_context: web::types::State<std::sync::Arc<TelemetryContext>>,
 ) -> Result<HttpResponse, CallbackError> {
     let subscription_id_from_path = path.into_inner();
 
@@ -238,7 +246,13 @@ pub async fn handler(
     match payload.action {
         CallbackAction::Check => handle_check(&payload.id, &subscription),
         CallbackAction::Next => {
-            handle_next(&payload.id, &payload, subscription, &callback_subscriptions)?;
+            handle_next(
+                &payload.id,
+                &payload,
+                subscription,
+                &callback_subscriptions,
+                &telemetry_context,
+            )?;
         }
         CallbackAction::Complete => {
             handle_complete(&payload.id, &payload, subscription, &callback_subscriptions)

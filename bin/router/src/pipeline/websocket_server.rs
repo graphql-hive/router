@@ -591,6 +591,7 @@ async fn handle_text_frame(
                             .unwrap_or_else(|| response.body.subscribe());
 
                         let client_op_guard = shared_state.telemetry_context.metrics.subscriptions.active_client_operation(SubscriptionTransport::WebSocket);
+                        let metrics = shared_state.telemetry_context.metrics.clone();
 
                         trace!(id = %id, "Subscription started");
 
@@ -617,6 +618,7 @@ async fn handle_text_frame(
                                             }
                                             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                                                 warn!(id = %id_for_loop, lagged = n, "Broadcast receiver lagged, dropping message");
+                                                metrics.subscriptions.record_client_lag(SubscriptionTransport::WebSocket, n);
                                                 continue;
                                             }
                                             Err(tokio::sync::broadcast::error::RecvError::Closed) => {
