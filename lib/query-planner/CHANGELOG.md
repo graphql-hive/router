@@ -30,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 2.10.8 (2026-07-07)
+
+### Fixes
+
+#### Query Planning performance improvements
+
+Removed unused per-path edge tracking and switched to references instead of owned values - no cloning of selection items.
+
 ## 2.10.7 (2026-07-06)
 
 ### Fixes
