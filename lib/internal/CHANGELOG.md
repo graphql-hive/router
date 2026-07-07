@@ -1,3 +1,9 @@
+## 0.0.35 (2026-07-07)
+
+### Fixes
+
+- Bump version - no changes
+
 ## 0.0.34 (2026-06-30)
 
 ### Fixes
