@@ -100,11 +100,9 @@ async fn require_id_expression_basic() {
         .await;
 
     let response = router
-        .send_post_request(
-            "/graphql",
-            json!({
-                "query": "{ topProducts { name } }"
-            }),
+        .send_graphql_request(
+            "{ topProducts { name } }",
+            None,
             some_header_map! {
                 http::header::HeaderName::from_static("x-require-id") => "true"
             },
@@ -161,11 +159,9 @@ async fn require_id_expression_with_env_secret() {
     // Header does not match the env secret.
     // require_id is true
     let response = router
-        .send_post_request(
-            "/graphql",
-            json!({
-                "query": "{ topProducts { name } }"
-            }),
+        .send_graphql_request(
+            "{ topProducts { name } }",
+            None,
             some_header_map! {
                 http::header::HeaderName::from_static("x-bypass-require-id") => "wrong-secret"
             },
@@ -176,11 +172,9 @@ async fn require_id_expression_with_env_secret() {
     // Header matches the env secret.
     // require_id is false
     let response = router
-        .send_post_request(
-            "/graphql",
-            json!({
-                "query": "{ topProducts { name } }"
-            }),
+        .send_graphql_request(
+            "{ topProducts { name } }",
+            None,
             some_header_map! {
                 http::header::HeaderName::from_static("x-bypass-require-id") => "bypass123"
             },
@@ -192,13 +186,7 @@ async fn require_id_expression_with_env_secret() {
     // Env var not set.
     // is_null(env(...)) is true, so require_id is true
     let response = router
-        .send_post_request(
-            "/graphql",
-            json!({
-                "query": "{ topProducts { name } }"
-            }),
-            None,
-        )
+        .send_graphql_request("{ topProducts { name } }", None, None)
         .await;
 
     assert_error_code(response, "PERSISTED_DOCUMENT_ID_REQUIRED").await;
