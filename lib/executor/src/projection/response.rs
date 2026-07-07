@@ -170,32 +170,40 @@ pub fn serialize_value_to_buffer(data: &Value, buffer: &mut Vec<u8>) {
         Value::String(value) => write_and_escape_string(buffer, value),
         Value::RawJson(raw) => buffer.put_slice(raw.as_bytes()),
         Value::Object(value) => {
-            buffer.put(OPEN_BRACE);
-            let mut first = true;
-            for (key, val) in value.iter() {
-                if !first {
-                    buffer.put(COMMA);
-                }
-                write_and_escape_string(buffer, key);
-                buffer.put(COLON);
-                serialize_value_to_buffer(val, buffer);
-                first = false;
-            }
-            buffer.put(CLOSE_BRACE);
+            serialize_object_to_buffer(value, buffer);
         }
         Value::Array(arr) => {
-            buffer.put(OPEN_BRACKET);
-            let mut first = true;
-            for item in arr.iter() {
-                if !first {
-                    buffer.put(COMMA);
-                }
-                serialize_value_to_buffer(item, buffer);
-                first = false;
-            }
-            buffer.put(CLOSE_BRACKET);
+            serialize_array_to_buffer(arr, buffer);
         }
     };
+}
+
+fn serialize_object_to_buffer(obj: &[(&str, Value)], buffer: &mut Vec<u8>) {
+    buffer.put(OPEN_BRACE);
+    let mut first = true;
+    for (key, val) in obj.iter() {
+        if !first {
+            buffer.put(COMMA);
+        }
+        write_and_escape_string(buffer, key);
+        buffer.put(COLON);
+        serialize_value_to_buffer(val, buffer);
+        first = false;
+    }
+    buffer.put(CLOSE_BRACE);
+}
+
+fn serialize_array_to_buffer(arr: &[Value], buffer: &mut Vec<u8>) {
+    buffer.put(OPEN_BRACKET);
+    let mut first = true;
+    for item in arr.iter() {
+        if !first {
+            buffer.put(COMMA);
+        }
+        serialize_value_to_buffer(item, buffer);
+        first = false;
+    }
+    buffer.put(CLOSE_BRACKET);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -209,97 +217,99 @@ fn project_selection_set<'a>(
     schema_metadata: &'a SchemaMetadata,
     nullability: &'a FieldNullability,
 ) -> Result<NullPropagationDecision, ProjectionError> {
-    match data {
-        Value::Array(arr) => {
-            let null_propagation_checkpoint = buffer.len();
-            let list_item_nullability = nullability.list_item();
-            let item_non_null = list_item_nullability.is_some_and(FieldNullability::is_non_null);
-            buffer.put(OPEN_BRACKET);
-            let mut first = true;
-            for item in arr.iter() {
-                if !first {
-                    buffer.put(COMMA);
-                }
-                let needs_null_propagation = project_selection_set(
-                    item,
-                    errors,
-                    selection,
-                    variable_values,
-                    buffer,
-                    parent_type_name.clone(),
-                    schema_metadata,
-                    list_item_nullability.unwrap_or(nullability),
-                )?;
+    if let Value::Array(arr) = data {
+        let null_propagation_checkpoint = buffer.len();
+        let list_item_nullability = nullability.list_item();
+        let item_non_null = list_item_nullability.is_some_and(FieldNullability::is_non_null);
+        buffer.put(OPEN_BRACKET);
+        let mut first = true;
+        for item in arr.iter() {
+            if !first {
+                buffer.put(COMMA);
+            }
+            let needs_null_propagation = project_selection_set(
+                item,
+                errors,
+                selection,
+                variable_values,
+                buffer,
+                parent_type_name.clone(),
+                schema_metadata,
+                list_item_nullability.unwrap_or(nullability),
+            )?;
 
-                // A `null` at a Non-Null element of this list propagates to the list itself.
-                if needs_null_propagation.should_propagate() && item_non_null {
+            // A `null` at a Non-Null element of this list propagates to the list itself.
+            if needs_null_propagation.should_propagate() && item_non_null {
+                buffer.truncate(null_propagation_checkpoint);
+                buffer.put(NULL);
+                return Ok(NullPropagationDecision::PropagateNullValue);
+            }
+
+            first = false;
+        }
+
+        buffer.put(CLOSE_BRACKET);
+        return Ok(NullPropagationDecision::KeepNullValue);
+    }
+
+    if let Some(obj) = data.as_object() {
+        match &selection.value {
+            ProjectionValueSource::ResponseData {
+                selections: Some(selections),
+            } => {
+                let null_propagation_checkpoint = buffer.len();
+                let null_propagation_decision = if selection.simple_projection {
+                    project_selection_set_with_map_simple(obj, selections, buffer)
+                } else {
+                    let mut first = true;
+                    let type_name = if selection.subtree_needs_type_name {
+                        TypeName::deferred(selection, Some(data))
+                    } else {
+                        parent_type_name
+                    };
+                    let null_propagation_decision = project_selection_set_with_map(
+                        obj,
+                        errors,
+                        selections,
+                        variable_values,
+                        type_name,
+                        buffer,
+                        &mut first,
+                        schema_metadata,
+                    )?;
+
+                    if !first {
+                        buffer.put(CLOSE_BRACE);
+                    } else {
+                        // If no selections were made, we should return an empty object
+                        buffer.put(EMPTY_OBJECT);
+                    }
+
+                    null_propagation_decision
+                };
+
+                if null_propagation_decision.should_propagate() {
                     buffer.truncate(null_propagation_checkpoint);
                     buffer.put(NULL);
                     return Ok(NullPropagationDecision::PropagateNullValue);
                 }
 
-                first = false;
+                return Ok(NullPropagationDecision::KeepNullValue);
             }
-
-            buffer.put(CLOSE_BRACKET);
-            Ok(NullPropagationDecision::KeepNullValue)
-        }
-        Value::Object(obj) => {
-            match &selection.value {
-                ProjectionValueSource::ResponseData {
-                    selections: Some(selections),
-                } => {
-                    let null_propagation_checkpoint = buffer.len();
-                    let null_propagation_decision = if selection.simple_projection {
-                        project_selection_set_with_map_simple(obj, selections, buffer)
-                    } else {
-                        let mut first = true;
-                        let type_name = if selection.subtree_needs_type_name {
-                            TypeName::deferred(selection, Some(data))
-                        } else {
-                            parent_type_name
-                        };
-                        let null_propagation_decision = project_selection_set_with_map(
-                            obj,
-                            errors,
-                            selections,
-                            variable_values,
-                            type_name,
-                            buffer,
-                            &mut first,
-                            schema_metadata,
-                        )?;
-
-                        if !first {
-                            buffer.put(CLOSE_BRACE);
-                        } else {
-                            // If no selections were made, we should return an empty object
-                            buffer.put(EMPTY_OBJECT);
-                        }
-
-                        null_propagation_decision
-                    };
-
-                    if null_propagation_decision.should_propagate() {
-                        buffer.truncate(null_propagation_checkpoint);
-                        buffer.put(NULL);
-                        return Ok(NullPropagationDecision::PropagateNullValue);
-                    }
-
-                    Ok(NullPropagationDecision::KeepNullValue)
-                }
-                ProjectionValueSource::ResponseData { selections: None } => {
-                    // If the selection has no sub-selections, we serialize the whole object
-                    serialize_value_to_buffer(data, buffer);
-                    Ok(NullPropagationDecision::KeepNullValue)
-                }
-                ProjectionValueSource::Null => {
-                    // This should not happen as we are in an object case, but just in case
-                    buffer.put(NULL);
-                    Ok(NullPropagationDecision::PropagateNullValue)
-                }
+            ProjectionValueSource::ResponseData { selections: None } => {
+                // If the selection has no sub-selections, we serialize the whole object
+                serialize_value_to_buffer(data, buffer);
+                return Ok(NullPropagationDecision::KeepNullValue);
+            }
+            ProjectionValueSource::Null => {
+                // This should not happen as we are in an object case, but just in case
+                buffer.put(NULL);
+                return Ok(NullPropagationDecision::PropagateNullValue);
             }
         }
+    }
+
+    match data {
         Value::Null => {
             buffer.put(NULL);
             Ok(NullPropagationDecision::PropagateNullValue)
@@ -317,6 +327,7 @@ fn is_simple_projection_set(plans: &[FieldProjectionPlan]) -> bool {
     plans.iter().all(|plan| plan.simple_projection)
 }
 
+#[inline]
 fn project_selection_set_with_map_simple(
     obj: &[(&str, Value)],
     plans: &[FieldProjectionPlan],
@@ -351,61 +362,89 @@ fn project_selection_set_with_map_simple(
     NullPropagationDecision::KeepNullValue
 }
 
+#[inline]
 fn project_simple_field_value(
     field_val: Option<&Value>,
     plan: &FieldProjectionPlan,
     buffer: &mut Vec<u8>,
 ) -> NullPropagationDecision {
-    if let Some(field_val) = field_val {
-        project_selection_set_simple(field_val, plan, buffer, &plan.nullability)
-    } else {
+    let Some(field_val) = field_val else {
         buffer.put(NULL);
-        NullPropagationDecision::PropagateNullValue
+        return NullPropagationDecision::PropagateNullValue;
+    };
+
+    if matches!(
+        plan.value,
+        ProjectionValueSource::ResponseData { selections: None }
+    ) && plan.nullability.list_item().is_none()
+    {
+        if matches!(field_val, Value::Null) {
+            buffer.put(NULL);
+            return NullPropagationDecision::PropagateNullValue;
+        }
+
+        serialize_value_to_buffer(field_val, buffer);
+        return NullPropagationDecision::KeepNullValue;
     }
+
+    project_selection_set_simple(field_val, plan, buffer, &plan.nullability)
 }
 
+#[inline]
 fn project_selection_set_simple(
     data: &Value,
     selection: &FieldProjectionPlan,
     buffer: &mut Vec<u8>,
     nullability: &FieldNullability,
 ) -> NullPropagationDecision {
-    match data {
-        Value::Array(arr) => {
-            let null_propagation_checkpoint = buffer.len();
-            let list_item_nullability = nullability.list_item();
-            let item_non_null = list_item_nullability.is_some_and(FieldNullability::is_non_null);
-            buffer.put(OPEN_BRACKET);
-            let mut first = true;
+    if let Value::Array(arr) = data {
+        let null_propagation_checkpoint = buffer.len();
+        let list_item_nullability = nullability.list_item();
+        let item_non_null = list_item_nullability.is_some_and(FieldNullability::is_non_null);
+        buffer.put(OPEN_BRACKET);
+        let mut first = true;
 
-            for item in arr.iter() {
-                if !first {
-                    buffer.put(COMMA);
-                }
-
-                let null_propagation_decision = project_selection_set_simple(
-                    item,
-                    selection,
-                    buffer,
-                    list_item_nullability.unwrap_or(nullability),
-                );
-
-                if null_propagation_decision.should_propagate() && item_non_null {
-                    buffer.truncate(null_propagation_checkpoint);
-                    buffer.put(NULL);
-                    return NullPropagationDecision::PropagateNullValue;
-                }
-
-                first = false;
+        for item in arr.iter() {
+            if !first {
+                buffer.put(COMMA);
             }
 
-            buffer.put(CLOSE_BRACKET);
-            NullPropagationDecision::KeepNullValue
+            let null_propagation_decision = project_selection_set_simple(
+                item,
+                selection,
+                buffer,
+                list_item_nullability.unwrap_or(nullability),
+            );
+
+            if null_propagation_decision.should_propagate() && item_non_null {
+                buffer.truncate(null_propagation_checkpoint);
+                buffer.put(NULL);
+                return NullPropagationDecision::PropagateNullValue;
+            }
+
+            first = false;
         }
-        Value::Object(obj) => match &selection.value {
+
+        buffer.put(CLOSE_BRACKET);
+        return NullPropagationDecision::KeepNullValue;
+    }
+
+    if let Some(obj) = data.as_object() {
+        return match &selection.value {
             ProjectionValueSource::ResponseData {
                 selections: Some(selections),
-            } => project_selection_set_with_map_simple(obj, selections, buffer),
+            } => {
+                let null_propagation_checkpoint = buffer.len();
+                let null_propagation_decision =
+                    project_selection_set_with_map_simple(obj, selections, buffer);
+
+                if null_propagation_decision.should_propagate() {
+                    buffer.truncate(null_propagation_checkpoint);
+                    buffer.put(NULL);
+                }
+
+                null_propagation_decision
+            }
             ProjectionValueSource::ResponseData { selections: None } => {
                 serialize_value_to_buffer(data, buffer);
                 NullPropagationDecision::KeepNullValue
@@ -414,7 +453,10 @@ fn project_selection_set_simple(
                 buffer.put(NULL);
                 NullPropagationDecision::PropagateNullValue
             }
-        },
+        };
+    }
+
+    match data {
         Value::Null => {
             buffer.put(NULL);
             NullPropagationDecision::PropagateNullValue
@@ -1036,5 +1078,84 @@ mod tests {
           }
         }
         "#);
+    }
+
+    #[test]
+    fn simple_projection_preserves_nested_null_propagation() {
+        let supergraph = hive_router_query_planner::utils::parsing::parse_schema(
+            r#"
+              type Query {
+                wrapper: Wrapper
+              }
+
+              type Wrapper {
+                required: Required!
+                optional: String
+              }
+
+              type Required {
+                id: ID!
+              }
+        "#,
+        );
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let schema_metadata = consumer_schema.schema_metadata();
+        let mut operation = parse_operation(
+            r#"
+              query {
+                wrapper {
+                  required {
+                    id
+                  }
+                  optional
+                }
+              }
+            "#,
+        );
+
+        let operation_ast = operation
+            .definitions
+            .iter_mut()
+            .find_map(|def| match def {
+                Definition::Operation(op) => Some(op),
+                _ => None,
+            })
+            .unwrap();
+
+        let supergraph_state = SupergraphState::new(&supergraph);
+        let normalized_operation: NormalizedDocument = create_normalized_document(
+            &supergraph_state,
+            operation_ast.clone(),
+            Some("NullPropagationQuery".into()),
+        );
+        let (operation_type_name, selections) =
+            FieldProjectionPlan::from_operation(&normalized_operation.operation, &schema_metadata);
+        assert!(selections.iter().all(|plan| plan.simple_projection));
+
+        let data_json = json!({
+            "wrapper": {
+                "required": {
+                    "id": null
+                },
+                "optional": "kept"
+            }
+        });
+        let data = Value::from(data_json.as_ref());
+        let projection = project_by_operation(
+            &data,
+            vec![],
+            &Default::default(),
+            operation_type_name,
+            &selections,
+            &None,
+            1000,
+            &schema_metadata,
+        );
+        let projected_bytes = projection.unwrap();
+        let projected_value: sonic_rs::Value = sonic_rs::from_slice(&projected_bytes).unwrap();
+        let expected_response: sonic_rs::Value =
+            sonic_rs::from_str(r#"{"data":{"wrapper":null}}"#).unwrap();
+
+        assert_eq!(projected_value, expected_response);
     }
 }
