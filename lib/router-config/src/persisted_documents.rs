@@ -7,13 +7,14 @@ use crate::primitives::file_path::FilePath;
 use crate::primitives::retry_policy::RetryPolicyConfig;
 use crate::primitives::single_or_multiple::SingleOrMultiple;
 use crate::primitives::toggle::ToggleWith;
+use crate::primitives::value_or_expression::ValueOrExpression;
 
 #[derive(Debug, Serialize, JsonSchema, Clone, Default)]
 pub struct PersistedDocumentsConfig {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
-    pub require_id: bool,
+    pub require_id: ValueOrExpression<bool>,
     #[serde(default)]
     pub log_missing_id: bool,
     #[serde(default)]
@@ -28,7 +29,7 @@ struct RawPersistedDocumentsConfig {
     #[serde(default)]
     enabled: bool,
     #[serde(default)]
-    require_id: bool,
+    require_id: ValueOrExpression<bool>,
     #[serde(default)]
     log_missing_id: bool,
     #[serde(default)]
