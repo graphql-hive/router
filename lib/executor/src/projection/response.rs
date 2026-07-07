@@ -334,10 +334,7 @@ fn project_selection_set_with_map<'a>(
             }
         }
 
-        let field_val = obj
-            .binary_search_by_key(&plan.response_key.as_str(), |(k, _)| *k)
-            .ok()
-            .map(|idx| &obj[idx].1);
+        let field_val = Value::object_get(obj, plan.response_key.as_str());
 
         let res = if let Some(conditions) = &plan.conditions {
             let field_type_name_cell = OnceCell::new();
@@ -578,11 +575,7 @@ fn resolve_type_name<'a>(
 
     let typename_field = field_val
         .and_then(|value| value.as_object())
-        .and_then(|obj| {
-            obj.binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| *k)
-                .ok()
-                .and_then(|idx| obj[idx].1.as_str())
-        });
+        .and_then(|obj| Value::object_get(obj, TYPENAME_FIELD_NAME).and_then(Value::as_str));
 
     if let Some(typename) = typename_field {
         return Ok(typename);
@@ -698,9 +691,12 @@ mod tests {
             &schema_metadata,
         );
         let projected_bytes = projection.unwrap();
-        let projected_str = String::from_utf8(projected_bytes).unwrap();
-        let expected_response = r#"{"data":{"metadatas":[{"id":"meta1","data":{"float":41.5,"int":-42,"str":"value1","unsigned":123}},{"id":"meta2","data":null}]}}"#;
-        assert_eq!(projected_str, expected_response);
+        let projected_value: sonic_rs::Value = sonic_rs::from_slice(&projected_bytes).unwrap();
+        let expected_response: sonic_rs::Value = sonic_rs::from_str(
+            r#"{"data":{"metadatas":[{"id":"meta1","data":{"float":41.5,"int":-42,"str":"value1","unsigned":123}}, {"id":"meta2","data":null}]}}"#,
+        )
+        .unwrap();
+        assert_eq!(projected_value, expected_response);
     }
 
     #[test]

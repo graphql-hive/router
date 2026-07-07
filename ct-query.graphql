@@ -1,0 +1,177 @@
+{
+  products(limit: 90) {
+    results {
+      id
+      skus
+      state {
+        id
+        key
+        type
+        roles
+        nameAllLocales {
+          locale
+          value
+        }
+        descriptionAllLocales {
+          locale
+          value
+        }
+      }
+      priceMode
+      taxCategory {
+        name
+        description
+        key
+        id
+        rates {
+          name
+          amount
+          country
+          state
+        }
+      }
+      productType {
+        key
+        name
+        description
+        attributeDefinitions {
+          results {
+            type {
+              name
+            }
+            name
+            attributeConstraint
+            labelAllLocales {
+              locale
+              value
+            }
+          }
+        }
+      }
+      masterData {
+        current {
+          metaTitleAllLocales {
+            value
+            locale
+          }
+          metaKeywordsAllLocales {
+            value
+            locale
+          }
+          metaDescriptionAllLocales {
+            value
+            locale
+          }
+          categories {
+            nameAllLocales {
+              locale
+              value
+            }
+            descriptionAllLocales {
+              locale
+              value
+            }
+            slugAllLocales {
+              locale
+              value
+            }
+            childCount
+            children {
+              nameAllLocales {
+                locale
+                value
+              }
+              descriptionAllLocales {
+                locale
+                value
+              }
+              slugAllLocales {
+                locale
+                value
+              }
+              childCount
+            }
+            ancestors {
+              nameAllLocales {
+                locale
+                value
+              }
+              descriptionAllLocales {
+                locale
+                value
+              }
+              slugAllLocales {
+                locale
+                value
+              }
+              childCount
+            }
+          }
+          searchKeywords {
+            locale
+            searchKeywords {
+              text
+            }
+          }
+          allVariants {
+            id
+            key
+            prices {
+              id
+              value {
+                type
+                centAmount
+                currencyCode
+              }
+              customerGroup {
+                name
+                key
+              }
+              channel {
+                id
+                nameAllLocales {
+                  value
+                  locale
+                }
+                descriptionAllLocales {
+                  value
+                  locale
+                }
+                address {
+                  streetName
+                  streetNumber
+                  postalCode
+                  city
+                  region
+                  state
+                  firstName
+                  lastName
+                }
+              }
+              discounted {
+                value {
+                  currencyCode
+                  centAmount
+                }
+                discount {
+                  predicate
+                  validFrom
+                  validUntil
+                  key
+                  nameAllLocales {
+                    locale
+                    value
+                  }
+                }
+              }
+            }
+            attributesRaw {
+              name
+              value
+            }
+          }
+        }
+      }
+    }
+  }
+}

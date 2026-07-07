@@ -1,5 +1,3 @@
-use std::cmp::Ordering;
-
 use crate::response::value::Value;
 
 pub fn deep_merge<'a>(target: &mut Value<'a>, source: Value<'a>) {
@@ -47,40 +45,16 @@ fn deep_merge_objects<'a>(
         return;
     }
 
-    let old_target = std::mem::take(target_vec);
-    let mut merged = Vec::with_capacity(old_target.len() + source_obj.len());
+    target_vec.reserve(source_obj.len());
 
-    let mut target_iter = old_target.into_iter().peekable();
-    let mut source_iter = source_obj.into_iter().peekable();
-
-    while let (Some(&(target_key, _)), Some(&(source_key, _))) =
-        (target_iter.peek(), source_iter.peek())
-    {
-        match target_key.cmp(source_key) {
-            Ordering::Less => {
-                merged.push(target_iter.next().unwrap());
-            }
-            Ordering::Greater => {
-                let (key, value) = source_iter.next().unwrap();
-                merged.push((key, value));
-            }
-            Ordering::Equal => {
-                let (key, target_val_ref) = target_iter.next().unwrap();
-                let (_, source_val_ref) = source_iter.next().unwrap();
-
-                let mut new_val = target_val_ref;
-                deep_merge_internal(&mut new_val, source_val_ref);
-                merged.push((key, new_val));
-            }
+    for (source_key, source_value) in source_obj {
+        if let Some((_, target_value)) = target_vec
+            .iter_mut()
+            .find(|(target_key, _)| *target_key == source_key)
+        {
+            deep_merge_internal(target_value, source_value);
+        } else {
+            target_vec.push((source_key, source_value));
         }
     }
-
-    // At this point, at least one of the iterators is exhausted.
-    // We can extend the merged vector with the remaining elements from both.
-    // For the exhausted iterator, this will be a no-op.
-    merged.extend(target_iter);
-    merged.extend(source_iter);
-
-    // Replace the original vector with the newly merged one.
-    *target_vec = merged;
 }
