@@ -113,16 +113,16 @@ fn ct_response_benches(c: &mut Criterion) {
     let mut group = c.benchmark_group("ct_response");
     group.throughput(Throughput::Bytes(fixture.payload.len() as u64));
 
-    // group.bench_function("deserialize_and_drop", |b| {
-    //     b.iter(|| {
-    //         let response = SubgraphResponse::deserialize_from_bytes(
-    //             black_box(fixture.payload.clone()),
-    //             fixture.custom_scalar_paths.as_ref(),
-    //         )
-    //         .expect("failed to deserialize CT payload");
-    //         black_box(response);
-    //     });
-    // });
+    group.bench_function("deserialize_and_drop", |b| {
+        b.iter(|| {
+            let response = SubgraphResponse::deserialize_from_bytes(
+                black_box(fixture.payload.clone()),
+                fixture.custom_scalar_paths.as_ref(),
+            )
+            .expect("failed to deserialize CT payload");
+            black_box(response);
+        });
+    });
 
     let projection_response = fixture.deserialize();
     group.bench_function("project_only", |b| {
@@ -142,38 +142,38 @@ fn ct_response_benches(c: &mut Criterion) {
         });
     });
 
-    // group.bench_function("full_deserialize_project_drop", |b| {
-    //     b.iter(|| {
-    //         let response = SubgraphResponse::deserialize_from_bytes(
-    //             black_box(fixture.payload.clone()),
-    //             fixture.custom_scalar_paths.as_ref(),
-    //         )
-    //         .expect("failed to deserialize CT payload");
-    //         let projected = project_by_operation(
-    //             black_box(&response.data),
-    //             vec![],
-    //             &ExecutionResultExtensions::default(),
-    //             black_box(fixture.operation_type_name),
-    //             black_box(&fixture.projection_plan),
-    //             &None,
-    //             fixture.projected_response_size_estimate,
-    //             fixture.schema_metadata,
-    //         )
-    //         .expect("failed to project CT payload");
-    //         black_box(projected);
-    //         black_box(response);
-    //     });
-    // });
+    group.bench_function("full_deserialize_project_drop", |b| {
+        b.iter(|| {
+            let response = SubgraphResponse::deserialize_from_bytes(
+                black_box(fixture.payload.clone()),
+                fixture.custom_scalar_paths.as_ref(),
+            )
+            .expect("failed to deserialize CT payload");
+            let projected = project_by_operation(
+                black_box(&response.data),
+                vec![],
+                &ExecutionResultExtensions::default(),
+                black_box(fixture.operation_type_name),
+                black_box(&fixture.projection_plan),
+                &None,
+                fixture.projected_response_size_estimate,
+                fixture.schema_metadata,
+            )
+            .expect("failed to project CT payload");
+            black_box(projected);
+            black_box(response);
+        });
+    });
 
-    // group.bench_function("drop_value_tree", |b| {
-    //     b.iter_batched(
-    //         || fixture.deserialize(),
-    //         |response| {
-    //             black_box(response);
-    //         },
-    //         BatchSize::SmallInput,
-    //     );
-    // });
+    group.bench_function("drop_value_tree", |b| {
+        b.iter_batched(
+            || fixture.deserialize(),
+            |response| {
+                black_box(response);
+            },
+            BatchSize::SmallInput,
+        );
+    });
 
     group.finish();
 }
