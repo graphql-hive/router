@@ -1775,7 +1775,6 @@ fn find_satisfiable_key<'a>(
             &OperationPath {
                 root_node: query_node.node_index,
                 last_segment: None,
-                visited_edge_indices: Default::default(),
                 cost: 0,
                 union_context: None,
             },

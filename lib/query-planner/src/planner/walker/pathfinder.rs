@@ -595,7 +595,7 @@ impl<'graph> PathSearch<'graph> {
                 for selection in selections.selection_set.items.iter() {
                     requirements.push_front(MoveRequirement {
                         paths: Rc::new(vec![path.clone()]),
-                        selection: selection.clone(),
+                        selection,
                     });
                 }
 
@@ -687,7 +687,7 @@ impl<'graph> PathSearch<'graph> {
 #[derive(Debug)]
 pub struct MoveRequirement<'graph> {
     pub paths: Rc<Vec<OperationPath<'graph>>>,
-    pub selection: SelectionItem,
+    pub selection: &'graph SelectionItem,
 }
 
 type FieldRequirementsResult<'graph> =
@@ -780,7 +780,7 @@ impl<'graph> PathSearch<'graph> {
             .unwrap() // Safe due to the check above
             .iter()
             .map(|selection_item| MoveRequirement {
-                selection: selection_item.clone(),
+                selection: selection_item,
                 paths: Rc::clone(&shared_next_paths_for_subs),
             })
             .collect();
@@ -866,7 +866,7 @@ impl<'graph> PathSearch<'graph> {
             .unwrap() // Safe due to the check above
             .iter()
             .map(|selection_item| MoveRequirement {
-                selection: selection_item.clone(),
+                selection: selection_item,
                 paths: Rc::clone(&shared_next_paths_for_subs),
             })
             .collect();
