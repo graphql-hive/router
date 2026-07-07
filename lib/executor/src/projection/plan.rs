@@ -123,6 +123,7 @@ type SelectionVariants = IndexMap<String, Vec<FieldProjectionPlan>>;
 pub struct FieldProjectionPlan {
     pub field_name: String,
     pub response_key: String,
+    pub output_type_name: String,
     pub is_typename: bool,
     pub nullability: FieldNullability,
     /// A condition that checks the name of the parent object.
@@ -916,6 +917,7 @@ impl FieldProjectionPlan {
             FieldProjectionPlan {
                 field_name: field.name.to_string(),
                 response_key,
+                output_type_name: field_type.clone(),
                 parent_type_guard,
                 is_typename: field_name == TYPENAME_FIELD_NAME,
                 nullability: nullability.clone(),
@@ -933,6 +935,7 @@ impl FieldProjectionPlan {
             FieldProjectionPlan {
                 field_name: field_name.to_string(),
                 response_key,
+                output_type_name: field_type.clone(),
                 parent_type_guard,
                 is_typename: field_name == TYPENAME_FIELD_NAME,
                 nullability: nullability.clone(),
@@ -1023,6 +1026,7 @@ impl FieldProjectionPlan {
         let mut plan = FieldProjectionPlan {
             field_name: self.field_name.clone(),
             response_key: self.response_key.clone(),
+            output_type_name: self.output_type_name.clone(),
             parent_type_guard: self.parent_type_guard.clone(),
             conditions: self.conditions.clone(),
             is_typename: self.is_typename,

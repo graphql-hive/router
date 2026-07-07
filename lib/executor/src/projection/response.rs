@@ -10,7 +10,6 @@ use bytes::BufMut;
 use sonic_rs::JsonValueTrait;
 use std::cell::OnceCell;
 use std::collections::HashMap;
-use std::rc::Rc;
 
 use crate::introspection::schema::{FieldNullability, SchemaMetadata};
 use crate::json_writer::{write_and_escape_string, write_f64, write_i64, write_u64};
@@ -44,10 +43,8 @@ enum TypeName<'a> {
     Deferred {
         selection: &'a FieldProjectionPlan,
         data: Option<&'a Value<'a>>,
-        parent: Rc<TypeName<'a>>,
-        schema: &'a SchemaMetadata,
         /// Cache for the resolved type name to avoid recomputation
-        cached: OnceCell<Result<&'a str, ProjectionError>>,
+        cached: OnceCell<&'a str>,
     },
 }
 
@@ -58,34 +55,23 @@ impl<'a> TypeName<'a> {
     }
 
     #[inline]
-    fn deferred(
-        selection: &'a FieldProjectionPlan,
-        data: Option<&'a Value>,
-        parent: TypeName<'a>,
-        schema: &'a SchemaMetadata,
-    ) -> Self {
+    fn deferred(selection: &'a FieldProjectionPlan, data: Option<&'a Value>) -> Self {
         TypeName::Deferred {
             selection,
             data,
-            parent: Rc::new(parent),
-            schema,
             cached: OnceCell::new(),
         }
     }
 
     #[inline]
-    fn get(&self) -> Result<&'a str, ProjectionError> {
+    fn get(&self) -> &'a str {
         match self {
-            TypeName::Resolved(name) => Ok(name),
+            TypeName::Resolved(name) => name,
             TypeName::Deferred {
                 selection,
                 data,
-                parent,
-                schema,
                 cached,
-            } => cached
-                .get_or_init(|| resolve_type_name(selection, *data, parent, schema))
-                .clone(),
+            } => cached.get_or_init(|| resolve_type_name(selection, *data)),
         }
     }
 }
@@ -259,7 +245,7 @@ fn project_selection_set<'a>(
                     let null_propagation_checkpoint = buffer.len();
                     let mut first = true;
                     let type_name = if selection.subtree_needs_type_name {
-                        TypeName::deferred(selection, Some(data), parent_type_name, schema_metadata)
+                        TypeName::deferred(selection, Some(data))
                     } else {
                         parent_type_name
                     };
@@ -326,7 +312,7 @@ fn project_selection_set_with_map<'a>(
 ) -> Result<NullPropagationDecision, ProjectionError> {
     for plan in plans {
         if let Some(guard) = &plan.parent_type_guard {
-            let name = parent_type_name.get()?;
+            let name = parent_type_name.get();
             if !guard.matches(name) {
                 // Seems like the field projection plan applies to other types, so move to the next one
                 continue;
@@ -338,14 +324,9 @@ fn project_selection_set_with_map<'a>(
         let res = if let Some(conditions) = &plan.conditions {
             if plan.conditions_need_type_name {
                 let field_type_name_cell = OnceCell::new();
-                let field_type_name_fn = || {
-                    field_type_name_cell
-                        .get_or_init(|| {
-                            resolve_type_name(plan, field_val, &parent_type_name, schema_metadata)
-                        })
-                        .clone()
-                };
-                let parent_type_name_fn = || parent_type_name.get();
+                let field_type_name_fn =
+                    || Ok(*field_type_name_cell.get_or_init(|| resolve_type_name(plan, field_val)));
+                let parent_type_name_fn = || Ok(parent_type_name.get());
                 check(
                     conditions,
                     &parent_type_name_fn,
@@ -383,7 +364,7 @@ fn project_selection_set_with_map<'a>(
                         if plan.is_typename {
                             // If the field is TYPENAME_FIELD, we should set it to the parent type name
                             buffer.put(QUOTE);
-                            buffer.put(parent_type_name.get()?.as_bytes());
+                            buffer.put(parent_type_name.get().as_bytes());
                             buffer.put(QUOTE);
                             NullPropagationDecision::KeepNullValue
                         } else if let Some(field_val) = field_val {
@@ -624,14 +605,9 @@ where
 /// A scenario when a type is missing or a type is missing a field,
 /// can only happen when field's projection rule lack a proper type guard,
 /// or the type guard was not correctly enforced, resulting in applying a plan for a different parent type.
-fn resolve_type_name<'a>(
-    plan: &'a FieldProjectionPlan,
-    field_val: Option<&'a Value>,
-    parent_type_name: &TypeName<'a>,
-    schema_metadata: &'a SchemaMetadata,
-) -> Result<&'a str, ProjectionError> {
+fn resolve_type_name<'a>(plan: &'a FieldProjectionPlan, field_val: Option<&'a Value>) -> &'a str {
     if plan.is_typename {
-        return Ok("String");
+        return "String";
     }
 
     let typename_field = field_val
@@ -639,22 +615,10 @@ fn resolve_type_name<'a>(
         .and_then(|obj| Value::object_get(obj, TYPENAME_FIELD_NAME).and_then(Value::as_str));
 
     if let Some(typename) = typename_field {
-        return Ok(typename);
+        return typename;
     }
 
-    let parent_type_name = parent_type_name.get()?;
-
-    let fields = schema_metadata
-        .get_type_fields(parent_type_name)
-        .ok_or_else(|| ProjectionError::MissingType(parent_type_name.to_string()))?;
-
-    fields
-        .get(&plan.field_name)
-        .map(|field_info| field_info.output_type_name.as_str())
-        .ok_or_else(|| ProjectionError::MissingField {
-            field_name: plan.field_name.to_string(),
-            type_name: parent_type_name.to_string(),
-        })
+    plan.output_type_name.as_str()
 }
 
 #[cfg(test)]
