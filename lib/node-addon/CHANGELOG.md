@@ -1,4 +1,12 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.41 (2026-07-07)
+
+### Fixes
+
+#### Query Planning performance improvements
+
+Removed unused per-path edge tracking and switched to references instead of owned values - no cloning of selection items.
+
 ## 0.0.40 (2026-07-06)
 
 ### Fixes
