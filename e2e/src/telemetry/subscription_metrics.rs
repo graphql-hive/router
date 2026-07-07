@@ -9,9 +9,7 @@ mod subscription_metrics_e2e_tests {
     };
     use ntex::http;
 
-    use crate::testkit::{
-        otel::OtlpCollector, some_header_map, ClientResponseExt, TestRouter, TestSubgraphs,
-    };
+    use crate::testkit::{otel::OtlpCollector, some_header_map, TestRouter, TestSubgraphs};
 
     async fn wait_for_metrics_export() {
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -64,11 +62,15 @@ mod subscription_metrics_e2e_tests {
             .start()
             .await;
 
-        let res = router
+        // reviewAddedLooping never completes on its own, so we control the lifecycle by
+        // reading one event (to prove the gauges went up) and then dropping the response
+        // stream (to prove the gauges come back down). intervalInMs is high to avoid spamming
+        // events while we hold the subscription open.
+        let mut res = router
             .send_graphql_request(
                 r#"
                 subscription {
-                    reviewAdded(intervalInMs: 0) {
+                    reviewAddedLooping(intervalInMs: 200) {
                         id
                     }
                 }
@@ -81,10 +83,7 @@ mod subscription_metrics_e2e_tests {
             .await;
 
         assert!(res.status().is_success(), "Expected 200 OK");
-        // this query is a finite stream, so draining the body waits for completion
-        // and drops the subscription's RAII guards before we assert on the metrics.
-        let body = res.string_body().await;
-        assert!(body.contains("event: complete"));
+        let _ = res.next().await.expect("expected at least one chunk");
 
         wait_for_metrics_export().await;
         let metrics = otlp_collector.metrics_view().await;
@@ -92,13 +91,30 @@ mod subscription_metrics_e2e_tests {
         let transport_attrs = [(labels::SUBSCRIPTION_TRANSPORT, "http_sse")];
         assert_eq!(
             metrics.latest_counter(CLIENTS_ACTIVE, &transport_attrs),
+            1.0,
+            "client active gauge must be 1 while the subscription is live"
+        );
+        assert_eq!(
+            metrics.latest_counter(CLIENTS_CONNECTIONS, &transport_attrs),
+            1.0,
+            "client connections gauge must be 1 while the subscription is live"
+        );
+
+        // dropping the response stream tears down the client's RAII guards
+        drop(res);
+
+        wait_for_metrics_export().await;
+        let metrics = otlp_collector.metrics_view().await;
+
+        assert_eq!(
+            metrics.latest_counter(CLIENTS_ACTIVE, &transport_attrs),
             0.0,
-            "client active gauge must return to 0 after the subscription completes"
+            "client active gauge must return to 0 after the subscription ends"
         );
         assert_eq!(
             metrics.latest_counter(CLIENTS_CONNECTIONS, &transport_attrs),
             0.0,
-            "client connections gauge must return to 0 after the subscription completes"
+            "client connections gauge must return to 0 after the subscription ends"
         );
 
         let subscribe_attrs = [
