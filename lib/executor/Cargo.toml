@@ -72,9 +72,14 @@ tokio = { workspace = true }
 insta = { workspace = true }
 mockito = { workspace = true }
 rustls = { workspace = true }
+pprof = { workspace = true }
 
 [[bench]]
 name = "executor_benches"
+harness = false
+
+[[bench]]
+name = "ct_response_benches"
 harness = false
 
 [[bench]]

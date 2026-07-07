@@ -51,6 +51,29 @@ impl Hash for Value<'_> {
 }
 
 impl<'a> Value<'a> {
+    #[inline]
+    pub fn object_get_entry<'b>(
+        obj: &'b [(&'a str, Value<'a>)],
+        key: &str,
+    ) -> Option<&'b (&'a str, Value<'a>)> {
+        obj.iter().find(|(field_name, _)| *field_name == key)
+    }
+
+    #[inline]
+    pub fn object_get<'b>(obj: &'b [(&'a str, Value<'a>)], key: &str) -> Option<&'b Value<'a>> {
+        Self::object_get_entry(obj, key).map(|(_, value)| value)
+    }
+
+    #[inline]
+    pub fn object_get_mut<'b>(
+        obj: &'b mut [(&'a str, Value<'a>)],
+        key: &str,
+    ) -> Option<&'b mut Value<'a>> {
+        obj.iter_mut()
+            .find(|(field_name, _)| *field_name == key)
+            .map(|(_, value)| value)
+    }
+
     pub fn take_entities(&mut self) -> Option<Vec<Value<'a>>> {
         self.take_entities_by_key("_entities")
     }
@@ -58,7 +81,9 @@ impl<'a> Value<'a> {
     pub fn take_entities_by_key(&mut self, key: &str) -> Option<Vec<Value<'a>>> {
         match self {
             Value::Object(data) => {
-                if let Ok(entities_idx) = data.binary_search_by_key(&key, |(k, _)| *k) {
+                if let Some(entities_idx) =
+                    data.iter().position(|(field_name, _)| *field_name == key)
+                {
                     if let Value::Array(arr) = data.remove(entities_idx).1 {
                         return Some(arr);
                     }
@@ -115,8 +140,7 @@ impl<'a> Value<'a> {
             match item {
                 SelectionItem::Field(field_selection) => {
                     let field_name = &field_selection.name;
-                    if let Ok(idx) = obj.binary_search_by_key(&field_name.as_str(), |(k, _)| k) {
-                        let (key, value) = &obj[idx];
+                    if let Some((key, value)) = Value::object_get_entry(obj, field_name.as_str()) {
                         key.hash(state);
                         value.hash_with_requires(
                             state,
@@ -127,10 +151,8 @@ impl<'a> Value<'a> {
                 }
                 SelectionItem::InlineFragment(inline_fragment) => {
                     let type_condition = &inline_fragment.type_condition;
-                    let type_name = obj
-                        .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
-                        .ok()
-                        .and_then(|idx| obj[idx].1.as_str())
+                    let type_name = Value::object_get(obj, TYPENAME_FIELD_NAME)
+                        .and_then(Value::as_str)
                         .unwrap_or(type_condition);
 
                     if possible_types.entity_satisfies_type_condition(type_name, type_condition) {
@@ -179,7 +201,6 @@ impl<'a> Value<'a> {
             ValueRef::Object(obj) => {
                 let mut vec = Vec::with_capacity(obj.len());
                 vec.extend(obj.iter().map(|(k, v)| (k, Value::from(v.as_ref()))));
-                vec.sort_unstable_by_key(|(k, _)| *k);
                 Value::Object(vec)
             }
         }
@@ -361,8 +382,6 @@ impl<'de> Visitor<'de> for ValueVisitor<'de> {
         while let Some((key, value)) = map.next_entry()? {
             entries.push((key, value));
         }
-        // IMPORTANT: We keep the sort for binary search compatibility.
-        entries.sort_unstable_by_key(|(k, _)| *k);
         Ok(Value::Object(entries))
     }
 }

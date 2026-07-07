@@ -131,10 +131,7 @@ fn project_requires_map_mut(
     parent_first: bool,
 ) {
     // First, check if __typename is present in the entity object, we'll use it later
-    let type_name = entity_obj
-        .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
-        .ok()
-        .and_then(|idx| entity_obj[idx].1.as_str());
+    let type_name = Value::object_get(entity_obj, TYPENAME_FIELD_NAME).and_then(Value::as_str);
 
     // An indicator that only `__typename` is used for the key fields.
     // This is an edge case that we need to identify, in order to detect when
@@ -165,15 +162,8 @@ fn project_requires_map_mut(
                     continue;
                 }
 
-                let original = entity_obj
-                    .binary_search_by_key(&field_name.as_str(), |(k, _)| k)
-                    .ok()
-                    .or_else(|| {
-                        entity_obj
-                            .binary_search_by_key(&response_key, |(k, _)| k)
-                            .ok()
-                    })
-                    .map(|idx| &entity_obj[idx].1);
+                let original = Value::object_get(entity_obj, field_name.as_str())
+                    .or_else(|| Value::object_get(entity_obj, response_key));
 
                 let Some(original) = original else {
                     continue;
@@ -344,8 +334,8 @@ mod tests {
           @r#"
           {
             "__typename": "Ad",
-            "contactOptions": null,
-            "id": "1"
+            "id": "1",
+            "contactOptions": null
           }
         "#);
 
