@@ -2443,7 +2443,7 @@ Configuration for persisted documents extraction and resolution.
 |----|----|-----------|--------|
 |**enabled**|`boolean`|Default: `false`<br/>||
 |**log\_missing\_id**|`boolean`|Default: `false`<br/>||
-|**require\_id**|`boolean`|Default: `false`<br/>||
+|**require\_id**||Default: `false`<br/>||
 |[**selectors**](#persisted_documentsselectors)|`array`|||
 |**storage**||||
 
