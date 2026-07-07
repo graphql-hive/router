@@ -349,16 +349,6 @@ jobs:
       - name: Run Audits
         run: npm run ci:test:graphql-over-http
         working-directory: audits
-      - name: Publish Test Results for comparison
-        uses: EnricoMi/publish-unit-test-result-action@d0a4676d0e0b938bc201470d88276b7c74c712b3 # v2
-        if: (!cancelled())
-        with:
-          check_name: test / graphql-over-http
-          comment_title: GraphQL over HTTP Audit Results
-          comment_mode: off
-          files: |
-            audits/reports/*.xml
-
   federation-audit:
     name: test / federation-audit
     runs-on: ubuntu-latest
@@ -383,15 +373,6 @@ jobs:
           name: federation-audit-logs
           path: |
             ./audits/logs/*.log
-      - name: Publish Test Results for comparison
-        uses: EnricoMi/publish-unit-test-result-action@d0a4676d0e0b938bc201470d88276b7c74c712b3 # v2
-        if: (!cancelled())
-        with:
-          check_name: test / federation-audit
-          comment_title: Federation Audit Results
-          comment_mode: off
-          files: |
-            audits/reports/*.xml
       - name: Run Audits (experimental_abstract_type_folding)
         run: npm run test:federation-all
         env:
