@@ -310,6 +310,8 @@ fn project_selection_set_with_map<'a>(
     first: &mut bool,
     schema_metadata: &'a SchemaMetadata,
 ) -> Result<NullPropagationDecision, ProjectionError> {
+    let mut field_lookup_cursor = 0;
+
     for plan in plans {
         if let Some(guard) = &plan.parent_type_guard {
             let name = parent_type_name.get();
@@ -319,7 +321,8 @@ fn project_selection_set_with_map<'a>(
             }
         }
 
-        let field_val = Value::object_get(obj, plan.response_key.as_str());
+        let field_val =
+            object_get_with_cursor(obj, plan.response_key.as_str(), &mut field_lookup_cursor);
 
         let res = if let Some(conditions) = &plan.conditions {
             if plan.conditions_need_type_name {
@@ -442,6 +445,36 @@ fn project_selection_set_with_map<'a>(
     }
 
     Ok(NullPropagationDecision::KeepNullValue)
+}
+
+#[inline]
+fn object_get_with_cursor<'a, 'b>(
+    obj: &'b [(&'a str, Value<'a>)],
+    key: &str,
+    cursor: &mut usize,
+) -> Option<&'b Value<'a>> {
+    let len = obj.len();
+    if len == 0 {
+        return None;
+    }
+
+    let start = (*cursor).min(len);
+
+    for index in start..len {
+        if obj[index].0 == key {
+            *cursor = index + 1;
+            return Some(&obj[index].1);
+        }
+    }
+
+    for index in 0..start {
+        if obj[index].0 == key {
+            *cursor = index + 1;
+            return Some(&obj[index].1);
+        }
+    }
+
+    None
 }
 
 #[inline]
