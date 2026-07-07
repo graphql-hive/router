@@ -132,6 +132,9 @@ pub struct FieldProjectionPlan {
     pub parent_type_guard: Option<TypeCondition>,
     pub conditions: Option<FieldProjectionCondition>,
     pub value: ProjectionValueSource,
+    pub conditions_need_type_name: bool,
+    pub needs_type_name: bool,
+    pub subtree_needs_type_name: bool,
 }
 
 #[cfg(debug_assertions)]
@@ -247,6 +250,7 @@ impl FieldProjectionPlan {
 
         for plan in &mut plans {
             Self::remove_redundant_child_guards(plan, schema_metadata);
+            plan.refresh_runtime_flags();
         }
 
         (root_type_name, plans)
@@ -921,6 +925,9 @@ impl FieldProjectionPlan {
                 value: ProjectionValueSource::ResponseData {
                     selections: Some(Arc::new(Vec::new())),
                 },
+                conditions_need_type_name: false,
+                needs_type_name: false,
+                subtree_needs_type_name: false,
             }
         } else {
             FieldProjectionPlan {
@@ -939,6 +946,9 @@ impl FieldProjectionPlan {
                     )
                     .map(Arc::new),
                 },
+                conditions_need_type_name: false,
+                needs_type_name: false,
+                subtree_needs_type_name: false,
             }
         };
 
@@ -1010,7 +1020,7 @@ impl FieldProjectionPlan {
     }
 
     pub fn with_new_value(&self, new_value: ProjectionValueSource) -> FieldProjectionPlan {
-        FieldProjectionPlan {
+        let mut plan = FieldProjectionPlan {
             field_name: self.field_name.clone(),
             response_key: self.response_key.clone(),
             parent_type_guard: self.parent_type_guard.clone(),
@@ -1018,6 +1028,48 @@ impl FieldProjectionPlan {
             is_typename: self.is_typename,
             nullability: self.nullability.clone(),
             value: new_value,
+            conditions_need_type_name: false,
+            needs_type_name: false,
+            subtree_needs_type_name: false,
+        };
+        plan.refresh_runtime_flags();
+        plan
+    }
+
+    fn condition_needs_type_name(condition: &FieldProjectionCondition) -> bool {
+        match condition {
+            FieldProjectionCondition::ParentTypeCondition(_)
+            | FieldProjectionCondition::FieldTypeCondition(_) => true,
+            FieldProjectionCondition::And(left, right)
+            | FieldProjectionCondition::Or(left, right) => {
+                Self::condition_needs_type_name(left) || Self::condition_needs_type_name(right)
+            }
+            FieldProjectionCondition::IncludeIfVariable(_)
+            | FieldProjectionCondition::SkipIfVariable(_)
+            | FieldProjectionCondition::EnumValuesCondition(_) => false,
+        }
+    }
+
+    fn refresh_runtime_flags(&mut self) {
+        self.conditions_need_type_name = self
+            .conditions
+            .as_ref()
+            .is_some_and(Self::condition_needs_type_name);
+
+        self.needs_type_name =
+            self.is_typename || self.parent_type_guard.is_some() || self.conditions_need_type_name;
+
+        self.subtree_needs_type_name = false;
+        if let ProjectionValueSource::ResponseData {
+            selections: Some(selections),
+        } = &mut self.value
+        {
+            let selections = Arc::make_mut(selections);
+            for selection in selections {
+                selection.refresh_runtime_flags();
+                self.subtree_needs_type_name |=
+                    selection.needs_type_name || selection.subtree_needs_type_name;
+            }
         }
     }
 

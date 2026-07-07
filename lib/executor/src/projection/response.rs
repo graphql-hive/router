@@ -258,12 +258,11 @@ fn project_selection_set<'a>(
                 } => {
                     let null_propagation_checkpoint = buffer.len();
                     let mut first = true;
-                    let type_name = TypeName::deferred(
-                        selection,
-                        Some(data),
-                        parent_type_name,
-                        schema_metadata,
-                    );
+                    let type_name = if selection.subtree_needs_type_name {
+                        TypeName::deferred(selection, Some(data), parent_type_name, schema_metadata)
+                    } else {
+                        parent_type_name
+                    };
                     let null_propagation_decision = project_selection_set_with_map(
                         obj,
                         errors,
@@ -337,22 +336,26 @@ fn project_selection_set_with_map<'a>(
         let field_val = Value::object_get(obj, plan.response_key.as_str());
 
         let res = if let Some(conditions) = &plan.conditions {
-            let field_type_name_cell = OnceCell::new();
-            let field_type_name_fn = || {
-                field_type_name_cell
-                    .get_or_init(|| {
-                        resolve_type_name(plan, field_val, &parent_type_name, schema_metadata)
-                    })
-                    .clone()
-            };
-            let parent_type_name_fn = || parent_type_name.get();
-            check(
-                conditions,
-                &parent_type_name_fn,
-                &field_type_name_fn,
-                field_val,
-                variable_values,
-            )
+            if plan.conditions_need_type_name {
+                let field_type_name_cell = OnceCell::new();
+                let field_type_name_fn = || {
+                    field_type_name_cell
+                        .get_or_init(|| {
+                            resolve_type_name(plan, field_val, &parent_type_name, schema_metadata)
+                        })
+                        .clone()
+                };
+                let parent_type_name_fn = || parent_type_name.get();
+                check(
+                    conditions,
+                    &parent_type_name_fn,
+                    &field_type_name_fn,
+                    field_val,
+                    variable_values,
+                )
+            } else {
+                check_without_type_names(conditions, field_val, variable_values)
+            }
         } else {
             Ok(())
         };
@@ -458,6 +461,64 @@ fn project_selection_set_with_map<'a>(
     }
 
     Ok(NullPropagationDecision::KeepNullValue)
+}
+
+#[inline]
+fn check_without_type_names(
+    cond: &FieldProjectionCondition,
+    field_value: Option<&Value>,
+    variable_values: &Option<HashMap<String, sonic_rs::Value>>,
+) -> Result<(), FieldProjectionConditionError> {
+    match cond {
+        FieldProjectionCondition::And(condition_a, condition_b) => {
+            check_without_type_names(condition_a, field_value, variable_values)
+                .and_then(|_| check_without_type_names(condition_b, field_value, variable_values))
+        }
+        FieldProjectionCondition::Or(condition_a, condition_b) => {
+            check_without_type_names(condition_a, field_value, variable_values)
+                .or_else(|_| check_without_type_names(condition_b, field_value, variable_values))
+        }
+        FieldProjectionCondition::IncludeIfVariable(variable_name) => {
+            if let Some(values) = variable_values {
+                if values
+                    .get(variable_name)
+                    .is_some_and(|v| v.as_bool().unwrap_or(false))
+                {
+                    Ok(())
+                } else {
+                    Err(FieldProjectionConditionError::Skip)
+                }
+            } else {
+                Err(FieldProjectionConditionError::Skip)
+            }
+        }
+        FieldProjectionCondition::SkipIfVariable(variable_name) => {
+            if let Some(values) = variable_values {
+                if values
+                    .get(variable_name)
+                    .is_some_and(|v| v.as_bool().unwrap_or(false))
+                {
+                    return Err(FieldProjectionConditionError::Skip);
+                }
+            }
+            Ok(())
+        }
+        FieldProjectionCondition::EnumValuesCondition(enum_values) => {
+            if let Some(Value::String(string_value)) = field_value {
+                if enum_values.contains(string_value.as_ref()) {
+                    Ok(())
+                } else {
+                    Err(FieldProjectionConditionError::InvalidEnumValue)
+                }
+            } else {
+                Ok(())
+            }
+        }
+        FieldProjectionCondition::ParentTypeCondition(_)
+        | FieldProjectionCondition::FieldTypeCondition(_) => {
+            unreachable!("type-name conditions should use check")
+        }
+    }
 }
 
 #[inline]
