@@ -153,12 +153,6 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         let subgraph_name_for_metrics = self.subgraph_name.clone();
         let telemetry_context = self.telemetry_context.clone();
 
-        // TODO: op_guard needs to be moved into the receiver stream
-        let op_guard = telemetry_context
-            .metrics
-            .subscriptions
-            .active_subgraph_operation(&self.subgraph_name);
-
         // no await intentionally. the task runs the subscription in the background
         // and sends responses through the channel. The spawned future itself stays local
         // to ntex runtime, so it can hold non-Send websocket client state.
@@ -206,18 +200,31 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 .await
                 .map(Ok);
 
-            // TODO:
-            // telemetry_context
-            //             .metrics
-            //             .subscriptions
-            //             .record_subgraph_termination(
-            //                 &subgraph_name,
-            //                 SubscriptionTransport::WebSocket,
-            //             );
-
-            drain_into(stream, tx, &subgraph_name, &endpoint.to_string()).await;
+            drain_into(
+                stream,
+                tx,
+                &telemetry_context,
+                SubscriptionTransport::WebSocket,
+                &subgraph_name,
+                &endpoint.to_string(),
+            )
+            .await;
         }));
 
-        Ok(receiver_stream(rx))
+        // op_guard lives with the receiver stream, so the active-operation metric stays up for
+        // as long as a consumer is actually pulling from it, and drops the moment the stream
+        // itself is dropped (subscription unsubscribed/disconnected)
+        let op_guard = self
+            .telemetry_context
+            .metrics
+            .subscriptions
+            .active_subgraph_operation(&self.subgraph_name);
+        let mut rx_stream = receiver_stream(rx);
+        Ok(Box::pin(async_stream::stream! {
+            let _op_guard = op_guard;
+            while let Some(item) = rx_stream.next().await {
+                yield item;
+            }
+        }))
     }
 }
