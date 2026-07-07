@@ -158,13 +158,12 @@ fn handle_next(
         }
     };
 
-    let subgraph_name = subscription.subgraph_name.clone();
     match try_send_or_drop(
         &subscription.sender,
         CallbackMessage::Next { payload: data },
         telemetry_context,
         SubscriptionTransport::HttpCallback,
-        &subgraph_name,
+        &subscription.subgraph_name,
         subscription_id,
     ) {
         // sent or dropped (consumer too slow): keep the subscription alive either way, same
