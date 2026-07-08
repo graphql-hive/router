@@ -2,9 +2,11 @@ use std::borrow::Cow;
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
 
+use ahash::AHashMap as HashMap;
 use bytes::BufMut;
 use hive_router_query_planner::ast::selection_item::SelectionItem;
 use hive_router_query_planner::planner::plan_nodes::FlattenNodePathSegment;
+use lasso2::{Key, Rodeo};
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::introspection::schema::PossibleTypes;
@@ -14,7 +16,7 @@ use crate::utils::consts::{
 };
 
 /// Compact identifier for a value stored in the flat store.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FlatValueId(pub u32);
 
 impl FlatValueId {
@@ -28,8 +30,22 @@ impl FlatValueId {
 }
 
 /// Compact identifier for a response key string in the key table.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ResponseKeyId(pub u32);
+
+unsafe impl Key for ResponseKeyId {
+    #[inline]
+    fn into_usize(self) -> usize {
+        self.0 as usize
+    }
+
+    #[inline]
+    fn try_from_usize(int: usize) -> Option<Self> {
+        u32::try_from(int).ok().map(ResponseKeyId)
+    }
+}
+
+type ResponseKeyInterner = Rodeo<ResponseKeyId, ahash::RandomState>;
 
 /// A leaf value in the flat store.
 #[derive(Debug, Clone)]
@@ -52,6 +68,37 @@ pub enum FlatValue<'a> {
 pub struct FlatObjectField {
     pub response_key: ResponseKeyId,
     pub value: FlatValueId,
+    pub output_key: Option<ResponseKeyId>,
+    pub output_position: Option<u16>,
+    pub is_non_null: bool,
+}
+
+impl FlatObjectField {
+    pub fn new(response_key: ResponseKeyId, value: FlatValueId) -> Self {
+        Self {
+            response_key,
+            value,
+            output_key: None,
+            output_position: None,
+            is_non_null: false,
+        }
+    }
+
+    pub fn with_output(
+        response_key: ResponseKeyId,
+        value: FlatValueId,
+        output_key: Option<ResponseKeyId>,
+        output_position: Option<u16>,
+        is_non_null: bool,
+    ) -> Self {
+        Self {
+            response_key,
+            value,
+            output_key,
+            output_position,
+            is_non_null,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -67,38 +114,44 @@ impl FlatStoreAppendMap {
 
 /// Immutable string table mapping `ResponseKeyId` to a response key string
 /// and its pre-serialized JSON form `"key":`.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ResponseKeys {
-    keys: Vec<Box<str>>,
+    interner: ResponseKeyInterner,
     serialized_keys: Vec<Box<[u8]>>,
+}
+
+impl Default for ResponseKeys {
+    fn default() -> Self {
+        Self {
+            interner: ResponseKeyInterner::with_hasher(ahash::RandomState::new()),
+            serialized_keys: Vec::new(),
+        }
+    }
 }
 
 impl ResponseKeys {
     pub fn intern(&mut self, key: &str) -> ResponseKeyId {
-        if let Some(pos) = self.keys.iter().position(|k| k.as_ref() == key) {
-            return ResponseKeyId(pos as u32);
+        if let Some(id) = self.interner.get(key) {
+            return id;
         }
-        let id = ResponseKeyId(self.keys.len() as u32);
+        let id = self.interner.get_or_intern(key);
+        debug_assert_eq!(id.0 as usize, self.serialized_keys.len());
         let mut serialized = Vec::with_capacity(key.len() + 4);
         serialized.push(b'"');
         serialized.extend_from_slice(key.as_bytes());
         serialized.push(b'"');
         serialized.push(b':');
-        self.keys.push(key.into());
         self.serialized_keys.push(serialized.into_boxed_slice());
         id
     }
 
     /// Look up a key id without mutating. Returns None if not found.
     pub fn get_key_id(&self, key: &str) -> Option<ResponseKeyId> {
-        self.keys
-            .iter()
-            .position(|k| k.as_ref() == key)
-            .map(|pos| ResponseKeyId(pos as u32))
+        self.interner.get(key)
     }
 
     pub fn key(&self, id: ResponseKeyId) -> &str {
-        &self.keys[id.0 as usize]
+        self.interner.resolve(&id)
     }
 
     pub fn serialized_json_key(&self, id: ResponseKeyId) -> &[u8] {
@@ -106,7 +159,7 @@ impl ResponseKeys {
     }
 
     pub fn len(&self) -> usize {
-        self.keys.len()
+        self.serialized_keys.len()
     }
 }
 
@@ -132,6 +185,28 @@ pub struct ObjectFieldsBuilder {
 impl<'a> FlatResponseStore<'a> {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_capacity(
+        values: usize,
+        object_fields: usize,
+        list_items: usize,
+        retained_bytes: usize,
+    ) -> Self {
+        Self {
+            values: Vec::with_capacity(values),
+            object_fields: Vec::with_capacity(object_fields),
+            list_items: Vec::with_capacity(list_items),
+            retained_bytes: Vec::with_capacity(retained_bytes),
+        }
+    }
+
+    pub fn with_response_size_hint(response_size: usize) -> Self {
+        let values = (response_size / 64).clamp(16, 512);
+        let object_fields = (response_size / 96).clamp(8, 512);
+        let list_items = (response_size / 128).clamp(8, 512);
+
+        Self::with_capacity(values, object_fields, list_items, 1)
     }
 
     // -- direct object fields builder --
@@ -210,15 +285,26 @@ impl<'a> FlatResponseStore<'a> {
     pub fn reserve_list(&mut self, capacity: usize) -> FlatListBuilder {
         FlatListBuilder {
             items: Vec::with_capacity(capacity),
+            len: 0,
         }
     }
+
+    pub fn push_list_item(&mut self, builder: &mut FlatListBuilder, id: FlatValueId) {
+        builder.items.push(id);
+        builder.len += 1;
+    }
+
+    pub fn discard_list(&mut self, _builder: FlatListBuilder) {}
 
     /// Finalize a list builder into a store value id.
     pub fn finish_list(&mut self, builder: FlatListBuilder) -> FlatValueId {
         let start = self.list_items.len() as u32;
-        let end = start + builder.items.len() as u32;
+        let len = builder.len;
+        self.list_items.reserve(builder.items.len());
         self.list_items.extend(builder.items);
-        self.push_value(FlatValue::List { items: start..end })
+        self.push_value(FlatValue::List {
+            items: start..start + len,
+        })
     }
 
     pub fn retain_bytes(&mut self, bytes: bytes::Bytes) {
@@ -1022,6 +1108,9 @@ impl<'a> FlatResponseStore<'a> {
                     dst_fields.push(FlatObjectField {
                         response_key: sf.response_key,
                         value: imported_value,
+                        output_key: sf.output_key,
+                        output_position: sf.output_position,
+                        is_non_null: sf.is_non_null,
                     });
                 }
                 self.alloc_object(dst_fields)
@@ -1056,16 +1145,37 @@ impl<'a> FlatResponseStore<'a> {
                 let target_fields =
                     &self.object_fields[target_range.start as usize..target_range.end as usize];
                 let mut new_fields = target_fields.to_vec();
-                for sf in source_fields {
-                    if let Some(existing) = new_fields
-                        .iter_mut()
-                        .find(|f| f.response_key == sf.response_key)
-                    {
-                        self.merge_value(existing.value, sf.value);
-                    } else {
-                        new_fields.push(sf);
+
+                if new_fields.len() >= 8 && source_fields.len() >= 2 {
+                    let mut target_index_by_key = HashMap::with_capacity(new_fields.len());
+                    for (index, field) in new_fields.iter().enumerate() {
+                        target_index_by_key
+                            .entry(field.response_key)
+                            .or_insert(index);
+                    }
+
+                    for sf in source_fields {
+                        if let Some(&index) = target_index_by_key.get(&sf.response_key) {
+                            let existing_value = new_fields[index].value;
+                            self.merge_value(existing_value, sf.value);
+                        } else {
+                            target_index_by_key.insert(sf.response_key, new_fields.len());
+                            new_fields.push(sf);
+                        }
+                    }
+                } else {
+                    for sf in source_fields {
+                        if let Some(existing) = new_fields
+                            .iter_mut()
+                            .find(|f| f.response_key == sf.response_key)
+                        {
+                            self.merge_value(existing.value, sf.value);
+                        } else {
+                            new_fields.push(sf);
+                        }
                     }
                 }
+
                 let start = self.object_fields.len() as u32;
                 let end = start + new_fields.len() as u32;
                 self.object_fields.extend(new_fields);
@@ -1127,6 +1237,27 @@ impl<'a> FlatResponseStore<'a> {
         }
     }
 
+    pub fn sort_object_fields_by_output_position(&mut self, object_id: FlatValueId) {
+        if let FlatValue::Object {
+            fields: target_range,
+        } = self.value(object_id).clone()
+        {
+            let range_start = target_range.start as usize;
+            let range_end = target_range.end as usize;
+            let field_slice = &mut self.object_fields[range_start..range_end];
+            field_slice.sort_by_key(|f| (f.output_position, f.output_key));
+            // After sorting by position, assign sequential output_position values
+            // for fields that have one, to normalize after merges.
+            let mut pos: u16 = 0;
+            for sf in field_slice.iter_mut() {
+                if sf.output_key.is_some() {
+                    sf.output_position = Some(pos);
+                    pos += 1;
+                }
+            }
+        }
+    }
+
     pub fn clear(&mut self) {
         self.values.clear();
         self.object_fields.clear();
@@ -1143,12 +1274,7 @@ impl<'a> FlatResponseStore<'a> {
 
 pub struct FlatListBuilder {
     items: Vec<FlatValueId>,
-}
-
-impl FlatListBuilder {
-    pub fn push(&mut self, id: FlatValueId) {
-        self.items.push(id);
-    }
+    len: u32,
 }
 
 fn write_flat_response_key(first: bool, response_key: Option<&str>, buffer: &mut Vec<u8>) {
@@ -1220,6 +1346,104 @@ impl<'a> FlatResponseStore<'a> {
         }
         buffer.put(CLOSE_BRACKET);
     }
+
+    pub fn serialize_output_value_impl(
+        &self,
+        id: FlatValueId,
+        keys: &ResponseKeys,
+        buffer: &mut Vec<u8>,
+    ) -> bool {
+        match self.value(id) {
+            FlatValue::Null | FlatValue::Missing | FlatValue::Inaccessible => {
+                buffer.put(NULL);
+                false
+            }
+            FlatValue::Bool(true) => {
+                buffer.put(TRUE);
+                true
+            }
+            FlatValue::Bool(false) => {
+                buffer.put(FALSE);
+                true
+            }
+            FlatValue::I64(num) => {
+                write_i64(buffer, *num);
+                true
+            }
+            FlatValue::U64(num) => {
+                write_u64(buffer, *num);
+                true
+            }
+            FlatValue::F64(num) => {
+                write_f64(buffer, *num);
+                true
+            }
+            FlatValue::String(s) => {
+                write_and_escape_string(buffer, s);
+                true
+            }
+            FlatValue::RawJson(raw) => {
+                buffer.put_slice(raw.as_bytes());
+                true
+            }
+            FlatValue::Object { fields } => self.serialize_output_object(fields, keys, buffer),
+            FlatValue::List { items } => self.serialize_output_list(items, keys, buffer),
+        }
+    }
+
+    fn serialize_output_object(
+        &self,
+        fields: &Range<u32>,
+        keys: &ResponseKeys,
+        buffer: &mut Vec<u8>,
+    ) -> bool {
+        let checkpoint = buffer.len();
+        buffer.put(OPEN_BRACE);
+        let field_slice = self.object_fields(fields);
+        let mut first = true;
+
+        for field in field_slice {
+            let output_key = match field.output_key {
+                Some(k) => k,
+                None => continue,
+            };
+            if !first {
+                buffer.put(COMMA);
+            }
+            first = false;
+
+            buffer.put_slice(keys.serialized_json_key(output_key));
+            let ok = self.serialize_output_value_impl(field.value, keys, buffer);
+            if !ok && field.is_non_null {
+                buffer.truncate(checkpoint);
+                buffer.put(NULL);
+                return false;
+            }
+        }
+
+        buffer.put(CLOSE_BRACE);
+        true
+    }
+
+    fn serialize_output_list(
+        &self,
+        items: &Range<u32>,
+        keys: &ResponseKeys,
+        buffer: &mut Vec<u8>,
+    ) -> bool {
+        buffer.put(OPEN_BRACKET);
+        let item_slice = self.list_items(items);
+        let mut first = true;
+        for &item_id in item_slice {
+            if !first {
+                buffer.put(COMMA);
+            }
+            first = false;
+            self.serialize_output_value_impl(item_id, keys, buffer);
+        }
+        buffer.put(CLOSE_BRACKET);
+        true
+    }
 }
 
 /// Serialize the full response data root into a JSON buffer.
@@ -1254,10 +1478,7 @@ mod tests {
         let mut keys = ResponseKeys::default();
         let k_name = keys.intern("name");
         let v_name = store.alloc_string(Cow::Borrowed("Alice"));
-        let obj = store.alloc_object(vec![FlatObjectField {
-            response_key: k_name,
-            value: v_name,
-        }]);
+        let obj = store.alloc_object(vec![FlatObjectField::new(k_name, v_name)]);
 
         let FlatValue::Object { fields } = store.value(obj) else {
             panic!("expected object");
@@ -1265,7 +1486,10 @@ mod tests {
         let field_slice = store.object_fields(fields);
         assert_eq!(field_slice.len(), 1);
         assert_eq!(field_slice[0].response_key, k_name);
-        assert!(matches!(store.value(field_slice[0].value), FlatValue::String(s) if s == "Alice"));
+        assert!(matches!(
+            store.value(field_slice[0].value),
+            FlatValue::String(s) if s == "Alice"
+        ));
     }
 
     #[test]
@@ -1296,10 +1520,7 @@ mod tests {
         let mut keys = ResponseKeys::default();
         let typename_key = keys.intern("__typename");
         let typename = store.alloc_string(Cow::Borrowed("Product"));
-        let obj = store.alloc_object(vec![FlatObjectField {
-            response_key: typename_key,
-            value: typename,
-        }]);
+        let obj = store.alloc_object(vec![FlatObjectField::new(typename_key, typename)]);
         let mut type_conditions = std::collections::BTreeSet::new();
         type_conditions.insert("User".to_string());
         let path = vec![FlattenNodePathSegment::TypeCondition(type_conditions)];
@@ -1339,11 +1560,13 @@ mod tests {
         let mut outer = store.reserve_list(1);
 
         let mut inner = store.reserve_list(2);
-        inner.push(store.alloc_i64(1));
-        inner.push(store.alloc_i64(2));
+        let one = store.alloc_i64(1);
+        store.push_list_item(&mut inner, one);
+        let two = store.alloc_i64(2);
+        store.push_list_item(&mut inner, two);
         let inner_list = store.finish_list(inner);
 
-        outer.push(inner_list);
+        store.push_list_item(&mut outer, inner_list);
         let outer_list = store.finish_list(outer);
 
         let FlatValue::List { items } = store.value(outer_list) else {
@@ -1363,15 +1586,9 @@ mod tests {
 
         let mut source = FlatResponseStore::new();
         let name = source.alloc_string(Cow::Borrowed("Alice"));
-        let item = source.alloc_object(vec![FlatObjectField {
-            response_key: k_name,
-            value: name,
-        }]);
+        let item = source.alloc_object(vec![FlatObjectField::new(k_name, name)]);
         let list = source.alloc_list_from_items(vec![item]);
-        let root = source.alloc_object(vec![FlatObjectField {
-            response_key: k_items,
-            value: list,
-        }]);
+        let root = source.alloc_object(vec![FlatObjectField::new(k_items, list)]);
 
         let append_map = target.append_store(source);
         let moved_root = append_map.value(root);
@@ -1399,16 +1616,10 @@ mod tests {
         let k2 = ResponseKeyId(1);
 
         let v1 = store.alloc_string(Cow::Borrowed("a"));
-        let obj1 = store.alloc_object(vec![FlatObjectField {
-            response_key: k1,
-            value: v1,
-        }]);
+        let obj1 = store.alloc_object(vec![FlatObjectField::new(k1, v1)]);
 
         let v2 = store.alloc_string(Cow::Borrowed("b"));
-        let obj2 = store.alloc_object(vec![FlatObjectField {
-            response_key: k2,
-            value: v2,
-        }]);
+        let obj2 = store.alloc_object(vec![FlatObjectField::new(k2, v2)]);
 
         store.merge_value(obj1, obj2);
 
@@ -1476,14 +1687,8 @@ mod tests {
         let v_name = store.alloc_string(Cow::Borrowed("Alice"));
         let v_age = store.alloc_i64(30);
         let obj = store.alloc_object(vec![
-            FlatObjectField {
-                response_key: k_name,
-                value: v_name,
-            },
-            FlatObjectField {
-                response_key: k_age,
-                value: v_age,
-            },
+            FlatObjectField::new(k_name, v_name),
+            FlatObjectField::new(k_age, v_age),
         ]);
 
         let mut buf = Vec::new();
@@ -1512,10 +1717,7 @@ mod tests {
         let mut keys = ResponseKeys::default();
         let k_x = keys.intern("x");
         let v_x = store.alloc_i64(1);
-        let obj = store.alloc_object(vec![FlatObjectField {
-            response_key: k_x,
-            value: v_x,
-        }]);
+        let obj = store.alloc_object(vec![FlatObjectField::new(k_x, v_x)]);
 
         let mut buf = Vec::new();
         serialize_store_data(&store, &keys, obj, &mut buf);

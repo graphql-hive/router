@@ -33,6 +33,7 @@ use hive_router_plan_executor::execution::client_request_details::JwtRequestDeta
 use hive_router_plan_executor::execution::plan::CoerceVariablesPayload;
 use hive_router_plan_executor::introspection::schema::SchemaMetadata;
 use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
+use hive_router_plan_executor::response::flat_output_plan::FlatOutputPlan;
 use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use hive_router_query_planner::ast::operation::OperationDefinition;
 
@@ -121,6 +122,7 @@ pub fn enforce_operation_authorization(
                 &new_operation_definition,
                 normalized_payload.operation_for_introspection.as_deref(),
             );
+            let flat_output_plan = Arc::new(FlatOutputPlan::compile(&new_projection_plan));
 
             (
                 Arc::new(GraphQLNormalizationPayload {
@@ -134,6 +136,7 @@ pub fn enforce_operation_authorization(
                     normalized_operation_hash: hashes.combined_operation_hash,
                     root_type_name: normalized_payload.root_type_name,
                     projection_plan: Arc::new(new_projection_plan),
+                    flat_output_plan,
                     operation_identity: normalized_payload.operation_identity.clone(),
                 }),
                 errors,

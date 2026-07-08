@@ -260,7 +260,7 @@ impl FromGraphQLErrorsToResponse for PlanExecutionOutput {
     ) -> Self {
         let error_count = errors.len();
         PlanExecutionOutput {
-            body: from_graphql_errors_to_bytes(errors),
+            body: from_graphql_errors_to_bytes(errors).into(),
             error_count,
             status_code,
         }

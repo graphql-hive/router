@@ -264,6 +264,9 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
         .as_ref()
         .and_then(|prom| prom.to_attached());
     info!("hive-router@{} starting...", ROUTER_VERSION);
+
+    start_pprof();
+
     let addr = router_config.address();
     let graphql_path = router_config.graphql_path().to_string();
     let websocket_path = router_config.websocket_path().map(|p| p.to_string());
@@ -620,6 +623,67 @@ pub fn configure_ntex_app(
         );
     }
 }
+
+#[cfg(feature = "pprof")]
+fn start_pprof() {
+    use pprof::protos::Message;
+    use std::io::Write;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    let frequency: i32 = std::env::var("PPROF_FREQUENCY")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100);
+
+    let period_secs: u64 = std::env::var("PPROF_PERIOD")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(60);
+
+    let output_dir = std::env::var("PPROF_OUTPUT_DIR").unwrap_or_else(|_| "/tmp".to_string());
+
+    std::fs::create_dir_all(&output_dir).ok();
+
+    let guard = pprof::ProfilerGuardBuilder::default()
+        .frequency(frequency)
+        .blocklist(&["libc", "libgcc", "pthread", "vdso"])
+        .build()
+        .expect("failed to start pprof profiler");
+
+    tracing::info!(
+        "pprof profiling enabled: frequency={}Hz period={}s output_dir={}",
+        frequency,
+        period_secs,
+        output_dir,
+    );
+
+    std::thread::Builder::new()
+        .name("pprof-periodic".into())
+        .spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(period_secs));
+
+            let report = guard
+                .report()
+                .build()
+                .expect("failed to build pprof report");
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let filename = format!("{}/hive-router_{}.pb", output_dir, timestamp);
+            let profile = report.pprof().expect("failed to serialize pprof profile");
+            let content = profile.encode_to_vec();
+            let mut file =
+                std::fs::File::create(&filename).expect("failed to create pprof output file");
+            file.write_all(&content)
+                .expect("failed to write pprof output file");
+            tracing::info!("pprof profile written to {}", filename);
+        })
+        .expect("failed to spawn pprof thread");
+}
+
+#[cfg(not(feature = "pprof"))]
+fn start_pprof() {}
 
 /// Initializes the rustls cryptographic provider for the entire process.
 ///

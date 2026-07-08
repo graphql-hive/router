@@ -4,13 +4,53 @@ use std::slice::from_raw_parts;
 
 use crate::utils::consts::NULL;
 
+pub trait JsonWriteBuffer: BufMut {
+    fn len(&self) -> usize;
+    fn reserve(&mut self, additional: usize);
+    fn truncate(&mut self, len: usize);
+}
+
+impl JsonWriteBuffer for Vec<u8> {
+    #[inline]
+    fn len(&self) -> usize {
+        Vec::len(self)
+    }
+
+    #[inline]
+    fn reserve(&mut self, additional: usize) {
+        Vec::reserve(self, additional);
+    }
+
+    #[inline]
+    fn truncate(&mut self, len: usize) {
+        Vec::truncate(self, len);
+    }
+}
+
+impl JsonWriteBuffer for ntex::util::BytesMut {
+    #[inline]
+    fn len(&self) -> usize {
+        ntex::util::BytesMut::len(self)
+    }
+
+    #[inline]
+    fn reserve(&mut self, additional: usize) {
+        ntex::util::BytesMut::reserve(self, additional);
+    }
+
+    #[inline]
+    fn truncate(&mut self, len: usize) {
+        ntex::util::BytesMut::truncate(self, len);
+    }
+}
+
 #[inline(always)]
-pub fn write_and_escape_string(writer: &mut Vec<u8>, input: &str) {
+pub fn write_and_escape_string<B: JsonWriteBuffer>(writer: &mut B, input: &str) {
     format_string(input, writer, true);
 }
 
-pub fn write_named_operation(
-    writer: &mut Vec<u8>,
+pub fn write_named_operation<B: JsonWriteBuffer>(
+    writer: &mut B,
     name: &[u8],
     name_write_pos: usize,
     input: &str,
@@ -47,7 +87,7 @@ pub fn write_named_operation(
     writer.put(&b"\""[..]);
 }
 
-pub fn write_f64(writer: &mut Vec<u8>, value: f64) {
+pub fn write_f64<B: JsonWriteBuffer>(writer: &mut B, value: f64) {
     if !value.is_finite() {
         // JSON does not allow infinite or nan values. In browsers JSON.stringify(Number.NaN) = "null"
         writer.put(NULL);
@@ -59,12 +99,12 @@ pub fn write_f64(writer: &mut Vec<u8>, value: f64) {
     writer.put(s.as_bytes())
 }
 
-pub fn write_u64(writer: &mut Vec<u8>, value: u64) {
+pub fn write_u64<B: JsonWriteBuffer>(writer: &mut B, value: u64) {
     let mut buf = itoa::Buffer::new();
     writer.put(buf.format(value).as_bytes());
 }
 
-pub fn write_i64(writer: &mut Vec<u8>, value: i64) {
+pub fn write_i64<B: JsonWriteBuffer>(writer: &mut B, value: i64) {
     let mut buf = itoa::Buffer::new();
     writer.put(buf.format(value).as_bytes());
 }
@@ -426,14 +466,12 @@ fn check_cross_page(ptr: *const u8, step: usize) -> bool {
 }
 
 #[inline(always)]
-fn format_string(input_str: &str, writer: &mut Vec<u8>, need_quote: bool) {
+fn format_string<B: JsonWriteBuffer>(input_str: &str, writer: &mut B, need_quote: bool) {
     // 1. Calculate the worst-case required size for the new string data.
     // Each character could potentially expand to 6 bytes (\uXXXX).
     // +32 for SIMD padding safety (loading/writing 32 bytes at once).
     // +3 for quotes ("...") and null termination or alignment slop.
     let worst_case_required = input_str.len() * 6 + 32 + 3;
-    let original_len = writer.len();
-
     // 2. Ensure the vector has enough TOTAL capacity to hold the new data.
     // This allows us to use unsafe pointer writes without bounds checking in the loop.
     writer.reserve(worst_case_required);
@@ -471,8 +509,8 @@ fn format_string(input_str: &str, writer: &mut Vec<u8>, need_quote: bool) {
     unsafe {
         let input_bytes = input_str.as_bytes();
         let mut src_ptr = input_bytes.as_ptr();
-        // Get a pointer to the END of the existing data in the buffer (where we start writing).
-        let dst_start_ptr = writer.as_mut_ptr().add(original_len);
+        // Get a pointer to the end of the existing data in the buffer.
+        let dst_start_ptr = writer.chunk_mut().as_mut_ptr();
         let mut dst_ptr = dst_start_ptr;
         let mut remaining_len: usize = input_bytes.len();
 
@@ -547,8 +585,8 @@ fn format_string(input_str: &str, writer: &mut Vec<u8>, need_quote: bool) {
         }
         // Calculate how many bytes we've written...
         let written_len = dst_ptr.offset_from(dst_start_ptr) as usize;
-        // ...and update the vector's length to reflect the new data.
-        writer.set_len(original_len + written_len);
+        // ...and update the buffer's length to reflect the new data.
+        writer.advance_mut(written_len);
     }
 }
 

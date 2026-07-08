@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
+use std::ops::Deref;
 use std::sync::Arc;
 use std::vec;
 
@@ -74,7 +75,7 @@ use crate::{
         plan::FieldProjectionPlan, request::project_requires, response::project_by_operation,
     },
     response::{
-        flat_output_plan::FlatOutputPlan,
+        flat_output_plan::{serialize_with_output_plan, FlatOutputPlan},
         flat_plan::FetchWritePlan,
         flat_store::{FlatResponseStore, FlatValue, FlatValueId, ResponseKeyId, ResponseKeys},
         graphql_error::{GraphQLError, GraphQLErrorPath, GraphQLErrorPathSegment},
@@ -159,9 +160,65 @@ pub enum QueryPlanExecutionResult {
 
 #[derive(Default)]
 pub struct PlanExecutionOutput {
-    pub body: Vec<u8>,
+    pub body: PlanExecutionBody,
     pub error_count: usize,
     pub status_code: StatusCode,
+}
+
+pub enum PlanExecutionBody {
+    Vec(Vec<u8>),
+    NtexBytes(ntex::util::Bytes),
+}
+
+impl Default for PlanExecutionBody {
+    fn default() -> Self {
+        Self::Vec(Vec::new())
+    }
+}
+
+impl From<Vec<u8>> for PlanExecutionBody {
+    fn from(body: Vec<u8>) -> Self {
+        Self::Vec(body)
+    }
+}
+
+impl From<ntex::util::Bytes> for PlanExecutionBody {
+    fn from(body: ntex::util::Bytes) -> Self {
+        Self::NtexBytes(body)
+    }
+}
+
+impl PlanExecutionBody {
+    pub fn into_vec(self) -> Vec<u8> {
+        match self {
+            Self::Vec(body) => body,
+            Self::NtexBytes(body) => body.to_vec(),
+        }
+    }
+
+    pub fn into_ntex_bytes(self) -> ntex::util::Bytes {
+        match self {
+            Self::Vec(body) => ntex::util::Bytes::from(body),
+            Self::NtexBytes(body) => body,
+        }
+    }
+}
+
+impl AsRef<[u8]> for PlanExecutionBody {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Vec(body) => body,
+            Self::NtexBytes(body) => body,
+        }
+    }
+}
+
+impl Deref for PlanExecutionBody {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
 }
 
 #[derive(Serialize)]
@@ -196,7 +253,7 @@ fn early_http_response_into_execution_output(
     }
 
     PlanExecutionOutput {
-        body: response.body,
+        body: response.body.into(),
         error_count: 0,
         status_code: response.status_code,
     }
@@ -411,7 +468,7 @@ pub async fn execute_query_plan<'exec>(
                     response_header_sink: response_header_sink.clone(),
                 };
                 match execute_query_plan_with_data(response.data, opts).await {
-                    Ok(result) => yield result.body,
+                    Ok(result) => yield result.body.into_vec(),
                     Err(ref err) => {
                         // fatal error, stream it and stop
                         log_plan_execution_error(err);
@@ -669,21 +726,19 @@ async fn execute_query_plan_with_data<'exec>(
         &exec_ctx.flat_keys,
         exec_ctx.flat_root,
     ) {
-        use crate::response::flat_output_plan::serialize_with_output_plan;
         use crate::utils::consts::{COLON, COMMA, QUOTE};
         use bytes::BufMut;
 
-        let mut buf = Vec::with_capacity(response_size_estimate);
+        let mut buf = ntex::util::BytesMut::with_capacity(response_size_estimate);
 
         buf.put_slice(b"{\"data\":");
-
         serialize_with_output_plan(
             flat_store,
-            opts.flat_output_plan.as_ref(),
+            &opts.flat_output_plan,
             flat_keys,
             flat_root,
             &opts.variable_values.variables_map,
-            &executor.schema_metadata.possible_types,
+            &opts.introspection_context.metadata.possible_types,
             opts.operation_type_name,
             &mut buf,
         );
@@ -709,7 +764,7 @@ async fn execute_query_plan_with_data<'exec>(
         }
 
         buf.put_slice(b"}");
-        buf
+        buf.freeze().into()
     } else {
         project_by_operation(
             &data,
@@ -725,6 +780,7 @@ async fn execute_query_plan_with_data<'exec>(
             subgraph_name: || None,
             affected_path: || None,
         })?
+        .into()
     };
 
     Ok(PlanExecutionOutput {
@@ -1181,10 +1237,10 @@ fn collect_null_flat_fields_for_selection_set(
                     continue;
                 }
                 let value = store.alloc_null();
-                fields.push(crate::response::flat_store::FlatObjectField {
+                fields.push(crate::response::flat_store::FlatObjectField::new(
                     response_key,
                     value,
-                });
+                ));
             }
             hive_router_query_planner::ast::selection_item::SelectionItem::InlineFragment(
                 fragment,
@@ -1858,7 +1914,6 @@ impl<'exec> Executor<'exec> {
                                             };
                                             store.merge_value(target_id, entity_id);
                                         }
-
                                         ctx.flat_store = Some(store);
                                         ctx.handle_errors(
                                             subgraph_name,

@@ -137,6 +137,8 @@ pub struct FieldWritePlan {
     pub response_key_id: ResponseKeyId,
     pub value: ValueWritePlan,
     pub nullability: FieldNullability,
+    pub output_key: Option<ResponseKeyId>,
+    pub output_position: Option<u16>,
 }
 
 #[derive(Debug, Clone)]
@@ -190,6 +192,8 @@ pub fn compile_response_write_plan(
                 response_key_id,
                 value: compile_value_write_plan(plan, &mut keys),
                 nullability: plan.nullability.clone(),
+                output_key: None,
+                output_position: None,
             }
         })
         .collect();
@@ -240,6 +244,8 @@ fn compile_value_write_plan(
                             response_key_id,
                             value: compile_value_write_plan(child, keys),
                             nullability: child.nullability.clone(),
+                            output_key: None,
+                            output_position: None,
                         }
                     })
                     .collect();

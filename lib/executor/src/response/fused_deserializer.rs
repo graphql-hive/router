@@ -53,7 +53,10 @@ pub fn deserialize_fetch_into_part(
     let bytes_ref: &'static [u8] = unsafe { std::mem::transmute(bytes_ref) };
     let mut deserializer = sonic_rs::Deserializer::from_slice(bytes_ref);
 
-    let seed = FusedFetchSeed { plan };
+    let seed = FusedFetchSeed {
+        plan,
+        response_size: bytes.len(),
+    };
     let mut part: FlatResponsePart = seed
         .deserialize(&mut deserializer)
         .map_err(|e| SubgraphExecutorError::ResponseDeserializationFailure(e, None))?;
@@ -82,6 +85,7 @@ pub fn deserialize_and_serialize_fused(
 
 struct FusedFetchSeed<'a> {
     plan: &'a FetchWritePlan,
+    response_size: usize,
 }
 
 impl<'a, 'de> DeserializeSeed<'de> for FusedFetchSeed<'a> {
@@ -91,12 +95,16 @@ impl<'a, 'de> DeserializeSeed<'de> for FusedFetchSeed<'a> {
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_map(FusedFetchVisitor { plan: self.plan })
+        deserializer.deserialize_map(FusedFetchVisitor {
+            plan: self.plan,
+            response_size: self.response_size,
+        })
     }
 }
 
 struct FusedFetchVisitor<'a> {
     plan: &'a FetchWritePlan,
+    response_size: usize,
 }
 
 impl<'a, 'de> Visitor<'de> for FusedFetchVisitor<'a> {
@@ -110,7 +118,8 @@ impl<'a, 'de> Visitor<'de> for FusedFetchVisitor<'a> {
     where
         M: MapAccess<'de>,
     {
-        let mut store: FlatResponseStore = FlatResponseStore::new();
+        let mut store: FlatResponseStore =
+            FlatResponseStore::with_response_size_hint(self.response_size);
         let keys: Arc<ResponseKeys> = Arc::clone(&self.plan.keys);
         let mut errors: Option<Vec<GraphQLError>> = None;
         let mut extensions: Option<Value<'static>> = None;
@@ -286,7 +295,10 @@ impl<'de> Visitor<'de> for FusedObjectVisitor<'_, '_, '_> {
             plan: self.plan,
             ctx: self.ctx,
         })? {
-            builder.push(elem);
+            self.ctx
+                .store
+                .borrow_mut()
+                .push_list_item(&mut builder, elem);
         }
 
         let list_id = self.ctx.store.borrow_mut().finish_list(builder);
@@ -377,12 +389,14 @@ where
         }
     }
 
+    let present_count = field_values.iter().filter(|v| v.is_some()).count();
+
     let mut store = ctx.store.borrow_mut();
-    let mut obj_builder = store.begin_object_fields(field_count);
+    let mut obj_builder = store.begin_object_fields(present_count);
 
     for (i, maybe_result) in field_values.iter_mut().enumerate() {
         let key_id = plan.fields[i].response_key_id;
-        let value_id = match maybe_result.take() {
+        match maybe_result.take() {
             Some(result) if result.propagated_null => {
                 if plan.fields[i].nullability.is_non_null() {
                     return Err(de::Error::custom(format!(
@@ -390,9 +404,30 @@ where
                         plan.fields[i].response_key
                     )));
                 }
-                store.alloc_null()
+                let null_id = store.alloc_null();
+                store.push_object_field(
+                    &mut obj_builder,
+                    FlatObjectField::with_output(
+                        key_id,
+                        null_id,
+                        Some(plan.fields[i].output_key.unwrap_or(key_id)),
+                        plan.fields[i].output_position.or(Some(i as u16)),
+                        plan.fields[i].nullability.is_non_null(),
+                    ),
+                );
             }
-            Some(result) => result.value_id,
+            Some(result) => {
+                store.push_object_field(
+                    &mut obj_builder,
+                    FlatObjectField::with_output(
+                        key_id,
+                        result.value_id,
+                        Some(plan.fields[i].output_key.unwrap_or(key_id)),
+                        plan.fields[i].output_position.or(Some(i as u16)),
+                        plan.fields[i].nullability.is_non_null(),
+                    ),
+                );
+            }
             None => {
                 if plan.fields[i].nullability.is_non_null() {
                     return Err(de::Error::custom(format!(
@@ -400,16 +435,8 @@ where
                         plan.fields[i].response_key
                     )));
                 }
-                store.alloc_null()
             }
-        };
-        store.push_object_field(
-            &mut obj_builder,
-            FlatObjectField {
-                response_key: key_id,
-                value: value_id,
-            },
-        );
+        }
     }
 
     let obj_id = store.finish_object_fields(obj_builder);
@@ -472,11 +499,17 @@ impl<'de> Visitor<'de> for FusedListVisitor<'_, '_, '_> {
         })? {
             if result.propagated_null {
                 if item_non_null {
+                    self.ctx.store.borrow_mut().discard_list(builder);
                     return Ok(WriteResult::propagate_null());
                 }
-                builder.push(self.ctx.store.borrow_mut().alloc_null());
+                let mut store = self.ctx.store.borrow_mut();
+                let null_id = store.alloc_null();
+                store.push_list_item(&mut builder, null_id);
             } else {
-                builder.push(result.value_id);
+                self.ctx
+                    .store
+                    .borrow_mut()
+                    .push_list_item(&mut builder, result.value_id);
             }
         }
 
@@ -603,7 +636,10 @@ impl<'de> Visitor<'de> for FusedLeafVisitor<'_, '_> {
             .reserve_list(seq.size_hint().unwrap_or(0));
 
         while let Some(elem) = seq.next_element_seed(FusedLeafSeqSeed { ctx: self.ctx })? {
-            builder.push(elem);
+            self.ctx
+                .store
+                .borrow_mut()
+                .push_list_item(&mut builder, elem);
         }
 
         let list_id = self.ctx.store.borrow_mut().finish_list(builder);
@@ -642,6 +678,8 @@ mod tests {
             response_key_id,
             value,
             nullability: FieldNullability::leaf(nullable),
+            output_key: None,
+            output_position: None,
         }
     }
 

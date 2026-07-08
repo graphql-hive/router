@@ -15,6 +15,7 @@ use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_plan_executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow};
 use hive_router_plan_executor::plugins::hooks;
+use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
 use hive_router_plan_executor::response::subgraph_response::SubgraphResponseShapeRegistry;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use hive_router_query_planner::planner::query_plan::QUERY_PLAN_KIND;
@@ -34,9 +35,13 @@ pub struct QueryPlanPayload {
 }
 
 impl QueryPlanPayload {
-    pub fn new(query_plan: Arc<QueryPlan>) -> Self {
+    pub fn new(
+        query_plan: Arc<QueryPlan>,
+        projection_plan: Option<&[FieldProjectionPlan]>,
+    ) -> Self {
         let subgraph_response_shapes = Arc::new(SubgraphResponseShapeRegistry::from_query_plan(
             query_plan.as_ref(),
+            projection_plan,
         ));
 
         Self {
@@ -124,7 +129,10 @@ pub async fn plan_operation_with_cache(
             .entry(plan_cache_key)
             .or_try_insert_with(async {
                 if is_pure_introspection {
-                    return Ok(Arc::new(QueryPlanPayload::new(EMPTY_QUERY_PLAN.clone())));
+                    return Ok(Arc::new(QueryPlanPayload::new(
+                        EMPTY_QUERY_PLAN.clone(),
+                        None,
+                    )));
                 }
 
                 // If the operation is empty, but the projection plan is not,,
@@ -140,7 +148,10 @@ pub async fn plan_operation_with_cache(
                 // That's why we return an empty plan,
                 // and allow for response projection to happen later.
                 if is_plan_operation_empty && !is_projection_plan_empty {
-                    return Ok(Arc::new(QueryPlanPayload::new(EMPTY_QUERY_PLAN.clone())));
+                    return Ok(Arc::new(QueryPlanPayload::new(
+                        EMPTY_QUERY_PLAN.clone(),
+                        Some(normalized_operation.projection_plan.as_slice()),
+                    )));
                 }
 
                 supergraph
@@ -151,7 +162,12 @@ pub async fn plan_operation_with_cache(
                         cancellation_token,
                     )
                     .map(Arc::new)
-                    .map(QueryPlanPayload::new)
+                    .map(|query_plan| {
+                        QueryPlanPayload::new(
+                            query_plan,
+                            Some(normalized_operation.projection_plan.as_slice()),
+                        )
+                    })
                     .map(Arc::new)
             })
             .await
@@ -192,7 +208,10 @@ pub async fn plan_operation_with_cache(
             }
             // Give the ownership back to variables
             if !Arc::ptr_eq(&plan_payload.query_plan, &end_payload.query_plan) {
-                plan_payload = Arc::new(QueryPlanPayload::new(end_payload.query_plan));
+                plan_payload = Arc::new(QueryPlanPayload::new(
+                    end_payload.query_plan,
+                    Some(normalized_operation.projection_plan.as_slice()),
+                ));
             }
         }
 

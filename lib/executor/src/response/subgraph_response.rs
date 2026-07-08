@@ -1,6 +1,7 @@
 use core::fmt;
 use std::sync::Arc;
 
+use ahash::AHashMap as HashMap;
 use bytes::Bytes;
 use hive_router_query_planner::{
     ast::{
@@ -21,6 +22,7 @@ use sonic_rs::LazyValue;
 use crate::{
     executors::error::SubgraphExecutorError,
     introspection::schema::FieldNullability,
+    projection::plan::{FieldProjectionPlan, ProjectionValueSource},
     response::{
         flat_plan::{
             FetchTarget, FetchWritePlan, FieldWritePlan, LeafWritePlan, ObjectWritePlan,
@@ -65,30 +67,29 @@ pub struct SubgraphResponseShape {
 
 #[derive(Debug, Clone, Default)]
 pub struct SubgraphResponseShapeRegistry {
-    shapes_by_fetch_id: Vec<(i64, SubgraphResponseShape)>,
-    write_plans_by_fetch_id: Vec<(i64, FetchWritePlan)>,
+    shapes_by_fetch_id: HashMap<i64, SubgraphResponseShape>,
+    write_plans_by_fetch_id: HashMap<i64, FetchWritePlan>,
 }
 
 impl SubgraphResponseShapeRegistry {
-    pub fn from_query_plan(query_plan: &QueryPlan) -> Self {
+    pub fn from_query_plan(
+        query_plan: &QueryPlan,
+        projection_plan: Option<&[FieldProjectionPlan]>,
+    ) -> Self {
         let mut registry = Self::default();
         if let Some(node) = &query_plan.node {
             registry.collect_node(node);
         }
-        registry.build_write_plans();
+        registry.build_write_plans(projection_plan);
         registry
     }
 
     pub fn get(&self, fetch_id: i64) -> Option<&SubgraphResponseShape> {
-        self.shapes_by_fetch_id
-            .iter()
-            .find_map(|(id, shape)| (*id == fetch_id).then_some(shape))
+        self.shapes_by_fetch_id.get(&fetch_id)
     }
 
     pub fn get_fetch_write_plan(&self, fetch_id: i64) -> Option<&FetchWritePlan> {
-        self.write_plans_by_fetch_id
-            .iter()
-            .find_map(|(id, plan)| (*id == fetch_id).then_some(plan))
+        self.write_plans_by_fetch_id.get(&fetch_id)
     }
 
     fn collect_node(&mut self, node: &PlanNode) {
@@ -98,14 +99,14 @@ impl SubgraphResponseShapeRegistry {
                     &fetch.operation,
                     fetch.custom_scalar_paths.as_ref(),
                 );
-                self.shapes_by_fetch_id.push((fetch.id, shape));
+                self.shapes_by_fetch_id.insert(fetch.id, shape);
             }
             PlanNode::BatchFetch(fetch) => {
                 let shape = SubgraphResponseShape::from_operation(
                     &fetch.operation,
                     fetch.custom_scalar_paths.as_ref(),
                 );
-                self.shapes_by_fetch_id.push((fetch.id, shape));
+                self.shapes_by_fetch_id.insert(fetch.id, shape);
             }
             PlanNode::Sequence(sequence) => {
                 for node in &sequence.nodes {
@@ -130,11 +131,16 @@ impl SubgraphResponseShapeRegistry {
         }
     }
 
-    fn build_write_plans(&mut self) {
+    fn build_write_plans(&mut self, projection_plan: Option<&[FieldProjectionPlan]>) {
         let mut keys = ResponseKeys::default();
-        let mut temp_plans: Vec<(i64, FetchWritePlan)> = Vec::new();
+        let mut temp_plans: Vec<(i64, FetchWritePlan)> =
+            Vec::with_capacity(self.shapes_by_fetch_id.len());
         for (fetch_id, shape) in self.shapes_by_fetch_id.iter() {
-            let data = shape_to_value_plan(&shape.data, &mut keys);
+            let data = if let Some(proj) = projection_plan {
+                shape_to_value_plan_with_output(&shape.data, proj, &mut keys)
+            } else {
+                shape_to_value_plan(&shape.data, &mut keys)
+            };
             temp_plans.push((
                 *fetch_id,
                 FetchWritePlan {
@@ -149,7 +155,7 @@ impl SubgraphResponseShapeRegistry {
         for (_, plan) in temp_plans.iter_mut() {
             plan.keys = Arc::clone(&global_keys);
         }
-        self.write_plans_by_fetch_id = temp_plans;
+        self.write_plans_by_fetch_id = temp_plans.into_iter().collect();
     }
 }
 
@@ -610,6 +616,87 @@ fn find_field_shape(fields: &[SubgraphFieldShape], key: &str, cursor: &mut usize
     None
 }
 
+fn shape_to_value_plan_with_output(
+    shape: &SubgraphValueShape,
+    projection_children: &[FieldProjectionPlan],
+    keys: &mut ResponseKeys,
+) -> ValueWritePlan {
+    match shape {
+        SubgraphValueShape::Leaf {
+            custom_scalar_paths,
+        } => {
+            let custom_scalar = custom_scalar_paths.as_ref().is_some_and(|p| p.terminal);
+            ValueWritePlan::Leaf(LeafWritePlan {
+                response_key: "".into(),
+                nullability: FieldNullability::Leaf { non_null: false },
+                custom_scalar,
+            })
+        }
+        SubgraphValueShape::Object { fields } => {
+            let field_plans: Vec<FieldWritePlan> = fields
+                .iter()
+                .enumerate()
+                .map(|(pos, f)| {
+                    let response_key: Box<str> = f.response_key.clone().into_boxed_str();
+                    let response_key_id = keys.intern(&response_key);
+
+                    let proj_field =
+                        find_projection_child(projection_children, &f.response_key, pos);
+
+                    let (output_key, output_position, child_projection) = match proj_field {
+                        Some(p) => {
+                            let out_key = keys.intern(&p.response_key);
+                            let child_proj = match &p.value {
+                                ProjectionValueSource::ResponseData {
+                                    selections: Some(s),
+                                } => Some(s.as_ref()),
+                                _ => None,
+                            };
+                            (Some(out_key), Some(pos as u16), child_proj)
+                        }
+                        None => (None, None, None),
+                    };
+
+                    let child_value = if let Some(proj_children) = child_projection {
+                        shape_to_value_plan_with_output(&f.value, proj_children, keys)
+                    } else {
+                        shape_to_value_plan(&f.value, keys)
+                    };
+
+                    FieldWritePlan {
+                        source_key: f.response_key.clone().into_boxed_str(),
+                        response_key,
+                        response_key_id,
+                        value: child_value,
+                        nullability: FieldNullability::Leaf { non_null: false },
+                        output_key,
+                        output_position,
+                    }
+                })
+                .collect();
+            ValueWritePlan::Object(ObjectWritePlan::new(
+                "".into(),
+                FieldNullability::Leaf { non_null: true },
+                field_plans,
+                "".into(),
+            ))
+        }
+    }
+}
+
+fn find_projection_child<'a>(
+    children: &'a [FieldProjectionPlan],
+    field_name: &str,
+    fallback_pos: usize,
+) -> Option<&'a FieldProjectionPlan> {
+    if let Some(child) = children.get(fallback_pos) {
+        if child.field_name == field_name {
+            return Some(child);
+        }
+    }
+    children.iter().find(|c| c.field_name == field_name)
+}
+
 fn shape_to_value_plan(shape: &SubgraphValueShape, keys: &mut ResponseKeys) -> ValueWritePlan {
     match shape {
         SubgraphValueShape::Leaf {
@@ -634,6 +721,8 @@ fn shape_to_value_plan(shape: &SubgraphValueShape, keys: &mut ResponseKeys) -> V
                         response_key_id,
                         value: shape_to_value_plan(&f.value, keys),
                         nullability: FieldNullability::Leaf { non_null: false },
+                        output_key: None,
+                        output_position: None,
                     }
                 })
                 .collect();

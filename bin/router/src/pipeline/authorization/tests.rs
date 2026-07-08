@@ -9,6 +9,7 @@ use hive_router_plan_executor::{
         schema::{SchemaMetadata, SchemaWithMetadata},
     },
     projection::plan::FieldProjectionPlan,
+    response::flat_output_plan::FlatOutputPlan,
 };
 use hive_router_query_planner::{
     ast::normalization::normalize_operation,
@@ -78,6 +79,7 @@ impl SupergraphTestData {
 
         let payload = GraphQLNormalizationPayload {
             root_type_name,
+            flat_output_plan: Arc::new(FlatOutputPlan::compile(&projection_plan)),
             projection_plan: Arc::new(projection_plan),
             operation_for_plan,
             operation_for_plan_hash: hashes.operation_for_plan_hash,

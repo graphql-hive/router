@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use bytes::BufMut;
 use sonic_rs::JsonValueTrait;
 
 use crate::introspection::schema::{FieldNullability, PossibleTypes};
-use crate::json_writer::{write_and_escape_string, write_f64, write_i64, write_u64};
+use crate::json_writer::{
+    write_and_escape_string, write_f64, write_i64, write_u64, JsonWriteBuffer,
+};
 use crate::projection::plan::{
     FieldProjectionCondition, FieldProjectionPlan, ProjectionValueSource, TypeCondition,
 };
@@ -44,6 +45,23 @@ pub enum FlatOutputFieldKind {
     CustomScalar,
     Object { children: Vec<FlatOutputField> },
     List { item: Option<Box<FlatOutputField>> },
+}
+
+struct BoundFlatOutputField<'a> {
+    field: &'a FlatOutputField,
+    flat_key_id: Option<ResponseKeyId>,
+    kind: BoundFlatOutputFieldKind<'a>,
+}
+
+enum BoundFlatOutputFieldKind<'a> {
+    Scalar,
+    CustomScalar,
+    Object {
+        children: Vec<BoundFlatOutputField<'a>>,
+    },
+    List {
+        item: Option<Box<BoundFlatOutputField<'a>>>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -320,7 +338,7 @@ fn resolve_flat_value_type_name(value: Option<&FlatValue>) -> Option<String> {
 ///
 /// This replaces raw flat serialization with a projection-aware serializer
 /// that observes field order, nullability, conditions, and type guards.
-pub fn serialize_with_output_plan(
+pub fn serialize_with_output_plan<B: JsonWriteBuffer>(
     store: &FlatResponseStore,
     plan: &FlatOutputPlan,
     flat_keys: &ResponseKeys,
@@ -328,13 +346,14 @@ pub fn serialize_with_output_plan(
     variable_values: &Option<VariablesMap>,
     possible_types: &PossibleTypes,
     root_type_name: &str,
-    buffer: &mut Vec<u8>,
+    buffer: &mut B,
 ) {
+    let root_fields = bind_output_fields(&plan.root_fields, &plan.keys, flat_keys);
     let _ = serialize_output_object(
         store,
         &plan.keys,
         flat_keys,
-        &plan.root_fields,
+        &root_fields,
         root,
         variable_values,
         possible_types,
@@ -343,19 +362,56 @@ pub fn serialize_with_output_plan(
     );
 }
 
+fn bind_output_fields<'a>(
+    fields: &'a [FlatOutputField],
+    output_keys: &ResponseKeys,
+    flat_keys: &ResponseKeys,
+) -> Vec<BoundFlatOutputField<'a>> {
+    fields
+        .iter()
+        .map(|field| bind_output_field(field, output_keys, flat_keys))
+        .collect()
+}
+
+fn bind_output_field<'a>(
+    field: &'a FlatOutputField,
+    output_keys: &ResponseKeys,
+    flat_keys: &ResponseKeys,
+) -> BoundFlatOutputField<'a> {
+    let flat_key_id = flat_keys.get_key_id(output_keys.key(field.response_key_id));
+    let kind = match &field.kind {
+        FlatOutputFieldKind::Scalar => BoundFlatOutputFieldKind::Scalar,
+        FlatOutputFieldKind::CustomScalar => BoundFlatOutputFieldKind::CustomScalar,
+        FlatOutputFieldKind::Object { children } => BoundFlatOutputFieldKind::Object {
+            children: bind_output_fields(children, output_keys, flat_keys),
+        },
+        FlatOutputFieldKind::List { item } => BoundFlatOutputFieldKind::List {
+            item: item
+                .as_ref()
+                .map(|item| Box::new(bind_output_field(item, output_keys, flat_keys))),
+        },
+    };
+
+    BoundFlatOutputField {
+        field,
+        flat_key_id,
+        kind,
+    }
+}
+
 /// Returns `true` if the serialization succeeded without non-null violation.
 /// Returns `false` if a non-null field received null; the caller must truncate
 /// to `checkpoint` and write `null`.
-fn serialize_output_object(
+fn serialize_output_object<B: JsonWriteBuffer>(
     store: &FlatResponseStore,
     output_keys: &ResponseKeys,
     flat_keys: &ResponseKeys,
-    children: &[FlatOutputField],
+    children: &[BoundFlatOutputField<'_>],
     object_id: FlatValueId,
     variable_values: &Option<VariablesMap>,
     possible_types: &PossibleTypes,
     parent_type_name: Option<&str>,
-    buffer: &mut Vec<u8>,
+    buffer: &mut B,
 ) -> bool {
     let obj_range = match store.value(object_id) {
         FlatValue::Object { fields } => fields.clone(),
@@ -366,22 +422,28 @@ fn serialize_output_object(
         }
     };
 
-    // Resolve the actual parent type name from __typename. For entity objects,
-    // __typename is always present. Fall back to the caller-provided hint then "Query".
-    let resolved_parent = flat_get_typename(store, flat_keys, &obj_range)
-        .or_else(|| parent_type_name.map(|s| s.to_string()))
-        .unwrap_or_else(|| "Query".to_string());
+    let needs_parent_type = children.iter().any(|child| {
+        child.field.is_typename || condition_needs_parent_type(child.field.condition.as_ref())
+    });
+    let resolved_parent = if needs_parent_type {
+        flat_get_typename(store, flat_keys, &obj_range)
+            .or(parent_type_name)
+            .unwrap_or("Query")
+    } else {
+        parent_type_name.unwrap_or("Query")
+    };
 
     let checkpoint = buffer.len();
     buffer.put(OPEN_BRACE_);
     let mut first = true;
 
     for child in children {
-        let condition_result = child.condition.as_ref().map(|cond| {
+        let field = child.field;
+        let condition_result = field.condition.as_ref().map(|cond| {
             check_flat_condition_with_value(
                 cond,
                 variable_values,
-                Some(&resolved_parent),
+                Some(resolved_parent),
                 None,
                 possible_types,
             )
@@ -399,9 +461,9 @@ fn serialize_output_object(
                     buffer.put(COMMA);
                 }
                 first = false;
-                buffer.put_slice(output_keys.serialized_json_key(child.response_key_id));
+                buffer.put_slice(output_keys.serialized_json_key(field.response_key_id));
                 buffer.put(NULL);
-                if child.nullability.is_non_null() {
+                if field.nullability.is_non_null() {
                     buffer.truncate(checkpoint);
                     buffer.put(NULL);
                     return false;
@@ -412,31 +474,28 @@ fn serialize_output_object(
         }
 
         // For __typename fields, serialize the resolved parent type name
-        if child.is_typename {
+        if field.is_typename {
             if !first {
                 buffer.put(COMMA);
             }
             first = false;
-            buffer.put_slice(output_keys.serialized_json_key(child.response_key_id));
-            write_and_escape_string(buffer, &resolved_parent);
+            buffer.put_slice(output_keys.serialized_json_key(field.response_key_id));
+            write_and_escape_string(buffer, resolved_parent);
             continue;
         }
 
-        // Final projection reads merged response objects by response key, matching
-        // the Value-based projection path.
-        let response_key = output_keys.key(child.response_key_id);
-        let field_value_id = flat_keys
-            .get_key_id(response_key)
+        let field_value_id = child
+            .flat_key_id
             .and_then(|kid| find_field_in_flat_object(store, &obj_range, kid));
 
         // Now we need to evaluate conditions that depend on the field value
         // (EnumValuesCondition) - re-evaluate if not already done
-        let condition_result_with_value = child.condition.as_ref().map(|cond| {
+        let condition_result_with_value = field.condition.as_ref().map(|cond| {
             let field_val = field_value_id.map(|id| store.value(id));
             check_flat_condition_with_value(
                 cond,
                 variable_values,
-                Some(&resolved_parent),
+                Some(resolved_parent),
                 field_val,
                 possible_types,
             )
@@ -453,9 +512,9 @@ fn serialize_output_object(
                     buffer.put(COMMA);
                 }
                 first = false;
-                buffer.put_slice(output_keys.serialized_json_key(child.response_key_id));
+                buffer.put_slice(output_keys.serialized_json_key(field.response_key_id));
                 buffer.put(NULL);
-                if child.nullability.is_non_null() {
+                if field.nullability.is_non_null() {
                     buffer.truncate(checkpoint);
                     buffer.put(NULL);
                     return false;
@@ -470,7 +529,7 @@ fn serialize_output_object(
         }
         first = false;
 
-        buffer.put_slice(output_keys.serialized_json_key(child.response_key_id));
+        buffer.put_slice(output_keys.serialized_json_key(field.response_key_id));
 
         let ok = match field_value_id {
             Some(value_id) => serialize_output_value(
@@ -481,7 +540,7 @@ fn serialize_output_object(
                 value_id,
                 variable_values,
                 possible_types,
-                Some(&resolved_parent),
+                Some(resolved_parent),
                 buffer,
             ),
             None => {
@@ -490,7 +549,7 @@ fn serialize_output_object(
             }
         };
 
-        if !ok && child.nullability.is_non_null() {
+        if !ok && field.nullability.is_non_null() {
             buffer.truncate(checkpoint);
             buffer.put(NULL);
             return false;
@@ -502,23 +561,23 @@ fn serialize_output_object(
 }
 
 /// Returns `true` if the value was serialized without non-null violation.
-fn serialize_output_value(
+fn serialize_output_value<B: JsonWriteBuffer>(
     store: &FlatResponseStore,
     output_keys: &ResponseKeys,
     flat_keys: &ResponseKeys,
-    field: &FlatOutputField,
+    child: &BoundFlatOutputField<'_>,
     value_id: FlatValueId,
     variable_values: &Option<VariablesMap>,
     possible_types: &PossibleTypes,
     field_parent_type: Option<&str>,
-    buffer: &mut Vec<u8>,
+    buffer: &mut B,
 ) -> bool {
-    match &field.kind {
-        FlatOutputFieldKind::Scalar | FlatOutputFieldKind::CustomScalar => {
+    match &child.kind {
+        BoundFlatOutputFieldKind::Scalar | BoundFlatOutputFieldKind::CustomScalar => {
             serialize_flat_scalar(store, value_id, buffer);
             !is_propagating_null(store, value_id)
         }
-        FlatOutputFieldKind::Object { children } => serialize_output_object(
+        BoundFlatOutputFieldKind::Object { children } => serialize_output_object(
             store,
             output_keys,
             flat_keys,
@@ -529,13 +588,13 @@ fn serialize_output_value(
             field_parent_type,
             buffer,
         ),
-        FlatOutputFieldKind::List {
+        BoundFlatOutputFieldKind::List {
             item: Some(item_field),
         } => serialize_output_list(
             store,
             output_keys,
             flat_keys,
-            field,
+            child.field,
             item_field,
             value_id,
             variable_values,
@@ -543,7 +602,7 @@ fn serialize_output_value(
             field_parent_type,
             buffer,
         ),
-        FlatOutputFieldKind::List { item: None } => {
+        BoundFlatOutputFieldKind::List { item: None } => {
             // Empty list with no item type – serialize as empty array
             buffer.put(OPEN_BRACKET_);
             buffer.put(CLOSE_BRACKET_);
@@ -553,17 +612,17 @@ fn serialize_output_value(
 }
 
 /// Returns `true` if the list was serialized without non-null violation.
-fn serialize_output_list(
+fn serialize_output_list<B: JsonWriteBuffer>(
     store: &FlatResponseStore,
     output_keys: &ResponseKeys,
     flat_keys: &ResponseKeys,
     field: &FlatOutputField,
-    item_field: &FlatOutputField,
+    item_field: &BoundFlatOutputField<'_>,
     list_value_id: FlatValueId,
     variable_values: &Option<VariablesMap>,
     possible_types: &PossibleTypes,
     _list_parent_type: Option<&str>,
-    buffer: &mut Vec<u8>,
+    buffer: &mut B,
 ) -> bool {
     let item_range = match store.value(list_value_id) {
         FlatValue::RawJson(_) => {
@@ -583,14 +642,14 @@ fn serialize_output_list(
     let checkpoint = buffer.len();
     buffer.put(OPEN_BRACKET_);
 
-    let items: Vec<FlatValueId> = store.list_items(&item_range).to_vec();
+    let items = store.list_items(&item_range);
     if items.is_empty() {
         buffer.put(CLOSE_BRACKET_);
         return true;
     }
 
     let mut first = true;
-    for &item_id in &items {
+    for &item_id in items {
         if !first {
             buffer.put(COMMA);
         }
@@ -631,27 +690,41 @@ fn find_field_in_flat_object(
     store
         .object_fields(range)
         .iter()
-        .find(|f| f.response_key == key_id)
+        .find(|f| f.response_key == key_id || f.output_key == Some(key_id))
         .map(|f| f.value)
 }
 
-fn flat_get_typename(
-    store: &FlatResponseStore<'_>,
+fn condition_needs_parent_type(condition: Option<&FlatCondition>) -> bool {
+    match condition {
+        Some(FlatCondition::ParentTypeCondition(_)) => true,
+        Some(FlatCondition::And(left, right)) | Some(FlatCondition::Or(left, right)) => {
+            condition_needs_parent_type(Some(left)) || condition_needs_parent_type(Some(right))
+        }
+        _ => false,
+    }
+}
+
+fn flat_get_typename<'store, 'data>(
+    store: &'store FlatResponseStore<'data>,
     flat_keys: &ResponseKeys,
     obj_range: &std::ops::Range<u32>,
-) -> Option<String> {
+) -> Option<&'store str> {
     let typename_key_id = flat_keys.get_key_id("__typename")?;
     for sf in store.object_fields(obj_range) {
         if sf.response_key == typename_key_id {
             if let FlatValue::String(s) = store.value(sf.value) {
-                return Some(s.to_string());
+                return Some(s.as_ref());
             }
         }
     }
     None
 }
 
-fn serialize_flat_scalar(store: &FlatResponseStore, id: FlatValueId, buffer: &mut Vec<u8>) {
+fn serialize_flat_scalar<B: JsonWriteBuffer>(
+    store: &FlatResponseStore,
+    id: FlatValueId,
+    buffer: &mut B,
+) {
     match store.value(id) {
         FlatValue::Null | FlatValue::Missing | FlatValue::Inaccessible => buffer.put(NULL),
         FlatValue::Bool(true) => buffer.put(TRUE),

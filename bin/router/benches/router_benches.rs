@@ -14,6 +14,7 @@ use hive_router_plan_executor::{
         schema::{SchemaMetadata, SchemaWithMetadata},
     },
     projection::plan::FieldProjectionPlan,
+    response::flat_output_plan::FlatOutputPlan,
 };
 use hive_router_query_planner::state::supergraph_state::OperationKind;
 use hive_router_query_planner::{
@@ -57,6 +58,7 @@ fn authorization_benchmark(c: &mut Criterion) {
 
         GraphQLNormalizationPayload {
             root_type_name,
+            flat_output_plan: Arc::new(FlatOutputPlan::compile(&projection_plan)),
             projection_plan: Arc::new(projection_plan),
             operation_for_plan: Arc::new(partitioned_operation.downstream_operation),
             operation_for_introspection: partitioned_operation

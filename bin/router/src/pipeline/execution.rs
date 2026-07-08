@@ -18,7 +18,6 @@ use hive_router_plan_executor::headers::response::ResponseHeaderSink;
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
-use hive_router_plan_executor::response::flat_output_plan::FlatOutputPlan;
 use http::HeaderName;
 use sonic_rs::json;
 use std::sync::Arc;
@@ -95,7 +94,7 @@ pub async fn execute_plan<'exec>(
             .map_err(PipelineError::QueryPlanSerializationFailed)?;
 
             return Ok(QueryPlanExecutionResult::Single(PlanExecutionOutput {
-                body,
+                body: body.into(),
                 ..Default::default()
             }));
         }
@@ -120,9 +119,6 @@ pub async fn execute_plan<'exec>(
         };
 
         let operation_name = planned_request.client_request_details.operation.name;
-        let flat_output_plan = Arc::new(FlatOutputPlan::compile(
-            &planned_request.normalized_payload.projection_plan,
-        ));
         let result = execute_query_plan(QueryPlanExecutionOpts {
             query_plan: planned_request.query_plan_payload.query_plan.as_ref(),
             operation_for_plan: planned_request
@@ -130,7 +126,7 @@ pub async fn execute_plan<'exec>(
                 .operation_for_plan
                 .clone(),
             projection_plan: planned_request.normalized_payload.projection_plan.clone(),
-            flat_output_plan,
+            flat_output_plan: planned_request.normalized_payload.flat_output_plan.clone(),
             subgraph_response_shapes: planned_request
                 .query_plan_payload
                 .subgraph_response_shapes

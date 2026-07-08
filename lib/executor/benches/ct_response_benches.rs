@@ -64,7 +64,8 @@ impl CtBenchFixture {
 
         // Match the response shape: {"data": ..., "errors": [...], "extensions": {...}}
         buf.extend_from_slice(b"{\"data\":");
-        part.store.serialize_value(root, &part.keys, &mut buf);
+        part.store
+            .serialize_output_value_impl(root, &part.keys, &mut buf);
         buf.extend_from_slice(b"}");
 
         buf
@@ -111,7 +112,8 @@ fn load_fixture() -> CtBenchFixture {
 
     let custom_scalar_paths = first_custom_scalar_paths(&query_plan).cloned();
     let fetch_id = first_fetch_id(&query_plan).expect("query plan has a fetch node");
-    let response_shape_registry = SubgraphResponseShapeRegistry::from_query_plan(&query_plan);
+    let response_shape_registry =
+        SubgraphResponseShapeRegistry::from_query_plan(&query_plan, Some(&*projection_plan));
     let response_shape = response_shape_registry
         .get(fetch_id)
         .expect("query plan has a response shape")

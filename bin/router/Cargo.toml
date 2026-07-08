@@ -21,6 +21,7 @@ path = "src/main.rs"
 noop_otlp_exporter = ["hive-router-internal/noop_otlp_exporter"]
 testing = []
 graphiql = []
+pprof = ["dep:pprof"]
 
 [dependencies]
 hive-router-query-planner = { path = "../../lib/query-planner", version = "2.10.7" }
@@ -56,6 +57,7 @@ ntex-router = { workspace = true }
 ntex-bytes = { workspace = true }
 ntex-dispatcher = { workspace = true }
 ntex-error = { workspace = true }
+pprof = { workspace = true, optional = true }
 ntex-h2 = { workspace = true }
 ntex-rt = { workspace = true }
 ntex-macros = { workspace = true }

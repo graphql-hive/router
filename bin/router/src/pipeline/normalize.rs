@@ -8,6 +8,7 @@ use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::introspection::partition::partition_operation;
 use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
+use hive_router_plan_executor::response::flat_output_plan::FlatOutputPlan;
 use hive_router_query_planner::ast::normalization::error::NormalizationError;
 use hive_router_query_planner::ast::normalization::normalize_operation;
 use hive_router_query_planner::ast::operation::OperationDefinition;
@@ -30,6 +31,7 @@ pub struct GraphQLNormalizationPayload {
     pub normalized_operation_hash: u64,
     pub root_type_name: &'static str,
     pub projection_plan: Arc<Vec<FieldProjectionPlan>>,
+    pub flat_output_plan: Arc<FlatOutputPlan>,
     pub operation_identity: OperationIdentity,
 }
 
@@ -119,6 +121,7 @@ pub async fn normalize_request_with_cache(
                 let operation = doc.operation;
                 let (root_type_name, projection_plan) =
                     FieldProjectionPlan::from_operation(&operation, &supergraph.metadata);
+                let flat_output_plan = Arc::new(FlatOutputPlan::compile(&projection_plan));
                 let partitioned_operation = partition_operation(operation);
 
                 let operation_for_plan = Arc::new(partitioned_operation.downstream_operation);
@@ -133,6 +136,7 @@ pub async fn normalize_request_with_cache(
                 let payload = GraphQLNormalizationPayload {
                     root_type_name,
                     projection_plan: Arc::new(projection_plan),
+                    flat_output_plan,
                     operation_for_plan,
                     operation_for_plan_hash: hashes.operation_for_plan_hash,
                     operation_for_introspection,

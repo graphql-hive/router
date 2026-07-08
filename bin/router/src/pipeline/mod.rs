@@ -564,7 +564,7 @@ pub async fn execute_planned_request<'exec>(
             );
 
             Ok(SharedRouterResponse::Single(SharedRouterSingleResponse {
-                body: ntex::util::Bytes::from(result.body),
+                body: result.body.into_ntex_bytes(),
                 headers,
                 status: result.status_code,
                 error_count: result.error_count,
@@ -665,7 +665,7 @@ pub async fn execute_pipeline<'exec>(
                 }
 
                 return Ok(QueryPlanExecutionResult::Single(PlanExecutionOutput {
-                    body,
+                    body: body.into(),
                     error_count: 0,
                     status_code: response.status(),
                 }));
