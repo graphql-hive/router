@@ -70,7 +70,6 @@ use crate::{
     },
     response::{
         flat_plan::FetchWritePlan,
-        flat_store::{FlatValueId},
         graphql_error::{GraphQLError, GraphQLErrorPath, GraphQLErrorPathSegment},
         merge::deep_merge,
         subgraph_response::{
@@ -652,17 +651,16 @@ async fn execute_query_plan_with_data<'exec>(
         }
     }
 
-    let body = if let (Some(ref flat_store), Some(ref flat_keys)) =
-        (&exec_ctx.flat_store, &exec_ctx.flat_keys)
+    let body = if let (Some(ref flat_store), Some(ref flat_keys), Some(flat_root)) =
+        (&exec_ctx.flat_store, &exec_ctx.flat_keys, exec_ctx.flat_root)
     {
         use bytes::BufMut;
         use crate::utils::consts::{QUOTE, COLON, COMMA};
 
-        let root = FlatValueId::new(0);
         let mut buf = Vec::with_capacity(response_size_estimate);
 
         buf.put_slice(b"{\"data\":");
-        flat_store.serialize_value(root, flat_keys, &mut buf);
+        flat_store.serialize_value(flat_root, flat_keys, &mut buf);
 
         if !errors.is_empty() {
             buf.put(COMMA);
@@ -1184,6 +1182,7 @@ impl<'exec> Executor<'exec> {
                             } else {
                                 ctx.flat_store = Some(flat_part.store);
                                 ctx.flat_keys = Some(flat_part.keys);
+                                ctx.flat_root = flat_part.data_root;
                             }
                         }
 
