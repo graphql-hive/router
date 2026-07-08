@@ -20,14 +20,17 @@ use sonic_rs::LazyValue;
 
 use crate::{
     executors::error::SubgraphExecutorError,
+    introspection::schema::FieldNullability,
     response::{
-        flat_plan::{FetchTarget, FetchWritePlan, FieldWritePlan, LeafWritePlan, ObjectWritePlan, ValueWritePlan},
+        flat_plan::{
+            FetchTarget, FetchWritePlan, FieldWritePlan, LeafWritePlan, ObjectWritePlan,
+            ValueWritePlan,
+        },
         flat_store::ResponseKeys,
         fused_deserializer::FlatResponsePart,
         graphql_error::GraphQLError,
         value::Value,
     },
-    introspection::schema::FieldNullability,
 };
 
 #[derive(Debug, Default)]
@@ -72,6 +75,7 @@ impl SubgraphResponseShapeRegistry {
         if let Some(node) = &query_plan.node {
             registry.collect_node(node);
         }
+        registry.build_write_plans();
         registry
     }
 
@@ -94,22 +98,14 @@ impl SubgraphResponseShapeRegistry {
                     &fetch.operation,
                     fetch.custom_scalar_paths.as_ref(),
                 );
-                let write_plan = shape.to_fetch_write_plan(fetch.id);
-                self.shapes_by_fetch_id
-                    .push((fetch.id, shape));
-                self.write_plans_by_fetch_id
-                    .push((fetch.id, write_plan));
+                self.shapes_by_fetch_id.push((fetch.id, shape));
             }
             PlanNode::BatchFetch(fetch) => {
                 let shape = SubgraphResponseShape::from_operation(
                     &fetch.operation,
                     fetch.custom_scalar_paths.as_ref(),
                 );
-                let write_plan = shape.to_fetch_write_plan(fetch.id);
-                self.shapes_by_fetch_id
-                    .push((fetch.id, shape));
-                self.write_plans_by_fetch_id
-                    .push((fetch.id, write_plan));
+                self.shapes_by_fetch_id.push((fetch.id, shape));
             }
             PlanNode::Sequence(sequence) => {
                 for node in &sequence.nodes {
@@ -132,6 +128,28 @@ impl SubgraphResponseShapeRegistry {
             }
             PlanNode::Subscription(_) | PlanNode::Defer(_) => {}
         }
+    }
+
+    fn build_write_plans(&mut self) {
+        let mut keys = ResponseKeys::default();
+        let mut temp_plans: Vec<(i64, FetchWritePlan)> = Vec::new();
+        for (fetch_id, shape) in self.shapes_by_fetch_id.iter() {
+            let data = shape_to_value_plan(&shape.data, &mut keys);
+            temp_plans.push((
+                *fetch_id,
+                FetchWritePlan {
+                    fetch_id: *fetch_id,
+                    data,
+                    target: FetchTarget::Root,
+                    keys: Arc::new(ResponseKeys::default()),
+                },
+            ));
+        }
+        let global_keys = Arc::new(keys);
+        for (_, plan) in temp_plans.iter_mut() {
+            plan.keys = Arc::clone(&global_keys);
+        }
+        self.write_plans_by_fetch_id = temp_plans;
     }
 }
 
@@ -619,12 +637,12 @@ fn shape_to_value_plan(shape: &SubgraphValueShape, keys: &mut ResponseKeys) -> V
                     }
                 })
                 .collect();
-            ValueWritePlan::Object(ObjectWritePlan {
-                response_key: "".into(),
-                nullability: FieldNullability::Leaf { non_null: true },
-                fields: field_plans,
-                object_type_name: "".into(),
-            })
+            ValueWritePlan::Object(ObjectWritePlan::new(
+                "".into(),
+                FieldNullability::Leaf { non_null: true },
+                field_plans,
+                "".into(),
+            ))
         }
     }
 }

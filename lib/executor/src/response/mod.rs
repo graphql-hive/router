@@ -1,3 +1,4 @@
+pub mod flat_output_plan;
 pub mod flat_plan;
 pub mod flat_store;
 pub mod fused_deserializer;

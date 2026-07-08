@@ -709,11 +709,12 @@ impl SubgraphHttpResponse {
             return deserialize_fetch_into_part(self.body, write_plan)
                 .map(|part| {
                     let errors = part.errors.clone();
+                    let extensions = part.extensions.clone();
                     let bytes = part.bytes.clone();
                     let resp = SubgraphResponse {
                         data: Value::Null,
                         errors,
-                        extensions: None,
+                        extensions,
                         headers: Some(self.headers.clone()),
                         bytes,
                         status: Some(self.status),
@@ -723,7 +724,10 @@ impl SubgraphHttpResponse {
                 })
                 .map_err(|e| match e {
                     SubgraphExecutorError::ResponseDeserializationFailure(err, _) => {
-                        SubgraphExecutorError::ResponseDeserializationFailure(err, Some(self.headers))
+                        SubgraphExecutorError::ResponseDeserializationFailure(
+                            err,
+                            Some(self.headers),
+                        )
                     }
                     other => other,
                 });

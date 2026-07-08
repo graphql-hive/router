@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -16,8 +17,12 @@ use hive_router_internal::telemetry::metrics::graphql_metrics::GraphQLErrorMetri
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
 };
-use hive_router_query_planner::ast::operation::SubgraphFetchOperation;
-use hive_router_query_planner::planner::plan_nodes::{CustomScalarPaths, FetchNode, FlattenNode};
+use hive_router_query_planner::ast::{
+    operation::SubgraphFetchOperation, selection_item::SelectionItem,
+};
+use hive_router_query_planner::planner::plan_nodes::{
+    CustomScalarPaths, FetchNode, FetchNodePathSegment, FlattenNode,
+};
 use hive_router_query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use hive_router_query_planner::{
     ast::operation::OperationDefinition,
@@ -60,7 +65,7 @@ use crate::{
     },
     introspection::{
         resolve::{resolve_introspection, IntrospectionContext},
-        schema::SchemaMetadata,
+        schema::{PossibleTypes, SchemaMetadata},
     },
     plugin_context::PluginRequestState,
     plugin_trait::{EarlyHTTPResponse, EndControlFlow, StartControlFlow},
@@ -69,7 +74,9 @@ use crate::{
         plan::FieldProjectionPlan, request::project_requires, response::project_by_operation,
     },
     response::{
+        flat_output_plan::FlatOutputPlan,
         flat_plan::FetchWritePlan,
+        flat_store::{FlatResponseStore, FlatValue, FlatValueId, ResponseKeyId, ResponseKeys},
         graphql_error::{GraphQLError, GraphQLErrorPath, GraphQLErrorPathSegment},
         merge::deep_merge,
         subgraph_response::{
@@ -120,6 +127,7 @@ pub struct QueryPlanExecutionOpts<'exec> {
     pub query_plan: &'exec QueryPlan,
     pub operation_for_plan: Arc<OperationDefinition>,
     pub projection_plan: Arc<Vec<FieldProjectionPlan>>,
+    pub flat_output_plan: Arc<FlatOutputPlan>,
     pub subgraph_response_shapes: Arc<SubgraphResponseShapeRegistry>,
     pub headers_plan: Arc<HeaderRulesPlan>,
     pub extensions_plan: Arc<ExtensionsPlan>,
@@ -371,6 +379,7 @@ pub async fn execute_query_plan<'exec>(
                     query_plan: &query_plan,
                     operation_for_plan: opts.operation_for_plan.clone(),
                     projection_plan: opts.projection_plan.clone(),
+                    flat_output_plan: opts.flat_output_plan.clone(),
                     subgraph_response_shapes: opts.subgraph_response_shapes.clone(),
                     headers_plan: opts.headers_plan.clone(),
                     extensions_plan: opts.extensions_plan.clone(),
@@ -539,40 +548,44 @@ async fn execute_query_plan_with_data<'exec>(
     let mut errors = exec_ctx.errors;
     let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
 
-    let has_flat_response = exec_ctx.flat_store.is_some();
-
     let mut demand_control_cost = None;
     if let Some(demand_control) = executor.demand_control_context {
-        if !has_flat_response {
-            let actual = demand_control.calculate_actual_cost(
-                &data,
-                &opts.variable_values.variables_map,
-                &exec_ctx.subgraph_response_cost_tracker,
+        let actual = demand_control.calculate_actual_cost(
+            &data,
+            match (
+                &exec_ctx.flat_store,
+                &exec_ctx.flat_keys,
+                exec_ctx.flat_root,
+            ) {
+                (Some(store), Some(keys), Some(root)) => Some((store, keys.as_ref(), root)),
+                _ => None,
+            },
+            &opts.variable_values.variables_map,
+            &exec_ctx.subgraph_response_cost_tracker,
+        );
+
+        demand_control_cost = Some(DemandControlCost {
+            estimated: demand_control.evaluation.estimated_cost,
+            max: demand_control.operation.operation_max_cost,
+            actual,
+        });
+
+        if actual > demand_control.operation.operation_max_cost {
+            tracing::info!(
+                operation_name = ?opts.operation_for_plan.name.as_deref(),
+                actual_cost = actual,
+                estimated_cost = demand_control.evaluation.estimated_cost,
+                max_cost = demand_control.operation.operation_max_cost,
+                "actual cost exceeds max cost (not enforced)"
             );
-
-            demand_control_cost = Some(DemandControlCost {
-                estimated: demand_control.evaluation.estimated_cost,
-                max: demand_control.operation.operation_max_cost,
-                actual,
-            });
-
-            if actual > demand_control.operation.operation_max_cost {
-                tracing::info!(
-                    operation_name = ?opts.operation_for_plan.name.as_deref(),
-                    actual_cost = actual,
-                    estimated_cost = demand_control.evaluation.estimated_cost,
-                    max_cost = demand_control.operation.operation_max_cost,
-                    "actual cost exceeds max cost (not enforced)"
-                );
-            }
-
-            demand_control.report_telemetry(
-                actual,
-                opts.operation_for_plan.name.as_deref(),
-                &opts.span,
-            );
-            demand_control.apply_expose_headers(&mut exec_ctx.response_headers_aggregator, actual);
         }
+
+        demand_control.report_telemetry(
+            actual,
+            opts.operation_for_plan.name.as_deref(),
+            &opts.span,
+        );
+        demand_control.apply_expose_headers(&mut exec_ctx.response_headers_aggregator, actual);
     }
 
     cache_control::finalize(
@@ -651,16 +664,29 @@ async fn execute_query_plan_with_data<'exec>(
         }
     }
 
-    let body = if let (Some(ref flat_store), Some(ref flat_keys), Some(flat_root)) =
-        (&exec_ctx.flat_store, &exec_ctx.flat_keys, exec_ctx.flat_root)
-    {
+    let body = if let (Some(ref flat_store), Some(ref flat_keys), Some(flat_root)) = (
+        &exec_ctx.flat_store,
+        &exec_ctx.flat_keys,
+        exec_ctx.flat_root,
+    ) {
+        use crate::response::flat_output_plan::serialize_with_output_plan;
+        use crate::utils::consts::{COLON, COMMA, QUOTE};
         use bytes::BufMut;
-        use crate::utils::consts::{QUOTE, COLON, COMMA};
 
         let mut buf = Vec::with_capacity(response_size_estimate);
 
         buf.put_slice(b"{\"data\":");
-        flat_store.serialize_value(flat_root, flat_keys, &mut buf);
+
+        serialize_with_output_plan(
+            flat_store,
+            opts.flat_output_plan.as_ref(),
+            flat_keys,
+            flat_root,
+            &opts.variable_values.variables_map,
+            &executor.schema_metadata.possible_types,
+            opts.operation_type_name,
+            &mut buf,
+        );
 
         if !errors.is_empty() {
             buf.put(COMMA);
@@ -668,15 +694,12 @@ async fn execute_query_plan_with_data<'exec>(
             buf.put_slice(b"errors");
             buf.put(QUOTE);
             buf.put(COLON);
-            buf.put_slice(
-                &sonic_rs::to_vec(&errors)
-                    .expect("failed to serialize errors"),
-            );
+            buf.put_slice(&sonic_rs::to_vec(&errors).expect("failed to serialize errors"));
         }
 
         if !opts.extensions.is_empty() {
-            let serialized = sonic_rs::to_vec(&opts.extensions)
-                .expect("failed to serialize extensions");
+            let serialized =
+                sonic_rs::to_vec(&opts.extensions).expect("failed to serialize extensions");
             buf.put(COMMA);
             buf.put(QUOTE);
             buf.put_slice(b"extensions");
@@ -840,6 +863,353 @@ struct PrepareExecutionJobOpts<'exec> {
     affected_path: Option<&'exec FlattenNodePath>,
 }
 
+fn apply_flat_output_rewrites(
+    store: &mut FlatResponseStore<'static>,
+    keys: &ResponseKeys,
+    possible_types: &PossibleTypes,
+    root: FlatValueId,
+    rewrites: &[FetchRewrite],
+) {
+    for rewrite in rewrites {
+        match rewrite {
+            FetchRewrite::ValueSetter(vs) => {
+                apply_flat_value_setter(
+                    store,
+                    keys,
+                    possible_types,
+                    root,
+                    &vs.path,
+                    &vs.set_value_to,
+                );
+            }
+            FetchRewrite::KeyRenamer(kr) => {
+                if let Some(new_key_id) = keys.get_key_id(&kr.rename_key_to) {
+                    apply_flat_key_renamer(store, keys, possible_types, root, &kr.path, new_key_id);
+                }
+            }
+        }
+    }
+}
+
+fn project_flat_requires_entity(
+    store: &FlatResponseStore<'static>,
+    keys: &ResponseKeys,
+    possible_types: &PossibleTypes,
+    requires: &[SelectionItem],
+    entity_id: FlatValueId,
+    input_rewrites: Option<&[FetchRewrite]>,
+    buffer: &mut Vec<u8>,
+    first: bool,
+) -> bool {
+    if let Some(input_rewrites) = input_rewrites {
+        let mut rewritten_store = FlatResponseStore::new();
+        let rewritten_entity = rewritten_store.import_value_tree(store, entity_id);
+        apply_flat_output_rewrites(
+            &mut rewritten_store,
+            keys,
+            possible_types,
+            rewritten_entity,
+            input_rewrites,
+        );
+        rewritten_store.project_requires_to_buffer(
+            keys,
+            possible_types,
+            requires,
+            rewritten_entity,
+            buffer,
+            first,
+            None,
+        )
+    } else {
+        store.project_requires_to_buffer(
+            keys,
+            possible_types,
+            requires,
+            entity_id,
+            buffer,
+            first,
+            None,
+        )
+    }
+}
+
+fn apply_flat_value_setter(
+    store: &mut FlatResponseStore<'static>,
+    keys: &ResponseKeys,
+    possible_types: &PossibleTypes,
+    current: FlatValueId,
+    path: &[FetchNodePathSegment],
+    set_value_to: &str,
+) {
+    if path.is_empty() {
+        store.set_value(
+            current,
+            FlatValue::String(Cow::Owned(set_value_to.to_owned())),
+        );
+        return;
+    }
+
+    let segment = &path[0];
+    let remaining = &path[1..];
+
+    match segment {
+        FetchNodePathSegment::Key(field_name) => {
+            let key_id = keys.get_key_id(field_name);
+            match store.value(current) {
+                FlatValue::Object { fields: range } => {
+                    let field_range = range.clone();
+                    let mut targets = Vec::new();
+                    for sf in store.object_fields(&field_range) {
+                        if key_id.is_some_and(|kid| sf.response_key == kid) {
+                            targets.push(sf.value);
+                        }
+                    }
+                    for target in targets {
+                        apply_flat_value_setter(
+                            store,
+                            keys,
+                            possible_types,
+                            target,
+                            remaining,
+                            set_value_to,
+                        );
+                    }
+                }
+                FlatValue::List { items: range } => {
+                    let item_range = range.clone();
+                    let items: Vec<FlatValueId> = store.list_items(&item_range).to_vec();
+                    for item_id in items {
+                        apply_flat_value_setter(
+                            store,
+                            keys,
+                            possible_types,
+                            item_id,
+                            path,
+                            set_value_to,
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+        FetchNodePathSegment::TypenameEquals(type_conditions) => match store.value(current) {
+            FlatValue::Object { fields: range } => {
+                let field_range = range.clone();
+                let type_name = store
+                    .object_fields(&field_range)
+                    .iter()
+                    .find(|sf| {
+                        let name = keys.key(sf.response_key);
+                        name == "__typename"
+                    })
+                    .and_then(|sf| match store.value(sf.value) {
+                        FlatValue::String(s) => Some(s.clone()),
+                        _ => None,
+                    });
+                if type_name.is_none_or(|tn| {
+                    type_conditions
+                        .iter()
+                        .any(|cond| possible_types.entity_satisfies_type_condition(&tn, cond))
+                }) {
+                    apply_flat_value_setter(
+                        store,
+                        keys,
+                        possible_types,
+                        current,
+                        remaining,
+                        set_value_to,
+                    );
+                }
+            }
+            FlatValue::List { items: range } => {
+                let item_range = range.clone();
+                let items: Vec<FlatValueId> = store.list_items(&item_range).to_vec();
+                for item_id in items {
+                    apply_flat_value_setter(
+                        store,
+                        keys,
+                        possible_types,
+                        item_id,
+                        path,
+                        set_value_to,
+                    );
+                }
+            }
+            _ => {}
+        },
+    }
+}
+
+fn apply_flat_key_renamer(
+    store: &mut FlatResponseStore<'static>,
+    keys: &ResponseKeys,
+    possible_types: &PossibleTypes,
+    current: FlatValueId,
+    path: &[FetchNodePathSegment],
+    new_key_id: ResponseKeyId,
+) {
+    if path.is_empty() {
+        return;
+    }
+
+    let segment = &path[0];
+    let remaining = &path[1..];
+
+    match segment {
+        FetchNodePathSegment::Key(field_name) => {
+            let key_id = keys.get_key_id(field_name);
+            if remaining.is_empty() {
+                if let Some(kid) = key_id {
+                    store.rename_object_field(current, kid, new_key_id);
+                }
+            } else {
+                match store.value(current) {
+                    FlatValue::Object { fields: range } => {
+                        let field_range = range.clone();
+                        let mut targets = Vec::new();
+                        for sf in store.object_fields(&field_range) {
+                            if key_id.is_some_and(|kid| sf.response_key == kid) {
+                                targets.push(sf.value);
+                            }
+                        }
+                        for target in targets {
+                            apply_flat_key_renamer(
+                                store,
+                                keys,
+                                possible_types,
+                                target,
+                                remaining,
+                                new_key_id,
+                            );
+                        }
+                    }
+                    FlatValue::List { items: range } => {
+                        let item_range = range.clone();
+                        let items: Vec<FlatValueId> = store.list_items(&item_range).to_vec();
+                        for item_id in items {
+                            apply_flat_key_renamer(
+                                store,
+                                keys,
+                                possible_types,
+                                item_id,
+                                path,
+                                new_key_id,
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        FetchNodePathSegment::TypenameEquals(type_conditions) => match store.value(current) {
+            FlatValue::Object { fields: range } => {
+                let field_range = range.clone();
+                let type_name = store
+                    .object_fields(&field_range)
+                    .iter()
+                    .find(|sf| {
+                        let name = keys.key(sf.response_key);
+                        name == "__typename"
+                    })
+                    .and_then(|sf| match store.value(sf.value) {
+                        FlatValue::String(s) => Some(s.clone()),
+                        _ => None,
+                    });
+                if type_name.is_none_or(|tn| {
+                    type_conditions
+                        .iter()
+                        .any(|cond| possible_types.entity_satisfies_type_condition(&tn, cond))
+                }) {
+                    apply_flat_key_renamer(
+                        store,
+                        keys,
+                        possible_types,
+                        current,
+                        remaining,
+                        new_key_id,
+                    );
+                }
+            }
+            FlatValue::List { items: range } => {
+                let item_range = range.clone();
+                let items: Vec<FlatValueId> = store.list_items(&item_range).to_vec();
+                for item_id in items {
+                    apply_flat_key_renamer(store, keys, possible_types, item_id, path, new_key_id);
+                }
+            }
+            _ => {}
+        },
+    }
+}
+
+fn alloc_null_flat_root_for_operation(
+    store: &mut FlatResponseStore<'static>,
+    keys: &ResponseKeys,
+    operation: &SubgraphFetchOperation,
+) -> FlatValueId {
+    let mut fields = Vec::new();
+    collect_null_flat_fields_for_selection_set(
+        store,
+        keys,
+        &operation.document.operation.selection_set,
+        &operation.document.fragments,
+        &mut fields,
+    );
+    store.alloc_object(fields)
+}
+
+fn collect_null_flat_fields_for_selection_set(
+    store: &mut FlatResponseStore<'static>,
+    keys: &ResponseKeys,
+    selection_set: &hive_router_query_planner::ast::selection_set::SelectionSet,
+    fragments: &[hive_router_query_planner::ast::fragment::FragmentDefinition],
+    fields: &mut Vec<crate::response::flat_store::FlatObjectField>,
+) {
+    for selection in &selection_set.items {
+        match selection {
+            hive_router_query_planner::ast::selection_item::SelectionItem::Field(field) => {
+                if field.omit_from_response {
+                    continue;
+                }
+                let Some(response_key) = keys.get_key_id(field.selection_identifier()) else {
+                    continue;
+                };
+                if fields
+                    .iter()
+                    .any(|field| field.response_key == response_key)
+                {
+                    continue;
+                }
+                let value = store.alloc_null();
+                fields.push(crate::response::flat_store::FlatObjectField {
+                    response_key,
+                    value,
+                });
+            }
+            hive_router_query_planner::ast::selection_item::SelectionItem::InlineFragment(
+                fragment,
+            ) => collect_null_flat_fields_for_selection_set(
+                store,
+                keys,
+                &fragment.selections,
+                fragments,
+                fields,
+            ),
+            hive_router_query_planner::ast::selection_item::SelectionItem::FragmentSpread(name) => {
+                if let Some(fragment) = fragments.iter().find(|fragment| fragment.name == *name) {
+                    collect_null_flat_fields_for_selection_set(
+                        store,
+                        keys,
+                        &fragment.selection_set,
+                        fragments,
+                        fields,
+                    );
+                }
+            }
+        }
+    }
+}
+
 impl<'exec> Executor<'exec> {
     async fn execute_plan_node(&self, ctx: &mut ExecutionContext<'exec>, node: &'exec PlanNode) {
         match node {
@@ -847,9 +1217,9 @@ impl<'exec> Executor<'exec> {
                 let mut scope = FuturesUnordered::new();
 
                 for child in &parallel_node.nodes {
-                    // We borrow `ctx.data` only for sync preparation of the job future,
-                    // and the actual execution of the job future is done without the borrow of `ctx.data`
-                    if let Some(fut) = self.prepare_job_future(child, &ctx.data) {
+                    // Job preparation is synchronous. When flat data exists it is used directly;
+                    // ctx.data is only consulted by legacy non-flat execution paths.
+                    if let Some(fut) = self.prepare_job_future(child, ctx) {
                         scope.push(fut);
                     }
                 }
@@ -875,7 +1245,7 @@ impl<'exec> Executor<'exec> {
                 }
             }
             node => {
-                if let Some(fut) = self.prepare_job_future(node, &ctx.data) {
+                if let Some(fut) = self.prepare_job_future(node, ctx) {
                     let job = fut.await;
                     self.process_job_result(ctx, job);
                 }
@@ -899,7 +1269,9 @@ impl<'exec> Executor<'exec> {
             output_rewrites: fetch_node.output_rewrites.as_deref(),
             custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
             response_shape: self.subgraph_response_shapes.get(fetch_node.id),
-            fetch_write_plan: self.subgraph_response_shapes.get_fetch_write_plan(fetch_node.id),
+            fetch_write_plan: self
+                .subgraph_response_shapes
+                .get_fetch_write_plan(fetch_node.id),
             raw_variable_values: None,
             affected_path: Some(&flatten_node.path),
         })
@@ -907,9 +1279,9 @@ impl<'exec> Executor<'exec> {
     }
 
     /**
-     * This function is sync, because we only need the immutable borrow of `ctx.data` to prepare the subgraph request,
+     * This function is sync, because we only need the immutable borrow of execution state to prepare the subgraph request,
      * and the actual execution of the subgraph request is done in `prepare_fetch_job` which is async.
-     * So we do everything in sync with `ctx.data` and return a future for the actual execution of the subgraph request.
+     * So we do everything in sync and return a future for the actual execution of the subgraph request.
      *
      * The return type is not a future of `Option`, but `Option` of future because the only case when we don't have a future,
      * and the result(`None`) is when the plan node is flatten node with no data.
@@ -917,8 +1289,9 @@ impl<'exec> Executor<'exec> {
     fn prepare_job_future<'wave>(
         &'wave self,
         node: &'exec PlanNode,
-        data: &Value<'exec>,
+        ctx: &ExecutionContext<'exec>,
     ) -> Option<BoxFuture<'wave, Result<ExecutionJob<'exec>, PlanExecutionError>>> {
+        let data = &ctx.data;
         match node {
             PlanNode::Fetch(fetch_node) => Some(
                 self.prepare_execution_job(PrepareExecutionJobOpts {
@@ -932,7 +1305,9 @@ impl<'exec> Executor<'exec> {
                     output_rewrites: fetch_node.output_rewrites.as_deref(),
                     custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
                     response_shape: self.subgraph_response_shapes.get(fetch_node.id),
-                    fetch_write_plan: self.subgraph_response_shapes.get_fetch_write_plan(fetch_node.id),
+                    fetch_write_plan: self
+                        .subgraph_response_shapes
+                        .get_fetch_write_plan(fetch_node.id),
                     raw_variable_values: None,
                     affected_path: None,
                 })
@@ -940,7 +1315,18 @@ impl<'exec> Executor<'exec> {
             ),
             PlanNode::BatchFetch(batch_fetch_node) => {
                 let (raw_variable_values, aliases) =
-                    self.prepare_batch_fetch_job_state(&batch_fetch_node.entity_batch, data);
+                    if let (Some(flat_store), Some(flat_keys), Some(flat_root)) =
+                        (&ctx.flat_store, &ctx.flat_keys, ctx.flat_root)
+                    {
+                        self.prepare_batch_fetch_job_state_flat(
+                            &batch_fetch_node.entity_batch,
+                            flat_store,
+                            flat_keys,
+                            flat_root,
+                        )
+                    } else {
+                        self.prepare_batch_fetch_job_state(&batch_fetch_node.entity_batch, data)
+                    };
 
                 if aliases
                     .iter()
@@ -967,7 +1353,9 @@ impl<'exec> Executor<'exec> {
                         output_rewrites: None,
                         custom_scalar_paths: batch_fetch_node.custom_scalar_paths.as_ref(),
                         response_shape: self.subgraph_response_shapes.get(batch_fetch_node.id),
-                        fetch_write_plan: self.subgraph_response_shapes.get_fetch_write_plan(batch_fetch_node.id),
+                        fetch_write_plan: self
+                            .subgraph_response_shapes
+                            .get_fetch_write_plan(batch_fetch_node.id),
                         raw_variable_values: Some(raw_variable_values),
                         affected_path: None,
                     })
@@ -992,6 +1380,103 @@ impl<'exec> Executor<'exec> {
                 let Some(requires_nodes) = fetch_node.requires.as_ref() else {
                     return Some(self.prepare_root_reentry_fetch_job(flatten_node, fetch_node));
                 };
+
+                if let (Some(flat_store), Some(flat_keys), Some(flat_root)) =
+                    (&ctx.flat_store, &ctx.flat_keys, ctx.flat_root)
+                {
+                    let mut index = 0;
+                    let normalized_path = flatten_node.path.as_slice();
+                    let mut filtered_representations = Vec::new();
+                    filtered_representations.put(OPEN_BRACKET);
+                    let possible_types = &self.schema_metadata.possible_types;
+                    let mut representation_hashes: Vec<Option<u64>> = Vec::new();
+                    let mut representation_hash_to_index: AHashMap<u64, usize> = AHashMap::new();
+
+                    flat_store.traverse_path(
+                        flat_root,
+                        flat_keys,
+                        normalized_path,
+                        0,
+                        possible_types,
+                        &mut |entity_id, _path, _depth| {
+                            if matches!(
+                                flat_store.value(entity_id),
+                                FlatValue::Null | FlatValue::Missing | FlatValue::Inaccessible
+                            ) {
+                                representation_hashes.push(None);
+                                return;
+                            }
+
+                            let hash = flat_store.hash_with_requires(
+                                flat_keys,
+                                possible_types,
+                                entity_id,
+                                &requires_nodes.items,
+                            );
+                            representation_hashes.push(Some(hash));
+                            let is_first_representation = representation_hash_to_index.is_empty();
+                            let vacant_entry = match representation_hash_to_index.entry(hash) {
+                                Entry::Occupied(_) => return,
+                                Entry::Vacant(vacant_entry) => vacant_entry,
+                            };
+
+                            let is_projected = project_flat_requires_entity(
+                                flat_store,
+                                flat_keys,
+                                possible_types,
+                                &requires_nodes.items,
+                                entity_id,
+                                fetch_node.input_rewrites.as_deref(),
+                                &mut filtered_representations,
+                                is_first_representation,
+                            );
+
+                            if is_projected {
+                                vacant_entry.insert(index);
+                                index += 1;
+                            }
+                        },
+                    );
+
+                    filtered_representations.put(CLOSE_BRACKET);
+
+                    if representation_hash_to_index.is_empty() {
+                        return None;
+                    }
+
+                    return Some(
+                        self.prepare_execution_job(PrepareExecutionJobOpts {
+                            subgraph_name: &fetch_node.service_name,
+                            variable_usages: fetch_node.variable_usages.as_ref(),
+                            operation_name: self
+                                .operation_name_factory
+                                .generate(&fetch_node.service_name, fetch_node.id),
+                            operation_kind: fetch_node.operation_kind.as_ref(),
+                            operation: &fetch_node.operation,
+                            output_rewrites: fetch_node.output_rewrites.as_deref(),
+                            custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
+                            response_shape: self.subgraph_response_shapes.get(fetch_node.id),
+                            fetch_write_plan: self
+                                .subgraph_response_shapes
+                                .get_fetch_write_plan(fetch_node.id),
+                            raw_variable_values: Some(vec![(
+                                "representations",
+                                filtered_representations,
+                            )]),
+                            affected_path: Some(&flatten_node.path),
+                        })
+                        .map_ok(|fetch_job| ExecutionJob::FlattenFetch {
+                            operation: fetch_job.operation(),
+                            flatten_node_path: &flatten_node.path,
+                            response: fetch_job.response(),
+                            subgraph_name: fetch_node.service_name.as_str(),
+                            representation_hashes,
+                            representation_hash_to_index,
+                            output_rewrites: fetch_node.output_rewrites.as_deref(),
+                        })
+                        .boxed(),
+                    );
+                }
 
                 let mut index = 0;
                 let normalized_path = flatten_node.path.as_slice();
@@ -1088,7 +1573,7 @@ impl<'exec> Executor<'exec> {
                 )
             }
             PlanNode::Condition(node) => condition_node_by_variables(node, self.variable_values)
-                .and_then(|node| self.prepare_job_future(node, data)),
+                .and_then(|node| self.prepare_job_future(node, ctx)),
             // Our Query Planner does not produce any other plan node types in ParallelNode
             _ => None,
         }
@@ -1169,17 +1654,97 @@ impl<'exec> Executor<'exec> {
 
                 match job {
                     ExecutionJob::Fetch {
+                        operation,
                         mut response,
                         output_rewrites,
                         merge_path,
                         ..
                     } => {
-                        // Flat path: take ownership of the flat part into the context
                         let has_flat = response.flat_part.is_some();
-                        if let Some(flat_part) = response.flat_part.take() {
+                        if let Some(mut flat_part) = response.flat_part.take() {
+                            // Preserve subgraph response bytes for cache-control
+                            if let Some(bytes) = &response.bytes {
+                                ctx.response_storage.add_response(bytes.clone());
+                            }
+
+                            // Apply output rewrites to flat data
+                            if let (Some(rewrites), Some(data_root)) =
+                                (output_rewrites, flat_part.data_root)
+                            {
+                                apply_flat_output_rewrites(
+                                    &mut flat_part.store,
+                                    &flat_part.keys,
+                                    &self.schema_metadata.possible_types,
+                                    data_root,
+                                    rewrites,
+                                );
+                            }
+
                             if flat_part.propagated_null {
-                                ctx.data = Value::Null;
+                                let null_root = alloc_null_flat_root_for_operation(
+                                    &mut flat_part.store,
+                                    &flat_part.keys,
+                                    operation,
+                                );
+                                if ctx.flat_store.is_some() {
+                                    let mut store = ctx.flat_store.take().unwrap();
+                                    let append_map = store.append_store(flat_part.store);
+                                    let imported_root = append_map.value(null_root);
+                                    let flat_root = ctx.flat_root.unwrap();
+                                    if let Some(merge_path) = merge_path {
+                                        let flat_keys = ctx.flat_keys.as_ref().unwrap();
+                                        let mut targets = Vec::new();
+                                        store.traverse_path(
+                                            flat_root,
+                                            flat_keys,
+                                            merge_path.as_slice(),
+                                            0,
+                                            &self.schema_metadata.possible_types,
+                                            &mut |target_id, _path, _depth| {
+                                                targets.push(target_id);
+                                            },
+                                        );
+                                        for target_id in targets {
+                                            store.merge_value(target_id, imported_root);
+                                        }
+                                    } else {
+                                        store.merge_value(flat_root, imported_root);
+                                    }
+                                    ctx.flat_store = Some(store);
+                                } else {
+                                    ctx.flat_store = Some(flat_part.store);
+                                    ctx.flat_keys = Some(flat_part.keys);
+                                    ctx.flat_root = Some(null_root);
+                                }
+                            } else if ctx.flat_store.is_some() {
+                                // Merge into existing flat state
+                                let mut store = ctx.flat_store.take().unwrap();
+                                let data_root = flat_part.data_root.unwrap();
+                                let append_map = store.append_store(flat_part.store);
+                                let imported_root = append_map.value(data_root);
+                                let flat_root = ctx.flat_root.unwrap();
+                                if let Some(merge_path) = merge_path {
+                                    let flat_keys = ctx.flat_keys.as_ref().unwrap();
+                                    let mut targets = Vec::new();
+                                    store.traverse_path(
+                                        flat_root,
+                                        flat_keys,
+                                        merge_path.as_slice(),
+                                        0,
+                                        &self.schema_metadata.possible_types,
+                                        &mut |target_id, _path, _depth| {
+                                            targets.push(target_id);
+                                        },
+                                    );
+                                    for target_id in targets {
+                                        store.merge_value(target_id, imported_root);
+                                    }
+                                } else {
+                                    store.merge_value(flat_root, imported_root);
+                                }
+                                ctx.flat_store = Some(store);
                             } else {
+                                // First fetch: initialize flat state
                                 ctx.flat_store = Some(flat_part.store);
                                 ctx.flat_keys = Some(flat_part.keys);
                                 ctx.flat_root = flat_part.data_root;
@@ -1230,68 +1795,159 @@ impl<'exec> Executor<'exec> {
                         if let Some(response_bytes) = response.bytes {
                             ctx.response_storage.add_response(response_bytes);
                         }
-                        if let Some(mut entities) = response.data.take_entities() {
-                            if let Some(output_rewrites) = output_rewrites {
-                                for output_rewrite in output_rewrites {
-                                    for entity in &mut entities {
-                                        output_rewrite
-                                            .rewrite(&self.schema_metadata.possible_types, entity);
+
+                        let has_flat = response.flat_part.is_some();
+
+                        // Process flat entities from the subgraph response.
+                        if let Some(mut flat_part) = response.flat_part.take() {
+                            if ctx.flat_store.is_some() {
+                                if let Some(data_root) = flat_part.data_root {
+                                    if let Some(entities) =
+                                        flat_part.store.take_entities(data_root, &flat_part.keys)
+                                    {
+                                        let mut store = ctx.flat_store.take().unwrap();
+                                        let possible_types = &self.schema_metadata.possible_types;
+
+                                        if let Some(rewrites) = output_rewrites {
+                                            for &entity_id in &entities {
+                                                apply_flat_output_rewrites(
+                                                    &mut flat_part.store,
+                                                    &flat_part.keys,
+                                                    possible_types,
+                                                    entity_id,
+                                                    rewrites,
+                                                );
+                                            }
+                                        }
+
+                                        let append_map = store.append_store(flat_part.store);
+                                        let entities: Vec<FlatValueId> = entities
+                                            .into_iter()
+                                            .map(|entity_id| append_map.value(entity_id))
+                                            .collect();
+
+                                        let mut index = 0;
+                                        let mut targets: Vec<(FlatValueId, usize)> = Vec::new();
+                                        store.traverse_path(
+                                            ctx.flat_root.unwrap(),
+                                            ctx.flat_keys.as_ref().unwrap(),
+                                            flatten_node_path.as_slice(),
+                                            0,
+                                            possible_types,
+                                            &mut |target_id, _p, _d| {
+                                                let hash =
+                                                    representation_hashes.get(index).copied();
+                                                index += 1;
+
+                                                let Some(Some(hash)) = hash else {
+                                                    return;
+                                                };
+                                                let Some(&entity_index) =
+                                                    representation_hash_to_index.get(&hash)
+                                                else {
+                                                    return;
+                                                };
+                                                targets.push((target_id, entity_index));
+                                            },
+                                        );
+
+                                        for (target_id, entity_index) in targets {
+                                            let Some(&entity_id) = entities.get(entity_index)
+                                            else {
+                                                continue;
+                                            };
+                                            store.merge_value(target_id, entity_id);
+                                        }
+
+                                        ctx.flat_store = Some(store);
+                                        ctx.handle_errors(
+                                            subgraph_name,
+                                            affected_path,
+                                            response.errors,
+                                            None,
+                                        );
+                                        return;
                                     }
                                 }
                             }
+                        }
 
-                            let mut index = 0;
-                            let normalized_path = flatten_node_path.as_slice();
-                            // If there is an error in the response, then collect the paths for normalizing the error
-                            let initial_error_path = response.errors.as_ref().map(|_| {
-                                GraphQLErrorPath::with_capacity(normalized_path.len() + 2)
-                            });
-                            let mut entity_index_error_map = response
-                                .errors
-                                .as_ref()
-                                .map(|_| HashMap::with_capacity(entities.len()));
-                            traverse_and_callback_mut(
-                                &mut ctx.data,
-                                normalized_path,
-                                self.schema_metadata,
-                                initial_error_path,
-                                &mut |target, error_path| {
-                                    let hash = representation_hashes.get(index).copied();
-                                    index += 1;
-
-                                    let Some(Some(hash)) = hash else {
-                                        return;
-                                    };
-
-                                    if let Some(entity_index) =
-                                        representation_hash_to_index.get(&hash)
-                                    {
-                                        if let (Some(error_path), Some(entity_index_error_map)) =
-                                            (error_path, entity_index_error_map.as_mut())
-                                        {
-                                            let error_paths = entity_index_error_map
-                                                .entry(entity_index)
-                                                .or_insert_with(Vec::new);
-                                            error_paths.push(error_path);
-                                        }
-                                        if let Some(entity) = entities.get(*entity_index) {
-                                            // SAFETY: `new_val` is a clone of an entity that lives for `'a`.
-                                            // The transmute is to satisfy the compiler, but the lifetime
-                                            // is valid.
-                                            let new_val: Value<'_> =
-                                                unsafe { std::mem::transmute(entity.clone()) };
-                                            deep_merge(target, new_val);
+                        // Fallback: original Value-based merge
+                        if !has_flat {
+                            if let Some(mut entities) = response.data.take_entities() {
+                                if let Some(output_rewrites) = output_rewrites {
+                                    for output_rewrite in output_rewrites {
+                                        for entity in &mut entities {
+                                            output_rewrite.rewrite(
+                                                &self.schema_metadata.possible_types,
+                                                entity,
+                                            );
                                         }
                                     }
-                                },
-                            );
+                                }
 
-                            ctx.handle_errors(
-                                subgraph_name,
-                                affected_path,
-                                response.errors,
-                                entity_index_error_map,
-                            );
+                                let mut index = 0;
+                                let normalized_path = flatten_node_path.as_slice();
+                                // If there is an error in the response, then collect the paths for normalizing the error
+                                let initial_error_path = response.errors.as_ref().map(|_| {
+                                    GraphQLErrorPath::with_capacity(normalized_path.len() + 2)
+                                });
+                                let mut entity_index_error_map = response
+                                    .errors
+                                    .as_ref()
+                                    .map(|_| HashMap::with_capacity(entities.len()));
+                                traverse_and_callback_mut(
+                                    &mut ctx.data,
+                                    normalized_path,
+                                    self.schema_metadata,
+                                    initial_error_path,
+                                    &mut |target, error_path| {
+                                        let hash = representation_hashes.get(index).copied();
+                                        index += 1;
+
+                                        let Some(Some(hash)) = hash else {
+                                            return;
+                                        };
+
+                                        if let Some(entity_index) =
+                                            representation_hash_to_index.get(&hash)
+                                        {
+                                            if let (
+                                                Some(error_path),
+                                                Some(entity_index_error_map),
+                                            ) = (error_path, entity_index_error_map.as_mut())
+                                            {
+                                                let error_paths = entity_index_error_map
+                                                    .entry(entity_index)
+                                                    .or_insert_with(Vec::new);
+                                                error_paths.push(error_path);
+                                            }
+                                            if let Some(entity) = entities.get(*entity_index) {
+                                                // SAFETY: `new_val` is a clone of an entity that lives for `'a`.
+                                                // The transmute is to satisfy the compiler, but the lifetime
+                                                // is valid.
+                                                let new_val: Value<'_> =
+                                                    unsafe { std::mem::transmute(entity.clone()) };
+                                                deep_merge(target, new_val);
+                                            }
+                                        }
+                                    },
+                                );
+
+                                ctx.handle_errors(
+                                    subgraph_name,
+                                    affected_path,
+                                    response.errors,
+                                    entity_index_error_map,
+                                );
+                            } else {
+                                ctx.handle_errors(
+                                    subgraph_name,
+                                    affected_path,
+                                    response.errors,
+                                    None,
+                                );
+                            }
                         } else {
                             ctx.handle_errors(subgraph_name, affected_path, response.errors, None);
                         }
@@ -1308,6 +1964,100 @@ impl<'exec> Executor<'exec> {
                         // Split errors by alias
                         let mut errors =
                             self.partition_batch_errors_by_alias(&aliases, response.errors.take());
+
+                        if let Some(mut flat_part) = response.flat_part.take() {
+                            if let (Some(flat_root), Some(data_root), Some(flat_keys)) =
+                                (ctx.flat_root, flat_part.data_root, ctx.flat_keys.clone())
+                            {
+                                let mut entities_by_alias = AHashMap::with_capacity(aliases.len());
+                                for (alias_index, alias_state) in aliases.iter().enumerate() {
+                                    if let Some(entities) = flat_part.store.take_entities_by_key(
+                                        data_root,
+                                        &flat_part.keys,
+                                        alias_state.alias_spec.alias.as_str(),
+                                    ) {
+                                        entities_by_alias.insert(AliasIndex(alias_index), entities);
+                                    }
+                                }
+
+                                if !entities_by_alias.is_empty() {
+                                    let mut store = ctx.flat_store.take().unwrap();
+
+                                    for (alias_index, alias_state) in aliases.iter().enumerate() {
+                                        if let Some(output_rewrites) =
+                                            alias_state.alias_spec.output_rewrites.as_ref()
+                                        {
+                                            if let Some(entities) =
+                                                entities_by_alias.get(&AliasIndex(alias_index))
+                                            {
+                                                for &entity_id in entities {
+                                                    apply_flat_output_rewrites(
+                                                        &mut flat_part.store,
+                                                        &flat_part.keys,
+                                                        &self.schema_metadata.possible_types,
+                                                        entity_id,
+                                                        output_rewrites,
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    let append_map = store.append_store(flat_part.store);
+                                    for entities in entities_by_alias.values_mut() {
+                                        for entity_id in entities {
+                                            *entity_id = append_map.value(*entity_id);
+                                        }
+                                    }
+
+                                    for (alias_index, alias_state) in aliases.iter().enumerate() {
+                                        let alias_index = AliasIndex(alias_index);
+                                        let mut alias_errors =
+                                            errors.by_alias_index.remove(&alias_index);
+                                        let entity_index_error_map = self
+                                            .merge_flat_batch_alias_entities(
+                                                &mut store,
+                                                flat_root,
+                                                &flat_keys,
+                                                alias_state,
+                                                entities_by_alias.get(&alias_index),
+                                                alias_errors.as_deref(),
+                                            );
+
+                                        let affected_path = if alias_state.paths.len() == 1 {
+                                            Some(alias_state.paths[0].merge_path)
+                                        } else {
+                                            None
+                                        };
+
+                                        ctx.handle_errors(
+                                            subgraph_name,
+                                            affected_path,
+                                            alias_errors.take(),
+                                            entity_index_error_map,
+                                        );
+                                    }
+
+                                    ctx.flat_store = Some(store);
+
+                                    if !errors.unmatched.is_empty() {
+                                        ctx.handle_errors(
+                                            subgraph_name,
+                                            None,
+                                            Some(errors.unmatched),
+                                            None,
+                                        );
+                                    }
+
+                                    tracing::trace!(
+                                        alias_count = aliases.len(),
+                                        "Patched flat entity batch alias results"
+                                    );
+                                    return;
+                                }
+                            }
+                        }
+
                         // Take returned entities per alias
                         let mut entities_by_alias =
                             Self::collect_batched_entities_by_alias(&mut response.data, &aliases);
@@ -1520,6 +2270,68 @@ impl<'exec> Executor<'exec> {
         entity_index_error_map
     }
 
+    fn merge_flat_batch_alias_entities<'alias>(
+        &self,
+        store: &mut FlatResponseStore<'static>,
+        flat_root: FlatValueId,
+        flat_keys: &ResponseKeys,
+        alias_state: &'alias AliasBatchState<'exec>,
+        entities: Option<&Vec<FlatValueId>>,
+        alias_errors: Option<&[GraphQLError]>,
+    ) -> Option<HashMap<&'alias usize, Vec<GraphQLErrorPath>>> {
+        let mut entity_index_error_map = alias_errors.map(|_| HashMap::new());
+        let Some(entities) = entities else {
+            return entity_index_error_map;
+        };
+
+        if alias_state.representation_hash_to_index.is_empty() {
+            return entity_index_error_map;
+        }
+
+        for path_state in &alias_state.paths {
+            let mut index = 0;
+            let mut targets: Vec<(FlatValueId, usize)> = Vec::new();
+
+            store.traverse_path(
+                flat_root,
+                flat_keys,
+                path_state.merge_path.as_slice(),
+                0,
+                &self.schema_metadata.possible_types,
+                &mut |target_id, _path, _depth| {
+                    let hash = path_state.representation_hashes.get(index).copied();
+                    index += 1;
+
+                    let Some(Some(hash)) = hash else {
+                        return;
+                    };
+
+                    let Some(entity_index) = alias_state.representation_hash_to_index.get(&hash)
+                    else {
+                        return;
+                    };
+
+                    if let Some(entity_index_error_map) = entity_index_error_map.as_mut() {
+                        entity_index_error_map
+                            .entry(entity_index)
+                            .or_insert_with(Vec::new);
+                    }
+
+                    targets.push((target_id, *entity_index));
+                },
+            );
+
+            for (target_id, entity_index) in targets {
+                let Some(&entity_id) = entities.get(entity_index) else {
+                    continue;
+                };
+                store.merge_value(target_id, entity_id);
+            }
+        }
+
+        entity_index_error_map
+    }
+
     // The preperation includes:
     // - building one `_entities` input list for each alias
     // - remembering where each item came from (so we can put results back)
@@ -1598,6 +2410,125 @@ impl<'exec> Executor<'exec> {
                         index += 1;
                     }
                 });
+
+                let representation_hashes = Arc::new(representation_hashes);
+
+                for path_index in grouped_target_indices {
+                    path_hashes_by_index[path_index] = Some(Arc::clone(&representation_hashes));
+                }
+            }
+
+            filtered_representations.put(CLOSE_BRACKET);
+
+            let mut paths = Vec::with_capacity(alias_spec.merge_paths.len());
+            for (path_index, merge_path) in alias_spec.merge_paths.iter().enumerate() {
+                paths.push(AliasPathState {
+                    merge_path,
+                    representation_hashes: path_hashes_by_index[path_index]
+                        .take()
+                        .unwrap_or_else(|| Arc::new(Vec::new())),
+                });
+            }
+
+            let variable_name = alias_spec.representations_variable_name.as_str();
+            if !raw_variable_indices_by_name.contains_key(variable_name) {
+                raw_variable_indices_by_name.insert(variable_name, raw_variable_values.len());
+                raw_variable_values.push((variable_name, filtered_representations));
+            }
+
+            aliases.push(AliasBatchState {
+                alias_spec,
+                representation_hash_to_index,
+                paths,
+            });
+        }
+
+        (raw_variable_values, aliases)
+    }
+
+    fn prepare_batch_fetch_job_state_flat(
+        &self,
+        entity_batch: &'exec EntityBatch,
+        store: &FlatResponseStore<'static>,
+        keys: &ResponseKeys,
+        flat_root: FlatValueId,
+    ) -> (Vec<(&'exec str, Vec<u8>)>, Vec<AliasBatchState<'exec>>) {
+        let mut raw_variable_values: Vec<(&'exec str, Vec<u8>)> =
+            Vec::with_capacity(entity_batch.aliases.len());
+        let mut raw_variable_indices_by_name: AHashMap<&'exec str, usize> =
+            AHashMap::with_capacity(entity_batch.aliases.len());
+        let mut aliases = Vec::with_capacity(entity_batch.aliases.len());
+
+        let possible_types = &self.schema_metadata.possible_types;
+
+        for alias_spec in &entity_batch.aliases {
+            let mut index = 0;
+            let mut filtered_representations = Vec::new();
+            filtered_representations.put(OPEN_BRACKET);
+            let mut representation_hash_to_index: AHashMap<u64, usize> = AHashMap::new();
+            let mut path_hashes_by_index: Vec<Option<Arc<Vec<Option<u64>>>>> =
+                vec![None; alias_spec.merge_paths.len()];
+
+            let mut path_groups: Vec<(&FlattenNodePath, Vec<usize>)> =
+                Vec::with_capacity(alias_spec.merge_paths.len());
+            for (path_index, merge_path) in alias_spec.merge_paths.iter().enumerate() {
+                if let Some((_, target_indices)) =
+                    path_groups.iter_mut().find(|(path, _)| *path == merge_path)
+                {
+                    target_indices.push(path_index);
+                } else {
+                    path_groups.push((merge_path, vec![path_index]));
+                }
+            }
+
+            for (merge_path, grouped_target_indices) in path_groups {
+                let mut representation_hashes: Vec<Option<u64>> = Vec::new();
+
+                store.traverse_path(
+                    flat_root,
+                    keys,
+                    merge_path.as_slice(),
+                    0,
+                    possible_types,
+                    &mut |entity_id, _path, _depth| {
+                        if matches!(
+                            store.value(entity_id),
+                            FlatValue::Null | FlatValue::Missing | FlatValue::Inaccessible
+                        ) {
+                            representation_hashes.push(None);
+                            return;
+                        }
+
+                        let hash = store.hash_with_requires(
+                            keys,
+                            possible_types,
+                            entity_id,
+                            &alias_spec.requires.items,
+                        );
+                        representation_hashes.push(Some(hash));
+                        let is_first_representation = representation_hash_to_index.is_empty();
+                        let vacant_entry = match representation_hash_to_index.entry(hash) {
+                            Entry::Occupied(_) => return,
+                            Entry::Vacant(vacant_entry) => vacant_entry,
+                        };
+
+                        let is_projected = project_flat_requires_entity(
+                            store,
+                            keys,
+                            possible_types,
+                            &alias_spec.requires.items,
+                            entity_id,
+                            alias_spec.input_rewrites.as_deref(),
+                            &mut filtered_representations,
+                            is_first_representation,
+                        );
+
+                        if is_projected {
+                            vacant_entry.insert(index);
+                            index += 1;
+                        }
+                    },
+                );
 
                 let representation_hashes = Arc::new(representation_hashes);
 

@@ -12,13 +12,10 @@ use serde::{
 use crate::executors::error::SubgraphExecutorError;
 use crate::introspection::schema::FieldNullability;
 use crate::response::flat_plan::{
-    FetchWritePlan, FieldWritePlan, ListWritePlan, ObjectWritePlan, ValueWritePlan, WriteResult,
+    FetchWritePlan, ListWritePlan, ObjectWritePlan, ValueWritePlan, WriteResult,
 };
-use crate::response::flat_store::{
-    FlatObjectField, FlatResponseStore, FlatValue, FlatValueId, ResponseKeys,
-};
+use crate::response::flat_store::{FlatObjectField, FlatResponseStore, FlatValueId, ResponseKeys};
 use crate::response::graphql_error::GraphQLError;
-use crate::response::subgraph_response::SubgraphResponse;
 use crate::response::value::Value;
 
 /// A response part produced by decoding a subgraph response through a fetch write plan.
@@ -28,6 +25,7 @@ pub struct FlatResponsePart {
     pub keys: Arc<ResponseKeys>,
     pub data_root: Option<FlatValueId>,
     pub errors: Option<Vec<GraphQLError>>,
+    pub extensions: Option<Value<'static>>,
     pub bytes: Option<Bytes>,
     pub propagated_null: bool,
 }
@@ -39,6 +37,7 @@ impl FlatResponsePart {
             keys: Arc::new(ResponseKeys::default()),
             data_root: None,
             errors: None,
+            extensions: None,
             bytes: None,
             propagated_null,
         }
@@ -114,6 +113,7 @@ impl<'a, 'de> Visitor<'de> for FusedFetchVisitor<'a> {
         let mut store: FlatResponseStore = FlatResponseStore::new();
         let keys: Arc<ResponseKeys> = Arc::clone(&self.plan.keys);
         let mut errors: Option<Vec<GraphQLError>> = None;
+        let mut extensions: Option<Value<'static>> = None;
         let mut data_root: Option<FlatValueId> = None;
         let mut propagated_null = false;
 
@@ -147,7 +147,14 @@ impl<'a, 'de> Visitor<'de> for FusedFetchVisitor<'a> {
                     errors = Some(map.next_value()?);
                 }
                 "extensions" => {
-                    let _: de::IgnoredAny = map.next_value()?;
+                    if extensions.is_some() {
+                        return Err(de::Error::duplicate_field("extensions"));
+                    }
+                    let value: Value<'de> = map.next_value()?;
+                    // SAFETY: The deserializer reads from response bytes that were widened to
+                    // 'static and are retained by FlatResponsePart.
+                    extensions =
+                        Some(unsafe { core::mem::transmute::<Value<'de>, Value<'static>>(value) });
                 }
                 _ => {
                     let _ = map.next_value::<de::IgnoredAny>()?;
@@ -160,6 +167,7 @@ impl<'a, 'de> Visitor<'de> for FusedFetchVisitor<'a> {
             keys,
             data_root,
             errors,
+            extensions,
             bytes: None,
             propagated_null,
         })
@@ -199,10 +207,7 @@ impl<'de> DeserializeSeed<'de> for FusedValueSeed<'_, '_, '_> {
                         Cow::Owned(s) => Cow::Owned(s),
                     };
                     Ok(WriteResult::ok(
-                        self.ctx
-                            .store
-                            .borrow_mut()
-                            .alloc_raw_json(raw_cow),
+                        self.ctx.store.borrow_mut().alloc_raw_json(raw_cow),
                     ))
                 } else {
                     deserializer.deserialize_any(FusedLeafVisitor {
@@ -277,12 +282,10 @@ impl<'de> Visitor<'de> for FusedObjectVisitor<'_, '_, '_> {
             .borrow_mut()
             .reserve_list(seq.size_hint().unwrap_or(0));
 
-        while let Some(elem) =
-            seq.next_element_seed(FusedObjectSeqSeed {
-                plan: self.plan,
-                ctx: self.ctx,
-            })?
-        {
+        while let Some(elem) = seq.next_element_seed(FusedObjectSeqSeed {
+            plan: self.plan,
+            ctx: self.ctx,
+        })? {
             builder.push(elem);
         }
 
@@ -348,10 +351,10 @@ where
     let field_count = plan.fields.len();
     let mut field_values = ctx.field_values_pool.borrow_mut().pop().unwrap_or_default();
     field_values.resize(field_count, None);
-    let mut offset = 0usize;
+    let mut cursor = 0usize;
 
     while let Some(key) = map.next_key::<&str>()? {
-        if let Some(index) = find_field_index(&plan.fields, key, &mut offset) {
+        if let Some(index) = plan.field_index_for_source_key_from(key, &mut cursor) {
             if field_values[index].is_none() {
                 let result = map
                     .next_value_seed(FusedValueSeed {
@@ -400,10 +403,13 @@ where
                 store.alloc_null()
             }
         };
-        store.push_object_field(&mut obj_builder, FlatObjectField {
-            response_key: key_id,
-            value: value_id,
-        });
+        store.push_object_field(
+            &mut obj_builder,
+            FlatObjectField {
+                response_key: key_id,
+                value: value_id,
+            },
+        );
     }
 
     let obj_id = store.finish_object_fields(obj_builder);
@@ -449,7 +455,11 @@ impl<'de> Visitor<'de> for FusedListVisitor<'_, '_, '_> {
     where
         A: SeqAccess<'de>,
     {
-        let mut builder = self.ctx.store.borrow_mut().reserve_list(seq.size_hint().unwrap_or(0));
+        let mut builder = self
+            .ctx
+            .store
+            .borrow_mut()
+            .reserve_list(seq.size_hint().unwrap_or(0));
         let item_non_null = self
             .plan
             .nullability
@@ -508,19 +518,27 @@ impl<'de> Visitor<'de> for FusedLeafVisitor<'_, '_> {
     }
 
     fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
-        Ok(WriteResult::ok(self.ctx.store.borrow_mut().alloc_bool(value)))
+        Ok(WriteResult::ok(
+            self.ctx.store.borrow_mut().alloc_bool(value),
+        ))
     }
 
     fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
-        Ok(WriteResult::ok(self.ctx.store.borrow_mut().alloc_i64(value)))
+        Ok(WriteResult::ok(
+            self.ctx.store.borrow_mut().alloc_i64(value),
+        ))
     }
 
     fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E> {
-        Ok(WriteResult::ok(self.ctx.store.borrow_mut().alloc_u64(value)))
+        Ok(WriteResult::ok(
+            self.ctx.store.borrow_mut().alloc_u64(value),
+        ))
     }
 
     fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E> {
-        Ok(WriteResult::ok(self.ctx.store.borrow_mut().alloc_f64(value)))
+        Ok(WriteResult::ok(
+            self.ctx.store.borrow_mut().alloc_f64(value),
+        ))
     }
 
     fn visit_borrowed_str<E>(self, value: &'de str) -> Result<Self::Value, E>
@@ -531,7 +549,10 @@ impl<'de> Visitor<'de> for FusedLeafVisitor<'_, '_> {
         // and retained in FlatResponsePart.bytes.
         let value: &'static str = unsafe { core::mem::transmute::<&str, &'static str>(value) };
         Ok(WriteResult::ok(
-            self.ctx.store.borrow_mut().alloc_string(Cow::Borrowed(value)),
+            self.ctx
+                .store
+                .borrow_mut()
+                .alloc_string(Cow::Borrowed(value)),
         ))
     }
 
@@ -540,7 +561,10 @@ impl<'de> Visitor<'de> for FusedLeafVisitor<'_, '_> {
         E: de::Error,
     {
         Ok(WriteResult::ok(
-            self.ctx.store.borrow_mut().alloc_string(Cow::Owned(value.to_owned())),
+            self.ctx
+                .store
+                .borrow_mut()
+                .alloc_string(Cow::Owned(value.to_owned())),
         ))
     }
 
@@ -578,127 +602,12 @@ impl<'de> Visitor<'de> for FusedLeafVisitor<'_, '_> {
             .borrow_mut()
             .reserve_list(seq.size_hint().unwrap_or(0));
 
-        while let Some(elem) = seq.next_element_seed(FusedLeafSeqSeed {
-            ctx: self.ctx,
-        })? {
+        while let Some(elem) = seq.next_element_seed(FusedLeafSeqSeed { ctx: self.ctx })? {
             builder.push(elem);
         }
 
         let list_id = self.ctx.store.borrow_mut().finish_list(builder);
         Ok(WriteResult::ok(list_id))
-    }
-}
-
-fn find_field_index(
-    fields: &[FieldWritePlan],
-    key: &str,
-    offset: &mut usize,
-) -> Option<usize> {
-    let len = fields.len();
-    if len == 0 {
-        return None;
-    }
-
-    let start = (*offset).min(len);
-    if start == len {
-        return None;
-    }
-
-    if fields[start].source_key.as_ref() == key {
-        *offset = start + 1;
-        return Some(start);
-    }
-
-    for index in (start + 1)..len {
-        if fields[index].source_key.as_ref() == key {
-            return Some(index);
-        }
-    }
-
-    None
-}
-
-/// Fallback: convert a flat response part into a SubgraphResponse.
-/// Useful during migration when the execution pipeline still expects SubgraphResponse.
-pub fn flat_part_to_subgraph_response(
-    part: FlatResponsePart,
-) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
-    let data = if part.propagated_null {
-        Value::Null
-    } else {
-        // Serialize the flat store data back into a Value::Object
-        // This is temporary until the pipeline fully supports flat responses.
-        flat_store_to_value(&part.store, part.data_root.unwrap_or(part.data_root.unwrap()), &part.keys)
-    };
-
-    Ok(SubgraphResponse {
-        data,
-        errors: part.errors,
-        extensions: None,
-        headers: None,
-        bytes: part.bytes,
-        status: None,
-        flat_part: None,
-    })
-}
-
-fn flat_store_to_value(
-    store: &FlatResponseStore<'static>,
-    id: FlatValueId,
-    keys: &ResponseKeys,
-) -> Value<'static> {
-    match store.value(id) {
-        FlatValue::Null | FlatValue::Missing | FlatValue::Inaccessible => Value::Null,
-        FlatValue::Bool(v) => Value::Bool(*v),
-        FlatValue::I64(v) => Value::I64(*v),
-        FlatValue::U64(v) => Value::U64(*v),
-        FlatValue::F64(v) => Value::F64(*v),
-        FlatValue::String(s) => Value::String(s.clone()),
-        FlatValue::RawJson(raw) => Value::RawJson(raw.clone()),
-        FlatValue::Object { fields: _ } | FlatValue::List { items: _ } => {
-            // Serialize to JSON and parse back as Value with owned strings
-            let mut buf = Vec::new();
-            crate::response::flat_store::serialize_store_data(store, keys, id, &mut buf);
-            // Use serde_json for owned conversion
-            let serde_value: serde_json::Value =
-                serde_json::from_slice(&buf).unwrap_or_default();
-            serde_value_to_owned_value(serde_value)
-        }
-    }
-}
-
-fn serde_value_to_owned_value(value: serde_json::Value) -> Value<'static> {
-    match value {
-        serde_json::Value::Null => Value::Null,
-        serde_json::Value::Bool(b) => Value::Bool(b),
-        serde_json::Value::String(s) => Value::String(Cow::Owned(s)),
-        serde_json::Value::Number(n) => {
-            if let Some(u) = n.as_u64() {
-                Value::U64(u)
-            } else if let Some(i) = n.as_i64() {
-                Value::I64(i)
-            } else if let Some(f) = n.as_f64() {
-                Value::F64(f)
-            } else {
-                Value::Null
-            }
-        }
-        serde_json::Value::Array(arr) => {
-            let items: Vec<Value<'static>> = arr
-                .into_iter()
-                .map(serde_value_to_owned_value)
-                .collect();
-            Value::Array(items)
-        }
-        serde_json::Value::Object(obj) => {
-            let mut entries = Vec::with_capacity(obj.len());
-            for (key, val) in obj {
-                let owned_val = serde_value_to_owned_value(val);
-                let leaked_key: &'static str = Box::leak(key.into_boxed_str());
-                entries.push((leaked_key, owned_val));
-            }
-            Value::Object(entries)
-        }
     }
 }
 
@@ -749,10 +658,10 @@ mod tests {
     fn fused_decode_simple_scalar_object() {
         let mut keys = ResponseKeys::default();
 
-        let plan = ObjectWritePlan {
-            response_key: "data".into(),
-            nullability: FieldNullability::leaf(true),
-            fields: vec![
+        let plan = ObjectWritePlan::new(
+            "data".into(),
+            FieldNullability::leaf(true),
+            vec![
                 make_field(
                     &mut keys,
                     "id",
@@ -766,8 +675,8 @@ mod tests {
                     false,
                 ),
             ],
-            object_type_name: "Query".into(),
-        };
+            "Query".into(),
+        );
 
         let fetch_plan = build_fetch_plan(ValueWritePlan::Object(plan), keys);
 
@@ -787,17 +696,17 @@ mod tests {
     fn fused_decode_skips_unknown_fields() {
         let mut keys = ResponseKeys::default();
 
-        let plan = ObjectWritePlan {
-            response_key: "data".into(),
-            nullability: FieldNullability::leaf(true),
-            fields: vec![make_field(
+        let plan = ObjectWritePlan::new(
+            "data".into(),
+            FieldNullability::leaf(true),
+            vec![make_field(
                 &mut keys,
                 "id",
                 ValueWritePlan::Leaf(leaf_plan("id", true)),
                 true,
             )],
-            object_type_name: "Query".into(),
-        };
+            "Query".into(),
+        );
 
         let fetch_plan = build_fetch_plan(ValueWritePlan::Object(plan), keys);
 
@@ -811,24 +720,27 @@ mod tests {
             part.data_root.unwrap(),
             &mut buf,
         );
-        assert_eq!(std::str::from_utf8(&buf).unwrap(), "{\"data\":{\"id\":\"1\"}}");
+        assert_eq!(
+            std::str::from_utf8(&buf).unwrap(),
+            "{\"data\":{\"id\":\"1\"}}"
+        );
     }
 
     #[test]
     fn fused_decode_nullable_field_is_null() {
         let mut keys = ResponseKeys::default();
 
-        let plan = ObjectWritePlan {
-            response_key: "data".into(),
-            nullability: FieldNullability::leaf(true),
-            fields: vec![make_field(
+        let plan = ObjectWritePlan::new(
+            "data".into(),
+            FieldNullability::leaf(true),
+            vec![make_field(
                 &mut keys,
                 "id",
                 ValueWritePlan::Leaf(leaf_plan("id", false)),
                 false,
             )],
-            object_type_name: "Query".into(),
-        };
+            "Query".into(),
+        );
 
         let fetch_plan = build_fetch_plan(ValueWritePlan::Object(plan), keys);
 
@@ -843,36 +755,39 @@ mod tests {
             part.data_root.unwrap(),
             &mut buf,
         );
-        assert_eq!(std::str::from_utf8(&buf).unwrap(), "{\"data\":{\"id\":null}}");
+        assert_eq!(
+            std::str::from_utf8(&buf).unwrap(),
+            "{\"data\":{\"id\":null}}"
+        );
     }
 
     #[test]
     fn fused_decode_nested_object() {
         let mut keys = ResponseKeys::default();
 
-        let inner = ObjectWritePlan {
-            response_key: "user".into(),
-            nullability: FieldNullability::leaf(false),
-            fields: vec![make_field(
+        let inner = ObjectWritePlan::new(
+            "user".into(),
+            FieldNullability::leaf(false),
+            vec![make_field(
                 &mut keys,
                 "name",
                 ValueWritePlan::Leaf(leaf_plan("name", true)),
                 true,
             )],
-            object_type_name: "User".into(),
-        };
+            "User".into(),
+        );
 
-        let plan = ObjectWritePlan {
-            response_key: "data".into(),
-            nullability: FieldNullability::leaf(true),
-            fields: vec![make_field(
+        let plan = ObjectWritePlan::new(
+            "data".into(),
+            FieldNullability::leaf(true),
+            vec![make_field(
                 &mut keys,
                 "user",
                 ValueWritePlan::Object(inner),
                 false,
             )],
-            object_type_name: "Query".into(),
-        };
+            "Query".into(),
+        );
 
         let fetch_plan = build_fetch_plan(ValueWritePlan::Object(plan), keys);
 
@@ -896,17 +811,17 @@ mod tests {
     fn fused_decode_list_of_objects() {
         let mut keys = ResponseKeys::default();
 
-        let inner = ObjectWritePlan {
-            response_key: "item".into(),
-            nullability: FieldNullability::leaf(true),
-            fields: vec![make_field(
+        let inner = ObjectWritePlan::new(
+            "item".into(),
+            FieldNullability::leaf(true),
+            vec![make_field(
                 &mut keys,
                 "id",
                 ValueWritePlan::Leaf(leaf_plan("id", true)),
                 true,
             )],
-            object_type_name: "Item".into(),
-        };
+            "Item".into(),
+        );
 
         let list = ListWritePlan {
             response_key: "items".into(),
@@ -914,17 +829,17 @@ mod tests {
             item: Box::new(ValueWritePlan::Object(inner)),
         };
 
-        let plan = ObjectWritePlan {
-            response_key: "data".into(),
-            nullability: FieldNullability::leaf(true),
-            fields: vec![make_field(
+        let plan = ObjectWritePlan::new(
+            "data".into(),
+            FieldNullability::leaf(true),
+            vec![make_field(
                 &mut keys,
                 "items",
                 ValueWritePlan::List(list),
                 false,
             )],
-            object_type_name: "Query".into(),
-        };
+            "Query".into(),
+        );
 
         let fetch_plan = build_fetch_plan(ValueWritePlan::Object(plan), keys);
 
@@ -948,12 +863,12 @@ mod tests {
     fn fused_decode_handles_subgraph_errors() {
         let keys = ResponseKeys::default();
 
-        let plan = ObjectWritePlan {
-            response_key: "data".into(),
-            nullability: FieldNullability::leaf(true),
-            fields: vec![],
-            object_type_name: "Query".into(),
-        };
+        let plan = ObjectWritePlan::new(
+            "data".into(),
+            FieldNullability::leaf(true),
+            vec![],
+            "Query".into(),
+        );
 
         let fetch_plan = build_fetch_plan(ValueWritePlan::Object(plan), keys);
 

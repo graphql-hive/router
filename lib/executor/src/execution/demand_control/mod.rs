@@ -31,7 +31,10 @@ use crate::{
         plan::{ExecutionJob, VariablesMap},
     },
     headers::{plan::HeaderAggregationStrategy, response::ResponseHeaderAggregator},
-    response::value::Value,
+    response::{
+        flat_store::{FlatResponseStore, FlatValue, FlatValueId, ResponseKeys},
+        value::Value,
+    },
 };
 
 #[derive(Debug)]
@@ -124,12 +127,23 @@ impl DemandControlExecutionContext {
     pub fn calculate_actual_cost(
         &self,
         data: &Value<'_>,
+        flat_data: Option<(&FlatResponseStore<'static>, &ResponseKeys, FlatValueId)>,
         variable_values: &Option<HashMap<String, sonic_rs::Value>>,
         subgraph_response_cost_tracker: &SubgraphResponseCostTracker,
     ) -> u64 {
         match self.actual.cost_plan.as_ref() {
             CompiledActualCostPlan::BySubgraph(_) => subgraph_response_cost_tracker.total(),
             CompiledActualCostPlan::ByResponseShape(actual_response_shape_plan) => {
+                if let Some((store, keys, root)) = flat_data {
+                    return estimate_actual_response_shape_cost_with_compiled_flat_plan(
+                        actual_response_shape_plan,
+                        store,
+                        keys,
+                        root,
+                        variable_values,
+                    );
+                }
+
                 estimate_actual_response_shape_cost_with_compiled_plan(
                     actual_response_shape_plan,
                     data,
@@ -155,6 +169,18 @@ impl DemandControlExecutionContext {
             let fetch_step_cost_actual = actual_subgraph_plans_by_fetch_hash
                 .get(&fetch_step_hash)
                 .map(|plan| {
+                    if let Some(flat_part) = response_ref.flat_part.as_ref() {
+                        if let Some(data_root) = flat_part.data_root {
+                            return estimate_actual_subgraph_response_cost_with_compiled_flat_plan(
+                                plan,
+                                &flat_part.store,
+                                &flat_part.keys,
+                                data_root,
+                                variables_map,
+                            );
+                        }
+                    }
+
                     estimate_actual_subgraph_response_cost_with_compiled_plan(
                         plan,
                         &response_ref.data,
@@ -436,6 +462,89 @@ pub fn estimate_actual_response_shape_cost_with_compiled_plan(
     evaluate_selection_set_actual_cost_plan(&plan.root, response_data, variable_values)
 }
 
+pub fn estimate_actual_subgraph_response_cost_with_compiled_flat_plan(
+    plan: &CompiledSubgraphActualCostPlan,
+    store: &FlatResponseStore<'static>,
+    keys: &ResponseKeys,
+    response_root: FlatValueId,
+    variable_values: &Option<HashMap<String, sonic_rs::Value>>,
+) -> u64 {
+    match &plan.root {
+        CompiledActualCostRootPlan::SelectionSet(selection_set) => {
+            evaluate_selection_set_actual_cost_flat_plan(
+                selection_set,
+                store,
+                keys,
+                response_root,
+                variable_values,
+            )
+        }
+        CompiledActualCostRootPlan::EntityGroups(groups) => {
+            let mut total = 0_u64;
+            for group in groups {
+                let Some(entities_id) =
+                    flat_object_get(store, keys, response_root, &group.response_key)
+                else {
+                    continue;
+                };
+
+                let FlatValue::List { items } = store.value(entities_id) else {
+                    continue;
+                };
+
+                for &entity_id in store.list_items(items) {
+                    let entity_type = flat_object_get(store, keys, entity_id, "__typename")
+                        .and_then(|typename_id| match store.value(typename_id) {
+                            FlatValue::String(value) => Some(value.as_ref()),
+                            _ => None,
+                        });
+
+                    let entity_plan = entity_type
+                        .and_then(|type_name| group.entity_plans_by_type.get(type_name))
+                        .or_else(|| {
+                            if group.entity_plans_by_type.len() == 1 {
+                                group.entity_plans_by_type.values().next()
+                            } else {
+                                None
+                            }
+                        });
+
+                    let Some(entity_plan) = entity_plan else {
+                        continue;
+                    };
+
+                    total = total.saturating_add(entity_plan.type_cost);
+                    total = total.saturating_add(evaluate_selection_set_actual_cost_flat_plan(
+                        &entity_plan.selections,
+                        store,
+                        keys,
+                        entity_id,
+                        variable_values,
+                    ));
+                }
+            }
+
+            total
+        }
+    }
+}
+
+pub fn estimate_actual_response_shape_cost_with_compiled_flat_plan(
+    plan: &CompiledResponseShapeActualCostPlan,
+    store: &FlatResponseStore<'static>,
+    keys: &ResponseKeys,
+    response_root: FlatValueId,
+    variable_values: &Option<HashMap<String, sonic_rs::Value>>,
+) -> u64 {
+    evaluate_selection_set_actual_cost_flat_plan(
+        &plan.root,
+        store,
+        keys,
+        response_root,
+        variable_values,
+    )
+}
+
 fn compile_selection_set_actual_cost_plan(
     selection_set: &SelectionSet,
     parent_type_name: &str,
@@ -657,6 +766,156 @@ fn should_skip_inline_fragment(
     }
 
     !apply_when_typename_missing
+}
+
+fn evaluate_selection_set_actual_cost_flat_plan(
+    plan: &CompiledSelectionSetActualCostPlan,
+    store: &FlatResponseStore<'static>,
+    keys: &ResponseKeys,
+    parent_value: FlatValueId,
+    variable_values: &Option<HashMap<String, sonic_rs::Value>>,
+) -> u64 {
+    let mut total_cost = 0_u64;
+
+    for item in &plan.items {
+        match item {
+            CompiledSelectionItemActualCostPlan::Field(field) => {
+                total_cost = total_cost.saturating_add(evaluate_field_actual_cost_flat_plan(
+                    field,
+                    store,
+                    keys,
+                    parent_value,
+                    variable_values,
+                ));
+            }
+            CompiledSelectionItemActualCostPlan::InlineFragment(fragment) => {
+                if should_skip_flat_inline_fragment(
+                    store,
+                    keys,
+                    parent_value,
+                    &fragment.type_condition,
+                    fragment.apply_when_typename_missing,
+                ) {
+                    continue;
+                }
+
+                total_cost =
+                    total_cost.saturating_add(evaluate_selection_set_actual_cost_flat_plan(
+                        &fragment.child,
+                        store,
+                        keys,
+                        parent_value,
+                        variable_values,
+                    ));
+            }
+        }
+    }
+
+    total_cost
+}
+
+fn evaluate_field_actual_cost_flat_plan(
+    field: &CompiledFieldActualCostPlan,
+    store: &FlatResponseStore<'static>,
+    keys: &ResponseKeys,
+    parent_value: FlatValueId,
+    variable_values: &Option<HashMap<String, sonic_rs::Value>>,
+) -> u64 {
+    if !is_conditionally_included_for_actual_from_flags(
+        field.include_if.as_deref(),
+        field.skip_if.as_deref(),
+        variable_values,
+    ) {
+        return 0;
+    }
+
+    let value = flat_object_get(store, keys, parent_value, field.response_key.as_str());
+
+    if field.is_list {
+        let Some(value) = value else {
+            return field.field_base_cost;
+        };
+        let FlatValue::List { items } = store.value(value) else {
+            return field.field_base_cost;
+        };
+
+        let mut list_total = 0_u64;
+        for &item in store.list_items(items) {
+            let child = evaluate_selection_set_actual_cost_flat_plan(
+                &field.child,
+                store,
+                keys,
+                item,
+                variable_values,
+            );
+            list_total = list_total.saturating_add(field.return_type_cost.saturating_add(child));
+        }
+
+        return field.field_base_cost.saturating_add(list_total);
+    }
+
+    let Some(value) = value else {
+        return field.field_base_cost;
+    };
+
+    if matches!(
+        store.value(value),
+        FlatValue::Null | FlatValue::Missing | FlatValue::Inaccessible
+    ) {
+        return field.field_base_cost;
+    }
+
+    let child = evaluate_selection_set_actual_cost_flat_plan(
+        &field.child,
+        store,
+        keys,
+        value,
+        variable_values,
+    );
+
+    field
+        .field_base_cost
+        .saturating_add(field.return_type_cost)
+        .saturating_add(child)
+}
+
+fn should_skip_flat_inline_fragment(
+    store: &FlatResponseStore<'static>,
+    keys: &ResponseKeys,
+    parent_value: FlatValueId,
+    type_condition: &str,
+    apply_when_typename_missing: bool,
+) -> bool {
+    let typename = flat_object_get(store, keys, parent_value, "__typename").and_then(|value| {
+        if let FlatValue::String(value) = store.value(value) {
+            Some(value.as_ref())
+        } else {
+            None
+        }
+    });
+
+    if let Some(typename) = typename {
+        return typename != type_condition;
+    }
+
+    !apply_when_typename_missing
+}
+
+fn flat_object_get(
+    store: &FlatResponseStore<'static>,
+    keys: &ResponseKeys,
+    object_id: FlatValueId,
+    key: &str,
+) -> Option<FlatValueId> {
+    let FlatValue::Object { fields } = store.value(object_id) else {
+        return None;
+    };
+    let key_id = keys.get_key_id(key)?;
+    store
+        .object_fields(fields)
+        .iter()
+        .find(|field| field.response_key == key_id)
+        .map(|field| field.value)
 }
 
 #[inline]
