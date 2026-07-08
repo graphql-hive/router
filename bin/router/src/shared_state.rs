@@ -27,7 +27,7 @@ use ntex::{http::HeaderMap, util::Bytes};
 use std::sync::atomic::AtomicUsize;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::HashSet, sync::Arc};
-use tracing::warn;
+use tracing::debug;
 
 use crate::cache_state::CacheState;
 use crate::jwt::context::JwtTokenPayload;
@@ -203,7 +203,10 @@ impl SharedRouterStreamResponse {
                         break;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        warn!(lagged = n, "Broadcast receiver lagged, dropping message");
+                        // NOTE: not warn to avoid log spam when receiver starts lagging.
+                        // users should rely on the lagged_messages metric to detect slow
+                        // consumers and tune accordingly
+                        debug!(lagged = n, "Broadcast receiver lagged, dropping message");
                         metrics.subscriptions.record_client_lag(transport, n);
                         continue;
                     }
