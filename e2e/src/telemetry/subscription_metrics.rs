@@ -21,6 +21,7 @@ mod subscription_metrics_e2e_tests {
     const CLIENTS_LAGGED_MESSAGES_TOTAL: &str =
         "hive.router.subscriptions.clients.lagged_messages_total";
     const SUBGRAPHS_ACTIVE: &str = "hive.router.subscriptions.subgraphs.active";
+    const SUBGRAPHS_CONNECTIONS: &str = "hive.router.subscriptions.subgraphs.connections";
     const SUBGRAPHS_OPERATIONS_TOTAL: &str = "hive.router.subscriptions.subgraphs.operations_total";
     const SUBGRAPHS_DROPPED_MESSAGES_TOTAL: &str =
         "hive.router.subscriptions.subgraphs.dropped_messages_total";
@@ -338,6 +339,125 @@ mod subscription_metrics_e2e_tests {
                 .len(),
             1,
             "requests to reviews subgraph should be deduplicated"
+        );
+    }
+
+    #[ntex::test]
+    async fn http_callback_subgraph_transport_metrics() {
+        let otlp_collector = OtlpCollector::start()
+            .await
+            .expect("Failed to start OTLP collector");
+
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+
+        let router_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let router_port = router_listener.local_addr().unwrap().port();
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .with_listener(router_listener)
+            .inline_config(format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    callback:
+                        public_url: http://0.0.0.0:{router_port}/callback
+                        subgraphs:
+                            - reviews
+                {}
+                "#,
+                otlp_metrics_config(&otlp_collector.http_metrics_endpoint())
+            ))
+            .build()
+            .start()
+            .await;
+
+        // reviewAddedLooping never completes on its own, so the subscription stays active
+        // until we drop the response stream below
+        let mut res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAddedLooping(intervalInMs: 200) {
+                        id
+                    }
+                }
+                "#,
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream"
+                },
+            )
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+        let _ = res.next().await.expect("expected at least one chunk");
+
+        wait_for_metrics_export().await;
+        let metrics = otlp_collector.metrics_view().await;
+
+        let subgraph_connection_attrs = [
+            (labels::SUBGRAPH_NAME, "reviews"),
+            (labels::SUBSCRIPTION_TRANSPORT, "http_callback"),
+        ];
+        assert_eq!(
+            metrics.latest_counter(SUBGRAPHS_CONNECTIONS, &subgraph_connection_attrs),
+            1.0,
+            "expected the http_callback-transported subgraph connection to be counted active"
+        );
+
+        let subgraph_attrs = [(labels::SUBGRAPH_NAME, "reviews")];
+        assert_eq!(
+            metrics.latest_counter(SUBGRAPHS_ACTIVE, &subgraph_attrs),
+            1.0,
+            "expected the subgraph subscription to be counted active"
+        );
+
+        let subgraph_subscribe_attrs = [
+            (labels::SUBGRAPH_NAME, "reviews"),
+            (labels::SUBSCRIPTION_OPERATION, "subscribe"),
+        ];
+        assert_eq!(
+            metrics.latest_counter(SUBGRAPHS_OPERATIONS_TOTAL, &subgraph_subscribe_attrs),
+            1.0,
+            "expected exactly one subgraph subscribe event"
+        );
+
+        // the client itself talks SSE to the router, the callback transport is only used
+        // between the router and the subgraph
+        let client_attrs = [(labels::SUBSCRIPTION_TRANSPORT, "http_sse")];
+        assert_eq!(
+            metrics.latest_counter(CLIENTS_ACTIVE, &client_attrs),
+            1.0,
+            "client active gauge must be 1 while the subscription is live"
+        );
+
+        drop(res);
+
+        wait_for_metrics_export().await;
+        let metrics = otlp_collector.metrics_view().await;
+
+        assert_eq!(
+            metrics.latest_counter(SUBGRAPHS_ACTIVE, &subgraph_attrs),
+            0.0,
+            "subgraph active gauge must return to 0 after the subscription ends"
+        );
+        assert_eq!(
+            metrics.latest_counter(SUBGRAPHS_CONNECTIONS, &subgraph_connection_attrs),
+            0.0,
+            "http_callback subgraph connection gauge must return to 0 after the subscription ends"
+        );
+
+        let subgraph_unsubscribe_attrs = [
+            (labels::SUBGRAPH_NAME, "reviews"),
+            (labels::SUBSCRIPTION_OPERATION, "unsubscribe"),
+        ];
+        assert_eq!(
+            metrics.latest_counter(SUBGRAPHS_OPERATIONS_TOTAL, &subgraph_unsubscribe_attrs),
+            1.0,
+            "expected exactly one http_callback subgraph unsubscribe event, matching the subscribe"
         );
     }
 
