@@ -50,7 +50,7 @@ pub fn try_send_or_drop<T>(
             // expected teardown path: fires once all downstream clients have
             // unsubscribed/disconnected and the receiver was dropped.
             // not an error, just means there's nothing left to forward to.
-            // TODO: since this is expected, is the debug log even encessary?
+            // TODO: since this is expected, is the debug log even necessary?
             debug!(
                 subgraph_name = %subgraph_name, endpoint = %endpoint,
                 "Subscription buffer for subgraph has no more receivers, all consumers disconnected or unsubscribed; stopping upstream drain",
