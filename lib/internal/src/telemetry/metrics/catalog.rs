@@ -104,7 +104,6 @@ pub mod labels {
     pub const ERROR_TYPE: &str = "error.type";
     pub const SUBGRAPH_NAME: &str = "subgraph.name";
     pub const SUBSCRIPTION_TRANSPORT: &str = "subscription.transport";
-    pub const SUBSCRIPTION_OPERATION: &str = "subscription.operation";
     pub const HTTP_REQUEST_METHOD: &str = "http.request.method";
     pub const HTTP_RESPONSE_STATUS_CODE: &str = "http.response.status_code";
     pub const HTTP_ROUTE: &str = "http.route";
@@ -128,7 +127,6 @@ pub mod units {
     pub const SECONDS: &str = "s";
     pub const SUBSCRIPTIONS: &str = "{subscription}";
     pub const CONNECTIONS: &str = "{connection}";
-    pub const OPERATIONS: &str = "{operation}";
     pub const MESSAGES: &str = "{message}";
 }
 
@@ -179,10 +177,14 @@ pub mod names {
     pub const SUBSCRIPTIONS_CLIENTS_ACTIVE: &str = "hive.router.subscriptions.clients.active";
     pub const SUBSCRIPTIONS_CLIENTS_CONNECTIONS: &str =
         "hive.router.subscriptions.clients.connections";
-    pub const SUBSCRIPTIONS_CLIENTS_OPERATIONS_TOTAL: &str =
-        "hive.router.subscriptions.clients.operations_total";
-    pub const SUBSCRIPTIONS_SUBGRAPHS_OPERATIONS_TOTAL: &str =
-        "hive.router.subscriptions.subgraphs.operations_total";
+    pub const SUBSCRIPTIONS_CLIENTS_STARTED_TOTAL: &str =
+        "hive.router.subscriptions.clients.started_total";
+    pub const SUBSCRIPTIONS_CLIENTS_ENDED_TOTAL: &str =
+        "hive.router.subscriptions.clients.ended_total";
+    pub const SUBSCRIPTIONS_SUBGRAPHS_STARTED_TOTAL: &str =
+        "hive.router.subscriptions.subgraphs.started_total";
+    pub const SUBSCRIPTIONS_SUBGRAPHS_ENDED_TOTAL: &str =
+        "hive.router.subscriptions.subgraphs.ended_total";
     pub const SUBSCRIPTIONS_SUBGRAPHS_DROPPED_MESSAGES_TOTAL: &str =
         "hive.router.subscriptions.subgraphs.dropped_messages_total";
     pub const SUBSCRIPTIONS_CLIENTS_LAGGED_MESSAGES_TOTAL: &str =
@@ -207,15 +209,20 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
         &[labels::SUBSCRIPTION_TRANSPORT],
     ),
     (
-        names::SUBSCRIPTIONS_CLIENTS_OPERATIONS_TOTAL,
-        &[
-            labels::SUBSCRIPTION_TRANSPORT,
-            labels::SUBSCRIPTION_OPERATION,
-        ],
+        names::SUBSCRIPTIONS_CLIENTS_STARTED_TOTAL,
+        &[labels::SUBSCRIPTION_TRANSPORT],
     ),
     (
-        names::SUBSCRIPTIONS_SUBGRAPHS_OPERATIONS_TOTAL,
-        &[labels::SUBGRAPH_NAME, labels::SUBSCRIPTION_OPERATION],
+        names::SUBSCRIPTIONS_CLIENTS_ENDED_TOTAL,
+        &[labels::SUBSCRIPTION_TRANSPORT],
+    ),
+    (
+        names::SUBSCRIPTIONS_SUBGRAPHS_STARTED_TOTAL,
+        &[labels::SUBGRAPH_NAME],
+    ),
+    (
+        names::SUBSCRIPTIONS_SUBGRAPHS_ENDED_TOTAL,
+        &[labels::SUBGRAPH_NAME],
     ),
     (
         names::SUBSCRIPTIONS_SUBGRAPHS_DROPPED_MESSAGES_TOTAL,

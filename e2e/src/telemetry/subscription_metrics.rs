@@ -17,12 +17,14 @@ mod subscription_metrics_e2e_tests {
 
     const CLIENTS_ACTIVE: &str = "hive.router.subscriptions.clients.active";
     const CLIENTS_CONNECTIONS: &str = "hive.router.subscriptions.clients.connections";
-    const CLIENTS_OPERATIONS_TOTAL: &str = "hive.router.subscriptions.clients.operations_total";
+    const CLIENTS_STARTED_TOTAL: &str = "hive.router.subscriptions.clients.started_total";
+    const CLIENTS_ENDED_TOTAL: &str = "hive.router.subscriptions.clients.ended_total";
     const CLIENTS_LAGGED_MESSAGES_TOTAL: &str =
         "hive.router.subscriptions.clients.lagged_messages_total";
     const SUBGRAPHS_ACTIVE: &str = "hive.router.subscriptions.subgraphs.active";
     const SUBGRAPHS_CONNECTIONS: &str = "hive.router.subscriptions.subgraphs.connections";
-    const SUBGRAPHS_OPERATIONS_TOTAL: &str = "hive.router.subscriptions.subgraphs.operations_total";
+    const SUBGRAPHS_STARTED_TOTAL: &str = "hive.router.subscriptions.subgraphs.started_total";
+    const SUBGRAPHS_ENDED_TOTAL: &str = "hive.router.subscriptions.subgraphs.ended_total";
     const SUBGRAPHS_DROPPED_MESSAGES_TOTAL: &str =
         "hive.router.subscriptions.subgraphs.dropped_messages_total";
 
@@ -118,23 +120,15 @@ mod subscription_metrics_e2e_tests {
             "client connections gauge must return to 0 after the subscription ends"
         );
 
-        let subscribe_attrs = [
-            (labels::SUBSCRIPTION_TRANSPORT, "http_sse"),
-            (labels::SUBSCRIPTION_OPERATION, "subscribe"),
-        ];
-        let unsubscribe_attrs = [
-            (labels::SUBSCRIPTION_TRANSPORT, "http_sse"),
-            (labels::SUBSCRIPTION_OPERATION, "unsubscribe"),
-        ];
         assert_eq!(
-            metrics.latest_counter(CLIENTS_OPERATIONS_TOTAL, &subscribe_attrs),
+            metrics.latest_counter(CLIENTS_STARTED_TOTAL, &transport_attrs),
             1.0,
-            "expected exactly one client subscribe event"
+            "expected exactly one client subscription started event"
         );
         assert_eq!(
-            metrics.latest_counter(CLIENTS_OPERATIONS_TOTAL, &unsubscribe_attrs),
+            metrics.latest_counter(CLIENTS_ENDED_TOTAL, &transport_attrs),
             1.0,
-            "expected exactly one client unsubscribe event, matching the subscribe"
+            "expected exactly one client subscription ended event, matching the start"
         );
 
         let subgraph_attrs = [(labels::SUBGRAPH_NAME, "reviews")];
@@ -144,23 +138,15 @@ mod subscription_metrics_e2e_tests {
             "subgraph active gauge must return to 0 after the subscription completes"
         );
 
-        let subgraph_subscribe_attrs = [
-            (labels::SUBGRAPH_NAME, "reviews"),
-            (labels::SUBSCRIPTION_OPERATION, "subscribe"),
-        ];
-        let subgraph_unsubscribe_attrs = [
-            (labels::SUBGRAPH_NAME, "reviews"),
-            (labels::SUBSCRIPTION_OPERATION, "unsubscribe"),
-        ];
         assert_eq!(
-            metrics.latest_counter(SUBGRAPHS_OPERATIONS_TOTAL, &subgraph_subscribe_attrs),
+            metrics.latest_counter(SUBGRAPHS_STARTED_TOTAL, &subgraph_attrs),
             1.0,
-            "expected exactly one subgraph subscribe event"
+            "expected exactly one subgraph subscription started event"
         );
         assert_eq!(
-            metrics.latest_counter(SUBGRAPHS_OPERATIONS_TOTAL, &subgraph_unsubscribe_attrs),
+            metrics.latest_counter(SUBGRAPHS_ENDED_TOTAL, &subgraph_attrs),
             1.0,
-            "expected exactly one subgraph unsubscribe event, matching the subscribe"
+            "expected exactly one subgraph subscription ended event, matching the start"
         );
 
         // no lag or drop counters should ever fire on this happy path
@@ -415,14 +401,10 @@ mod subscription_metrics_e2e_tests {
             "expected the subgraph subscription to be counted active"
         );
 
-        let subgraph_subscribe_attrs = [
-            (labels::SUBGRAPH_NAME, "reviews"),
-            (labels::SUBSCRIPTION_OPERATION, "subscribe"),
-        ];
         assert_eq!(
-            metrics.latest_counter(SUBGRAPHS_OPERATIONS_TOTAL, &subgraph_subscribe_attrs),
+            metrics.latest_counter(SUBGRAPHS_STARTED_TOTAL, &subgraph_attrs),
             1.0,
-            "expected exactly one subgraph subscribe event"
+            "expected exactly one subgraph subscription started event"
         );
 
         // the client itself talks SSE to the router, the callback transport is only used
@@ -450,14 +432,10 @@ mod subscription_metrics_e2e_tests {
             "http_callback subgraph connection gauge must return to 0 after the subscription ends"
         );
 
-        let subgraph_unsubscribe_attrs = [
-            (labels::SUBGRAPH_NAME, "reviews"),
-            (labels::SUBSCRIPTION_OPERATION, "unsubscribe"),
-        ];
         assert_eq!(
-            metrics.latest_counter(SUBGRAPHS_OPERATIONS_TOTAL, &subgraph_unsubscribe_attrs),
+            metrics.latest_counter(SUBGRAPHS_ENDED_TOTAL, &subgraph_attrs),
             1.0,
-            "expected exactly one http_callback subgraph unsubscribe event, matching the subscribe"
+            "expected exactly one http_callback subgraph subscription ended event, matching the start"
         );
     }
 
