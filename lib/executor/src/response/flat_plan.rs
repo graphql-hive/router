@@ -56,6 +56,28 @@ pub enum ValueWritePlan {
     Skip,
 }
 
+impl ValueWritePlan {
+    /// Estimate how many flat values this plan subtree will contribute.
+    /// List items are unknown at plan time, so we use a modest default.
+    pub fn value_count_hint(&self) -> usize {
+        match self {
+            ValueWritePlan::Leaf(_) => 1,
+            ValueWritePlan::Skip => 0,
+            ValueWritePlan::Object(obj) => {
+                1 + obj
+                    .fields
+                    .iter()
+                    .map(|f| f.value.value_count_hint())
+                    .sum::<usize>()
+            }
+            ValueWritePlan::List(list) => {
+                let item_per_list = 16;
+                1 + item_per_list + list.item.value_count_hint() * item_per_list
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LeafWritePlan {
     pub response_key: Box<str>,

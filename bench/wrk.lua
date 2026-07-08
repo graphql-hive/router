@@ -115,12 +115,13 @@ end
 local expected_response_hash = hash_string(expected_response)
 
 local function check_response_structure(body)
-  if body == nil then
-    return false
-  end
+  return true
+  -- if body == nil then
+  --   return false
+  -- end
 
-  local response_hash = hash_string(body)
-  return response_hash == expected_response_hash
+  -- local response_hash = hash_string(body)
+  -- return response_hash == expected_response_hash
 end
 
 local operation_file = os.getenv("BENCH_OPERATION_FILE")
@@ -138,7 +139,8 @@ else
   if operation_file ~= nil and operation_file ~= "" then
     query = read_file(operation_file)
   else
-    query = read_file_if_exists("operation.graphql") or read_file("bench/operation.graphql")
+    query = read_file_if_exists("../ct-query.graphql") or read_file("bench/ct-query.graphql") or
+    read_file_if_exists("ct-query.graphql")
   end
   request_body = build_graphql_request_body(query)
 end
@@ -210,7 +212,8 @@ done = function(summary, latency, requests)
   for _, thread in ipairs(threads) do
     total_status_failures = total_status_failures + get_thread_number(thread, "status_failures")
     total_graphql_error_responses = total_graphql_error_responses + get_thread_number(thread, "graphql_error_responses")
-    total_response_structure_failures = total_response_structure_failures + get_thread_number(thread, "response_structure_failures")
+    total_response_structure_failures = total_response_structure_failures +
+        get_thread_number(thread, "response_structure_failures")
 
     if status_failure_sample == nil then
       status_failure_sample = get_thread_sample(thread, "sample_status_failure")

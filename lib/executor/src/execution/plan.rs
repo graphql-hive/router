@@ -1012,10 +1012,9 @@ fn apply_flat_value_setter(
         FetchNodePathSegment::Key(field_name) => {
             let key_id = keys.get_key_id(field_name);
             match store.value(current) {
-                FlatValue::Object { fields: range } => {
-                    let field_range = range.clone();
+                FlatValue::Object { fields } => {
                     let mut targets = Vec::new();
-                    for sf in store.object_fields(&field_range) {
+                    for sf in fields.iter() {
                         if key_id.is_some_and(|kid| sf.response_key == kid) {
                             targets.push(sf.value);
                         }
@@ -1031,10 +1030,9 @@ fn apply_flat_value_setter(
                         );
                     }
                 }
-                FlatValue::List { items: range } => {
-                    let item_range = range.clone();
-                    let items: Vec<FlatValueId> = store.list_items(&item_range).to_vec();
-                    for item_id in items {
+                FlatValue::List { items } => {
+                    let item_ids = items.to_vec();
+                    for &item_id in item_ids.iter() {
                         apply_flat_value_setter(
                             store,
                             keys,
@@ -1049,10 +1047,8 @@ fn apply_flat_value_setter(
             }
         }
         FetchNodePathSegment::TypenameEquals(type_conditions) => match store.value(current) {
-            FlatValue::Object { fields: range } => {
-                let field_range = range.clone();
-                let type_name = store
-                    .object_fields(&field_range)
+            FlatValue::Object { fields } => {
+                let type_name = fields
                     .iter()
                     .find(|sf| {
                         let name = keys.key(sf.response_key);
@@ -1077,10 +1073,9 @@ fn apply_flat_value_setter(
                     );
                 }
             }
-            FlatValue::List { items: range } => {
-                let item_range = range.clone();
-                let items: Vec<FlatValueId> = store.list_items(&item_range).to_vec();
-                for item_id in items {
+            FlatValue::List { items } => {
+                let item_ids = items.to_vec();
+                for &item_id in item_ids.iter() {
                     apply_flat_value_setter(
                         store,
                         keys,
@@ -1120,10 +1115,9 @@ fn apply_flat_key_renamer(
                 }
             } else {
                 match store.value(current) {
-                    FlatValue::Object { fields: range } => {
-                        let field_range = range.clone();
+                    FlatValue::Object { fields } => {
                         let mut targets = Vec::new();
-                        for sf in store.object_fields(&field_range) {
+                        for sf in fields.iter() {
                             if key_id.is_some_and(|kid| sf.response_key == kid) {
                                 targets.push(sf.value);
                             }
@@ -1139,10 +1133,9 @@ fn apply_flat_key_renamer(
                             );
                         }
                     }
-                    FlatValue::List { items: range } => {
-                        let item_range = range.clone();
-                        let items: Vec<FlatValueId> = store.list_items(&item_range).to_vec();
-                        for item_id in items {
+                    FlatValue::List { items } => {
+                        let item_ids = items.to_vec();
+                        for &item_id in item_ids.iter() {
                             apply_flat_key_renamer(
                                 store,
                                 keys,
@@ -1158,10 +1151,8 @@ fn apply_flat_key_renamer(
             }
         }
         FetchNodePathSegment::TypenameEquals(type_conditions) => match store.value(current) {
-            FlatValue::Object { fields: range } => {
-                let field_range = range.clone();
-                let type_name = store
-                    .object_fields(&field_range)
+            FlatValue::Object { fields } => {
+                let type_name = fields
                     .iter()
                     .find(|sf| {
                         let name = keys.key(sf.response_key);
@@ -1186,10 +1177,9 @@ fn apply_flat_key_renamer(
                     );
                 }
             }
-            FlatValue::List { items: range } => {
-                let item_range = range.clone();
-                let items: Vec<FlatValueId> = store.list_items(&item_range).to_vec();
-                for item_id in items {
+            FlatValue::List { items } => {
+                let item_ids = items.to_vec();
+                for &item_id in item_ids.iter() {
                     apply_flat_key_renamer(store, keys, possible_types, item_id, path, new_key_id);
                 }
             }

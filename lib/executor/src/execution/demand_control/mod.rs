@@ -492,7 +492,7 @@ pub fn estimate_actual_subgraph_response_cost_with_compiled_flat_plan(
                     continue;
                 };
 
-                for &entity_id in store.list_items(items) {
+                for &entity_id in items.iter() {
                     let entity_type = flat_object_get(store, keys, entity_id, "__typename")
                         .and_then(|typename_id| match store.value(typename_id) {
                             FlatValue::String(value) => Some(value.as_ref()),
@@ -840,7 +840,7 @@ fn evaluate_field_actual_cost_flat_plan(
         };
 
         let mut list_total = 0_u64;
-        for &item in store.list_items(items) {
+        for &item in items.iter() {
             let child = evaluate_selection_set_actual_cost_flat_plan(
                 &field.child,
                 store,
@@ -911,8 +911,7 @@ fn flat_object_get(
         return None;
     };
     let key_id = keys.get_key_id(key)?;
-    store
-        .object_fields(fields)
+    fields
         .iter()
         .find(|field| field.response_key == key_id)
         .map(|field| field.value)

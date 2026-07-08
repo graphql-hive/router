@@ -11,7 +11,7 @@ use crate::projection::plan::{
     FieldProjectionCondition, FieldProjectionPlan, ProjectionValueSource, TypeCondition,
 };
 use crate::response::flat_store::{
-    FlatResponseStore, FlatValue, FlatValueId, ResponseKeyId, ResponseKeys,
+    FlatObjectField, FlatResponseStore, FlatValue, FlatValueId, ResponseKeyId, ResponseKeys,
 };
 use crate::utils::consts::CLOSE_BRACE as CLOSE_BRACE_;
 use crate::utils::consts::CLOSE_BRACKET as CLOSE_BRACKET_;
@@ -413,10 +413,9 @@ fn serialize_output_object<B: JsonWriteBuffer>(
     parent_type_name: Option<&str>,
     buffer: &mut B,
 ) -> bool {
-    let obj_range = match store.value(object_id) {
-        FlatValue::Object { fields } => fields.clone(),
+    let obj_fields = match store.value(object_id) {
+        FlatValue::Object { fields } => fields.as_ref(),
         _ => {
-            // Not an object – serialize as null
             buffer.put(NULL);
             return false;
         }
@@ -426,7 +425,7 @@ fn serialize_output_object<B: JsonWriteBuffer>(
         child.field.is_typename || condition_needs_parent_type(child.field.condition.as_ref())
     });
     let resolved_parent = if needs_parent_type {
-        flat_get_typename(store, flat_keys, &obj_range)
+        flat_get_typename(store, flat_keys, obj_fields)
             .or(parent_type_name)
             .unwrap_or("Query")
     } else {
@@ -486,7 +485,7 @@ fn serialize_output_object<B: JsonWriteBuffer>(
 
         let field_value_id = child
             .flat_key_id
-            .and_then(|kid| find_field_in_flat_object(store, &obj_range, kid));
+            .and_then(|kid| find_field_in_flat_object(obj_fields, kid));
 
         // Now we need to evaluate conditions that depend on the field value
         // (EnumValuesCondition) - re-evaluate if not already done
@@ -624,12 +623,12 @@ fn serialize_output_list<B: JsonWriteBuffer>(
     _list_parent_type: Option<&str>,
     buffer: &mut B,
 ) -> bool {
-    let item_range = match store.value(list_value_id) {
+    let list_items = match store.value(list_value_id) {
         FlatValue::RawJson(_) => {
             serialize_flat_scalar(store, list_value_id, buffer);
             return true;
         }
-        FlatValue::List { items } => items.clone(),
+        FlatValue::List { items } => items.as_ref(),
         _ => {
             buffer.put(NULL);
             return false;
@@ -642,14 +641,13 @@ fn serialize_output_list<B: JsonWriteBuffer>(
     let checkpoint = buffer.len();
     buffer.put(OPEN_BRACKET_);
 
-    let items = store.list_items(&item_range);
-    if items.is_empty() {
+    if list_items.is_empty() {
         buffer.put(CLOSE_BRACKET_);
         return true;
     }
 
     let mut first = true;
-    for &item_id in items {
+    for &item_id in list_items {
         if !first {
             buffer.put(COMMA);
         }
@@ -683,12 +681,10 @@ fn serialize_output_list<B: JsonWriteBuffer>(
 // ---------------------------------------------------------------------------
 
 fn find_field_in_flat_object(
-    store: &FlatResponseStore,
-    range: &std::ops::Range<u32>,
+    fields: &[FlatObjectField],
     key_id: ResponseKeyId,
 ) -> Option<FlatValueId> {
-    store
-        .object_fields(range)
+    fields
         .iter()
         .find(|f| f.response_key == key_id || f.output_key == Some(key_id))
         .map(|f| f.value)
@@ -707,10 +703,10 @@ fn condition_needs_parent_type(condition: Option<&FlatCondition>) -> bool {
 fn flat_get_typename<'store, 'data>(
     store: &'store FlatResponseStore<'data>,
     flat_keys: &ResponseKeys,
-    obj_range: &std::ops::Range<u32>,
+    obj_fields: &[FlatObjectField],
 ) -> Option<&'store str> {
     let typename_key_id = flat_keys.get_key_id("__typename")?;
-    for sf in store.object_fields(obj_range) {
+    for sf in obj_fields {
         if sf.response_key == typename_key_id {
             if let FlatValue::String(s) = store.value(sf.value) {
                 return Some(s.as_ref());

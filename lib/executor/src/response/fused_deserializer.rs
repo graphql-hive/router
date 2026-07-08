@@ -120,6 +120,10 @@ impl<'a, 'de> Visitor<'de> for FusedFetchVisitor<'a> {
     {
         let mut store: FlatResponseStore =
             FlatResponseStore::with_response_size_hint(self.response_size);
+
+        let extra_values = self.plan.data.value_count_hint();
+        store.reserve_values(extra_values);
+
         let keys: Arc<ResponseKeys> = Arc::clone(&self.plan.keys);
         let mut errors: Option<Vec<GraphQLError>> = None;
         let mut extensions: Option<Value<'static>> = None;
@@ -283,25 +287,17 @@ impl<'de> Visitor<'de> for FusedObjectVisitor<'_, '_, '_> {
     where
         A: SeqAccess<'de>,
     {
-        // When the plan expects an object but the JSON is an array, treat each
-        // element as an instance of the object plan (list of objects).
-        let mut builder = self
-            .ctx
-            .store
-            .borrow_mut()
-            .reserve_list(seq.size_hint().unwrap_or(0));
+        let cap = seq.size_hint().unwrap_or(0);
+        let mut items = Vec::with_capacity(cap);
 
         while let Some(elem) = seq.next_element_seed(FusedObjectSeqSeed {
             plan: self.plan,
             ctx: self.ctx,
         })? {
-            self.ctx
-                .store
-                .borrow_mut()
-                .push_list_item(&mut builder, elem);
+            items.push(elem);
         }
 
-        let list_id = self.ctx.store.borrow_mut().finish_list(builder);
+        let list_id = self.ctx.store.borrow_mut().alloc_list_from_items(items);
         Ok(WriteResult::ok(list_id))
     }
 }
@@ -364,6 +360,7 @@ where
     let mut field_values = ctx.field_values_pool.borrow_mut().pop().unwrap_or_default();
     field_values.resize(field_count, None);
     let mut cursor = 0usize;
+    let mut present_count = 0u32;
 
     while let Some(key) = map.next_key::<&str>()? {
         if let Some(index) = plan.field_index_for_source_key_from(key, &mut cursor) {
@@ -381,6 +378,7 @@ where
                     )));
                 }
                 field_values[index] = Some(result);
+                present_count += 1;
             } else {
                 let _ = map.next_value::<de::IgnoredAny>()?;
             }
@@ -389,11 +387,7 @@ where
         }
     }
 
-    let present_count = field_values.iter().filter(|v| v.is_some()).count();
-
-    let mut store = ctx.store.borrow_mut();
-    let mut obj_builder = store.begin_object_fields(present_count);
-
+    let mut fields = Vec::with_capacity(present_count as usize);
     for (i, maybe_result) in field_values.iter_mut().enumerate() {
         let key_id = plan.fields[i].response_key_id;
         match maybe_result.take() {
@@ -404,29 +398,24 @@ where
                         plan.fields[i].response_key
                     )));
                 }
+                let mut store = ctx.store.borrow_mut();
                 let null_id = store.alloc_null();
-                store.push_object_field(
-                    &mut obj_builder,
-                    FlatObjectField::with_output(
-                        key_id,
-                        null_id,
-                        Some(plan.fields[i].output_key.unwrap_or(key_id)),
-                        plan.fields[i].output_position.or(Some(i as u16)),
-                        plan.fields[i].nullability.is_non_null(),
-                    ),
-                );
+                fields.push(FlatObjectField::with_output(
+                    key_id,
+                    null_id,
+                    Some(plan.fields[i].output_key.unwrap_or(key_id)),
+                    plan.fields[i].output_position.or(Some(i as u16)),
+                    plan.fields[i].nullability.is_non_null(),
+                ));
             }
             Some(result) => {
-                store.push_object_field(
-                    &mut obj_builder,
-                    FlatObjectField::with_output(
-                        key_id,
-                        result.value_id,
-                        Some(plan.fields[i].output_key.unwrap_or(key_id)),
-                        plan.fields[i].output_position.or(Some(i as u16)),
-                        plan.fields[i].nullability.is_non_null(),
-                    ),
-                );
+                fields.push(FlatObjectField::with_output(
+                    key_id,
+                    result.value_id,
+                    Some(plan.fields[i].output_key.unwrap_or(key_id)),
+                    plan.fields[i].output_position.or(Some(i as u16)),
+                    plan.fields[i].nullability.is_non_null(),
+                ));
             }
             None => {
                 if plan.fields[i].nullability.is_non_null() {
@@ -439,8 +428,8 @@ where
         }
     }
 
-    let obj_id = store.finish_object_fields(obj_builder);
-    drop(store);
+    fields.sort_unstable_by_key(|f| f.response_key);
+    let obj_id = ctx.store.borrow_mut().alloc_object(fields);
 
     field_values.clear();
     ctx.field_values_pool.borrow_mut().push(field_values);
@@ -482,11 +471,8 @@ impl<'de> Visitor<'de> for FusedListVisitor<'_, '_, '_> {
     where
         A: SeqAccess<'de>,
     {
-        let mut builder = self
-            .ctx
-            .store
-            .borrow_mut()
-            .reserve_list(seq.size_hint().unwrap_or(0));
+        let cap = seq.size_hint().unwrap_or(0);
+        let mut items = Vec::with_capacity(cap);
         let item_non_null = self
             .plan
             .nullability
@@ -499,21 +485,16 @@ impl<'de> Visitor<'de> for FusedListVisitor<'_, '_, '_> {
         })? {
             if result.propagated_null {
                 if item_non_null {
-                    self.ctx.store.borrow_mut().discard_list(builder);
                     return Ok(WriteResult::propagate_null());
                 }
-                let mut store = self.ctx.store.borrow_mut();
-                let null_id = store.alloc_null();
-                store.push_list_item(&mut builder, null_id);
+                let null_id = self.ctx.store.borrow_mut().alloc_null();
+                items.push(null_id);
             } else {
-                self.ctx
-                    .store
-                    .borrow_mut()
-                    .push_list_item(&mut builder, result.value_id);
+                items.push(result.value_id);
             }
         }
 
-        let list_id = self.ctx.store.borrow_mut().finish_list(builder);
+        let list_id = self.ctx.store.borrow_mut().alloc_list_from_items(items);
         Ok(WriteResult::ok(list_id))
     }
 }
@@ -629,20 +610,14 @@ impl<'de> Visitor<'de> for FusedLeafVisitor<'_, '_> {
     where
         A: SeqAccess<'de>,
     {
-        let mut builder = self
-            .ctx
-            .store
-            .borrow_mut()
-            .reserve_list(seq.size_hint().unwrap_or(0));
+        let cap = seq.size_hint().unwrap_or(0);
+        let mut items = Vec::with_capacity(cap);
 
         while let Some(elem) = seq.next_element_seed(FusedLeafSeqSeed { ctx: self.ctx })? {
-            self.ctx
-                .store
-                .borrow_mut()
-                .push_list_item(&mut builder, elem);
+            items.push(elem);
         }
 
-        let list_id = self.ctx.store.borrow_mut().finish_list(builder);
+        let list_id = self.ctx.store.borrow_mut().alloc_list_from_items(items);
         Ok(WriteResult::ok(list_id))
     }
 }
