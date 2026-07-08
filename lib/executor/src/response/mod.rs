@@ -1,3 +1,6 @@
+pub mod flat_plan;
+pub mod flat_store;
+pub mod fused_deserializer;
 pub mod graphql_error;
 pub mod merge;
 pub mod storage;

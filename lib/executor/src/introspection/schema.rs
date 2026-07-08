@@ -31,7 +31,7 @@ impl FieldNullability {
         FieldNullability::Leaf { non_null: true }
     }
 
-    fn leaf(non_null: bool) -> Self {
+    pub fn leaf(non_null: bool) -> Self {
         FieldNullability::Leaf { non_null }
     }
 

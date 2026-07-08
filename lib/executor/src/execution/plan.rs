@@ -69,6 +69,8 @@ use crate::{
         plan::FieldProjectionPlan, request::project_requires, response::project_by_operation,
     },
     response::{
+        flat_plan::FetchWritePlan,
+        flat_store::{FlatValueId},
         graphql_error::{GraphQLError, GraphQLErrorPath, GraphQLErrorPathSegment},
         merge::deep_merge,
         subgraph_response::{
@@ -281,6 +283,9 @@ pub async fn execute_query_plan<'exec>(
             extensions: None,
             custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
             response_shape: opts.subgraph_response_shapes.get(fetch_node.id),
+            fetch_write_plan: opts
+                .subgraph_response_shapes
+                .get_fetch_write_plan(fetch_node.id),
         };
 
         // TODO: otel instrumentation and stuff
@@ -535,36 +540,40 @@ async fn execute_query_plan_with_data<'exec>(
     let mut errors = exec_ctx.errors;
     let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
 
+    let has_flat_response = exec_ctx.flat_store.is_some();
+
     let mut demand_control_cost = None;
     if let Some(demand_control) = executor.demand_control_context {
-        let actual = demand_control.calculate_actual_cost(
-            &data,
-            &opts.variable_values.variables_map,
-            &exec_ctx.subgraph_response_cost_tracker,
-        );
-
-        demand_control_cost = Some(DemandControlCost {
-            estimated: demand_control.evaluation.estimated_cost,
-            max: demand_control.operation.operation_max_cost,
-            actual,
-        });
-
-        if actual > demand_control.operation.operation_max_cost {
-            tracing::info!(
-                operation_name = ?opts.operation_for_plan.name.as_deref(),
-                actual_cost = actual,
-                estimated_cost = demand_control.evaluation.estimated_cost,
-                max_cost = demand_control.operation.operation_max_cost,
-                "actual cost exceeds max cost (not enforced)"
+        if !has_flat_response {
+            let actual = demand_control.calculate_actual_cost(
+                &data,
+                &opts.variable_values.variables_map,
+                &exec_ctx.subgraph_response_cost_tracker,
             );
-        }
 
-        demand_control.report_telemetry(
-            actual,
-            opts.operation_for_plan.name.as_deref(),
-            &opts.span,
-        );
-        demand_control.apply_expose_headers(&mut exec_ctx.response_headers_aggregator, actual);
+            demand_control_cost = Some(DemandControlCost {
+                estimated: demand_control.evaluation.estimated_cost,
+                max: demand_control.operation.operation_max_cost,
+                actual,
+            });
+
+            if actual > demand_control.operation.operation_max_cost {
+                tracing::info!(
+                    operation_name = ?opts.operation_for_plan.name.as_deref(),
+                    actual_cost = actual,
+                    estimated_cost = demand_control.evaluation.estimated_cost,
+                    max_cost = demand_control.operation.operation_max_cost,
+                    "actual cost exceeds max cost (not enforced)"
+                );
+            }
+
+            demand_control.report_telemetry(
+                actual,
+                opts.operation_for_plan.name.as_deref(),
+                &opts.span,
+            );
+            demand_control.apply_expose_headers(&mut exec_ctx.response_headers_aggregator, actual);
+        }
     }
 
     cache_control::finalize(
@@ -643,20 +652,59 @@ async fn execute_query_plan_with_data<'exec>(
         }
     }
 
-    let body = project_by_operation(
-        &data,
-        errors,
-        &opts.extensions,
-        opts.operation_type_name,
-        &opts.projection_plan,
-        &opts.variable_values.variables_map,
-        response_size_estimate,
-        &opts.introspection_context.metadata,
-    )
-    .with_plan_context(LazyPlanContext {
-        subgraph_name: || None,
-        affected_path: || None,
-    })?;
+    let body = if let (Some(ref flat_store), Some(ref flat_keys)) =
+        (&exec_ctx.flat_store, &exec_ctx.flat_keys)
+    {
+        use bytes::BufMut;
+        use crate::utils::consts::{QUOTE, COLON, COMMA};
+
+        let root = FlatValueId::new(0);
+        let mut buf = Vec::with_capacity(response_size_estimate);
+
+        buf.put_slice(b"{\"data\":");
+        flat_store.serialize_value(root, flat_keys, &mut buf);
+
+        if !errors.is_empty() {
+            buf.put(COMMA);
+            buf.put(QUOTE);
+            buf.put_slice(b"errors");
+            buf.put(QUOTE);
+            buf.put(COLON);
+            buf.put_slice(
+                &sonic_rs::to_vec(&errors)
+                    .expect("failed to serialize errors"),
+            );
+        }
+
+        if !opts.extensions.is_empty() {
+            let serialized = sonic_rs::to_vec(&opts.extensions)
+                .expect("failed to serialize extensions");
+            buf.put(COMMA);
+            buf.put(QUOTE);
+            buf.put_slice(b"extensions");
+            buf.put(QUOTE);
+            buf.put(COLON);
+            buf.put_slice(&serialized);
+        }
+
+        buf.put_slice(b"}");
+        buf
+    } else {
+        project_by_operation(
+            &data,
+            errors,
+            &opts.extensions,
+            opts.operation_type_name,
+            &opts.projection_plan,
+            &opts.variable_values.variables_map,
+            response_size_estimate,
+            &opts.introspection_context.metadata,
+        )
+        .with_plan_context(LazyPlanContext {
+            subgraph_name: || None,
+            affected_path: || None,
+        })?
+    };
 
     Ok(PlanExecutionOutput {
         body,
@@ -787,6 +835,7 @@ struct PrepareExecutionJobOpts<'exec> {
     // Response paths whose values should stay raw JSON in `data`
     custom_scalar_paths: Option<&'exec CustomScalarPaths>,
     response_shape: Option<&'exec SubgraphResponseShape>,
+    fetch_write_plan: Option<&'exec FetchWritePlan>,
     // If the fetch job is for a flatten node, we pass the filtered representations,
     raw_variable_values: Option<Vec<(&'exec str, Vec<u8>)>>,
     // and the path to the representations in the original response for error handling and normalization
@@ -852,6 +901,7 @@ impl<'exec> Executor<'exec> {
             output_rewrites: fetch_node.output_rewrites.as_deref(),
             custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
             response_shape: self.subgraph_response_shapes.get(fetch_node.id),
+            fetch_write_plan: self.subgraph_response_shapes.get_fetch_write_plan(fetch_node.id),
             raw_variable_values: None,
             affected_path: Some(&flatten_node.path),
         })
@@ -884,6 +934,7 @@ impl<'exec> Executor<'exec> {
                     output_rewrites: fetch_node.output_rewrites.as_deref(),
                     custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
                     response_shape: self.subgraph_response_shapes.get(fetch_node.id),
+                    fetch_write_plan: self.subgraph_response_shapes.get_fetch_write_plan(fetch_node.id),
                     raw_variable_values: None,
                     affected_path: None,
                 })
@@ -918,6 +969,7 @@ impl<'exec> Executor<'exec> {
                         output_rewrites: None,
                         custom_scalar_paths: batch_fetch_node.custom_scalar_paths.as_ref(),
                         response_shape: self.subgraph_response_shapes.get(batch_fetch_node.id),
+                        fetch_write_plan: self.subgraph_response_shapes.get_fetch_write_plan(batch_fetch_node.id),
                         raw_variable_values: Some(raw_variable_values),
                         affected_path: None,
                     })
@@ -1016,6 +1068,9 @@ impl<'exec> Executor<'exec> {
                         output_rewrites: fetch_node.output_rewrites.as_deref(),
                         custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
                         response_shape: self.subgraph_response_shapes.get(fetch_node.id),
+                        fetch_write_plan: self
+                            .subgraph_response_shapes
+                            .get_fetch_write_plan(fetch_node.id),
                         raw_variable_values: Some(vec![(
                             "representations",
                             filtered_representations,
@@ -1121,33 +1176,45 @@ impl<'exec> Executor<'exec> {
                         merge_path,
                         ..
                     } => {
-                        if let Some(response_bytes) = response.bytes {
-                            ctx.response_storage.add_response(response_bytes);
-                        }
-                        if let Some(output_rewrites) = output_rewrites {
-                            for output_rewrite in output_rewrites {
-                                output_rewrite.rewrite(
-                                    &self.schema_metadata.possible_types,
-                                    &mut response.data,
-                                );
+                        // Flat path: take ownership of the flat part into the context
+                        let has_flat = response.flat_part.is_some();
+                        if let Some(flat_part) = response.flat_part.take() {
+                            if flat_part.propagated_null {
+                                ctx.data = Value::Null;
+                            } else {
+                                ctx.flat_store = Some(flat_part.store);
+                                ctx.flat_keys = Some(flat_part.keys);
                             }
                         }
 
-                        match merge_path {
-                            // Root fetch
-                            None => deep_merge(&mut ctx.data, response.data),
-                            // Root re-entry
-                            Some(merge_path) => {
-                                let source = response.data;
-                                traverse_and_callback_mut(
-                                    &mut ctx.data,
-                                    merge_path.as_slice(),
-                                    self.schema_metadata,
-                                    None,
-                                    &mut |target, _error_path| {
-                                        deep_merge(target, source.clone());
-                                    },
-                                );
+                        if !has_flat {
+                            if let Some(response_bytes) = response.bytes {
+                                ctx.response_storage.add_response(response_bytes);
+                            }
+
+                            if let Some(output_rewrites) = output_rewrites {
+                                for output_rewrite in output_rewrites {
+                                    output_rewrite.rewrite(
+                                        &self.schema_metadata.possible_types,
+                                        &mut response.data,
+                                    );
+                                }
+                            }
+
+                            match merge_path {
+                                None => deep_merge(&mut ctx.data, response.data),
+                                Some(merge_path) => {
+                                    let source = response.data;
+                                    traverse_and_callback_mut(
+                                        &mut ctx.data,
+                                        merge_path.as_slice(),
+                                        self.schema_metadata,
+                                        None,
+                                        &mut |target, _error_path| {
+                                            deep_merge(target, source.clone());
+                                        },
+                                    );
+                                }
                             }
                         }
 
@@ -1603,6 +1670,7 @@ impl<'exec> Executor<'exec> {
                 extensions: None,
                 custom_scalar_paths: opts.custom_scalar_paths,
                 response_shape: opts.response_shape,
+                fetch_write_plan: opts.fetch_write_plan,
             };
 
             let client_document_hash_str = opts.operation.hash.to_string();

@@ -20,7 +20,14 @@ use sonic_rs::LazyValue;
 
 use crate::{
     executors::error::SubgraphExecutorError,
-    response::{graphql_error::GraphQLError, value::Value},
+    response::{
+        flat_plan::{FetchTarget, FetchWritePlan, FieldWritePlan, LeafWritePlan, ObjectWritePlan, ValueWritePlan},
+        flat_store::ResponseKeys,
+        fused_deserializer::FlatResponsePart,
+        graphql_error::GraphQLError,
+        value::Value,
+    },
+    introspection::schema::FieldNullability,
 };
 
 #[derive(Debug, Default)]
@@ -31,6 +38,7 @@ pub struct SubgraphResponse<'a> {
     pub headers: Option<Arc<HeaderMap>>,
     pub bytes: Option<Bytes>,
     pub status: Option<StatusCode>,
+    pub flat_part: Option<FlatResponsePart>,
 }
 
 impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
@@ -55,6 +63,7 @@ pub struct SubgraphResponseShape {
 #[derive(Debug, Clone, Default)]
 pub struct SubgraphResponseShapeRegistry {
     shapes_by_fetch_id: Vec<(i64, SubgraphResponseShape)>,
+    write_plans_by_fetch_id: Vec<(i64, FetchWritePlan)>,
 }
 
 impl SubgraphResponseShapeRegistry {
@@ -72,25 +81,35 @@ impl SubgraphResponseShapeRegistry {
             .find_map(|(id, shape)| (*id == fetch_id).then_some(shape))
     }
 
+    pub fn get_fetch_write_plan(&self, fetch_id: i64) -> Option<&FetchWritePlan> {
+        self.write_plans_by_fetch_id
+            .iter()
+            .find_map(|(id, plan)| (*id == fetch_id).then_some(plan))
+    }
+
     fn collect_node(&mut self, node: &PlanNode) {
         match node {
             PlanNode::Fetch(fetch) => {
-                self.shapes_by_fetch_id.push((
-                    fetch.id,
-                    SubgraphResponseShape::from_operation(
-                        &fetch.operation,
-                        fetch.custom_scalar_paths.as_ref(),
-                    ),
-                ));
+                let shape = SubgraphResponseShape::from_operation(
+                    &fetch.operation,
+                    fetch.custom_scalar_paths.as_ref(),
+                );
+                let write_plan = shape.to_fetch_write_plan(fetch.id);
+                self.shapes_by_fetch_id
+                    .push((fetch.id, shape));
+                self.write_plans_by_fetch_id
+                    .push((fetch.id, write_plan));
             }
             PlanNode::BatchFetch(fetch) => {
-                self.shapes_by_fetch_id.push((
-                    fetch.id,
-                    SubgraphResponseShape::from_operation(
-                        &fetch.operation,
-                        fetch.custom_scalar_paths.as_ref(),
-                    ),
-                ));
+                let shape = SubgraphResponseShape::from_operation(
+                    &fetch.operation,
+                    fetch.custom_scalar_paths.as_ref(),
+                );
+                let write_plan = shape.to_fetch_write_plan(fetch.id);
+                self.shapes_by_fetch_id
+                    .push((fetch.id, shape));
+                self.write_plans_by_fetch_id
+                    .push((fetch.id, write_plan));
             }
             PlanNode::Sequence(sequence) => {
                 for node in &sequence.nodes {
@@ -143,6 +162,18 @@ impl SubgraphResponseShape {
                 &operation.document.fragments,
                 custom_scalar_paths,
             ),
+        }
+    }
+
+    /// Compile a FetchWritePlan for deserializing subgraph responses into the flat store.
+    pub fn to_fetch_write_plan(&self, fetch_id: i64) -> FetchWritePlan {
+        let mut keys = ResponseKeys::default();
+        let data = shape_to_value_plan(&self.data, &mut keys);
+        FetchWritePlan {
+            fetch_id,
+            data,
+            target: FetchTarget::Root,
+            keys: Arc::new(keys),
         }
     }
 }
@@ -339,6 +370,7 @@ impl<'a, 'de> Visitor<'de> for SubgraphResponseVisitor<'a> {
             headers: None,
             bytes: None,
             status: None,
+            flat_part: None,
         })
     }
 }
@@ -413,6 +445,7 @@ impl<'a, 'de> Visitor<'de> for ShapedSubgraphResponseVisitor<'a> {
             headers: None,
             bytes: None,
             status: None,
+            flat_part: None,
         })
     }
 }
@@ -557,6 +590,43 @@ fn find_field_shape(fields: &[SubgraphFieldShape], key: &str, cursor: &mut usize
     }
 
     None
+}
+
+fn shape_to_value_plan(shape: &SubgraphValueShape, keys: &mut ResponseKeys) -> ValueWritePlan {
+    match shape {
+        SubgraphValueShape::Leaf {
+            custom_scalar_paths,
+        } => {
+            let custom_scalar = custom_scalar_paths.as_ref().is_some_and(|p| p.terminal);
+            ValueWritePlan::Leaf(LeafWritePlan {
+                response_key: "".into(),
+                nullability: FieldNullability::Leaf { non_null: false },
+                custom_scalar,
+            })
+        }
+        SubgraphValueShape::Object { fields } => {
+            let field_plans: Vec<FieldWritePlan> = fields
+                .iter()
+                .map(|f| {
+                    let response_key: Box<str> = f.response_key.clone().into_boxed_str();
+                    let response_key_id = keys.intern(&response_key);
+                    FieldWritePlan {
+                        source_key: f.response_key.clone().into_boxed_str(),
+                        response_key,
+                        response_key_id,
+                        value: shape_to_value_plan(&f.value, keys),
+                        nullability: FieldNullability::Leaf { non_null: false },
+                    }
+                })
+                .collect();
+            ValueWritePlan::Object(ObjectWritePlan {
+                response_key: "".into(),
+                nullability: FieldNullability::Leaf { non_null: true },
+                fields: field_plans,
+                object_type_name: "".into(),
+            })
+        }
+    }
 }
 
 #[derive(Clone, Copy)]

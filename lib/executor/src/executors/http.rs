@@ -13,7 +13,10 @@ use crate::json_writer::write_named_operation;
 use crate::plugin_context::PluginRequestState;
 use crate::plugin_trait::{EndControlFlow, StartControlFlow};
 use crate::plugins::hooks;
+use crate::response::flat_plan::FetchWritePlan;
+use crate::response::fused_deserializer::deserialize_fetch_into_part;
 use crate::response::subgraph_response::{SubgraphResponse, SubgraphResponseShape};
+use crate::response::value::Value;
 use futures::stream::BoxStream;
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::inflight::InFlightRole;
@@ -498,6 +501,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         let response_result = response.deserialize_http_response(
             execution_request.custom_scalar_paths,
             execution_request.response_shape,
+            execution_request.fetch_write_plan,
         );
         if let Some(mut http_request_capture) = http_request_capture {
             finish_capture_from_subgraph_result(
@@ -699,7 +703,32 @@ impl SubgraphHttpResponse {
         self,
         custom_scalar_paths: Option<&CustomScalarPaths>,
         response_shape: Option<&SubgraphResponseShape>,
+        fetch_write_plan: Option<&FetchWritePlan>,
     ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
+        if let Some(write_plan) = fetch_write_plan {
+            return deserialize_fetch_into_part(self.body, write_plan)
+                .map(|part| {
+                    let errors = part.errors.clone();
+                    let bytes = part.bytes.clone();
+                    let resp = SubgraphResponse {
+                        data: Value::Null,
+                        errors,
+                        extensions: None,
+                        headers: Some(self.headers.clone()),
+                        bytes,
+                        status: Some(self.status),
+                        flat_part: Some(part),
+                    };
+                    resp
+                })
+                .map_err(|e| match e {
+                    SubgraphExecutorError::ResponseDeserializationFailure(err, _) => {
+                        SubgraphExecutorError::ResponseDeserializationFailure(err, Some(self.headers))
+                    }
+                    other => other,
+                });
+        }
+
         let response = if let Some(response_shape) = response_shape {
             SubgraphResponse::deserialize_from_bytes_with_shape(self.body, response_shape)
         } else {
@@ -742,6 +771,7 @@ mod tests {
             extensions: None,
             custom_scalar_paths: None,
             response_shape: None,
+            fetch_write_plan: None,
         };
 
         let body = build_request_body(&execution_request).expect("request body should serialize");

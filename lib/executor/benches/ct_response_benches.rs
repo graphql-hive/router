@@ -4,11 +4,16 @@ use hive_router_plan_executor::{
     execution::plan::ExecutionResultExtensions,
     introspection::schema::SchemaWithMetadata,
     projection::{plan::FieldProjectionPlan, response::project_by_operation},
-    response::subgraph_response::{SubgraphResponse, SubgraphResponseShape},
+    response::{
+        flat_plan::FetchWritePlan,
+        fused_deserializer::deserialize_fetch_into_part,
+        subgraph_response::{
+            SubgraphResponse, SubgraphResponseShape, SubgraphResponseShapeRegistry,
+        },
+    },
 };
 use hive_router_query_planner::{
     ast::normalization::normalize_operation,
-    ast::operation::SubgraphFetchOperation,
     graph::PlannerOverrideContext,
     planner::{
         plan_nodes::{CustomScalarPaths, PlanNode, QueryPlan},
@@ -26,6 +31,7 @@ struct CtBenchFixture {
     payload: Bytes,
     custom_scalar_paths: Option<CustomScalarPaths>,
     response_shape: SubgraphResponseShape,
+    fetch_write_plan: FetchWritePlan,
     operation_type_name: &'static str,
     projection_plan: Vec<FieldProjectionPlan>,
     schema_metadata: &'static hive_router_plan_executor::introspection::schema::SchemaMetadata,
@@ -47,6 +53,21 @@ impl CtBenchFixture {
             &self.response_shape,
         )
         .expect("failed to deserialize shaped CT payload")
+    }
+
+    fn flat_full_execute_serialize(&self) -> Vec<u8> {
+        let part = deserialize_fetch_into_part(self.payload.clone(), &self.fetch_write_plan)
+            .expect("failed to deserialize flat CT payload");
+
+        let root = part.data_root.unwrap();
+        let mut buf = Vec::with_capacity(self.payload.len());
+
+        // Match the response shape: {"data": ..., "errors": [...], "extensions": {...}}
+        buf.extend_from_slice(b"{\"data\":");
+        part.store.serialize_value(root, &part.keys, &mut buf);
+        buf.extend_from_slice(b"}");
+
+        buf
     }
 }
 
@@ -89,26 +110,34 @@ fn load_fixture() -> CtBenchFixture {
         .expect("failed to build query plan");
 
     let custom_scalar_paths = first_custom_scalar_paths(&query_plan).cloned();
-    let fetch_operation = first_fetch_operation(&query_plan).expect("query plan has a fetch node");
-    let response_shape =
-        SubgraphResponseShape::from_operation(fetch_operation, custom_scalar_paths.as_ref());
+    let fetch_id = first_fetch_id(&query_plan).expect("query plan has a fetch node");
+    let response_shape_registry = SubgraphResponseShapeRegistry::from_query_plan(&query_plan);
+    let response_shape = response_shape_registry
+        .get(fetch_id)
+        .expect("query plan has a response shape")
+        .clone();
+    let fetch_write_plan = response_shape_registry
+        .get_fetch_write_plan(fetch_id)
+        .expect("query plan has a fetch write plan")
+        .clone();
 
     CtBenchFixture {
         projected_response_size_estimate: payload.len(),
         payload: Bytes::from(payload),
         custom_scalar_paths,
         response_shape,
+        fetch_write_plan,
         operation_type_name,
         projection_plan,
         schema_metadata,
     }
 }
 
-fn first_fetch_operation(query_plan: &QueryPlan) -> Option<&SubgraphFetchOperation> {
-    fn visit(node: &PlanNode) -> Option<&SubgraphFetchOperation> {
+fn first_fetch_id(query_plan: &QueryPlan) -> Option<i64> {
+    fn visit(node: &PlanNode) -> Option<i64> {
         match node {
-            PlanNode::Fetch(fetch) => Some(&fetch.operation),
-            PlanNode::BatchFetch(fetch) => Some(&fetch.operation),
+            PlanNode::Fetch(fetch) => Some(fetch.id),
+            PlanNode::BatchFetch(fetch) => Some(fetch.id),
             PlanNode::Sequence(sequence) => sequence.nodes.iter().find_map(visit),
             PlanNode::Parallel(parallel) => parallel.nodes.iter().find_map(visit),
             PlanNode::Flatten(flatten) => visit(&flatten.node),
@@ -235,6 +264,13 @@ fn ct_response_benches(c: &mut Criterion) {
         });
     });
 
+    group.bench_function("flat_full_execute_serialize", |b| {
+        b.iter(|| {
+            let result = fixture.flat_full_execute_serialize();
+            black_box(result);
+        });
+    });
+
     group.bench_function("drop_value_tree", |b| {
         b.iter_batched(
             || fixture.deserialize(),
@@ -258,10 +294,24 @@ fn ct_response_benches(c: &mut Criterion) {
     group.finish();
 }
 
+fn criterion_config() -> Criterion {
+    let profiling_enabled = matches!(
+        env::var("PROFILE_ENABLED").as_deref(),
+        Ok("1" | "true" | "TRUE" | "yes" | "on")
+    );
+
+    let criterion = Criterion::default();
+
+    if profiling_enabled {
+        criterion.with_profiler(PProfProfiler::new(1000, Output::Protobuf))
+    } else {
+        criterion
+    }
+}
+
 criterion_group! {
     name = benches;
-    config = Criterion::default();
-        // .with_profiler(PProfProfiler::new(1000, Output::Protobuf));
+    config = criterion_config();
     targets = ct_response_benches
 }
 criterion_main!(benches);

@@ -473,6 +473,7 @@ mod tests {
             extensions: None,
             custom_scalar_paths: None,
             response_shape: None,
+            fetch_write_plan: None,
         }
     }
 

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use hive_router_query_planner::planner::plan_nodes::FlattenNodePath;
 
@@ -7,6 +8,7 @@ use crate::{
     extensions::aggregator::ExtensionsAggregator,
     headers::response::ResponseHeaderAggregator,
     response::{
+        flat_store::{FlatResponseStore, ResponseKeys},
         graphql_error::{GraphQLError, GraphQLErrorPath},
         storage::ResponsesStorage,
         value::Value,
@@ -20,6 +22,8 @@ pub struct ExecutionContext<'a> {
     pub response_headers_aggregator: ResponseHeaderAggregator,
     pub extensions_aggregator: ExtensionsAggregator<'a>,
     pub subgraph_response_cost_tracker: SubgraphResponseCostTracker<'a>,
+    pub flat_store: Option<FlatResponseStore<'static>>,
+    pub flat_keys: Option<Arc<ResponseKeys>>,
 }
 
 impl<'a> Default for ExecutionContext<'a> {
@@ -31,6 +35,8 @@ impl<'a> Default for ExecutionContext<'a> {
             response_headers_aggregator: Default::default(),
             extensions_aggregator: Default::default(),
             subgraph_response_cost_tracker: SubgraphResponseCostTracker::new(),
+            flat_store: None,
+            flat_keys: None,
         }
     }
 }

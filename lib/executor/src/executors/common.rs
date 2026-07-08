@@ -9,7 +9,10 @@ use sonic_rs::Value;
 use crate::{
     executors::error::SubgraphExecutorError,
     plugin_context::PluginRequestState,
-    response::subgraph_response::{SubgraphResponse, SubgraphResponseShape},
+    response::{
+        flat_plan::FetchWritePlan,
+        subgraph_response::{SubgraphResponse, SubgraphResponseShape},
+    },
 };
 
 #[async_trait]
@@ -61,6 +64,7 @@ pub struct SubgraphExecutionRequest<'a> {
     pub extensions: Option<SubgraphRequestExtensions>,
     pub custom_scalar_paths: Option<&'a CustomScalarPaths>,
     pub response_shape: Option<&'a SubgraphResponseShape>,
+    pub fetch_write_plan: Option<&'a FetchWritePlan>,
 }
 
 impl SubgraphExecutionRequest<'_> {
