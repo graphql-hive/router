@@ -617,7 +617,10 @@ async fn handle_text_frame(
                                                 break;
                                             }
                                             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                                                warn!(id = %id_for_loop, lagged = n, "Broadcast receiver lagged, dropping message");
+                                                // NOTE: not warn to avoid log spam when receiver starts
+                                                // lagging. users should rely on the lagged_messages
+                                                // metric to detect slow consumers and tune accordingly
+                                                debug!(id = %id_for_loop, lagged = n, "Broadcast receiver lagged, dropping message");
                                                 metrics.subscriptions.record_client_lag(SubscriptionTransport::WebSocket, n);
                                                 continue;
                                             }

@@ -2,7 +2,7 @@ use futures::stream::{BoxStream, Stream};
 use futures_util::StreamExt;
 use ntex::rt;
 use tokio::sync::mpsc;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use hive_router_internal::telemetry::metrics::subscription_metrics::SubscriptionTransport;
 use hive_router_internal::telemetry::TelemetryContext;
@@ -36,7 +36,9 @@ pub fn try_send_or_drop<T>(
         Ok(()) => SendOutcome::Sent,
         Err(mpsc::error::TrySendError::Full(_)) => {
             // drop the message but keep the subscription alive, same as broadcast::Lagged
-            warn!(
+            // NOTE: not warn to avoid log spam with an active slow consumer. users should rely
+            // on the dropped_messages metric to detect slow consumers and tune accordingly
+            debug!(
                 subgraph_name = %subgraph_name, endpoint = %endpoint,
                 "Consumer for subgraph is too slow, dropping message",
             );
