@@ -24,3 +24,9 @@ fn on_http_request<'req>(
 ```
 
 See the new [plugin_examples/replace_schema](https://github.com/graphql-hive/router/tree/main/plugin_examples/replace_schema) example for a full walkthrough.
+
+Plugin author caveats:
+
+- `from_supergraph_sdl` is expensive (full planner build). Construct once per schema variant in the plugin lifecycle (e.g. `on_plugin_init` or the plugin's own reload loop), never per request.
+- Router-side supergraph reload does not touch plugin-owned states: no cache invalidation, no forced subscription close, no callback heartbeat enforcer background task. Their state, their lifecycle.
+- `on_http_request` is a **sync** hook. The feature lookup against their external service cannot be awaited there. They must resolve project -> enabled features asynchronously in their own lifecycle (background refresh, cache) and only do a synchronous map lookup (project_key -> Arc<SchemaState>) in the hook. If a blocking per-request lookup ever becomes a hard requirement, making `on_http_request` async (or adding an async early hook) is a separate change.
