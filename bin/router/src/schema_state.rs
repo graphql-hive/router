@@ -77,6 +77,9 @@ pub enum SupergraphManagerError {
 
     #[error("Error from plugin: {0}")]
     PluginError(String),
+
+    #[error("Failed to parse supergraph SDL: {0}")]
+    ParseSupergraphError(#[from] graphql_tools::parser::schema::ParseError),
 }
 
 impl SchemaState {
@@ -86,6 +89,52 @@ impl SchemaState {
 
     pub fn is_ready(&self) -> bool {
         self.current_supergraph().is_some()
+    }
+
+    /// Builds a standalone `SchemaState` from a supergraph SDL string, with its own fresh
+    /// caches, demand-control runtime and callback subscriptions map. There is no background
+    /// loader and no reload channel: the caller (a plugin) owns the lifecycle and is expected
+    /// to build a new `SchemaState` whenever the schema variant changes.
+    ///
+    /// This is expensive (full planner build): construct once per schema variant, never per
+    /// request.
+    pub fn from_supergraph_sdl(
+        sdl: &str,
+        router_config: Arc<HiveRouterConfig>,
+        telemetry_context: Arc<TelemetryContext>,
+    ) -> Result<Self, SupergraphManagerError> {
+        let document = safe_parse_schema(sdl)?;
+        Self::from_supergraph_document(document, router_config, telemetry_context)
+    }
+
+    /// Same as [`Self::from_supergraph_sdl`], but takes an already-parsed supergraph document.
+    pub fn from_supergraph_document(
+        document: Document,
+        router_config: Arc<HiveRouterConfig>,
+        telemetry_context: Arc<TelemetryContext>,
+    ) -> Result<Self, SupergraphManagerError> {
+        let callback_subscriptions: CallbackSubscriptionsMap = Arc::new(DashMap::new());
+        let demand_control_runtime = DemandControlRuntime::from_config(
+            router_config.demand_control.as_ref(),
+            telemetry_context.metrics.clone(),
+        );
+
+        let supergraph_data = Self::build_data(
+            router_config,
+            telemetry_context.clone(),
+            document,
+            callback_subscriptions.clone(),
+        )?;
+
+        Ok(Self {
+            current_swapable: Arc::new(ArcSwap::from(Arc::new(Some(supergraph_data)))),
+            plan_cache: Cache::new(1000),
+            validate_cache: Cache::new(1000),
+            normalize_cache: Cache::new(1000),
+            demand_control_runtime,
+            telemetry_context,
+            callback_subscriptions,
+        })
     }
 
     pub async fn new_from_config(
