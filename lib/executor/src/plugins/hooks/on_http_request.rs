@@ -81,7 +81,7 @@ impl<'req> OnHttpRequestHookPayload<'req> {
     /// ### Important
     ///
     /// The generic type `T` must be exactly `hive_router::SchemaState`. If any other type is passed,
-    /// the router will will silently fall back to the default schema state.
+    /// the router will silently fall back to the default schema state.
     ///
     /// ### Example
     ///
