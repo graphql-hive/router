@@ -18,7 +18,7 @@ use hive_router::{
         plugin_trait::{RouterPlugin, StartHookPayload},
     },
     query_planner::utils::parsing::safe_parse_schema,
-    HiveRouterConfig, SchemaState, TelemetryContext,
+    HiveRouterConfig, SchemaState, SupergraphManagerError, TelemetryContext,
 };
 
 const SUPERGRAPH_SDL: &str = include_str!("../supergraph.graphql");
@@ -100,14 +100,10 @@ fn build_schema_state(
     disabled_features: &[&str],
     router_config: Arc<HiveRouterConfig>,
     telemetry_context: Arc<TelemetryContext>,
-) -> Result<SchemaState, Box<dyn std::error::Error>> {
+) -> Result<SchemaState, SupergraphManagerError> {
     let document = safe_parse_schema(SUPERGRAPH_SDL)?;
     let document = strip_disabled_features(document, disabled_features);
-    Ok(SchemaState::from_supergraph_document(
-        document,
-        router_config,
-        telemetry_context,
-    )?)
+    SchemaState::from_supergraph_document(document, router_config, telemetry_context)
 }
 
 fn strip_disabled_features(document: Document, disabled_features: &[&str]) -> Document {

@@ -51,7 +51,10 @@ use crate::{
 
 use crate::cache_state::{register_cache_size_observers, CacheState};
 pub use crate::plugins::registry::PluginRegistry;
-pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
+pub use crate::{
+    schema_state::{SchemaState, SupergraphManagerError},
+    shared_state::RouterSharedState,
+};
 pub use arc_swap::ArcSwap;
 pub use async_trait::async_trait;
 pub use dashmap::DashMap;
