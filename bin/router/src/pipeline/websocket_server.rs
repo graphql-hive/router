@@ -383,7 +383,7 @@ async fn handle_text_frame(
                 let parser_result =
                     match parse_operation_with_cache(shared_state, &payload, &plugin_req_state).await {
                         Ok(result) => result,
-                        Err(err) => return Some(err.into_server_message(&id)),
+                        Err(err) => return Some(err.into_server_message(&id, shared_state)),
                     };
 
                 let parser_payload = match parser_result {
@@ -426,7 +426,7 @@ async fn handle_text_frame(
                         ));
                     }
                     Ok(None) => {}
-                    Err(err) => return Some(err.into_server_message(&id)),
+                    Err(err) => return Some(err.into_server_message(&id, shared_state)),
                 }
 
                 let normalize_payload = match normalize_request_with_cache(
@@ -438,7 +438,7 @@ async fn handle_text_frame(
                 .await
                 {
                     Ok(payload) => payload,
-                    Err(err) => return Some(err.into_server_message(&id)),
+                    Err(err) => return Some(err.into_server_message(&id, shared_state)),
                 };
 
                 let is_subscription = matches!(
@@ -447,7 +447,7 @@ async fn handle_text_frame(
                 );
 
                 if is_subscription && !shared_state.router_config.subscriptions.enabled {
-                    return Some(PipelineError::SubscriptionsNotSupported.into_server_message(&id));
+                    return Some(PipelineError::SubscriptionsNotSupported.into_server_message(&id, shared_state));
                 }
 
                 let request_dedupe_enabled =
@@ -520,24 +520,24 @@ async fn handle_text_frame(
                     let (shared_response, _role) = match result {
                         Ok(result) => result,
                         Err(PipelineError::JwtError(err)) => {
-                            let _ = sink.send(err.clone().into_server_message(&id)).await;
+                            let _ = sink.send(err.clone().into_server_message(&id, shared_state)).await;
                             // we report error as graphql error, but we also close the
                             // connection since we're dealing with auth so let's be safe
                             return Some(err.into_close_message());
                         },
-                        Err(err) => return Some(err.into_server_message(&id)),
+                        Err(err) => return Some(err.into_server_message(&id, shared_state)),
                     };
                     Arc::unwrap_or_clone(shared_response)
                 } else {
                     match exec(None).await {
                         Ok(result) => result,
                         Err(PipelineError::JwtError(err)) => {
-                            let _ = sink.send(err.clone().into_server_message(&id)).await;
+                            let _ = sink.send(err.clone().into_server_message(&id, shared_state)).await;
                             // we report error as graphql error, but we also close the
                             // connection since we're dealing with auth so let's be safe
                             return Some(err.into_close_message());
                         },
-                        Err(err) => return Some(err.into_server_message(&id)),
+                        Err(err) => return Some(err.into_server_message(&id, shared_state)),
                     }
                 };
 
@@ -747,9 +747,15 @@ fn parse_headers_from_extensions(extensions: Option<&HashMap<String, Value>>) ->
 
 // NOTE: no `From` trait because it can into ws message and ws closecode but both are ws::Message
 impl PipelineError {
-    fn into_server_message(self, id: &str) -> ws::Message {
+    fn into_server_message(self, id: &str, shared_state: &RouterSharedState) -> ws::Message {
         let code = self.graphql_error_code();
         let message = self.graphql_error_message();
+
+        shared_state
+            .telemetry_context
+            .metrics
+            .graphql
+            .record_error(code);
 
         let graphql_error = GraphQLError::from_message_and_extensions(
             message,
@@ -762,13 +768,18 @@ impl PipelineError {
 
 // NOTE: no `From` trait because it can into ws message and ws closecode but both are ws::Message
 impl JwtError {
-    fn into_server_message(self, id: &str) -> ws::Message {
+    fn into_server_message(self, id: &str, shared_state: &RouterSharedState) -> ws::Message {
+        let code = self.error_code();
+
+        shared_state
+            .telemetry_context
+            .metrics
+            .graphql
+            .record_error(code);
+
         ServerMessage::error(
             id,
-            &[GraphQLError::from_message_and_code(
-                self.to_string(),
-                self.error_code(),
-            )],
+            &[GraphQLError::from_message_and_code(self.to_string(), code)],
         )
     }
     fn into_close_message(self) -> ws::Message {
