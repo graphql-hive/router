@@ -197,6 +197,7 @@ impl SharedRouterStreamResponse {
                 match receiver.recv().await {
                     Ok(SubscriptionEvent::Raw(data)) => {
                         yield data.to_vec();
+                        metrics.subscriptions.record_client_sent(transport);
                     }
                     Ok(SubscriptionEvent::Error(errors)) => {
                         yield FailedExecutionResult { errors }.serialize();

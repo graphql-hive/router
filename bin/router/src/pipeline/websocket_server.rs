@@ -611,6 +611,7 @@ async fn handle_text_frame(
                                         match maybe_item {
                                             Ok(SubscriptionEvent::Raw(data)) => {
                                                 let _ = sink.send(ServerMessage::next(&id_for_loop, &data)).await;
+                                                metrics.subscriptions.record_client_sent(SubscriptionTransport::WebSocket);
                                             }
                                             Ok(SubscriptionEvent::Error(errors)) => {
                                                 let _ = sink.send(ServerMessage::error(&id_for_loop, &errors)).await;

@@ -37,6 +37,7 @@ pub struct SubscriptionMetrics {
     clients_started_total: Option<Counter<u64>>,
     clients_ended_total: Option<Counter<u64>>,
     clients_lagged_messages_total: Option<Counter<u64>>,
+    clients_sent_messages_total: Option<Counter<u64>>,
 }
 
 impl SubscriptionMetrics {
@@ -105,6 +106,12 @@ impl SubscriptionMetrics {
                 .with_unit(units::MESSAGES)
                 .build()
         });
+        let clients_sent_messages_total = meter.map(|m| {
+            m.u64_counter(names::SUBSCRIPTIONS_CLIENTS_SENT_MESSAGES_TOTAL)
+                .with_description("Total messages sent to client subscribers.")
+                .with_unit(units::MESSAGES)
+                .build()
+        });
         Self {
             subgraphs_active,
             subgraphs_connections,
@@ -116,6 +123,7 @@ impl SubscriptionMetrics {
             clients_started_total,
             clients_ended_total,
             clients_lagged_messages_total,
+            clients_sent_messages_total,
         }
     }
 
@@ -228,6 +236,19 @@ impl SubscriptionMetrics {
         debug_assert_attrs(names::SUBSCRIPTIONS_CLIENTS_LAGGED_MESSAGES_TOTAL, &attrs);
         if let Some(c) = &self.clients_lagged_messages_total {
             c.add(n, &attrs);
+        }
+    }
+
+    /// Records a single message sent to a client subscriber.
+    pub fn record_client_sent(&self, transport: SubscriptionTransport) {
+        let attrs = [KeyValue::new(
+            labels::SUBSCRIPTION_TRANSPORT,
+            transport.as_str(),
+        )];
+        #[cfg(debug_assertions)]
+        debug_assert_attrs(names::SUBSCRIPTIONS_CLIENTS_SENT_MESSAGES_TOTAL, &attrs);
+        if let Some(c) = &self.clients_sent_messages_total {
+            c.add(1, &attrs);
         }
     }
 }

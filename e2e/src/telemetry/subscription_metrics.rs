@@ -21,6 +21,8 @@ mod subscription_metrics_e2e_tests {
     const CLIENTS_ENDED_TOTAL: &str = "hive.router.subscriptions.clients.ended_total";
     const CLIENTS_LAGGED_MESSAGES_TOTAL: &str =
         "hive.router.subscriptions.clients.lagged_messages_total";
+    const CLIENTS_SENT_MESSAGES_TOTAL: &str =
+        "hive.router.subscriptions.clients.sent_messages_total";
     const SUBGRAPHS_ACTIVE: &str = "hive.router.subscriptions.subgraphs.active";
     const SUBGRAPHS_CONNECTIONS: &str = "hive.router.subscriptions.subgraphs.connections";
     const SUBGRAPHS_STARTED_TOTAL: &str = "hive.router.subscriptions.subgraphs.started_total";
@@ -155,6 +157,13 @@ mod subscription_metrics_e2e_tests {
             0.0,
             "lag counter must not fire on normal completion"
         );
+
+        // reviewAddedLooping keeps emitting in the background regardless of how many
+        // chunks the client actually read, so only assert delivery happened at all
+        assert!(
+            metrics.latest_counter(CLIENTS_SENT_MESSAGES_TOTAL, &transport_attrs) >= 1.0,
+            "expected at least one message sent to the client"
+        );
     }
 
     #[ntex::test]
@@ -221,6 +230,12 @@ mod subscription_metrics_e2e_tests {
             "expected websocket client active gauge to return to 0"
         );
 
+        assert_eq!(
+            metrics.latest_counter(CLIENTS_SENT_MESSAGES_TOTAL, &ws_attrs),
+            received as f64,
+            "expected the sent counter to match the number of events received over the finite WS stream"
+        );
+
         for phantom_transport in ["http_sse", "http_multipart", "http_callback"] {
             let attrs = [(labels::SUBSCRIPTION_TRANSPORT, phantom_transport)];
             assert!(
@@ -230,6 +245,10 @@ mod subscription_metrics_e2e_tests {
             assert!(
                 !metrics.has_counter(CLIENTS_CONNECTIONS, &attrs),
                 "did not expect a {phantom_transport}-labeled client connection series from a WS subscription"
+            );
+            assert!(
+                !metrics.has_counter(CLIENTS_SENT_MESSAGES_TOTAL, &attrs),
+                "did not expect a {phantom_transport}-labeled client sent series from a WS subscription"
             );
         }
     }
@@ -306,6 +325,23 @@ mod subscription_metrics_e2e_tests {
             ),
             1.0,
             "expected the multipart joiner to be counted active, not just the first subscriber"
+        );
+
+        // reviewAdded keeps emitting in the background regardless of how many chunks each
+        // client actually read, so only assert both joiners independently received deliveries
+        assert!(
+            metrics.latest_counter(
+                CLIENTS_SENT_MESSAGES_TOTAL,
+                &[(labels::SUBSCRIPTION_TRANSPORT, "http_sse")]
+            ) >= 1.0,
+            "expected at least one message sent to the SSE joiner"
+        );
+        assert!(
+            metrics.latest_counter(
+                CLIENTS_SENT_MESSAGES_TOTAL,
+                &[(labels::SUBSCRIPTION_TRANSPORT, "http_multipart")]
+            ) >= 1.0,
+            "expected at least one message sent to the multipart joiner, deduplication must not merge per-client delivery counts"
         );
 
         // only one subgraph operation was created, even though two clients joined

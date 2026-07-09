@@ -189,6 +189,8 @@ pub mod names {
         "hive.router.subscriptions.subgraphs.dropped_messages_total";
     pub const SUBSCRIPTIONS_CLIENTS_LAGGED_MESSAGES_TOTAL: &str =
         "hive.router.subscriptions.clients.lagged_messages_total";
+    pub const SUBSCRIPTIONS_CLIENTS_SENT_MESSAGES_TOTAL: &str =
+        "hive.router.subscriptions.clients.sent_messages_total";
 }
 
 pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
@@ -230,6 +232,10 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
     ),
     (
         names::SUBSCRIPTIONS_CLIENTS_LAGGED_MESSAGES_TOTAL,
+        &[labels::SUBSCRIPTION_TRANSPORT],
+    ),
+    (
+        names::SUBSCRIPTIONS_CLIENTS_SENT_MESSAGES_TOTAL,
         &[labels::SUBSCRIPTION_TRANSPORT],
     ),
     (names::GRAPHQL_ERRORS_TOTAL, &[labels::CODE]),
