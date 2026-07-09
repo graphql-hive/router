@@ -132,6 +132,17 @@ mod subscription_metrics_e2e_tests {
             1.0,
             "expected exactly one client subscription ended event, matching the start"
         );
+        assert_eq!(
+            metrics.latest_counter(
+                CLIENTS_ENDED_TOTAL,
+                &[
+                    (labels::SUBSCRIPTION_TRANSPORT, "http_sse"),
+                    (labels::SUBSCRIPTION_END_REASON, "client_disconnected"),
+                ]
+            ),
+            1.0,
+            "dropping the response stream should be attributed to client_disconnected"
+        );
 
         let subgraph_attrs = [(labels::SUBGRAPH_NAME, "reviews")];
         assert_eq!(
@@ -234,6 +245,17 @@ mod subscription_metrics_e2e_tests {
             metrics.latest_counter(CLIENTS_SENT_MESSAGES_TOTAL, &ws_attrs),
             received as f64,
             "expected the sent counter to match the number of events received over the finite WS stream"
+        );
+        assert_eq!(
+            metrics.latest_counter(
+                CLIENTS_ENDED_TOTAL,
+                &[
+                    (labels::SUBSCRIPTION_TRANSPORT, "websocket"),
+                    (labels::SUBSCRIPTION_END_REASON, "completed"),
+                ]
+            ),
+            1.0,
+            "a finite WS subscription that drains naturally should end with reason completed"
         );
 
         for phantom_transport in ["http_sse", "http_multipart", "http_callback"] {

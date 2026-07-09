@@ -7,6 +7,7 @@ use hive_router_config::traffic_shaping::{
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::expressions::{BooleanOrProgram, ExpressionCompileError};
 use hive_router_internal::inflight::{InFlightCleanupGuard, InFlightMap};
+use hive_router_internal::telemetry::metrics::catalog::values::SubscriptionEndReason;
 use hive_router_internal::telemetry::metrics::subscription_metrics::SubscriptionTransport;
 use hive_router_internal::telemetry::metrics::Metrics;
 use hive_router_internal::telemetry::TelemetryContext;
@@ -186,12 +187,11 @@ impl SharedRouterStreamResponse {
         };
         // each consumer (leader or joiner) gets its own guards, created here so dedup joiners
         // are counted too - dropped when the client stream below ends
-        let client_op_guard = metrics.subscriptions.active_client_operation(transport);
+        let mut client_op_guard = metrics.subscriptions.active_client_operation(transport);
         let client_conn_guard = metrics.subscriptions.active_client_connection(transport);
         let metrics = metrics.clone();
 
         let stream = Box::pin(async_stream::stream! {
-            let _client_op_guard = client_op_guard;
             let _client_conn_guard = client_conn_guard;
             loop {
                 match receiver.recv().await {
@@ -200,6 +200,7 @@ impl SharedRouterStreamResponse {
                         metrics.subscriptions.record_client_sent(transport);
                     }
                     Ok(SubscriptionEvent::Error(errors)) => {
+                        client_op_guard.set_end_reason(SubscriptionEndReason::Error);
                         yield FailedExecutionResult { errors }.serialize();
                         break;
                     }
@@ -212,10 +213,12 @@ impl SharedRouterStreamResponse {
                         continue;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        client_op_guard.set_end_reason(SubscriptionEndReason::Completed);
                         break;
                     }
                 }
             }
+            let _client_op_guard = client_op_guard;
         });
 
         let content_type_header = match stream_content_type {

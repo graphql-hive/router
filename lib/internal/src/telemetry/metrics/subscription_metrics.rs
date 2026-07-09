@@ -3,7 +3,7 @@ use opentelemetry::{
     KeyValue,
 };
 
-use crate::telemetry::metrics::catalog::{labels, names, units};
+use crate::telemetry::metrics::catalog::{labels, names, units, values::SubscriptionEndReason};
 
 #[cfg(debug_assertions)]
 use crate::telemetry::metrics::catalog::debug_assert_attrs;
@@ -188,6 +188,7 @@ impl SubscriptionMetrics {
             counter: self.clients_active.clone(),
             ended_total: self.clients_ended_total.clone(),
             transport,
+            end_reason: SubscriptionEndReason::ClientDisconnected,
         }
     }
 
@@ -298,19 +299,32 @@ pub struct ActiveClientOperationGuard {
     counter: Option<UpDownCounter<i64>>,
     ended_total: Option<Counter<u64>>,
     transport: SubscriptionTransport,
+    end_reason: SubscriptionEndReason,
+}
+
+impl ActiveClientOperationGuard {
+    /// Records why the subscription ended. Call this before the guard drops;
+    /// if never called, the drop is attributed to `ClientDisconnected`.
+    pub fn set_end_reason(&mut self, reason: SubscriptionEndReason) {
+        self.end_reason = reason;
+    }
 }
 
 impl Drop for ActiveClientOperationGuard {
     fn drop(&mut self) {
-        let attrs = [KeyValue::new(
+        let active_attrs = [KeyValue::new(
             labels::SUBSCRIPTION_TRANSPORT,
             self.transport.as_str(),
         )];
         if let Some(c) = &self.counter {
-            c.add(-1, &attrs);
+            c.add(-1, &active_attrs);
         }
         if let Some(c) = &self.ended_total {
-            c.add(1, &attrs);
+            let ended_attrs = [
+                KeyValue::new(labels::SUBSCRIPTION_TRANSPORT, self.transport.as_str()),
+                KeyValue::new(labels::SUBSCRIPTION_END_REASON, self.end_reason.as_str()),
+            ];
+            c.add(1, &ended_attrs);
         }
     }
 }

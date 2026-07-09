@@ -62,6 +62,27 @@ pub mod values {
         }
     }
 
+    /// Why a client subscription ended, recorded on the `ended_total` counter.
+    ///
+    /// Defaults to `ClientDisconnected` when a guard drops without an explicit
+    /// reason being set (e.g. the client closed the connection or the stream
+    /// was dropped), so every guard drop is still attributed to a reason.
+    #[derive(Clone, Copy, Debug, strum::IntoStaticStr)]
+    pub enum SubscriptionEndReason {
+        #[strum(serialize = "completed")]
+        Completed,
+        #[strum(serialize = "error")]
+        Error,
+        #[strum(serialize = "client_disconnected")]
+        ClientDisconnected,
+    }
+
+    impl SubscriptionEndReason {
+        pub fn as_str(self) -> &'static str {
+            self.into()
+        }
+    }
+
     /// Circuit breaker state exposed via metrics.
     ///
     /// The internal recloser state has three values (Closed, HalfOpen, Open),
@@ -104,6 +125,7 @@ pub mod labels {
     pub const ERROR_TYPE: &str = "error.type";
     pub const SUBGRAPH_NAME: &str = "subgraph.name";
     pub const SUBSCRIPTION_TRANSPORT: &str = "subscription.transport";
+    pub const SUBSCRIPTION_END_REASON: &str = "subscription.end_reason";
     pub const HTTP_REQUEST_METHOD: &str = "http.request.method";
     pub const HTTP_RESPONSE_STATUS_CODE: &str = "http.response.status_code";
     pub const HTTP_ROUTE: &str = "http.route";
@@ -216,7 +238,10 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
     ),
     (
         names::SUBSCRIPTIONS_CLIENTS_ENDED_TOTAL,
-        &[labels::SUBSCRIPTION_TRANSPORT],
+        &[
+            labels::SUBSCRIPTION_TRANSPORT,
+            labels::SUBSCRIPTION_END_REASON,
+        ],
     ),
     (
         names::SUBSCRIPTIONS_SUBGRAPHS_STARTED_TOTAL,

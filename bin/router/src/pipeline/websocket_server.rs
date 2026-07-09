@@ -17,6 +17,7 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn, Instrument};
 
+use hive_router_internal::telemetry::metrics::catalog::values::SubscriptionEndReason;
 use hive_router_internal::telemetry::metrics::subscription_metrics::{
     ActiveClientConnectionGuard, SubscriptionTransport,
 };
@@ -602,7 +603,7 @@ async fn handle_text_frame(
                         // making cancellation impossible
                         rt::spawn(async move {
                             let _guard = guard;
-                            let _client_op_guard = client_op_guard;
+                            let mut client_op_guard = client_op_guard;
                             let mut cancelled = false;
 
                             loop {
@@ -614,6 +615,7 @@ async fn handle_text_frame(
                                                 metrics.subscriptions.record_client_sent(SubscriptionTransport::WebSocket);
                                             }
                                             Ok(SubscriptionEvent::Error(errors)) => {
+                                                client_op_guard.set_end_reason(SubscriptionEndReason::Error);
                                                 let _ = sink.send(ServerMessage::error(&id_for_loop, &errors)).await;
                                                 break;
                                             }
@@ -626,6 +628,7 @@ async fn handle_text_frame(
                                                 continue;
                                             }
                                             Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                                client_op_guard.set_end_reason(SubscriptionEndReason::Completed);
                                                 break;
                                             }
                                         }
