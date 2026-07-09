@@ -78,7 +78,13 @@ impl<'req> OnHttpRequestHookPayload<'req> {
     /// different one, on a per-request basis, e.g. to serve a different set of fields depending
     /// on the caller.
     ///
-    /// Example:
+    /// ### Important
+    ///
+    /// The generic type `T` must be exactly `hive_router::SchemaState`. If any other type is passed,
+    /// the router will will silently fall back to the default schema state.
+    ///
+    /// ### Example
+    ///
     /// ```ignore
     /// payload.set_schema_state(my_schema_state.clone());
     /// ```
