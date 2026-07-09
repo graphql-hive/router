@@ -58,12 +58,14 @@ pub use dashmap::DashMap;
 pub use graphql_tools;
 use graphql_tools::validation::rules::default_rules_validation_plan;
 pub use hive_router_config::humantime_serde;
-use hive_router_config::{load_config, subscriptions::CallbackConfig, HiveRouterConfig};
+pub use hive_router_config::HiveRouterConfig;
+use hive_router_config::{load_config, subscriptions::CallbackConfig};
 pub use hive_router_internal::background_tasks;
 use hive_router_internal::background_tasks::{BackgroundTask, CancellationToken};
+pub use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_internal::telemetry::{
     otel::tracing_opentelemetry::OpenTelemetrySpanExt,
-    traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
+    traces::spans::http_request::HttpServerRequestSpan,
 };
 pub use hive_router_internal::BoxError;
 use hive_router_internal::{
@@ -132,8 +134,17 @@ async fn graphql_endpoint_handler(
         .http_server
         .capture_request(&request);
 
+    // A plugin may have overridden the schema state for this request in `on_http_request`
+    // (see `OnHttpRequestHookPayload::set_schema_state`); otherwise fall back to the router's own.
+    let schema_state = request
+        .extensions()
+        .get::<Arc<SchemaState>>()
+        .cloned()
+        .unwrap_or_else(|| schema_state.get_ref().clone());
+
     let response =
-        graphql_endpoint_dispatch(&mut request, body_stream, schema_state, app_state.clone()).await;
+        graphql_endpoint_dispatch(&mut request, body_stream, &schema_state, app_state.clone())
+            .await;
 
     let graphql_operation = read_graphql_operation_metric_identity(&request);
     let graphql_operation_name = graphql_operation
@@ -159,7 +170,7 @@ async fn graphql_endpoint_handler(
 async fn graphql_endpoint_dispatch(
     request: &mut HttpRequest,
     body_stream: web::types::Payload,
-    schema_state: web::types::State<Arc<SchemaState>>,
+    schema_state: &Arc<SchemaState>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> web::HttpResponse {
     let parent_ctx = app_state
@@ -188,7 +199,7 @@ async fn graphql_endpoint_dispatch(
             request,
             body_stream,
             app_state.get_ref(),
-            schema_state.get_ref(),
+            schema_state,
             &root_http_request_span,
             &mut response_mode,
             response_header_sink.clone(),

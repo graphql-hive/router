@@ -56,7 +56,13 @@ pub async fn ws_index(
     schema_state: web::types::State<Arc<SchemaState>>,
     shared_state: web::types::State<Arc<RouterSharedState>>,
 ) -> Result<HttpResponse, Error> {
-    let schema_state = schema_state.get_ref().clone();
+    // A plugin may have overridden the schema state for this request in `on_http_request`
+    // (see `OnHttpRequestHookPayload::set_schema_state`); otherwise fall back to the router's own.
+    let schema_state = req
+        .extensions()
+        .get::<Arc<SchemaState>>()
+        .cloned()
+        .unwrap_or_else(|| schema_state.get_ref().clone());
     let shared_state = shared_state.get_ref().clone();
 
     let accepted_subprotocol = ws::subprotocols(&req)
