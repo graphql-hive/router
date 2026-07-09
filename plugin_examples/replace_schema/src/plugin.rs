@@ -136,9 +136,8 @@ fn strip_disabled_features(document: Document, disabled_features: &[&str]) -> Do
         .definitions
         .into_iter()
         .filter(|def| {
-            def.name().map_or(true, |name| {
-                !removed_definitions.contains(&name.to_string())
-            })
+            def.name()
+                .map_or(true, |name| !removed_definitions.iter().any(|d| d == name))
         })
         .map(|def| {
             let Some(def_name) = def.name().map(str::to_string) else {
