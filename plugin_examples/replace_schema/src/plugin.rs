@@ -107,19 +107,19 @@ fn build_schema_state(
 }
 
 fn strip_disabled_features(document: Document, disabled_features: &[&str]) -> Document {
-    let mut removed_definitions = vec![];
+    let mut removed_definitions: Vec<String> = vec![];
     let mut removed_fields: HashMap<String, Vec<String>> = HashMap::new();
 
     for definition in &document.definitions {
-        if let Some(directives) = definition.directives() {
-            if has_disabled_feature(disabled_features, directives) {
-                removed_definitions.push(definition.clone());
-                continue;
-            }
-        }
         let Some(def_name) = definition.name() else {
             continue;
         };
+        if let Some(directives) = definition.directives() {
+            if has_disabled_feature(disabled_features, directives) {
+                removed_definitions.push(def_name.to_string());
+                continue;
+            }
+        }
         if let Some(TypeDefinitionFields::Fields(fields)) = definition.fields() {
             for field in fields {
                 if has_disabled_feature(disabled_features, &field.directives) {
@@ -135,7 +135,11 @@ fn strip_disabled_features(document: Document, disabled_features: &[&str]) -> Do
     let definitions = document
         .definitions
         .into_iter()
-        .filter(|def| !removed_definitions.contains(def))
+        .filter(|def| {
+            def.name().map_or(true, |name| {
+                !removed_definitions.contains(&name.to_string())
+            })
+        })
         .map(|def| {
             let Some(def_name) = def.name().map(str::to_string) else {
                 return def;
