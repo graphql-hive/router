@@ -1610,7 +1610,7 @@ impl<'exec> Executor<'exec> {
                 );
             }
 
-            let response = self
+            let mut response = self
                 .executors
                 .execute(
                     opts.subgraph_name,
@@ -1630,6 +1630,15 @@ impl<'exec> Executor<'exec> {
                     subgraph_operation_span.record_error_count(errors.len());
                     subgraph_operation_span
                         .record_errors(|| errors.iter().map(|e| e.into()).collect());
+                }
+            }
+
+            if let Some(status) = &response.status {
+                if !status.is_success() {
+                    response.append_error(GraphQLError::create_from_status_code(
+                        status,
+                        opts.subgraph_name,
+                    ));
                 }
             }
 
@@ -2022,6 +2031,8 @@ mod tests {
 
         let mock_a = subgraph_a
             .mock("POST", "/graphql")
+            .with_status(200)
+            .with_header("content-type", "application/json")
             .with_body(r#"{"data":{"from_a":"value_a"}}"#)
             .create();
 
@@ -2039,6 +2050,8 @@ mod tests {
 
         let mock_b = subgraph_b
             .mock("POST", "/graphql")
+            .with_status(200)
+            .with_header("content-type", "application/json")
             .with_chunked_body(move |writer| {
                 // We can add some delay here to make sure the parallel execution is actually working
                 std::thread::sleep(Duration::from_millis(1000));

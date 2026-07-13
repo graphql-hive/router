@@ -2,8 +2,9 @@ use core::fmt;
 use graphql_tools::parser::Pos;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_internal::graphql::{ObservedError, PathSegment};
+use http::StatusCode;
 use serde::{de, Deserialize, Deserializer, Serialize};
-use sonic_rs::Value;
+use sonic_rs::{json, Value};
 use std::collections::{BTreeMap, HashMap};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -67,6 +68,31 @@ impl From<&Pos> for GraphQLErrorLocation {
 impl GraphQLError {
     pub fn entity_index_and_path<'a>(&'a self) -> Option<EntityIndexAndPath<'a>> {
         self.path.as_ref().and_then(|p| p.entity_index_and_path())
+    }
+
+    pub fn append_extensions(&mut self, extensions: BTreeMap<String, Value>) {
+        self.extensions.extensions.extend(extensions);
+    }
+
+    pub fn create_from_status_code(status: &StatusCode, subgraph_name: &str) -> Self {
+        let mut extensions = GraphQLErrorExtensions::new_from_code_and_service_name(
+            "SUBREQUEST_HTTP_ERROR",
+            subgraph_name,
+        );
+
+        extensions
+            .extensions
+            .insert("http".into(), json!({ "status": status.as_u16() }));
+
+        Self {
+            message: format!(
+                "Subgraph '{0}' responded with an invalid HTTP status code '{1}'",
+                subgraph_name, status
+            ),
+            locations: None,
+            extensions,
+            path: None,
+        }
     }
 
     pub fn normalize_entity_error(
@@ -165,7 +191,7 @@ impl GraphQLError {
     /// assert_eq!(json!(error), json!({
     ///     "message": "An error occurred",
     ///     "extensions": {
-    ///         "serviceName": "users",
+    ///         "service": "users",
     ///         "code": "DOWNSTREAM_SERVICE_ERROR"
     ///     }
     /// }));
@@ -287,7 +313,7 @@ impl GraphQLErrorPath {
 pub struct GraphQLErrorExtensions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "service", skip_serializing_if = "Option::is_none")]
     pub service_name: Option<String>,
     /// Corresponds to a path of a Flatten(Fetch) node that caused the error.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -329,9 +355,9 @@ impl<'de> Deserialize<'de> for GraphQLErrorExtensions {
                             }
                             code = Some(map.next_value()?);
                         }
-                        "serviceName" => {
+                        "service" => {
                             if service_name.is_some() {
-                                return Err(de::Error::duplicate_field("serviceName"));
+                                return Err(de::Error::duplicate_field("service"));
                             }
                             service_name = Some(map.next_value()?);
                         }

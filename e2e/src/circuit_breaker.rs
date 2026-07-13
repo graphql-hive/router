@@ -121,7 +121,7 @@ mod circuit_breaker_e2e_tests {
       "message": "Request to subgraph timed out",
       "extensions": {
         "code": "SUBGRAPH_REQUEST_TIMEOUT",
-        "serviceName": "accounts"
+        "service": "accounts"
       }
     }
   ]
@@ -143,7 +143,7 @@ mod circuit_breaker_e2e_tests {
       "message": "Rejected by the circuit breaker",
       "extensions": {
         "code": "SUBGRAPH_CIRCUIT_BREAKER_REJECTED",
-        "serviceName": "accounts"
+        "service": "accounts"
       }
     }
   ]
@@ -284,7 +284,7 @@ mod circuit_breaker_e2e_tests {
       "message": "Received empty response body from subgraph \"accounts\"",
       "extensions": {
         "code": "SUBGRAPH_RESPONSE_BODY_EMPTY",
-        "serviceName": "accounts"
+        "service": "accounts"
       }
     }
   ]
@@ -310,7 +310,7 @@ mod circuit_breaker_e2e_tests {
       "message": "Rejected by the circuit breaker",
       "extensions": {
         "code": "SUBGRAPH_CIRCUIT_BREAKER_REJECTED",
-        "serviceName": "accounts"
+        "service": "accounts"
       }
     }
   ]
@@ -375,7 +375,7 @@ mod circuit_breaker_e2e_tests {
       "message": "Rejected by the circuit breaker",
       "extensions": {
         "code": "SUBGRAPH_CIRCUIT_BREAKER_REJECTED",
-        "serviceName": "accounts"
+        "service": "accounts"
       }
     }
   ]
@@ -385,6 +385,7 @@ mod circuit_breaker_e2e_tests {
         let success_mock = accounts_server
             .mock("POST", "/accounts")
             .with_status(200)
+            .with_header("content-type", "application/json")
             .with_body(r#"{"data":{"users":[{"id":"1"}]}}"#)
             .expect_at_least(1)
             .create_async()
@@ -430,6 +431,7 @@ mod circuit_breaker_e2e_tests {
         let products_success_mock = products_server
             .mock("POST", "/products")
             .with_status(200)
+            .with_header("content-type", "application/json")
             .with_body(r#"{"data":{"topProducts":[{"upc":"1"}]}}"#)
             .expect_at_least(1)
             .create_async()
@@ -487,7 +489,7 @@ mod circuit_breaker_e2e_tests {
       "message": "Rejected by the circuit breaker",
       "extensions": {
         "code": "SUBGRAPH_CIRCUIT_BREAKER_REJECTED",
-        "serviceName": "accounts"
+        "service": "accounts"
       }
     }
   ]
@@ -578,7 +580,7 @@ mod circuit_breaker_e2e_tests {
       "message": "Received empty response body from subgraph \"accounts\"",
       "extensions": {
         "code": "SUBGRAPH_RESPONSE_BODY_EMPTY",
-        "serviceName": "accounts"
+        "service": "accounts"
       }
     }
   ]
@@ -641,7 +643,7 @@ mod circuit_breaker_e2e_tests {
       "message": "Received empty response body from subgraph \"accounts\"",
       "extensions": {
         "code": "SUBGRAPH_RESPONSE_BODY_EMPTY",
-        "serviceName": "accounts"
+        "service": "accounts"
       }
     }
   ]
@@ -714,7 +716,7 @@ mod circuit_breaker_e2e_tests {
       "message": "Rejected by the circuit breaker",
       "extensions": {
         "code": "SUBGRAPH_CIRCUIT_BREAKER_REJECTED",
-        "serviceName": "accounts"
+        "service": "accounts"
       }
     }
   ]
@@ -777,7 +779,7 @@ mod circuit_breaker_e2e_tests {
       "message": "Request to subgraph timed out",
       "extensions": {
         "code": "SUBGRAPH_REQUEST_TIMEOUT",
-        "serviceName": "accounts"
+        "service": "accounts"
       }
     }
   ]
@@ -799,7 +801,7 @@ mod circuit_breaker_e2e_tests {
       "message": "Rejected by the circuit breaker",
       "extensions": {
         "code": "SUBGRAPH_CIRCUIT_BREAKER_REJECTED",
-        "serviceName": "accounts"
+        "service": "accounts"
       }
     }
   ]
@@ -1376,7 +1378,7 @@ mod circuit_breaker_e2e_tests {
       "message": "Rejected by the circuit breaker",
       "extensions": {
         "code": "SUBGRAPH_CIRCUIT_BREAKER_REJECTED",
-        "serviceName": "accounts"
+        "service": "accounts"
       }
     }
   ]
@@ -1452,7 +1454,7 @@ mod circuit_breaker_e2e_tests {
       "message": "Received empty response body from subgraph \"accounts\"",
       "extensions": {
         "code": "SUBGRAPH_RESPONSE_BODY_EMPTY",
-        "serviceName": "accounts"
+        "service": "accounts"
       }
     }
   ]
@@ -1513,24 +1515,36 @@ mod circuit_breaker_e2e_tests {
         // error extensions with the originating subgraph name.
         insta::assert_snapshot!(
             res.json_body_string_pretty().await,
-            @r###"{
-  "data": {
-    "users": [
-      {
-        "id": "1"
-      }
-    ]
-  },
-  "errors": [
-    {
-      "message": "upstream is unhappy",
-      "extensions": {
-        "code": "UPSTREAM_FAILURE",
-        "serviceName": "accounts"
-      }
-    }
-  ]
-}"###
+            @r#"
+        {
+          "data": {
+            "users": [
+              {
+                "id": "1"
+              }
+            ]
+          },
+          "errors": [
+            {
+              "message": "upstream is unhappy",
+              "extensions": {
+                "code": "UPSTREAM_FAILURE",
+                "service": "accounts"
+              }
+            },
+            {
+              "message": "Subgraph 'accounts' responded with an invalid HTTP status code '503 Service Unavailable'",
+              "extensions": {
+                "code": "SUBREQUEST_HTTP_ERROR",
+                "service": "accounts",
+                "http": {
+                  "status": 503
+                }
+              }
+            }
+          ]
+        }
+        "#
         );
 
         error_mock.assert_async().await;
@@ -1600,20 +1614,32 @@ mod circuit_breaker_e2e_tests {
         }
         insta::assert_snapshot!(
             bodies[0],
-            @r###"{
-  "data": {
-    "users": null
-  },
-  "errors": [
-    {
-      "message": "upstream is unhappy",
-      "extensions": {
-        "code": "UPSTREAM_FAILURE",
-        "serviceName": "accounts"
-      }
-    }
-  ]
-}"###
+            @r#"
+        {
+          "data": {
+            "users": null
+          },
+          "errors": [
+            {
+              "message": "upstream is unhappy",
+              "extensions": {
+                "code": "UPSTREAM_FAILURE",
+                "service": "accounts"
+              }
+            },
+            {
+              "message": "Subgraph 'accounts' responded with an invalid HTTP status code '503 Service Unavailable'",
+              "extensions": {
+                "code": "SUBREQUEST_HTTP_ERROR",
+                "service": "accounts",
+                "http": {
+                  "status": 503
+                }
+              }
+            }
+          ]
+        }
+        "#
         );
 
         error_mock.assert_async().await;
@@ -1635,7 +1661,7 @@ mod circuit_breaker_e2e_tests {
       "message": "Rejected by the circuit breaker",
       "extensions": {
         "code": "SUBGRAPH_CIRCUIT_BREAKER_REJECTED",
-        "serviceName": "accounts"
+        "service": "accounts"
       }
     }
   ]
@@ -1768,7 +1794,7 @@ mod circuit_breaker_e2e_tests {
       "message": "Rejected by the circuit breaker",
       "extensions": {
         "code": "SUBGRAPH_CIRCUIT_BREAKER_REJECTED",
-        "serviceName": "accounts"
+        "service": "accounts"
       }
     }
   ]
@@ -2606,6 +2632,7 @@ mod circuit_breaker_e2e_tests {
         let success_mock = accounts_server
             .mock("POST", "/accounts")
             .with_status(200)
+            .with_header("content-type", "application/json")
             .with_body(r#"{"data":{"users":[{"id":"1"}]}}"#)
             .expect_at_least(4)
             .create_async()

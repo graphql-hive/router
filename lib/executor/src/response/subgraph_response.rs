@@ -25,6 +25,16 @@ pub struct SubgraphResponse<'a> {
     pub status: Option<StatusCode>,
 }
 
+impl SubgraphResponse<'_> {
+    pub fn append_error(&mut self, error: GraphQLError) {
+        if let Some(errors) = &mut self.errors {
+            errors.push(error);
+        } else {
+            self.errors = Some(vec![error]);
+        }
+    }
+}
+
 impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -272,6 +282,11 @@ impl<'a> SubgraphResponse<'a> {
                 .end()
                 .map_err(|e| SubgraphExecutorError::ResponseDeserializationFailure(e, None))?;
             resp.bytes = Some(bytes);
+
+            if resp.data.is_null() && resp.errors.is_none() {
+                return Err(SubgraphExecutorError::MalformedResponse(None));
+            }
+
             Ok(resp)
         })
     }

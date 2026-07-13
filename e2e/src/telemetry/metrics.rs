@@ -1119,7 +1119,7 @@ async fn test_otlp_http_client_transport_failure_sets_graphql_status_and_error_t
             labels::GRAPHQL_RESPONSE_STATUS,
             values::GraphQLResponseStatus::Error.as_str(),
         ),
-        (labels::ERROR_TYPE, "SUBGRAPH_REQUEST_FAILURE"),
+        (labels::ERROR_TYPE, "SUBREQUEST_HTTP_ERROR"),
     ];
 
     assert_histogram_count(

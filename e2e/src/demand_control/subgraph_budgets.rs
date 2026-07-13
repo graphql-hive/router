@@ -75,7 +75,7 @@ mod subgraph_budgets_tests {
             err["extensions"]["code"].as_str(),
             Some("SUBGRAPH_COST_ESTIMATED_TOO_EXPENSIVE")
         );
-        assert_eq!(err["extensions"]["serviceName"].as_str(), Some("reviews"));
+        assert_eq!(err["extensions"]["service"].as_str(), Some("reviews"));
         assert_eq!(err["extensions"]["affectedPath"].as_str(), Some("me"));
     }
 
@@ -186,7 +186,7 @@ mod subgraph_budgets_tests {
         let blocked_products = json["errors"].as_array().map_or(false, |errors| {
             errors.iter().any(|e| {
                 e["extensions"]["code"].as_str() == Some("SUBGRAPH_COST_ESTIMATED_TOO_EXPENSIVE")
-                    && e["extensions"]["serviceName"].as_str() == Some("products")
+                    && e["extensions"]["service"].as_str() == Some("products")
             })
         });
         assert!(
@@ -248,7 +248,7 @@ mod subgraph_budgets_tests {
         let blocked_products = json["errors"].as_array().map_or(false, |errors| {
             errors.iter().any(|e| {
                 e["extensions"]["code"].as_str() == Some("SUBGRAPH_COST_ESTIMATED_TOO_EXPENSIVE")
-                    && e["extensions"]["serviceName"].as_str() == Some("products")
+                    && e["extensions"]["service"].as_str() == Some("products")
             })
         });
         assert!(
@@ -312,7 +312,7 @@ mod subgraph_budgets_tests {
         let blocked_reviews = json["errors"].as_array().map_or(false, |errors| {
             errors.iter().any(|e| {
                 e["extensions"]["code"].as_str() == Some("SUBGRAPH_COST_ESTIMATED_TOO_EXPENSIVE")
-                    && e["extensions"]["serviceName"].as_str() == Some("reviews")
+                    && e["extensions"]["service"].as_str() == Some("reviews")
             })
         });
 
