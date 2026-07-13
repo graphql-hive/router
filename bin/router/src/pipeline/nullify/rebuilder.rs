@@ -6,16 +6,16 @@ use hive_router_query_planner::ast::{
     value::Value,
 };
 
-use crate::pipeline::authorization::tree::{PathIndex, UnauthorizedPathTrie};
+use crate::pipeline::trie::{PathIndex, Trie};
 
-/// Reconstructs a GraphQL operation with unauthorized fields removed.
-pub(super) fn rebuild_authorized_operation<'op>(
-    original_operation: &'op OperationDefinition,
-    unauthorized_path_trie: &UnauthorizedPathTrie<'op>,
+/// Reconstructs a GraphQL operation with nulled fields removed.
+pub(crate) fn rebuild_nulled_operation(
+    original_operation: &OperationDefinition,
+    nulled_field_trie: &Trie,
 ) -> OperationDefinition {
-    let selection_set = rebuild_authorized_selection_set(
+    let selection_set = rebuild_nulled_selection_set(
         &original_operation.selection_set,
-        unauthorized_path_trie,
+        nulled_field_trie,
         PathIndex::root(),
     );
 
@@ -41,72 +41,62 @@ pub(super) fn rebuild_authorized_operation<'op>(
     }
 }
 
-/// Recursively filters a selection set to remove unauthorized fields.
-fn rebuild_authorized_selection_set<'op>(
-    original_selection_set: &'op SelectionSet,
-    unauthorized_path_trie: &UnauthorizedPathTrie<'op>,
+/// Recursively filters a selection set to remove nulled fields.
+fn rebuild_nulled_selection_set(
+    original_selection_set: &SelectionSet,
+    nulled_field_trie: &Trie,
     path_position: PathIndex,
 ) -> SelectionSet {
-    if !unauthorized_path_trie.has_unauthorized_fields(path_position) {
+    // If the current position, is the last one, there are no children to traverse.
+    if !nulled_field_trie.has_children(path_position) {
         return original_selection_set.clone();
     }
 
-    let mut authorized_items = Vec::with_capacity(original_selection_set.items.len());
+    let mut kept_items = Vec::with_capacity(original_selection_set.items.len());
 
     for selection in &original_selection_set.items {
         match selection {
             SelectionItem::Field(field) => {
                 let path_segment = field.alias.as_ref().unwrap_or(&field.name);
 
-                let Some((child_path_position, is_unauthorized)) =
-                    unauthorized_path_trie.find_field(path_position, path_segment)
+                let Some((child_path_position, is_nulled)) =
+                    nulled_field_trie.find_segment_at_position(path_position, path_segment)
                 else {
-                    authorized_items.push(selection.clone());
+                    kept_items.push(selection.clone());
                     continue;
                 };
 
-                if is_unauthorized {
+                if is_nulled {
                     continue;
                 }
 
-                let filtered_selections = rebuild_authorized_selection_set(
+                let filtered_selections = rebuild_nulled_selection_set(
                     &field.selections,
-                    unauthorized_path_trie,
+                    nulled_field_trie,
                     child_path_position,
                 );
                 if filtered_selections.is_empty() && !field.selections.is_empty() {
                     continue;
                 }
 
-                authorized_items.push(SelectionItem::Field(
+                kept_items.push(SelectionItem::Field(
                     field.with_new_selections(filtered_selections),
                 ));
             }
             SelectionItem::InlineFragment(fragment) => {
-                let Some((fragment_path_position, is_unauthorized)) =
-                    unauthorized_path_trie.find_field(path_position, &fragment.type_condition)
-                else {
-                    // If the fragment is not in the trie, it means it's authorized.
-                    authorized_items.push(selection.clone());
-                    continue;
-                };
-
-                // If the fragment's type condition itself is marked as unauthorized, skip it entirely.
-                if is_unauthorized {
-                    continue;
-                }
-
-                let filtered_selections = rebuild_authorized_selection_set(
+                let filtered_selections = rebuild_nulled_selection_set(
                     &fragment.selections,
-                    unauthorized_path_trie,
-                    fragment_path_position,
+                    nulled_field_trie,
+                    path_position,
                 );
 
-                if !filtered_selections.is_empty() {
-                    authorized_items.push(SelectionItem::InlineFragment(
-                        fragment.with_new_selections(filtered_selections),
-                    ));
+                if filtered_selections.is_empty() && !fragment.selections.is_empty() {
+                    continue;
                 }
+
+                kept_items.push(SelectionItem::InlineFragment(
+                    fragment.with_new_selections(filtered_selections),
+                ));
             }
             SelectionItem::FragmentSpread(_) => {
                 // Fragment spreads are inlined during normalization, so they shouldn't exist here
@@ -114,43 +104,37 @@ fn rebuild_authorized_selection_set<'op>(
         }
     }
 
-    SelectionSet {
-        items: authorized_items,
-    }
+    SelectionSet { items: kept_items }
 }
 
-/// Rebuilds the projection plan to exclude unauthorized fields.
-pub(super) fn rebuild_authorized_projection_plan(
+/// Rebuilds the projection plan to set nulled fields to null.
+pub(crate) fn rebuild_nulled_projection_plan(
     original_plans: &Vec<FieldProjectionPlan>,
-    unauthorized_path_trie: &UnauthorizedPathTrie,
+    nulled_field_trie: &Trie,
 ) -> Vec<FieldProjectionPlan> {
-    rebuild_authorized_projection_plan_recursive(
-        original_plans,
-        unauthorized_path_trie,
-        PathIndex::root(),
-    )
-    .unwrap_or_default()
+    rebuild_nulled_projection_plan_recursive(original_plans, nulled_field_trie, PathIndex::root())
+        .unwrap_or_default()
 }
 
-/// Recursively filters projection plans. Unauthorized fields become null.
-fn rebuild_authorized_projection_plan_recursive(
+/// Recursively filters projection plans. Nulled fields become null.
+fn rebuild_nulled_projection_plan_recursive(
     original_plans: &Vec<FieldProjectionPlan>,
-    unauthorized_path_trie: &UnauthorizedPathTrie,
+    nulled_field_trie: &Trie,
     path_position: PathIndex,
 ) -> Option<Vec<FieldProjectionPlan>> {
-    let mut authorized_plans = Vec::with_capacity(original_plans.len());
+    let mut kept_plans = Vec::with_capacity(original_plans.len());
 
     for plan in original_plans {
         let path_segment = &plan.response_key;
-        let Some((child_path_position, is_unauthorized)) =
-            unauthorized_path_trie.find_field(path_position, path_segment)
+        let Some((child_path_position, is_nulled)) =
+            nulled_field_trie.find_segment_at_position(path_position, path_segment)
         else {
-            authorized_plans.push(plan.clone());
+            kept_plans.push(plan.clone());
             continue;
         };
 
-        if is_unauthorized {
-            authorized_plans.push(plan.with_new_value(ProjectionValueSource::Null));
+        if is_nulled {
+            kept_plans.push(plan.with_new_value(ProjectionValueSource::Null));
             continue;
         }
 
@@ -158,22 +142,22 @@ fn rebuild_authorized_projection_plan_recursive(
             ProjectionValueSource::ResponseData {
                 selections: Some(selections),
             } => ProjectionValueSource::ResponseData {
-                selections: rebuild_authorized_projection_plan_recursive(
+                selections: rebuild_nulled_projection_plan_recursive(
                     selections,
-                    unauthorized_path_trie,
+                    nulled_field_trie,
                     child_path_position,
                 )
                 .map(Arc::new),
             },
             other => other.clone(),
         };
-        authorized_plans.push(plan.with_new_value(new_value));
+        kept_plans.push(plan.with_new_value(new_value));
     }
 
-    if authorized_plans.is_empty() {
+    if kept_plans.is_empty() {
         None
     } else {
-        Some(authorized_plans)
+        Some(kept_plans)
     }
 }
 

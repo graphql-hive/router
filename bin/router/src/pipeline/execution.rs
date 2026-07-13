@@ -1,4 +1,3 @@
-use crate::pipeline::authorization::AuthorizationError;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::shared_state::RouterSharedState;
@@ -17,6 +16,7 @@ use hive_router_plan_executor::headers::response::ResponseHeaderSink;
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
+use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use http::HeaderName;
 use sonic_rs::json;
@@ -37,7 +37,7 @@ pub struct PlannedRequest<'req> {
     pub query_plan_payload: &'req QueryPlan,
     pub variable_payload: Arc<CoerceVariablesPayload>,
     pub client_request_details: Arc<ClientRequestDetails<'req>>,
-    pub authorization_errors: Vec<AuthorizationError>,
+    pub initial_errors: Vec<GraphQLError>,
     pub demand_control_execution_context: Option<DemandControlExecutionContext>,
     pub plugin_req_state: Option<PluginRequestState<'req>>,
 }
@@ -139,11 +139,7 @@ pub async fn execute_plan<'exec>(
                 .demand_control_execution_context
                 .map(|d| d.into()),
             executors: Arc::clone(&supergraph.subgraph_executor_map),
-            initial_errors: planned_request
-                .authorization_errors
-                .iter()
-                .map(|e| e.into())
-                .collect(),
+            initial_errors: planned_request.initial_errors,
             span,
             plugin_req_state: planned_request.plugin_req_state,
             operation_name_factory: OperationNameFactory::new(

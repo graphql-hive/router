@@ -18,7 +18,8 @@ members = [
   "progressive_override_launchdarkly",
   "non_standard_request",
   "incoming_request_deduplication",
-  "error_mapping"
+  "error_mapping",
+  "field_nulling",
 ]
 
 [workspace.dependencies]

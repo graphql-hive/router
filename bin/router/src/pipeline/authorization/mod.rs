@@ -8,30 +8,27 @@
 #[cfg(test)]
 mod tests;
 
-mod collector;
 pub mod metadata;
-mod rebuilder;
-mod tree;
 
 use std::sync::Arc;
 
-use crate::pipeline::authorization::collector::{
-    collect_authorization_statuses, propagate_null_bubbling,
-};
 use crate::pipeline::authorization::metadata::AuthorizationMetadataExt;
-use crate::pipeline::authorization::rebuilder::{
-    rebuild_authorized_operation, rebuild_authorized_projection_plan,
-};
-use crate::pipeline::authorization::tree::UnauthorizedPathTrie;
 use crate::pipeline::error::PipelineError;
-use crate::pipeline::normalize::{hash_normalized_operation, GraphQLNormalizationPayload};
+use crate::pipeline::normalize::GraphQLNormalizationPayload;
+use crate::pipeline::nullify::rebuilder::{
+    rebuild_nulled_operation, rebuild_nulled_projection_plan,
+};
+use crate::pipeline::trie::Trie;
+use crate::utils::StrByAddr;
 
+use ahash::HashSet;
 use hive_router_config::authorization::UnauthorizedMode;
 use hive_router_config::HiveRouterConfig;
-use hive_router_internal::authorization::metadata::AuthorizationMetadata;
+use hive_router_internal::authorization::metadata::{AuthorizationMetadata, AuthorizationRule};
 use hive_router_plan_executor::execution::client_request_details::JwtRequestDetails;
 use hive_router_plan_executor::execution::plan::CoerceVariablesPayload;
 use hive_router_plan_executor::introspection::schema::SchemaMetadata;
+use hive_router_plan_executor::operation_filter::{OperationFilter, Selection};
 use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
 use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use hive_router_query_planner::ast::operation::OperationDefinition;
@@ -74,6 +71,85 @@ impl From<&AuthorizationError> for GraphQLError {
     }
 }
 
+impl From<&GraphQLError> for AuthorizationError {
+    fn from(error: &GraphQLError) -> Self {
+        AuthorizationError {
+            path: error.extensions.affected_path.clone().unwrap_or_default(),
+        }
+    }
+}
+
+fn unauthorized_error() -> GraphQLError {
+    GraphQLError::from_message_and_code("Unauthorized field or type", "UNAUTHORIZED_FIELD_OR_TYPE")
+}
+
+struct AuthorizationChecker<'a, 'op> {
+    auth_metadata: &'a AuthorizationMetadata,
+    user_context: &'a UserAuthContext,
+    cache: HashSet<StrByAddr<'op>>,
+}
+
+impl<'op> AuthorizationChecker<'_, 'op> {
+    /// Returns `true` if this type (or any field/nested type under it) has authorization
+    /// rules that need to be checked.
+    /// When `false`, everything under this type can be skipped.
+    fn parent_has_auth(&self, parent_type_name: &str) -> bool {
+        self.auth_metadata
+            .type_has_any_auth
+            .get(parent_type_name)
+            .copied()
+            .unwrap_or(true)
+    }
+
+    fn is_type_authorized(&mut self, type_name: &'op str) -> bool {
+        let key = StrByAddr(type_name);
+
+        if self.cache.contains(&key) {
+            return true;
+        }
+
+        let authorized = self
+            .auth_metadata
+            .type_rules
+            .get(type_name)
+            .is_none_or(|rule| self.is_rule_satisfied(rule));
+
+        if authorized {
+            self.cache.insert(key);
+        }
+
+        authorized
+    }
+
+    fn is_field_authorized(&self, type_name: &str, field_name: &str) -> bool {
+        let Some(rule) = self
+            .auth_metadata
+            .field_rules
+            .get(type_name)
+            .and_then(|fields| fields.get(field_name))
+        else {
+            return true;
+        };
+
+        self.is_rule_satisfied(rule)
+    }
+
+    fn is_rule_satisfied(&self, rule: &AuthorizationRule) -> bool {
+        match rule {
+            AuthorizationRule::Authenticated => self.user_context.is_authenticated,
+            AuthorizationRule::RequiresScopes(scopes) => {
+                self.user_context.is_authenticated
+                    && scopes.0.iter().any(|and_group| {
+                        and_group
+                            .0
+                            .iter()
+                            .all(|scope_id| self.user_context.scope_ids.contains(scope_id))
+                    })
+            }
+        }
+    }
+}
+
 /// Main entry point for authorization enforcement.
 ///
 /// Checks if authorization is enabled and delegates to the authorization pipeline
@@ -108,7 +184,7 @@ pub fn enforce_operation_authorization(
         variable_payload,
         jwt_request_details,
         reject_mode,
-    );
+    )?;
 
     Ok(match decision {
         AuthorizationDecision::NoChange => (normalized_payload.clone(), vec![]),
@@ -116,29 +192,10 @@ pub fn enforce_operation_authorization(
             new_operation_definition,
             new_projection_plan,
             errors,
-        } => {
-            let hashes = hash_normalized_operation(
-                &new_operation_definition,
-                normalized_payload.operation_for_introspection.as_deref(),
-            );
-
-            (
-                Arc::new(GraphQLNormalizationPayload {
-                    operation_for_plan: Arc::new(new_operation_definition),
-                    operation_for_plan_hash: hashes.operation_for_plan_hash,
-                    // These are cheap Arc clones
-                    operation_for_introspection: normalized_payload
-                        .operation_for_introspection
-                        .clone(),
-                    operation_for_introspection_hash: hashes.operation_for_introspection_hash,
-                    normalized_operation_hash: hashes.combined_operation_hash,
-                    root_type_name: normalized_payload.root_type_name,
-                    projection_plan: Arc::new(new_projection_plan),
-                    operation_identity: normalized_payload.operation_identity.clone(),
-                }),
-                errors,
-            )
-        }
+        } => (
+            normalized_payload.with_operation(new_operation_definition, new_projection_plan),
+            errors,
+        ),
         AuthorizationDecision::Reject { errors } => {
             return Err(PipelineError::AuthorizationFailed(errors));
         }
@@ -152,80 +209,89 @@ pub fn apply_authorization_to_operation(
     variable_payload: &CoerceVariablesPayload,
     jwt_request_details: &JwtRequestDetails,
     reject_mode: bool,
-) -> AuthorizationDecision {
+) -> Result<AuthorizationDecision, PipelineError> {
     if auth_metadata.is_empty() {
-        return AuthorizationDecision::NoChange;
+        return Ok(AuthorizationDecision::NoChange);
     }
 
-    let user_context = create_user_auth_context(jwt_request_details, auth_metadata);
+    let user_context = UserAuthContext::from_jwt(jwt_request_details, auth_metadata);
 
     // Early exit if authenticated users satisfy all rules
     if user_context.is_authenticated && auth_metadata.scopes.is_empty() {
-        return AuthorizationDecision::NoChange;
+        return Ok(AuthorizationDecision::NoChange);
     }
 
-    // Phase 1: Collect authorization status for all fields
+    // Phase 1 & 2: Walk the operation, decide per-field/per-fragment
+    // authorization, and let `OperationFilter` bubble non-null rejections up to
+    // the nearest nullable ancestor.
 
-    let collection_result = collect_authorization_statuses(
-        &normalized_payload.operation_for_plan.selection_set,
-        normalized_payload.root_type_name,
-        schema_metadata,
-        variable_payload,
+    let mut checker = AuthorizationChecker {
         auth_metadata,
-        &user_context,
-    );
+        user_context: &user_context,
+        cache: HashSet::default(),
+    };
 
-    if collection_result.errors.is_empty() {
-        return AuthorizationDecision::NoChange;
+    let operation_filter_output = OperationFilter::new(schema_metadata).filter(
+        normalized_payload.root_type_name,
+        &normalized_payload.operation_for_plan.selection_set,
+        variable_payload,
+        |selection| match selection {
+            Selection::Field(field) => {
+                if !checker.parent_has_auth(field.parent_type_name) {
+                    return selection.keep();
+                }
+
+                let is_authorized = checker.is_type_authorized(field.parent_type_name)
+                    && checker.is_field_authorized(field.parent_type_name, field.field_name)
+                    && checker.is_type_authorized(field.output_type_name);
+
+                if is_authorized {
+                    selection.keep()
+                } else {
+                    selection.reject(unauthorized_error())
+                }
+            }
+            Selection::Fragment(fragment) => {
+                if !checker.parent_has_auth(fragment.parent_type_name) {
+                    return selection.keep();
+                }
+
+                if checker.is_type_authorized(fragment.type_condition) {
+                    selection.keep()
+                } else {
+                    selection.reject(unauthorized_error())
+                }
+            }
+        },
+    )?;
+
+    if operation_filter_output.errors.is_empty() {
+        return Ok(AuthorizationDecision::NoChange);
     }
+
+    let errors: Vec<AuthorizationError> = operation_filter_output
+        .errors
+        .iter()
+        .map(AuthorizationError::from)
+        .collect();
 
     if reject_mode {
         tracing::debug!("Request rejected due to unauthorized fields and reject mode being set");
-        return AuthorizationDecision::Reject {
-            errors: collection_result.errors,
-        };
+        return Ok(AuthorizationDecision::Reject { errors });
     }
-
-    // Phase 2: Apply GraphQL null bubbling semantics
-    // Unauthorized non-null fields must "bubble up" and nullify their parents
-
-    let removal_flags = if collection_result.has_non_null_unauthorized {
-        propagate_null_bubbling(&collection_result.checks)
-    } else {
-        // No non-null unauthorized fields, so no bubbling needed
-        vec![false; collection_result.checks.len()]
-    };
 
     // Phase 3: Reconstruct the operation without unauthorized paths
 
-    let unauthorized_path_trie =
-        UnauthorizedPathTrie::from_checks(&collection_result.checks, &removal_flags);
+    let nulled_field_trie = Trie::from_paths(&operation_filter_output.rejected_paths);
 
-    let new_operation = rebuild_authorized_operation(
-        &normalized_payload.operation_for_plan,
-        &unauthorized_path_trie,
-    );
-    let new_projection_plan = rebuild_authorized_projection_plan(
-        &normalized_payload.projection_plan,
-        &unauthorized_path_trie,
-    );
+    let new_operation =
+        rebuild_nulled_operation(&normalized_payload.operation_for_plan, &nulled_field_trie);
+    let new_projection_plan =
+        rebuild_nulled_projection_plan(&normalized_payload.projection_plan, &nulled_field_trie);
 
-    AuthorizationDecision::Modified {
+    Ok(AuthorizationDecision::Modified {
         new_operation_definition: new_operation,
         new_projection_plan,
-        errors: collection_result.errors,
-    }
-}
-
-/// Creates user authorization context from JWT details.
-fn create_user_auth_context(
-    jwt_request_details: &JwtRequestDetails,
-    auth_metadata: &AuthorizationMetadata,
-) -> UserAuthContext {
-    match jwt_request_details {
-        JwtRequestDetails::Authenticated { scopes, .. } => {
-            UserAuthContext::new(true, scopes.as_deref().unwrap_or(&[]), auth_metadata)
-        }
-        JwtRequestDetails::Unauthenticated => UserAuthContext::new(false, &[], auth_metadata),
-    }
+        errors,
+    })
 }

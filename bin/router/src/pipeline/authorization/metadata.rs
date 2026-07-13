@@ -3,6 +3,7 @@ use hive_router_internal::authorization::metadata::{
     AuthorizationMetadata, AuthorizationRule, FieldRulesMap, RequiredScopes, ScopeAndGroup,
     ScopeId, ScopeInterner, TypeFieldRulesMap, TypeRulesMap,
 };
+use hive_router_plan_executor::execution::client_request_details::JwtRequestDetails;
 use hive_router_plan_executor::introspection::schema::SchemaMetadata;
 use hive_router_query_planner::ast::value::Value;
 use hive_router_query_planner::federation_spec::authorization::{
@@ -30,6 +31,18 @@ impl UserAuthContext {
                 .iter()
                 .filter_map(|s| auth_metadata.scopes.get(s))
                 .collect(),
+        }
+    }
+
+    pub fn from_jwt(
+        jwt_request_details: &JwtRequestDetails,
+        auth_metadata: &AuthorizationMetadata,
+    ) -> Self {
+        match jwt_request_details {
+            JwtRequestDetails::Authenticated { scopes, .. } => {
+                Self::new(true, scopes.as_deref().unwrap_or(&[]), auth_metadata)
+            }
+            JwtRequestDetails::Unauthenticated => Self::new(false, &[], auth_metadata),
         }
     }
 }
@@ -74,15 +87,6 @@ where
         visited: &mut HashSet<String>,
     ) -> bool;
 
-    fn is_type_authorized(&self, type_name: &str, user_context: &UserAuthContext) -> bool;
-
-    fn is_field_authorized(
-        &self,
-        type_name: &str,
-        field_name: &str,
-        user_context: &UserAuthContext,
-    ) -> bool;
-
     /// Computes and adds authorization rules for union types based on their members.
     /// For each union, combines the authorization requirements of all member types.
     fn compute_union_type_rules(schema_metadata: &SchemaMetadata, type_rules: &mut TypeRulesMap);
@@ -97,8 +101,6 @@ where
     /// Combines multiple RequiredScopes using AND logic via cross product.
     /// Example: [["a"], ["b"]] AND [["c"], ["d"]] = [["a", "c"], ["a", "d"], ["b", "c"], ["b", "d"]]
     fn cross_product_required_scopes(member_scopes: &[&RequiredScopes]) -> RequiredScopes;
-
-    fn is_rule_satisfied(&self, rule: &AuthorizationRule, user_context: &UserAuthContext) -> bool;
 
     /// Processes a type definition, extracting authorization rules for the type and its fields.
     fn process_type_definition(
@@ -249,30 +251,6 @@ impl AuthorizationMetadataExt for AuthorizationMetadata {
         false
     }
 
-    fn is_type_authorized(&self, type_name: &str, user_context: &UserAuthContext) -> bool {
-        if let Some(rule) = self.type_rules.get(type_name) {
-            return self.is_rule_satisfied(rule, user_context);
-        }
-
-        true
-    }
-
-    fn is_field_authorized(
-        &self,
-        type_name: &str,
-        field_name: &str,
-        user_context: &UserAuthContext,
-    ) -> bool {
-        if let Some(rule) = self
-            .field_rules
-            .get(type_name)
-            .and_then(|fields| fields.get(field_name))
-        {
-            return self.is_rule_satisfied(rule, user_context);
-        }
-        true
-    }
-
     /// Computes and adds authorization rules for union types based on their members.
     /// For each union, combines the authorization requirements of all member types.
     fn compute_union_type_rules(schema_metadata: &SchemaMetadata, type_rules: &mut TypeRulesMap) {
@@ -351,21 +329,6 @@ impl AuthorizationMetadataExt for AuthorizationMetadata {
         }
 
         RequiredScopes(result)
-    }
-
-    fn is_rule_satisfied(&self, rule: &AuthorizationRule, user_context: &UserAuthContext) -> bool {
-        match rule {
-            AuthorizationRule::Authenticated => user_context.is_authenticated,
-            AuthorizationRule::RequiresScopes(scopes) => {
-                user_context.is_authenticated
-                    && scopes.0.iter().any(|and_group| {
-                        and_group
-                            .0
-                            .iter()
-                            .all(|scope_id| user_context.scope_ids.contains(scope_id))
-                    })
-            }
-        }
     }
 
     /// Processes a type definition, extracting authorization rules for the type and its fields.

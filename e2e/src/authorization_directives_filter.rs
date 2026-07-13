@@ -258,14 +258,14 @@ mod authorization_directives_in_filter_mode_e2e_tests {
               "message": "Unauthorized field or type",
               "extensions": {
                 "code": "UNAUTHORIZED_FIELD_OR_TYPE",
-                "affectedPath": "me"
+                "affectedPath": "topProducts.price"
               }
             },
             {
               "message": "Unauthorized field or type",
               "extensions": {
                 "code": "UNAUTHORIZED_FIELD_OR_TYPE",
-                "affectedPath": "topProducts.price"
+                "affectedPath": "me"
               }
             }
           ]
@@ -336,14 +336,14 @@ mod authorization_directives_in_filter_mode_e2e_tests {
               "message": "Unauthorized field or type",
               "extensions": {
                 "code": "UNAUTHORIZED_FIELD_OR_TYPE",
-                "affectedPath": "me.birthday"
+                "affectedPath": "topProducts.notes"
               }
             },
             {
               "message": "Unauthorized field or type",
               "extensions": {
                 "code": "UNAUTHORIZED_FIELD_OR_TYPE",
-                "affectedPath": "topProducts.notes"
+                "affectedPath": "me.birthday"
               }
             }
           ]
@@ -1603,7 +1603,6 @@ mod authorization_directives_in_filter_mode_e2e_tests {
                 Some(authorization_header_with_scopes("")),
             )
             .await;
-        assert!(res.status().is_success(), "Expected 200 OK");
 
         insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
           {
@@ -1621,6 +1620,8 @@ mod authorization_directives_in_filter_mode_e2e_tests {
             ]
           }
         "#);
+
+        assert!(res.status().is_success(), "Expected 200 OK");
 
         // With both scopes - should get both fields
         let res = router
