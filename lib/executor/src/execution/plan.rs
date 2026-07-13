@@ -2031,6 +2031,8 @@ mod tests {
 
         let mock_a = subgraph_a
             .mock("POST", "/graphql")
+            .with_status(200)
+            .with_header("content-type", "application/json")
             .with_body(r#"{"data":{"from_a":"value_a"}}"#)
             .create();
 
@@ -2048,6 +2050,8 @@ mod tests {
 
         let mock_b = subgraph_b
             .mock("POST", "/graphql")
+            .with_status(200)
+            .with_header("content-type", "application/json")
             .with_chunked_body(move |writer| {
                 // We can add some delay here to make sure the parallel execution is actually working
                 std::thread::sleep(Duration::from_millis(1000));
