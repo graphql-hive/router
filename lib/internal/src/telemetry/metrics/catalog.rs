@@ -62,6 +62,27 @@ pub mod values {
         }
     }
 
+    /// Why a client subscription ended, recorded on the `ended_total` counter.
+    ///
+    /// Defaults to `ClientDisconnected` when a guard drops without an explicit
+    /// reason being set (e.g. the client closed the connection or the stream
+    /// was dropped), so every guard drop is still attributed to a reason.
+    #[derive(Clone, Copy, Debug, strum::IntoStaticStr)]
+    pub enum SubscriptionEndReason {
+        #[strum(serialize = "completed")]
+        Completed,
+        #[strum(serialize = "error")]
+        Error,
+        #[strum(serialize = "client_disconnected")]
+        ClientDisconnected,
+    }
+
+    impl SubscriptionEndReason {
+        pub fn as_str(self) -> &'static str {
+            self.into()
+        }
+    }
+
     /// Circuit breaker state exposed via metrics.
     ///
     /// The internal recloser state has three values (Closed, HalfOpen, Open),
@@ -103,6 +124,8 @@ pub mod labels {
     pub const STATUS: &str = "status";
     pub const ERROR_TYPE: &str = "error.type";
     pub const SUBGRAPH_NAME: &str = "subgraph.name";
+    pub const SUBSCRIPTION_TRANSPORT: &str = "subscription.transport";
+    pub const SUBSCRIPTION_END_REASON: &str = "subscription.end_reason";
     pub const HTTP_REQUEST_METHOD: &str = "http.request.method";
     pub const HTTP_RESPONSE_STATUS_CODE: &str = "http.response.status_code";
     pub const HTTP_ROUTE: &str = "http.route";
@@ -124,6 +147,9 @@ pub mod units {
     pub const DEMAND_CONTROL_COST_UNIT: &str = "{cost}";
     pub const BYTES: &str = "By";
     pub const SECONDS: &str = "s";
+    pub const SUBSCRIPTIONS: &str = "{subscription}";
+    pub const CONNECTIONS: &str = "{connection}";
+    pub const MESSAGES: &str = "{message}";
 }
 
 pub mod names {
@@ -167,9 +193,76 @@ pub mod names {
     pub const COPROCESSOR_REQUESTS_TOTAL: &str = "hive.router.coprocessor.requests_total";
     pub const COPROCESSOR_DURATION: &str = "hive.router.coprocessor.duration";
     pub const COPROCESSOR_ERRORS_TOTAL: &str = "hive.router.coprocessor.errors_total";
+    pub const SUBSCRIPTIONS_SUBGRAPHS_ACTIVE: &str = "hive.router.subscriptions.subgraphs.active";
+    pub const SUBSCRIPTIONS_SUBGRAPHS_CONNECTIONS: &str =
+        "hive.router.subscriptions.subgraphs.connections";
+    pub const SUBSCRIPTIONS_CLIENTS_ACTIVE: &str = "hive.router.subscriptions.clients.active";
+    pub const SUBSCRIPTIONS_CLIENTS_CONNECTIONS: &str =
+        "hive.router.subscriptions.clients.connections";
+    pub const SUBSCRIPTIONS_CLIENTS_STARTED_TOTAL: &str =
+        "hive.router.subscriptions.clients.started_total";
+    pub const SUBSCRIPTIONS_CLIENTS_ENDED_TOTAL: &str =
+        "hive.router.subscriptions.clients.ended_total";
+    pub const SUBSCRIPTIONS_SUBGRAPHS_STARTED_TOTAL: &str =
+        "hive.router.subscriptions.subgraphs.started_total";
+    pub const SUBSCRIPTIONS_SUBGRAPHS_ENDED_TOTAL: &str =
+        "hive.router.subscriptions.subgraphs.ended_total";
+    pub const SUBSCRIPTIONS_SUBGRAPHS_DROPPED_MESSAGES_TOTAL: &str =
+        "hive.router.subscriptions.subgraphs.dropped_messages_total";
+    pub const SUBSCRIPTIONS_CLIENTS_LAGGED_MESSAGES_TOTAL: &str =
+        "hive.router.subscriptions.clients.lagged_messages_total";
+    pub const SUBSCRIPTIONS_CLIENTS_SENT_MESSAGES_TOTAL: &str =
+        "hive.router.subscriptions.clients.sent_messages_total";
 }
 
 pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
+    (
+        names::SUBSCRIPTIONS_SUBGRAPHS_ACTIVE,
+        &[labels::SUBGRAPH_NAME],
+    ),
+    (
+        names::SUBSCRIPTIONS_SUBGRAPHS_CONNECTIONS,
+        &[labels::SUBGRAPH_NAME, labels::SUBSCRIPTION_TRANSPORT],
+    ),
+    (
+        names::SUBSCRIPTIONS_CLIENTS_ACTIVE,
+        &[labels::SUBSCRIPTION_TRANSPORT],
+    ),
+    (
+        names::SUBSCRIPTIONS_CLIENTS_CONNECTIONS,
+        &[labels::SUBSCRIPTION_TRANSPORT],
+    ),
+    (
+        names::SUBSCRIPTIONS_CLIENTS_STARTED_TOTAL,
+        &[labels::SUBSCRIPTION_TRANSPORT],
+    ),
+    (
+        names::SUBSCRIPTIONS_CLIENTS_ENDED_TOTAL,
+        &[
+            labels::SUBSCRIPTION_TRANSPORT,
+            labels::SUBSCRIPTION_END_REASON,
+        ],
+    ),
+    (
+        names::SUBSCRIPTIONS_SUBGRAPHS_STARTED_TOTAL,
+        &[labels::SUBGRAPH_NAME],
+    ),
+    (
+        names::SUBSCRIPTIONS_SUBGRAPHS_ENDED_TOTAL,
+        &[labels::SUBGRAPH_NAME],
+    ),
+    (
+        names::SUBSCRIPTIONS_SUBGRAPHS_DROPPED_MESSAGES_TOTAL,
+        &[labels::SUBSCRIPTION_TRANSPORT],
+    ),
+    (
+        names::SUBSCRIPTIONS_CLIENTS_LAGGED_MESSAGES_TOTAL,
+        &[labels::SUBSCRIPTION_TRANSPORT],
+    ),
+    (
+        names::SUBSCRIPTIONS_CLIENTS_SENT_MESSAGES_TOTAL,
+        &[labels::SUBSCRIPTION_TRANSPORT],
+    ),
     (names::GRAPHQL_ERRORS_TOTAL, &[labels::CODE]),
     (
         names::COST_ESTIMATED,

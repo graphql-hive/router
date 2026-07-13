@@ -9,10 +9,13 @@ use ntex::rt;
 use tokio::sync::mpsc;
 use tracing::debug;
 
+use hive_router_internal::telemetry::metrics::subscription_metrics::SubscriptionTransport;
+use hive_router_internal::telemetry::TelemetryContext;
+
 use crate::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
 use crate::executors::error::SubgraphExecutorError;
 use crate::executors::graphql_transport_ws::build_subscribe_payload;
-use crate::executors::subscription_buffer::{drain_into, receiver_stream};
+use crate::executors::subscription_buffer::drain_into;
 use crate::executors::websocket_client::{connect, WsClient};
 use crate::response::subgraph_response::SubgraphResponse;
 
@@ -21,6 +24,7 @@ pub struct WsSubgraphExecutor {
     endpoint: http::Uri,
     tls_config: Option<Arc<rustls::ClientConfig>>,
     buffer_capacity: usize,
+    telemetry_context: Arc<TelemetryContext>,
 }
 
 impl WsSubgraphExecutor {
@@ -29,12 +33,14 @@ impl WsSubgraphExecutor {
         endpoint: http::Uri,
         tls_config: Option<Arc<rustls::ClientConfig>>,
         buffer_capacity: usize,
+        telemetry_context: Arc<TelemetryContext>,
     ) -> Self {
         Self {
             subgraph_name,
             endpoint,
             tls_config,
             buffer_capacity,
+            telemetry_context,
         }
     }
 }
@@ -128,7 +134,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
     > {
         // buffer decouples the emitting subgraph from slow downstream consumers, dropping
         // messages under backpressure instead of throttling the subgraph
-        let (tx, rx) = mpsc::channel::<Result<SubgraphResponse<'static>, SubgraphExecutorError>>(
+        let (tx, mut rx) = mpsc::channel::<Result<SubgraphResponse<'static>, SubgraphExecutorError>>(
             self.buffer_capacity,
         );
 
@@ -143,6 +149,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
             "establishing WebSocket subscription connection to subgraph {} at {}",
             self.subgraph_name, self.endpoint
         );
+
+        let subgraph_name_for_metrics = self.subgraph_name.clone();
+        let telemetry_context = self.telemetry_context.clone();
 
         // no await intentionally. the task runs the subscription in the background
         // and sends responses through the channel. The spawned future itself stays local
@@ -178,14 +187,43 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 subgraph_name, endpoint
             );
 
+            let _conn_guard = telemetry_context
+                .metrics
+                .subscriptions
+                .active_subgraph_connection(
+                    &subgraph_name_for_metrics,
+                    SubscriptionTransport::WebSocket,
+                );
+
             let stream = client
                 .subscribe(subscribe_payload, custom_scalar_paths)
                 .await
                 .map(Ok);
 
-            drain_into(stream, tx, &subgraph_name, &endpoint.to_string()).await;
+            drain_into(
+                stream,
+                tx,
+                &telemetry_context,
+                SubscriptionTransport::WebSocket,
+                &subgraph_name,
+                &endpoint.to_string(),
+            )
+            .await;
         }));
 
-        Ok(receiver_stream(rx))
+        // op_guard lives with the receiver stream, so the active-operation metric stays up for
+        // as long as a consumer is actually pulling from it, and drops the moment the stream
+        // itself is dropped (subscription unsubscribed/disconnected)
+        let op_guard = self
+            .telemetry_context
+            .metrics
+            .subscriptions
+            .active_subgraph_operation(&self.subgraph_name);
+        Ok(Box::pin(async_stream::stream! {
+            let _op_guard = op_guard;
+            while let Some(item) = rx.recv().await {
+                yield item;
+            }
+        }))
     }
 }

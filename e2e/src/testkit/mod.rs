@@ -827,12 +827,15 @@ impl TestRouter<Built> {
                 let cb_path = path.to_string();
                 let cb_addr = listen.to_string();
                 let cb_subs = schema_state.callback_subscriptions.clone();
+                let cb_telemetry_context = shared_state.telemetry_context.clone();
 
                 let server = web::HttpServer::new(async move || {
                     let cb_subs = cb_subs.clone();
                     let cb_path = cb_path.clone();
+                    let telemetry_context = cb_telemetry_context.clone();
                     web::App::new()
                         .state(cb_subs)
+                        .state(telemetry_context)
                         .configure(move |m| add_callback_handler(m, &cb_path))
                 })
                 .bind(&cb_addr)
@@ -918,9 +921,10 @@ impl TestRouter<Built> {
                         paths.clone(),
                         prometheus.as_ref().map(|p| p.endpoint.clone()),
                     ))
-                    .state(shared_state)
+                    .state(shared_state.clone())
                     .state(schema_state)
                     .state(callback_subs)
+                    .state(shared_state.telemetry_context.clone())
                     .configure(|m| configure_ntex_app(m, &paths, prometheus))
                     .configure(|m| {
                         if let Some(ref callback) = serv_callback_path {

@@ -14,6 +14,9 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, trace};
 use ulid::Ulid;
 
+use hive_router_internal::telemetry::metrics::subscription_metrics::SubscriptionTransport;
+use hive_router_internal::telemetry::TelemetryContext;
+
 use crate::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
 use crate::executors::error::SubgraphExecutorError;
 use crate::executors::http::{build_request_body, HttpClient};
@@ -26,6 +29,7 @@ pub const SUBSCRIPTION_PROTOCOL_HEADER: &str = "subscription-protocol";
 
 #[derive(Clone)]
 pub struct CallbackSubscription {
+    pub subgraph_name: String,
     pub verifier: String,
     pub sender: mpsc::Sender<CallbackMessage>,
     // the subgraph sends an initial check before responding to the subscription POST, but under
@@ -72,6 +76,7 @@ pub struct HttpCallbackSubgraphExecutor {
     pub callback_base_url: String,
     pub heartbeat_interval_ms: u64,
     pub active_subscriptions: CallbackSubscriptionsMap,
+    pub telemetry_context: Arc<TelemetryContext>,
 }
 
 impl HttpCallbackSubgraphExecutor {
@@ -82,6 +87,7 @@ impl HttpCallbackSubgraphExecutor {
         callback_base_url: String,
         heartbeat_interval_ms: u64,
         active_subscriptions: CallbackSubscriptionsMap,
+        telemetry_context: Arc<TelemetryContext>,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -105,6 +111,7 @@ impl HttpCallbackSubgraphExecutor {
             callback_base_url,
             heartbeat_interval_ms,
             active_subscriptions,
+            telemetry_context,
         }
     }
 
@@ -174,6 +181,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         self.active_subscriptions.insert(
             subscription_id.clone(),
             CallbackSubscription {
+                subgraph_name: self.subgraph_name.clone(),
                 verifier,
                 sender: tx,
                 created_at: Instant::now(),
@@ -242,9 +250,22 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
             return Err(SubgraphExecutorError::HttpCallbackStatusCodeNotOk(status));
         }
 
+        let op_guard = self
+            .telemetry_context
+            .metrics
+            .subscriptions
+            .active_subgraph_operation(&self.subgraph_name);
+        let conn_guard = self
+            .telemetry_context
+            .metrics
+            .subscriptions
+            .active_subgraph_connection(&self.subgraph_name, SubscriptionTransport::HttpCallback);
+
         Ok(Box::pin(async_stream::stream! {
             // `guard` is held here; dropping the stream drops `guard`, removing the map entry.
             let _guard = guard;
+            let _op_guard = op_guard;
+            let _conn_guard = conn_guard;
 
             trace!(subscription_id = %subscription_id, "HTTP callback subscription stream started");
 

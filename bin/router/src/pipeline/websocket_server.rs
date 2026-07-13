@@ -17,6 +17,10 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn, Instrument};
 
+use hive_router_internal::telemetry::metrics::catalog::values::SubscriptionEndReason;
+use hive_router_internal::telemetry::metrics::subscription_metrics::{
+    ActiveClientConnectionGuard, SubscriptionTransport,
+};
 use hive_router_internal::telemetry::traces::spans::graphql::GraphQLOperationSpan;
 use hive_router_plan_executor::executors::graphql_transport_ws::{
     ClientMessage, CloseCode, ConnectionInitPayload, ServerMessage, WS_SUBPROTOCOL,
@@ -108,6 +112,18 @@ async fn ws_service(
         debug!("WebSocket connection accepted");
     }
 
+    let conn_guard: Option<ActiveClientConnectionGuard> = if has_accepted_subprotocol {
+        Some(
+            shared_state
+                .telemetry_context
+                .metrics
+                .subscriptions
+                .active_client_connection(SubscriptionTransport::WebSocket),
+        )
+    } else {
+        None
+    };
+
     let ws_uri: Rc<http::Uri> = Rc::new(
         shared_state
             .router_config
@@ -175,6 +191,8 @@ async fn ws_service(
         // in turn cancel all active subscription streams and perform
         // the cleanup in there
         state.borrow_mut().subscriptions.clear();
+        // drop conn_guard here to decrement the connection counter
+        drop(conn_guard);
     });
 
     Ok(chain(service).and_then(on_shutdown))
@@ -365,7 +383,7 @@ async fn handle_text_frame(
                 let parser_result =
                     match parse_operation_with_cache(shared_state, &payload, &plugin_req_state).await {
                         Ok(result) => result,
-                        Err(err) => return Some(err.into_server_message(&id)),
+                        Err(err) => return Some(err.into_server_message(&id, shared_state)),
                     };
 
                 let parser_payload = match parser_result {
@@ -408,7 +426,7 @@ async fn handle_text_frame(
                         ));
                     }
                     Ok(None) => {}
-                    Err(err) => return Some(err.into_server_message(&id)),
+                    Err(err) => return Some(err.into_server_message(&id, shared_state)),
                 }
 
                 let normalize_payload = match normalize_request_with_cache(
@@ -420,7 +438,7 @@ async fn handle_text_frame(
                 .await
                 {
                     Ok(payload) => payload,
-                    Err(err) => return Some(err.into_server_message(&id)),
+                    Err(err) => return Some(err.into_server_message(&id, shared_state)),
                 };
 
                 let is_subscription = matches!(
@@ -429,7 +447,7 @@ async fn handle_text_frame(
                 );
 
                 if is_subscription && !shared_state.router_config.subscriptions.enabled {
-                    return Some(PipelineError::SubscriptionsNotSupported.into_server_message(&id));
+                    return Some(PipelineError::SubscriptionsNotSupported.into_server_message(&id, shared_state));
                 }
 
                 let request_dedupe_enabled =
@@ -502,24 +520,24 @@ async fn handle_text_frame(
                     let (shared_response, _role) = match result {
                         Ok(result) => result,
                         Err(PipelineError::JwtError(err)) => {
-                            let _ = sink.send(err.clone().into_server_message(&id)).await;
+                            let _ = sink.send(err.clone().into_server_message(&id, shared_state)).await;
                             // we report error as graphql error, but we also close the
                             // connection since we're dealing with auth so let's be safe
                             return Some(err.into_close_message());
                         },
-                        Err(err) => return Some(err.into_server_message(&id)),
+                        Err(err) => return Some(err.into_server_message(&id, shared_state)),
                     };
                     Arc::unwrap_or_clone(shared_response)
                 } else {
                     match exec(None).await {
                         Ok(result) => result,
                         Err(PipelineError::JwtError(err)) => {
-                            let _ = sink.send(err.clone().into_server_message(&id)).await;
+                            let _ = sink.send(err.clone().into_server_message(&id, shared_state)).await;
                             // we report error as graphql error, but we also close the
                             // connection since we're dealing with auth so let's be safe
                             return Some(err.into_close_message());
                         },
-                        Err(err) => return Some(err.into_server_message(&id)),
+                        Err(err) => return Some(err.into_server_message(&id, shared_state)),
                     }
                 };
 
@@ -573,6 +591,9 @@ async fn handle_text_frame(
                             .receiver
                             .unwrap_or_else(|| response.body.subscribe());
 
+                        let client_op_guard = shared_state.telemetry_context.metrics.subscriptions.active_client_operation(SubscriptionTransport::WebSocket);
+                        let metrics = shared_state.telemetry_context.metrics.clone();
+
                         trace!(id = %id, "Subscription started");
 
                         let sink = sink.clone();
@@ -582,6 +603,7 @@ async fn handle_text_frame(
                         // making cancellation impossible
                         rt::spawn(async move {
                             let _guard = guard;
+                            let mut client_op_guard = client_op_guard;
                             let mut cancelled = false;
 
                             loop {
@@ -590,16 +612,23 @@ async fn handle_text_frame(
                                         match maybe_item {
                                             Ok(SubscriptionEvent::Raw(data)) => {
                                                 let _ = sink.send(ServerMessage::next(&id_for_loop, &data)).await;
+                                                metrics.subscriptions.record_client_sent(SubscriptionTransport::WebSocket);
                                             }
                                             Ok(SubscriptionEvent::Error(errors)) => {
+                                                client_op_guard.set_end_reason(SubscriptionEndReason::Error);
                                                 let _ = sink.send(ServerMessage::error(&id_for_loop, &errors)).await;
                                                 break;
                                             }
                                             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                                                warn!(id = %id_for_loop, lagged = n, "Broadcast receiver lagged, dropping message");
+                                                // NOTE: not warn to avoid log spam when receiver starts
+                                                // lagging. users should rely on the lagged_messages
+                                                // metric to detect slow consumers and tune accordingly
+                                                debug!(id = %id_for_loop, lagged = n, "Broadcast receiver lagged, dropping message");
+                                                metrics.subscriptions.record_client_lag(SubscriptionTransport::WebSocket, n);
                                                 continue;
                                             }
                                             Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                                client_op_guard.set_end_reason(SubscriptionEndReason::Completed);
                                                 break;
                                             }
                                         }
@@ -718,9 +747,15 @@ fn parse_headers_from_extensions(extensions: Option<&HashMap<String, Value>>) ->
 
 // NOTE: no `From` trait because it can into ws message and ws closecode but both are ws::Message
 impl PipelineError {
-    fn into_server_message(self, id: &str) -> ws::Message {
+    fn into_server_message(self, id: &str, shared_state: &RouterSharedState) -> ws::Message {
         let code = self.graphql_error_code();
         let message = self.graphql_error_message();
+
+        shared_state
+            .telemetry_context
+            .metrics
+            .graphql
+            .record_error(code);
 
         let graphql_error = GraphQLError::from_message_and_extensions(
             message,
@@ -733,13 +768,18 @@ impl PipelineError {
 
 // NOTE: no `From` trait because it can into ws message and ws closecode but both are ws::Message
 impl JwtError {
-    fn into_server_message(self, id: &str) -> ws::Message {
+    fn into_server_message(self, id: &str, shared_state: &RouterSharedState) -> ws::Message {
+        let code = self.error_code();
+
+        shared_state
+            .telemetry_context
+            .metrics
+            .graphql
+            .record_error(code);
+
         ServerMessage::error(
             id,
-            &[GraphQLError::from_message_and_code(
-                self.to_string(),
-                self.error_code(),
-            )],
+            &[GraphQLError::from_message_and_code(self.to_string(), code)],
         )
     }
     fn into_close_message(self) -> ws::Message {

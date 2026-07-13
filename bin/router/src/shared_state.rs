@@ -7,6 +7,9 @@ use hive_router_config::traffic_shaping::{
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::expressions::{BooleanOrProgram, ExpressionCompileError};
 use hive_router_internal::inflight::{InFlightCleanupGuard, InFlightMap};
+use hive_router_internal::telemetry::metrics::catalog::values::SubscriptionEndReason;
+use hive_router_internal::telemetry::metrics::subscription_metrics::SubscriptionTransport;
+use hive_router_internal::telemetry::metrics::Metrics;
 use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::coprocessor::{CoprocessorError, CoprocessorRuntime};
 use hive_router_plan_executor::execution::plan::FailedExecutionResult;
@@ -25,7 +28,7 @@ use ntex::{http::HeaderMap, util::Bytes};
 use std::sync::atomic::AtomicUsize;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::HashSet, sync::Arc};
-use tracing::warn;
+use tracing::debug;
 
 use crate::cache_state::CacheState;
 use crate::jwt::context::JwtTokenPayload;
@@ -109,6 +112,7 @@ impl SharedRouterResponse {
     pub fn into_response(
         self,
         response_mode: &ResponseMode,
+        metrics: &Arc<Metrics>,
     ) -> Result<web::HttpResponse, PipelineError> {
         match self {
             SharedRouterResponse::Single(single) => Ok(single.into()),
@@ -116,7 +120,7 @@ impl SharedRouterResponse {
                 let stream_content_type = response_mode
                     .stream_content_type()
                     .ok_or(PipelineError::SubscriptionsTransportNotSupported)?;
-                Ok(stream.into_response(stream_content_type))
+                Ok(stream.into_response(stream_content_type, metrics))
             }
         }
     }
@@ -166,30 +170,55 @@ impl Clone for SharedRouterStreamResponse {
 }
 
 impl SharedRouterStreamResponse {
-    pub fn into_response(self, stream_content_type: &StreamContentType) -> web::HttpResponse {
+    pub fn into_response(
+        self,
+        stream_content_type: &StreamContentType,
+        metrics: &Arc<Metrics>,
+    ) -> web::HttpResponse {
         // leader already has a pre-subscribed receiver to avoid missing
         // any potential events emitted. joiners, on the other hand, subscribe
         let mut receiver = self.receiver.unwrap_or_else(|| self.body.subscribe());
 
+        let transport = match stream_content_type {
+            StreamContentType::IncrementalDelivery | StreamContentType::ApolloMultipartHTTP => {
+                SubscriptionTransport::HttpMultipart
+            }
+            StreamContentType::SSE => SubscriptionTransport::HttpSse,
+        };
+        // each consumer (leader or joiner) gets its own guards, created here so dedup joiners
+        // are counted too - dropped when the client stream below ends
+        let mut client_op_guard = metrics.subscriptions.active_client_operation(transport);
+        let client_conn_guard = metrics.subscriptions.active_client_connection(transport);
+        let metrics = metrics.clone();
+
         let stream = Box::pin(async_stream::stream! {
+            let _client_conn_guard = client_conn_guard;
             loop {
                 match receiver.recv().await {
                     Ok(SubscriptionEvent::Raw(data)) => {
                         yield data.to_vec();
+                        metrics.subscriptions.record_client_sent(transport);
                     }
                     Ok(SubscriptionEvent::Error(errors)) => {
+                        client_op_guard.set_end_reason(SubscriptionEndReason::Error);
                         yield FailedExecutionResult { errors }.serialize();
                         break;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        warn!(lagged = n, "Broadcast receiver lagged, dropping message");
+                        // NOTE: not warn to avoid log spam when receiver starts lagging.
+                        // users should rely on the lagged_messages metric to detect slow
+                        // consumers and tune accordingly
+                        debug!(lagged = n, "Broadcast receiver lagged, dropping message");
+                        metrics.subscriptions.record_client_lag(transport, n);
                         continue;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        client_op_guard.set_end_reason(SubscriptionEndReason::Completed);
                         break;
                     }
                 }
             }
+            let _client_op_guard = client_op_guard;
         });
 
         let content_type_header = match stream_content_type {

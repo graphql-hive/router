@@ -1,9 +1,12 @@
 use bytes::Bytes as BytesLib;
 use dashmap::mapref::one::Ref;
+use hive_router_internal::telemetry::metrics::subscription_metrics::SubscriptionTransport;
+use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::executors::http_callback::{
     CallbackMessage, CallbackSubscription, CallbackSubscriptionsMap, CALLBACK_PROTOCOL_VERSION,
     SUBSCRIPTION_PROTOCOL_HEADER,
 };
+use hive_router_plan_executor::executors::subscription_buffer::{try_send_or_drop, SendOutcome};
 use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use http::StatusCode;
 use ntex::util::Bytes;
@@ -11,7 +14,6 @@ use ntex::web::WebResponseError;
 use ntex::web::{self, types::Path, HttpRequest, HttpResponse};
 use serde::Deserialize;
 use strum::EnumString;
-use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
 
 #[derive(Debug, Deserialize, EnumString)]
@@ -66,11 +68,6 @@ pub enum CallbackError {
     InvalidVerifier { subscription_id: String },
     #[error("Subscription receiver dropped for subscription ID '{subscription_id}'")]
     SubscriptionDropped { subscription_id: String },
-    // NOTE: intentionally a different variant from SubscriptionDropped
-    #[error(
-        "Client consuming too slowly. Event buffer full for subscription ID '{subscription_id}'"
-    )]
-    ClientTooSlow { subscription_id: String },
 }
 
 impl CallbackError {
@@ -83,7 +80,6 @@ impl CallbackError {
             CallbackError::SubscriptionNotFound { .. } => warn!("{}", self),
             CallbackError::InvalidVerifier { .. } => warn!("{}", self),
             CallbackError::SubscriptionDropped { .. } => debug!("{}", self),
-            CallbackError::ClientTooSlow { .. } => warn!("{}", self),
         }
     }
 }
@@ -98,9 +94,6 @@ impl WebResponseError for CallbackError {
             CallbackError::SubscriptionNotFound { .. }
             | CallbackError::SubscriptionDropped { .. }
             | CallbackError::SubscriptionIdMismatch { .. } => StatusCode::NOT_FOUND,
-            // 503 signals the subgraph that the router is temporarily unable to accept events,
-            // the subgraph can decide to retry or close the subscription on its end
-            CallbackError::ClientTooSlow { .. } => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
     fn error_response(&self, _: &HttpRequest) -> HttpResponse {
@@ -152,6 +145,7 @@ fn handle_next(
     payload: &CallbackPayload<'_>,
     subscription: Ref<'_, String, CallbackSubscription>,
     callback_subscriptions: &CallbackSubscriptionsMap,
+    telemetry_context: &TelemetryContext,
 ) -> Result<(), CallbackError> {
     trace!(subscription_id = %subscription_id, "Received next message");
 
@@ -164,22 +158,18 @@ fn handle_next(
         }
     };
 
-    match subscription
-        .sender
-        .try_send(CallbackMessage::Next { payload: data })
-    {
-        Ok(()) => Ok(()),
-        Err(mpsc::error::TrySendError::Full(_)) => {
-            // if the channel is full it means the consuming client is too slow and unable to keep
-            // up. we terminate the subscription without an error message because it anyways cant go through
-            warn!(subscription_id = %subscription_id, "Subscription client is too slow");
-            drop(subscription);
-            callback_subscriptions.remove(subscription_id);
-            Err(CallbackError::ClientTooSlow {
-                subscription_id: subscription_id.to_string(),
-            })
-        }
-        Err(mpsc::error::TrySendError::Closed(_)) => {
+    match try_send_or_drop(
+        &subscription.sender,
+        CallbackMessage::Next { payload: data },
+        telemetry_context,
+        SubscriptionTransport::HttpCallback,
+        &subscription.subgraph_name,
+        subscription_id,
+    ) {
+        // sent or dropped (consumer too slow): keep the subscription alive either way, same
+        // as the websocket/http drainers, the dropped-message metric already covers this.
+        SendOutcome::Sent | SendOutcome::Dropped => Ok(()),
+        SendOutcome::Closed => {
             debug!(subscription_id = %subscription_id, "Subscription receiver dropped");
             drop(subscription);
             callback_subscriptions.remove(subscription_id);
@@ -211,6 +201,7 @@ pub async fn handler(
     path: Path<String>,
     body: Bytes,
     callback_subscriptions: web::types::State<CallbackSubscriptionsMap>,
+    telemetry_context: web::types::State<std::sync::Arc<TelemetryContext>>,
 ) -> Result<HttpResponse, CallbackError> {
     let subscription_id_from_path = path.into_inner();
 
@@ -238,7 +229,13 @@ pub async fn handler(
     match payload.action {
         CallbackAction::Check => handle_check(&payload.id, &subscription),
         CallbackAction::Next => {
-            handle_next(&payload.id, &payload, subscription, &callback_subscriptions)?;
+            handle_next(
+                &payload.id,
+                &payload,
+                subscription,
+                &callback_subscriptions,
+                &telemetry_context,
+            )?;
         }
         CallbackAction::Complete => {
             handle_complete(&payload.id, &payload, subscription, &callback_subscriptions)
