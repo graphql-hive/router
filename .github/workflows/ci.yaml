@@ -124,6 +124,8 @@ jobs:
             package: "./lib/query-planner"
           - name: "executor"
             package: "./lib/executor"
+          - name: "router"
+            package: "./bin/router"
     name: benchmark / ${{ matrix.name }}
     runs-on: ubuntu-latest
     steps:
