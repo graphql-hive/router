@@ -1,5 +1,4 @@
 use ahash::HashMap;
-use lasso2::{Capacity, Rodeo, Spur};
 
 /// Type-safe position in the path trie structure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -25,19 +24,23 @@ impl PathIndex {
 
 /// Node in the path trie for tracking "marked" field paths.
 #[derive(Debug, Default)]
-struct PathNode {
-    /// Mapping from interned field name to child position.
-    children: HashMap<Spur, PathIndex>,
+struct PathNode<'p> {
+    /// Mapping from field name to child position, hashed by content.
+    children: HashMap<&'p str, PathIndex>,
     /// If true, the field corresponding to this path is marked. What a mark
     /// means is entirely up to the caller (e.g. nulling, per `rebuilder.rs`).
     marked: bool,
 }
 
 /// An index-based (flattened) trie for marking field paths efficiently and
-/// querying them during a selection-set walk. Field names are interned to
-/// allocate less memory than storing raw strings. This structure carries no
+/// querying them during a selection-set walk. This structure carries no
 /// opinion about what a "mark" means - see its consumers (e.g.
 /// `nullify::rebuilder`) for that.
+///
+/// Path segments are looked up by content (not by string identity), since
+/// callers query this trie with strings from independently-allocated trees
+/// (e.g. the operation's AST vs. the projection plan's `response_key`
+/// strings) that don't share the same memory addresses even when equal.
 ///
 /// For marked paths like `["user", "posts", "title"]` and `["user", "email"]`:
 ///
@@ -56,35 +59,31 @@ struct PathNode {
 /// - 3 - "title" marked
 /// - 4 - "email" marked
 #[derive(Debug)]
-pub(crate) struct Trie {
+pub(crate) struct Trie<'p> {
     /// The root is always at position 0.
-    nodes: Vec<PathNode>,
-    interner: Rodeo,
+    nodes: Vec<PathNode<'p>>,
 }
 
-impl Trie {
+impl<'p> Trie<'p> {
     /// Creates a new lookup with an empty root entry, pre-sized to
-    /// accommodate `node_count` nodes and `segment_count` interned segments.
-    fn with_capacity(node_count: usize, segment_count: usize) -> Self {
+    /// accommodate `node_count` nodes.
+    fn with_capacity(node_count: usize) -> Self {
         let mut nodes = Vec::with_capacity(node_count + 1);
         nodes.push(PathNode::default()); // Root entry at position 0
-        Self {
-            nodes,
-            interner: Rodeo::with_capacity(Capacity::for_strings(segment_count)),
-        }
+        Self { nodes }
     }
 
     /// Builds a trie from a list of paths, marking each one.
-    pub(crate) fn from_paths(paths: &[Vec<&str>]) -> Self {
+    pub(crate) fn from_paths(paths: &[Vec<&'p str>]) -> Self {
         let segment_count: usize = paths.iter().map(|path| path.len()).sum();
-        let mut trie = Self::with_capacity(segment_count, segment_count);
+        let mut trie = Self::with_capacity(segment_count);
         for path in paths {
             trie.add_path(path.iter().copied());
         }
         trie
     }
 
-    pub(crate) fn add_path(&mut self, segments: impl Iterator<Item = impl AsRef<str>>) {
+    pub(crate) fn add_path(&mut self, segments: impl Iterator<Item = &'p str>) {
         let mut current = PathIndex::root();
         let mut peekable = segments.peekable();
 
@@ -93,15 +92,14 @@ impl Trie {
                 break;
             };
             let is_last = peekable.peek().is_none();
-            let spur = self.interner.get_or_intern(segment.as_ref());
-            let child = self.nodes[current.get()].children.get(&spur).copied();
+            let child = self.nodes[current.get()].children.get(segment).copied();
 
             let next = match child {
                 Some(child_idx) => child_idx,
                 None => {
                     let new_idx = PathIndex::new(self.nodes.len());
                     self.nodes.push(PathNode::default());
-                    self.nodes[current.get()].children.insert(spur, new_idx);
+                    self.nodes[current.get()].children.insert(segment, new_idx);
                     new_idx
                 }
             };
@@ -123,9 +121,8 @@ impl Trie {
         parent_path_position: PathIndex,
         segment: &str,
     ) -> Option<(PathIndex, bool)> {
-        let spur = self.interner.get(segment)?;
         let parent_node = &self.nodes[parent_path_position.get()];
-        let child_path_position = parent_node.children.get(&spur).copied()?;
+        let child_path_position = parent_node.children.get(segment).copied()?;
         let child_node = &self.nodes[child_path_position.get()];
         Some((child_path_position, child_node.marked))
     }
