@@ -66,7 +66,7 @@ pub fn traverse_and_callback_mut<'a, Callback>(
         FlattenNodePathSegment::Field(field_name) => {
             // If the key is Field, we expect current_data to be an object
             if let Value::Object(map) = current_data {
-                if let Ok(idx) = map.binary_search_by_key(&field_name.as_str(), |(k, _)| k) {
+                if let Some(idx) = map.iter().position(|(k, _)| *k == field_name.as_str()) {
                     let (_, next_data) = map.get_mut(idx).unwrap();
                     let rest_of_path = &remaining_path[1..];
                     let current_error_path_for_field =
@@ -87,8 +87,8 @@ pub fn traverse_and_callback_mut<'a, Callback>(
             // If the key is Cast, we expect current_data to be an object or an array
             if let Value::Object(obj) = current_data {
                 let maybe_type_name = obj
-                    .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
-                    .ok()
+                    .iter()
+                    .position(|(k, _)| *k == TYPENAME_FIELD_NAME)
                     .and_then(|idx| obj[idx].1.as_str());
 
                 if maybe_type_name.is_none_or(|type_name| {
@@ -156,7 +156,7 @@ pub fn traverse_and_callback<'a, Callback>(
         }
         FlattenNodePathSegment::Field(field_name) => {
             if let Value::Object(map) = current_data {
-                if let Ok(idx) = map.binary_search_by_key(&field_name.as_str(), |(k, _)| k) {
+                if let Some(idx) = map.iter().position(|(k, _)| *k == field_name.as_str()) {
                     let (_, next_data) = &map[idx];
                     let rest_of_path = &remaining_path[1..];
                     traverse_and_callback(next_data, rest_of_path, possible_types, callback);
@@ -166,8 +166,8 @@ pub fn traverse_and_callback<'a, Callback>(
         FlattenNodePathSegment::TypeCondition(type_condition) => {
             if let Value::Object(obj) = current_data {
                 let maybe_type_name = obj
-                    .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
-                    .ok()
+                    .iter()
+                    .position(|(k, _)| *k == TYPENAME_FIELD_NAME)
                     .and_then(|idx| obj[idx].1.as_str());
 
                 if maybe_type_name.is_none_or(|type_name| {

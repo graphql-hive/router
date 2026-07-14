@@ -58,7 +58,7 @@ impl<'a> Value<'a> {
     pub fn take_entities_by_key(&mut self, key: &str) -> Option<Vec<Value<'a>>> {
         match self {
             Value::Object(data) => {
-                if let Ok(entities_idx) = data.binary_search_by_key(&key, |(k, _)| *k) {
+                if let Some(entities_idx) = data.iter().position(|(k, _)| *k == key) {
                     if let Value::Array(arr) = data.remove(entities_idx).1 {
                         return Some(arr);
                     }
@@ -115,7 +115,7 @@ impl<'a> Value<'a> {
             match item {
                 SelectionItem::Field(field_selection) => {
                     let field_name = &field_selection.name;
-                    if let Ok(idx) = obj.binary_search_by_key(&field_name.as_str(), |(k, _)| k) {
+                    if let Some(idx) = obj.iter().position(|(k, _)| *k == field_name.as_str()) {
                         let (key, value) = &obj[idx];
                         key.hash(state);
                         value.hash_with_requires(
@@ -128,8 +128,8 @@ impl<'a> Value<'a> {
                 SelectionItem::InlineFragment(inline_fragment) => {
                     let type_condition = &inline_fragment.type_condition;
                     let type_name = obj
-                        .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
-                        .ok()
+                        .iter()
+                        .position(|(k, _)| *k == TYPENAME_FIELD_NAME)
                         .and_then(|idx| obj[idx].1.as_str())
                         .unwrap_or(type_condition);
 
@@ -179,7 +179,6 @@ impl<'a> Value<'a> {
             ValueRef::Object(obj) => {
                 let mut vec = Vec::with_capacity(obj.len());
                 vec.extend(obj.iter().map(|(k, v)| (k, Value::from(v.as_ref()))));
-                vec.sort_unstable_by_key(|(k, _)| *k);
                 Value::Object(vec)
             }
         }
@@ -361,8 +360,6 @@ impl<'de> Visitor<'de> for ValueVisitor<'de> {
         while let Some((key, value)) = map.next_entry()? {
             entries.push((key, value));
         }
-        // IMPORTANT: We keep the sort for binary search compatibility.
-        entries.sort_unstable_by_key(|(k, _)| *k);
         Ok(Value::Object(entries))
     }
 }

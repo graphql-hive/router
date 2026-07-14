@@ -132,8 +132,8 @@ fn project_requires_map_mut(
 ) {
     // First, check if __typename is present in the entity object, we'll use it later
     let type_name = entity_obj
-        .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
-        .ok()
+        .iter()
+        .position(|(k, _)| *k == TYPENAME_FIELD_NAME)
         .and_then(|idx| entity_obj[idx].1.as_str());
 
     // An indicator that only `__typename` is used for the key fields.
@@ -166,12 +166,12 @@ fn project_requires_map_mut(
                 }
 
                 let original = entity_obj
-                    .binary_search_by_key(&field_name.as_str(), |(k, _)| k)
-                    .ok()
+                    .iter()
+                    .position(|(k, _)| *k == field_name.as_str())
                     .or_else(|| {
                         entity_obj
-                            .binary_search_by_key(&response_key, |(k, _)| k)
-                            .ok()
+                            .iter()
+                            .position(|(k, _)| *k == response_key)
                     })
                     .map(|idx| &entity_obj[idx].1);
 
@@ -342,11 +342,11 @@ mod tests {
             }),
           ).expect("projection should produce output"),
           @r#"
-          {
-            "__typename": "Ad",
-            "contactOptions": null,
-            "id": "1"
-          }
+        {
+          "__typename": "Ad",
+          "id": "1",
+          "contactOptions": null
+        }
         "#);
 
         insta::assert_snapshot!(

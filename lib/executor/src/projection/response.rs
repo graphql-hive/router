@@ -335,8 +335,8 @@ fn project_selection_set_with_map<'a>(
         }
 
         let field_val = obj
-            .binary_search_by_key(&plan.response_key.as_str(), |(k, _)| *k)
-            .ok()
+            .iter()
+            .position(|(k, _)| &**k == plan.response_key.as_str())
             .map(|idx| &obj[idx].1);
 
         let res = if let Some(conditions) = &plan.conditions {
@@ -579,8 +579,8 @@ fn resolve_type_name<'a>(
     let typename_field = field_val
         .and_then(|value| value.as_object())
         .and_then(|obj| {
-            obj.binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| *k)
-                .ok()
+            obj.iter()
+                .position(|(k, _)| *k == TYPENAME_FIELD_NAME)
                 .and_then(|idx| obj[idx].1.as_str())
         });
 
@@ -699,8 +699,16 @@ mod tests {
         );
         let projected_bytes = projection.unwrap();
         let projected_str = String::from_utf8(projected_bytes).unwrap();
-        let expected_response = r#"{"data":{"metadatas":[{"id":"meta1","data":{"float":41.5,"int":-42,"str":"value1","unsigned":123}},{"id":"meta2","data":null}]}}"#;
-        assert_eq!(projected_str, expected_response);
+
+        let projected_json: serde_json::Value =
+            sonic_rs::from_str(&projected_str).expect("failed to parse request body to JSON");
+        let expected_response = r#"{"data":{"metadatas":[{"id":"meta1","data":{"unsigned":123,"float":41.5,"int":-42,"str":"value1"}},{"id":"meta2","data":null}]}}"#;
+        let expected_json: serde_json::Value = sonic_rs::from_str(expected_response)
+            .expect("failed to parse expected response to JSON");
+        assert_eq!(
+            serde_json::to_string_pretty(&projected_json).unwrap(),
+            serde_json::to_string_pretty(&expected_json).unwrap()
+        );
     }
 
     #[test]

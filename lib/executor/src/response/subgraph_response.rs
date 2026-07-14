@@ -251,7 +251,6 @@ impl<'a, 'de> Visitor<'de> for PathAwareValueVisitor<'a> {
             };
             entries.push((key, value));
         }
-        entries.sort_unstable_by_key(|(key, _)| *key);
         Ok(Value::Object(entries))
     }
 }
