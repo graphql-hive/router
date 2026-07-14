@@ -108,3 +108,7 @@ insta = { workspace = true }
 [[bench]]
 name = "persisted_documents_matcher_benches"
 harness = false
+
+[[bench]]
+name = "router_benches"
+harness = false
