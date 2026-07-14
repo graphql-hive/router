@@ -21,7 +21,7 @@ use crate::pipeline::nullify::rebuilder::{
 use crate::pipeline::trie::Trie;
 use crate::utils::StrByAddr;
 
-use ahash::HashSet;
+use ahash::HashMap;
 use hive_router_config::authorization::UnauthorizedMode;
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::authorization::metadata::{AuthorizationMetadata, AuthorizationRule};
@@ -86,7 +86,7 @@ fn unauthorized_error() -> GraphQLError {
 struct AuthorizationChecker<'a, 'op> {
     auth_metadata: &'a AuthorizationMetadata,
     user_context: &'a UserAuthContext,
-    cache: HashSet<StrByAddr<'op>>,
+    cache: HashMap<StrByAddr<'op>, bool>,
 }
 
 impl<'op> AuthorizationChecker<'_, 'op> {
@@ -104,8 +104,8 @@ impl<'op> AuthorizationChecker<'_, 'op> {
     fn is_type_authorized(&mut self, type_name: &'op str) -> bool {
         let key = StrByAddr(type_name);
 
-        if self.cache.contains(&key) {
-            return true;
+        if let Some(&authorized) = self.cache.get(&key) {
+            return authorized;
         }
 
         let authorized = self
@@ -114,9 +114,7 @@ impl<'op> AuthorizationChecker<'_, 'op> {
             .get(type_name)
             .is_none_or(|rule| self.is_rule_satisfied(rule));
 
-        if authorized {
-            self.cache.insert(key);
-        }
+        self.cache.insert(key, authorized);
 
         authorized
     }
@@ -228,7 +226,7 @@ pub fn apply_authorization_to_operation(
     let mut checker = AuthorizationChecker {
         auth_metadata,
         user_context: &user_context,
-        cache: HashSet::default(),
+        cache: HashMap::default(),
     };
 
     let operation_filter_output = OperationFilter::new(schema_metadata).filter(

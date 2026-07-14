@@ -1,5 +1,5 @@
+use ahash::HashMap;
 use std::collections::hash_map::Entry;
-use std::collections::HashMap;
 
 use hive_router_query_planner::ast::{
     selection_item::SelectionItem,
@@ -112,7 +112,7 @@ impl<'exec> OperationFilter<'exec> {
         let mut ctx = FilteringContext {
             schema_metadata: self.schema_metadata,
             variable_payload,
-            decisions: HashMap::new(),
+            decisions: HashMap::default(),
             path: Vec::new(),
             result: OperationFilterOutput::default(),
         };

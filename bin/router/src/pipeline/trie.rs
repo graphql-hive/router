@@ -1,5 +1,5 @@
 use ahash::HashMap;
-use lasso2::{Rodeo, Spur};
+use lasso2::{Capacity, Rodeo, Spur};
 
 /// Type-safe position in the path trie structure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -63,17 +63,21 @@ pub(crate) struct Trie {
 }
 
 impl Trie {
-    /// Creates a new lookup with an empty root entry.
-    pub fn new() -> Self {
+    /// Creates a new lookup with an empty root entry, pre-sized to
+    /// accommodate `node_count` nodes and `segment_count` interned segments.
+    fn with_capacity(node_count: usize, segment_count: usize) -> Self {
+        let mut nodes = Vec::with_capacity(node_count + 1);
+        nodes.push(PathNode::default()); // Root entry at position 0
         Self {
-            nodes: vec![PathNode::default()], // Root entry at position 0
-            interner: Rodeo::default(),
+            nodes,
+            interner: Rodeo::with_capacity(Capacity::for_strings(segment_count)),
         }
     }
 
     /// Builds a trie from a list of paths, marking each one.
     pub(crate) fn from_paths(paths: &[Vec<&str>]) -> Self {
-        let mut trie = Self::new();
+        let segment_count: usize = paths.iter().map(|path| path.len()).sum();
+        let mut trie = Self::with_capacity(segment_count, segment_count);
         for path in paths {
             trie.add_path(path.iter().copied());
         }

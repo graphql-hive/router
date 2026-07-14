@@ -1,8 +1,11 @@
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 
+use ahash::HashSet;
 use hive_router_plan_executor::projection::plan::{FieldProjectionPlan, ProjectionValueSource};
 use hive_router_query_planner::ast::{
-    operation::OperationDefinition, selection_item::SelectionItem, selection_set::SelectionSet,
+    operation::OperationDefinition,
+    selection_item::SelectionItem,
+    selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
     value::Value,
 };
 
@@ -13,14 +16,13 @@ pub(crate) fn rebuild_nulled_operation(
     original_operation: &OperationDefinition,
     nulled_field_trie: &Trie,
 ) -> OperationDefinition {
+    let mut used_variables = HashSet::default();
     let selection_set = rebuild_nulled_selection_set(
         &original_operation.selection_set,
         nulled_field_trie,
         PathIndex::root(),
+        &mut used_variables,
     );
-
-    // Collect variables from the filtered operation
-    let used_variables = collect_used_variables(&selection_set);
 
     let variable_definitions = original_operation
         .variable_definitions
@@ -41,14 +43,18 @@ pub(crate) fn rebuild_nulled_operation(
     }
 }
 
-/// Recursively filters a selection set to remove nulled fields.
+/// Recursively filters a selection set to remove nulled fields, collecting
+/// the set of variables used by whatever is kept along the way (so a second
+/// full traversal isn't needed afterwards to compute this).
 fn rebuild_nulled_selection_set(
     original_selection_set: &SelectionSet,
     nulled_field_trie: &Trie,
     path_position: PathIndex,
+    used_variables: &mut HashSet<String>,
 ) -> SelectionSet {
     // If the current position, is the last one, there are no children to traverse.
     if !nulled_field_trie.has_children(path_position) {
+        collect_variables_recursive(original_selection_set, used_variables);
         return original_selection_set.clone();
     }
 
@@ -62,6 +68,8 @@ fn rebuild_nulled_selection_set(
                 let Some((child_path_position, is_nulled)) =
                     nulled_field_trie.find_segment_at_position(path_position, path_segment)
                 else {
+                    collect_field_own_variables(field, used_variables);
+                    collect_variables_recursive(&field.selections, used_variables);
                     kept_items.push(selection.clone());
                     continue;
                 };
@@ -74,11 +82,13 @@ fn rebuild_nulled_selection_set(
                     &field.selections,
                     nulled_field_trie,
                     child_path_position,
+                    used_variables,
                 );
                 if filtered_selections.is_empty() && !field.selections.is_empty() {
                     continue;
                 }
 
+                collect_field_own_variables(field, used_variables);
                 kept_items.push(SelectionItem::Field(
                     field.with_new_selections(filtered_selections),
                 ));
@@ -88,12 +98,14 @@ fn rebuild_nulled_selection_set(
                     &fragment.selections,
                     nulled_field_trie,
                     path_position,
+                    used_variables,
                 );
 
                 if filtered_selections.is_empty() && !fragment.selections.is_empty() {
                     continue;
                 }
 
+                collect_fragment_own_variables(fragment, used_variables);
                 kept_items.push(SelectionItem::InlineFragment(
                     fragment.with_new_selections(filtered_selections),
                 ));
@@ -161,57 +173,56 @@ fn rebuild_nulled_projection_plan_recursive(
     }
 }
 
-/// Collects all variable references from a selection set (single-pass).
-///
-/// Scans the filtered operation to find which variables are actually used,
-/// allowing us to remove unused variable definitions.
-fn collect_used_variables(selection_set: &SelectionSet) -> HashSet<String> {
-    let mut used_variables = HashSet::default();
-    collect_variables_recursive(selection_set, &mut used_variables);
-    used_variables
-}
-
-/// Recursively collects variables from a selection set.
+/// Recursively collects variables from an entire (unfiltered) selection set.
+/// Used when a subtree is kept as-is, so it still needs to be scanned once
+/// for variable usage.
 fn collect_variables_recursive(selection_set: &SelectionSet, used_variables: &mut HashSet<String>) {
     for item in &selection_set.items {
         match item {
             SelectionItem::Field(field) => {
-                // Collect from field arguments
-                if let Some(args) = &field.arguments {
-                    for arg in args.values() {
-                        collect_variables_from_value(arg, used_variables);
-                    }
-                }
-
-                // Collect from @skip directive
-                if let Some(var_name) = &field.skip_if {
-                    used_variables.insert(var_name.clone());
-                }
-
-                // Collect from @include directive
-                if let Some(var_name) = &field.include_if {
-                    used_variables.insert(var_name.clone());
-                }
-
-                // Recurse into field selections
+                collect_field_own_variables(field, used_variables);
                 collect_variables_recursive(&field.selections, used_variables);
             }
             SelectionItem::InlineFragment(fragment) => {
-                // Collect from fragment directives
-                if let Some(var_name) = &fragment.skip_if {
-                    used_variables.insert(var_name.clone());
-                }
-                if let Some(var_name) = &fragment.include_if {
-                    used_variables.insert(var_name.clone());
-                }
-
-                // Recurse into fragment selections
+                collect_fragment_own_variables(fragment, used_variables);
                 collect_variables_recursive(&fragment.selections, used_variables);
             }
             SelectionItem::FragmentSpread(_) => {
                 // Fragment spreads are inlined during normalization
             }
         }
+    }
+}
+
+/// Collects variables referenced directly on a field (arguments, `@skip`/`@include`),
+/// without recursing into its nested selections.
+fn collect_field_own_variables(field: &FieldSelection, used_variables: &mut HashSet<String>) {
+    if let Some(args) = &field.arguments {
+        for arg in args.values() {
+            collect_variables_from_value(arg, used_variables);
+        }
+    }
+
+    if let Some(var_name) = &field.skip_if {
+        used_variables.insert(var_name.clone());
+    }
+
+    if let Some(var_name) = &field.include_if {
+        used_variables.insert(var_name.clone());
+    }
+}
+
+/// Collects variables referenced directly on an inline fragment (`@skip`/`@include`),
+/// without recursing into its nested selections.
+fn collect_fragment_own_variables(
+    fragment: &InlineFragmentSelection,
+    used_variables: &mut HashSet<String>,
+) {
+    if let Some(var_name) = &fragment.skip_if {
+        used_variables.insert(var_name.clone());
+    }
+    if let Some(var_name) = &fragment.include_if {
+        used_variables.insert(var_name.clone());
     }
 }
 
