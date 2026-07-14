@@ -26,8 +26,7 @@ const SUPERGRAPH_SDL: &str = include_str!("../supergraph.graphql");
 /// schema) per request, in `on_http_request`, and have it hold for the entire pipeline: parsing,
 /// validation, normalization, planning, execution *and* introspection.
 ///
-/// Unlike stripping the schema at the validation stage (see the `feature_flags` example),
-/// overriding the schema document also affects introspection, because introspection is built
+/// Overriding the schema document also affects introspection, because introspection is built
 /// from the same resolved schema state that parsing/validation/planning use.
 ///
 /// Here we pre-parse one supergraph document per feature bundle (stripping `@feature`-tagged
