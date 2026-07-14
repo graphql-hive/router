@@ -1,5 +1,6 @@
 use std::{ops::ControlFlow, sync::Arc};
 
+use graphql_tools::static_graphql::schema::Document;
 use hive_router_plan_executor::{
     hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpResponseHookPayload},
     plugin_context::PluginContext,
@@ -8,10 +9,12 @@ use hive_router_plan_executor::{
     request_context::{RequestContextExt, SharedRequestContext},
 };
 use ntex::{
+    http::StatusCode,
     service::{Service, ServiceCtx},
     web::{self, DefaultError},
     Middleware, SharedCfg,
 };
+use tracing::error;
 
 use crate::{RouterPaths, RouterSharedState};
 
@@ -128,6 +131,36 @@ where
 
             // Give the ownership back to variables
             req = start_payload.router_http_request;
+
+            // A plugin may have selected a schema document via `set_schema_document`. Resolve it
+            // through the router-owned schema-state cache here, once, so both HTTP and WebSocket
+            // entry points can just read the resulting `Arc<SchemaState>` from request extensions.
+            let selected_document = req.extensions().get::<Arc<Document>>().cloned();
+            if let Some(document) = selected_document {
+                let shared_state = shared_state
+                    .as_ref()
+                    .expect("router shared state must be present when plugins are configured");
+                match shared_state.schema_state_cache.resolve(
+                    document,
+                    shared_state.router_config.clone(),
+                    shared_state.telemetry_context.clone(),
+                ) {
+                    Ok(schema_state) => {
+                        req.extensions_mut().insert(schema_state);
+                    }
+                    Err(err) => {
+                        // if schema-state build fails, we intentionally return an internal error.
+                        // falling back to the default schema could expose fields the plugin intended
+                        // to remove or change - posing a security threat
+                        error!(error = %err, "failed to build schema state for plugin-selected document");
+                        let error_response = web::HttpResponse::build(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                        )
+                        .body("Failed to build schema state for the selected schema document");
+                        return Ok(req.into_response(error_response));
+                    }
+                }
+            }
 
             let mut response = ctx.call(&self.service, req).await?;
 

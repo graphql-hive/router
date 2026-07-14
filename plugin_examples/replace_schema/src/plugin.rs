@@ -4,7 +4,7 @@ use hive_router::{
     async_trait,
     graphql_tools::{
         ast::TypeDefinitionFields,
-        parser::schema::Definition,
+        parser::schema::{Definition, ParseError},
         static_graphql::{
             query::Value,
             schema::{Document, EnumType, InputObjectType, ObjectType, TypeDefinition},
@@ -18,25 +18,28 @@ use hive_router::{
         plugin_trait::{RouterPlugin, StartHookPayload},
     },
     query_planner::utils::parsing::safe_parse_schema,
-    HiveRouterConfig, SchemaState, SupergraphManagerError, TelemetryContext,
 };
 
 const SUPERGRAPH_SDL: &str = include_str!("../supergraph.graphql");
 
-/// This example shows how a plugin can pick a whole `SchemaState` (not just a schema document)
-/// per request, in `on_http_request`, and have it hold for the entire pipeline: parsing,
+/// This example shows how a plugin can pick a whole schema document (not just a validation-time
+/// schema) per request, in `on_http_request`, and have it hold for the entire pipeline: parsing,
 /// validation, normalization, planning, execution *and* introspection.
 ///
 /// Unlike stripping the schema at the validation stage (see the `feature_flags` example),
-/// overriding the `SchemaState` also affects introspection, because `IntrospectionContext` is
-/// built from the same `SupergraphData` that parsing/validation/planning use.
+/// overriding the schema document also affects introspection, because introspection is built
+/// from the same resolved schema state that parsing/validation/planning use.
 ///
-/// Here we pre-build one `SchemaState` per feature bundle from the supergraph SDL (stripping
-/// `@feature`-tagged types/fields from the *supergraph* document, not the public schema - the
-/// public/consumer schema is derived by the router from whatever we hand it) and pick between
-/// them using the `x-schema-variant` request header.
+/// Here we pre-parse one supergraph document per feature bundle (stripping `@feature`-tagged
+/// types/fields from the *supergraph* document, not the public schema - the public/consumer
+/// schema is derived by the router from whatever we hand it) and pick between them using the
+/// `x-schema-variant` request header.
+///
+/// The plugin only owns stable `Arc<Document>`s. The router resolves each document to its own
+/// internally-owned `SchemaState` (building it once on the first request that selects it, then
+/// reusing it for later requests with the same `Arc<Document>`).
 pub struct ReplaceSchemaPlugin {
-    variants: HashMap<&'static str, Arc<SchemaState>>,
+    variants: HashMap<&'static str, Arc<Document>>,
 }
 
 #[async_trait]
@@ -48,27 +51,15 @@ impl RouterPlugin for ReplaceSchemaPlugin {
     }
 
     fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
-        let router_config = Arc::new(HiveRouterConfig::default());
-        let telemetry_context = Arc::new(TelemetryContext::from_propagation_config(
-            &Default::default(),
-        ));
-
+        // Parse each schema variant once here and keep the `Arc<Document>` around for the
+        // lifetime of the plugin. `on_http_request` must hand the router the *same* `Arc` every
+        // time a variant is selected - constructing a fresh document per request would defeat
+        // the router's schema-state cache and force an expensive rebuild on every request.
         let mut variants = HashMap::new();
-        variants.insert(
-            "full",
-            Arc::new(build_schema_state(
-                &[],
-                router_config.clone(),
-                telemetry_context.clone(),
-            )?),
-        );
+        variants.insert("full", Arc::new(build_document(&[])?));
         variants.insert(
             "basic",
-            Arc::new(build_schema_state(
-                &["inStock", "shippingEstimate"],
-                router_config,
-                telemetry_context,
-            )?),
+            Arc::new(build_document(&["inStock", "shippingEstimate"])?),
         );
 
         payload.initialize_plugin(Self { variants })
@@ -85,25 +76,20 @@ impl RouterPlugin for ReplaceSchemaPlugin {
             .and_then(|value| value.to_str().ok())
             .unwrap_or("full");
 
-        if let Some(schema_state) = self.variants.get(variant) {
-            payload.set_schema_state(schema_state.clone());
+        if let Some(document) = self.variants.get(variant) {
+            payload.set_schema_document(document.clone());
         }
 
         payload.proceed()
     }
 }
 
-/// Builds a `SchemaState` from the supergraph SDL, with the given `@feature`-tagged types/fields
-/// stripped from the supergraph document (so they disappear from planning, validation *and*
-/// introspection alike). An empty `disabled_features` keeps the schema as-is.
-fn build_schema_state(
-    disabled_features: &[&str],
-    router_config: Arc<HiveRouterConfig>,
-    telemetry_context: Arc<TelemetryContext>,
-) -> Result<SchemaState, SupergraphManagerError> {
+/// Builds a supergraph document with the given `@feature`-tagged types/fields stripped (so they
+/// disappear from planning, validation *and* introspection alike). An empty `disabled_features`
+/// keeps the schema as-is.
+fn build_document(disabled_features: &[&str]) -> Result<Document, ParseError> {
     let document = safe_parse_schema(SUPERGRAPH_SDL)?;
-    let document = strip_disabled_features(document, disabled_features);
-    SchemaState::from_supergraph_document(document, router_config, telemetry_context)
+    Ok(strip_disabled_features(document, disabled_features))
 }
 
 fn strip_disabled_features(document: Document, disabled_features: &[&str]) -> Document {

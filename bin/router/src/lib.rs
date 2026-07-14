@@ -51,24 +51,19 @@ use crate::{
 
 use crate::cache_state::{register_cache_size_observers, CacheState};
 pub use crate::plugins::registry::PluginRegistry;
-pub use crate::{
-    schema_state::{SchemaState, SupergraphManagerError},
-    shared_state::RouterSharedState,
-};
+pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 pub use arc_swap::ArcSwap;
 pub use async_trait::async_trait;
 pub use dashmap::DashMap;
 pub use graphql_tools;
 use graphql_tools::validation::rules::default_rules_validation_plan;
 pub use hive_router_config::humantime_serde;
-pub use hive_router_config::HiveRouterConfig;
-use hive_router_config::{load_config, subscriptions::CallbackConfig};
+use hive_router_config::{load_config, subscriptions::CallbackConfig, HiveRouterConfig};
 pub use hive_router_internal::background_tasks;
 use hive_router_internal::background_tasks::{BackgroundTask, CancellationToken};
-pub use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_internal::telemetry::{
     otel::tracing_opentelemetry::OpenTelemetrySpanExt,
-    traces::spans::http_request::HttpServerRequestSpan,
+    traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
 };
 pub use hive_router_internal::BoxError;
 use hive_router_internal::{
@@ -137,8 +132,10 @@ async fn graphql_endpoint_handler(
         .http_server
         .capture_request(&request);
 
-    // A plugin may have overridden the schema state for this request in `on_http_request`
-    // (see `OnHttpRequestHookPayload::set_schema_state`); otherwise fall back to the router's own.
+    // A plugin may have overridden the schema document for this request in `on_http_request`
+    // (see `OnHttpRequestHookPayload::set_schema_document`); the plugin middleware resolves it
+    // into an `Arc<SchemaState>` and stores it in request extensions. Otherwise fall back to the
+    // router's own.
     let schema_state = request
         .extensions()
         .get::<Arc<SchemaState>>()

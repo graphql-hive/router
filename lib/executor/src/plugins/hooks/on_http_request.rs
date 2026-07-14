@@ -1,3 +1,4 @@
+use graphql_tools::static_graphql::schema::Document;
 use ntex::{
     http::Response,
     web::{self, DefaultError, WebRequest},
@@ -78,18 +79,25 @@ impl<'req> OnHttpRequestHookPayload<'req> {
     /// different one, on a per-request basis, e.g. to serve a different set of fields depending
     /// on the caller.
     ///
+    /// The router resolves the document into an internally-owned schema state (building it on
+    /// the first request for that document, then reusing it) and stores that resolved state in
+    /// the request extensions after all `on_http_request` hooks have run.
+    ///
     /// ### Important
     ///
-    /// The generic type `T` must be exactly `hive_router::SchemaState`. If any other type is passed,
-    /// the router will silently fall back to the default schema state.
+    /// Plugins must retain and reuse the *same* `Arc<Document>` for each schema variant (e.g.
+    /// build it once in `on_plugin_init` and keep it in the plugin's state). The router matches
+    /// documents by allocation identity, so parsing or otherwise allocating a new `Document` per
+    /// request defeats the router's schema-state cache and causes an expensive `SchemaState`
+    /// rebuild on every request.
     ///
     /// ### Example
     ///
     /// ```ignore
-    /// payload.set_schema_state(my_schema_state.clone());
+    /// payload.set_schema_document(document.clone());
     /// ```
-    pub fn set_schema_state<T: Send + Sync + 'static>(&self, state: Arc<T>) {
-        self.router_http_request.extensions_mut().insert(state);
+    pub fn set_schema_document(&self, document: Arc<Document>) {
+        self.router_http_request.extensions_mut().insert(document);
     }
 }
 

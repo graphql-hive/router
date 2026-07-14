@@ -46,6 +46,7 @@ use crate::pipeline::persisted_documents::resolve::PersistedDocumentResolverErro
 use crate::pipeline::persisted_documents::PersistedDocumentsRuntime;
 use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
 use crate::pipeline::sse;
+use crate::schema_state::SchemaStateCache;
 use crate::storage::StorageManager;
 
 pub type JwtClaimsCache = Cache<String, Arc<JwtTokenPayload>>;
@@ -329,6 +330,9 @@ pub struct RouterSharedState {
     pub active_subscriptions: ActiveSubscriptions,
     /// The storage manager for the router.
     pub storage_manager: Arc<StorageManager>,
+    /// Resolves a plugin-selected `Arc<Document>` (via `set_schema_document`) to its
+    /// `Arc<SchemaState>`, building and caching it on a miss.
+    pub schema_state_cache: SchemaStateCache,
 }
 
 impl RouterSharedState {
@@ -394,6 +398,7 @@ impl RouterSharedState {
             long_lived_client_count: Arc::new(AtomicUsize::new(0)),
             active_subscriptions,
             storage_manager,
+            schema_state_cache: SchemaStateCache::default(),
         })
     }
 }

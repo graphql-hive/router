@@ -33,7 +33,8 @@ use hive_router_query_planner::{
     utils::parsing::safe_parse_schema,
 };
 use moka::future::Cache;
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -77,9 +78,6 @@ pub enum SupergraphManagerError {
 
     #[error("Error from plugin: {0}")]
     PluginError(String),
-
-    #[error("Failed to parse supergraph SDL: {0}")]
-    ParseSupergraphError(#[from] graphql_tools::parser::schema::ParseError),
 }
 
 impl SchemaState {
@@ -89,22 +87,6 @@ impl SchemaState {
 
     pub fn is_ready(&self) -> bool {
         self.current_supergraph().is_some()
-    }
-
-    /// Builds a standalone `SchemaState` from a supergraph SDL string, with its own fresh
-    /// caches, demand-control runtime and callback subscriptions map. There is no background
-    /// loader and no reload channel: the caller (a plugin) owns the lifecycle and is expected
-    /// to build a new `SchemaState` whenever the schema variant changes.
-    ///
-    /// This is expensive (full planner build): construct once per schema variant, never per
-    /// request.
-    pub fn from_supergraph_sdl(
-        sdl: &str,
-        router_config: Arc<HiveRouterConfig>,
-        telemetry_context: Arc<TelemetryContext>,
-    ) -> Result<Self, SupergraphManagerError> {
-        let document = safe_parse_schema(sdl)?;
-        Self::from_supergraph_document(document, router_config, telemetry_context)
     }
 
     /// Same as [`Self::from_supergraph_sdl`], but takes an already-parsed supergraph document.
@@ -364,6 +346,57 @@ impl SchemaState {
     }
 }
 
+/// Router-owned cache mapping a plugin-provided `Arc<Document>` to the `Arc<SchemaState>` built
+/// from it. Keyed by allocation identity (`Arc::ptr_eq`), not document content, so plugins must
+/// reuse the same `Arc<Document>` per schema variant to get cache hits.
+///
+/// Strict FIFO eviction: the oldest inserted entry is evicted first once the cache is full,
+/// regardless of how often it was hit. Miss construction is serialized by the mutex; this is
+/// deliberately simple since schema variants and cache misses are expected to be rare.
+pub struct SchemaStateCache {
+    entries: Mutex<VecDeque<(Arc<Document>, Arc<SchemaState>)>>,
+}
+
+/// Maximum number of distinct schema-document variants kept resolved at once.
+const SCHEMA_STATE_CACHE_MAX_SIZE: usize = 10;
+
+impl Default for SchemaStateCache {
+    fn default() -> Self {
+        Self {
+            entries: Mutex::new(VecDeque::with_capacity(SCHEMA_STATE_CACHE_MAX_SIZE)),
+        }
+    }
+}
+
+impl SchemaStateCache {
+    /// Resolves `document` to its `Arc<SchemaState>`, building and caching it on a miss.
+    pub fn resolve(
+        &self,
+        document: Arc<Document>,
+        router_config: Arc<HiveRouterConfig>,
+        telemetry_context: Arc<TelemetryContext>,
+    ) -> Result<Arc<SchemaState>, SupergraphManagerError> {
+        let mut entries = self.entries.lock().unwrap();
+
+        if let Some((_, state)) = entries.iter().find(|(doc, _)| Arc::ptr_eq(doc, &document)) {
+            return Ok(state.clone());
+        }
+
+        let state = Arc::new(SchemaState::from_supergraph_document(
+            document.as_ref().clone(),
+            router_config,
+            telemetry_context,
+        )?);
+
+        if entries.len() >= SCHEMA_STATE_CACHE_MAX_SIZE {
+            entries.pop_front();
+        }
+        entries.push_back((document, state.clone()));
+
+        Ok(state)
+    }
+}
+
 pub struct SupergraphBackgroundLoader {
     loader: Box<dyn SupergraphLoader + Send + Sync>,
     sender: Arc<mpsc::Sender<String>>,
@@ -505,5 +538,164 @@ impl BackgroundTask for CallbackHeartbeatEnforcerTask {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod schema_state_cache_tests {
+    use super::*;
+
+    const TEST_SUPERGRAPH_SDL: &str =
+        include_str!("../../../plugin_examples/replace_schema/supergraph.graphql");
+
+    fn test_document() -> Arc<Document> {
+        // subgraph executor construction needs a process-wide rustls crypto provider; installing
+        // it repeatedly across tests is a harmless no-op (just logs a warning) but is very useful
+        // when running only this test in isolation, so we do it here instead of in a global test setup
+        crate::init_rustls_crypto_provider();
+        Arc::new(safe_parse_schema(TEST_SUPERGRAPH_SDL).expect("valid test supergraph SDL"))
+    }
+
+    fn test_config() -> Arc<HiveRouterConfig> {
+        Arc::new(HiveRouterConfig::default())
+    }
+
+    fn test_telemetry() -> Arc<TelemetryContext> {
+        Arc::new(TelemetryContext::from_propagation_config(
+            &Default::default(),
+        ))
+    }
+
+    #[test]
+    fn reusing_same_document_returns_same_state() {
+        let cache = SchemaStateCache::default();
+        let document = test_document();
+
+        let first = cache
+            .resolve(document.clone(), test_config(), test_telemetry())
+            .unwrap();
+        let second = cache
+            .resolve(document, test_config(), test_telemetry())
+            .unwrap();
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(cache.entries.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn different_allocations_create_separate_entries() {
+        let cache = SchemaStateCache::default();
+
+        // Structurally identical documents, but distinct `Arc` allocations.
+        let a = test_document();
+        let b = test_document();
+        assert_eq!(a.as_ref(), b.as_ref());
+
+        let state_a = cache.resolve(a, test_config(), test_telemetry()).unwrap();
+        let state_b = cache.resolve(b, test_config(), test_telemetry()).unwrap();
+
+        assert!(!Arc::ptr_eq(&state_a, &state_b));
+        assert_eq!(cache.entries.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn eleventh_unique_document_evicts_the_first() {
+        let cache = SchemaStateCache::default();
+        let documents: Vec<Arc<Document>> = (0..11).map(|_| test_document()).collect();
+
+        for document in &documents[..10] {
+            cache
+                .resolve(document.clone(), test_config(), test_telemetry())
+                .unwrap();
+        }
+        assert_eq!(
+            cache.entries.lock().unwrap().len(),
+            SCHEMA_STATE_CACHE_MAX_SIZE
+        );
+
+        cache
+            .resolve(documents[10].clone(), test_config(), test_telemetry())
+            .unwrap();
+
+        let entries = cache.entries.lock().unwrap();
+        assert_eq!(entries.len(), SCHEMA_STATE_CACHE_MAX_SIZE);
+        assert!(!entries
+            .iter()
+            .any(|(doc, _)| Arc::ptr_eq(doc, &documents[0])));
+        assert!(entries
+            .iter()
+            .any(|(doc, _)| Arc::ptr_eq(doc, &documents[10])));
+    }
+
+    #[test]
+    fn cache_hits_do_not_refresh_fifo_order() {
+        let cache = SchemaStateCache::default();
+        let first = test_document();
+        let second = test_document();
+
+        cache
+            .resolve(first.clone(), test_config(), test_telemetry())
+            .unwrap();
+        cache
+            .resolve(second, test_config(), test_telemetry())
+            .unwrap();
+
+        // hitting the first (oldest) entry again must not move it to the back.
+        cache
+            .resolve(first.clone(), test_config(), test_telemetry())
+            .unwrap();
+
+        let entries = cache.entries.lock().unwrap();
+        assert!(Arc::ptr_eq(&entries.front().unwrap().0, &first));
+    }
+
+    #[test]
+    fn reusing_an_evicted_document_rebuilds_its_state() {
+        let cache = SchemaStateCache::default();
+        let evicted = test_document();
+
+        cache
+            .resolve(evicted.clone(), test_config(), test_telemetry())
+            .unwrap();
+        let first_state = cache.entries.lock().unwrap().front().unwrap().1.clone();
+
+        // fill the cache with 10 other unique documents so `evicted` falls off the front.
+        for _ in 0..10 {
+            cache
+                .resolve(test_document(), test_config(), test_telemetry())
+                .unwrap();
+        }
+        assert!(!cache
+            .entries
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(doc, _)| Arc::ptr_eq(doc, &evicted)));
+
+        let rebuilt_state = cache
+            .resolve(evicted, test_config(), test_telemetry())
+            .unwrap();
+        assert!(!Arc::ptr_eq(&first_state, &rebuilt_state));
+    }
+
+    #[test]
+    fn failed_build_does_not_evict_a_valid_cached_state() {
+        let cache = SchemaStateCache::default();
+        let valid = test_document();
+        cache
+            .resolve(valid.clone(), test_config(), test_telemetry())
+            .unwrap();
+
+        // a malformed subgraph endpoint URL fails executor construction gracefully (unlike a
+        // structurally-broken document, which would fail on the safe_parse_schema step
+        let invalid_sdl =
+            TEST_SUPERGRAPH_SDL.replace("http://0.0.0.0:4200/accounts", "not a valid url ::");
+        let invalid = Arc::new(safe_parse_schema(&invalid_sdl).expect("still parses as SDL"));
+        let result = cache.resolve(invalid, test_config(), test_telemetry());
+        assert!(result.is_err());
+
+        let entries = cache.entries.lock().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(Arc::ptr_eq(&entries.front().unwrap().0, &valid));
     }
 }
