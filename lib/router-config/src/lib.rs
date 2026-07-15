@@ -300,8 +300,10 @@ pub fn load_config(
 }
 
 pub fn parse_yaml_config(config_raw: String) -> Result<HiveRouterConfig, RouterConfigError> {
+    let env_overrides = EnvVarOverrides::init_from_env()?;
     let config_root_path = get_current_dir()?;
-    let config = Config::builder();
+    let mut config = Config::builder();
+    config = env_overrides.apply_overrides(config)?;
 
     with_start_path(&config_root_path, || {
         config

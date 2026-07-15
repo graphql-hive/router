@@ -5,10 +5,14 @@ use std::collections::HashMap;
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ErrorMaskingConfig {
+    /// The error message to redact in subgraph errors. The default is "Unexpected error".
     #[serde(default = "default_redacted_error_message")]
     pub redacted_error_message: String,
+    /// The default error masking configuration for all subgraphs.
     #[serde(default)]
-    pub all: SubgraphErrorMaskingConfig,
+    pub all: AllErrorMaskingConfig,
+    /// The error masking configuration for individual subgraphs.
+    /// Any configuration field that will be specified here, will override the configuration in `all`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subgraphs: Option<HashMap<String, SubgraphErrorMaskingConfig>>,
 }
@@ -21,28 +25,66 @@ impl Default for ErrorMaskingConfig {
     fn default() -> Self {
         Self {
             redacted_error_message: default_redacted_error_message(),
-            all: SubgraphErrorMaskingConfig::default(),
+            all: AllErrorMaskingConfig::default(),
             subgraphs: None,
         }
     }
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-pub struct SubgraphErrorMaskingConfig {
+#[serde(deny_unknown_fields)]
+pub struct AllErrorMaskingConfig {
+    /// Whether to redact the error message in subgraph errors. The default is `true`.
+    ///
+    /// This field can be set to `false`, in order to disable error masking, by setting the `DISABLE_SUBGRAPH_ERROR_MASKING=true` environment variable.
     #[serde(default = "default_redact_error_message")]
+    pub error_message: bool,
+    /// Whether to redact the `extensions` in errors.
+    ///
+    /// You may pick the execution mode by setting `mode: allow` or `mode: deny`.
+    /// Note: only root-level fields are supported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<ExtensionsMaskingConfig>,
+}
+
+fn default_redact_error_message() -> bool {
+    true
+}
+
+impl Default for AllErrorMaskingConfig {
+    fn default() -> Self {
+        Self {
+            error_message: true,
+            extensions: None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct SubgraphErrorMaskingConfig {
+    /// Whether to redact the `error_message` in errors, for that specific subgraph.
+    ///
+    /// Configuring this will override the global `all.error_message` setting.
+    #[serde(default = "default_subgraph_redact_error_message")]
     pub error_message: Option<bool>,
+    /// Whether to redact the `extensions` in errors, for that specific subgraph.
+    /// Configuring this will override the global `all.extensions` setting.
+    ///
+    /// You may pick the execution mode by setting `mode: allow` or `mode: deny`.
+    /// Note: only root-level fields are supported.
     #[serde(default)]
     pub extensions: Option<ExtensionsMaskingConfig>,
 }
 
-fn default_redact_error_message() -> Option<bool> {
+fn default_subgraph_redact_error_message() -> Option<bool> {
     None
 }
 
 impl Default for SubgraphErrorMaskingConfig {
     fn default() -> Self {
         Self {
-            error_message: Some(true),
+            error_message: default_subgraph_redact_error_message(),
             extensions: None,
         }
     }
@@ -51,8 +93,10 @@ impl Default for SubgraphErrorMaskingConfig {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields, tag = "mode")]
 pub enum ExtensionsMaskingConfig {
+    /// Redact extensions based on the allowlist.
     #[serde(rename = "allow")]
     AllowList { keys: Vec<String> },
+    /// Redact extensions based on the denylist.
     #[serde(rename = "deny")]
     DenyList { keys: Vec<String> },
 }

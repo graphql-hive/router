@@ -13,3 +13,6 @@ headers:
       - insert:
           name: "x-router-env"
           expression: env("ROUTER_ENV_HEADER", "default")
+error_masking:
+  all:
+    error_message: false

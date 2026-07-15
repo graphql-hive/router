@@ -7,7 +7,6 @@ use hive_router_internal::telemetry::traces::spans::graphql::{
 };
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 use hive_router_plan_executor::execution::demand_control::DemandControlExecutionContext;
-use hive_router_plan_executor::execution::error_masking::ErrorMaskingRuntime;
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
 use hive_router_plan_executor::execution::operation_name::OperationNameFactory;
 use hive_router_plan_executor::execution::plan::{
@@ -120,10 +119,6 @@ pub async fn execute_plan<'exec>(
             None
         };
 
-        let error_masking_runtime = Arc::new(ErrorMaskingRuntime::compile_from_config(
-            &app_state.router_config.error_masking,
-        ));
-
         let operation_name = planned_request.client_request_details.operation.name;
         let result = execute_query_plan(QueryPlanExecutionOpts {
             query_plan: planned_request.query_plan_payload,
@@ -154,7 +149,7 @@ pub async fn execute_plan<'exec>(
                 operation_name,
             ),
             response_header_sink,
-            error_masking_runtime,
+            error_masking_runtime: app_state.error_masking.clone(),
         })
         .await?;
 

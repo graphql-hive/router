@@ -1122,6 +1122,9 @@ mod subscriptions_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                error_masking:
+                    all:
+                      error_message: false
                 subscriptions:
                     enabled: true
                 "#,

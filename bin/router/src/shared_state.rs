@@ -12,6 +12,7 @@ use hive_router_internal::telemetry::metrics::subscription_metrics::Subscription
 use hive_router_internal::telemetry::metrics::Metrics;
 use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::coprocessor::{CoprocessorError, CoprocessorRuntime};
+use hive_router_plan_executor::execution::error_masking::ErrorMaskingRuntime;
 use hive_router_plan_executor::execution::plan::FailedExecutionResult;
 use hive_router_plan_executor::extensions::{
     compile::compile_extensions_plan, plan::ExtensionsPlan,
@@ -328,6 +329,8 @@ pub struct RouterSharedState {
     pub active_subscriptions: ActiveSubscriptions,
     /// The storage manager for the router.
     pub storage_manager: Arc<StorageManager>,
+    /// The error masking configuration for the router.
+    pub error_masking: Arc<ErrorMaskingRuntime>,
 }
 
 impl RouterSharedState {
@@ -356,6 +359,9 @@ impl RouterSharedState {
                 .map_err(Box::new)
             })
             .transpose()?;
+        let error_masking = Arc::new(ErrorMaskingRuntime::compile_from_config(
+            &router_config.error_masking,
+        ));
 
         Ok(Self {
             validation_plan: Arc::new(validation_plan),
@@ -392,6 +398,7 @@ impl RouterSharedState {
             long_lived_client_count: Arc::new(AtomicUsize::new(0)),
             active_subscriptions,
             storage_manager,
+            error_masking,
         })
     }
 }

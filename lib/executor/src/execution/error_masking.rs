@@ -1,29 +1,40 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
-use hive_router_config::error_masking::{
-    ErrorMaskingConfig, ExtensionsMaskingConfig, SubgraphErrorMaskingConfig,
-};
+use hive_router_config::error_masking::{ErrorMaskingConfig, ExtensionsMaskingConfig};
 
 pub struct ErrorMaskingRuntime {
-    default_redacted_error_message: String,
-    per_subgraph_config: HashMap<String, ErrorMaskingCompiledConfig>,
-    default_config: ErrorMaskingCompiledConfig,
+    redacted_error_message: String,
+
+    // Error masking for the error message, split by "all" and subgraph-specific
+    default_error_masking: bool,
+    per_subgraph_error_masking: HashMap<String, bool>,
+
+    // Error masking for the error extensions, split by "all" and subgraph-specific
+    default_extensions_masking: Option<RedactExtensionsPlan>,
+    per_subgraph_extensions_masking: HashMap<String, Option<RedactExtensionsPlan>>,
 }
 
 impl ErrorMaskingRuntime {
     pub fn apply(&self, err: &mut GraphQLError) {
         if let Some(service_name) = &err.extensions.service_name {
-            let effective_config = self
-                .per_subgraph_config
+            let should_mask_message = self
+                .per_subgraph_error_masking
                 .get(service_name)
-                .unwrap_or(&self.default_config);
+                .copied()
+                .unwrap_or(self.default_error_masking);
 
-            if effective_config.redact_error_message {
-                err.message = self.default_redacted_error_message.clone();
+            if should_mask_message {
+                err.message = self.redacted_error_message.clone();
             }
 
-            if let Some(plan) = &effective_config.extensions_plan {
+            let extensions_masking_config = self
+                .per_subgraph_extensions_masking
+                .get(service_name)
+                .and_then(|plan| plan.as_ref())
+                .or(self.default_extensions_masking.as_ref());
+
+            if let Some(plan) = extensions_masking_config {
                 plan.apply(&mut err.extensions);
             }
         }
@@ -31,39 +42,56 @@ impl ErrorMaskingRuntime {
 
     pub fn compile_from_config(config: &ErrorMaskingConfig) -> Self {
         Self {
-            default_redacted_error_message: config.redacted_error_message.clone(),
-            per_subgraph_config: config
+            redacted_error_message: config.redacted_error_message.clone(),
+            default_error_masking: config.all.error_message,
+            per_subgraph_error_masking: config
                 .subgraphs
                 .as_ref()
                 .map(|subgraphs| {
                     subgraphs
                         .iter()
-                        .map(|(name, cfg)| (name.clone(), Self::compile_config(cfg)))
+                        .map(|(name, cfg)| {
+                            (
+                                name.clone(),
+                                cfg.error_message.unwrap_or(config.all.error_message),
+                            )
+                        })
                         .collect()
                 })
                 .unwrap_or_default(),
-            default_config: Self::compile_config(&config.all),
+            default_extensions_masking: config
+                .all
+                .extensions
+                .as_ref()
+                .map(Self::compile_extensions_config),
+            per_subgraph_extensions_masking: config
+                .subgraphs
+                .as_ref()
+                .map(|subgraphs| {
+                    subgraphs
+                        .iter()
+                        .map(|(name, cfg)| {
+                            (
+                                name.clone(),
+                                cfg.extensions.as_ref().map(Self::compile_extensions_config),
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 
-    fn compile_config(config: &SubgraphErrorMaskingConfig) -> ErrorMaskingCompiledConfig {
-        let extensions_plan = config.extensions.as_ref().map(|cfg| match cfg {
+    fn compile_extensions_config(
+        extensions_config: &ExtensionsMaskingConfig,
+    ) -> RedactExtensionsPlan {
+        match extensions_config {
             ExtensionsMaskingConfig::AllowList { keys } => {
                 RedactExtensionsPlan::Allow(keys.clone())
             }
             ExtensionsMaskingConfig::DenyList { keys } => RedactExtensionsPlan::Deny(keys.clone()),
-        });
-
-        ErrorMaskingCompiledConfig {
-            redact_error_message: config.error_message.unwrap_or(true),
-            extensions_plan,
         }
     }
-}
-
-struct ErrorMaskingCompiledConfig {
-    redact_error_message: bool,
-    extensions_plan: Option<RedactExtensionsPlan>,
 }
 
 enum RedactExtensionsPlan {
@@ -85,7 +113,7 @@ impl RedactExtensionsPlan {
 
     fn apply_deny_list(extensions: &mut GraphQLErrorExtensions, list: &[String]) {
         for removal_path in list {
-            Self::remove_field(extensions, &removal_path);
+            Self::remove_field(extensions, removal_path);
         }
     }
 
@@ -98,7 +126,7 @@ impl RedactExtensionsPlan {
         for key in list {
             match key.as_str() {
                 "code" => allow_code = true,
-                "serviceName" => allow_service_name = true,
+                "service" => allow_service_name = true,
                 "affectedPath" => allow_affected_path = true,
                 other => {
                     allowed_keys.insert(other);
@@ -127,15 +155,12 @@ impl RedactExtensionsPlan {
         match key {
             "code" => {
                 extensions.code = None;
-                return;
             }
-            "serviceName" => {
+            "service" => {
                 extensions.service_name = None;
-                return;
             }
             "affectedPath" => {
                 extensions.affected_path = None;
-                return;
             }
             _ => {
                 extensions.extensions.remove(key);
