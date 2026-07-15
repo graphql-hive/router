@@ -28,11 +28,12 @@ fn get_root_type_name<'a>(
         Some(OperationKind::Mutation) => supergraph
             .mutation_type
             .as_ref()
-            .ok_or_else(|| MinificationError::TypeNotFound("Mutation".to_string()))?,
-        Some(OperationKind::Subscription) => supergraph
-            .subscription_type
-            .as_ref()
-            .ok_or_else(|| MinificationError::TypeNotFound("Subscription".to_string()))?,
+            .ok_or_else(|| MinificationError::TypeForOperationNotFound("mutation".to_string()))?,
+        Some(OperationKind::Subscription) => {
+            supergraph.subscription_type.as_ref().ok_or_else(|| {
+                MinificationError::TypeForOperationNotFound("subscription".to_string())
+            })?
+        }
     })
 }
 

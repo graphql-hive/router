@@ -230,7 +230,7 @@ pub fn apply_authorization_to_operation(
     };
 
     let operation_filter_output = OperationFilter::new(schema_metadata).filter(
-        normalized_payload.root_type_name,
+        &normalized_payload.root_type_name,
         &normalized_payload.operation_for_plan.selection_set,
         variable_payload,
         |selection| match selection {

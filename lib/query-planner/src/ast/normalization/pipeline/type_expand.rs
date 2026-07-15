@@ -66,56 +66,56 @@ pub fn type_expand(ctx: &mut NormalizationContext) -> Result<(), NormalizationEr
         }
     }
 
-    let query_type_name = ctx.query_type_name();
-    let mutation_type_name = ctx.mutation_type_name();
-    let subscription_type_name = ctx.subscription_type_name();
+    let supergraph = ctx.supergraph;
+    let definitions = &mut ctx.document.definitions;
 
-    for definition in &mut ctx.document.definitions {
-        match definition {
-            Definition::Operation(op_def) => match op_def {
-                OperationDefinition::SelectionSet(selection_set) => {
-                    let root =
-                        ctx.supergraph
-                            .definitions
-                            .get(query_type_name)
-                            .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
-                                type_name: "Query".to_string(),
-                            })?;
-                    handle_selection_set(ctx.supergraph, &possible_types, root, selection_set)?;
-                }
-                OperationDefinition::Query(Query { selection_set, .. }) => {
-                    let root =
-                        ctx.supergraph
-                            .definitions
-                            .get(query_type_name)
-                            .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
-                                type_name: "Query".to_string(),
-                            })?;
-                    handle_selection_set(ctx.supergraph, &possible_types, root, selection_set)?;
-                }
-                OperationDefinition::Mutation(Mutation { selection_set, .. }) => {
-                    let root = ctx
-                        .supergraph
-                        .definitions
-                        .get(mutation_type_name)
-                        .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
-                            type_name: "Mutation".to_string(),
-                        })?;
-                    handle_selection_set(ctx.supergraph, &possible_types, root, selection_set)?;
-                }
-                OperationDefinition::Subscription(Subscription { selection_set, .. }) => {
-                    let root = ctx
-                        .supergraph
-                        .definitions
-                        .get(subscription_type_name)
-                        .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
-                            type_name: "Subscription".to_string(),
-                        })?;
-                    handle_selection_set(ctx.supergraph, &possible_types, root, selection_set)?;
-                }
-            },
-            Definition::Fragment(_) => {}
-        }
+    for definition in definitions {
+        let selection_set_and_root_name = match definition {
+            Definition::Operation(OperationDefinition::SelectionSet(selection_set)) => {
+                Some((selection_set, ctx.root_types.query_type_name()?))
+            }
+            Definition::Operation(OperationDefinition::Query(Query { selection_set, .. })) => {
+                Some((selection_set, ctx.root_types.query_type_name()?))
+            }
+
+            Definition::Operation(OperationDefinition::Mutation(Mutation {
+                selection_set,
+                ..
+            })) => Some((
+                selection_set,
+                ctx.root_types.mutation_type_name().ok_or_else(|| {
+                    NormalizationError::TypeForOperationNotFound {
+                        kind: "mutation".to_string(),
+                    }
+                })?,
+            )),
+
+            Definition::Operation(OperationDefinition::Subscription(Subscription {
+                selection_set,
+                ..
+            })) => Some((
+                selection_set,
+                ctx.root_types.subscription_type_name().ok_or_else(|| {
+                    NormalizationError::TypeForOperationNotFound {
+                        kind: "subscription".to_string(),
+                    }
+                })?,
+            )),
+
+            Definition::Fragment(_) => None,
+        };
+
+        let Some((selection_set, root_type_name)) = selection_set_and_root_name else {
+            continue;
+        };
+
+        let root = supergraph.definitions.get(root_type_name).ok_or_else(|| {
+            NormalizationError::SchemaTypeNotFound {
+                type_name: root_type_name.to_owned(),
+            }
+        })?;
+
+        handle_selection_set(supergraph, &possible_types, root, selection_set)?;
     }
 
     Ok(())

@@ -11,6 +11,7 @@ mod object_entities;
 mod override_requires;
 mod overrides;
 mod provides;
+mod renamed_root_types;
 mod requires;
 mod requires_circular;
 mod requires_fragments;

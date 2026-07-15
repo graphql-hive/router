@@ -183,43 +183,9 @@ fn visit_definitions<'a, Visitor, UserContext>(
             Definition::Operation(operation) => match operation {
                 OperationDefinition::Query(_) => Some(&context.schema.query_type().name),
                 OperationDefinition::SelectionSet(_) => Some(&context.schema.query_type().name),
-                OperationDefinition::Mutation(_) => {
-                    context.schema.mutation_type().map(|t| &t.name).or_else(|| {
-                        // Awkward hack but enables me to move forward
-                        // Somehow the `mutation_type()` gives None, even though `Mutation` type is defined in the schema.
-                        if let Some(type_definition) = context.schema.type_by_name("Mutation") {
-                            return match type_definition {
-                                crate::parser::schema::TypeDefinition::Object(object_type) => {
-                                    Some(&object_type.name)
-                                }
-                                _ => None,
-                            };
-                        }
-
-                        None
-                    })
-                }
+                OperationDefinition::Mutation(_) => context.schema.mutation_type().map(|t| &t.name),
                 OperationDefinition::Subscription(_) => {
-                    context
-                        .schema
-                        .subscription_type()
-                        .map(|t| &t.name)
-                        .or_else(|| {
-                            // Awkward hack but enables me to move forward
-                            // Somehow the `subscription_type()` gives None, even though `Subscription` type is defined in the schema.
-                            if let Some(type_definition) =
-                                context.schema.type_by_name("Subscription")
-                            {
-                                return match type_definition {
-                                    crate::parser::schema::TypeDefinition::Object(object_type) => {
-                                        Some(&object_type.name)
-                                    }
-                                    _ => None,
-                                };
-                            }
-
-                            None
-                        })
+                    context.schema.subscription_type().map(|t| &t.name)
                 }
             },
         };
@@ -752,5 +718,78 @@ pub trait OperationVisitor<'a, UserContext = ()> {
         _: &mut UserContext,
         _: &(String, Value),
     ) {
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct RecordingVisitor {
+        seen_types: Vec<Option<String>>,
+    }
+
+    impl<'a> OperationVisitor<'a, ()> for RecordingVisitor {
+        fn enter_operation_definition(
+            &mut self,
+            context: &mut OperationVisitorContext<'a>,
+            _user_context: &mut (),
+            _operation: &'a OperationDefinition,
+        ) {
+            self.seen_types.push(
+                context
+                    .current_type()
+                    .map(|type_def| type_def.name().to_string()),
+            );
+        }
+    }
+
+    fn assert_seen_type(schema_sdl: &str, operation: &str, expected: &str) {
+        let schema = crate::parser::parse_schema::<String>(schema_sdl)
+            .expect("valid schema")
+            .into_static();
+        let operation_doc = crate::parser::parse_query::<String>(operation)
+            .expect("valid operation")
+            .into_static();
+
+        let mut context = OperationVisitorContext::new(&operation_doc, &schema);
+        let mut visitor = RecordingVisitor {
+            seen_types: Vec::new(),
+        };
+
+        visit_document(&mut visitor, &operation_doc, &mut context, &mut ());
+
+        assert_eq!(visitor.seen_types.len(), 1);
+        assert_eq!(visitor.seen_types[0], Some(expected.to_string()));
+    }
+
+    #[test]
+    fn default_root_type_names() {
+        let schema = "
+            type Query { hello: String }
+            type Mutation { doThing: String }
+            type Subscription { onThing: String }
+        ";
+
+        assert_seen_type(schema, "mutation { doThing }", "Mutation");
+        assert_seen_type(schema, "subscription { onThing }", "Subscription");
+    }
+
+    #[test]
+    fn renamed_root_types() {
+        let schema = "
+            schema {
+              query: RootQuery
+              mutation: RootMutation
+              subscription: RootSubscription
+            }
+
+            type RootQuery { hello: String }
+            type RootMutation { doThing: String }
+            type RootSubscription { onThing: String }
+        ";
+
+        assert_seen_type(schema, "mutation { doThing }", "RootMutation");
+        assert_seen_type(schema, "subscription { onThing }", "RootSubscription");
     }
 }

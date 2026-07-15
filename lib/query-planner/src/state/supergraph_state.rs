@@ -31,6 +31,8 @@ pub type SchemaDocument = input::Document<'static, String>;
 pub enum SupergraphStateError {
     #[error("Subgraph not found: '{0}'")]
     SubgraphNotFound(String),
+    #[error("Root type not found for operation kind: '{0}'")]
+    RootTypeNotFound(OperationKind),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -711,15 +713,37 @@ impl SupergraphState {
         result
     }
 
-    pub fn root_type_name(&self, operation_kind: Option<&OperationKind>) -> &str {
+    pub fn root_type_name(
+        &self,
+        operation_kind: Option<&OperationKind>,
+    ) -> Result<&str, SupergraphStateError> {
         match operation_kind {
-            Some(OperationKind::Query) => &self.query_type,
-            Some(OperationKind::Mutation) => self.mutation_type.as_deref().unwrap_or("Mutation"),
-            Some(OperationKind::Subscription) => {
-                self.subscription_type.as_deref().unwrap_or("Subscription")
+            None | Some(OperationKind::Query) => Ok(&self.query_type),
+            Some(OperationKind::Mutation) => {
+                self.mutation_type
+                    .as_deref()
+                    .ok_or(SupergraphStateError::RootTypeNotFound(
+                        OperationKind::Mutation,
+                    ))
             }
-            None => &self.query_type,
+            Some(OperationKind::Subscription) => {
+                self.subscription_type
+                    .as_deref()
+                    .ok_or(SupergraphStateError::RootTypeNotFound(
+                        OperationKind::Subscription,
+                    ))
+            }
         }
+    }
+
+    /// panics if the root type is not found for the given operation kind.
+    /// Use only when you are sure the root type is present,
+    /// like after the operation was validated to have matching root type.
+    pub fn expect_root_type_name(&self, operation_kind: Option<&OperationKind>) -> &str {
+        self.root_type_name(operation_kind)
+            // SAFETY: The root type is guaranteed to exist for the given operation kind,
+            // as the operation was validated.
+            .unwrap_or_else(|err| panic!("{}", err))
     }
 }
 
@@ -741,6 +765,14 @@ impl OperationKind {
             OperationKind::Mutation => "mutation",
             OperationKind::Subscription => "subscription",
         }
+    }
+
+    pub fn is_query(&self) -> bool {
+        matches!(self, OperationKind::Query)
+    }
+
+    pub fn is_mutation(&self) -> bool {
+        matches!(self, OperationKind::Mutation)
     }
 }
 

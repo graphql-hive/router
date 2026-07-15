@@ -693,7 +693,7 @@ where
 {
     let mut tokens = TokenStream::new(s);
     let (doc, _) = many1(parser(definition))
-        .map(|d| Document { definitions: d })
+        .map(Document::new)
         .skip(eof())
         .parse_stream(&mut tokens)
         .into_result()
@@ -716,15 +716,13 @@ mod test {
     fn one_field() {
         assert_eq!(
             ast("schema { query: Query }"),
-            Document {
-                definitions: vec![Definition::SchemaDefinition(SchemaDefinition {
-                    position: Pos { line: 1, column: 1 },
-                    directives: vec![],
-                    query: Some("Query".into()),
-                    mutation: None,
-                    subscription: None
-                })],
-            }
+            Document::new(vec![Definition::SchemaDefinition(SchemaDefinition {
+                position: Pos { line: 1, column: 1 },
+                directives: vec![],
+                query: Some("Query".into()),
+                mutation: None,
+                subscription: None
+            })])
         );
     }
 }

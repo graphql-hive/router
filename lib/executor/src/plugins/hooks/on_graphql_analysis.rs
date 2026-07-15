@@ -87,9 +87,9 @@ impl<'exec> OnGraphqlAnalysisHookPayload<'exec> {
         let operation = self.filtered_operation_for_plan;
 
         let root_type_name = match operation.operation_kind {
-            None | Some(OperationKind::Query) => schema_metadata.query_type.as_deref(),
-            Some(OperationKind::Mutation) => schema_metadata.mutation_type.as_deref(),
-            Some(OperationKind::Subscription) => schema_metadata.subscription_type.as_deref(),
+            None | Some(OperationKind::Query) => schema_metadata.query_type_name.as_deref(),
+            Some(OperationKind::Mutation) => schema_metadata.mutation_type_name.as_deref(),
+            Some(OperationKind::Subscription) => schema_metadata.subscription_type_name.as_deref(),
         }
         .expect("root type name not found in schema metadata");
 

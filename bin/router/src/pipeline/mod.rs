@@ -491,10 +491,9 @@ pub async fn execute_planned_request<'exec>(
         operation: OperationDetails {
             name: normalize_payload.operation_for_plan.name.as_deref(),
             kind: match normalize_payload.operation_for_plan.operation_kind {
-                Some(OperationKind::Query) => "query",
+                None | Some(OperationKind::Query) => "query",
                 Some(OperationKind::Mutation) => "mutation",
                 Some(OperationKind::Subscription) => "subscription",
-                None => "query",
             },
             query: graphql_params.get_query()?,
         },
@@ -739,7 +738,7 @@ pub async fn execute_pipeline<'exec>(
                 &variable_payload,
                 &query_plan_payload,
                 normalize_payload.operation_for_plan.as_ref(),
-                normalize_payload.root_type_name,
+                normalize_payload.root_type_name.as_str(),
                 normalize_payload.normalized_operation_hash,
                 (&normalize_payload.operation_identity).into(),
             )

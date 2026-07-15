@@ -34,7 +34,8 @@ pub struct GraphQLNormalizationPayload {
     pub operation_for_introspection: Option<Arc<OperationDefinition>>,
     pub operation_for_introspection_hash: Option<u64>,
     pub normalized_operation_hash: u64,
-    pub root_type_name: &'static str,
+    pub root_type_name: String,
+    pub operation_kind: OperationKind,
     pub projection_plan: Arc<Vec<FieldProjectionPlan>>,
     pub operation_identity: OperationIdentity,
 }
@@ -65,13 +66,16 @@ impl GraphQLNormalizationPayload {
     ) -> Arc<GraphQLNormalizationPayload> {
         let hashes =
             hash_normalized_operation(&new_operation, self.operation_for_introspection.as_deref());
+
         Arc::new(GraphQLNormalizationPayload {
             operation_for_plan: Arc::new(new_operation),
             operation_for_plan_hash: hashes.operation_for_plan_hash,
+            // These are cheap Arc clones
             operation_for_introspection: self.operation_for_introspection.clone(),
             operation_for_introspection_hash: hashes.operation_for_introspection_hash,
             normalized_operation_hash: hashes.combined_operation_hash,
-            root_type_name: self.root_type_name,
+            root_type_name: self.root_type_name.clone(),
+            operation_kind: self.operation_kind.clone(),
             projection_plan: Arc::new(new_projection_plan),
             operation_identity: self.operation_identity.clone(),
         })
@@ -166,8 +170,13 @@ pub async fn normalize_request_with_cache(
                 );
 
                 let operation = doc.operation;
+                let operation_kind = operation
+                    .operation_kind
+                    .clone()
+                    .unwrap_or(OperationKind::Query);
                 let (root_type_name, projection_plan) =
                     FieldProjectionPlan::from_operation(&operation, &supergraph.metadata);
+                let root_type_name = root_type_name.to_string();
                 let partitioned_operation = partition_operation(operation);
 
                 let operation_for_plan = Arc::new(partitioned_operation.downstream_operation);
@@ -181,6 +190,7 @@ pub async fn normalize_request_with_cache(
 
                 let payload = GraphQLNormalizationPayload {
                     root_type_name,
+                    operation_kind,
                     projection_plan: Arc::new(projection_plan),
                     operation_for_plan,
                     operation_for_plan_hash: hashes.operation_for_plan_hash,

@@ -49,6 +49,12 @@ fn authorization_benchmark(c: &mut Criterion) {
         let normalized = normalize_operation(supergraph, &parsed, None).unwrap();
         let (root_type_name, projection_plan) =
             FieldProjectionPlan::from_operation(&normalized.operation, &metadata);
+        let root_type_name = root_type_name.to_string();
+        let operation_kind = normalized
+            .operation
+            .operation_kind
+            .clone()
+            .unwrap_or(OperationKind::Query);
         let partitioned_operation = partition_operation(normalized.operation);
         let hashes = hash_normalized_operation(
             &partitioned_operation.downstream_operation,
@@ -57,6 +63,7 @@ fn authorization_benchmark(c: &mut Criterion) {
 
         GraphQLNormalizationPayload {
             root_type_name,
+            operation_kind,
             projection_plan: Arc::new(projection_plan),
             operation_for_plan: Arc::new(partitioned_operation.downstream_operation),
             operation_for_introspection: partitioned_operation

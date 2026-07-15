@@ -123,7 +123,8 @@ pub struct QueryPlanExecutionOpts<'exec> {
     pub extensions: ExecutionResultExtensions<'exec>,
     pub client_request: Arc<ClientRequestDetails<'exec>>,
     pub introspection_context: Arc<IntrospectionContext>,
-    pub operation_type_name: &'static str,
+    pub operation_type_name: String,
+    pub operation_kind: OperationKind,
     pub executors: Arc<SubgraphExecutorMap>,
     pub jwt_auth_forwarding: Option<Arc<JwtAuthForwardingPlan>>,
     pub graphql_error_recorder: Option<GraphQLErrorMetricsRecorder>,
@@ -380,7 +381,8 @@ pub async fn execute_query_plan<'exec>(
                         path_params: client_path_params.clone(),
                     }.into(),
                     introspection_context: opts.introspection_context.clone(),
-                    operation_type_name: opts.operation_type_name,
+                    operation_type_name: opts.operation_type_name.clone(),
+                    operation_kind: opts.operation_kind.clone(),
                     executors: opts.executors.clone(),
                     jwt_auth_forwarding: opts.jwt_auth_forwarding.clone(),
                     initial_errors,
@@ -434,7 +436,7 @@ async fn execute_query_plan_with_data<'exec>(
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
     let mut errors = opts.initial_errors;
 
-    let dedupe_subgraph_requests = opts.operation_type_name == "Query";
+    let dedupe_subgraph_requests = opts.operation_kind.is_query();
 
     let mut on_end_callbacks = vec![];
 
@@ -564,7 +566,7 @@ async fn execute_query_plan_with_data<'exec>(
     cache_control::finalize(
         &mut exec_ctx.response_headers_aggregator,
         // force no-store for mutations and errors (execution or graphql errors)
-        opts.operation_type_name == "Mutation" || !errors.is_empty(),
+        opts.operation_kind.is_mutation() || !errors.is_empty(),
         // response_storage.len() counts subgraphs that returned bytes, which is
         // exactly what we need: a plugin hook can short-circuit with a bytes-less
         // SubgraphResponse, but in that case it also produces no cache-control header,
@@ -641,7 +643,7 @@ async fn execute_query_plan_with_data<'exec>(
         &data,
         errors,
         &opts.extensions,
-        opts.operation_type_name,
+        opts.operation_type_name.as_str(),
         &opts.projection_plan,
         &opts.variable_values.variables_map,
         response_size_estimate,

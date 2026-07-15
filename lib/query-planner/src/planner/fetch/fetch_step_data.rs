@@ -17,7 +17,7 @@ use crate::{
         plan_nodes::FetchRewrite,
         tree::query_tree_node::MutationFieldPosition,
     },
-    state::supergraph_state::SubgraphName,
+    state::supergraph_state::{OperationKind, SubgraphName},
 };
 
 bitflags! {
@@ -38,6 +38,7 @@ pub struct FetchStepData<State> {
     pub input: FetchStepSelections<State>,
     pub output: FetchStepSelections<State>,
     pub kind: FetchStepKind,
+    pub operation_kind: OperationKind,
     pub flags: FetchStepFlags,
     pub condition: Option<Condition>,
     pub variable_usages: Option<BTreeSet<String>>,
@@ -222,6 +223,7 @@ impl FetchStepData<SingleTypeFetchStep> {
             input: self.input.into_multi_type(),
             output: self.output.into_multi_type(),
             kind: self.kind,
+            operation_kind: self.operation_kind,
             flags: self.flags,
             condition: self.condition,
             variable_usages: self.variable_usages,
