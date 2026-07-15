@@ -16,7 +16,7 @@ use hive_router_plan_executor::execution::demand_control::{
     DemandControlExecutionOperationContext, DemandControlExecutionSubgraphsContext,
 };
 use hive_router_plan_executor::execution::plan::CoerceVariablesPayload;
-use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
+use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphSnapshot;
 use hive_router_query_planner::ast::operation::{OperationDefinition, SubgraphFetchOperation};
 use hive_router_query_planner::planner::plan_nodes::{PlanNode, QueryPlan};
 use hive_router_query_planner::state::supergraph_state::{OperationKind, SupergraphState};
@@ -95,7 +95,7 @@ impl DemandControlRuntime {
     #[allow(clippy::too_many_arguments)]
     pub async fn evaluate<'exec>(
         &self,
-        supergraph: &'exec SupergraphData,
+        supergraph: &'exec SupergraphSnapshot,
         variable_payload: &'exec CoerceVariablesPayload,
         query_plan: &'exec QueryPlan,
         operation_for_plan: &'exec OperationDefinition,
@@ -104,9 +104,16 @@ impl DemandControlRuntime {
         operation_identity: GraphQLSpanOperationIdentity<'exec>,
     ) -> Result<DemandControlExecutionContext, PipelineError> {
         let operation_name = operation_identity.name;
+        let cache_key = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = xxhash_rust::xxh3::Xxh3::new();
+            supergraph.cache_id.hash(&mut hasher);
+            normalized_operation_hash.hash(&mut hasher);
+            hasher.finish()
+        };
         let compiled_plan = self
             .formula_cache
-            .entry(normalized_operation_hash)
+            .entry(cache_key)
             .or_insert_with(async {
                 Arc::new(self.compile_demand_control_plan(
                     query_plan,

@@ -18,7 +18,6 @@ use std::sync::Arc;
 use crate::pipeline::authorization::collector::{
     collect_authorization_statuses, propagate_null_bubbling,
 };
-use crate::pipeline::authorization::metadata::AuthorizationMetadataExt;
 use crate::pipeline::authorization::rebuilder::{
     rebuild_authorized_operation, rebuild_authorized_projection_plan,
 };
@@ -37,7 +36,7 @@ use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use hive_router_query_planner::ast::operation::OperationDefinition;
 
 use hive_router_internal::telemetry::traces::spans::graphql::GraphQLAuthorizeSpan;
-pub use metadata::{AuthorizationMetadataError, UserAuthContext};
+pub use metadata::{AuthorizationMetadataError, AuthorizationMetadataExt, UserAuthContext};
 
 /// Error representing an unauthorized field access.
 ///

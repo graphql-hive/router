@@ -1,6 +1,5 @@
 use std::{ops::ControlFlow, sync::Arc};
 
-use graphql_tools::static_graphql::schema::Document;
 use hive_router_plan_executor::{
     hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpResponseHookPayload},
     plugin_context::PluginContext,
@@ -9,12 +8,10 @@ use hive_router_plan_executor::{
     request_context::{RequestContextExt, SharedRequestContext},
 };
 use ntex::{
-    http::StatusCode,
     service::{Service, ServiceCtx},
     web::{self, DefaultError},
     Middleware, SharedCfg,
 };
-use tracing::error;
 
 use crate::{RouterPaths, RouterSharedState};
 
@@ -67,28 +64,27 @@ where
     ) -> Result<Self::Response, Self::Error> {
         let shared_state = req.app_state::<Arc<RouterSharedState>>().cloned();
 
-        // Determine if the request should be handled by plugins.
-        // The exceptions are:
-        // - health endpoint
-        // - readiness endpoint
-        // - prometheus endpoint (if it's on the same port)
-        let should_run = {
-            let path = req.path();
-            path != self.paths.health
-                && path != self.paths.readiness
-                && self.prometheus_endpoint.as_deref() != Some(path)
-        };
-
-        if !should_run {
+        // The prometheus endpoint (if it's on the same port) bypasses both plugins and the
+        // coprocessor entirely.
+        if self.prometheus_endpoint.as_deref() == Some(req.path()) {
             return ctx.call(&self.service, req).await;
         }
+
+        // Health and readiness run the plugin `on_http_request`/`on_end` chain (so a
+        // plugin-selected supergraph can be resolved for readiness), but never the coprocessor
+        let is_health = req.path() == self.paths.health;
+        let is_probe = is_health || req.path() == self.paths.readiness;
 
         let request_context = SharedRequestContext::default();
         req.write_request_context(request_context.clone());
 
-        let coprocessor_runtime = shared_state
-            .as_ref()
-            .and_then(|shared_state| shared_state.coprocessor.as_ref());
+        let coprocessor_runtime = if is_probe {
+            None
+        } else {
+            shared_state
+                .as_ref()
+                .and_then(|shared_state| shared_state.coprocessor.as_ref())
+        };
 
         let plugins = shared_state
             .as_ref()
@@ -131,36 +127,6 @@ where
 
             // Give the ownership back to variables
             req = start_payload.router_http_request;
-
-            // A plugin may have selected a schema document via `set_schema_document`. Resolve it
-            // through the router-owned schema-state cache here, once, so both HTTP and WebSocket
-            // entry points can just read the resulting `Arc<SchemaState>` from request extensions.
-            let selected_document = req.extensions().get::<Arc<Document>>().cloned();
-            if let Some(document) = selected_document {
-                let shared_state = shared_state
-                    .as_ref()
-                    .expect("router shared state must be present when plugins are configured");
-                match shared_state.schema_state_cache.resolve(
-                    document,
-                    shared_state.router_config.clone(),
-                    shared_state.telemetry_context.clone(),
-                ) {
-                    Ok(schema_state) => {
-                        req.extensions_mut().insert(schema_state);
-                    }
-                    Err(err) => {
-                        // if schema-state build fails, we intentionally return an internal error.
-                        // falling back to the default schema could expose fields the plugin intended
-                        // to remove or change - posing a security threat
-                        error!(error = %err, "failed to build schema state for plugin-selected document");
-                        let error_response = web::HttpResponse::build(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                        )
-                        .body("Failed to build schema state for the selected schema document");
-                        return Ok(req.into_response(error_response));
-                    }
-                }
-            }
 
             let mut response = ctx.call(&self.service, req).await?;
 

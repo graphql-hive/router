@@ -11,7 +11,7 @@ use hive_router_internal::telemetry::traces::spans::graphql::GraphQLValidateSpan
 use hive_router_plan_executor::hooks::on_graphql_validation::{
     OnGraphQLValidationEndHookPayload, OnGraphQLValidationStartHookPayload,
 };
-use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
+use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphSnapshot;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_plan_executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow};
 use hive_router_plan_executor::plugins::hooks;
@@ -24,7 +24,7 @@ mod shared;
 
 #[inline]
 pub async fn validate_operation_with_cache(
-    supergraph: &SupergraphData,
+    supergraph: &SupergraphSnapshot,
     schema_state: &SchemaState,
     app_state: &RouterSharedState,
     parser_payload: &GraphQLParserPayload,
@@ -77,6 +77,7 @@ pub async fn validate_operation_with_cache(
 
         let cache_key = {
             let mut hasher = Xxh3::new();
+            supergraph.cache_id.hash(&mut hasher);
             validation_schema.hash.hash(&mut hasher);
             validation_plan.hash.hash(&mut hasher);
             parser_payload.cache_key.hash(&mut hasher);

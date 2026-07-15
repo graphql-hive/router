@@ -27,6 +27,8 @@ pub enum LoadSupergraphError {
     StorageIdNotFound(String),
     #[error("Storage error: {0}")]
     StorageError(#[from] StorageError),
+    #[error("'supergraph.source: plugin' has no loader - a plugin must select a supergraph for every request")]
+    NoLoaderForPluginSource,
 }
 
 #[derive(Debug)]

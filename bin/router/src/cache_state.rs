@@ -74,12 +74,6 @@ impl CacheState {
             plan_cache: Cache::new(1000),
         }
     }
-
-    pub fn on_schema_change(&self) {
-        self.plan_cache.invalidate_all();
-        self.validate_cache.invalidate_all();
-        self.normalize_cache.invalidate_all();
-    }
 }
 
 pub fn register_cache_size_observers(

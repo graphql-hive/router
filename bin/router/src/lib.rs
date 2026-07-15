@@ -132,19 +132,8 @@ async fn graphql_endpoint_handler(
         .http_server
         .capture_request(&request);
 
-    // A plugin may have overridden the schema document for this request in `on_http_request`
-    // (see `OnHttpRequestHookPayload::set_schema_document`); the plugin middleware resolves it
-    // into an `Arc<SchemaState>` and stores it in request extensions. Otherwise fall back to the
-    // router's own.
-    let schema_state = request
-        .extensions()
-        .get::<Arc<SchemaState>>()
-        .cloned()
-        .unwrap_or_else(|| schema_state.get_ref().clone());
-
     let response =
-        graphql_endpoint_dispatch(&mut request, body_stream, &schema_state, app_state.clone())
-            .await;
+        graphql_endpoint_dispatch(&mut request, body_stream, schema_state, app_state.clone()).await;
 
     let graphql_operation = read_graphql_operation_metric_identity(&request);
     let graphql_operation_name = graphql_operation
@@ -170,7 +159,7 @@ async fn graphql_endpoint_handler(
 async fn graphql_endpoint_dispatch(
     request: &mut HttpRequest,
     body_stream: web::types::Payload,
-    schema_state: &Arc<SchemaState>,
+    schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> web::HttpResponse {
     let parent_ctx = app_state
@@ -199,7 +188,7 @@ async fn graphql_endpoint_dispatch(
             request,
             body_stream,
             app_state.get_ref(),
-            schema_state,
+            schema_state.get_ref(),
             &root_http_request_span,
             &mut response_mode,
             response_header_sink.clone(),
@@ -231,11 +220,13 @@ async fn graphql_endpoint_dispatch(
         if let Some(coprocessor_runtime) = app_state.coprocessor.as_ref() {
             response = match coprocessor_runtime
                 .on_graphql_response(response, request, || {
-                    schema_state
-                        .current_supergraph()
-                        .as_ref()
-                        .as_ref()
-                        .map(|supergraph| supergraph.public_schema.sdl.clone())
+                    // reuse the exact snapshot execution already resolved and stored on the
+                    // request - never re-resolve here, which could observe a different
+                    // generation than the one that actually executed the operation
+                    request
+                        .extensions()
+                        .get::<crate::schema_state::SelectedSupergraph>()
+                        .map(|selected| selected.snapshot.public_schema.sdl.clone())
                 })
                 .await
             {

@@ -2658,7 +2658,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router"
-version = "0.0.81"
+version = "0.0.83"
 dependencies = [
  "ahash",
  "anyhow",
@@ -2763,7 +2763,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-internal"
-version = "0.0.35"
+version = "0.0.36"
 dependencies = [
  "ahash",
  "async-trait",
@@ -2804,7 +2804,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-plan-executor"
-version = "6.21.1"
+version = "6.22.1"
 dependencies = [
  "ahash",
  "async-stream",
@@ -2842,6 +2842,7 @@ dependencies = [
  "strum 0.28.0",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
  "ulid",
  "uuid",

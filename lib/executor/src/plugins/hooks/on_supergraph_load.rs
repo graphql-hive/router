@@ -1,15 +1,16 @@
+use std::ops::Deref;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use graphql_tools::static_graphql::schema::Document;
-use hive_router_internal::authorization::metadata::AuthorizationMetadata;
-use hive_router_query_planner::planner::Planner;
+use hive_router_query_planner::planner::{Planner, PlannerError, QueryPlannerOptions};
+use hive_router_query_planner::utils::parsing::safe_parse_schema;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
-    execution::operation_name::OperationNameForwardConfig,
-    introspection::schema::SchemaMetadata,
+    introspection::schema::{SchemaMetadata, SchemaWithMetadata},
     plugin_trait::{EndHookPayload, FromGraphQLErrorToResponse, StartHookPayload},
     response::graphql_error::GraphQLError,
-    SubgraphExecutorMap,
 };
 
 pub struct PublicSchema {
@@ -19,37 +20,159 @@ pub struct PublicSchema {
     pub sdl: Arc<str>,
 }
 
-pub struct SupergraphData {
-    /// The metadata of the supergraph schema,
-    /// which includes the list of subgraphs, their relationships, and other relevant information about the supergraph.
-    pub metadata: Arc<SchemaMetadata>,
-    /// The query planner instance that will be used to generate the query plan for the incoming GraphQL requests based on the supergraph schema.
-    pub planner: Planner,
-    /// The authorization metadata that will be used to authorize the incoming GraphQL requests based on the supergraph schema and the authorization rules defined in the router.
-    pub authorization: AuthorizationMetadata,
-    /// The map of subgraph executors that will be used to execute the query plan for the incoming GraphQL requests based on the supergraph schema.
-    pub subgraph_executor_map: Arc<SubgraphExecutorMap>,
-    /// The AST of the supergraph schema document that was loaded and parsed by the router.
-    pub supergraph_schema: Arc<Document>,
-    /// The public schema exposed by the router.
-    /// It is generated from the supergraph schema and stripped from federation internals.
-    pub public_schema: PublicSchema,
-    /// The operation name forward configuration that will be used to forward operation names to the subgraphs.
-    pub operation_name_forward_config: Arc<OperationNameForwardConfig>,
+/// Errors that can occur while constructing a schema-only [`SupergraphData`].
+#[derive(Debug, thiserror::Error)]
+pub enum SupergraphBuildError {
+    #[error("Failed to parse supergraph SDL: {0}")]
+    ParseError(#[from] graphql_tools::parser::schema::ParseError),
+    #[error("Failed to build query planner: {0}")]
+    PlannerBuilderError(#[from] PlannerError),
 }
 
-impl SupergraphData {
-    #[inline]
-    pub fn schema_checksum(&self) -> u64 {
-        self.planner.consumer_schema.hash
+/// Monotonically increasing id allocated to each constructed supergraph.
+static NEXT_SUPERGRAPH_DATA_ID: AtomicU64 = AtomicU64::new(0);
+
+/// The schema-derived data shared by a [`SupergraphData`] owner and every [`SupergraphSnapshot`]
+/// cloned from it. Never constructed directly; always reached through the owner or a snapshot.
+pub struct SupergraphData {
+    /// Process-unique id allocated once per constructed supergraph. Never reused, so it can
+    /// safely partition schema-aware caches: a later, distinct supergraph instance can never
+    /// reach cache entries created for an earlier (possibly dropped) one, even if both happen
+    /// to have identical consumer schemas.
+    pub cache_id: u64,
+    pub metadata: Arc<SchemaMetadata>,
+    pub planner: Planner,
+    pub supergraph_schema: Arc<Document>,
+    pub public_schema: PublicSchema,
+}
+
+/// A cheap, read-only snapshot of a [`SupergraphData`] owner: the schema-derived data plus a
+/// clone of the owner's retirement token. Holding a snapshot keeps the schema-derived data
+/// alive, but never keeps the owner `Arc<SupergraphData>` itself alive.
+#[derive(Clone)]
+pub struct SupergraphSnapshot {
+    data: Arc<SupergraphData>,
+    retirement: CancellationToken,
+}
+
+impl Deref for SupergraphSnapshot {
+    type Target = SupergraphData;
+
+    fn deref(&self) -> &Self::Target {
+        &self.data
     }
 }
 
-pub type OnSupergraphLoadResult = Result<SupergraphData, GraphQLError>;
+impl SupergraphSnapshot {
+    /// Whether the owner this snapshot was taken from has since been retired (dropped or
+    /// replaced). Ordinary in-flight requests holding a snapshot are unaffected by retirement;
+    /// this is meant for subscription producers and long-lived connections deciding whether to
+    /// keep accepting new work from this snapshot.
+    #[inline]
+    pub fn is_retired(&self) -> bool {
+        self.retirement.is_cancelled()
+    }
+
+    /// Resolves once the owner this snapshot was taken from is retired. Resolves immediately if
+    /// it already was.
+    #[inline]
+    pub async fn retired(&self) {
+        self.retirement.cancelled().await
+    }
+
+    /// A clone of the retirement token, for callers (e.g. subscription pumps) that need to hold
+    /// onto it independently of the rest of the snapshot.
+    #[inline]
+    pub fn retirement_token(&self) -> CancellationToken {
+        self.retirement.clone()
+    }
+}
+
+/// The owner handle for one constructed supergraph. Plugins and the router's configured source
+/// retain `Arc<SupergraphData>` while a supergraph remains selectable for new requests. Contains
+/// only schema-derived data - router runtime concerns (subgraph executors, telemetry, etc.) should
+/// live in the router, built separately from a [`SupergraphSnapshot`].
+///
+/// When the last `Arc<SupergraphData>` reference drops, [`Drop`] publishes retirement: every
+/// [`SupergraphSnapshot`] taken from it observes this (immediately, or later via
+/// [`SupergraphSnapshot::retired`]), without that observation delaying or being delayed by the
+/// owner's drop.
+pub struct Supergraph {
+    data: Arc<SupergraphData>,
+    retirement: CancellationToken,
+}
+
+impl Deref for Supergraph {
+    type Target = SupergraphData;
+
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
+impl Drop for Supergraph {
+    fn drop(&mut self) {
+        self.retirement.cancel();
+    }
+}
+
+impl Into<SupergraphSnapshot> for &Supergraph {
+    fn into(self) -> SupergraphSnapshot {
+        SupergraphSnapshot {
+            data: self.data.clone(),
+            retirement: self.retirement.clone(),
+        }
+    }
+}
+
+impl Supergraph {
+    /// Same as [`Self::from_sdl`], but takes an already-parsed supergraph document.
+    pub fn from_document(
+        document: Document,
+        options: QueryPlannerOptions,
+    ) -> Result<Self, SupergraphBuildError> {
+        let planner = Planner::new_from_supergraph(&document, options)?;
+        let metadata = Arc::new(planner.consumer_schema.schema_metadata());
+
+        let public_schema = PublicSchema {
+            document: planner.consumer_schema.document.clone(),
+            sdl: Arc::<str>::from(planner.consumer_schema.document.to_string()),
+        };
+
+        let data = SupergraphData {
+            cache_id: NEXT_SUPERGRAPH_DATA_ID.fetch_add(1, Ordering::Relaxed),
+            metadata,
+            planner,
+            supergraph_schema: Arc::new(document),
+            public_schema,
+        };
+
+        Ok(Self {
+            data: Arc::new(data),
+            retirement: CancellationToken::new(),
+        })
+    }
+
+    /// Parses `sdl` into a supergraph document and builds a schema-only [`SupergraphData`] from
+    /// it. `options` may only carry query-planner options - router configuration, telemetry, and
+    /// router runtime state do not belong here.
+    pub fn from_sdl(sdl: &str, options: QueryPlannerOptions) -> Result<Self, SupergraphBuildError> {
+        Self::from_document(safe_parse_schema(sdl)?, options)
+    }
+
+    /// Takes a cheap, read-only snapshot of this owner's schema-derived data plus a clone of its
+    /// retirement token. Store this in request extensions and caches - never the owner itself.
+    pub fn snapshot(&self) -> SupergraphSnapshot {
+        self.into()
+    }
+}
+
+pub type OnSupergraphLoadResult = Result<Supergraph, GraphQLError>;
 
 pub struct OnSupergraphLoadStartHookPayload {
-    /// The current supergraph data that is currently used by the router before loading the new supergraph schema.
-    pub current_supergraph_data: Arc<Option<SupergraphData>>,
+    /// A snapshot of the configured supergraph currently in use by the router, before loading
+    /// the new one. `None` before the first supergraph has finished loading.
+    pub current_supergraph_data: Option<SupergraphSnapshot>,
     /// The raw SDL string of the new supergraph schema that is being loaded by the router.
     /// Plugins can modify the SDL string before it is parsed and loaded by the router,
     /// and the modified SDL string will be used in the loading process instead of the original one.
@@ -70,7 +193,7 @@ pub type OnSupergraphLoadStartHookResult<'exec> = crate::plugin_trait::StartHook
 
 pub struct OnSupergraphLoadEndHookPayload {
     /// The new supergraph data that is generated from loading the new supergraph schema.
-    pub new_supergraph_data: SupergraphData,
+    pub new_supergraph_data: Supergraph,
 }
 
 impl EndHookPayload<OnSupergraphLoadResult> for OnSupergraphLoadEndHookPayload {}

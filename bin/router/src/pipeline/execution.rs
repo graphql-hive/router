@@ -14,7 +14,9 @@ use hive_router_plan_executor::execution::plan::{
     QueryPlanExecutionOpts, QueryPlanExecutionResult,
 };
 use hive_router_plan_executor::headers::response::ResponseHeaderSink;
-use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
+use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphSnapshot;
+
+use crate::schema_state::RouterSupergraphRuntime;
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
@@ -44,7 +46,8 @@ pub struct PlannedRequest<'req> {
 
 #[inline]
 pub async fn execute_plan<'exec>(
-    supergraph: &SupergraphData,
+    supergraph: &SupergraphSnapshot,
+    runtime: &RouterSupergraphRuntime,
     app_state: &RouterSharedState,
     planned_request: PlannedRequest<'exec>,
     span: GraphQLOperationSpan,
@@ -138,7 +141,7 @@ pub async fn execute_plan<'exec>(
             demand_control_context: planned_request
                 .demand_control_execution_context
                 .map(|d| d.into()),
-            executors: Arc::clone(&supergraph.subgraph_executor_map),
+            executors: Arc::clone(&runtime.subgraph_executor_map),
             initial_errors: planned_request
                 .authorization_errors
                 .iter()
@@ -147,7 +150,7 @@ pub async fn execute_plan<'exec>(
             span,
             plugin_req_state: planned_request.plugin_req_state,
             operation_name_factory: OperationNameFactory::new(
-                supergraph.operation_name_forward_config.clone(),
+                runtime.operation_name_forward_config.clone(),
                 operation_name,
             ),
             response_header_sink,

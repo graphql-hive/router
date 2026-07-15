@@ -11,7 +11,7 @@ use hive_router_plan_executor::execution::plan::PlanExecutionOutput;
 use hive_router_plan_executor::hooks::on_query_plan::{
     OnQueryPlanEndHookPayload, OnQueryPlanStartHookPayload,
 };
-use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
+use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphSnapshot;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_plan_executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow};
 use hive_router_plan_executor::plugins::hooks;
@@ -34,7 +34,7 @@ static EMPTY_QUERY_PLAN: LazyLock<Arc<QueryPlan>> = LazyLock::new(|| {
 
 #[inline]
 pub async fn plan_operation_with_cache(
-    supergraph: &SupergraphData,
+    supergraph: &SupergraphSnapshot,
     schema_state: &SchemaState,
     normalized_operation: &GraphQLNormalizationPayload,
     request_override_context: &RequestOverrideContext,
@@ -90,7 +90,11 @@ pub async fn plan_operation_with_cache(
         } else {
             filtered_operation_for_plan.hash()
         };
-        let plan_cache_key = calculate_cache_key(operation_for_plan_hash, &stable_override_context);
+        let plan_cache_key = calculate_cache_key(
+            supergraph.cache_id,
+            operation_for_plan_hash,
+            &stable_override_context,
+        );
         let is_plan_operation_empty = filtered_operation_for_plan.selection_set.is_empty();
         let is_projection_plan_empty = normalized_operation.projection_plan.is_empty();
         let contains_introspection = normalized_operation.operation_for_introspection.is_some();
@@ -178,8 +182,9 @@ pub async fn plan_operation_with_cache(
 }
 
 #[inline]
-fn calculate_cache_key(operation_hash: u64, context: &StableOverrideContext) -> u64 {
+fn calculate_cache_key(cache_id: u64, operation_hash: u64, context: &StableOverrideContext) -> u64 {
     let mut hasher = Xxh3::new();
+    cache_id.hash(&mut hasher);
     operation_hash.hash(&mut hasher);
     context.hash(&mut hasher);
     hasher.finish()

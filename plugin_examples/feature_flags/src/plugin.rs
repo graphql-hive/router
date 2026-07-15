@@ -17,23 +17,26 @@ use hive_router::{
         hooks::{
             on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
             on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
-            on_supergraph_load::{
-                OnSupergraphLoadStartHookPayload, OnSupergraphLoadStartHookResult,
-            },
+            on_supergraph_load::SupergraphData,
         },
         plugin_trait::{RouterPlugin, StartHookPayload},
     },
+    query_planner::utils::parsing::safe_parse_schema,
 };
 
-#[derive(Default)]
-struct FeatureFlagSchemas {
-    supergraph: Option<Arc<Document>>,
-    variants: HashMap<String, Arc<Document>>,
-}
+const SUPERGRAPH_SDL: &str = include_str!("../supergraph.graphql");
 
-#[derive(Default)]
+/// This example shows how a plugin can be the router's only source of a supergraph
+/// (`supergraph.source: plugin` in `router.config.yaml`) and pick a feature-flag-stripped variant
+/// of it per request, in `on_http_request`.
+///
+/// The base supergraph document is parsed once, in `on_plugin_init`. From then on, every request
+/// builds (or reuses a cached) `Arc<SupergraphData>` for its exact combination of
+/// `x-feature-flags` header values, stripping any `@feature`-tagged types/fields that aren't
+/// enabled - affecting parsing, validation, planning, execution *and* introspection alike.
 pub struct FeatureFlagsPlugin {
-    schemas: Mutex<FeatureFlagSchemas>,
+    supergraph: Document,
+    variants: Mutex<HashMap<String, Arc<SupergraphData>>>,
 }
 
 #[async_trait]
@@ -45,17 +48,14 @@ impl RouterPlugin for FeatureFlagsPlugin {
     }
 
     fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
-        payload.initialize_plugin_with_defaults()
-    }
-
-    fn on_supergraph_reload<'exec>(
-        &'exec self,
-        payload: OnSupergraphLoadStartHookPayload,
-    ) -> OnSupergraphLoadStartHookResult<'exec> {
-        let mut schemas = self.schemas.lock().unwrap();
-        schemas.supergraph = Some(Arc::new(payload.new_ast.clone()));
-        schemas.variants.clear();
-        payload.proceed()
+        let subgraphs_url = std::env::var("FEATURE_FLAGS_SUBGRAPHS_URL")
+            .expect("FEATURE_FLAGS_SUBGRAPHS_URL must be set for tests");
+        let document =
+            safe_parse_schema(&SUPERGRAPH_SDL.replace("http://0.0.0.0:4200", &subgraphs_url))?;
+        payload.initialize_plugin(Self {
+            supergraph: document,
+            variants: Mutex::new(HashMap::new()),
+        })
     }
 
     fn on_http_request<'req>(
@@ -75,25 +75,37 @@ impl RouterPlugin for FeatureFlagsPlugin {
 
         // sort the feature flags so header order does not change the cache key
         feature_flags.sort();
-
         let cache_key = feature_flags.join(",");
-        let mut schemas = self.schemas.lock().unwrap();
-        let Some(supergraph) = schemas.supergraph.clone() else {
-            return payload.proceed();
-        };
-        let document = schemas
-            .variants
-            .entry(cache_key)
-            .or_insert_with(|| schema_for_features(&supergraph, &feature_flags))
-            .clone();
-        drop(schemas);
 
-        payload.set_schema_document(document);
+        let mut variants = self.variants.lock().unwrap();
+        let existing = variants.get(&cache_key).cloned();
+        match existing {
+            // (cheap) already constructed, serve from cache
+            Some(selected) => payload.set_supergraph(selected),
+            // (expensive) not constructed, build and cache it
+            None => {
+                let document = schema_for_features(&self.supergraph, &feature_flags);
+                match SupergraphData::from_document(document, Default::default()) {
+                    Ok(supergraph_data) => {
+                        // build successful
+                        let supergraph_data = Arc::new(supergraph_data);
+                        variants.insert(cache_key, supergraph_data.clone());
+                        payload.set_supergraph(supergraph_data);
+                    }
+                    Err(_) => {
+                        // building the supergraph failed, you can optionally log, but
+                        // intentionally not set the supergraph and let the router fail the
+                        // request with an error coded NO_SUPERGRAPH_AVAILABLE
+                    }
+                }
+            }
+        }
+
         payload.proceed()
     }
 }
 
-fn schema_for_features(document: &Arc<Document>, feature_flags: &[String]) -> Arc<Document> {
+fn schema_for_features(document: &Document, feature_flags: &[String]) -> Document {
     let mut removed_definitions = vec![];
     let mut removed_field_definitions: HashMap<String, Vec<String>> = HashMap::new();
 
@@ -194,7 +206,7 @@ fn schema_for_features(document: &Arc<Document>, feature_flags: &[String]) -> Ar
         })
         .collect();
 
-    Arc::new(Document { definitions })
+    Document { definitions }
 }
 
 fn should_keep_node(

@@ -46,7 +46,7 @@ use crate::pipeline::{
     normalize::normalize_request_with_cache, parser::parse_operation_with_cache, usage_reporting,
     validation::validate_operation_with_cache,
 };
-use crate::schema_state::SchemaState;
+use crate::schema_state::{SchemaState, SelectedSupergraph};
 use crate::shared_state::{RouterSharedState, SharedRouterResponse};
 
 type WsStateRef = Rc<RefCell<WsState<tokio::sync::mpsc::Sender<()>>>>;
@@ -56,16 +56,9 @@ pub async fn ws_index(
     schema_state: web::types::State<Arc<SchemaState>>,
     shared_state: web::types::State<Arc<RouterSharedState>>,
 ) -> Result<HttpResponse, Error> {
-    // A plugin may have overridden the schema document for this request in `on_http_request`
-    // (see `OnHttpRequestHookPayload::set_schema_document`); the plugin middleware resolves it
-    // into an `Arc<SchemaState>` and stores it in request extensions. Otherwise fall back to the
-    // router's own.
-    let schema_state = req
-        .extensions()
-        .get::<Arc<SchemaState>>()
-        .cloned()
-        .unwrap_or_else(|| schema_state.get_ref().clone());
+    let schema_state = schema_state.get_ref().clone();
     let shared_state = shared_state.get_ref().clone();
+    let supergraph = schema_state.select_supergraph(&req);
 
     let accepted_subprotocol = ws::subprotocols(&req)
         .find(|p| *p == WS_SUBPROTOCOL)
@@ -85,12 +78,14 @@ pub async fn ws_index(
             let shared_state = shared_state.clone();
             let plugin_context = plugin_context.clone();
             let request_context = request_context.clone();
+            let supergraph = supergraph.clone();
             async move {
                 ws_service(
                     accepted_subprotocol.is_some(),
                     sink,
                     schema_state,
                     shared_state,
+                    supergraph,
                     plugin_context,
                     request_context,
                 )
@@ -101,11 +96,13 @@ pub async fn ws_index(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn ws_service(
     has_accepted_subprotocol: bool,
     sink: ws::WsSink,
     schema_state: Arc<SchemaState>,
     shared_state: Arc<RouterSharedState>,
+    supergraph: Option<SelectedSupergraph>,
     plugin_context: Option<Arc<PluginContext>>,
     request_context: SharedRequestContext,
 ) -> Result<impl Service<ws::Frame, Response = Option<ws::Message>, Error = io::Error>, web::Error>
@@ -165,6 +162,7 @@ async fn ws_service(
         let request_context = request_context.clone();
         let ws_uri = ws_uri.clone();
         let ws_path = ws_path.clone();
+        let supergraph = supergraph.clone();
         async move {
             match parse_frame_to_text(frame, &state) {
                 Ok(text) => Ok(handle_text_frame(
@@ -173,6 +171,7 @@ async fn ws_service(
                     state,
                     &schema_state,
                     &shared_state,
+                    supergraph.as_ref(),
                     plugin_context,
                     &request_context,
                     &ws_uri,
@@ -230,6 +229,7 @@ async fn handle_text_frame(
     state: WsStateRef,
     schema_state: &Arc<SchemaState>,
     shared_state: &Arc<RouterSharedState>,
+    supergraph: Option<&SelectedSupergraph>,
     plugin_context: Option<Arc<PluginContext>>,
     request_context: &SharedRequestContext,
     ws_uri: &http::Uri,
@@ -284,22 +284,29 @@ async fn handle_text_frame(
             let span_clone = operation_span.clone();
 
             let result = async {
-                let maybe_supergraph = schema_state.current_supergraph();
-                let supergraph = match maybe_supergraph.as_ref() {
-                    Some(supergraph) => supergraph,
-                    None => {
-                        warn!(
-                            "No supergraph available yet, unable to process client subscribe message"
-                        );
-                        return Some(ServerMessage::error(
-                            &id,
-                            &[GraphQLError::from_message_and_extensions(
-                                "No supergraph available yet".to_string(),
-                                GraphQLErrorExtensions::new_from_code("SERVICE_UNAVAILABLE"),
-                            )],
-                        ));
-                    }
+                let Some(supergraph) = supergraph else {
+                    warn!("No supergraph available yet, unable to process client subscribe message");
+                    return Some(ServerMessage::error(
+                        &id,
+                        &[GraphQLError::from_message_and_extensions(
+                            "No supergraph available yet".to_string(),
+                            GraphQLErrorExtensions::new_from_code("SERVICE_UNAVAILABLE"),
+                        )],
+                    ));
                 };
+
+                if supergraph.snapshot.is_retired() {
+                    // the supergraph selected at upgrade time has since been retired (configured
+                    // reload, or the owning plugin dropped/replaced its variant) - reject new
+                    // operations on this connection rather than create work from a stale schema.
+                    return Some(ServerMessage::error(
+                        &id,
+                        &[GraphQLError::from_message_and_extensions(
+                            "Supergraph used by this connection has been retired".to_string(),
+                            GraphQLErrorExtensions::new_from_code("SERVICE_UNAVAILABLE"),
+                        )],
+                    ));
+                }
 
                 let config = &shared_state.router_config.websocket;
 
@@ -416,7 +423,7 @@ async fn handle_text_frame(
                 );
 
                 match validate_operation_with_cache(
-                    supergraph,
+                    &supergraph.snapshot,
                     schema_state,
                     shared_state,
                     &parser_payload,
@@ -438,7 +445,7 @@ async fn handle_text_frame(
                 }
 
                 let normalize_payload = match normalize_request_with_cache(
-                    supergraph,
+                    &supergraph.snapshot,
                     schema_state,
                     &payload,
                     &parser_payload,
@@ -477,7 +484,7 @@ async fn handle_text_frame(
                         ws_uri.path(),
                         headers.as_ref(),
                         &shared_state.in_flight_requests_header_policy,
-                        supergraph.schema_checksum(),
+                        supergraph.snapshot.cache_id,
                         normalize_payload.normalized_operation_hash,
                         variables_hash,
                         extensions_hash,
@@ -500,7 +507,7 @@ async fn handle_text_frame(
                     Default::default(),
                     payload,
                     &normalize_payload,
-                    supergraph,
+                    &supergraph,
                     shared_state,
                     schema_state,
                     operation_span,
@@ -563,7 +570,7 @@ async fn handle_text_frame(
                         headers: headers_vec,
                     };
                     usage_reporting::collect_usage_report(
-                        supergraph.supergraph_schema.clone(),
+                        supergraph.snapshot.supergraph_schema.clone(),
                         started_at.elapsed(),
                         client_name,
                         client_version,

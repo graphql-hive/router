@@ -1,11 +1,16 @@
 #[cfg(test)]
 mod tests {
-    use e2e::testkit::{ClientResponseExt, TestRouter, TestSubgraphs};
+    use e2e::testkit::{ClientResponseExt, EnvVarsGuard, TestRouter, TestSubgraphs};
     use hive_router::ntex;
 
     #[ntex::test]
     async fn basic_variant_hides_feature_fields_from_validation_and_introspection() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
+
+        let _env_guard = EnvVarsGuard::new()
+            .set("REPLACE_SCHEMA_SUBGRAPHS_URL", &subgraphs.url())
+            .apply()
+            .await;
 
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
@@ -15,7 +20,7 @@ mod tests {
             .start()
             .await;
 
-        // The default (no header) variant is the "full" schema: shippingEstimate is queryable.
+        // default (no header) variant is the "full" schema: shippingEstimate is queryable
         let res = router
             .send_graphql_request(
                 r#"
@@ -32,8 +37,6 @@ mod tests {
             .await;
         assert_eq!(res.status(), 200);
 
-        // With the "basic" variant, shippingEstimate has been stripped from the supergraph
-        // before planning, so it's a validation error, same as if the field never existed.
         let res = router
             .send_graphql_request(
                 r#"
@@ -70,8 +73,8 @@ mod tests {
         }
         "###);
 
-        // Introspection respects the override too: shippingEstimate and inStock are entirely
-        // gone from the "basic" variant's `Product` type, not just rejected by validation.
+        // shippingEstimate and inStock are entirely gone from the "basic" variant's `Product`
+        // type, not just rejected by validation
         let res = router
             .send_graphql_request(
                 r#"
@@ -123,29 +126,28 @@ mod tests {
         "###);
     }
 
-    /// A plugin whose selected document always fails `SchemaState` construction (a malformed
-    /// subgraph endpoint URL), used to assert the router returns an internal error instead of
-    /// silently falling back to the router's default schema.
+    /// a plugin whose override variant always fails `SchemaState` construction (a malformed
+    /// subgraph endpoint URL), used to assert the router returns an error instead of
+    /// silently falling back to the router's default schema when the override is selected
     mod broken_schema_plugin {
         use std::sync::Arc;
 
         use hive_router::{
             async_trait,
-            graphql_tools::static_graphql::schema::Document,
             plugins::{
                 hooks::{
                     on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
                     on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
+                    on_supergraph_load::SupergraphData,
                 },
                 plugin_trait::{RouterPlugin, StartHookPayload},
             },
-            query_planner::utils::parsing::safe_parse_schema,
         };
 
         const SUPERGRAPH_SDL: &str = include_str!("../supergraph.graphql");
 
         pub struct BrokenSchemaPlugin {
-            document: Arc<Document>,
+            broken_variant: Arc<SupergraphData>,
         }
 
         #[async_trait]
@@ -159,9 +161,9 @@ mod tests {
             fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
                 let broken_sdl =
                     SUPERGRAPH_SDL.replace("http://0.0.0.0:4200/accounts", "not a valid url ::");
-                let document = safe_parse_schema(&broken_sdl)?;
+                let broken_variant = SupergraphData::from_sdl(&broken_sdl, Default::default())?;
                 payload.initialize_plugin(Self {
-                    document: Arc::new(document),
+                    broken_variant: Arc::new(broken_variant),
                 })
             }
 
@@ -169,19 +171,29 @@ mod tests {
                 &'req self,
                 payload: OnHttpRequestHookPayload<'req>,
             ) -> OnHttpRequestHookResult<'req> {
-                payload.set_schema_document(self.document.clone());
+                let variant = payload
+                    .router_http_request
+                    .headers()
+                    .get("x-schema-variant")
+                    .and_then(|value| value.to_str().ok());
+
+                if variant == Some("basic") {
+                    payload.set_supergraph(self.broken_variant.clone());
+                }
+
                 payload.proceed()
             }
         }
     }
 
     #[ntex::test]
-    async fn failed_schema_state_build_returns_internal_error_not_default_schema() {
+    async fn failed_schema_state_build_returns_error_not_default_schema() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
 
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
             .inline_config(
+                // replace with broken_schema plugin
                 include_str!("../router.config.yaml").replace("replace_schema:", "broken_schema:"),
             )
             .register_plugin::<broken_schema_plugin::BrokenSchemaPlugin>()
@@ -189,6 +201,8 @@ mod tests {
             .start()
             .await;
 
+        // No override header: the router's own default (working) schema is used,
+        // unaffected by the plugin's broken variant
         let res = router
             .send_graphql_request(
                 r#"
@@ -202,9 +216,35 @@ mod tests {
                 None,
             )
             .await;
+        assert_eq!(res.status(), 200);
 
-        // Must not silently fall back to the router's default (working) schema: the plugin
-        // selected a document whose `SchemaState` fails to build, so the request must fail.
-        assert_eq!(res.status(), 500);
+        // with the override header, the plugin selects its broken variant
+        let res = router
+            .send_graphql_request(
+                r#"
+                query {
+                    topProducts(first: 1) {
+                        name
+                    }
+                }
+                "#,
+                None,
+                e2e::some_header_map! {
+                    "x-schema-variant" => "basic"
+                },
+            )
+            .await;
+        e2e::insta::assert_snapshot!(res.json_body_string_pretty().await, @r###"
+        {
+          "errors": [
+            {
+              "message": "No supergraph available yet, unable to process request",
+              "extensions": {
+                "code": "NO_SUPERGRAPH_AVAILABLE"
+              }
+            }
+          ]
+        }
+        "###);
     }
 }

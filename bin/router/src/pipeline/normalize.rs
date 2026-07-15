@@ -5,7 +5,7 @@ use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLNormalizeSpan, GraphQLSpanOperationIdentity,
 };
 use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
-use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
+use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphSnapshot;
 use hive_router_plan_executor::introspection::partition::partition_operation;
 use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
 use hive_router_query_planner::ast::normalization::error::NormalizationError;
@@ -81,7 +81,7 @@ pub struct NormalizedOperationHashes {
 
 #[inline]
 pub async fn normalize_request_with_cache(
-    supergraph: &SupergraphData,
+    supergraph: &SupergraphSnapshot,
     schema_state: &SchemaState,
     graphql_params: &GraphQLParams,
     parser_payload: &GraphQLParserPayload,
@@ -90,14 +90,19 @@ pub async fn normalize_request_with_cache(
     let normalize_cache_capture = metrics.cache.normalize.capture_request();
     let normalize_span = GraphQLNormalizeSpan::new();
     async {
-        let cache_key = match &graphql_params.operation_name {
-            Some(operation_name) => {
-                let mut hasher = Xxh3::new();
-                graphql_params.query.hash(&mut hasher);
-                operation_name.hash(&mut hasher);
-                hasher.finish()
+        let cache_key = {
+            let mut hasher = Xxh3::new();
+            supergraph.cache_id.hash(&mut hasher);
+            match &graphql_params.operation_name {
+                Some(operation_name) => {
+                    graphql_params.query.hash(&mut hasher);
+                    operation_name.hash(&mut hasher);
+                }
+                None => {
+                    parser_payload.cache_key.hash(&mut hasher);
+                }
             }
-            None => parser_payload.cache_key,
+            hasher.finish()
         };
 
         schema_state

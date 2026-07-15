@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use hive_router_internal::telemetry::traces::spans::graphql::GraphQLVariableCoercionSpan;
 use hive_router_plan_executor::execution::plan::CoerceVariablesPayload;
-use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
+use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphSnapshot;
 use hive_router_plan_executor::variables::collect_variables;
 use sonic_rs::Value;
 use tracing::{trace, warn};
@@ -12,7 +12,7 @@ use crate::pipeline::normalize::GraphQLNormalizationPayload;
 
 #[inline]
 pub fn coerce_request_variables(
-    supergraph: &SupergraphData,
+    supergraph: &SupergraphSnapshot,
     variables: &mut HashMap<String, Value>,
     normalized_operation: &GraphQLNormalizationPayload,
 ) -> Result<CoerceVariablesPayload, PipelineError> {

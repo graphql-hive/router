@@ -4,7 +4,7 @@ use hive_router::{
     async_trait,
     graphql_tools::{
         ast::TypeDefinitionFields,
-        parser::schema::{Definition, ParseError},
+        parser::schema::Definition,
         static_graphql::{
             query::Value,
             schema::{Document, EnumType, InputObjectType, ObjectType, TypeDefinition},
@@ -14,6 +14,7 @@ use hive_router::{
         hooks::{
             on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
             on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
+            on_supergraph_load::SupergraphData,
         },
         plugin_trait::{RouterPlugin, StartHookPayload},
     },
@@ -22,23 +23,20 @@ use hive_router::{
 
 const SUPERGRAPH_SDL: &str = include_str!("../supergraph.graphql");
 
-/// This example shows how a plugin can pick a whole schema document (not just a validation-time
-/// schema) per request, in `on_http_request`, and have it hold for the entire pipeline: parsing,
-/// validation, normalization, planning, execution *and* introspection.
+/// This example shows how a plugin can override the router's default, configured supergraph
+/// (`supergraph.source: file` in `router.config.yaml`) with a different one, per request, in
+/// `on_http_request`.
 ///
-/// Overriding the schema document also affects introspection, because introspection is built
-/// from the same resolved schema state that parsing/validation/planning use.
+/// Overriding a supergraph also affects introspection, because introspection is built from the
+/// same schema snapshot that parsing/validation/planning use.
 ///
-/// Here we pre-parse one supergraph document per feature bundle (stripping `@feature`-tagged
-/// types/fields from the *supergraph* document, not the public schema - the public/consumer
-/// schema is derived by the router from whatever we hand it) and pick between them using the
-/// `x-schema-variant` request header.
-///
-/// The plugin only owns stable `Arc<Document>`s. The router resolves each document to its own
-/// internally-owned `SchemaState` (building it once on the first request that selects it, then
-/// reusing it for later requests with the same `Arc<Document>`).
+/// Here we build one extra `Arc<SupergraphData>` (stripping `@feature`-tagged types/fields from
+/// the *supergraph* document, not the public schema - the public/consumer schema is derived by
+/// the router from whatever we hand it) and swap it in only when the `x-schema-variant: basic`
+/// request header is present. Without that header (or with any other value), the router's own
+/// default supergraph is used unchanged.
 pub struct ReplaceSchemaPlugin {
-    variants: HashMap<&'static str, Arc<Document>>,
+    basic_variant: Arc<SupergraphData>,
 }
 
 #[async_trait]
@@ -50,18 +48,13 @@ impl RouterPlugin for ReplaceSchemaPlugin {
     }
 
     fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
-        // Parse each schema variant once here and keep the `Arc<Document>` around for the
-        // lifetime of the plugin. `on_http_request` must hand the router the *same* `Arc` every
-        // time a variant is selected - constructing a fresh document per request would defeat
-        // the router's schema-state cache and force an expensive rebuild on every request.
-        let mut variants = HashMap::new();
-        variants.insert("full", Arc::new(build_document(&[])?));
-        variants.insert(
-            "basic",
-            Arc::new(build_document(&["inStock", "shippingEstimate"])?),
-        );
-
-        payload.initialize_plugin(Self { variants })
+        let subgraphs_url = std::env::var("REPLACE_SCHEMA_SUBGRAPHS_URL")
+            .expect("REPLACE_SCHEMA_SUBGRAPHS_URL must be set for tests");
+        let document =
+            safe_parse_schema(&SUPERGRAPH_SDL.replace("http://0.0.0.0:4200", &subgraphs_url))?;
+        let document = strip_disabled_features(document, &["inStock", "shippingEstimate"]);
+        let basic_variant = Arc::new(SupergraphData::from_document(document, Default::default())?);
+        payload.initialize_plugin(Self { basic_variant })
     }
 
     fn on_http_request<'req>(
@@ -72,23 +65,14 @@ impl RouterPlugin for ReplaceSchemaPlugin {
             .router_http_request
             .headers()
             .get("x-schema-variant")
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or("full");
+            .and_then(|value| value.to_str().ok());
 
-        if let Some(document) = self.variants.get(variant) {
-            payload.set_schema_document(document.clone());
+        if variant == Some("basic") {
+            payload.set_supergraph(self.basic_variant.clone());
         }
 
         payload.proceed()
     }
-}
-
-/// Builds a supergraph document with the given `@feature`-tagged types/fields stripped (so they
-/// disappear from planning, validation *and* introspection alike). An empty `disabled_features`
-/// keeps the schema as-is.
-fn build_document(disabled_features: &[&str]) -> Result<Document, ParseError> {
-    let document = safe_parse_schema(SUPERGRAPH_SDL)?;
-    Ok(strip_disabled_features(document, disabled_features))
 }
 
 fn strip_disabled_features(document: Document, disabled_features: &[&str]) -> Document {
@@ -170,7 +154,6 @@ fn strip_disabled_features(document: Document, disabled_features: &[&str]) -> Do
     Document { definitions }
 }
 
-/// Whether this node is tagged `@feature(name: ...)` for one of the disabled features.
 fn has_disabled_feature(
     disabled_features: &[&str],
     directives: &[hive_router::graphql_tools::static_graphql::schema::Directive],

@@ -105,7 +105,7 @@ mod supergraph_e2e_tests {
     }
 
     #[ntex::test]
-    async fn should_clear_internal_caches_when_supergraph_changes() {
+    async fn reloading_supergraph_does_not_reuse_stale_cache_partitions() {
         let mut server = mockito::Server::new_async().await;
         let host = server.host_with_port();
         let mock1 = server
@@ -134,12 +134,18 @@ mod supergraph_e2e_tests {
             .await
             .expect("Expected mock1 to be matched");
 
+        // introspection needs no subgraph resolution, so it works against this bare
+        // (subgraph-less) test schema and can be reused verbatim after the reload below - any
+        // difference in its result proves the swap took effect, and any cache growth (rather
+        // than replacement) proves the old and new partitions don't collide
+        let introspect_query = r#"{ __type(name: "Query") { fields { name } } }"#;
+
         // wait for caches to populate
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
             // we keep making requests to ensure the cache because its flakey
             let res = router
-                .send_graphql_request("{ __schema { types { name } } }", None, None)
+                .send_graphql_request(introspect_query, None, None)
                 .await;
             assert!(res.status().is_success(), "Expected 200 OK");
 
@@ -164,6 +170,11 @@ mod supergraph_e2e_tests {
             ntex::time::sleep(Duration::from_millis(50)).await;
         }
 
+        let plan_entries_before_reload = router.schema_state().plan_cache.entry_count();
+        let normalize_entries_before_reload = router.schema_state().normalize_cache.entry_count();
+        assert!(plan_entries_before_reload >= 1);
+        assert!(normalize_entries_before_reload >= 1);
+
         mock1.remove();
 
         let mock2 = server
@@ -178,28 +189,43 @@ mod supergraph_e2e_tests {
             .await
             .expect("Expected mock2 to be matched");
 
-        // wait for cache invalidation to be reflected
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        loop {
-            router
-                .schema_state()
-                .normalize_cache
-                .run_pending_tasks()
-                .await;
-            router.schema_state().plan_cache.run_pending_tasks().await;
-            if router.schema_state().plan_cache.entry_count() == 0
-                && router.schema_state().normalize_cache.entry_count() == 0
-            {
-                break;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "timed out waiting for caches to clear: plan={}, normalize={}",
-                router.schema_state().plan_cache.entry_count(),
-                router.schema_state().normalize_cache.entry_count()
-            );
-            ntex::time::sleep(Duration::from_millis(50)).await;
-        }
+        // wait for the router to finish applying the new supergraph state before asserting - the
+        // mock being matched only means the poller fetched the sdl, not that the router has
+        // finished rebuilding its query planner.
+        router.wait_for_ready(None).await;
+
+        // same query text as before the reload, but it must reflect the *new* schema - proving
+        // the swap took effect for new requests without needing to force-clear any cache.
+        let res = router
+            .send_graphql_request(introspect_query, None, None)
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        let body = res.json_body().await;
+        let fields: Vec<&str> = body["data"]["__type"]["fields"]
+            .as_array()
+            .expect("fields array")
+            .iter()
+            .map(|f| f["name"].as_str().expect("field name"))
+            .collect();
+        assert_eq!(fields, vec!["dummyNew"]);
+
+        router
+            .schema_state()
+            .normalize_cache
+            .run_pending_tasks()
+            .await;
+        router.schema_state().plan_cache.run_pending_tasks().await;
+
+        // the reloaded supergraph gets a new, process-unique cache id, so its entries land on a
+        // distinct cache partition rather than colliding with (or evicting) the old supergraph's
+        assert!(
+            router.schema_state().plan_cache.entry_count() > plan_entries_before_reload,
+            "expected the new schema's plan cache entry to add to, not replace, the old one"
+        );
+        assert!(
+            router.schema_state().normalize_cache.entry_count() > normalize_entries_before_reload,
+            "expected the new schema's normalize cache entry to add to, not replace, the old one"
+        );
     }
 
     /// In this test we are testing that the supergraph is not changed for in-flight requests.
