@@ -85,10 +85,6 @@ impl DemandControlRuntime {
     pub fn formula_cache(&self) -> &Cache<u64, Arc<DemandControlFormulaPlan>> {
         &self.formula_cache
     }
-
-    pub fn invalidate_formula_cache(&self) {
-        self.formula_cache.invalidate_all();
-    }
 }
 
 impl DemandControlRuntime {
