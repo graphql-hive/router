@@ -68,6 +68,12 @@ impl RouterPlugin for FeatureFlagsPlugin {
             .get("x-feature-flags")
             .and_then(|header_value| header_value.to_str().ok())
             .unwrap_or_default();
+
+        if feature_flags_header == "skip" {
+            // skip setting the supergraph to test NO_SUPERGRAPH_AVAILABLE
+            return payload.proceed();
+        }
+
         let mut feature_flags: Vec<String> = feature_flags_header
             .split(',')
             .map(|tag| tag.trim().to_string())

@@ -218,4 +218,49 @@ mod tests {
         }
         "###);
     }
+
+    #[ntex::test]
+    async fn none_selected_returns_error_no_supergraph_available() {
+        let _env_guard = EnvVarsGuard::new()
+            .set("FEATURE_FLAGS_SUBGRAPHS_URL", "doesnt matter")
+            .apply()
+            .await;
+
+        let router = TestRouter::builder()
+            .file_config("../plugin_examples/feature_flags/router.config.yaml")
+            .register_plugin::<crate::plugin::FeatureFlagsPlugin>()
+            .skip_wait_for_ready_on_start()
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                query {
+                    topProducts(first: 1) {
+                        name
+                    }
+                }
+                "#,
+                None,
+                e2e::some_header_map! {
+                    "x-feature-flags" => "skip"
+                },
+            )
+            .await;
+
+        e2e::insta::assert_snapshot!(res.json_body_string_pretty().await, @r###"
+        {
+          "errors": [
+            {
+              "message": "No supergraph available yet, unable to process request",
+              "extensions": {
+                "code": "NO_SUPERGRAPH_AVAILABLE"
+              }
+            }
+          ]
+        }
+        "###);
+    }
 }
