@@ -8,7 +8,7 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "graphql": "^17.0.1",
+    "graphql": "^17.0.2",
     "graphql-yoga": "5.21.2"
   },
   "private": false
