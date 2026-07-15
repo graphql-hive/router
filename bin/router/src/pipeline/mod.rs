@@ -1,8 +1,9 @@
 use futures::StreamExt;
 use hive_router_internal::{
     http::read_body_stream,
-    telemetry::traces::spans::{
-        graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan,
+    telemetry::{
+        logging::{summary, targets},
+        traces::spans::{graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan},
     },
 };
 use hive_router_plan_executor::{
@@ -46,7 +47,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use tracing::{error, Instrument};
+use tracing::{debug, error, warn, Instrument};
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::{
@@ -125,6 +126,8 @@ pub async fn graphql_request_handler(
         .as_ref()
         .and_then(|cors| cors.get_early_response(req))
     {
+        debug!(target: targets::HTTP_SERVER, "returning early CORS response");
+
         return Ok(early_response);
     }
 
@@ -132,6 +135,8 @@ pub async fn graphql_request_handler(
     // ignores the `text/html` preference and falls through to regular GraphQL handling,
     // so browser GETs still get a valid response instead of a 404.
     *response_mode = req.negotiate(shared_state.router_config.laboratory.enabled)?;
+    debug!(target: targets::HTTP_SERVER, response_mode = response_mode.as_str(), "response mode was negotiated");
+    summary::record(|s| s.set_response_mode(response_mode.as_str()));
 
     // `negotiate` only returns `Laboratory` when it is enabled.
     if *response_mode == ResponseMode::Laboratory {
@@ -158,7 +163,8 @@ pub async fn graphql_request_handler(
         )
         .await?;
 
-        http_server_request_span.record_body_size(body_bytes.len());
+        let req_body_size = body_bytes.len();
+        http_server_request_span.record_body_size(req_body_size);
 
         let mut request_headers = req.headers().clone();
         let request_context = req.read_request_context()?;
@@ -170,6 +176,13 @@ pub async fn graphql_request_handler(
         )?;
         let client_name = client.name.as_deref();
         let client_version = client.version.as_deref();
+
+        summary::record(|s| {
+            s.set_client_info(
+                client_name,
+                client_version,
+            )
+        });
 
         let mut plugin_req_state = None;
 
@@ -202,7 +215,21 @@ pub async fn graphql_request_handler(
             }
         };
 
+        summary::record(|s| {
+            s.set_persisted_document_id(prepared_operation.resolved_document_id.as_deref())
+        });
+
         let mut graphql_params = prepared_operation.graphql_params;
+
+        debug!(
+            target: targets::GRAPHQL_EXECUTION,
+            client_name,
+            client_version,
+            operation_name = graphql_params.operation_name.as_deref(),
+            body_size = req_body_size,
+            operation = graphql_params.query.as_deref(),
+            "graphql request started",
+        );
 
         write_graphql_operation_metric_identity(req, graphql_params.operation_name.clone(), None);
 
@@ -215,6 +242,12 @@ pub async fn graphql_request_handler(
                 return Ok(response);
             }
         };
+
+        summary::record(|s| {
+            s.set_operation_name(parser_payload.operation_name.as_deref());
+            s.set_operation_type(parser_payload.operation_type.as_str());
+            s.set_operation_hash(Some(parser_payload.hive_operation_hash.as_str()));
+        });
 
         operation_span.record_details(
             &parser_payload.minified_document,
@@ -229,6 +262,9 @@ pub async fn graphql_request_handler(
                 response_headers: vec![(RETRY_AFTER, HeaderValue::from_static("10"))],
             });
         };
+
+        summary::record(|s| s.set_supergraph_identifier(supergraph.snapshot.cache_id));
+
 
         if let Some(response) = validate_operation_with_cache(
             &supergraph,
@@ -321,7 +357,11 @@ pub async fn graphql_request_handler(
             if let Some(OperationKind::Mutation) =
                 normalize_payload.operation_for_plan.operation_kind
             {
-                error!("Mutation is not allowed over GET, stopping");
+                warn!(
+                    target: targets::GRAPHQL_VALIDATION,
+                    "Mutation is not allowed over GET, stopping"
+                );
+
                 return Err(PipelineError::MutationNotAllowedOverHttpGet);
             }
         }
@@ -437,6 +477,12 @@ pub async fn graphql_request_handler(
                 GraphQLResponseStatus::Ok
             },
         );
+
+        debug!(target: targets::GRAPHQL_EXECUTION, error_count = shared_response.error_count(), "graphql request completed");
+
+        summary::record(|s| {
+            s.set_error_count(shared_response.error_count() as u32);
+        });
 
         shared_response.into_response(response_mode, &shared_state.telemetry_context.metrics)
     }
@@ -621,7 +667,7 @@ fn materialize_shared_response_headers(
         .take()
         .modify_client_response_headers(response.headers_mut())
     {
-        error!(error = %err, "Failed to apply response header rules to client response");
+        error!(target: targets::HEADER_MANIPULATION, error = ?err, "Failed to apply response header rules to client response");
     }
 
     Arc::new(response.headers().clone())

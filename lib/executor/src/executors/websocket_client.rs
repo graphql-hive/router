@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use hive_router_internal::telemetry::logging::targets;
 use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
 use hyper_rustls::ConfigBuilderExt;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
@@ -166,7 +167,7 @@ impl WsClient {
         connection: WsConnection<Sealed>,
         payload: Option<ConnectionInitPayload>,
     ) -> Result<Self, WsInitError> {
-        debug!("Initialising WebSocket client connection");
+        debug!(target: targets::WEBSOCKET_CLIENT, "Initialising WebSocket client connection");
 
         let sink = connection.sink();
         let mut receiver = connection.receiver();
@@ -206,7 +207,7 @@ impl WsClient {
                                 ServerMessage::ConnectionAck {} => {
                                     state.borrow_mut().handshake_received = true;
                                     state.borrow_mut().complete_handshake();
-                                    debug!("Connection acknowledged");
+                                    debug!(target: targets::WEBSOCKET_CLIENT, "Connection acknowledged");
                                     break;
                                 }
                                 ServerMessage::Ping {} => {
@@ -215,10 +216,11 @@ impl WsClient {
                                 ServerMessage::Pong {} => {}
                                 _ => {
                                     // any other message before ack is an error
-                                    error!(
-                                        "Wrong message received before ConnectionAck: {:?}",
-                                        server_msg
+                                    error!(target: targets::WEBSOCKET_CLIENT,
+                                        error = ?server_msg,
+                                        "Wrong message received before ConnectionAck",
                                     );
+
                                     let _ = sink.send(CloseCode::Unauthorized.into()).await;
                                     return Err(WsInitError::WrongMessageBeforeAck);
                                 }
@@ -230,18 +232,18 @@ impl WsClient {
                             let _ = sink.send(msg).await;
                         }
                         Err(FrameNotParsedToText::Closed) => {
-                            debug!("Connection closed before acknowledgement");
+                            debug!(target: targets::WEBSOCKET_CLIENT, "Connection closed before acknowledgement");
                             return Err(WsInitError::ConnectionClosedBeforeAck);
                         }
                         Err(FrameNotParsedToText::None) => {}
                     }
                 }
                 Some(Err(e)) => {
-                    error!("WebSocket receiver error during init: {:?}", e);
+                    error!(target: targets::WEBSOCKET_CLIENT, error = ?e, "WebSocket receiver error during init");
                     return Err(WsInitError::ConnectionAckReceiverError);
                 }
                 None => {
-                    debug!("WebSocket receiver closed during init");
+                    debug!(target: targets::WEBSOCKET_CLIENT, "WebSocket receiver closed during init");
                     return Err(WsInitError::ConnectionAckReceiverClosed);
                 }
             }
@@ -301,7 +303,7 @@ impl WsClient {
             ))
             .await;
 
-        trace!(id = %subscribe_id, "Subscribe message sent");
+        trace!(target: targets::WEBSOCKET_CLIENT, subscription_id = %subscribe_id, "Subscribe message sent");
 
         let state = self.state.clone();
         let sink = self.sink.clone();
@@ -403,7 +405,8 @@ async fn dispatch_loop(
                 }
             }
             Some(Err(e)) => {
-                error!("Dispatch loop WebSocket receiver error: {:?}", e);
+                error!(target: targets::WEBSOCKET_CLIENT, error = ?e, "Dispatch loop WebSocket receiver error");
+
                 return;
             }
             None => {
@@ -441,7 +444,7 @@ fn handle_text_frame(text: String, state: &WsStateRef) -> Option<ws::Message> {
         Err(msg) => return Some(msg),
     };
 
-    trace!("type" = server_msg.as_ref(), "Received server message");
+    trace!(target: targets::WEBSOCKET_CLIENT, type = server_msg.as_ref(), "Received server message");
 
     match server_msg {
         ServerMessage::ConnectionAck {} => {
@@ -460,7 +463,8 @@ fn handle_text_frame(text: String, state: &WsStateRef) -> Option<ws::Message> {
                 ) {
                     Ok(response) => response,
                     Err(e) => {
-                        tracing::warn!("Failed to deserialize payload: {}", e);
+                        tracing::error!(target: targets::WEBSOCKET_CLIENT, error = ?e, "Failed to deserialize payload");
+
                         WsClientError::FailedToDeserializePayload.into()
                     }
                 };
@@ -494,7 +498,7 @@ fn text_to_server_message(text: &str) -> Result<ServerMessage, ws::Message> {
     let server_msg: ServerMessage = match sonic_rs::from_str(text) {
         Ok(msg) => msg,
         Err(e) => {
-            error!("Failed to parse server message to JSON: {}", e);
+            error!(target: targets::WEBSOCKET_CLIENT, error = ?e, "Failed to parse server message to JSON");
             return Err(CloseCode::BadResponse("Invalid message received from server").into());
         }
     };

@@ -8,6 +8,7 @@ use crate::schema_state::SelectedSupergraph;
 use crate::shared_state::RouterSharedState;
 use crate::SchemaState;
 use graphql_tools::validation::validate::validate;
+use hive_router_internal::telemetry::logging::targets;
 use hive_router_internal::telemetry::traces::spans::graphql::GraphQLValidateSpan;
 use hive_router_plan_executor::hooks::on_graphql_validation::{
     OnGraphQLValidationEndHookPayload, OnGraphQLValidationStartHookPayload,
@@ -15,7 +16,7 @@ use hive_router_plan_executor::hooks::on_graphql_validation::{
 use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_plan_executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow};
 use hive_router_plan_executor::plugins::hooks;
-use tracing::{error, trace, Instrument};
+use tracing::{debug, warn, Instrument};
 use xxhash_rust::xxh3::Xxh3;
 pub mod max_aliases_rule;
 pub mod max_depth_rule;
@@ -60,6 +61,8 @@ pub async fn validate_operation_with_cache(
                         // continue to next plugin
                     }
                     StartControlFlow::EndWithResponse(response) => {
+                        debug!(target: targets::GRAPHQL_VALIDATION, "plugin returned early response during validation phase");
+
                         return Ok(Some(response));
                     }
                     StartControlFlow::OnEnd(callback) => {
@@ -138,6 +141,8 @@ pub async fn validate_operation_with_cache(
                         // continue to next callback
                     }
                     EndControlFlow::EndWithResponse(response) => {
+                        debug!(target: targets::GRAPHQL_VALIDATION, "plugin returned early response during validation phase (on-end)");
+
                         return Ok(Some(response));
                     }
                 }
@@ -146,11 +151,8 @@ pub async fn validate_operation_with_cache(
         }
 
         if !errors.is_empty() {
-            error!(
-                "GraphQL validation failed with total of {} errors",
-                errors.len()
-            );
-            trace!("Validation errors: {:?}", errors);
+            warn!(target: targets::GRAPHQL_VALIDATION, total_errors = errors.len(), "GraphQL validation failed");
+            debug!(target: targets::GRAPHQL_VALIDATION, errors = ?errors, document = %validation_operation, "validation errors");
 
             return Err(PipelineError::ValidationErrors(errors));
         }

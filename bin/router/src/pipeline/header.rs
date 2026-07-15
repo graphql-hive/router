@@ -1,4 +1,5 @@
 use headers_accept::Accept;
+use hive_router_internal::telemetry::logging::targets;
 use http::{header::ACCEPT, Method};
 use mediatype::{
     names::{HTML, TEXT},
@@ -8,7 +9,7 @@ use ntex::web::HttpRequest;
 use std::str::FromStr;
 use std::sync::LazyLock;
 use strum::{AsRefStr, EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
-use tracing::error;
+use tracing::warn;
 
 use crate::pipeline::error::PipelineError;
 
@@ -188,6 +189,15 @@ impl Default for ResponseMode {
 }
 
 impl ResponseMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ResponseMode::SingleOnly(_) => "single",
+            ResponseMode::StreamOnly(_) => "stream",
+            ResponseMode::Dual(_, _) => "dual",
+            ResponseMode::Laboratory => "laboratory",
+        }
+    }
+
     pub fn can_single(&self) -> bool {
         matches!(self, ResponseMode::SingleOnly(_) | ResponseMode::Dual(_, _))
     }
@@ -250,7 +260,8 @@ impl RequestAccepts for HttpRequest {
         };
 
         let accept = Accept::from_str(accept_header).map_err(|err| {
-            error!("Failed to parse Accept header: {}", err);
+            warn!(target: targets::HTTP_SERVER, error = ?err, "failed to parse Accept header");
+
             PipelineError::InvalidHeaderValue(ACCEPT)
         })?;
 

@@ -1,12 +1,12 @@
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use hive_router_config::persisted_documents::PersistedDocumentsStorageRefConfig;
-use hive_router_internal::background_tasks::BackgroundTask;
+use hive_router_internal::{background_tasks::BackgroundTask, telemetry::logging::targets};
 use object_store::path::Path;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tracing::debug;
+use tracing::{debug, error};
 
 use crate::{
     pipeline::persisted_documents::resolve::{
@@ -56,13 +56,16 @@ impl StorageResolver {
 
         match result {
             StorageGetResult::NotModified => {
-                debug!("persisted documents store was not modified");
+                debug!(target: targets::PERSISTED_DOCUMENTS, "persisted documents store was not modified");
             }
             StorageGetResult::Modified { contents, etag } => {
+                debug!(target: targets::PERSISTED_DOCUMENTS, "persisted documents store was modified");
+
                 let parsed_manifest = parse_manifest(self.location.as_ref(), contents.as_bytes())
                     .map_err(PersistedDocumentResolverError::FileManifest)?;
                 let documents: DocumentsById = parsed_manifest.try_into()?;
                 self.documents.store(Arc::new(documents));
+
                 *self.last_etag.write().await = etag;
             }
         }
@@ -119,7 +122,7 @@ impl BackgroundTask for StorageManifestReloadTask {
             let error = self.loader.reload_if_needed().await;
 
             if let Err(err) = error {
-                tracing::error!(error = %err, "failed to reload persisted documents manifest from storage");
+                error!(target: targets::PERSISTED_DOCUMENTS, error = %err, "failed to reload persisted documents manifest from storage");
             }
 
             ntex::time::sleep(self.poll_interval).await;

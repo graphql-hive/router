@@ -2,6 +2,7 @@ pub mod coprocessor;
 pub mod mock_subgraphs;
 pub mod otel;
 pub mod s3_mock;
+pub mod stdout;
 
 use axum_server::{tls_rustls::RustlsConfig, Handle};
 use bytes::Bytes;

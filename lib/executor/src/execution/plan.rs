@@ -12,6 +12,7 @@ use futures::{
     FutureExt, StreamExt,
 };
 use hive_router_internal::graphql::ObservedError;
+use hive_router_internal::telemetry::logging::{summary, targets};
 use hive_router_internal::telemetry::metrics::graphql_metrics::GraphQLErrorMetricsRecorder;
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
@@ -30,7 +31,7 @@ use hive_router_query_planner::{
 use http::{HeaderMap, StatusCode};
 use serde::Serialize;
 use sonic_rs::{JsonValueTrait, ValueRef};
-use tracing::Instrument;
+use tracing::{debug, error, warn, Instrument};
 
 use crate::execution::client_request_details::OperationDetails;
 use crate::execution::demand_control::DemandControlExecutionContext;
@@ -162,7 +163,8 @@ impl FailedExecutionResult {
     pub fn serialize(&self) -> Vec<u8> {
         sonic_rs::to_vec(&self).unwrap_or_else(|err| {
             // should never happen. result should always serialize - but hey, no unwraps
-            tracing::error!("Failed to serialize pipeline error to response: {}", err);
+            error!(target: targets::CORE, error = ?err, "Failed to serialize pipeline error to response");
+
             sonic_rs::to_vec(&FailedExecutionResult {
                 errors: vec![GraphQLError::from_message_and_code(
                     "Failed to serialize error response",
@@ -191,15 +193,21 @@ fn early_http_response_into_execution_output(
     }
 }
 
+#[inline]
 fn log_plan_execution_error(error: &PlanExecutionError) {
     if let Some(subgraph_name) = error.subgraph_name() {
-        tracing::error!(
-            "Error executing plan with subgraph '{}': {}",
-            subgraph_name,
-            error
+        error!(
+            target: targets::GRAPHQL_EXECUTION,
+            subgraph = ?subgraph_name,
+            error = ?error,
+            "Error executing step",
         );
     } else {
-        tracing::error!("Error executing plan: {}", error);
+        error!(
+            target: targets::GRAPHQL_EXECUTION,
+            error = ?error,
+            "Error executing step",
+        );
     }
 }
 
@@ -529,6 +537,8 @@ async fn execute_query_plan_with_data<'exec>(
 
     let mut data = exec_ctx.data;
     let mut errors = exec_ctx.errors;
+
+    summary::record(|s| s.set_partial_response(error_count > 0 && !data.is_null()));
     let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
 
     let mut demand_control_cost = None;
@@ -546,7 +556,8 @@ async fn execute_query_plan_with_data<'exec>(
         });
 
         if actual > demand_control.operation.operation_max_cost {
-            tracing::info!(
+            warn!(
+                target: targets::DEMAND_CONTROL,
                 operation_name = ?opts.operation_for_plan.name.as_deref(),
                 actual_cost = actual,
                 estimated_cost = demand_control.evaluation.estimated_cost,
@@ -891,10 +902,12 @@ impl<'exec> Executor<'exec> {
                 {
                     // All alias lists are empty, so nothing to fetch.
                     // We skip the network call to save time.
-                    tracing::trace!(
+                    debug!(
+                        target: targets::GRAPHQL_EXECUTION,
                         alias_count = aliases.len(),
                         "Skipping batched entity fetch with no representations"
                     );
+
                     return None;
                 }
 
@@ -1269,6 +1282,7 @@ impl<'exec> Executor<'exec> {
                         }
 
                         tracing::trace!(
+                            target: targets::GRAPHQL_EXECUTION,
                             alias_count = aliases.len(),
                             "Patched entity batch alias results"
                         );
@@ -1885,6 +1899,7 @@ mod tests {
             HiveRouterConfig::default().into(),
             Arc::new(TelemetryContext::from_propagation_config(
                 &Default::default(),
+                &Default::default(),
             )),
             Arc::new(DashMap::new()),
         )
@@ -2005,6 +2020,7 @@ mod tests {
                 &subgraph_endpoint_map,
                 HiveRouterConfig::default().into(),
                 Arc::new(TelemetryContext::from_propagation_config(
+                    &Default::default(),
                     &Default::default(),
                 )),
                 Arc::new(DashMap::new()),

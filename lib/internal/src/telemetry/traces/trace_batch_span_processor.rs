@@ -44,6 +44,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::telemetry::error::TelemetryError;
+use crate::telemetry::logging::targets;
 
 /// Messages sent between Router threads and batch span processor's work thread
 #[allow(clippy::large_enum_variant)]
@@ -117,6 +118,7 @@ impl ActiveTrace {
         let max_spans_per_trace = config.max_spans_per_trace;
         warn!(
             name: "TraceBatchingProcessor.SpanDiscarded",
+            target: targets::TELEMETRY,
             trace_id = %span.span_context.trace_id(),
             %max_spans_per_trace,
             "Span discarded due to maximum spans per trace limit"
@@ -190,13 +192,15 @@ impl SpanProcessor for TraceBatchSpanProcessor {
 
             if count == 0 {
                 warn!(
-                  name: "TraceBatchSpanProcessor.SpanDroppingStarted",
-                  message = "Beginning to drop span messages due to full/internal errors. No further log will be emitted for next 100 spans. During Shutdown time, a log will be emitted with exact count of total spans dropped."
+                    name: "TraceBatchSpanProcessor.SpanDroppingStarted",
+                    target: targets::TELEMETRY,
+                    "Beginning to drop span messages due to full/internal errors. No further log will be emitted for next 100 spans. During Shutdown time, a log will be emitted with exact count of total spans dropped."
                 );
             } else if count.is_multiple_of(100) {
                 warn!(
-                  name: "TraceBatchSpanProcessor.SpanDroppingStarted",
-                  message = "Still droping span messages due to full/internal errors. No further log will be emitted for next 100 spans. During Shutdown time, a log will be emitted with exact count of total spans dropped."
+                    name: "TraceBatchSpanProcessor.SpanDroppingStarted",
+                    target: targets::TELEMETRY,
+                    message = "Still dropping span messages due to full/internal errors. No further log will be emitted for next 100 spans. During Shutdown time, a log will be emitted with exact count of total spans dropped."
                 );
             }
         }
@@ -229,6 +233,7 @@ impl SpanProcessor for TraceBatchSpanProcessor {
             let max_traces_in_memory = self.config.max_traces_in_memory;
             warn!(
                 name: "BatchSpanProcessor.Shutdown",
+                target: targets::TELEMETRY,
                 total_spans_dropped = total_dropped,
                 spans_dropped_trace_limit = limit_dropped,
                 max_traces_in_memory = max_traces_in_memory,
@@ -320,14 +325,14 @@ impl<E: SpanExporter + 'static> TraceAggregator<E> {
             BatchMessage::Shutdown(channel) => {
                 self.drain_active_traces();
                 self.flush_export_queue().await;
-                tracing::info!(
-                    component = "telemetry",
+                tracing::debug!(
+                    target: targets::TELEMETRY,
                     layer = "trace_batch_processor",
                     "shutdown scheduled"
                 );
                 let result = self.exporter.write().await.shutdown();
                 tracing::info!(
-                    component = "telemetry",
+                    target: targets::TELEMETRY,
                     layer = "trace_batch_processor",
                     "shutdown completed"
                 );
@@ -444,6 +449,7 @@ impl<E: SpanExporter + 'static> TraceAggregator<E> {
                 let max_traces_in_memory = self.config.max_traces_in_memory;
                 warn!(
                     name: "TraceBatchingProcessor.SpanDiscarded",
+                    target: targets::TELEMETRY,
                     trace_id = %span.span_context.trace_id(),
                     %max_traces_in_memory,
                     "Memory limit reached, dropping span"
@@ -493,7 +499,7 @@ impl<E: SpanExporter + 'static> TraceAggregator<E> {
         // Drop traces that are too old
         for trace_id in to_drop {
             if let Some(trace) = self.active_traces.remove(&trace_id) {
-                debug!(name: "TraceBatchingProcessor.TraceDiscarded", %trace_id, "Trace expired without root end");
+                debug!(name: "TraceBatchingProcessor.TraceDiscarded", target: targets::TELEMETRY, %trace_id, "Trace expired without root end");
                 self.drop_metrics
                     .dropped_spans_count
                     .fetch_add(trace.spans.len(), Ordering::Relaxed);
@@ -558,7 +564,7 @@ impl<E: SpanExporter + 'static> TraceAggregator<E> {
 
             let task = async move {
                 if let Err(err) = Self::export(batch, exporter, max_export_timeout).await {
-                    error!(name: "TraceBatchSpanProcessor.Export.Error", reason = format!("{}", err));
+                    error!(name: "TraceBatchSpanProcessor.Export.Error", target: targets::TELEMETRY, error = ?err, "failed to export trace batch");
                 }
                 Ok(())
             };

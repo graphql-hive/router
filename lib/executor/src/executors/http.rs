@@ -17,6 +17,7 @@ use crate::response::subgraph_response::SubgraphResponse;
 use futures::stream::BoxStream;
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::inflight::InFlightRole;
+use hive_router_internal::telemetry::logging::{summary, targets};
 use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
 use hive_router_internal::telemetry::metrics::http_client_metrics::HttpClientRequestStateCapture;
 use hive_router_internal::telemetry::metrics::subscription_metrics::SubscriptionTransport;
@@ -226,7 +227,8 @@ async fn send_request<'a>(
 
     *req.headers_mut() = headers;
 
-    debug!("making http request to {}", endpoint.to_string());
+    debug!(target: targets::HTTP_CLIENT, endpoint = ?endpoint, subgraph = subgraph_name, "making http request");
+    summary::record(|s| s.record_subgraph(subgraph_name));
 
     let http_request_span = HttpClientRequestSpan::from_request(&req);
     let mut http_request_capture = telemetry_context.metrics.http_client.capture_request(
@@ -253,9 +255,11 @@ async fn send_request<'a>(
         http_request_capture.set_status_code(res.status().as_u16());
 
         debug!(
-            "http request to {} completed, status: {}",
-            endpoint.to_string(),
-            res.status()
+            target: targets::HTTP_CLIENT,
+            endpoint = ?endpoint,
+            subgraph = subgraph_name,
+            status = res.status().as_u16(),
+            "subgraph http request completed",
         );
 
         let (parts, body) = res.into_parts();
@@ -314,6 +318,10 @@ pub enum DeduplicationHint {
 
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
+    fn executor_name(&self) -> &str {
+        "http"
+    }
+
     fn endpoint(&self) -> &http::Uri {
         &self.endpoint
     }
@@ -556,9 +564,10 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         *req.headers_mut() = headers;
 
         debug!(
-            "establishing subscription connection to subgraph {} at {}",
-            self.subgraph_name,
-            self.endpoint.to_string()
+            target: targets::HTTP_CLIENT,
+            subgraph = self.subgraph_name,
+            endpoint = ?self.endpoint,
+            "establishing subscription connection"
         );
 
         let res_fut = self.http_client.request(req);
@@ -570,10 +579,11 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         }?;
 
         debug!(
-            "subscription connection to subgraph {} at {} established, status: {}",
-            self.subgraph_name,
-            self.endpoint.to_string(),
-            res.status()
+            target: targets::HTTP_CLIENT,
+            subgraph = self.subgraph_name,
+            endpoint = ?self.endpoint,
+            status = res.status().as_u16(),
+            "subscription connection established"
         );
 
         if !res.status().is_success() {
@@ -599,7 +609,8 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 
         if is_multipart {
             debug!(
-                subgraph_name = self.subgraph_name,
+                target: targets::HTTP_CLIENT,
+                subgraph = self.subgraph_name,
                 "using multipart HTTP for subscription",
             );
 
@@ -629,11 +640,13 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 let _op_guard = op_guard;
                 let _conn_guard = conn_guard;
 
-                trace!("multipart subscription stream started");
+                trace!(target: targets::HTTP_CLIENT, "multipart subscription stream started");
+
                 for await result in stream {
                     match result {
                         Ok(response) => {
-                            trace!(response = ?response, "multipart subscription event received");
+                            trace!(target: targets::HTTP_CLIENT, response = ?response, "multipart subscription event received");
+
                             yield Ok(response);
                         }
                         Err(e) => {
@@ -656,9 +669,10 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             ))
         } else {
             debug!(
-                "using SSE for subscription connection to subgraph {} at {}",
-                self.subgraph_name,
-                self.endpoint.to_string(),
+                target: targets::HTTP_CLIENT,
+                subgraph = self.subgraph_name,
+                endpoint = ?self.endpoint,
+                "using SSE for subscription connection to subgraph",
             );
 
             let stream = sse::parse_to_stream(body_stream, custom_scalar_paths.clone());
@@ -678,11 +692,11 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 let _op_guard = op_guard;
                 let _conn_guard = conn_guard;
 
-                trace!("SSE subscription stream started");
+                trace!(target: targets::HTTP_CLIENT, "SSE subscription stream started");
                 for await result in stream {
                     match result {
                         Ok(response) => {
-                            trace!(response = ?response, "SSE subscription event received");
+                            trace!(target: targets::HTTP_CLIENT, response = ?response, "SSE subscription event received");
                             yield Ok(response);
                         }
                         Err(e) => {

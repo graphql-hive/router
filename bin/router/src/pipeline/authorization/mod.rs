@@ -24,6 +24,7 @@ use ahash::HashMap;
 use hive_router_config::authorization::UnauthorizedMode;
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::authorization::metadata::{AuthorizationMetadata, AuthorizationRule};
+use hive_router_internal::telemetry::logging::targets;
 use hive_router_plan_executor::execution::client_request_details::JwtRequestDetails;
 use hive_router_plan_executor::execution::plan::CoerceVariablesPayload;
 use hive_router_plan_executor::introspection::schema::SchemaMetadata;
@@ -273,7 +274,7 @@ pub fn apply_authorization_to_operation(
         .collect();
 
     if reject_mode {
-        tracing::debug!("Request rejected due to unauthorized fields and reject mode being set");
+        tracing::warn!(target: targets::AUTHORIZATION, "request rejected due to unauthorized fields and reject mode being set");
         return Ok(AuthorizationDecision::Reject { errors });
     }
 

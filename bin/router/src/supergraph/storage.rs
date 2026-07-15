@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
+use hive_router_internal::telemetry::logging::targets;
 use object_store::path::Path;
 use tokio::sync::RwLock;
 use tracing::error;
@@ -70,7 +71,12 @@ impl SupergraphLoader for SupergraphStorageLoader {
         match fetcher_result {
             // If there was an error fetching the supergraph, propagate it
             Err(err) => {
-                error!("Error fetching supergraph from storage: {}", err);
+                error!(
+                    target: targets::SUPERGRAPH,
+                    error = ?err,
+                    "Error fetching supergraph from storage",
+                );
+
                 Err(err)
             }
             // If the supergraph has not changed, return Unchanged
