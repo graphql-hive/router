@@ -1,18 +1,10 @@
 use std::sync::Arc;
 
 use hive_router_internal::telemetry::TelemetryContext;
-use moka::future::Cache;
 use moka::Entry;
 
-use crate::pipeline::parser::ParseCacheEntry;
 use crate::schema_state::SchemaState;
-
-// schema-dependent caches (validate/normalize/plan/demand-control formula) live on
-// `RouterSupergraphRuntime` instead - this only holds the schema-independent parse cache, which
-// is safe to share across every supergraph variant.
-pub struct CacheState {
-    pub parse_cache: Cache<u64, ParseCacheEntry>,
-}
+use crate::shared_state::RouterSharedState;
 
 #[derive(Clone, Copy, Debug)]
 pub enum CacheHitMiss {
@@ -63,28 +55,21 @@ impl<K, V> EntryValueHitMissExt<V> for Entry<K, V> {
     }
 }
 
-impl CacheState {
-    pub fn new() -> Self {
-        Self {
-            parse_cache: Cache::new(1000),
-        }
-    }
-}
-
 pub fn register_cache_size_observers(
     telemetry_context: Arc<TelemetryContext>,
-    cache_state: Arc<CacheState>,
+    shared_state: Arc<RouterSharedState>,
     schema_state: Arc<SchemaState>,
 ) {
     let metrics = &telemetry_context.metrics.cache;
 
     metrics
         .parse
-        .observe_size_with(move || cache_state.parse_cache.entry_count());
+        .observe_size_with(move || shared_state.parse_cache.entry_count());
 
     // validate/normalize/plan caches live on `RouterSupergraphRuntime` (one per supergraph variant,
-    // dropped with it on retirement) rather than on `CacheState`, so sum entry counts across every
-    // runtime currently alive (the configured default plus any plugin-selected ones still cached).
+    // dropped with it on retirement) rather than on the shared state, so sum entry counts across
+    // every runtime currently alive (the configured default plus any plugin-selected ones still cached)
+
     let validate_schema_state = Arc::clone(&schema_state);
     metrics.validate.observe_size_with(move || {
         let mut total = 0;

@@ -49,7 +49,7 @@ use crate::{
     telemetry::{HeaderExtractor, PrometheusAttached},
 };
 
-use crate::cache_state::{register_cache_size_observers, CacheState};
+use crate::cache_state::register_cache_size_observers;
 pub use crate::plugins::registry::PluginRegistry;
 pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 pub use arc_swap::ArcSwap;
@@ -442,7 +442,6 @@ pub async fn configure_app_from_config(
     let storage_manager = Arc::new(StorageManager::new(&router_config.storages)?);
     let router_config_arc = Arc::new(router_config);
     let telemetry_context_arc = Arc::new(telemetry_context);
-    let cache_state = Arc::new(CacheState::new());
 
     let schema_state = SchemaState::new_from_config(
         bg_tasks_manager,
@@ -455,13 +454,6 @@ pub async fn configure_app_from_config(
     .await?;
     let schema_state_arc = Arc::new(schema_state);
 
-    if router_config_arc.telemetry.metrics.is_enabled() {
-        register_cache_size_observers(
-            telemetry_context_arc.clone(),
-            cache_state.clone(),
-            schema_state_arc.clone(),
-        );
-    }
     let mut validation_plan = default_rules_validation_plan();
     if let Some(max_depth_config) = &router_config_arc.limits.max_depth {
         validation_plan.add_rule(Box::new(MaxDepthRule {
@@ -498,18 +490,26 @@ pub async fn configure_app_from_config(
         ));
     }
 
+    let metrics_enabled = router_config_arc.telemetry.metrics.is_enabled();
     let shared_state = Arc::new(RouterSharedState::new(
         router_config_arc,
         persisted_documents_runtime,
         jwt_runtime,
         hive_usage_agent,
         validation_plan,
-        telemetry_context_arc,
+        telemetry_context_arc.clone(),
         plugins_arc,
-        cache_state,
         active_subscriptions.clone(),
         storage_manager,
     )?);
+
+    if metrics_enabled {
+        register_cache_size_observers(
+            telemetry_context_arc,
+            shared_state.clone(),
+            schema_state_arc.clone(),
+        );
+    }
 
     Ok((shared_state, schema_state_arc))
 }
