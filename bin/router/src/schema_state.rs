@@ -30,7 +30,8 @@ use hive_router_query_planner::{
 };
 use moka::future::Cache;
 use ntex::web::HttpRequest;
-use std::collections::{HashSet, VecDeque};
+use std::collections::hash_map;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -38,7 +39,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, trace};
 
 use crate::{
-    cache_state::CacheState,
     pipeline::authorization::AuthorizationMetadataError,
     pipeline::authorization::AuthorizationMetadataExt,
     pipeline::demand_control::runtime::DemandControlRuntime,
@@ -68,10 +68,17 @@ pub enum RouterSupergraphRuntimeError {
 /// router's authorization pipeline (which also depends on router configuration), and plugins
 /// constructing a `SupergraphData` never need it - so it's built here, alongside the rest of the
 /// router runtime, rather than in the executor crate.
+///
+/// The runtime also holds the schema-dependent caches (validate/normalize/plan/demand-control formula)
+/// scoped to this runtime. Retiring the runtime (see [`RuntimeCacheCleanupTask`]) drops these along with it.
 pub struct RouterSupergraphRuntime {
     pub subgraph_executor_map: Arc<SubgraphExecutorMap>,
     pub operation_name_forward_config: Arc<OperationNameForwardConfig>,
     pub authorization: AuthorizationMetadata,
+    pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
+    pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
+    pub plan_cache: Cache<u64, Arc<QueryPlan>>,
+    pub demand_control_runtime: Option<DemandControlRuntime>,
 }
 
 impl RouterSupergraphRuntime {
@@ -93,10 +100,18 @@ impl RouterSupergraphRuntime {
         ));
         let authorization =
             AuthorizationMetadata::build(&snapshot.planner.supergraph, &snapshot.metadata)?;
+        let demand_control_runtime = DemandControlRuntime::from_config(
+            router_config.demand_control.as_ref(),
+            telemetry_context.metrics.clone(),
+        );
         Ok(Self {
             subgraph_executor_map,
             operation_name_forward_config,
             authorization,
+            validate_cache: Cache::new(1000),
+            normalize_cache: Cache::new(1000),
+            plan_cache: Cache::new(1000),
+            demand_control_runtime,
         })
     }
 }
@@ -134,7 +149,7 @@ impl From<&ConfiguredSupergraph> for SelectedSupergraph {
 
 const RUNTIME_CACHE_MAX_SIZE: usize = 10;
 
-type RuntimeCache = Mutex<VecDeque<(u64, Arc<RouterSupergraphRuntime>)>>;
+type RouterSupergraphRuntimeCache = Mutex<VecDeque<(u64, Arc<RouterSupergraphRuntime>)>>;
 
 pub struct SchemaState {
     router_config: Arc<HiveRouterConfig>,
@@ -143,15 +158,14 @@ pub struct SchemaState {
     //   - sometimes `None` when the supergraph is being fetched and built
     //   - always `None` when the router is configured with `supergraph.source: plugin`
     configured: Arc<ArcSwap<Option<ConfiguredSupergraph>>>,
-    runtime_cache: Arc<RuntimeCache>,
+    // the cache of `RouterSupergraphRuntime`s for selected supergraphs, bounded by FIFO eviction
+    runtime_cache: Arc<RouterSupergraphRuntimeCache>,
     // sender half for `RuntimeCacheCleanupTask` - registers a cache entry's retirement token so
-    // the cleanup task removes it from the cache once its owner retires. `None` when the runtime
-    // cache cleanup task hasn't been registered (e.g. in tests constructing `SchemaState` directly).
-    runtime_cache_cleanup: Option<mpsc::UnboundedSender<(u64, CancellationToken)>>,
-    pub plan_cache: Cache<u64, Arc<QueryPlan>>,
-    pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
-    pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
-    pub demand_control_runtime: Option<DemandControlRuntime>,
+    // the cleanup task removes it from the cache once its owner retires, and notifies it of FIFO
+    // evictions so it can drop the now-pointless waiter instead of leaving it dormant. `None`
+    // when the runtime cache cleanup task hasn't been registered (e.g. in tests constructing
+    // `SchemaState` directly).
+    runtime_cache_cleanup: Option<mpsc::UnboundedSender<RuntimeCacheCleanupMessage>>,
     pub telemetry_context: Arc<TelemetryContext>,
     pub callback_subscriptions: CallbackSubscriptionsMap,
 }
@@ -219,6 +233,16 @@ impl SchemaState {
         Ok(Some(selected_supergraph))
     }
 
+    /// Returns the router's currently configured default runtime, if any (`None` for
+    /// `supergraph.source: plugin`, or before the first supergraph has loaded).
+    pub fn configured_runtime(&self) -> Option<Arc<RouterSupergraphRuntime>> {
+        self.configured
+            .load()
+            .as_ref()
+            .as_ref()
+            .map(|configured| configured.runtime.clone())
+    }
+
     /// Resolves the runtime for a plugin-selected snapshot from the bounded FIFO cache, building
     /// and caching a new one on a miss. Cache hits do not refresh FIFO order.
     fn resolve_runtime(
@@ -241,22 +265,37 @@ impl SchemaState {
             &self.callback_subscriptions,
         )?);
 
-        // bounded FIFO eviction still protects against too many simultaneously live variants,
+        // bounded FIFO eviction protects against too many simultaneously live variants,
         // the cleanup task below only gets entries out *sooner*, when their owner retires
-        if entries.len() >= RUNTIME_CACHE_MAX_SIZE {
-            entries.pop_front();
-        }
+        let evicted = if entries.len() >= RUNTIME_CACHE_MAX_SIZE {
+            entries.pop_front().map(|(evicted_id, _)| evicted_id)
+        } else {
+            None
+        };
         entries.push_back((cache_id, runtime.clone()));
 
         // release mutex, no longer needed at this point
         drop(entries);
 
-        // register this entry's retirement token with the cleanup task so the cache entry is
-        // removed promptly once its owner retires, instead of waiting for FIFO eviction. a send
-        // failure just means the cleanup task isn't running (e.g. router shutting down or a test
-        // building `SchemaState` directly) - the cache entry is still bounded by FIFO eviction.
         if let Some(sender) = &self.runtime_cache_cleanup {
-            sender.send((cache_id, snapshot.retirement_token())).ok();
+            // evicted entry's waiter (if any) is now watching a retirement token nobody cares
+            // about anymore - cancel it so it doesn't sit dormant in the cleanup task forever.
+            if let Some(evicted_id) = evicted {
+                sender
+                    .send(RuntimeCacheCleanupMessage::Evicted(evicted_id))
+                    .ok();
+            }
+
+            // register this entry's retirement token with the cleanup task so the cache entry is
+            // removed promptly once its owner retires, instead of waiting for FIFO eviction. a send
+            // failure just means the cleanup task isn't running (e.g. router shutting down or a test
+            // building `SchemaState` directly) - the cache entry is still bounded by FIFO eviction.
+            sender
+                .send(RuntimeCacheCleanupMessage::Registered(
+                    cache_id,
+                    snapshot.retirement_token(),
+                ))
+                .ok();
         }
 
         Ok(runtime)
@@ -273,7 +312,6 @@ impl SchemaState {
         telemetry_context: Arc<TelemetryContext>,
         router_config: Arc<HiveRouterConfig>,
         plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
-        cache_state: Arc<CacheState>,
         active_subscriptions: ActiveSubscriptions,
         storage_manager: Arc<StorageManager>,
     ) -> Result<Self, SupergraphManagerError> {
@@ -428,15 +466,6 @@ impl SchemaState {
             });
         }
 
-        let plan_cache = cache_state.plan_cache.clone();
-        let validate_cache = cache_state.validate_cache.clone();
-        let normalize_cache = cache_state.normalize_cache.clone();
-
-        let demand_control_runtime = DemandControlRuntime::from_config(
-            router_config.demand_control.as_ref(),
-            telemetry_context.metrics.clone(),
-        );
-
         // kick off subscriptions/subgraphs that are idling/timed out due to missed heartbeats
         if let Some(ref callback_config) = router_config.subscriptions.callback {
             if !callback_config.heartbeat_interval.is_zero() {
@@ -454,7 +483,7 @@ impl SchemaState {
         // itself by observing its own selected supergraph's retirement token.
         let _ = active_subscriptions;
 
-        let runtime_cache: Arc<RuntimeCache> =
+        let runtime_cache: Arc<RouterSupergraphRuntimeCache> =
             Arc::new(Mutex::new(VecDeque::with_capacity(RUNTIME_CACHE_MAX_SIZE)));
         let (cleanup_tx, cleanup_rx) = mpsc::unbounded_channel();
         bg_tasks_manager.register_task(RuntimeCacheCleanupTask {
@@ -467,10 +496,6 @@ impl SchemaState {
             runtime_cache,
             runtime_cache_cleanup: Some(cleanup_tx),
             router_config,
-            plan_cache,
-            validate_cache,
-            normalize_cache,
-            demand_control_runtime,
             telemetry_context: telemetry_context.clone(),
             callback_subscriptions,
         })
@@ -556,6 +581,17 @@ impl BackgroundTask for SupergraphBackgroundLoaderTask {
     }
 }
 
+/// Message sent to `RuntimeCacheCleanupTask` over its registration channel.
+enum RuntimeCacheCleanupMessage {
+    /// A new cache entry was inserted - watch its retirement token so the entry can be removed
+    /// promptly once its owner retires, instead of waiting for FIFO eviction.
+    Registered(u64, CancellationToken),
+    /// A cache entry was pushed out by bounded FIFO eviction - if a waiter was registered for
+    /// it, drop it. Otherwise it would keep watching a retirement token for an entry that's
+    /// already gone from the cache, sitting dormant until (if ever) the owner retires.
+    Evicted(u64),
+}
+
 /// Router-managed background task that removes runtime-cache entries once their owner retires,
 /// instead of waiting for bounded FIFO eviction to eventually push them out.
 ///
@@ -570,8 +606,8 @@ impl BackgroundTask for SupergraphBackgroundLoaderTask {
 /// unaffected by the removal; see the retirement-token call sites in `pipeline/mod.rs` and
 /// `pipeline/websocket_server.rs` for the checks that still gate on retirement directly.
 struct RuntimeCacheCleanupTask {
-    runtime_cache: Arc<RuntimeCache>,
-    registrations: tokio::sync::Mutex<mpsc::UnboundedReceiver<(u64, CancellationToken)>>,
+    runtime_cache: Arc<RouterSupergraphRuntimeCache>,
+    registrations: tokio::sync::Mutex<mpsc::UnboundedReceiver<RuntimeCacheCleanupMessage>>,
 }
 
 #[async_trait]
@@ -582,7 +618,10 @@ impl BackgroundTask for RuntimeCacheCleanupTask {
 
     async fn run(&self, token: CancellationToken) {
         let mut registrations = self.registrations.lock().await;
-        let mut registered_ids: HashSet<u64> = HashSet::new();
+
+        // per-waiter cancellation, so an evicted entry's waiter can be dropped without waiting
+        // for its retirement token (which may never fire, or fire long after eviction)
+        let mut waiter_cancels: HashMap<u64, CancellationToken> = HashMap::new();
         let mut waiters = FuturesUnordered::new();
 
         loop {
@@ -592,21 +631,44 @@ impl BackgroundTask for RuntimeCacheCleanupTask {
                     return;
                 }
                 registered = registrations.recv() => {
-                    let Some((cache_id, retirement)) = registered else {
-                        debug!("runtime cache cleanup registration channel closed, stopping");
-                        return;
-                    };
-                    // dedup by cache id: FIFO eviction + reinsertion of the same live owner
-                    // must not create a second waiter for it
-                    if registered_ids.insert(cache_id) {
-                        waiters.push(async move {
-                            retirement.cancelled().await;
-                            cache_id
-                        });
+                    match registered {
+                        None => {
+                            debug!("runtime cache cleanup registration channel closed, stopping");
+                            return;
+                        }
+                        Some(RuntimeCacheCleanupMessage::Registered(cache_id, retirement)) => {
+                            // dedup by cache id: FIFO eviction + reinsertion of the same live
+                            // owner must not create a second waiter for it
+                            if let hash_map::Entry::Vacant(entry) =
+                                waiter_cancels.entry(cache_id)
+                            {
+                                let waiter_cancel = CancellationToken::new();
+                                entry.insert(waiter_cancel.clone());
+                                waiters.push(async move {
+                                    tokio::select! {
+                                        _ = retirement.cancelled() => Some(cache_id),
+                                        _ = waiter_cancel.cancelled() => None,
+                                    }
+                                });
+                            }
+                        }
+                        Some(RuntimeCacheCleanupMessage::Evicted(cache_id)) => {
+                            // cancel the waiter for this id (if any) - it would otherwise sit
+                            // dormant, watching a retirement token for an entry that's already
+                            // gone from the cache
+                            if let Some(waiter_cancel) = waiter_cancels.remove(&cache_id) {
+                                waiter_cancel.cancel();
+                            }
+                        }
                     }
                 }
-                Some(cache_id) = waiters.next(), if !waiters.is_empty() => {
-                    registered_ids.remove(&cache_id);
+                Some(resolved) = waiters.next(), if !waiters.is_empty() => {
+                    let Some(cache_id) = resolved else {
+                        // waiter was cancelled due to eviction, already removed from
+                        // `waiter_cancels` at cancellation time
+                        continue;
+                    };
+                    waiter_cancels.remove(&cache_id);
                     let mut entries = self.runtime_cache.lock().unwrap();
                     // no-op if already gone (FIFO eviction raced us, or already removed) -
                     // removing the entry only drops the cache's Arc, active requests and
@@ -696,10 +758,6 @@ mod plugin_runtime_cache_tests {
             runtime_cache: Arc::new(Mutex::new(VecDeque::with_capacity(RUNTIME_CACHE_MAX_SIZE))),
             runtime_cache_cleanup: None,
             router_config: Arc::new(HiveRouterConfig::default()),
-            plan_cache: Cache::new(1),
-            validate_cache: Cache::new(1),
-            normalize_cache: Cache::new(1),
-            demand_control_runtime: None,
             telemetry_context: Arc::new(TelemetryContext::from_propagation_config(
                 &Default::default(),
             )),
@@ -830,6 +888,82 @@ mod plugin_runtime_cache_tests {
             ntex::time::sleep(Duration::from_millis(10)).await;
         }
         assert!(runtime_cache.lock().unwrap().is_empty());
+
+        cancel.cancel();
+        let _ = task_handle.await;
+    }
+
+    /// an `Evicted` message must drop the stale waiter for that id, so that if the same id
+    /// is registered again later (e.g. FIFO evicted then the owner retires far later), the
+    /// new registration gets its own live waiter instead of being silently swallowed by
+    /// leftover dedup state from the evicted registration
+    #[ntex::test]
+    async fn evicted_message_lets_the_same_id_be_registered_again() {
+        let owner = test_owner();
+        let cache_id = owner.cache_id;
+        let runtime_cache: Arc<RouterSupergraphRuntimeCache> =
+            Arc::new(Mutex::new(VecDeque::from([(
+                cache_id,
+                Arc::new(
+                    RouterSupergraphRuntime::build(
+                        &owner.snapshot(),
+                        &Arc::new(HiveRouterConfig::default()),
+                        &Arc::new(TelemetryContext::from_propagation_config(
+                            &Default::default(),
+                        )),
+                        &Arc::new(DashMap::new()),
+                    )
+                    .unwrap(),
+                ),
+            )])));
+
+        let (cleanup_tx, cleanup_rx) = mpsc::unbounded_channel();
+        let task = RuntimeCacheCleanupTask {
+            runtime_cache: runtime_cache.clone(),
+            registrations: tokio::sync::Mutex::new(cleanup_rx),
+        };
+        let cancel = CancellationToken::new();
+        let task_handle = ntex::rt::spawn({
+            let cancel = cancel.clone();
+            async move { task.run(cancel).await }
+        });
+
+        // register a watcher for `cache_id` whose token never fires, then evict it - the fix
+        // must drop this waiter rather than leave it dormant
+        let stale_retirement = CancellationToken::new();
+        cleanup_tx
+            .send(RuntimeCacheCleanupMessage::Registered(
+                cache_id,
+                stale_retirement.clone(),
+            ))
+            .unwrap();
+        cleanup_tx
+            .send(RuntimeCacheCleanupMessage::Evicted(cache_id))
+            .unwrap();
+
+        // register the same id again (as if it were reinserted later) with a token that *does*
+        // fire - if the stale waiter's dedup entry wasn't cleared by eviction, this registration
+        // would be silently dropped as a "duplicate" and the entry would never be removed
+        let live_retirement = CancellationToken::new();
+        cleanup_tx
+            .send(RuntimeCacheCleanupMessage::Registered(
+                cache_id,
+                live_retirement.clone(),
+            ))
+            .unwrap();
+
+        live_retirement.cancel();
+
+        for _ in 0..100 {
+            if runtime_cache.lock().unwrap().is_empty() {
+                break;
+            }
+            ntex::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            runtime_cache.lock().unwrap().is_empty(),
+            "entry was not removed - the re-registration was likely swallowed as a stale duplicate"
+        );
 
         cancel.cancel();
         let _ = task_handle.await;

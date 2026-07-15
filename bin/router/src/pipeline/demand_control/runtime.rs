@@ -104,16 +104,9 @@ impl DemandControlRuntime {
         operation_identity: GraphQLSpanOperationIdentity<'exec>,
     ) -> Result<DemandControlExecutionContext, PipelineError> {
         let operation_name = operation_identity.name;
-        let cache_key = {
-            use std::hash::{Hash, Hasher};
-            let mut hasher = xxhash_rust::xxh3::Xxh3::new();
-            supergraph.cache_id.hash(&mut hasher);
-            normalized_operation_hash.hash(&mut hasher);
-            hasher.finish()
-        };
         let compiled_plan = self
             .formula_cache
-            .entry(cache_key)
+            .entry(normalized_operation_hash)
             .or_insert_with(async {
                 Arc::new(self.compile_demand_control_plan(
                     query_plan,

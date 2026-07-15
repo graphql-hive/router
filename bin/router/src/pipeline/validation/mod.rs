@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::cache_state::{CacheHitMiss, EntryValueHitMissExt};
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::parser::GraphQLParserPayload;
+use crate::schema_state::SelectedSupergraph;
 use crate::shared_state::RouterSharedState;
 use crate::SchemaState;
 use graphql_tools::validation::validate::validate;
@@ -11,7 +12,6 @@ use hive_router_internal::telemetry::traces::spans::graphql::GraphQLValidateSpan
 use hive_router_plan_executor::hooks::on_graphql_validation::{
     OnGraphQLValidationEndHookPayload, OnGraphQLValidationStartHookPayload,
 };
-use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphSnapshot;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_plan_executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow};
 use hive_router_plan_executor::plugins::hooks;
@@ -24,7 +24,7 @@ mod shared;
 
 #[inline]
 pub async fn validate_operation_with_cache(
-    supergraph: &SupergraphSnapshot,
+    supergraph: &SelectedSupergraph,
     schema_state: &SchemaState,
     app_state: &RouterSharedState,
     parser_payload: &GraphQLParserPayload,
@@ -35,7 +35,7 @@ pub async fn validate_operation_with_cache(
     async {
         let mut errors = None;
         let mut on_end_callbacks = vec![];
-        let mut validation_schema = supergraph.planner.consumer_schema.clone();
+        let mut validation_schema = supergraph.snapshot.planner.consumer_schema.clone();
         let mut validation_operation = parser_payload.parsed_operation.clone();
         let mut validation_plan = app_state.validation_plan.clone();
 
@@ -77,7 +77,6 @@ pub async fn validate_operation_with_cache(
 
         let cache_key = {
             let mut hasher = Xxh3::new();
-            supergraph.cache_id.hash(&mut hasher);
             validation_schema.hash.hash(&mut hasher);
             validation_plan.hash.hash(&mut hasher);
             parser_payload.cache_key.hash(&mut hasher);
@@ -91,7 +90,8 @@ pub async fn validate_operation_with_cache(
             None => {
                 let metrics = &schema_state.telemetry_context.metrics;
                 let validate_cache_capture = metrics.cache.validate.capture_request();
-                schema_state
+                supergraph
+                    .runtime
                     .validate_cache
                     .entry(cache_key)
                     .or_insert_with(async {

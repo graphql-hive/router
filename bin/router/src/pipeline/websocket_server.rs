@@ -433,7 +433,7 @@ async fn handle_text_frame(
                 );
 
                 match validate_operation_with_cache(
-                    &supergraph.snapshot,
+                    &supergraph,
                     schema_state,
                     shared_state,
                     &parser_payload,
@@ -456,6 +456,7 @@ async fn handle_text_frame(
 
                 let normalize_payload = match normalize_request_with_cache(
                     &supergraph.snapshot,
+                    &supergraph.runtime,
                     schema_state,
                     &payload,
                     &parser_payload,

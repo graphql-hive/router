@@ -225,7 +225,7 @@ pub async fn graphql_request_handler(
         };
 
         if let Some(response) = validate_operation_with_cache(
-            &supergraph.snapshot,
+            &supergraph,
             schema_state,
             shared_state,
             &parser_payload,
@@ -285,6 +285,7 @@ pub async fn graphql_request_handler(
 
         let normalize_payload = normalize_request_with_cache(
             &supergraph.snapshot,
+            &supergraph.runtime,
             schema_state,
             &graphql_params,
             &parser_payload,
@@ -701,7 +702,7 @@ pub async fn execute_pipeline<'exec>(
     }
 
     let query_plan_result = plan_operation_with_cache(
-        &supergraph.snapshot,
+        &supergraph,
         schema_state,
         &normalize_payload,
         &progressive_override_ctx,
@@ -719,7 +720,8 @@ pub async fn execute_pipeline<'exec>(
 
     let variable_payload = Arc::new(variable_payload);
 
-    let demand_control_execution_context = match schema_state.demand_control_runtime.as_ref() {
+    let demand_control_execution_context = match supergraph.runtime.demand_control_runtime.as_ref()
+    {
         Some(demand_control_runtime) => match demand_control_runtime
             .evaluate(
                 &supergraph.snapshot,

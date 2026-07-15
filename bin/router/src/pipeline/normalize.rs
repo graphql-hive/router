@@ -17,7 +17,7 @@ use xxhash_rust::xxh3::Xxh3;
 use crate::cache_state::{CacheHitMiss, EntryResultHitMissExt};
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::parser::GraphQLParserPayload;
-use crate::schema_state::SchemaState;
+use crate::schema_state::{RouterSupergraphRuntime, SchemaState};
 use tracing::{trace, Instrument};
 
 #[derive(Debug, Clone)]
@@ -82,6 +82,7 @@ pub struct NormalizedOperationHashes {
 #[inline]
 pub async fn normalize_request_with_cache(
     supergraph: &SupergraphSnapshot,
+    runtime: &RouterSupergraphRuntime,
     schema_state: &SchemaState,
     graphql_params: &GraphQLParams,
     parser_payload: &GraphQLParserPayload,
@@ -92,7 +93,6 @@ pub async fn normalize_request_with_cache(
     async {
         let cache_key = {
             let mut hasher = Xxh3::new();
-            supergraph.cache_id.hash(&mut hasher);
             match &graphql_params.operation_name {
                 Some(operation_name) => {
                     graphql_params.query.hash(&mut hasher);
@@ -105,7 +105,7 @@ pub async fn normalize_request_with_cache(
             hasher.finish()
         };
 
-        schema_state
+        runtime
             .normalize_cache
             .entry(cache_key)
             .or_try_insert_with::<_, NormalizationError>(async {

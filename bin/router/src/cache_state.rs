@@ -1,19 +1,16 @@
 use std::sync::Arc;
 
-use graphql_tools::validation::utils::ValidationError;
 use hive_router_internal::telemetry::TelemetryContext;
-use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use moka::future::Cache;
 use moka::Entry;
 
-use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::parser::ParseCacheEntry;
 
+// schema-dependent caches (validate/normalize/plan/demand-control formula) live on
+// `RouterSupergraphRuntime` instead - this only holds the schema-independent parse cache, which
+// is safe to share across every supergraph variant.
 pub struct CacheState {
     pub parse_cache: Cache<u64, ParseCacheEntry>,
-    pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
-    pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
-    pub plan_cache: Cache<u64, Arc<QueryPlan>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -69,9 +66,6 @@ impl CacheState {
     pub fn new() -> Self {
         Self {
             parse_cache: Cache::new(1000),
-            validate_cache: Cache::new(1000),
-            normalize_cache: Cache::new(1000),
-            plan_cache: Cache::new(1000),
         }
     }
 }
@@ -82,27 +76,11 @@ pub fn register_cache_size_observers(
 ) {
     let metrics = &telemetry_context.metrics.cache;
 
-    let parse_cache = Arc::clone(&cache_state);
     metrics
         .parse
-        .observe_size_with(move || parse_cache.parse_cache.entry_count());
+        .observe_size_with(move || cache_state.parse_cache.entry_count());
 
-    let normalize_cache = Arc::clone(&cache_state);
-    metrics
-        .normalize
-        .observe_size_with(move || normalize_cache.normalize_cache.entry_count());
-
-    let validate_cache = Arc::clone(&cache_state);
-    metrics
-        .validate
-        .observe_size_with(move || validate_cache.validate_cache.entry_count());
-
-    let plan_cache = Arc::clone(&cache_state);
-    metrics
-        .plan
-        .observe_size_with(move || plan_cache.plan_cache.entry_count());
-
-    // The demand-control formula cache is owned by `DemandControlRuntime` (it is
-    // schema-scoped), so its size observer is registered in
-    // `SchemaState::new_from_config` instead.
+    // validate/normalize/plan caches now live on `RouterSupergraphRuntime` (one per supergraph,
+    // dropped with it on retirement) instead of one shared `CacheState` cache, so there's no
+    // single cache left here to observe the size of.
 }

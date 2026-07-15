@@ -453,7 +453,6 @@ pub async fn configure_app_from_config(
         telemetry_context_arc.clone(),
         router_config_arc.clone(),
         plugins_arc.clone(),
-        cache_state.clone(),
         active_subscriptions.clone(),
         storage_manager.clone(),
     )

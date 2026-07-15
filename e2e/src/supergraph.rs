@@ -105,7 +105,7 @@ mod supergraph_e2e_tests {
     }
 
     #[ntex::test]
-    async fn reloading_supergraph_does_not_reuse_stale_cache_partitions() {
+    async fn reloading_supergraph_gets_isolated_runtime_caches() {
         let mut server = mockito::Server::new_async().await;
         let host = server.host_with_port();
         let mock1 = server
@@ -136,8 +136,8 @@ mod supergraph_e2e_tests {
 
         // introspection needs no subgraph resolution, so it works against this bare
         // (subgraph-less) test schema and can be reused verbatim after the reload below - any
-        // difference in its result proves the swap took effect, and any cache growth (rather
-        // than replacement) proves the old and new partitions don't collide
+        // difference in its result proves the swap took effect, and the old runtime's caches
+        // being untouched proves the new runtime doesn't share (or evict from) the old one's
         let introspect_query = r#"{ __type(name: "Query") { fields { name } } }"#;
 
         // wait for caches to populate
@@ -149,14 +149,17 @@ mod supergraph_e2e_tests {
                 .await;
             assert!(res.status().is_success(), "Expected 200 OK");
 
-            router
+            let runtime_before_reload = router
                 .schema_state()
+                .configured_runtime()
+                .expect("configured runtime to exist");
+            runtime_before_reload
                 .normalize_cache
                 .run_pending_tasks()
                 .await;
-            router.schema_state().plan_cache.run_pending_tasks().await;
-            if router.schema_state().plan_cache.entry_count() >= 1
-                && router.schema_state().normalize_cache.entry_count() >= 1
+            runtime_before_reload.plan_cache.run_pending_tasks().await;
+            if runtime_before_reload.plan_cache.entry_count() >= 1
+                && runtime_before_reload.normalize_cache.entry_count() >= 1
             {
                 break;
             }
@@ -164,14 +167,18 @@ mod supergraph_e2e_tests {
             assert!(
                 std::time::Instant::now() < deadline,
                 "timed out waiting for caches to populate: plan={}, normalize={}",
-                router.schema_state().plan_cache.entry_count(),
-                router.schema_state().normalize_cache.entry_count()
+                runtime_before_reload.plan_cache.entry_count(),
+                runtime_before_reload.normalize_cache.entry_count()
             );
             ntex::time::sleep(Duration::from_millis(50)).await;
         }
 
-        let plan_entries_before_reload = router.schema_state().plan_cache.entry_count();
-        let normalize_entries_before_reload = router.schema_state().normalize_cache.entry_count();
+        let runtime_before_reload = router
+            .schema_state()
+            .configured_runtime()
+            .expect("configured runtime to exist");
+        let plan_entries_before_reload = runtime_before_reload.plan_cache.entry_count();
+        let normalize_entries_before_reload = runtime_before_reload.normalize_cache.entry_count();
         assert!(plan_entries_before_reload >= 1);
         assert!(normalize_entries_before_reload >= 1);
 
@@ -209,22 +216,42 @@ mod supergraph_e2e_tests {
             .collect();
         assert_eq!(fields, vec!["dummyNew"]);
 
-        router
+        let runtime_after_reload = router
             .schema_state()
+            .configured_runtime()
+            .expect("configured runtime to exist");
+        runtime_after_reload
             .normalize_cache
             .run_pending_tasks()
             .await;
-        router.schema_state().plan_cache.run_pending_tasks().await;
+        runtime_after_reload.plan_cache.run_pending_tasks().await;
 
-        // the reloaded supergraph gets a new, process-unique cache id, so its entries land on a
-        // distinct cache partition rather than colliding with (or evicting) the old supergraph's
+        // the reload publishes a new runtime with its own, freshly built caches - it isn't the
+        // same runtime whose cache we sampled above
+        assert!(!std::sync::Arc::ptr_eq(
+            &runtime_before_reload,
+            &runtime_after_reload
+        ));
         assert!(
-            router.schema_state().plan_cache.entry_count() > plan_entries_before_reload,
-            "expected the new schema's plan cache entry to add to, not replace, the old one"
+            runtime_after_reload.plan_cache.entry_count() >= 1,
+            "expected the new runtime's plan cache to be populated by the request above"
         );
         assert!(
-            router.schema_state().normalize_cache.entry_count() > normalize_entries_before_reload,
-            "expected the new schema's normalize cache entry to add to, not replace, the old one"
+            runtime_after_reload.normalize_cache.entry_count() >= 1,
+            "expected the new runtime's normalize cache to be populated by the request above"
+        );
+
+        // the old runtime (and its caches) is untouched by the reload - nothing evicted or
+        // rewrote its entries just because a new supergraph is now configured
+        assert_eq!(
+            runtime_before_reload.plan_cache.entry_count(),
+            plan_entries_before_reload,
+            "expected the old runtime's plan cache to be left alone by the reload"
+        );
+        assert_eq!(
+            runtime_before_reload.normalize_cache.entry_count(),
+            normalize_entries_before_reload,
+            "expected the old runtime's normalize cache to be left alone by the reload"
         );
     }
 
