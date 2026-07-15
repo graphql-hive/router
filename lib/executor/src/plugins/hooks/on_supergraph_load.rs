@@ -116,11 +116,11 @@ impl Drop for Supergraph {
     }
 }
 
-impl Into<SupergraphSnapshot> for &Supergraph {
-    fn into(self) -> SupergraphSnapshot {
+impl From<&Supergraph> for SupergraphSnapshot {
+    fn from(val: &Supergraph) -> Self {
         SupergraphSnapshot {
-            data: self.data.clone(),
-            retirement: self.retirement.clone(),
+            data: val.data.clone(),
+            retirement: val.retirement.clone(),
         }
     }
 }

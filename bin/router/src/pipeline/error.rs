@@ -39,6 +39,7 @@ use crate::{
         progressive_override::LabelEvaluationError,
         sse,
     },
+    schema_state::RouterSupergraphRuntimeError,
     RouterSharedState,
 };
 
@@ -193,6 +194,10 @@ pub enum PipelineError {
 
     #[error("Request context error")]
     RequestContextError(#[from] RequestContextError),
+
+    // TODO: should we expose the actual error? should be exposed when masking is disabled
+    #[error("Supergraph runtime error")]
+    RouterSupergraphRuntimeError(#[from] RouterSupergraphRuntimeError),
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -301,6 +306,8 @@ impl PipelineError {
             (Self::NoSupergraphAvailable { .. }, _) => StatusCode::SERVICE_UNAVAILABLE,
             (Self::CoprocessorError(err), _) => err.status_code(),
             (Self::RequestContextError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+
+            (Self::RouterSupergraphRuntimeError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }

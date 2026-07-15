@@ -58,7 +58,9 @@ pub async fn ws_index(
 ) -> Result<HttpResponse, Error> {
     let schema_state = schema_state.get_ref().clone();
     let shared_state = shared_state.get_ref().clone();
-    let supergraph = schema_state.select_supergraph(&req);
+
+    // TODO: get rid of the unwrap
+    let supergraph = schema_state.select_supergraph(&req).unwrap();
 
     let accepted_subprotocol = ws::subprotocols(&req)
         .find(|p| *p == WS_SUBPROTOCOL)
@@ -235,6 +237,17 @@ async fn handle_text_frame(
     ws_uri: &http::Uri,
     ws_path: &Path<http::Uri>,
 ) -> Option<ws::Message> {
+    // let supergraph = match schema_state.select_supergraph(&req) {
+    //     Ok(supergraph) => supergraph,
+    //     Err(err) => {
+    //         error!(
+    //             err = ?err,
+    //             "Supergraph runtime error"
+    //         );
+    //         return Some(CloseCode::BadRequest("Supergraph runtime error").into());
+    //     }
+    // };
+
     // TODO: cover response header aggregation for WS
     let response_header_sink = ResponseHeaderSink::default();
     let client_msg: ClientMessage = match sonic_rs::from_str(&text) {
@@ -507,7 +520,7 @@ async fn handle_text_frame(
                     Default::default(),
                     payload,
                     &normalize_payload,
-                    &supergraph,
+                    supergraph,
                     shared_state,
                     schema_state,
                     operation_span,
