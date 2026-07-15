@@ -46,7 +46,7 @@ use crate::pipeline::{
     normalize::normalize_request_with_cache, parser::parse_operation_with_cache, usage_reporting,
     validation::validate_operation_with_cache,
 };
-use crate::schema_state::{SchemaState, SelectedSupergraph};
+use crate::schema_state::SchemaState;
 use crate::shared_state::{RouterSharedState, SharedRouterResponse};
 
 type WsStateRef = Rc<RefCell<WsState<tokio::sync::mpsc::Sender<()>>>>;
@@ -59,9 +59,6 @@ pub async fn ws_index(
     let schema_state = schema_state.get_ref().clone();
     let shared_state = shared_state.get_ref().clone();
 
-    // TODO: get rid of the unwrap
-    let supergraph = schema_state.select_supergraph(&req).unwrap();
-
     let accepted_subprotocol = ws::subprotocols(&req)
         .find(|p| *p == WS_SUBPROTOCOL)
         .map(|_| WS_SUBPROTOCOL);
@@ -73,21 +70,21 @@ pub async fn ws_index(
     };
 
     ws::start(
-        req,
+        req.clone(),
         accepted_subprotocol,
         fn_factory_with_config(move |sink: ws::WsSink| {
             let schema_state = schema_state.clone();
             let shared_state = shared_state.clone();
             let plugin_context = plugin_context.clone();
             let request_context = request_context.clone();
-            let supergraph = supergraph.clone();
+            let req = req.clone();
             async move {
                 ws_service(
                     accepted_subprotocol.is_some(),
                     sink,
                     schema_state,
                     shared_state,
-                    supergraph,
+                    req,
                     plugin_context,
                     request_context,
                 )
@@ -104,7 +101,7 @@ async fn ws_service(
     sink: ws::WsSink,
     schema_state: Arc<SchemaState>,
     shared_state: Arc<RouterSharedState>,
-    supergraph: Option<SelectedSupergraph>,
+    req: HttpRequest,
     plugin_context: Option<Arc<PluginContext>>,
     request_context: SharedRequestContext,
 ) -> Result<impl Service<ws::Frame, Response = Option<ws::Message>, Error = io::Error>, web::Error>
@@ -164,7 +161,7 @@ async fn ws_service(
         let request_context = request_context.clone();
         let ws_uri = ws_uri.clone();
         let ws_path = ws_path.clone();
-        let supergraph = supergraph.clone();
+        let req = req.clone();
         async move {
             match parse_frame_to_text(frame, &state) {
                 Ok(text) => Ok(handle_text_frame(
@@ -173,7 +170,7 @@ async fn ws_service(
                     state,
                     &schema_state,
                     &shared_state,
-                    supergraph.as_ref(),
+                    &req,
                     plugin_context,
                     &request_context,
                     &ws_uri,
@@ -231,22 +228,22 @@ async fn handle_text_frame(
     state: WsStateRef,
     schema_state: &Arc<SchemaState>,
     shared_state: &Arc<RouterSharedState>,
-    supergraph: Option<&SelectedSupergraph>,
+    req: &HttpRequest,
     plugin_context: Option<Arc<PluginContext>>,
     request_context: &SharedRequestContext,
     ws_uri: &http::Uri,
     ws_path: &Path<http::Uri>,
 ) -> Option<ws::Message> {
-    // let supergraph = match schema_state.select_supergraph(&req) {
-    //     Ok(supergraph) => supergraph,
-    //     Err(err) => {
-    //         error!(
-    //             err = ?err,
-    //             "Supergraph runtime error"
-    //         );
-    //         return Some(CloseCode::BadRequest("Supergraph runtime error").into());
-    //     }
-    // };
+    let supergraph = match schema_state.select_supergraph(req) {
+        Ok(supergraph) => supergraph,
+        Err(err) => {
+            error!(err = ?err, "Supergraph runtime error");
+            return Some(
+                CloseCode::InternalServerError(Some("Supergraph runtime error".to_string())).into(),
+            );
+        }
+    };
+    let supergraph = supergraph.as_ref();
 
     // TODO: cover response header aggregation for WS
     let response_header_sink = ResponseHeaderSink::default();
