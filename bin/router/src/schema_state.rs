@@ -195,20 +195,35 @@ impl SchemaState {
 
         // a plugin selected a supergraph for this request, maybe we cached its runtime
 
-        let cache_id = plugin_supergraph.cache_id;
+        let runtime = self.resolve_runtime(&plugin_supergraph)?;
+
+        let selected_supergraph = SelectedSupergraph {
+            snapshot: plugin_supergraph,
+            runtime,
+        };
+
+        req.extensions_mut().insert(selected_supergraph.clone());
+
+        Ok(Some(selected_supergraph))
+    }
+
+    /// Resolves the runtime for a plugin-selected snapshot from the bounded FIFO cache, building
+    /// and caching a new one on a miss. Cache hits do not refresh FIFO order.
+    fn resolve_runtime(
+        &self,
+        snapshot: &SupergraphSnapshot,
+    ) -> Result<Arc<RouterSupergraphRuntime>, RouterSupergraphRuntimeError> {
+        let cache_id = snapshot.cache_id;
 
         let mut entries = self.runtime_cache.lock().unwrap();
         if let Some((_, runtime)) = entries.iter().find(|(id, _)| *id == cache_id) {
-            return Ok(Some(SelectedSupergraph {
-                snapshot: plugin_supergraph,
-                runtime: runtime.clone(),
-            }));
+            return Ok(runtime.clone());
         }
 
         // no cached runtime for the plugin-selected supergraph, build one and cache it
 
         let runtime = Arc::new(RouterSupergraphRuntime::build(
-            &plugin_supergraph,
+            snapshot,
             &self.router_config,
             &self.telemetry_context,
             &self.callback_subscriptions,
@@ -220,14 +235,7 @@ impl SchemaState {
         }
         entries.push_back((cache_id, runtime.clone()));
 
-        let selected_supergraph = SelectedSupergraph {
-            snapshot: plugin_supergraph,
-            runtime,
-        };
-
-        req.extensions_mut().insert(selected_supergraph.clone());
-
-        Ok(Some(selected_supergraph))
+        Ok(runtime)
     }
 
     /// Returns true if the router is ready to serve requests, i.e. if a supergraph is available for
@@ -580,183 +588,117 @@ impl BackgroundTask for CallbackHeartbeatEnforcerTask {
     }
 }
 
-// #[cfg(test)]
-// mod plugin_runtime_cache_tests {
-//     use super::*;
+#[cfg(test)]
+mod plugin_runtime_cache_tests {
+    use super::*;
 
-//     const TEST_SUPERGRAPH_SDL: &str =
-//         include_str!("../../../plugin_examples/replace_schema/supergraph.graphql");
+    const TEST_SUPERGRAPH_SDL: &str =
+        include_str!("../../../plugin_examples/replace_schema/supergraph.graphql");
 
-//     fn test_config() -> Arc<HiveRouterConfig> {
-//         Arc::new(HiveRouterConfig::default())
-//     }
+    fn test_schema_state() -> SchemaState {
+        SchemaState {
+            configured: Arc::new(ArcSwap::from(Arc::new(None))),
+            runtime_cache: Mutex::new(VecDeque::with_capacity(RUNTIME_CACHE_MAX_SIZE)),
+            router_config: Arc::new(HiveRouterConfig::default()),
+            plan_cache: Cache::new(1),
+            validate_cache: Cache::new(1),
+            normalize_cache: Cache::new(1),
+            demand_control_runtime: None,
+            telemetry_context: Arc::new(TelemetryContext::from_propagation_config(
+                &Default::default(),
+            )),
+            callback_subscriptions: Arc::new(DashMap::new()),
+        }
+    }
 
-//     fn test_telemetry() -> Arc<TelemetryContext> {
-//         Arc::new(TelemetryContext::from_propagation_config(
-//             &Default::default(),
-//         ))
-//     }
+    fn test_owner() -> Arc<Supergraph> {
+        crate::init_rustls_crypto_provider();
+        Arc::new(
+            Supergraph::from_sdl(
+                TEST_SUPERGRAPH_SDL,
+                hive_router_query_planner::planner::QueryPlannerOptions::default(),
+            )
+            .expect("valid test supergraph SDL"),
+        )
+    }
 
-//     fn test_owner() -> Arc<Supergraph> {
-//         crate::init_rustls_crypto_provider();
-//         Arc::new(
-//             Supergraph::from_sdl(
-//                 TEST_SUPERGRAPH_SDL,
-//                 hive_router_query_planner::planner::QueryPlannerOptions::default(),
-//             )
-//             .expect("valid test supergraph SDL"),
-//         )
-//     }
+    #[test]
+    fn reusing_same_supergraph_reuses_one_runtime() {
+        let state = test_schema_state();
+        let owner = test_owner();
+        let snapshot = owner.snapshot();
 
-//     #[test]
-//     fn reusing_same_supergraph_reuses_one_runtime() {
-//         let cache = PluginRuntimeCache::default();
-//         let owner = test_owner();
-//         let snapshot = owner.snapshot();
-//         let callback_subscriptions: CallbackSubscriptionsMap = Arc::new(DashMap::new());
+        let first = state.resolve_runtime(&snapshot).unwrap();
+        let second = state.resolve_runtime(&snapshot).unwrap();
 
-//         let first = cache
-//             .resolve(
-//                 &snapshot,
-//                 &test_config(),
-//                 &test_telemetry(),
-//                 &callback_subscriptions,
-//             )
-//             .unwrap();
-//         let second = cache
-//             .resolve(
-//                 &snapshot,
-//                 &test_config(),
-//                 &test_telemetry(),
-//                 &callback_subscriptions,
-//             )
-//             .unwrap();
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(state.runtime_cache.lock().unwrap().len(), 1);
+    }
 
-//         assert!(Arc::ptr_eq(&first, &second));
-//         assert_eq!(cache.entries.lock().unwrap().len(), 1);
-//     }
+    #[test]
+    fn distinct_supergraph_instances_get_distinct_runtimes() {
+        let state = test_schema_state();
 
-//     #[test]
-//     fn distinct_supergraph_instances_get_distinct_runtimes() {
-//         let cache = PluginRuntimeCache::default();
-//         let callback_subscriptions: CallbackSubscriptionsMap = Arc::new(DashMap::new());
+        let a = test_owner();
+        let b = test_owner();
+        // distinct cache ids even though the content is identical.
+        assert_ne!(a.cache_id, b.cache_id);
 
-//         let a = test_owner();
-//         let b = test_owner();
-//         // distinct cache ids even though the content is identical.
-//         assert_ne!(a.cache_id, b.cache_id);
+        let runtime_a = state.resolve_runtime(&a.snapshot()).unwrap();
+        let runtime_b = state.resolve_runtime(&b.snapshot()).unwrap();
 
-//         let runtime_a = cache
-//             .resolve(
-//                 &a.snapshot(),
-//                 &test_config(),
-//                 &test_telemetry(),
-//                 &callback_subscriptions,
-//             )
-//             .unwrap();
-//         let runtime_b = cache
-//             .resolve(
-//                 &b.snapshot(),
-//                 &test_config(),
-//                 &test_telemetry(),
-//                 &callback_subscriptions,
-//             )
-//             .unwrap();
+        assert!(!Arc::ptr_eq(&runtime_a, &runtime_b));
+        assert_eq!(state.runtime_cache.lock().unwrap().len(), 2);
+    }
 
-//         assert!(!Arc::ptr_eq(&runtime_a, &runtime_b));
-//         assert_eq!(cache.entries.lock().unwrap().len(), 2);
-//     }
+    #[test]
+    fn eleventh_unique_supergraph_evicts_the_first() {
+        let state = test_schema_state();
+        let owners: Vec<Arc<Supergraph>> = (0..11).map(|_| test_owner()).collect();
 
-//     #[test]
-//     fn eleventh_unique_supergraph_evicts_the_first() {
-//         let cache = PluginRuntimeCache::default();
-//         let callback_subscriptions: CallbackSubscriptionsMap = Arc::new(DashMap::new());
-//         let owners: Vec<Arc<Supergraph>> = (0..11).map(|_| test_owner()).collect();
+        for owner in &owners[..10] {
+            state.resolve_runtime(&owner.snapshot()).unwrap();
+        }
+        assert_eq!(
+            state.runtime_cache.lock().unwrap().len(),
+            RUNTIME_CACHE_MAX_SIZE
+        );
 
-//         for owner in &owners[..10] {
-//             cache
-//                 .resolve(
-//                     &owner.snapshot(),
-//                     &test_config(),
-//                     &test_telemetry(),
-//                     &callback_subscriptions,
-//                 )
-//                 .unwrap();
-//         }
-//         assert_eq!(cache.entries.lock().unwrap().len(), RUNTIME_CACHE_MAX_SIZE);
+        state.resolve_runtime(&owners[10].snapshot()).unwrap();
 
-//         cache
-//             .resolve(
-//                 &owners[10].snapshot(),
-//                 &test_config(),
-//                 &test_telemetry(),
-//                 &callback_subscriptions,
-//             )
-//             .unwrap();
+        let entries = state.runtime_cache.lock().unwrap();
+        assert_eq!(entries.len(), RUNTIME_CACHE_MAX_SIZE);
+        assert!(!entries.iter().any(|(id, _)| *id == owners[0].cache_id));
+        assert!(entries.iter().any(|(id, _)| *id == owners[10].cache_id));
+    }
 
-//         let entries = cache.entries.lock().unwrap();
-//         assert_eq!(entries.len(), RUNTIME_CACHE_MAX_SIZE);
-//         assert!(!entries.iter().any(|(id, _)| *id == owners[0].cache_id));
-//         assert!(entries.iter().any(|(id, _)| *id == owners[10].cache_id));
-//     }
+    #[test]
+    fn cache_hits_do_not_refresh_fifo_order() {
+        let state = test_schema_state();
+        let first = test_owner();
+        let second = test_owner();
 
-//     #[test]
-//     fn cache_hits_do_not_refresh_fifo_order() {
-//         let cache = PluginRuntimeCache::default();
-//         let callback_subscriptions: CallbackSubscriptionsMap = Arc::new(DashMap::new());
-//         let first = test_owner();
-//         let second = test_owner();
+        state.resolve_runtime(&first.snapshot()).unwrap();
+        state.resolve_runtime(&second.snapshot()).unwrap();
+        state.resolve_runtime(&first.snapshot()).unwrap();
 
-//         cache
-//             .resolve(
-//                 &first.snapshot(),
-//                 &test_config(),
-//                 &test_telemetry(),
-//                 &callback_subscriptions,
-//             )
-//             .unwrap();
-//         cache
-//             .resolve(
-//                 &second.snapshot(),
-//                 &test_config(),
-//                 &test_telemetry(),
-//                 &callback_subscriptions,
-//             )
-//             .unwrap();
-//         cache
-//             .resolve(
-//                 &first.snapshot(),
-//                 &test_config(),
-//                 &test_telemetry(),
-//                 &callback_subscriptions,
-//             )
-//             .unwrap();
+        let entries = state.runtime_cache.lock().unwrap();
+        assert_eq!(entries.front().unwrap().0, first.cache_id);
+    }
 
-//         let entries = cache.entries.lock().unwrap();
-//         assert_eq!(entries.front().unwrap().0, first.cache_id);
-//     }
+    #[test]
+    fn dropping_owner_does_not_retire_a_cached_runtime_entry() {
+        let state = test_schema_state();
+        let owner = test_owner();
+        let snapshot = owner.snapshot();
 
-//     #[test]
-//     fn dropping_owner_does_not_retire_a_cached_runtime_entry() {
-//         let cache = PluginRuntimeCache::default();
-//         let callback_subscriptions: CallbackSubscriptionsMap = Arc::new(DashMap::new());
-//         let owner = test_owner();
-//         let snapshot = owner.snapshot();
+        state.resolve_runtime(&snapshot).unwrap();
 
-//         cache
-//             .resolve(
-//                 &snapshot,
-//                 &test_config(),
-//                 &test_telemetry(),
-//                 &callback_subscriptions,
-//             )
-//             .unwrap();
+        drop(owner);
 
-//         drop(owner);
-
-//         // the runtime cache entry is untouched by the owner's retirement - only bounded FIFO
-//         // eviction ever removes it.
-//         assert!(snapshot.is_retired());
-//         assert_eq!(cache.entries.lock().unwrap().len(), 1);
-//     }
-// }
+        // the runtime cache entry is untouched by the owner's retirement - only bounded FIFO
+        // eviction ever removes it.
+        assert!(snapshot.is_retired());
+        assert_eq!(state.runtime_cache.lock().unwrap().len(), 1);
+    }
+}
