@@ -238,9 +238,9 @@ mod tests {
         {
           "errors": [
             {
-              "message": "No supergraph available yet, unable to process request",
+              "message": "Supergraph runtime error",
               "extensions": {
-                "code": "NO_SUPERGRAPH_AVAILABLE"
+                "code": "SUPERGRAPH_RUNTIME_ERROR"
               }
             }
           ]
