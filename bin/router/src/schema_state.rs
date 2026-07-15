@@ -317,7 +317,7 @@ impl SchemaState {
     /// Returns true if the router is ready to serve requests, i.e. if a supergraph is available for
     /// the request (either plugin-selected or configured default).
     pub fn is_ready(&self, req: &HttpRequest) -> bool {
-        self.select_supergraph(req).ok().is_some()
+        matches!(self.select_supergraph(req), Ok(Some(_)))
     }
 
     pub async fn new_from_config(
