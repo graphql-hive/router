@@ -3,6 +3,8 @@ use crate::storage::StorageManager;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use dashmap::DashMap;
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
 use hive_router_internal::authorization::metadata::AuthorizationMetadata;
@@ -28,7 +30,7 @@ use hive_router_query_planner::{
 };
 use moka::future::Cache;
 use ntex::web::HttpRequest;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -132,10 +134,20 @@ impl From<&ConfiguredSupergraph> for SelectedSupergraph {
 
 const RUNTIME_CACHE_MAX_SIZE: usize = 10;
 
+type RuntimeCache = Mutex<VecDeque<(u64, Arc<RouterSupergraphRuntime>)>>;
+
 pub struct SchemaState {
-    configured: Arc<ArcSwap<Option<ConfiguredSupergraph>>>,
-    runtime_cache: Mutex<VecDeque<(u64, Arc<RouterSupergraphRuntime>)>>,
     router_config: Arc<HiveRouterConfig>,
+    // the supergraph configured through the router config that can be loaded (and polled)
+    //   - `Some` when the router's configured supergraph is available and has been loaded
+    //   - sometimes `None` when the supergraph is being fetched and built
+    //   - always `None` when the router is configured with `supergraph.source: plugin`
+    configured: Arc<ArcSwap<Option<ConfiguredSupergraph>>>,
+    runtime_cache: Arc<RuntimeCache>,
+    // sender half for `RuntimeCacheCleanupTask` - registers a cache entry's retirement token so
+    // the cleanup task removes it from the cache once its owner retires. `None` when the runtime
+    // cache cleanup task hasn't been registered (e.g. in tests constructing `SchemaState` directly).
+    runtime_cache_cleanup: Option<mpsc::UnboundedSender<(u64, CancellationToken)>>,
     pub plan_cache: Cache<u64, Arc<QueryPlan>>,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
@@ -229,11 +241,23 @@ impl SchemaState {
             &self.callback_subscriptions,
         )?);
 
-        // TODO: evict when the supergraph is retired instead
+        // bounded FIFO eviction still protects against too many simultaneously live variants,
+        // the cleanup task below only gets entries out *sooner*, when their owner retires
         if entries.len() >= RUNTIME_CACHE_MAX_SIZE {
             entries.pop_front();
         }
         entries.push_back((cache_id, runtime.clone()));
+
+        // release mutex, no longer needed at this point
+        drop(entries);
+
+        // register this entry's retirement token with the cleanup task so the cache entry is
+        // removed promptly once its owner retires, instead of waiting for FIFO eviction. a send
+        // failure just means the cleanup task isn't running (e.g. router shutting down or a test
+        // building `SchemaState` directly) - the cache entry is still bounded by FIFO eviction.
+        if let Some(sender) = &self.runtime_cache_cleanup {
+            sender.send((cache_id, snapshot.retirement_token())).ok();
+        }
 
         Ok(runtime)
     }
@@ -430,9 +454,18 @@ impl SchemaState {
         // itself by observing its own selected supergraph's retirement token.
         let _ = active_subscriptions;
 
+        let runtime_cache: Arc<RuntimeCache> =
+            Arc::new(Mutex::new(VecDeque::with_capacity(RUNTIME_CACHE_MAX_SIZE)));
+        let (cleanup_tx, cleanup_rx) = mpsc::unbounded_channel();
+        bg_tasks_manager.register_task(RuntimeCacheCleanupTask {
+            runtime_cache: runtime_cache.clone(),
+            registrations: tokio::sync::Mutex::new(cleanup_rx),
+        });
+
         Ok(Self {
             configured,
-            runtime_cache: Mutex::new(VecDeque::with_capacity(RUNTIME_CACHE_MAX_SIZE)),
+            runtime_cache,
+            runtime_cache_cleanup: Some(cleanup_tx),
             router_config,
             plan_cache,
             validate_cache,
@@ -523,6 +556,68 @@ impl BackgroundTask for SupergraphBackgroundLoaderTask {
     }
 }
 
+/// Router-managed background task that removes runtime-cache entries once their owner retires,
+/// instead of waiting for bounded FIFO eviction to eventually push them out.
+///
+/// Runtimes are registered dynamically (one registration per cache insertion, after router
+/// initialization), so this is a single long-lived task fed through `registrations` rather than
+/// an unmanaged spawned task per runtime. Registration is deduplicated by cache id: a FIFO
+/// eviction followed by reinsertion of the same still-live owner must not create a second waiter
+/// for it.
+///
+/// This does not make the runtime cache itself reject retired entries - it only ever removes
+/// them eventually. Requests already holding a cloned `Arc<RouterSupergraphRuntime>` are
+/// unaffected by the removal; see the retirement-token call sites in `pipeline/mod.rs` and
+/// `pipeline/websocket_server.rs` for the checks that still gate on retirement directly.
+struct RuntimeCacheCleanupTask {
+    runtime_cache: Arc<RuntimeCache>,
+    registrations: tokio::sync::Mutex<mpsc::UnboundedReceiver<(u64, CancellationToken)>>,
+}
+
+#[async_trait]
+impl BackgroundTask for RuntimeCacheCleanupTask {
+    fn id(&self) -> &str {
+        "runtime-cache-cleanup"
+    }
+
+    async fn run(&self, token: CancellationToken) {
+        let mut registrations = self.registrations.lock().await;
+        let mut registered_ids: HashSet<u64> = HashSet::new();
+        let mut waiters = FuturesUnordered::new();
+
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => {
+                    debug!("runtime cache cleanup task cancelled, stopping");
+                    return;
+                }
+                registered = registrations.recv() => {
+                    let Some((cache_id, retirement)) = registered else {
+                        debug!("runtime cache cleanup registration channel closed, stopping");
+                        return;
+                    };
+                    // dedup by cache id: FIFO eviction + reinsertion of the same live owner
+                    // must not create a second waiter for it
+                    if registered_ids.insert(cache_id) {
+                        waiters.push(async move {
+                            retirement.cancelled().await;
+                            cache_id
+                        });
+                    }
+                }
+                Some(cache_id) = waiters.next(), if !waiters.is_empty() => {
+                    registered_ids.remove(&cache_id);
+                    let mut entries = self.runtime_cache.lock().unwrap();
+                    // no-op if already gone (FIFO eviction raced us, or already removed) -
+                    // removing the entry only drops the cache's Arc, active requests and
+                    // streams hold their own clone and keep running through it
+                    entries.retain(|(id, _)| *id != cache_id);
+                }
+            }
+        }
+    }
+}
+
 struct CallbackHeartbeatEnforcerTask {
     callback_subscriptions: CallbackSubscriptionsMap,
     heartbeat_interval: Duration,
@@ -598,7 +693,8 @@ mod plugin_runtime_cache_tests {
     fn test_schema_state() -> SchemaState {
         SchemaState {
             configured: Arc::new(ArcSwap::from(Arc::new(None))),
-            runtime_cache: Mutex::new(VecDeque::with_capacity(RUNTIME_CACHE_MAX_SIZE)),
+            runtime_cache: Arc::new(Mutex::new(VecDeque::with_capacity(RUNTIME_CACHE_MAX_SIZE))),
+            runtime_cache_cleanup: None,
             router_config: Arc::new(HiveRouterConfig::default()),
             plan_cache: Cache::new(1),
             validate_cache: Cache::new(1),
@@ -700,5 +796,42 @@ mod plugin_runtime_cache_tests {
         // eviction ever removes it.
         assert!(snapshot.is_retired());
         assert_eq!(state.runtime_cache.lock().unwrap().len(), 1);
+    }
+
+    #[ntex::test]
+    async fn cleanup_task_removes_cache_entry_once_owner_retires() {
+        let mut state = test_schema_state();
+        let runtime_cache = state.runtime_cache.clone();
+        let (cleanup_tx, cleanup_rx) = mpsc::unbounded_channel();
+        state.runtime_cache_cleanup = Some(cleanup_tx);
+
+        let task = RuntimeCacheCleanupTask {
+            runtime_cache: runtime_cache.clone(),
+            registrations: tokio::sync::Mutex::new(cleanup_rx),
+        };
+        let cancel = CancellationToken::new();
+        let task_handle = ntex::rt::spawn({
+            let cancel = cancel.clone();
+            async move { task.run(cancel).await }
+        });
+
+        let owner = test_owner();
+        let snapshot = owner.snapshot();
+        state.resolve_runtime(&snapshot).unwrap();
+        assert_eq!(runtime_cache.lock().unwrap().len(), 1);
+
+        drop(owner);
+
+        // cleanup runs asynchronously - poll briefly instead of assuming an immediate removal
+        for _ in 0..100 {
+            if runtime_cache.lock().unwrap().is_empty() {
+                break;
+            }
+            ntex::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(runtime_cache.lock().unwrap().is_empty());
+
+        cancel.cancel();
+        let _ = task_handle.await;
     }
 }
