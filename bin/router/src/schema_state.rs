@@ -57,20 +57,20 @@ pub enum RouterSupergraphRuntimeError {
     AuthorizationMetadataError(#[from] AuthorizationMetadataError),
 }
 
-/// Router's state derived from a supergraph *and* router configuration: subgraph
-/// executors, operation-name forwarding, and authorization metadata. Everything purely
-/// schema-derived (planner, public schema, metadata) lives in [`SupergraphSnapshot`] instead.
+/// Router state derived from a supergraph and router configuration: subgraph executors,
+/// operation-name forwarding, authorization metadata, and schema-aware caches. The planner,
+/// public schema, and plugin-relevant schema metadata live in [`SupergraphSnapshot`] instead.
 ///
-/// This type never retains the owner handle of the [`Supergraph`], only the schema snapshot it was
-/// built from (via the snapshot's cache id, for cache lookups).
+/// This type retains neither the [`Supergraph`] owner nor its snapshot. Requests and streams carry
+/// the snapshot separately for schema access and retirement checks.
 ///
 /// Authorization metadata is schema-derived in what it consumes, but it is only ever read by the
 /// router's authorization pipeline (which also depends on router configuration), and plugins
-/// constructing a `SupergraphData` never need it - so it's built here, alongside the rest of the
-/// router runtime, rather than in the executor crate.
+/// constructing a [`Supergraph`] never need it. It is therefore built here with the rest of the
+/// router runtime rather than in the executor crate.
 ///
-/// The runtime also holds the schema-dependent caches (validate/normalize/plan/demand-control formula)
-/// scoped to this runtime. Retiring the runtime (see [`RuntimeCacheCleanupTask`]) drops these along with it.
+/// The runtime also holds the schema-dependent caches for validation, normalization, planning,
+/// and demand-control formulas. Evicting the runtime drops those caches once active users release it.
 pub struct RouterSupergraphRuntime {
     pub subgraph_executor_map: Arc<SubgraphExecutorMap>,
     pub operation_name_forward_config: Arc<OperationNameForwardConfig>,
@@ -131,8 +131,8 @@ pub struct SelectedSupergraph {
 /// observe a mismatched generation.
 struct ConfiguredSupergraph {
     // retained only so it stays alive while it is the current configured value. dropping it
-    // (on the next successful reload swap) publishes retirement and as such terminates any subscriptions
-    // and does any necessary cleanup
+    // on the next successful reload publishes retirement, terminates its subscriptions, and
+    // lets the runtime and its caches be cleaned up once in-flight users release them
     _owner: Arc<Supergraph>,
     snapshot: SupergraphSnapshot,
     runtime: Arc<RouterSupergraphRuntime>,
@@ -180,11 +180,6 @@ pub enum SupergraphManagerError {
     #[error(transparent)]
     RouterSupergraphRuntimeError(#[from] RouterSupergraphRuntimeError),
 
-    #[error(transparent)]
-    ExecutorInitError(#[from] SubgraphExecutorError),
-    #[error(transparent)]
-    AuthorizationMetadataError(#[from] AuthorizationMetadataError),
-
     #[error("Unexpected: failed to load initial supergraph")]
     FailedToLoadInitialSupergraph,
 
@@ -215,24 +210,30 @@ impl SchemaState {
 
             let runtime = self.resolve_runtime(&plugin_supergraph)?;
 
-            let selected_supergraph = SelectedSupergraph {
+            let selected = SelectedSupergraph {
                 snapshot: plugin_supergraph,
                 runtime,
             };
 
-            req.extensions_mut().insert(selected_supergraph.clone());
+            req.extensions_mut().insert(selected.clone());
 
-            return Ok(Some(selected_supergraph));
+            return Ok(Some(selected));
         }
 
         // no plugin-selected supergraph, fall back to the router's configured default
 
-        Ok(self
+        let selected = self
             .configured
             .load()
             .as_ref()
             .as_ref()
-            .map(SelectedSupergraph::from))
+            .map(SelectedSupergraph::from);
+
+        if let Some(selected) = &selected {
+            req.extensions_mut().insert(selected.clone());
+        }
+
+        Ok(selected)
     }
 
     /// Returns the router's currently configured default runtime, if any (`None` for
@@ -317,7 +318,7 @@ impl SchemaState {
     /// Returns true if the router is ready to serve requests, i.e. if a supergraph is available for
     /// the request (either plugin-selected or configured default).
     pub fn is_ready(&self, req: &HttpRequest) -> bool {
-        matches!(self.select_supergraph(req), Ok(Some(_)))
+        matches!(self.select_supergraph(req), Ok(Some(selected)) if !selected.snapshot.is_retired())
     }
 
     pub async fn new_from_config(
@@ -461,8 +462,8 @@ impl SchemaState {
                     match built {
                         Ok(new_configured) => {
                             // Swapping in the new value here is enough: the previous
-                            // `ConfiguredSupergraph`'s owner `Arc<SupergraphData>` is only kept
-                            // alive by this slot (ordinary requests only ever hold a snapshot),
+                            // `ConfiguredSupergraph`'s owner `Arc<Supergraph>` is only kept alive
+                            // by this slot (ordinary requests only ever hold a snapshot),
                             // so once it's replaced its `Drop` publishes retirement and every
                             // subscription producer selected from it terminates on its own -
                             // no global subscription closure needed here.
@@ -616,8 +617,8 @@ enum RuntimeCacheCleanupMessage {
 ///
 /// This does not make the runtime cache itself reject retired entries - it only ever removes
 /// them eventually. Requests already holding a cloned `Arc<RouterSupergraphRuntime>` are
-/// unaffected by the removal; see the retirement-token call sites in `pipeline/mod.rs` and
-/// `pipeline/websocket_server.rs` for the checks that still gate on retirement directly.
+/// unaffected by the removal; see the retirement checks in `pipeline/mod.rs` and
+/// `pipeline/websocket_server.rs` that still gate on retirement directly.
 struct RuntimeCacheCleanupTask {
     runtime_cache: Arc<RouterSupergraphRuntimeCache>,
     registrations: tokio::sync::Mutex<mpsc::UnboundedReceiver<RuntimeCacheCleanupMessage>>,
@@ -819,6 +820,60 @@ mod plugin_runtime_cache_tests {
     }
 
     #[test]
+    fn configured_selection_stays_pinned_to_the_request_after_rotation() {
+        let state = test_schema_state();
+        let first_owner = test_owner();
+        let first_snapshot = first_owner.snapshot();
+        let first_id = first_snapshot.cache_id;
+        let first_runtime = Arc::new(
+            RouterSupergraphRuntime::build(
+                &first_snapshot,
+                &state.router_config,
+                &state.telemetry_context,
+                &state.callback_subscriptions,
+            )
+            .unwrap(),
+        );
+        state.configured.store(Arc::new(Some(ConfiguredSupergraph {
+            _owner: first_owner,
+            snapshot: first_snapshot,
+            runtime: first_runtime,
+        })));
+
+        let req = ntex::web::test::TestRequest::default().to_http_request();
+        assert_eq!(
+            state
+                .select_supergraph(&req)
+                .unwrap()
+                .unwrap()
+                .snapshot
+                .cache_id,
+            first_id
+        );
+
+        let second_owner = test_owner();
+        let second_snapshot = second_owner.snapshot();
+        let second_runtime = Arc::new(
+            RouterSupergraphRuntime::build(
+                &second_snapshot,
+                &state.router_config,
+                &state.telemetry_context,
+                &state.callback_subscriptions,
+            )
+            .unwrap(),
+        );
+        state.configured.store(Arc::new(Some(ConfiguredSupergraph {
+            _owner: second_owner,
+            snapshot: second_snapshot,
+            runtime: second_runtime,
+        })));
+
+        let selected = state.select_supergraph(&req).unwrap().unwrap();
+        assert_eq!(selected.snapshot.cache_id, first_id);
+        assert!(selected.snapshot.is_retired());
+    }
+
+    #[test]
     fn eleventh_unique_supergraph_evicts_the_first() {
         let state = test_schema_state();
         let owners: Vec<Arc<Supergraph>> = (0..11).map(|_| test_owner()).collect();
@@ -854,7 +909,7 @@ mod plugin_runtime_cache_tests {
     }
 
     #[test]
-    fn dropping_owner_does_not_retire_a_cached_runtime_entry() {
+    fn dropping_owner_marks_snapshot_retired_without_a_cleanup_task() {
         let state = test_schema_state();
         let owner = test_owner();
         let snapshot = owner.snapshot();
@@ -863,8 +918,8 @@ mod plugin_runtime_cache_tests {
 
         drop(owner);
 
-        // the runtime cache entry is untouched by the owner's retirement - only bounded FIFO
-        // eviction ever removes it.
+        // this isolated state deliberately has no cleanup task, so retirement is observable
+        // while the bounded cache entry remains until FIFO eviction
         assert!(snapshot.is_retired());
         assert_eq!(state.runtime_cache.lock().unwrap().len(), 1);
     }

@@ -80,9 +80,9 @@ impl<'req> OnHttpRequestHookPayload<'req> {
     /// on the caller.
     ///
     /// The plugin owns construction, retention, replacement and removal of every
-    /// `Arc<SupergraphData>` it selects from. The router only ever takes a cheap, read-only
-    /// snapshot of the supplied owner (stored in the request extensions after all
-    /// `on_http_request` hooks have run) - it never retains the owner `Arc` itself. This means a
+    /// `Arc<Supergraph>` it selects from. This method stores a cheap, read-only snapshot in
+    /// request extensions and never retains the owner `Arc` itself. A later plugin can replace
+    /// that snapshot, preserving normal last-write-wins hook behavior. This means a
     /// plugin can drop or replace a variant at any time: new requests simply stop being able to
     /// select it, existing in-flight requests already holding a snapshot finish normally, and any
     /// active subscriptions selected from it are closed with a schema-reload error.

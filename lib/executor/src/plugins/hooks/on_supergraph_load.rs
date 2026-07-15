@@ -20,7 +20,7 @@ pub struct PublicSchema {
     pub sdl: Arc<str>,
 }
 
-/// Errors that can occur while constructing a schema-only [`SupergraphData`].
+/// Errors that can occur while constructing a schema-only [`Supergraph`].
 #[derive(Debug, thiserror::Error)]
 pub enum SupergraphBuildError {
     #[error("Failed to parse supergraph SDL: {0}")]
@@ -32,13 +32,12 @@ pub enum SupergraphBuildError {
 /// Monotonically increasing id allocated to each constructed supergraph.
 static NEXT_SUPERGRAPH_DATA_ID: AtomicU64 = AtomicU64::new(0);
 
-/// The schema-derived data shared by a [`SupergraphData`] owner and every [`SupergraphSnapshot`]
+/// The schema-derived data shared by a [`Supergraph`] owner and every [`SupergraphSnapshot`]
 /// cloned from it. Never constructed directly; always reached through the owner or a snapshot.
 pub struct SupergraphData {
-    /// Process-unique id allocated once per constructed supergraph. Never reused, so it can
-    /// safely partition schema-aware caches: a later, distinct supergraph instance can never
-    /// reach cache entries created for an earlier (possibly dropped) one, even if both happen
-    /// to have identical consumer schemas.
+    /// Process-unique id allocated once per constructed supergraph. Never reused, so a later
+    /// instance cannot reuse an earlier runtime or join its in-flight request deduplication,
+    /// even when both have identical consumer schemas.
     pub cache_id: u64,
     pub metadata: Arc<SchemaMetadata>,
     pub planner: Planner,
@@ -46,9 +45,9 @@ pub struct SupergraphData {
     pub public_schema: PublicSchema,
 }
 
-/// A cheap, read-only snapshot of a [`SupergraphData`] owner: the schema-derived data plus a
-/// clone of the owner's retirement token. Holding a snapshot keeps the schema-derived data
-/// alive, but never keeps the owner `Arc<SupergraphData>` itself alive.
+/// A cheap, read-only snapshot of a [`Supergraph`] owner: the schema-derived data plus a clone
+/// of the owner's retirement token. Holding a snapshot keeps the schema-derived data alive, but
+/// never keeps the owner `Arc<Supergraph>` itself alive.
 #[derive(Clone)]
 pub struct SupergraphSnapshot {
     data: Arc<SupergraphData>,
@@ -89,11 +88,11 @@ impl SupergraphSnapshot {
 }
 
 /// The owner handle for one constructed supergraph. Plugins and the router's configured source
-/// retain `Arc<SupergraphData>` while a supergraph remains selectable for new requests. Contains
-/// only schema-derived data - router runtime concerns (subgraph executors, telemetry, etc.) should
-/// live in the router, built separately from a [`SupergraphSnapshot`].
+/// retain `Arc<Supergraph>` while a supergraph remains selectable for new requests. It contains
+/// only schema-derived data. Router runtime concerns such as subgraph executors and telemetry live
+/// in the router and are built separately from a [`SupergraphSnapshot`].
 ///
-/// When the last `Arc<SupergraphData>` reference drops, [`Drop`] publishes retirement: every
+/// When the last `Arc<Supergraph>` reference drops, [`Drop`] publishes retirement: every
 /// [`SupergraphSnapshot`] taken from it observes this (immediately, or later via
 /// [`SupergraphSnapshot::retired`]), without that observation delaying or being delayed by the
 /// owner's drop.
@@ -139,8 +138,11 @@ impl Supergraph {
             sdl: Arc::<str>::from(planner.consumer_schema.document.to_string()),
         };
 
+        let cache_id = NEXT_SUPERGRAPH_DATA_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .expect("supergraph id space exhausted");
         let data = SupergraphData {
-            cache_id: NEXT_SUPERGRAPH_DATA_ID.fetch_add(1, Ordering::Relaxed),
+            cache_id,
             metadata,
             planner,
             supergraph_schema: Arc::new(document),
@@ -153,7 +155,7 @@ impl Supergraph {
         })
     }
 
-    /// Parses `sdl` into a supergraph document and builds a schema-only [`SupergraphData`] from
+    /// Parses `sdl` into a supergraph document and builds a schema-only [`Supergraph`] from
     /// it. `options` may only carry query-planner options - router configuration, telemetry, and
     /// router runtime state do not belong here.
     pub fn from_sdl(sdl: &str, options: QueryPlannerOptions) -> Result<Self, SupergraphBuildError> {
@@ -173,9 +175,9 @@ pub struct OnSupergraphLoadStartHookPayload {
     /// A snapshot of the configured supergraph currently in use by the router, before loading
     /// the new one. `None` before the first supergraph has finished loading.
     pub current_supergraph_data: Option<SupergraphSnapshot>,
-    /// The raw SDL string of the new supergraph schema that is being loaded by the router.
-    /// Plugins can modify the SDL string before it is parsed and loaded by the router,
-    /// and the modified SDL string will be used in the loading process instead of the original one.
+    /// The parsed AST of the new supergraph schema being loaded by the router.
+    /// Plugins can modify this document before planner and runtime construction. The modified
+    /// document is used for the rest of the configured load process.
     pub new_ast: Document,
 }
 

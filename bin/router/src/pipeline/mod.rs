@@ -532,7 +532,7 @@ pub async fn execute_planned_request<'exec>(
             let sender = producer_handle.sender().clone();
 
             let mut body_stream = result.body;
-            let retirement = supergraph.snapshot.retirement_token();
+            let supergraph = supergraph.clone();
             rt::spawn(async move {
                 loop {
                     tokio::select! {
@@ -547,7 +547,7 @@ pub async fn execute_planned_request<'exec>(
                                 None => break,
                             }
                         }
-                        _ = retirement.cancelled() => {
+                        _ = supergraph.snapshot.retired() => {
                             // the supergraph this subscription was selected from has been
                             // retired (configured reload, or the owning plugin dropped/replaced
                             // its variant) - terminate with the same error a full reload used to
@@ -563,6 +563,7 @@ pub async fn execute_planned_request<'exec>(
                     }
                 }
                 // dropping producer_handle closes the broadcast channel
+                drop(supergraph);
             });
 
             let headers = materialize_shared_response_headers(
@@ -767,7 +768,7 @@ pub fn inbound_request_fingerprint(
     path: &str,
     request_headers: &HeaderMap,
     dedupe_header_policy: &RouterRequestDedupeHeaderPolicy,
-    schema_checksum: u64,
+    supergraph_cache_id: u64,
     normalized_operation_hash: u64,
     variables_hash: u64,
     extensions_hash: u64,
@@ -788,7 +789,7 @@ pub fn inbound_request_fingerprint(
     method.hash(&mut hasher);
     path.hash(&mut hasher);
     headers.hash(&mut hasher);
-    schema_checksum.hash(&mut hasher);
+    supergraph_cache_id.hash(&mut hasher);
     normalized_operation_hash.hash(&mut hasher);
     variables_hash.hash(&mut hasher);
     extensions_hash.hash(&mut hasher);

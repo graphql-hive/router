@@ -234,6 +234,10 @@ async fn handle_text_frame(
     ws_uri: &http::Uri,
     ws_path: &Path<http::Uri>,
 ) -> Option<ws::Message> {
+    // IMPORTANT: we intentionally check if a supegraph is selected this "late" because
+    // browsers cannot interpret a rejected HTTP Upgrade request and will show a cryptic
+    // error to the clients. instead, we accept the connection - but close it immediately
+    // if the supergraph is not available, which will result in a more understandable error
     let supergraph = match schema_state.select_supergraph(req) {
         Ok(supergraph) => supergraph,
         Err(err) => {
@@ -295,6 +299,8 @@ async fn handle_text_frame(
 
             let result = async {
                 let Some(supergraph) = supergraph else {
+                    // IMPORTANT: we dont do this earlier because router might be loading the
+                    // supergraph as we speak, so we simply reject the operation request instead
                     warn!("No supergraph available yet, unable to process client subscribe message");
                     return Some(ServerMessage::error(
                         &id,
