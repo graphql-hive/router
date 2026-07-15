@@ -87,10 +87,7 @@ impl<'p> Trie<'p> {
         let mut current = PathIndex::root();
         let mut peekable = segments.peekable();
 
-        loop {
-            let Some(segment) = peekable.next() else {
-                break;
-            };
+        while let Some(segment) = peekable.next() {
             let is_last = peekable.peek().is_none();
             let child = self.nodes[current.get()].children.get(segment).copied();
 
