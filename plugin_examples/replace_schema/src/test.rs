@@ -138,7 +138,7 @@ mod tests {
                 hooks::{
                     on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
                     on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
-                    on_supergraph_load::SupergraphData,
+                    on_supergraph_load::Supergraph,
                 },
                 plugin_trait::{RouterPlugin, StartHookPayload},
             },
@@ -147,7 +147,7 @@ mod tests {
         const SUPERGRAPH_SDL: &str = include_str!("../supergraph.graphql");
 
         pub struct BrokenSchemaPlugin {
-            broken_variant: Arc<SupergraphData>,
+            broken_variant: Arc<Supergraph>,
         }
 
         #[async_trait]
@@ -161,7 +161,7 @@ mod tests {
             fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
                 let broken_sdl =
                     SUPERGRAPH_SDL.replace("http://0.0.0.0:4200/accounts", "not a valid url ::");
-                let broken_variant = SupergraphData::from_sdl(&broken_sdl, Default::default())?;
+                let broken_variant = Supergraph::from_sdl(&broken_sdl, Default::default())?;
                 payload.initialize_plugin(Self {
                     broken_variant: Arc::new(broken_variant),
                 })

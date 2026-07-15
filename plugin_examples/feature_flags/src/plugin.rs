@@ -17,7 +17,7 @@ use hive_router::{
         hooks::{
             on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
             on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
-            on_supergraph_load::SupergraphData,
+            on_supergraph_load::Supergraph,
         },
         plugin_trait::{RouterPlugin, StartHookPayload},
     },
@@ -31,12 +31,12 @@ const SUPERGRAPH_SDL: &str = include_str!("../supergraph.graphql");
 /// of it per request, in `on_http_request`.
 ///
 /// The base supergraph document is parsed once, in `on_plugin_init`. From then on, every request
-/// builds (or reuses a cached) `Arc<SupergraphData>` for its exact combination of
+/// builds (or reuses a cached) `Arc<Supergraph>` for its exact combination of
 /// `x-feature-flags` header values, stripping any `@feature`-tagged types/fields that aren't
 /// enabled - affecting parsing, validation, planning, execution *and* introspection alike.
 pub struct FeatureFlagsPlugin {
     supergraph: Document,
-    variants: Mutex<HashMap<String, Arc<SupergraphData>>>,
+    variants: Mutex<HashMap<String, Arc<Supergraph>>>,
 }
 
 #[async_trait]
@@ -85,7 +85,7 @@ impl RouterPlugin for FeatureFlagsPlugin {
             // (expensive) not constructed, build and cache it
             None => {
                 let document = schema_for_features(&self.supergraph, &feature_flags);
-                match SupergraphData::from_document(document, Default::default()) {
+                match Supergraph::from_document(document, Default::default()) {
                     Ok(supergraph_data) => {
                         // build successful
                         let supergraph_data = Arc::new(supergraph_data);

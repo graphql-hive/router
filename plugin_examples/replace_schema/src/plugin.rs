@@ -14,7 +14,7 @@ use hive_router::{
         hooks::{
             on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
             on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
-            on_supergraph_load::SupergraphData,
+            on_supergraph_load::Supergraph,
         },
         plugin_trait::{RouterPlugin, StartHookPayload},
     },
@@ -30,13 +30,13 @@ const SUPERGRAPH_SDL: &str = include_str!("../supergraph.graphql");
 /// Overriding a supergraph also affects introspection, because introspection is built from the
 /// same schema snapshot that parsing/validation/planning use.
 ///
-/// Here we build one extra `Arc<SupergraphData>` (stripping `@feature`-tagged types/fields from
+/// Here we build one extra `Arc<Supergraph>` (stripping `@feature`-tagged types/fields from
 /// the *supergraph* document, not the public schema - the public/consumer schema is derived by
 /// the router from whatever we hand it) and swap it in only when the `x-schema-variant: basic`
 /// request header is present. Without that header (or with any other value), the router's own
 /// default supergraph is used unchanged.
 pub struct ReplaceSchemaPlugin {
-    basic_variant: Arc<SupergraphData>,
+    basic_variant: Arc<Supergraph>,
 }
 
 #[async_trait]
@@ -53,7 +53,7 @@ impl RouterPlugin for ReplaceSchemaPlugin {
         let document =
             safe_parse_schema(&SUPERGRAPH_SDL.replace("http://0.0.0.0:4200", &subgraphs_url))?;
         let document = strip_disabled_features(document, &["inStock", "shippingEstimate"]);
-        let basic_variant = Arc::new(SupergraphData::from_document(document, Default::default())?);
+        let basic_variant = Arc::new(Supergraph::from_document(document, Default::default())?);
         payload.initialize_plugin(Self { basic_variant })
     }
 
