@@ -702,7 +702,7 @@ pub async fn execute_pipeline<'exec>(
     }
 
     let query_plan_result = plan_operation_with_cache(
-        &supergraph,
+        supergraph,
         schema_state,
         &normalize_payload,
         &progressive_override_ctx,

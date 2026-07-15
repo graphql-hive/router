@@ -433,7 +433,7 @@ async fn handle_text_frame(
                 );
 
                 match validate_operation_with_cache(
-                    &supergraph,
+                    supergraph,
                     schema_state,
                     shared_state,
                     &parser_payload,
