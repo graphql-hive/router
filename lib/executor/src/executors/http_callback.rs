@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::stream::BoxStream;
+use hive_router_internal::telemetry::logging::targets;
 use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
 use http::{HeaderMap, HeaderValue};
 use http_body_util::BodyExt;
@@ -64,7 +65,7 @@ struct CallbackSubscriptionGuard {
 impl Drop for CallbackSubscriptionGuard {
     fn drop(&mut self) {
         self.callback_subscriptions.remove(&self.subscription_id);
-        trace!(subscription_id = %self.subscription_id, "HTTP callback subscription entry removed from active subscriptions");
+        trace!(target: targets::HTTP_CALLBACK, subscription_id = %self.subscription_id, "HTTP callback subscription entry removed from active subscriptions");
     }
 }
 
@@ -142,6 +143,10 @@ impl HttpCallbackSubgraphExecutor {
 
 #[async_trait]
 impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
+    fn executor_name(&self) -> &str {
+        "http_callback"
+    }
+
     fn endpoint(&self) -> &http::Uri {
         &self.endpoint
     }
@@ -209,10 +214,11 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         *req.headers_mut() = headers;
 
         debug!(
-            subscription_id = %subscription_id,
-            "sending HTTP callback subscription request to subgraph {} at {}",
-            self.subgraph_name,
-            self.endpoint.to_string()
+            target: targets::HTTP_CALLBACK,
+            subscription_id,
+            subgraph = self.subgraph_name,
+            endpoint = %self.endpoint,
+            "sending HTTP callback subscription request to subgraph",
         );
 
         let req_fut = self.http_client.request(req);
@@ -227,10 +233,12 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         };
 
         debug!(
-            subscription_id = %subscription_id,
-            "HTTP callback subscription request to {} completed, status: {}",
-            self.endpoint.to_string(),
-            res.status()
+            target: targets::HTTP_CALLBACK,
+            subscription_id,
+            subgraph = self.subgraph_name,
+            endpoint = %self.endpoint,
+            status = %res.status(),
+            "HTTP callback subscription request completed",
         );
 
         if !res.status().is_success() {
@@ -241,12 +249,15 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
                 .as_ref()
                 .and_then(|b| std::str::from_utf8(b).ok())
                 .unwrap_or("(no body)");
+
             error!(
-                subscription_id = %subscription_id,
+                target: targets::HTTP_CALLBACK,
+                subscription_id,
                 status = %status,
                 body = body_str,
                 "HTTP callback subscription request failed with non-success status"
             );
+
             return Err(SubgraphExecutorError::HttpCallbackStatusCodeNotOk(status));
         }
 
@@ -267,12 +278,20 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
             let _op_guard = op_guard;
             let _conn_guard = conn_guard;
 
-            trace!(subscription_id = %subscription_id, "HTTP callback subscription stream started");
+            trace!(
+                target: targets::HTTP_CALLBACK,
+                subscription_id,
+                "HTTP callback subscription stream started"
+            );
 
             while let Some(msg) = rx.recv().await {
                 match msg {
                     CallbackMessage::Next { payload } => {
-                        trace!(subscription_id = %subscription_id, "received next payload");
+                        trace!(
+                            target: targets::HTTP_CALLBACK,
+                            subscription_id,
+                            "received next payload"
+                        );
                         match SubgraphResponse::deserialize_from_bytes(
                             payload,
                             custom_scalar_paths.as_ref(),
@@ -280,8 +299,9 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
                             Ok(response) => yield Ok(response),
                             Err(e) => {
                                 error!(
+                                    target: targets::HTTP_CALLBACK,
                                     subscription_id = %subscription_id,
-                                    error = %e,
+                                    error = ?e,
                                     "failed to deserialize callback payload"
                                 );
                                 yield Err(e);
@@ -290,7 +310,11 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
                         }
                     }
                     CallbackMessage::Complete { errors } => {
-                        trace!(subscription_id = %subscription_id, "received complete");
+                        trace!(
+                            target: targets::HTTP_CALLBACK,
+                            subscription_id,
+                            "received complete"
+                        );
                         if let Some(errors) = errors {
                             if !errors.is_empty() {
                                 yield Ok(SubgraphResponse {
@@ -304,7 +328,11 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
                 }
             }
 
-            trace!(subscription_id = %subscription_id, "HTTP callback subscription stream ended");
+            trace!(
+                target: targets::HTTP_CALLBACK,
+                subscription_id,
+                "HTTP callback subscription stream ended"
+            );
         }))
     }
 }

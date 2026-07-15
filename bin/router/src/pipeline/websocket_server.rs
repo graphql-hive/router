@@ -48,6 +48,10 @@ use crate::pipeline::{
 };
 use crate::schema_state::SchemaState;
 use crate::shared_state::{RouterSharedState, SharedRouterResponse};
+use crate::telemetry::HeaderExtractor;
+use hive_router_internal::telemetry::logging::request_id::WithRequestIdentifiers;
+use hive_router_internal::telemetry::logging::summary::{self, RequestSummary, WithRequestSummary};
+use hive_router_internal::telemetry::logging::targets;
 
 type WsStateRef = Rc<RefCell<WsState<tokio::sync::mpsc::Sender<()>>>>;
 
@@ -107,13 +111,13 @@ async fn ws_service(
 ) -> Result<impl Service<ws::Frame, Response = Option<ws::Message>, Error = io::Error>, web::Error>
 {
     if !has_accepted_subprotocol {
-        debug!("WebSocket connection rejecting due to unacceptable subprotocol");
+        warn!(target: targets::WEBSOCKET_SERVER, "websocket connection rejecting due to unacceptable subprotocol");
         let _ = sink.send(CloseCode::SubprotocolNotAcceptable.into()).await;
         // we dont return an Err here because we want to gracefully close the
         // connection for the client side with a close frame. returning an Err
         // would result in an abrupt termination of the connection
     } else {
-        debug!("WebSocket connection accepted");
+        debug!(target: targets::WEBSOCKET_SERVER, "websocket connection accepted");
     }
 
     let conn_guard: Option<ActiveClientConnectionGuard> = if has_accepted_subprotocol {
@@ -213,7 +217,7 @@ struct SubscriptionGuard {
 impl Drop for SubscriptionGuard {
     fn drop(&mut self) {
         self.state.borrow_mut().subscriptions.remove(&self.id);
-        trace!(id = %self.id, "Subscription removed from active subscriptions");
+        trace!(target: targets::WEBSOCKET_SERVER, id = %self.id, "Subscription removed from active subscriptions");
     }
 }
 
@@ -241,7 +245,7 @@ async fn handle_text_frame(
     let supergraph = match schema_state.select_supergraph(req) {
         Ok(supergraph) => supergraph,
         Err(err) => {
-            error!(err = ?err, "Supergraph runtime error");
+            error!(target: targets::WEBSOCKET_SERVER, err = ?err, "Supergraph runtime error");
             return Some(
                 CloseCode::InternalServerError(Some("Supergraph runtime error".to_string())).into(),
             );
@@ -254,16 +258,18 @@ async fn handle_text_frame(
     let client_msg: ClientMessage = match sonic_rs::from_str(&text) {
         Ok(msg) => msg,
         Err(e) => {
-            error!("Failed to parse client message to JSON: {}", e);
+            error!(target: targets::WEBSOCKET_SERVER, error = ?e, "Failed to parse client message to JSON");
             return Some(CloseCode::BadRequest("Invalid message received from client").into());
         }
     };
 
-    trace!("type" = client_msg.as_ref(), "Received client message");
+    trace!(target: targets::WEBSOCKET_SERVER, type = client_msg.as_ref(), "Received client message");
 
     match client_msg {
         ClientMessage::ConnectionInit { payload } => {
             if state.borrow().handshake_received {
+                warn!(target: targets::WEBSOCKET_SERVER, "Received multiple connection init messages, rejecting connection");
+
                 return Some(CloseCode::TooManyInitialisationRequests.into());
             }
             state.borrow_mut().handshake_received = true;
@@ -272,14 +278,14 @@ async fn handle_text_frame(
 
             let _ = sink.send(ServerMessage::ack()).await;
 
-            debug!("Connection acknowledged");
+            debug!(target: targets::WEBSOCKET_SERVER, "websocket connection acknowledged");
 
             let header_map =
                 parse_headers_from_connection_init_payload(state.borrow().init_payload.as_ref());
             if !header_map.is_empty() {
-                trace!("Connection init message contains headers in the payload");
+                trace!(target: targets::WEBSOCKET_SERVER, "Connection init message contains headers in the payload");
             } else {
-                trace!("Connection init message does not contain headers in the payload");
+                trace!(target: targets::WEBSOCKET_SERVER, "Connection init message does not contain headers in the payload");
             }
 
             None
@@ -301,7 +307,8 @@ async fn handle_text_frame(
                 let Some(supergraph) = supergraph else {
                     // IMPORTANT: we dont do this earlier because router might be loading the
                     // supergraph as we speak, so we simply reject the operation request instead
-                    warn!("No supergraph available yet, unable to process client subscribe message");
+                    error!(target: targets::WEBSOCKET_SERVER, "No supergraph available yet, unable to process client subscribe message");
+
                     return Some(ServerMessage::error(
                         &id,
                         &[GraphQLError::from_message_and_extensions(
@@ -345,6 +352,14 @@ async fn handle_text_frame(
                     headers.insert(key.clone(), value.clone());
                 }
 
+                let parent_ctx = shared_state
+                    .telemetry_context
+                    .extract_context(&HeaderExtractor(&headers));
+                let request_identifiers =
+                  Arc::new(shared_state
+                        .telemetry_context
+                        .logging_correlation_extractor
+                        .extract(&headers, &parent_ctx));
                 let headers = Arc::new(headers);
 
                 // store the merged headers back to init_payload if configured to do so
@@ -360,329 +375,362 @@ async fn handle_text_frame(
                     }
                 }
 
-                let payload = GraphQLParams {
-                    query: Some(payload.query),
-                    operation_name: payload.operation_name,
-                    variables: payload.variables.unwrap_or_default(),
-                    extensions: payload.extensions,
-                };
+                let inner_res = async {
+                  let payload = GraphQLParams {
+                      query: Some(payload.query),
+                      operation_name: payload.operation_name,
+                      variables: payload.variables.unwrap_or_default(),
+                      extensions: payload.extensions,
+                  };
 
-                // synthetic router http request for plugins - there's no real http request
-                // in the ws subscribe flow, so we assemble one from the ws path and merged headers.
-                // of course there is the http upgrade request, but that one is useless for the plugin system
-                let plugin_req_state = if let (Some(plugins), Some(ref plugin_context)) = (
-                    shared_state.plugins.as_ref(),
-                    plugin_context,
-                ) {
-                    Some(PluginRequestState {
-                        plugins: plugins.clone(),
-                        router_http_request: RouterHttpRequest {
-                            uri: ws_uri,
-                            method: &Method::POST,
-                            version: http::Version::HTTP_11,
-                            headers: headers.as_ref(),
-                            path: ws_uri.path(),
-                            query_string: ws_uri.query().unwrap_or(""),
-                            match_info: ws_path,
-                        },
-                        context: plugin_context.clone(),
-                        request_context: request_context.clone(),
-                    })
-                } else {
-                    None
-                };
+                  // synthetic router http request for plugins - there's no real http request
+                  // in the ws subscribe flow, so we assemble one from the ws path and merged headers.
+                  // of course there is the http upgrade request, but that one is useless for the plugin system
+                  let plugin_req_state = if let (Some(plugins), Some(ref plugin_context)) = (
+                      shared_state.plugins.as_ref(),
+                      plugin_context,
+                  ) {
+                      Some(PluginRequestState {
+                          plugins: plugins.clone(),
+                          router_http_request: RouterHttpRequest {
+                              uri: ws_uri,
+                              method: &Method::POST,
+                              version: http::Version::HTTP_11,
+                              headers: headers.as_ref(),
+                              path: ws_uri.path(),
+                              query_string: ws_uri.query().unwrap_or(""),
+                              match_info: ws_path,
+                          },
+                          context: plugin_context.clone(),
+                          request_context: request_context.clone(),
+                      })
+                  } else {
+                      None
+                  };
 
-                let client_name = headers
-                    .get(
-                        shared_state
-                            .router_config
-                            .telemetry
-                            .client_identification
-                            .name_header.get_header_ref(),
-                    )
-                    .and_then(|v| v.to_str().ok());
-                let client_version = headers
-                    .get(
-                        shared_state
-                            .router_config
-                            .telemetry
-                            .client_identification
-                            .version_header.get_header_ref(),
-                    )
-                    .and_then(|v| v.to_str().ok());
+                  let client_name = headers
+                      .get(
+                          shared_state
+                              .router_config
+                              .telemetry
+                              .client_identification
+                              .name_header.get_header_ref(),
+                      )
+                      .and_then(|v| v.to_str().ok());
+                  let client_version = headers
+                      .get(
+                          shared_state
+                              .router_config
+                              .telemetry
+                              .client_identification
+                              .version_header.get_header_ref(),
+                      )
+                      .and_then(|v| v.to_str().ok());
 
-                let parser_result =
-                    match parse_operation_with_cache(shared_state, &payload, &plugin_req_state).await {
-                        Ok(result) => result,
-                        Err(err) => return Some(err.into_server_message(&id, shared_state)),
-                    };
+                  let parser_result =
+                      match parse_operation_with_cache(shared_state, &payload, &plugin_req_state).await {
+                          Ok(result) => result,
+                          Err(err) => return Some(err.into_server_message(&id, shared_state)),
+                      };
 
-                let parser_payload = match parser_result {
-                    crate::pipeline::parser::ParseResult::Payload(payload) => payload,
-                    crate::pipeline::parser::ParseResult::EarlyResponse(_) => {
-                        return Some(ServerMessage::error(
-                            &id,
-                            &[GraphQLError::from_message_and_code(
-                                "Unexpected early response during parse",
-                                "INTERNAL_SERVER_ERROR",
-                            )],
-                        ));
-                    }
-                };
+                  let parser_payload = match parser_result {
+                      crate::pipeline::parser::ParseResult::Payload(payload) => payload,
+                      crate::pipeline::parser::ParseResult::EarlyResponse(_) => {
+                          return Some(ServerMessage::error(
+                              &id,
+                              &[GraphQLError::from_message_and_code(
+                                  "Unexpected early response during parse",
+                                  "INTERNAL_SERVER_ERROR",
+                              )],
+                          ));
+                      }
+                  };
 
-                operation_span.record_details(
-                    &parser_payload.minified_document,
-                    (&parser_payload).into(),
-                    client_name,
-                    client_version,
-                    &parser_payload.hive_operation_hash,
-                );
+                  operation_span.record_details(
+                      &parser_payload.minified_document,
+                      (&parser_payload).into(),
+                      client_name,
+                      client_version,
+                      &parser_payload.hive_operation_hash,
+                  );
 
-                match validate_operation_with_cache(
-                    supergraph,
-                    schema_state,
-                    shared_state,
-                    &parser_payload,
-                    &plugin_req_state,
-                )
-                .await
-                {
-                    Ok(Some(_)) => {
-                        return Some(ServerMessage::error(
-                            &id,
-                            &[GraphQLError::from_message_and_code(
-                                "Unexpected early response during validation",
-                                "INTERNAL_SERVER_ERROR",
-                            )],
-                        ));
-                    }
-                    Ok(None) => {}
-                    Err(err) => return Some(err.into_server_message(&id, shared_state)),
-                }
+                  match validate_operation_with_cache(
+                      supergraph,
+                      schema_state,
+                      shared_state,
+                      &parser_payload,
+                      &plugin_req_state,
+                  )
+                  .await
+                  {
+                      Ok(Some(_)) => {
+                          return Some(ServerMessage::error(
+                              &id,
+                              &[GraphQLError::from_message_and_code(
+                                  "Unexpected early response during validation",
+                                  "INTERNAL_SERVER_ERROR",
+                              )],
+                          ));
+                      }
+                      Ok(None) => {}
+                      Err(err) => return Some(err.into_server_message(&id, shared_state)),
+                  }
 
-                let normalize_payload = match normalize_request_with_cache(
-                    &supergraph.snapshot,
-                    &supergraph.runtime,
-                    schema_state,
-                    &payload,
-                    &parser_payload,
-                )
-                .await
-                {
-                    Ok(payload) => payload,
-                    Err(err) => return Some(err.into_server_message(&id, shared_state)),
-                };
+                  let normalize_payload = match normalize_request_with_cache(
+                      &supergraph.snapshot,
+                      &supergraph.runtime,
+                      schema_state,
+                      &payload,
+                      &parser_payload,
+                  )
+                  .await
+                  {
+                      Ok(payload) => payload,
+                      Err(err) => return Some(err.into_server_message(&id, shared_state)),
+                  };
 
-                let is_subscription = matches!(
-                    normalize_payload.operation_for_plan.operation_kind,
-                    Some(OperationKind::Subscription)
-                );
+                  let is_subscription = matches!(
+                      normalize_payload.operation_for_plan.operation_kind,
+                      Some(OperationKind::Subscription)
+                  );
 
-                if is_subscription && !shared_state.router_config.subscriptions.enabled {
-                    return Some(PipelineError::SubscriptionsNotSupported.into_server_message(&id, shared_state));
-                }
+                  if is_subscription && !shared_state.router_config.subscriptions.enabled {
+                      return Some(PipelineError::SubscriptionsNotSupported.into_server_message(&id, shared_state));
+                  }
 
-                let request_dedupe_enabled =
-                    shared_state.router_config.traffic_shaping.router.dedupe.enabled;
+                  let request_dedupe_enabled =
+                      shared_state.router_config.traffic_shaping.router.dedupe.enabled;
 
-                let fingerprint = if request_dedupe_enabled
-                    && matches!(
-                        normalize_payload.operation_for_plan.operation_kind,
-                        // same deduplication applies for queries and subscriptions
-                        None | Some(OperationKind::Query) | Some(OperationKind::Subscription)
-                    ) {
-                    let variables_hash = hash_graphql_variables(&payload.variables);
-                    let extensions_hash = payload
-                        .extensions
-                        .as_ref()
-                        .map_or(0, hash_graphql_extensions);
-                    Some(inbound_request_fingerprint(
-                        &Method::POST,
-                        ws_uri.path(),
-                        headers.as_ref(),
-                        &shared_state.in_flight_requests_header_policy,
-                        supergraph.snapshot.cache_id,
-                        normalize_payload.normalized_operation_hash,
-                        variables_hash,
-                        extensions_hash,
-                    ))
-                } else {
-                    None
-                };
+                  let fingerprint = if request_dedupe_enabled
+                      && matches!(
+                          normalize_payload.operation_for_plan.operation_kind,
+                          // same deduplication applies for queries and subscriptions
+                          None | Some(OperationKind::Query) | Some(OperationKind::Subscription)
+                      ) {
+                      let variables_hash = hash_graphql_variables(&payload.variables);
+                      let extensions_hash = payload
+                          .extensions
+                          .as_ref()
+                          .map_or(0, hash_graphql_extensions);
+                      Some(inbound_request_fingerprint(
+                          &Method::POST,
+                          ws_uri.path(),
+                          headers.as_ref(),
+                          &shared_state.in_flight_requests_header_policy,
+                          supergraph.snapshot.cache_id,
+                          normalize_payload.normalized_operation_hash,
+                          variables_hash,
+                          extensions_hash,
+                      ))
+                  } else {
+                      None
+                  };
 
-                // synthetic request details for plan executor
-                let response_mode = ResponseMode::Dual(
-                    SingleContentType::default(),
-                    StreamContentType::default(),
-                );
-                let method = Method::POST;
-                let exec = |guard| execute_planned_request(
-                    &method,
-                    ws_uri,
-                    headers.as_ref().clone(),
-                    // TODO: WebSocket subscriptions do not yet expose route path params
-                    Default::default(),
-                    payload,
-                    &normalize_payload,
-                    supergraph,
-                    shared_state,
-                    schema_state,
-                    operation_span,
-                    plugin_req_state,
-                    request_context,
-                    &response_mode,
-                    guard,
-                    response_header_sink.clone()
-                );
+                  // synthetic request details for plan executor
+                  let response_mode = ResponseMode::Dual(
+                      SingleContentType::default(),
+                      StreamContentType::default(),
+                  );
+                  let method = Method::POST;
 
-                let shared_response = if let Some(fp) = fingerprint {
-                    let result = if is_subscription {
-                        shared_state
-                            .in_flight_requests
-                            .claim(fp)
-                            .get_or_try_init_with_guard(|guard| exec(Some(guard)))
-                            .await
-                    } else {
-                        shared_state
-                            .in_flight_requests
-                            .claim(fp)
-                            .get_or_try_init(|| exec(None))
-                            .await
-                    };
-                    let (shared_response, _role) = match result {
-                        Ok(result) => result,
-                        Err(PipelineError::JwtError(err)) => {
-                            let _ = sink.send(err.clone().into_server_message(&id, shared_state)).await;
-                            // we report error as graphql error, but we also close the
-                            // connection since we're dealing with auth so let's be safe
-                            return Some(err.into_close_message());
-                        },
-                        Err(err) => return Some(err.into_server_message(&id, shared_state)),
-                    };
-                    Arc::unwrap_or_clone(shared_response)
-                } else {
-                    match exec(None).await {
-                        Ok(result) => result,
-                        Err(PipelineError::JwtError(err)) => {
-                            let _ = sink.send(err.clone().into_server_message(&id, shared_state)).await;
-                            // we report error as graphql error, but we also close the
-                            // connection since we're dealing with auth so let's be safe
-                            return Some(err.into_close_message());
-                        },
-                        Err(err) => return Some(err.into_server_message(&id, shared_state)),
-                    }
-                };
+                  debug!(
+                      target: targets::GRAPHQL_EXECUTION,
+                      client_name,
+                      client_version,
+                      operation_name = parser_payload.operation_name.as_deref(),
+                      operation = payload.query.as_deref(),
+                      "graphql request started",
+                  );
 
-                if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
-                    let mut headers_vec = Vec::with_capacity(headers.len());
-                    for (name, value) in headers.iter() {
-                        if let Ok(val_str) = value.to_str() {
-                            headers_vec.push((name.to_string(), val_str.to_string()));
-                        }
-                    }
+                  summary::record(|s| {
+                      s.set_client_info(client_name, client_version);
+                      s.set_operation_name(parser_payload.operation_name.as_deref());
+                      s.set_operation_type(parser_payload.operation_type.as_str());
+                      s.set_operation_hash(Some(parser_payload.hive_operation_hash.as_str()));
+                      s.set_response_mode(response_mode.as_str());
+                  });
 
-                    let request_details = RequestDetails {
-                        method: Method::POST,
-                        url: (*ws_uri).clone(),
-                        headers: headers_vec,
-                    };
-                    usage_reporting::collect_usage_report(
-                        supergraph.snapshot.supergraph_schema.clone(),
-                        started_at.elapsed(),
-                        client_name,
-                        client_version,
-                        normalize_payload.operation_for_plan.name.as_deref(),
-                        normalize_payload.operation_for_plan.operation_kind.as_ref(),
-                        &parser_payload.minified_document,
-                        hive_usage_agent,
-                        shared_response.error_count(),
-                        Some(request_details),
-                    )
-                    .await;
-                }
+                  let exec = |guard| execute_planned_request(
+                      &method,
+                      ws_uri,
+                      headers.as_ref().clone(),
+                      // TODO: WebSocket subscriptions do not yet expose route path params
+                      Default::default(),
+                      payload,
+                      &normalize_payload,
+                      supergraph,
+                      shared_state,
+                      schema_state,
+                      operation_span,
+                      plugin_req_state,
+                      request_context,
+                      &response_mode,
+                      guard,
+                      response_header_sink.clone()
+                  );
 
-                match shared_response {
-                    SharedRouterResponse::Single(response) => {
-                        let _ = sink.send(ServerMessage::next(&id, &response.body)).await;
-                        Some(ServerMessage::complete(&id))
-                    }
-                    SharedRouterResponse::Stream(response) => {
-                        let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
+                  let shared_response = if let Some(fp) = fingerprint {
+                      let result = if is_subscription {
+                          shared_state
+                              .in_flight_requests
+                              .claim(fp)
+                              .get_or_try_init_with_guard(|guard| exec(Some(guard)))
+                              .await
+                      } else {
+                          shared_state
+                              .in_flight_requests
+                              .claim(fp)
+                              .get_or_try_init(|| exec(None))
+                              .await
+                      };
+                      let (shared_response, _role) = match result {
+                          Ok(result) => result,
+                          Err(PipelineError::JwtError(err)) => {
+                              let _ = sink.send(err.clone().into_server_message(&id, shared_state)).await;
+                              // we report error as graphql error, but we also close the
+                              // connection since we're dealing with auth so let's be safe
+                              return Some(err.into_close_message());
+                          },
+                          Err(err) => return Some(err.into_server_message(&id, shared_state)),
+                      };
+                      Arc::unwrap_or_clone(shared_response)
+                  } else {
+                      match exec(None).await {
+                          Ok(result) => result,
+                          Err(PipelineError::JwtError(err)) => {
+                              let _ = sink.send(err.clone().into_server_message(&id, shared_state)).await;
+                              // we report error as graphql error, but we also close the
+                              // connection since we're dealing with auth so let's be safe
+                              return Some(err.into_close_message());
+                          },
+                          Err(err) => return Some(err.into_server_message(&id, shared_state)),
+                      }
+                  };
 
-                        state
-                            .borrow_mut()
-                            .subscriptions
-                            .insert(id.clone(), cancel_tx);
+                  if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
+                      let mut headers_vec = Vec::with_capacity(headers.len());
+                      for (name, value) in headers.iter() {
+                          if let Ok(val_str) = value.to_str() {
+                              headers_vec.push((name.to_string(), val_str.to_string()));
+                          }
+                      }
 
-                        let guard = SubscriptionGuard {
-                            state: state.clone(),
-                            id: id.clone(),
-                        };
+                      let request_details = RequestDetails {
+                          method: Method::POST,
+                          url: (*ws_uri).clone(),
+                          headers: headers_vec,
+                      };
+                      usage_reporting::collect_usage_report(
+                          supergraph.snapshot.supergraph_schema.clone(),
+                          started_at.elapsed(),
+                          client_name,
+                          client_version,
+                          normalize_payload.operation_for_plan.name.as_deref(),
+                          normalize_payload.operation_for_plan.operation_kind.as_ref(),
+                          &parser_payload.minified_document,
+                          hive_usage_agent,
+                          shared_response.error_count(),
+                          Some(request_details),
+                      )
+                      .await;
+                  }
 
-                        let mut receiver = response
-                            .receiver
-                            .unwrap_or_else(|| response.body.subscribe());
+                  debug!(target: targets::GRAPHQL_EXECUTION, error_count = shared_response.error_count(), "graphql request completed");
 
-                        let client_op_guard = shared_state.telemetry_context.metrics.subscriptions.active_client_operation(SubscriptionTransport::WebSocket);
-                        let metrics = shared_state.telemetry_context.metrics.clone();
+                  summary::record(|s| {
+                      s.error_count.store(
+                          shared_response.error_count() as u32,
+                          std::sync::atomic::Ordering::Relaxed,
+                      );
+                      s.set_duration(started_at.elapsed());
+                  });
+                  summary::emit();
 
-                        trace!(id = %id, "Subscription started");
+                  match shared_response {
+                      SharedRouterResponse::Single(response) => {
+                          let _ = sink.send(ServerMessage::next(&id, &response.body)).await;
+                          Some(ServerMessage::complete(&id))
+                      }
+                      SharedRouterResponse::Stream(response) => {
+                          let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
 
-                        let sink = sink.clone();
-                        let id_for_loop = id.clone();
-                        // must be spawned - blocking the frame handler would prevent
-                        // ClientMessage::Complete from being received and processed,
-                        // making cancellation impossible
-                        rt::spawn(async move {
-                            let _guard = guard;
-                            let mut client_op_guard = client_op_guard;
-                            let mut cancelled = false;
+                          state
+                              .borrow_mut()
+                              .subscriptions
+                              .insert(id.clone(), cancel_tx);
 
-                            loop {
-                                tokio::select! {
-                                    maybe_item = receiver.recv() => {
-                                        match maybe_item {
-                                            Ok(SubscriptionEvent::Raw(data)) => {
-                                                let _ = sink.send(ServerMessage::next(&id_for_loop, &data)).await;
-                                                metrics.subscriptions.record_client_sent(SubscriptionTransport::WebSocket);
-                                            }
-                                            Ok(SubscriptionEvent::Error(errors)) => {
-                                                client_op_guard.set_end_reason(SubscriptionEndReason::Error);
-                                                let _ = sink.send(ServerMessage::error(&id_for_loop, &errors)).await;
-                                                break;
-                                            }
-                                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                                                // NOTE: not warn to avoid log spam when receiver starts
-                                                // lagging. users should rely on the lagged_messages
-                                                // metric to detect slow consumers and tune accordingly
-                                                debug!(id = %id_for_loop, lagged = n, "Broadcast receiver lagged, dropping message");
-                                                metrics.subscriptions.record_client_lag(SubscriptionTransport::WebSocket, n);
-                                                continue;
-                                            }
-                                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                                                client_op_guard.set_end_reason(SubscriptionEndReason::Completed);
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    _ = cancel_rx.recv() => {
-                                        cancelled = true;
-                                        break;
-                                    }
-                                }
-                            }
+                          let guard = SubscriptionGuard {
+                              state: state.clone(),
+                              id: id.clone(),
+                          };
 
-                            if cancelled {
-                                trace!(id = %id_for_loop, "Subscription cancelled");
-                            } else {
-                                trace!(id = %id_for_loop, "Subscription completed");
-                                let _ = sink.send(ServerMessage::complete(&id_for_loop)).await;
-                            }
-                        });
+                          let mut receiver = response
+                              .receiver
+                              .unwrap_or_else(|| response.body.subscribe());
 
-                        None
-                    }
-                }
+                          let client_op_guard = shared_state.telemetry_context.metrics.subscriptions.active_client_operation(SubscriptionTransport::WebSocket);
+                          let metrics = shared_state.telemetry_context.metrics.clone();
+
+                          trace!(target: targets::WEBSOCKET_SERVER, id = %id, "Subscription started");
+
+                          let sink = sink.clone();
+                          let id_for_loop = id.clone();
+                          // must be spawned - blocking the frame handler would prevent
+                          // ClientMessage::Complete from being received and processed,
+                          // making cancellation impossible
+                          rt::spawn(async move {
+                              let _guard = guard;
+                              let mut client_op_guard = client_op_guard;
+                              let mut cancelled = false;
+
+                              loop {
+                                  tokio::select! {
+                                      maybe_item = receiver.recv() => {
+                                          match maybe_item {
+                                              Ok(SubscriptionEvent::Raw(data)) => {
+                                                  let _ = sink.send(ServerMessage::next(&id_for_loop, &data)).await;
+                                                  metrics.subscriptions.record_client_sent(SubscriptionTransport::WebSocket);
+                                              }
+                                              Ok(SubscriptionEvent::Error(errors)) => {
+                                                  client_op_guard.set_end_reason(SubscriptionEndReason::Error);
+                                                  let _ = sink.send(ServerMessage::error(&id_for_loop, &errors)).await;
+                                                  break;
+                                              }
+                                              Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                                  // NOTE: not warn to avoid log spam when receiver starts
+                                                  // lagging. users should rely on the lagged_messages
+                                                  // metric to detect slow consumers and tune accordingly
+                                                  debug!(target: targets::WEBSOCKET_SERVER, id = %id_for_loop, lagged = n, "Broadcast receiver lagged, dropping message");
+                                                  metrics.subscriptions.record_client_lag(SubscriptionTransport::WebSocket, n);
+                                                  continue;
+                                              }
+                                              Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                                  client_op_guard.set_end_reason(SubscriptionEndReason::Completed);
+                                                  break;
+                                              }
+                                          }
+                                      }
+                                      _ = cancel_rx.recv() => {
+                                          cancelled = true;
+                                          break;
+                                      }
+                                  }
+                              }
+
+                              if cancelled {
+                                  trace!(target: targets::WEBSOCKET_SERVER, id = %id_for_loop, "Subscription cancelled");
+                              } else {
+                                  trace!(target: targets::WEBSOCKET_SERVER, id = %id_for_loop, "Subscription completed");
+                                  let _ = sink.send(ServerMessage::complete(&id_for_loop)).await;
+                              }
+                          }.with_request_id(request_identifiers.clone()));
+
+                          None
+                      }
+                  }
+                }.with_request_id(request_identifiers.clone()).with_request_summary(Arc::new(RequestSummary::default())).await;
+
+                inner_res
             }
             .instrument(span_clone)
             .await;
@@ -695,7 +743,7 @@ async fn handle_text_frame(
             }
 
             if let Some(cancel_tx) = state.borrow_mut().subscriptions.remove(&id) {
-                trace!(id = %id, "Client requested subscription cancellation");
+                trace!(target: targets::WEBSOCKET_SERVER, id = %id, "Client requested subscription cancellation");
                 let _ = cancel_tx.try_send(());
             }
             None

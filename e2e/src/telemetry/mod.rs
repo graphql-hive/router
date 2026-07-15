@@ -1,3 +1,4 @@
+mod logging;
 mod metrics;
 mod subscription_metrics;
 mod tracing;

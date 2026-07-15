@@ -20,7 +20,7 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::Duration;
 use tower::{BoxError, ServiceBuilder, ServiceExt};
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 use crate::consts::PLUGIN_VERSION;
 
@@ -233,7 +233,7 @@ impl Plugin for PersistedDocumentsPlugin {
                                 }
                                 match mgr.resolve_document(document_id).await {
                                     Ok(document) => {
-                                        info!("Document found in persisted documents: {}", document);
+                                        debug!("Document found in persisted documents: {}", document);
 
                                         if req
                                             .context

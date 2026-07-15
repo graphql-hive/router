@@ -1,5 +1,6 @@
 use ahash::{HashMap as AHashMap, HashMapExt, HashSet as AHashSet, HashSetExt};
 
+use hive_router_internal::telemetry::logging::targets;
 use hive_router_plan_executor::execution::demand_control::demand_control_definition_cost;
 use hive_router_plan_executor::execution::demand_control::CompiledActualCostPlan;
 use hive_router_plan_executor::execution::demand_control::DemandControlEvaluation;
@@ -298,6 +299,7 @@ fn eval_cost_expr(
                     Ok(only_value)
                 } else {
                     warn!(
+                        target: targets::DEMAND_CONTROL,
                         field = field_name.as_str(),
                         found = resolved_count,
                         "rejecting operation: expected exactly one slicing argument for @listSize"

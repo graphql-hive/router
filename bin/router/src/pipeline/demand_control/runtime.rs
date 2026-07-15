@@ -6,6 +6,7 @@ use hive_router_config::demand_control::{
     DemandControlActualCostMode, DemandControlConfig, DemandControlExposeHeadersConfig,
     DemandControlMode,
 };
+use hive_router_internal::telemetry::logging::targets;
 use hive_router_internal::telemetry::metrics::demand_control_metrics::DemandControlResultCode;
 use hive_router_internal::telemetry::metrics::Metrics;
 use hive_router_internal::telemetry::traces::spans::graphql::GraphQLSpanOperationIdentity;
@@ -44,12 +45,15 @@ impl DemandControlRuntime {
         metrics: Arc<Metrics>,
     ) -> Option<Self> {
         let config = config?;
+
         if !config.enabled {
-            debug!("demand control is disabled");
+            debug!(target: targets::DEMAND_CONTROL, "demand control is disabled");
+
             return None;
         }
 
         info!(
+            target: targets::DEMAND_CONTROL,
             operation_mode = ?config.operation_cost.mode,
             operation_max_cost = config.operation_cost.max,
             subgraph_budget_mode = ?config.subgraphs_budget.mode,
@@ -61,6 +65,7 @@ impl DemandControlRuntime {
         if config.operation_cost.mode == DemandControlMode::Enforce {
             if config.operation_cost.max == 0 {
                 warn!(
+                    target: targets::DEMAND_CONTROL,
                     "demand control is in enforce mode with a max cost of 0; all operations with non-zero cost will be rejected"
                 );
             }
@@ -69,6 +74,7 @@ impl DemandControlRuntime {
                 && config.default_list_size.subgraphs.is_none()
             {
                 warn!(
+                    target: targets::DEMAND_CONTROL,
                     "demand control is in enforce mode without a default list_size; list fields without an @listSize directive are estimated as 0 and may be under-counted"
                 );
             }
@@ -137,6 +143,7 @@ impl DemandControlRuntime {
             match self.config.operation_cost.mode {
                 DemandControlMode::Enforce => {
                     warn!(
+                        target: targets::DEMAND_CONTROL,
                         operation_name = ?operation_name,
                         estimated_cost = evaluation.estimated_cost,
                         max_cost,
@@ -161,7 +168,8 @@ impl DemandControlRuntime {
                     });
                 }
                 DemandControlMode::Measure => {
-                    info!(
+                    warn!(
+                        target: targets::DEMAND_CONTROL,
                         operation_name = ?operation_name,
                         estimated_cost = evaluation.estimated_cost,
                         max_cost,
@@ -227,7 +235,13 @@ impl DemandControlRuntime {
 
             if let Some(subgraph_max) = maybe_subgraph_max {
                 if *estimated_cost > subgraph_max {
-                    debug!(subgraph_name = subgraph.as_str(), estimated_cost, subgraph_max, "subgraph call will be blocked dueing execution due to estimated cost exceeding limit");
+                    debug!(
+                        target: targets::DEMAND_CONTROL,
+                        subgraph_name = subgraph.as_str(),
+                        estimated_cost,
+                        subgraph_max,
+                        "subgraph call will be blocked during execution due to estimated cost exceeding limit"
+                    );
                     over_limit.insert(subgraph.clone(), subgraph_max);
                 }
             }

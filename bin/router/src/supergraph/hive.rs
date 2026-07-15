@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use hive_console_sdk::supergraph_fetcher::{
     async_fetcher::SupergraphFetcherAsyncState, SupergraphFetcher, SupergraphFetcherError,
 };
+use hive_router_internal::telemetry::logging::targets;
 use std::time::Duration;
 use tracing::{debug, error};
 
@@ -59,7 +60,11 @@ impl SupergraphLoader for SupergraphHiveConsoleLoader {
         match fetcher_result {
             // If there was an error fetching the supergraph, propagate it
             Err(err) => {
-                error!("Error fetching supergraph from Hive Console: {}", err);
+                error!(
+                  target: targets::SUPERGRAPH,
+                  error = ?err,
+                  "Error fetching supergraph from Hive Console",
+                );
                 Err(LoadSupergraphError::from(err))
             }
             // If the supergraph has not changed, return Unchanged
@@ -85,11 +90,13 @@ impl SupergraphHiveConsoleLoader {
         retry_count: u32,
     ) -> Result<Box<Self>, LoadSupergraphError> {
         debug!(
-            "Creating supergraph source from Hive Console CDN: '{:#?}' (poll interval: {}ms, request_timeout: {}ms)",
-            endpoints,
-            poll_interval.as_millis(),
-            request_timeout.as_millis()
+          target: targets::SUPERGRAPH,
+          endpoints = ?endpoints,
+          interval_ms = poll_interval.as_millis(),
+          request_timeout_ms = request_timeout.as_millis(),
+          "Creating supergraph source from Hive Console CDN",
         );
+
         let mut fetcher_builder = SupergraphFetcher::builder()
             .user_agent(format!("hive-router/{}", ROUTER_VERSION))
             .key(key.to_string())

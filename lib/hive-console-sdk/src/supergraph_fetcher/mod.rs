@@ -10,6 +10,8 @@ pub mod async_fetcher;
 pub mod builder;
 pub mod sync_fetcher;
 
+pub const SUPERGRAPH_FETCHER_TARGET: &str = "console_sdk::supergraph";
+
 #[derive(Debug)]
 pub struct SupergraphFetcher<State> {
     state: State,

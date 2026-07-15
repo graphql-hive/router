@@ -1,11 +1,18 @@
-use std::{io::IsTerminal, str::FromStr, sync::Mutex};
-
-use hive_router_config::{log::LogFormat, HiveRouterConfig};
+use hive_router_config::{
+    log::{LogFormat, LoggingConfig},
+    HiveRouterConfig,
+};
 use hive_router_internal::{
     http::normalize_route_path,
     telemetry::{
         build_otel_layer_from_config, build_resource, build_scope,
         error::TelemetryError,
+        logging::{
+            format_json::RouterJsonFormat,
+            format_text::RouterTextFormat,
+            targets,
+            utils::{create_ignore_otel_filter, create_targets_filter, DynLayer},
+        },
         metrics::{build_meter_provider_from_config, PrometheusRuntimeConfig},
         otel::{
             opentelemetry::{
@@ -25,12 +32,11 @@ use hive_router_internal::{
 use ntex::web::{self};
 use ntex::web::{App, HttpResponse, HttpServer};
 use prometheus::{Encoder, TextEncoder};
-use tracing_subscriber::{filter::filter_fn, util::SubscriberInitExt, Layer};
-use tracing_subscriber::{fmt::time::UtcTime, EnvFilter};
-use tracing_subscriber::{
-    fmt::{self},
-    layer::SubscriberExt,
-};
+use std::{io::IsTerminal, str::FromStr, sync::Mutex};
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::{filter::ParseError, fmt::time::UtcTime, Registry};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{EnvFilter, Layer};
 
 pub struct HeaderExtractor<'a>(pub &'a ntex::http::HeaderMap);
 
@@ -62,6 +68,7 @@ pub struct Telemetry {
     pub metrics_provider: Option<SdkMeterProvider>,
     pub prometheus: Option<PrometheusRuntime>,
     pub context: TelemetryContext,
+    pub logging_writer_guard: tracing_appender::non_blocking::WorkerGuard,
 }
 
 pub enum PrometheusRuntime {
@@ -128,11 +135,16 @@ impl Telemetry {
             (None, None)
         };
 
-        let registry = tracing_subscriber::registry().with(otel_layer);
-        init_logging(config, registry)?;
+        let (logging_layer, stdout_guard) = init_logging::<Registry>(&config.log)?;
+        let registry = tracing_subscriber::registry()
+            .with(logging_layer)
+            .with(otel_layer);
+
+        registry.init();
 
         let context = TelemetryContext::from_propagation_config_with_meter(
             &config.telemetry.tracing.propagation,
+            &config.log,
             metrics_provider
                 .as_ref()
                 .map(|provider| provider.meter_with_scope(scope)),
@@ -145,6 +157,7 @@ impl Telemetry {
             metrics_provider,
             prometheus,
             context,
+            logging_writer_guard: stdout_guard,
         })
     }
 
@@ -195,15 +208,15 @@ impl Telemetry {
             .map(|setup| setup.provider.meter_with_scope(scope));
         let context = TelemetryContext::from_propagation_config_with_meter(
             &config.telemetry.tracing.propagation,
+            &config.log,
             meter,
         );
 
-        let filter = EnvFilter::from_str(config.log.env_filter_str())?;
+        let (logging_layer, logging_writer_guard) = init_logging::<Registry>(&config.log)?;
 
         let subscriber = tracing_subscriber::Registry::default()
-            .with(filter)
-            .with(otel_layer)
-            .with(fmt::layer().with_test_writer());
+            .with(logging_layer)
+            .with(otel_layer);
 
         Ok((
             Self {
@@ -211,6 +224,7 @@ impl Telemetry {
                 metrics_provider: metrics_result.map(|setup| setup.provider),
                 prometheus: None,
                 context,
+                logging_writer_guard,
             },
             subscriber,
         ))
@@ -223,15 +237,17 @@ impl Telemetry {
         let meter_provider = self.metrics_provider.clone();
         let shutdown_tracer = spawn_blocking(|| {
             if let Some(provider) = tracer {
-                tracing::info!(
-                    component = "telemetry",
+                tracing::debug!(
+                    target: targets::TELEMETRY,
                     layer = "provider",
                     "shutdown scheduled"
                 );
+
                 let _ = provider.force_flush();
                 let _ = provider.shutdown();
+
                 tracing::info!(
-                    component = "telemetry",
+                    target: targets::TELEMETRY,
                     layer = "provider",
                     "shutdown completed"
                 );
@@ -240,14 +256,14 @@ impl Telemetry {
 
         let shutdown_prometheus = async {
             if let Some(runtime) = &self.prometheus {
-                tracing::info!(
-                    component = "telemetry",
+                tracing::debug!(
+                    target: targets::TELEMETRY,
                     layer = "prometheus",
                     "shutdown scheduled"
                 );
                 runtime.shutdown().await;
                 tracing::info!(
-                    component = "telemetry",
+                    target: targets::TELEMETRY,
                     layer = "prometheus",
                     "shutdown completed"
                 );
@@ -256,15 +272,15 @@ impl Telemetry {
 
         let shutdown_metrics = spawn_blocking(|| {
             if let Some(provider) = meter_provider {
-                tracing::info!(
-                    component = "telemetry",
+                tracing::debug!(
+                    target: targets::TELEMETRY,
                     layer = "metrics",
                     "shutdown scheduled"
                 );
                 let _ = provider.force_flush();
                 let _ = provider.shutdown();
                 tracing::info!(
-                    component = "telemetry",
+                    target: targets::TELEMETRY,
                     layer = "metrics",
                     "shutdown completed"
                 );
@@ -322,7 +338,7 @@ fn create_prometheus_runtime(
     };
 
     tracing::info!(
-        component = "telemetry",
+        target: targets::TELEMETRY,
         layer = "metrics",
         port = %port,
         path = %path_for_log,
@@ -333,9 +349,9 @@ fn create_prometheus_runtime(
     let handle = tokio::spawn(async move {
         if let Err(err) = server.await {
             tracing::error!(
-                component = "telemetry",
+                target: targets::TELEMETRY,
                 layer = "metrics",
-                error = %err,
+                error = ?err,
                 "Prometheus metrics server failed"
             );
         }
@@ -355,6 +371,13 @@ pub(crate) fn build_metrics_response(registry: &prometheus::Registry) -> HttpRes
     let mut buffer = Vec::new();
 
     if let Err(err) = encoder.encode(&metric_families, &mut buffer) {
+        tracing::error!(
+            target: targets::TELEMETRY,
+            layer = "metrics",
+            error = ?err,
+            "failed to encode metrics"
+        );
+
         return HttpResponse::InternalServerError()
             .body(format!("failed to encode metrics: {err}"));
     }
@@ -368,62 +391,48 @@ async fn metrics_handler(registry: web::types::State<prometheus::Registry>) -> H
     build_metrics_response(&registry)
 }
 
-pub fn init_logging<S>(config: &HiveRouterConfig, registry: S) -> Result<(), TelemetryInitError>
+pub fn init_logging<S>(config: &LoggingConfig) -> Result<(DynLayer<S>, WorkerGuard), ParseError>
 where
     S: tracing::Subscriber
         + for<'span> tracing_subscriber::registry::LookupSpan<'span>
         + Send
         + Sync,
 {
+    let stdout_stream = std::io::stdout();
+    let is_terminal = stdout_stream.is_terminal();
+    let (stdout_writer, stdout_guard) = tracing_appender::non_blocking(stdout_stream);
+    let targets_filter = create_targets_filter(&config.level, config.log_internals);
+    let ignore_otel_filter = create_ignore_otel_filter();
+    let env_filter =
+        EnvFilter::from_str(config.env_filter_str())?.add_directive(config.level.as_str().parse()?);
+    let stdout_layer = tracing_subscriber::fmt::layer();
     let timer = UtcTime::rfc_3339();
-    let filter = EnvFilter::from_str(config.log.env_filter_str())?;
-    let is_terminal = std::io::stdout().is_terminal();
 
-    let events_only = filter_fn(|m| !m.is_span());
+    let layer = match config.format {
+        LogFormat::Json => stdout_layer
+            .event_format(RouterJsonFormat)
+            .with_writer(stdout_writer)
+            .with_filter(targets_filter)
+            .with_filter(env_filter)
+            .with_filter(ignore_otel_filter)
+            .boxed(),
+        LogFormat::Text => {
+            let compact = tracing_subscriber::fmt::format::Format::default()
+                .compact()
+                .with_thread_ids(false)
+                .with_timer(timer)
+                .with_target(true)
+                .with_ansi(is_terminal);
 
-    match config.log.format {
-        LogFormat::PrettyTree => {
-            registry
-                .with(
-                    tracing_tree::HierarchicalLayer::new(2)
-                        .with_ansi(is_terminal)
-                        .with_bracketed_fields(true)
-                        .with_deferred_spans(false)
-                        .with_wraparound(25)
-                        .with_indent_lines(true)
-                        .with_timer(tracing_tree::time::Uptime::default())
-                        .with_thread_names(false)
-                        .with_thread_ids(false)
-                        .with_targets(false)
-                        .with_filter(events_only),
-                )
-                .with(filter)
-                .init();
-        }
-        LogFormat::Json => {
-            registry
-                .with(
-                    fmt::layer()
-                        .json()
-                        .with_timer(timer)
-                        .with_filter(events_only),
-                )
-                .with(filter)
-                .init();
-        }
-        LogFormat::PrettyCompact => {
-            registry
-                .with(
-                    fmt::layer()
-                        .compact()
-                        .with_ansi(is_terminal)
-                        .with_timer(timer)
-                        .with_filter(events_only),
-                )
-                .with(filter)
-                .init();
+            stdout_layer
+                .event_format(RouterTextFormat(compact))
+                .with_writer(stdout_writer)
+                .with_filter(targets_filter)
+                .with_filter(env_filter)
+                .with_filter(ignore_otel_filter)
+                .boxed()
         }
     };
 
-    Ok(())
+    Ok((layer, stdout_guard))
 }
