@@ -201,36 +201,38 @@ impl SchemaState {
     ) -> Result<Option<SelectedSupergraph>, RouterSupergraphRuntimeError> {
         // already selected for this request (by a plugin or by the router's configured default)
         let already_selected = req.extensions().get::<SelectedSupergraph>().cloned();
-        if let Some(already_selected) = already_selected.or_else(|| {
-            // not selected yet, maybe there's a configured supergraph
-            self.configured
-                .load()
-                .as_ref()
-                .as_ref()
-                .map(SelectedSupergraph::from)
-        }) {
+        if let Some(already_selected) = already_selected {
             return Ok(Some(already_selected));
-        };
+        }
 
-        // no selected supergraph for this request, maybe a plugin selected one for this request
+        // not selected yet, maybe a plugin selected one for this request - this must be checked
+        // before the configured default, otherwise a plugin's override could never take effect
 
-        let Some(plugin_supergraph) = req.extensions().get::<SupergraphSnapshot>().cloned() else {
-            // neither a plugin-selected supergraph nor a configured default is available
-            return Ok(None);
-        };
+        let plugin_supergraph = req.extensions().get::<SupergraphSnapshot>().cloned();
+        if let Some(plugin_supergraph) = plugin_supergraph {
+            // a plugin selected a supergraph for this request, maybe we cached its runtime (fast)
+            // and if we didnt cache the runtime, we will build a new one (slow)
 
-        // a plugin selected a supergraph for this request, maybe we cached its runtime
+            let runtime = self.resolve_runtime(&plugin_supergraph)?;
 
-        let runtime = self.resolve_runtime(&plugin_supergraph)?;
+            let selected_supergraph = SelectedSupergraph {
+                snapshot: plugin_supergraph,
+                runtime,
+            };
 
-        let selected_supergraph = SelectedSupergraph {
-            snapshot: plugin_supergraph,
-            runtime,
-        };
+            req.extensions_mut().insert(selected_supergraph.clone());
 
-        req.extensions_mut().insert(selected_supergraph.clone());
+            return Ok(Some(selected_supergraph));
+        }
 
-        Ok(Some(selected_supergraph))
+        // no plugin-selected supergraph, fall back to the router's configured default
+
+        Ok(self
+            .configured
+            .load()
+            .as_ref()
+            .as_ref()
+            .map(SelectedSupergraph::from))
     }
 
     /// Returns the router's currently configured default runtime, if any (`None` for
