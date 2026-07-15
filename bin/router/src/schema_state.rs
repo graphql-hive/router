@@ -243,6 +243,17 @@ impl SchemaState {
             .map(|configured| configured.runtime.clone())
     }
 
+    /// Calls `f` for every runtime currently alive: every plugin-selected runtime still sitting
+    /// in the bounded FIFO cache, plus the configured default (if any).
+    pub fn for_each_runtime(&self, mut f: impl FnMut(&RouterSupergraphRuntime)) {
+        if let Some(configured) = self.configured.load().as_ref() {
+            f(&configured.runtime);
+        }
+        for (_, runtime) in self.runtime_cache.lock().unwrap().iter() {
+            f(runtime);
+        }
+    }
+
     /// Resolves the runtime for a plugin-selected snapshot from the bounded FIFO cache, building
     /// and caching a new one on a miss. Cache hits do not refresh FIFO order.
     fn resolve_runtime(

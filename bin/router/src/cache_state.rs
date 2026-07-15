@@ -5,6 +5,7 @@ use moka::future::Cache;
 use moka::Entry;
 
 use crate::pipeline::parser::ParseCacheEntry;
+use crate::schema_state::SchemaState;
 
 // schema-dependent caches (validate/normalize/plan/demand-control formula) live on
 // `RouterSupergraphRuntime` instead - this only holds the schema-independent parse cache, which
@@ -73,6 +74,7 @@ impl CacheState {
 pub fn register_cache_size_observers(
     telemetry_context: Arc<TelemetryContext>,
     cache_state: Arc<CacheState>,
+    schema_state: Arc<SchemaState>,
 ) {
     let metrics = &telemetry_context.metrics.cache;
 
@@ -80,7 +82,28 @@ pub fn register_cache_size_observers(
         .parse
         .observe_size_with(move || cache_state.parse_cache.entry_count());
 
-    // validate/normalize/plan caches now live on `RouterSupergraphRuntime` (one per supergraph,
-    // dropped with it on retirement) instead of one shared `CacheState` cache, so there's no
-    // single cache left here to observe the size of.
+    // validate/normalize/plan caches live on `RouterSupergraphRuntime` (one per supergraph variant,
+    // dropped with it on retirement) rather than on `CacheState`, so sum entry counts across every
+    // runtime currently alive (the configured default plus any plugin-selected ones still cached).
+    let validate_schema_state = Arc::clone(&schema_state);
+    metrics.validate.observe_size_with(move || {
+        let mut total = 0;
+        validate_schema_state
+            .for_each_runtime(|runtime| total += runtime.validate_cache.entry_count());
+        total
+    });
+
+    let normalize_schema_state = Arc::clone(&schema_state);
+    metrics.normalize.observe_size_with(move || {
+        let mut total = 0;
+        normalize_schema_state
+            .for_each_runtime(|runtime| total += runtime.normalize_cache.entry_count());
+        total
+    });
+
+    metrics.plan.observe_size_with(move || {
+        let mut total = 0;
+        schema_state.for_each_runtime(|runtime| total += runtime.plan_cache.entry_count());
+        total
+    });
 }

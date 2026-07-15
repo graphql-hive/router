@@ -444,10 +444,6 @@ pub async fn configure_app_from_config(
     let telemetry_context_arc = Arc::new(telemetry_context);
     let cache_state = Arc::new(CacheState::new());
 
-    if router_config_arc.telemetry.metrics.is_enabled() {
-        register_cache_size_observers(telemetry_context_arc.clone(), cache_state.clone());
-    }
-
     let schema_state = SchemaState::new_from_config(
         bg_tasks_manager,
         telemetry_context_arc.clone(),
@@ -458,6 +454,14 @@ pub async fn configure_app_from_config(
     )
     .await?;
     let schema_state_arc = Arc::new(schema_state);
+
+    if router_config_arc.telemetry.metrics.is_enabled() {
+        register_cache_size_observers(
+            telemetry_context_arc.clone(),
+            cache_state.clone(),
+            schema_state_arc.clone(),
+        );
+    }
     let mut validation_plan = default_rules_validation_plan();
     if let Some(max_depth_config) = &router_config_arc.limits.max_depth {
         validation_plan.add_rule(Box::new(MaxDepthRule {
