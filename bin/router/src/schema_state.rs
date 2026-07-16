@@ -153,10 +153,10 @@ type RouterSupergraphRuntimeCache = Mutex<VecDeque<(u64, Arc<RouterSupergraphRun
 
 pub struct SchemaState {
     router_config: Arc<HiveRouterConfig>,
-    // the supergraph configured through the router config that can be loaded (and polled)
-    //   - `Some` when the router's configured supergraph is available and has been loaded
-    //   - sometimes `None` when the supergraph is being fetched and built
-    //   - always `None` when the router is configured with `supergraph.source: plugin`
+    /// The supergraph configured through the router config that can be loaded (and polled)
+    ///   - `Some` when the router's configured supergraph is available and has been loaded
+    ///   - sometimes `None` when the supergraph is being fetched and built
+    ///   - always `None` when the router is configured with `supergraph.source: plugin`
     configured: Arc<ArcSwap<Option<ConfiguredSupergraph>>>,
     // the cache of `RouterSupergraphRuntime`s for selected supergraphs, bounded by FIFO eviction
     runtime_cache: Arc<RouterSupergraphRuntimeCache>,
