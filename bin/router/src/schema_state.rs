@@ -461,12 +461,12 @@ impl SchemaState {
 
                     match built {
                         Ok(new_configured) => {
-                            // Swapping in the new value here is enough: the previous
+                            // swapping in the new value here is enough: the previous
                             // `ConfiguredSupergraph`'s owner `Arc<Supergraph>` is only kept alive
                             // by this slot (ordinary requests only ever hold a snapshot),
                             // so once it's replaced its `Drop` publishes retirement and every
                             // subscription producer selected from it terminates on its own -
-                            // no global subscription closure needed here.
+                            // no global subscription closure needed here
                             configured_spawn_clone.store(Arc::new(Some(new_configured)));
                             debug!("Supergraph updated successfully");
                             process_capture.finish_ok();
