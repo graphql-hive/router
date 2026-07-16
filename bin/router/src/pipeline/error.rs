@@ -195,7 +195,6 @@ pub enum PipelineError {
     #[error("Request context error")]
     RequestContextError(#[from] RequestContextError),
 
-    // TODO: should we expose the actual error? should be exposed when masking is disabled
     #[error("Supergraph runtime error")]
     #[strum(serialize = "SUPERGRAPH_RUNTIME_ERROR")]
     RouterSupergraphRuntimeError(#[from] RouterSupergraphRuntimeError),
