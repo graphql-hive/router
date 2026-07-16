@@ -1,5 +1,5 @@
 use super::ValidationRule;
-use crate::ast::{visit_document, OperationVisitor, OperationVisitorContext};
+use crate::ast::{OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::TypeCondition;
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
 
@@ -88,21 +88,12 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownTypeNames {
 }
 
 impl ValidationRule for KnownTypeNames {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "KnownTypeNames"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut KnownTypeNames::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+        Box::new(KnownTypeNames::new())
     }
 }
 

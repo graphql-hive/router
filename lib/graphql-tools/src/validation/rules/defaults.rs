@@ -6,8 +6,8 @@ use super::{
     NoFragmentsCycle, NoUndefinedVariables, NoUnusedFragments, NoUnusedVariables,
     OverlappingFieldsCanBeMerged, PossibleFragmentSpreads, ProvidedRequiredArguments,
     SingleFieldSubscriptions, UniqueArgumentNames, UniqueDirectivesPerLocation,
-    UniqueFragmentNames, UniqueOperationNames, UniqueVariableNames, ValuesOfCorrectType,
-    VariablesAreInputTypes, VariablesInAllowedPosition,
+    UniqueFragmentNames, UniqueInputFieldNames, UniqueOperationNames, UniqueVariableNames,
+    ValuesOfCorrectType, VariablesAreInputTypes, VariablesInAllowedPosition,
 };
 
 pub fn default_rules_validation_plan() -> ValidationPlan {
@@ -35,6 +35,7 @@ pub fn default_rules_validation_plan() -> ValidationPlan {
         Box::new(KnownDirectives::new()),
         Box::new(VariablesInAllowedPosition::new()),
         Box::new(ValuesOfCorrectType::new()),
+        Box::new(UniqueInputFieldNames::new()),
         Box::new(UniqueDirectivesPerLocation::new()),
     ];
 

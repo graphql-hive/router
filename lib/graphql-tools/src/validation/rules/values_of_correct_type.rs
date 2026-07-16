@@ -1,11 +1,9 @@
-use std::collections::BTreeMap;
-
 use crate::parser::schema::TypeDefinition;
 
 use crate::static_graphql::query::Value;
 use crate::validation::utils::ValidationError;
 use crate::{
-    ast::{visit_document, OperationVisitor, OperationVisitorContext},
+    ast::{OperationVisitor, OperationVisitorContext},
     validation::utils::ValidationErrorContext,
 };
 
@@ -126,13 +124,13 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for ValuesOfCorrectType {
         &mut self,
         visitor_context: &mut OperationVisitorContext<'a>,
         user_context: &mut ValidationErrorContext,
-        object_value: &BTreeMap<String, Value>,
+        object_value: &[(String, Value)],
     ) {
         if let Some(TypeDefinition::InputObject(input_object_def)) =
             visitor_context.current_input_type()
         {
             input_object_def.fields.iter().for_each(|field| {
-                if field.is_required() && !object_value.contains_key(&field.name) {
+                if field.is_required() && !object_value.iter().any(|(k, _)| k == &field.name) {
                     user_context.report_error(ValidationError {
                         error_code: self.error_code(),
                         message: format!(
@@ -144,7 +142,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for ValuesOfCorrectType {
                 }
             });
 
-            object_value.keys().for_each(|field_name| {
+            object_value.iter().for_each(|(field_name, _)| {
                 if !input_object_def
                     .fields
                     .iter()
@@ -183,21 +181,12 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for ValuesOfCorrectType {
 }
 
 impl ValidationRule for ValuesOfCorrectType {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "ValuesOfCorrectType"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut ValuesOfCorrectType::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+        Box::new(ValuesOfCorrectType::new())
     }
 }
 
@@ -1909,8 +1898,8 @@ fn variables_with_complex_invalid_default_values() {
     assert_eq!(
         messages,
         vec![
-            "Expected value of type \"Int\", found \"abc\".",
             "Expected value of type \"Boolean\", found 123.",
+            "Expected value of type \"Int\", found \"abc\".",
         ]
     );
 }
@@ -1959,4 +1948,21 @@ fn list_variables_with_invalid_item() {
         messages,
         vec!["Expected value of type \"String\", found 2."]
     );
+}
+
+#[test]
+fn reports_original_error_for_custom_scalar_which_throws() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(ValuesOfCorrectType::new()));
+    let errors = test_operation_with_schema(
+        "{
+          someScalarArg(arg: 123)
+        }",
+        "scalar SomeScalar
+        type Query { someScalarArg(arg: SomeScalar): String }",
+        &mut plan,
+    );
+    let messages = get_messages(&errors);
+    assert_eq!(messages.len(), 0);
 }

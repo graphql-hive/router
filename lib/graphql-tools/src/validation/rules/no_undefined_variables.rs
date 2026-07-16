@@ -1,5 +1,5 @@
 use super::ValidationRule;
-use crate::ast::{visit_document, AstNodeWithName, OperationVisitor, OperationVisitorContext};
+use crate::ast::{AstNodeWithName, OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::{self, OperationDefinition};
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
 use std::collections::{HashMap, HashSet};
@@ -179,21 +179,12 @@ fn error_message(var_name: &str, op_name: &Option<&str>) -> String {
 }
 
 impl<'n> ValidationRule for NoUndefinedVariables<'n> {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "NoUndefinedVariables"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut NoUndefinedVariables::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+        Box::new(NoUndefinedVariables::new())
     }
 }
 
@@ -596,7 +587,7 @@ fn multiple_undefined_variables_produce_multiple_errors() {
           ...FragAB
         }
         fragment FragAB on Type {
-          field1(a: $a, b: $b)
+          field1(a: $a, b: $b, d: $d)
           ...FragC
           field3(a: $a, b: $b)
         }
@@ -608,9 +599,11 @@ fn multiple_undefined_variables_produce_multiple_errors() {
     );
 
     let messages = get_messages(&errors);
-    assert_eq!(messages.len(), 4);
-    assert!(messages.contains(&&"Variable \"$c\" is not defined by operation \"Foo\".".to_owned()));
+    assert_eq!(messages.len(), 6);
     assert!(messages.contains(&&"Variable \"$a\" is not defined by operation \"Foo\".".to_owned()));
+    assert!(messages.contains(&&"Variable \"$c\" is not defined by operation \"Foo\".".to_owned()));
+    assert!(messages.contains(&&"Variable \"$d\" is not defined by operation \"Foo\".".to_owned()));
     assert!(messages.contains(&&"Variable \"$b\" is not defined by operation \"Bar\".".to_owned()));
     assert!(messages.contains(&&"Variable \"$c\" is not defined by operation \"Bar\".".to_owned()));
+    assert!(messages.contains(&&"Variable \"$d\" is not defined by operation \"Bar\".".to_owned()));
 }

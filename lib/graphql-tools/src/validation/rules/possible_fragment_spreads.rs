@@ -1,5 +1,5 @@
 use super::ValidationRule;
-use crate::ast::{visit_document, OperationVisitor, OperationVisitorContext};
+use crate::ast::{OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::TypeCondition;
 use crate::static_graphql::schema;
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
@@ -116,21 +116,12 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for PossibleFragmentSpread
 }
 
 impl ValidationRule for PossibleFragmentSpreads {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "PossibleFragmentSpreads"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut PossibleFragmentSpreads::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+        Box::new(PossibleFragmentSpreads::new())
     }
 }
 
@@ -596,6 +587,28 @@ fn interface_into_non_overlapping_interface_in_inline_fragment() {
         messages,
         vec![
           "Fragment cannot be spread here as objects of type \"Pet\" can never be of type \"Intelligent\"."
+        ]
+    )
+}
+
+#[test]
+fn interface_into_non_overlapping_union() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(PossibleFragmentSpreads {}));
+    let errors = test_operation_with_schema(
+        "fragment invalidInterfaceWithinUnion on CatOrDog { ...intelligentFragment }
+        fragment intelligentFragment on Intelligent { iq }",
+        RULE_TEST_SCHEMA,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(
+        messages,
+        vec![
+          "Fragment \"intelligentFragment\" cannot be spread here as objects of type \"CatOrDog\" can never be of type \"Intelligent\"."
         ]
     )
 }

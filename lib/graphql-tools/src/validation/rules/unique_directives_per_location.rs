@@ -5,7 +5,7 @@ use crate::static_graphql::query::{
     Directive, Field, FragmentDefinition, FragmentSpread, InlineFragment, OperationDefinition,
 };
 use crate::{
-    ast::{visit_document, OperationVisitor, OperationVisitorContext},
+    ast::{OperationVisitor, OperationVisitorContext},
     validation::utils::{ValidationError, ValidationErrorContext},
 };
 
@@ -104,21 +104,12 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueDirectivesPerLoc
 }
 
 impl ValidationRule for UniqueDirectivesPerLocation {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "UniqueDirectivesPerLocation"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut UniqueDirectivesPerLocation::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+        Box::new(UniqueDirectivesPerLocation::new())
     }
 }
 

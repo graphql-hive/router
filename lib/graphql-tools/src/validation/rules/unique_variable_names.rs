@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use crate::parser::Pos;
 
 use super::ValidationRule;
-use crate::ast::{visit_document, OperationVisitor, OperationVisitorContext};
+use crate::ast::{OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::*;
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
 
@@ -60,21 +60,12 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueVariableNames<'a
 }
 
 impl<'v> ValidationRule for UniqueVariableNames<'v> {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "UniqueVariableNames"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut UniqueVariableNames::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+        Box::new(UniqueVariableNames::new())
     }
 }
 

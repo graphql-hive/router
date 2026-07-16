@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    ast::{visit_document, AstNodeWithName, OperationVisitor, OperationVisitorContext},
+    ast::{AstNodeWithName, OperationVisitor, OperationVisitorContext},
     static_graphql::query::{Type, Value, VariableDefinition},
     validation::utils::{ValidationError, ValidationErrorContext},
 };
@@ -16,7 +16,7 @@ use super::ValidationRule;
 #[derive(Default)]
 pub struct VariablesInAllowedPosition<'a> {
     spreads: HashMap<Scope<'a>, HashSet<&'a str>>,
-    variable_usages: HashMap<Scope<'a>, Vec<(&'a str, &'a Type)>>,
+    variable_usages: HashMap<Scope<'a>, Vec<(&'a str, &'a Type, bool)>>,
     variable_defs: HashMap<Scope<'a>, Vec<&'a VariableDefinition>>,
     current_scope: Option<Scope<'a>>,
 }
@@ -45,34 +45,51 @@ impl<'a> VariablesInAllowedPosition<'a> {
 
         visited.insert(from.clone());
 
-        if let Some(usages) = self.variable_usages.get(from) {
-            for (var_name, var_type) in usages {
-                if let Some(var_def) = var_defs.iter().find(|var_def| var_def.name == *var_name) {
-                    // Per https://spec.graphql.org/draft/#sec-All-Variable-Usages-are-Allowed,
-                    // a non-null default value makes the variable usable in a non-null position
-                    // because the default fills in when the variable is omitted. Model this by
-                    // promoting the variable's effective type to NonNull(var_type) for the
-                    // subtype check. An explicit `null` default does not get this promotion.
-                    let expected_type = match (&var_def.default_value, &var_def.var_type) {
-                        (_, t @ Type::NonNullType(_)) => t.clone(),
-                        (Some(default_value), t) if !matches!(default_value, Value::Null) => {
-                            Type::NonNullType(Box::new(t.clone()))
-                        }
-                        (_, t) => t.clone(),
-                    };
+        let usages = match self.variable_usages.get(from) {
+            Some(usages) => usages.as_slice(),
+            None => &[],
+        };
+        for (var_name, location_type, has_default) in usages {
+            let Some(var_def) = var_defs.iter().find(|var_def| var_def.name == *var_name) else {
+                continue;
+            };
 
-                    if !visitor_context.schema.is_subtype(&expected_type, var_type) {
-                        user_context.report_error(ValidationError {
-                          error_code: self.error_code(),
-                            message: format!("Variable \"${}\" of type \"{}\" used in position expecting type \"{}\".",
-                                var_name,
-                                expected_type,
-                                var_type,
-                            ),
-                            locations: vec![var_def.position],
-                        });
-                    }
-                }
+            let has_non_null_default = var_def
+                .default_value
+                .as_ref()
+                .is_some_and(|v| !matches!(v, Value::Null));
+
+            // https://spec.graphql.org/draft/#sec-All-Variable-Usages-are-Allowed
+            // If a variable definition has a non-null default value (e.g., $foo: String = "hi"),
+            // the variable can be used where a non-null type is expected,
+            // because when the variable is omitted, the default kicks in.
+            // An explicit null default ($foo: String = null) doesn't get this treatment,
+            // since null doesn't satisfy a non-null position.
+            let variable_type = match &var_def.var_type {
+                Type::NonNullType(_) => var_def.var_type.clone(),
+                t if has_non_null_default => Type::NonNullType(Box::new(t.clone())),
+                t => t.clone(),
+            };
+
+            // A default at the usage location permits a nullable variable in a
+            // non-null position, so ignore the location's outer nullability.
+            let effective_location_type = match (has_default, location_type) {
+                (true, Type::NonNullType(inner)) => inner.as_ref(),
+                _ => location_type,
+            };
+
+            if !visitor_context
+                .schema
+                .is_subtype(&variable_type, effective_location_type)
+            {
+                user_context.report_error(ValidationError {
+                    error_code: self.error_code(),
+                    message: format!(
+                        "Variable \"${}\" of type \"{}\" used in position expecting type \"{}\".",
+                        var_name, variable_type, location_type,
+                    ),
+                    locations: vec![var_def.position],
+                });
             }
         }
 
@@ -170,30 +187,22 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for VariablesInAllowedPosi
             &self.current_scope,
             visitor_context.current_input_type_literal(),
         ) {
+            let has_default = visitor_context.current_input_type_has_default();
             self.variable_usages
                 .entry(scope.clone())
                 .or_default()
-                .push((variable_name, input_type));
+                .push((variable_name, input_type, has_default));
         }
     }
 }
 
 impl<'v> ValidationRule for VariablesInAllowedPosition<'v> {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "VariablesInAllowedPosition"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut VariablesInAllowedPosition::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+        Box::new(VariablesInAllowedPosition::new())
     }
 }
 
@@ -652,7 +661,7 @@ fn int_to_int_non_null_where_argument_with_default_value() {
     let errors = test_operation_with_schema(
         "query Query($intVar: Int) {
           complicatedArgs {
-            nonNullFieldWithDefault(nonNullIntArg: $intVar)
+            nonNullFieldWithDefault(arg: $intVar)
           }
         }",
         TEST_SCHEMA,
@@ -730,4 +739,92 @@ fn boolean_to_boolean_non_null_with_default_value() {
 
     let messages = get_messages(&errors);
     assert_eq!(messages.len(), 0);
+}
+
+#[test]
+fn nullable_enum_to_non_null_enum_with_default_on_argument() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(VariablesInAllowedPosition::new()));
+    let errors = test_operation_with_schema(
+        "query Query($currency: FurColor) {
+          complicatedArgs {
+            enumArgFieldWithDefault(enumArg: $currency)
+          }
+        }",
+        &(TEST_SCHEMA.replace(
+            "enumArgField(enumArg: FurColor): String",
+            "enumArgField(enumArg: FurColor): String\n  enumArgFieldWithDefault(enumArg: FurColor! = BROWN): String",
+        )),
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages.len(), 0);
+}
+
+#[test]
+fn nullable_int_to_non_null_int_with_default_on_argument() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(VariablesInAllowedPosition::new()));
+    let errors = test_operation_with_schema(
+        "query Query($intVar: Int) {
+          complicatedArgs {
+            nonNullFieldWithDefault(arg: $intVar)
+          }
+        }",
+        TEST_SCHEMA,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages.len(), 0);
+}
+
+#[test]
+fn nullable_int_to_non_null_input_field_with_default() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(VariablesInAllowedPosition::new()));
+    let errors = test_operation_with_schema(
+        "query Query($intVar: Int) {
+          set(input: { value: $intVar })
+        }",
+        "input Input {
+          value: Int! = 1
+        }
+        type Query {
+          set(input: Input): String
+        }",
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages.len(), 0);
+}
+
+#[test]
+fn string_to_non_null_int_with_default_on_argument() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(VariablesInAllowedPosition::new()));
+    let errors = test_operation_with_schema(
+        "query Query($stringVar: String) {
+          complicatedArgs {
+            nonNullFieldWithDefault(arg: $stringVar)
+          }
+        }",
+        TEST_SCHEMA,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(
+        messages,
+        vec![
+            "Variable \"$stringVar\" of type \"String\" used in position expecting type \"Int!\"."
+        ]
+    )
 }

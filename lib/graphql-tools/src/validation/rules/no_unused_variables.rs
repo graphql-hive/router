@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::ValidationRule;
-use crate::ast::{visit_document, AstNodeWithName, OperationVisitor, OperationVisitorContext};
+use crate::ast::{AstNodeWithName, OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::{self, OperationDefinition};
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
 
@@ -181,21 +181,12 @@ fn error_message(var_name: &str, op_name: &Option<&str>) -> String {
 }
 
 impl<'n> ValidationRule for NoUnusedVariables<'n> {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "NoUnusedVariables"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut NoUnusedVariables::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+        Box::new(NoUnusedVariables::new())
     }
 }
 

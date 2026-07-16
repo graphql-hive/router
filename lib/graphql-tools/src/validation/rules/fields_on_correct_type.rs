@@ -1,4 +1,4 @@
-use crate::ast::{visit_document, OperationVisitor, OperationVisitorContext};
+use crate::ast::{OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::{Field, OperationDefinition, Selection};
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
 
@@ -76,21 +76,12 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for FieldsOnCorrectType {
 }
 
 impl ValidationRule for FieldsOnCorrectType {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "FieldsOnCorrectType"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut FieldsOnCorrectType::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+        Box::new(FieldsOnCorrectType::new())
     }
 }
 
@@ -577,7 +568,7 @@ fn forbidden_typename_on_subscription_type() {
     let mut plan = create_plan_from_rule(Box::new(FieldsOnCorrectType {}));
     let errors = test_operation_with_schema(
         "subscription {
-          __typename 
+          __typename
         }",
         FIELDS_ON_CORRECT_TYPE_TEST_SCHEMA,
         &mut plan,

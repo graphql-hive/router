@@ -4,7 +4,6 @@ use graphql_tools::parser::minify_query_document;
 use graphql_tools::parser::schema::InputObjectType;
 use moka::sync::Cache;
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -434,7 +433,7 @@ impl<'a> OperationVisitor<'a, SchemaCoordinatesContext<'a>> for SchemaCoordinate
         &mut self,
         info: &mut OperationVisitorContext<'a>,
         ctx: &mut SchemaCoordinatesContext,
-        object_value: &BTreeMap<String, graphql_tools::static_graphql::query::Value>,
+        object_value: &[(String, graphql_tools::static_graphql::query::Value)],
     ) {
         if let Some(TypeDefinition::InputObject(input_object_def)) = info.current_input_type() {
             object_value.iter().for_each(|(name, value)| {
@@ -541,7 +540,7 @@ impl<'a, T: Text<'a> + Clone> OperationTransformer<'a, T> for StripLiteralsTrans
                 TransformedValue::Replace(Value::List(items))
             }
             Value::Object(fields) => {
-                let fields: BTreeMap<T::Value, Value<'a, T>> = fields
+                let fields: Vec<(T::Value, Value<'a, T>)> = fields
                     .iter()
                     .map(|field| {
                         let (name, value) = field;

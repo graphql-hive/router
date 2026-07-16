@@ -2,7 +2,7 @@ use crate::parser::query::{Definition, TypeCondition};
 use crate::parser::Pos;
 
 use super::ValidationRule;
-use crate::ast::{visit_document, OperationVisitor, OperationVisitorContext};
+use crate::ast::{OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::*;
 use crate::static_graphql::schema::{
     Document as SchemaDocument, Field as FieldDefinition, TypeDefinition,
@@ -897,21 +897,12 @@ fn format_reason(reason: &ConflictReasonMessage) -> String {
 }
 
 impl<'o> ValidationRule for OverlappingFieldsCanBeMerged<'o> {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "OverlappingFieldsCanBeMerged"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut OverlappingFieldsCanBeMerged::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+        Box::new(OverlappingFieldsCanBeMerged::new())
     }
 }
 
@@ -1853,4 +1844,306 @@ fn finds_invalid_case_even_with_immediately_recursive_fragment() {
     assert_eq!(messages, vec![
       "Fields \"fido\" conflict because \"name\" and \"nickname\" are different fields. Use different aliases on the fields to fetch both if this was intentional."
     ]);
+}
+
+#[test]
+fn ignores_unknown_fragments() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(OverlappingFieldsCanBeMerged::new()));
+    let errors = test_operation_with_schema("{ dog ...UnknownFragment }", TEST_SCHEMA, &mut plan);
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages.len(), 0);
+}
+
+#[test]
+fn does_not_infinite_loop_on_recursive_fragment_with_a_field_named_after_fragment() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(OverlappingFieldsCanBeMerged::new()));
+    let errors = test_operation_with_schema(
+        "fragment fragA on Human { fragA, ...fragA }",
+        TEST_SCHEMA,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages.len(), 0);
+}
+
+#[test]
+fn does_not_infinite_loop_on_recursive_fragments_separated_by_fields() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(OverlappingFieldsCanBeMerged::new()));
+    let errors = test_operation_with_schema(
+        "{ ...fragA }
+        fragment fragA on Human { ...fragB }
+        fragment fragB on Human { name, ...fragA }",
+        TEST_SCHEMA,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages.len(), 0);
+}
+
+#[test]
+fn deep_conflict_with_multiple_issues() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(OverlappingFieldsCanBeMerged::new()));
+    let errors = test_operation_with_schema(
+        "{
+          field {
+            x: a
+            y: b
+          }
+          field {
+            x: b
+            y: a
+          }
+        }",
+        TEST_SCHEMA,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages, vec![
+      "Fields \"field\" conflict because subfields \"x\" conflict because \"a\" and \"b\" are different fields and subfields \"y\" conflict because \"b\" and \"a\" are different fields. Use different aliases on the fields to fetch both if this was intentional."
+    ]);
+}
+
+#[test]
+fn very_deep_conflict() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(OverlappingFieldsCanBeMerged::new()));
+    let errors = test_operation_with_schema(
+        "{
+          field {
+            deepField {
+              x: a
+            }
+          }
+          field {
+            deepField {
+              x: b
+            }
+          }
+        }",
+        TEST_SCHEMA,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages, vec![
+      "Fields \"field\" conflict because subfields \"deepField\" conflict because subfields \"x\" conflict because \"a\" and \"b\" are different fields. Use different aliases on the fields to fetch both if this was intentional."
+    ]);
+}
+
+#[test]
+fn reports_deep_conflict_to_nearest_common_ancestor() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(OverlappingFieldsCanBeMerged::new()));
+    let errors = test_operation_with_schema(
+        "{
+          field {
+            x: a
+          }
+          field {
+            ...F
+          }
+        }
+        fragment F on Type {
+          x: b
+        }",
+        TEST_SCHEMA,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages, vec![
+      "Fields \"field\" conflict because subfields \"x\" conflict because \"a\" and \"b\" are different fields. Use different aliases on the fields to fetch both if this was intentional."
+    ]);
+}
+
+#[test]
+fn reports_deep_conflict_to_nearest_common_ancestor_in_fragments() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(OverlappingFieldsCanBeMerged::new()));
+    let errors = test_operation_with_schema(
+        "{
+          field {
+            ...F
+          }
+          field {
+            ...G
+          }
+        }
+        fragment F on Type {
+          x: a
+        }
+        fragment G on Type {
+          x: b
+        }",
+        TEST_SCHEMA,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages, vec![
+      "Fields \"field\" conflict because subfields \"x\" conflict because \"a\" and \"b\" are different fields. Use different aliases on the fields to fetch both if this was intentional."
+    ]);
+}
+
+#[test]
+fn reports_deep_conflict_in_nested_fragments() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(OverlappingFieldsCanBeMerged::new()));
+    let errors = test_operation_with_schema(
+        "{
+          field {
+            ...F
+          }
+          field {
+            x: b
+          }
+        }
+        fragment F on Type {
+          x: a
+        }",
+        TEST_SCHEMA,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages, vec![
+      "Fields \"field\" conflict because subfields \"x\" conflict because \"b\" and \"a\" are different fields. Use different aliases on the fields to fetch both if this was intentional."
+    ]);
+}
+
+#[test]
+fn reports_deep_conflict_after_nested_fragments() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(OverlappingFieldsCanBeMerged::new()));
+    let errors = test_operation_with_schema(
+        "{
+          field {
+            x: a
+          }
+          ...F
+        }
+        fragment F on Type {
+          field {
+            x: b
+          }
+        }",
+        TEST_SCHEMA,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages, vec![
+      "Fields \"field\" conflict because subfields \"x\" conflict because \"a\" and \"b\" are different fields. Use different aliases on the fields to fetch both if this was intentional."
+    ]);
+}
+
+#[test]
+fn finds_invalid_cases_even_with_field_named_after_fragment() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(OverlappingFieldsCanBeMerged::new()));
+    let errors = test_operation_with_schema(
+        "fragment fragA on Type {
+          fragA,
+          ...fragA,
+          x: a,
+          x: b
+        }",
+        TEST_SCHEMA,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages, vec![
+      "Fields \"x\" conflict because \"a\" and \"b\" are different fields. Use different aliases on the fields to fetch both if this was intentional."
+    ]);
+}
+
+#[test]
+fn allows_different_order_of_args() {
+    use crate::validation::test_utils::*;
+
+    let schema = "
+      type Query {
+        f: Type
+      }
+      type Type {
+        f(a: Int, b: Int): Int
+      }
+    ";
+    let mut plan = create_plan_from_rule(Box::new(OverlappingFieldsCanBeMerged::new()));
+    let errors = test_operation_with_schema(
+        "{ f { f(a: 1, b: 2) } f { f(b: 2, a: 1) } }",
+        schema,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages.len(), 0);
+}
+
+#[test]
+fn allows_different_order_of_input_object_fields_in_arg_values() {
+    use crate::validation::test_utils::*;
+
+    let schema = "
+      type Query {
+        f(order: Input): String
+      }
+      input Input {
+        a: Int
+        b: Int
+      }
+    ";
+    let mut plan = create_plan_from_rule(Box::new(OverlappingFieldsCanBeMerged::new()));
+    let errors = test_operation_with_schema(
+        "{ f(order: {a: 1, b: 2}) f(order: {b: 2, a: 1}) }",
+        schema,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages.len(), 0);
+}
+
+#[test]
+fn works_for_field_names_that_are_js_keywords() {
+    use crate::validation::test_utils::*;
+
+    let schema = "
+      type Query {
+        null: String
+        true: String
+        false: String
+      }
+    ";
+    let mut plan = create_plan_from_rule(Box::new(OverlappingFieldsCanBeMerged::new()));
+    let errors = test_operation_with_schema("{ null true false }", schema, &mut plan);
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages.len(), 0);
 }

@@ -1,5 +1,5 @@
 use super::ValidationRule;
-use crate::ast::{visit_document, OperationVisitor, OperationVisitorContext};
+use crate::ast::{OperationVisitor, OperationVisitorContext};
 use crate::validation::utils::ValidationError;
 use crate::validation::utils::ValidationErrorContext;
 
@@ -44,21 +44,12 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for VariablesAreInputTypes
 }
 
 impl ValidationRule for VariablesAreInputTypes {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "VariablesAreInputTypes"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut VariablesAreInputTypes::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+        Box::new(VariablesAreInputTypes::new())
     }
 }
 

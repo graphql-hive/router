@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fmt};
+use std::fmt;
 
 use combine::easy::{Error, Info};
 use combine::{choice, many, many1, optional, position, StdParseResult};
@@ -63,7 +63,7 @@ pub enum Value<'a, T: Text<'a>> {
     Null,
     Enum(T::Value),
     List(Vec<Value<'a, T>>),
-    Object(BTreeMap<T::Value, Value<'a, T>>),
+    Object(Vec<(T::Value, Value<'a, T>)>),
 }
 
 impl<'a, T: Text<'a>> Value<'a, T> {

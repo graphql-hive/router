@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
 use graphql_tools::{
-    ast::OperationVisitorContext,
-    static_graphql::query::Definition,
+    ast::{OperationVisitor, OperationVisitorContext},
+    static_graphql::query::{Definition, Document, FragmentDefinition},
     validation::{
-        rules::ValidationRule,
+        rules::{ValidationRule, ValidationVisitor},
         utils::{ValidationError, ValidationErrorContext},
     },
 };
@@ -17,42 +17,24 @@ pub struct MaxDirectivesRule {
 }
 
 impl ValidationRule for MaxDirectivesRule {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "MAX_DIRECTIVES_EXCEEDED"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext<'_>,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        let mut visitor = MaxDirectivesVisitor {
-            config: &self.config,
-            visited_fragments: HashMap::with_capacity(ctx.known_fragments.len()),
-            ctx,
-        };
-        for definition in &ctx.operation.definitions {
-            let Definition::Operation(op) = definition else {
-                continue;
-            };
-
-            // First start counting directives from the operation definition
-            // `op.into()` will get `CountableNode`, then `count_directives` will
-            // start counting directives nestedly
-            if let Err(err) = visitor.count_directives(op.into()) {
-                error_collector.report_error(err);
-            }
-        }
+    fn visitor<'doc>(&self) -> ValidationVisitor<'doc> {
+        Box::new(MaxDirectivesVisitor {
+            config: self.config.clone(),
+            visited_fragments: HashMap::new(),
+        })
     }
 }
 
-struct MaxDirectivesVisitor<'a, 'b> {
-    config: &'b MaxDirectivesRuleConfig,
+struct MaxDirectivesVisitor<'a> {
+    config: MaxDirectivesRuleConfig,
     visited_fragments: HashMap<&'a str, VisitedFragment>,
-    ctx: &'b OperationVisitorContext<'a>,
 }
 
-impl<'a> MaxDirectivesVisitor<'a, '_> {
+impl<'a> MaxDirectivesVisitor<'a> {
     fn check_limit(&self, count: usize) -> Result<usize, ValidationError> {
         if count > self.config.n {
             Err(ValidationError {
@@ -64,8 +46,10 @@ impl<'a> MaxDirectivesVisitor<'a, '_> {
             Ok(count)
         }
     }
+
     fn count_directives(
         &mut self,
+        known_fragments: &HashMap<&'a str, &'a FragmentDefinition>,
         countable_node: CountableNode<'a>,
     ) -> Result<usize, ValidationError> {
         // Start with 0
@@ -79,7 +63,7 @@ impl<'a> MaxDirectivesVisitor<'a, '_> {
         if let Some(selection_set) = countable_node.selection_set() {
             for selection in &selection_set.items {
                 let countable_node: CountableNode<'a> = selection.into();
-                let child_directives = self.count_directives(countable_node)?;
+                let child_directives = self.count_directives(known_fragments, countable_node)?;
                 directive_count = self.check_limit(directive_count + child_directives)?;
             }
         }
@@ -102,10 +86,11 @@ impl<'a> MaxDirectivesVisitor<'a, '_> {
                 .insert(fragment_name, VisitedFragment::Visiting);
 
             // If the fragment is found, get the original Fragment Definition and convert it to CountableNode
-            if let Some(fragment_def) = self.ctx.known_fragments.get(fragment_name) {
+            if let Some(fragment_def) = known_fragments.get(fragment_name) {
                 let countable_node: CountableNode<'a> = fragment_def.into();
                 // Count directives of the fragment
-                let fragment_directive_count = self.count_directives(countable_node)?;
+                let fragment_directive_count =
+                    self.count_directives(known_fragments, countable_node)?;
 
                 // Update it with the actual count
                 self.visited_fragments.insert(
@@ -117,6 +102,30 @@ impl<'a> MaxDirectivesVisitor<'a, '_> {
         }
 
         Ok(directive_count)
+    }
+}
+
+impl<'a> OperationVisitor<'a, ValidationErrorContext> for MaxDirectivesVisitor<'a> {
+    fn enter_document(
+        &mut self,
+        context: &mut OperationVisitorContext<'a>,
+        user_context: &mut ValidationErrorContext,
+        document: &'a Document,
+    ) {
+        self.visited_fragments = HashMap::with_capacity(context.known_fragments.len());
+
+        for definition in &document.definitions {
+            let Definition::Operation(op) = definition else {
+                continue;
+            };
+
+            // First start counting directives from the operation definition
+            // `op.into()` will get `CountableNode`, then `count_directives` will
+            // start counting directives nestedly
+            if let Err(err) = self.count_directives(&context.known_fragments, op.into()) {
+                user_context.report_error(err);
+            }
+        }
     }
 }
 

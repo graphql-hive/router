@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use super::ValidationRule;
-use crate::ast::{visit_document, AstNodeWithName, OperationVisitor, OperationVisitorContext};
+use crate::ast::{AstNodeWithName, OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::*;
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
 
@@ -25,6 +25,24 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueOperationNames<'
             self.store_finding(name);
         }
     }
+
+    fn leave_document(
+        &mut self,
+        _: &mut OperationVisitorContext,
+        user_context: &mut ValidationErrorContext,
+        _: &Document,
+    ) {
+        self.findings_counter
+            .iter()
+            .filter(|(_, count)| **count > 1)
+            .for_each(|(name, _)| {
+                user_context.report_error(ValidationError {
+                    error_code: self.error_code(),
+                    message: format!("There can be only one operation named \"{}\".", name),
+                    locations: vec![],
+                });
+            });
+    }
 }
 
 impl<'a> Default for UniqueOperationNames<'a> {
@@ -47,29 +65,12 @@ impl<'a> UniqueOperationNames<'a> {
 }
 
 impl<'u> ValidationRule for UniqueOperationNames<'u> {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "UniqueOperationNames"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        let mut rule = UniqueOperationNames::new();
-
-        visit_document(&mut rule, ctx.operation, ctx, error_collector);
-
-        rule.findings_counter
-            .into_iter()
-            .filter(|(_key, value)| *value > 1)
-            .for_each(|(key, _value)| {
-                error_collector.report_error(ValidationError {
-                    error_code: self.error_code(),
-                    message: format!("There can be only one operation named \"{}\".", key),
-                    locations: vec![],
-                })
-            })
+    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+        Box::new(UniqueOperationNames::new())
     }
 }
 

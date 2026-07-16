@@ -1,5 +1,5 @@
 use super::ValidationRule;
-use crate::ast::{visit_document, OperationVisitor, OperationVisitorContext};
+use crate::ast::{OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::Value;
 use crate::static_graphql::schema::InputValue;
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
@@ -91,21 +91,12 @@ fn validate_arguments(
 }
 
 impl ValidationRule for ProvidedRequiredArguments {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "ProvidedRequiredArguments"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut ProvidedRequiredArguments::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+        Box::new(ProvidedRequiredArguments::new())
     }
 }
 
@@ -154,6 +145,24 @@ fn no_arg_on_optional_arg() {
         "{
           dog {
             isHouseTrained
+          }
+        }",
+        TEST_SCHEMA,
+        &mut plan,
+    );
+
+    assert_eq!(get_messages(&errors).len(), 0);
+}
+
+#[test]
+fn no_arg_on_non_null_field_with_default() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(ProvidedRequiredArguments {}));
+    let errors = test_operation_with_schema(
+        "{
+          complicatedArgs {
+            nonNullFieldWithDefault
           }
         }",
         TEST_SCHEMA,

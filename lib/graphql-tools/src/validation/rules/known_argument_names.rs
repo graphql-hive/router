@@ -1,5 +1,5 @@
 use super::ValidationRule;
-use crate::ast::{visit_document, OperationVisitor, OperationVisitorContext};
+use crate::ast::{OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::Directive;
 use crate::static_graphql::schema::{InputValue, TypeDefinition};
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
@@ -67,12 +67,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownArgumentNames<'a>
         if let Some(parent_type) = visitor_context.current_parent_type() {
             if let Some(field_def) = parent_type.field_by_name(&field.name) {
                 self.current_known_arguments = Some((
-                    ArgumentParent::Field(
-                        &field_def.name,
-                        visitor_context
-                            .current_parent_type()
-                            .expect("Missing parent type"),
-                    ),
+                    ArgumentParent::Field(&field_def.name, parent_type),
                     &field_def.arguments,
                 ));
             }
@@ -126,21 +121,12 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownArgumentNames<'a>
 }
 
 impl<'k> ValidationRule for KnownArgumentNames<'k> {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "KnownArgumentNames"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut KnownArgumentNames::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+        Box::new(KnownArgumentNames::new())
     }
 }
 

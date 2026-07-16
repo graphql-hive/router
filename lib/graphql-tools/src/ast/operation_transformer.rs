@@ -564,7 +564,7 @@ mod tests {
                         TransformedValue::Replace(Value::List(items))
                     }
                     Value::Object(fields) => {
-                        let fields: std::collections::BTreeMap<T::Value, Value<'a, T>> = fields
+                        let fields: Vec<(T::Value, Value<'a, T>)> = fields
                             .iter()
                             .map(|field| {
                                 let (name, value) = field;

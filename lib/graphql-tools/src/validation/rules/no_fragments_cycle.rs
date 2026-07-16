@@ -1,6 +1,6 @@
 use super::ValidationRule;
 use crate::ast::ext::AstNodeWithName;
-use crate::ast::{visit_document, OperationVisitor, OperationVisitorContext};
+use crate::ast::{OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::{FragmentDefinition, FragmentSpread};
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
 use std::collections::{HashMap, HashSet};
@@ -154,21 +154,12 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for NoFragmentsCycle {
 }
 
 impl ValidationRule for NoFragmentsCycle {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "NoFragmentsCycle"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut NoFragmentsCycle::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+        Box::new(NoFragmentsCycle::new())
     }
 }
 

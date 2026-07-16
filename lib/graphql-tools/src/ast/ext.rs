@@ -312,7 +312,9 @@ impl Value {
             (Value::Enum(a), Value::Enum(b)) => a.eq(b),
             (Value::List(a), Value::List(b)) => a.iter().zip(b.iter()).all(|(a, b)| a.compare(b)),
             (Value::Object(a), Value::Object(b)) => {
-                a.iter().zip(b.iter()).all(|(a, b)| a.1.compare(b.1))
+                a.len() == b.len()
+                    && a.iter()
+                        .all(|(k_a, v_a)| b.iter().any(|(k_b, v_b)| k_a == k_b && v_a.compare(v_b)))
             }
             (Value::Variable(a), Value::Variable(b)) => a.eq(b),
             _ => false,
@@ -323,7 +325,10 @@ impl Value {
         match self {
             Value::Variable(v) => vec![v],
             Value::List(list) => list.iter().flat_map(|v| v.variables_in_use()).collect(),
-            Value::Object(object) => object.values().flat_map(|v| v.variables_in_use()).collect(),
+            Value::Object(object) => object
+                .iter()
+                .flat_map(|(_, v)| v.variables_in_use())
+                .collect(),
             _ => vec![],
         }
     }
