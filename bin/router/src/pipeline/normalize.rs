@@ -91,18 +91,14 @@ pub async fn normalize_request_with_cache(
     let normalize_cache_capture = metrics.cache.normalize.capture_request();
     let normalize_span = GraphQLNormalizeSpan::new();
     async {
-        let cache_key = {
-            let mut hasher = Xxh3::new();
-            match &graphql_params.operation_name {
-                Some(operation_name) => {
-                    graphql_params.query.hash(&mut hasher);
-                    operation_name.hash(&mut hasher);
-                }
-                None => {
-                    parser_payload.cache_key.hash(&mut hasher);
-                }
+        let cache_key = match &graphql_params.operation_name {
+            Some(operation_name) => {
+                let mut hasher = Xxh3::new();
+                graphql_params.query.hash(&mut hasher);
+                operation_name.hash(&mut hasher);
+                hasher.finish()
             }
-            hasher.finish()
+            None => parser_payload.cache_key,
         };
 
         runtime
