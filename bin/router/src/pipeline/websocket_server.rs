@@ -234,10 +234,10 @@ async fn handle_text_frame(
     ws_uri: &http::Uri,
     ws_path: &Path<http::Uri>,
 ) -> Option<ws::Message> {
-    // IMPORTANT: we intentionally check if a supegraph is selected this "late" because
+    // IMPORTANT: we intentionally check if a supergraph is selected this "late" because
     // browsers cannot interpret a rejected HTTP Upgrade request and will show a cryptic
-    // error to the clients. instead, we accept the connection - but close it immediately
-    // if the supergraph is not available, which will result in a more understandable error
+    // error to clients. instead, we accept the connection but close it immediately if no
+    // supergraph is available, which results in a more understandable error
     let supergraph = match schema_state.select_supergraph(req) {
         Ok(supergraph) => supergraph,
         Err(err) => {
