@@ -195,7 +195,7 @@ pub type OnSupergraphLoadStartHookResult<'exec> = crate::plugin_trait::StartHook
 
 pub struct OnSupergraphLoadEndHookPayload {
     /// The new supergraph data that is generated from loading the new supergraph schema.
-    pub new_supergraph_data: Supergraph,
+    pub new_supergraph: Supergraph,
 }
 
 impl EndHookPayload<OnSupergraphLoadResult> for OnSupergraphLoadEndHookPayload {}

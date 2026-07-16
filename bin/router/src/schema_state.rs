@@ -373,7 +373,7 @@ impl SchemaState {
                     };
 
                     let mut on_end_callbacks = vec![];
-                    let mut new_supergraph_data = None;
+                    let mut new_supergraph = None;
                     if let Some(plugins) = plugins.as_ref() {
                         let current_supergraph_data = configured_spawn_clone
                             .load()
@@ -391,7 +391,7 @@ impl SchemaState {
                             match result.control_flow {
                                 StartControlFlow::Proceed => {}
                                 StartControlFlow::EndWithResponse(plugin_res) => {
-                                    new_supergraph_data = Some(plugin_res.map_err(|err| {
+                                    new_supergraph = Some(plugin_res.map_err(|err| {
                                         SupergraphManagerError::PluginError(err.message)
                                     }));
                                     break;
@@ -411,16 +411,15 @@ impl SchemaState {
                                 .experimental_abstract_type_folding,
                         };
 
-                    let built = new_supergraph_data
+                    let built = new_supergraph
                         .unwrap_or_else(|| {
                             Supergraph::from_document(new_ast, query_planner_options)
                                 .map_err(SupergraphManagerError::from)
                         })
-                        .and_then(|mut new_supergraph_data| {
+                        .and_then(|mut new_supergraph| {
                             if !on_end_callbacks.is_empty() {
-                                let mut end_payload = OnSupergraphLoadEndHookPayload {
-                                    new_supergraph_data,
-                                };
+                                let mut end_payload =
+                                    OnSupergraphLoadEndHookPayload { new_supergraph };
                                 for callback in on_end_callbacks {
                                     let result = callback(end_payload);
                                     end_payload = result.payload;
@@ -428,7 +427,7 @@ impl SchemaState {
                                         EndControlFlow::Proceed => {}
                                         EndControlFlow::EndWithResponse(plugin_res) => {
                                             match plugin_res {
-                                                Ok(data) => end_payload.new_supergraph_data = data,
+                                                Ok(data) => end_payload.new_supergraph = data,
                                                 Err(err) => {
                                                     return Err(
                                                         SupergraphManagerError::PluginError(
@@ -440,12 +439,12 @@ impl SchemaState {
                                         }
                                     }
                                 }
-                                new_supergraph_data = end_payload.new_supergraph_data;
+                                new_supergraph = end_payload.new_supergraph;
                             }
-                            Ok(new_supergraph_data)
+                            Ok(new_supergraph)
                         })
-                        .and_then(|new_supergraph_data| {
-                            let snapshot = new_supergraph_data.snapshot();
+                        .and_then(|new_supergraph| {
+                            let snapshot = new_supergraph.snapshot();
                             let runtime = RouterSupergraphRuntime::build(
                                 &snapshot,
                                 &router_config_for_task,
@@ -453,7 +452,7 @@ impl SchemaState {
                                 &callback_subscriptions_for_reload,
                             )?;
                             Ok(ConfiguredSupergraph {
-                                _owner: Arc::new(new_supergraph_data),
+                                _owner: Arc::new(new_supergraph),
                                 snapshot,
                                 runtime: Arc::new(runtime),
                             })
