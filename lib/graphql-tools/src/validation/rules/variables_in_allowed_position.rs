@@ -34,7 +34,7 @@ impl<'doc> VariablesInAllowedPosition<'doc> {
     fn collect_incorrect_usages(
         &self,
         from: &Scope<'doc>,
-        var_defs: &Vec<&VariableDefinition>,
+        var_defs: &[&VariableDefinition],
         visitor_context: &mut OperationVisitorContext,
         user_context: &mut ValidationErrorContext,
         visited: &mut HashSet<Scope<'doc>>,
