@@ -11,19 +11,19 @@ use crate::validation::utils::{ValidationError, ValidationErrorContext};
 /// within operations, or spread within other fragments spread within operations.
 ///
 /// See https://spec.graphql.org/draft/#sec-Fragments-Must-Be-Used
-pub struct NoUnusedFragments<'a> {
-    fragments_in_use: Vec<&'a str>,
-    current_fragment_spreads: Vec<&'a str>,
-    current_fragment: Option<&'a str>,
-    fragment_spreads: HashMap<&'a str, Vec<&'a str>>,
+pub struct NoUnusedFragments<'doc> {
+    fragments_in_use: Vec<&'doc str>,
+    current_fragment_spreads: Vec<&'doc str>,
+    current_fragment: Option<&'doc str>,
+    fragment_spreads: HashMap<&'doc str, Vec<&'doc str>>,
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for NoUnusedFragments<'a> {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for NoUnusedFragments<'doc> {
     fn enter_fragment_definition(
         &mut self,
         _: &mut OperationVisitorContext,
         _: &mut ValidationErrorContext,
-        fragment: &'a FragmentDefinition,
+        fragment: &'doc FragmentDefinition,
     ) {
         self.current_fragment = Some(fragment.name.as_str());
         self.current_fragment_spreads = Vec::new();
@@ -45,7 +45,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for NoUnusedFragments<'a> 
         &mut self,
         _: &mut OperationVisitorContext,
         _: &mut ValidationErrorContext,
-        fragment_spread: &'a FragmentSpread,
+        fragment_spread: &'doc FragmentSpread,
     ) {
         let name = fragment_spread.fragment_name.as_str();
         if self.current_fragment.is_some() {
@@ -94,13 +94,13 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for NoUnusedFragments<'a> 
     }
 }
 
-impl<'a> Default for NoUnusedFragments<'a> {
+impl Default for NoUnusedFragments<'_> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'a> NoUnusedFragments<'a> {
+impl NoUnusedFragments<'_> {
     pub fn new() -> Self {
         NoUnusedFragments {
             fragments_in_use: Vec::new(),
@@ -111,12 +111,12 @@ impl<'a> NoUnusedFragments<'a> {
     }
 }
 
-impl<'n> ValidationRule for NoUnusedFragments<'n> {
+impl ValidationRule for NoUnusedFragments<'_> {
     fn error_code(&self) -> &'static str {
         "NoUnusedFragments"
     }
 
-    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
         Box::new(NoUnusedFragments::new())
     }
 }

@@ -64,7 +64,7 @@ pub fn do_types_overlap(
     false
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for PossibleFragmentSpreads {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for PossibleFragmentSpreads {
     fn enter_inline_fragment(
         &mut self,
         visitor_context: &mut OperationVisitorContext,
@@ -120,7 +120,7 @@ impl ValidationRule for PossibleFragmentSpreads {
         "PossibleFragmentSpreads"
     }
 
-    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
         Box::new(PossibleFragmentSpreads::new())
     }
 }

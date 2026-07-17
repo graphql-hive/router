@@ -27,7 +27,7 @@ impl UniqueArgumentNames {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueArgumentNames {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for UniqueArgumentNames {
     fn enter_field(
         &mut self,
         _: &mut OperationVisitorContext,
@@ -88,7 +88,7 @@ impl ValidationRule for UniqueArgumentNames {
         "UniqueArgumentNames"
     }
 
-    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
         Box::new(UniqueArgumentNames::new())
     }
 }

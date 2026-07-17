@@ -30,10 +30,10 @@ impl KnownDirectives {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownDirectives {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for KnownDirectives {
     fn enter_operation_definition(
         &mut self,
-        _: &mut OperationVisitorContext<'a>,
+        _: &mut OperationVisitorContext<'doc>,
         _: &mut ValidationErrorContext,
         operation_definition: &crate::static_graphql::query::OperationDefinition,
     ) {
@@ -47,7 +47,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownDirectives {
 
     fn leave_operation_definition(
         &mut self,
-        _: &mut OperationVisitorContext<'a>,
+        _: &mut OperationVisitorContext<'doc>,
         _: &mut ValidationErrorContext,
         _: &OperationDefinition,
     ) {
@@ -56,7 +56,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownDirectives {
 
     fn enter_field(
         &mut self,
-        _: &mut OperationVisitorContext<'a>,
+        _: &mut OperationVisitorContext<'doc>,
         _: &mut ValidationErrorContext,
         _: &Field,
     ) {
@@ -65,7 +65,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownDirectives {
 
     fn leave_field(
         &mut self,
-        _: &mut OperationVisitorContext<'a>,
+        _: &mut OperationVisitorContext<'doc>,
         _: &mut ValidationErrorContext,
         _: &Field,
     ) {
@@ -74,7 +74,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownDirectives {
 
     fn enter_fragment_definition(
         &mut self,
-        _: &mut OperationVisitorContext<'a>,
+        _: &mut OperationVisitorContext<'doc>,
         _: &mut ValidationErrorContext,
         _: &FragmentDefinition,
     ) {
@@ -83,7 +83,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownDirectives {
 
     fn leave_fragment_definition(
         &mut self,
-        _: &mut OperationVisitorContext<'a>,
+        _: &mut OperationVisitorContext<'doc>,
         _: &mut ValidationErrorContext,
         _: &FragmentDefinition,
     ) {
@@ -92,7 +92,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownDirectives {
 
     fn enter_fragment_spread(
         &mut self,
-        _: &mut OperationVisitorContext<'a>,
+        _: &mut OperationVisitorContext<'doc>,
         _: &mut ValidationErrorContext,
         _: &crate::static_graphql::query::FragmentSpread,
     ) {
@@ -101,7 +101,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownDirectives {
 
     fn leave_fragment_spread(
         &mut self,
-        _: &mut OperationVisitorContext<'a>,
+        _: &mut OperationVisitorContext<'doc>,
         _: &mut ValidationErrorContext,
         _: &crate::static_graphql::query::FragmentSpread,
     ) {
@@ -110,7 +110,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownDirectives {
 
     fn enter_inline_fragment(
         &mut self,
-        _: &mut OperationVisitorContext<'a>,
+        _: &mut OperationVisitorContext<'doc>,
         _: &mut ValidationErrorContext,
         _: &InlineFragment,
     ) {
@@ -119,7 +119,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownDirectives {
 
     fn leave_inline_fragment(
         &mut self,
-        _: &mut OperationVisitorContext<'a>,
+        _: &mut OperationVisitorContext<'doc>,
         _: &mut ValidationErrorContext,
         _: &InlineFragment,
     ) {
@@ -128,7 +128,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownDirectives {
 
     fn enter_directive(
         &mut self,
-        visitor_context: &mut OperationVisitorContext<'a>,
+        visitor_context: &mut OperationVisitorContext<'doc>,
         user_context: &mut ValidationErrorContext,
         directive: &Directive,
     ) {
@@ -165,7 +165,7 @@ impl ValidationRule for KnownDirectives {
         "KnownDirectives"
     }
 
-    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
         Box::new(KnownDirectives::new())
     }
 }

@@ -24,7 +24,7 @@ impl FragmentsOnCompositeTypes {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for FragmentsOnCompositeTypes {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for FragmentsOnCompositeTypes {
     fn enter_inline_fragment(
         &mut self,
         visitor_context: &mut OperationVisitorContext,
@@ -75,7 +75,7 @@ impl ValidationRule for FragmentsOnCompositeTypes {
         "FragmentsOnCompositeTypes"
     }
 
-    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
         Box::new(FragmentsOnCompositeTypes::new())
     }
 }

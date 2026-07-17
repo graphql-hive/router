@@ -24,7 +24,7 @@ impl ProvidedRequiredArguments {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for ProvidedRequiredArguments {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for ProvidedRequiredArguments {
     fn enter_field(
         &mut self,
         visitor_context: &mut OperationVisitorContext,
@@ -95,7 +95,7 @@ impl ValidationRule for ProvidedRequiredArguments {
         "ProvidedRequiredArguments"
     }
 
-    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
         Box::new(ProvidedRequiredArguments::new())
     }
 }

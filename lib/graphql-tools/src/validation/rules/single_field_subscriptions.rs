@@ -23,7 +23,7 @@ impl SingleFieldSubscriptions {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for SingleFieldSubscriptions {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for SingleFieldSubscriptions {
     fn enter_operation_definition(
         &mut self,
         visitor_context: &mut OperationVisitorContext,
@@ -92,7 +92,7 @@ impl ValidationRule for SingleFieldSubscriptions {
         "SingleFieldSubscriptions"
     }
 
-    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
         Box::new(SingleFieldSubscriptions::new())
     }
 }

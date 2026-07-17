@@ -29,12 +29,12 @@ impl ValidationRule for MaxDepthRule {
     }
 }
 
-struct MaxDepthVisitor<'a> {
+struct MaxDepthVisitor<'doc> {
     config: MaxDepthRuleConfig,
-    visited_fragments: HashMap<&'a str, VisitedFragment>,
+    visited_fragments: HashMap<&'doc str, VisitedFragment>,
 }
 
-impl<'a> MaxDepthVisitor<'a> {
+impl<'doc> MaxDepthVisitor<'doc> {
     fn check_limit(&self, count: usize) -> Result<usize, ValidationError> {
         if count > self.config.n {
             Err(ValidationError {
@@ -49,8 +49,8 @@ impl<'a> MaxDepthVisitor<'a> {
 
     fn count_depth(
         &mut self,
-        known_fragments: &HashMap<&'a str, &'a FragmentDefinition>,
-        node: CountableNode<'a>,
+        known_fragments: &HashMap<&'doc str, &'doc FragmentDefinition>,
+        node: CountableNode<'doc>,
         parent_depth: Option<usize>,
     ) -> Result<usize, ValidationError> {
         // If introspection queries are to be ignored, skip them from the root
@@ -139,12 +139,12 @@ impl<'a> MaxDepthVisitor<'a> {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for MaxDepthVisitor<'a> {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for MaxDepthVisitor<'doc> {
     fn enter_document(
         &mut self,
-        context: &mut OperationVisitorContext<'a>,
+        context: &mut OperationVisitorContext<'doc>,
         user_context: &mut ValidationErrorContext,
-        document: &'a Document,
+        document: &'doc Document,
     ) {
         self.visited_fragments = HashMap::with_capacity(context.known_fragments.len());
 

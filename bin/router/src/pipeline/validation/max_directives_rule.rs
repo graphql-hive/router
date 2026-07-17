@@ -29,12 +29,12 @@ impl ValidationRule for MaxDirectivesRule {
     }
 }
 
-struct MaxDirectivesVisitor<'a> {
+struct MaxDirectivesVisitor<'doc> {
     config: MaxDirectivesRuleConfig,
-    visited_fragments: HashMap<&'a str, VisitedFragment>,
+    visited_fragments: HashMap<&'doc str, VisitedFragment>,
 }
 
-impl<'a> MaxDirectivesVisitor<'a> {
+impl<'doc> MaxDirectivesVisitor<'doc> {
     fn check_limit(&self, count: usize) -> Result<usize, ValidationError> {
         if count > self.config.n {
             Err(ValidationError {
@@ -49,8 +49,8 @@ impl<'a> MaxDirectivesVisitor<'a> {
 
     fn count_directives(
         &mut self,
-        known_fragments: &HashMap<&'a str, &'a FragmentDefinition>,
-        countable_node: CountableNode<'a>,
+        known_fragments: &HashMap<&'doc str, &'doc FragmentDefinition>,
+        countable_node: CountableNode<'doc>,
     ) -> Result<usize, ValidationError> {
         // Start with 0
         let mut directive_count: usize = 0;
@@ -62,7 +62,7 @@ impl<'a> MaxDirectivesVisitor<'a> {
         // If it is a node that has selections, iterate over the selection set, and get their number of directives
         if let Some(selection_set) = countable_node.selection_set() {
             for selection in &selection_set.items {
-                let countable_node: CountableNode<'a> = selection.into();
+                let countable_node: CountableNode<'doc> = selection.into();
                 let child_directives = self.count_directives(known_fragments, countable_node)?;
                 directive_count = self.check_limit(directive_count + child_directives)?;
             }
@@ -87,7 +87,7 @@ impl<'a> MaxDirectivesVisitor<'a> {
 
             // If the fragment is found, get the original Fragment Definition and convert it to CountableNode
             if let Some(fragment_def) = known_fragments.get(fragment_name) {
-                let countable_node: CountableNode<'a> = fragment_def.into();
+                let countable_node: CountableNode<'doc> = fragment_def.into();
                 // Count directives of the fragment
                 let fragment_directive_count =
                     self.count_directives(known_fragments, countable_node)?;
@@ -105,12 +105,12 @@ impl<'a> MaxDirectivesVisitor<'a> {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for MaxDirectivesVisitor<'a> {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for MaxDirectivesVisitor<'doc> {
     fn enter_document(
         &mut self,
-        context: &mut OperationVisitorContext<'a>,
+        context: &mut OperationVisitorContext<'doc>,
         user_context: &mut ValidationErrorContext,
-        document: &'a Document,
+        document: &'doc Document,
     ) {
         self.visited_fragments = HashMap::with_capacity(context.known_fragments.len());
 

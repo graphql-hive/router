@@ -56,10 +56,10 @@ impl UniqueDirectivesPerLocation {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueDirectivesPerLocation {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for UniqueDirectivesPerLocation {
     fn enter_operation_definition(
         &mut self,
-        ctx: &mut OperationVisitorContext<'a>,
+        ctx: &mut OperationVisitorContext<'doc>,
         err_ctx: &mut ValidationErrorContext,
         operation: &OperationDefinition,
     ) {
@@ -68,7 +68,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueDirectivesPerLoc
 
     fn enter_field(
         &mut self,
-        ctx: &mut OperationVisitorContext<'a>,
+        ctx: &mut OperationVisitorContext<'doc>,
         err_ctx: &mut ValidationErrorContext,
         field: &Field,
     ) {
@@ -77,7 +77,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueDirectivesPerLoc
 
     fn enter_fragment_definition(
         &mut self,
-        ctx: &mut OperationVisitorContext<'a>,
+        ctx: &mut OperationVisitorContext<'doc>,
         err_ctx: &mut ValidationErrorContext,
         fragment: &FragmentDefinition,
     ) {
@@ -86,7 +86,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueDirectivesPerLoc
 
     fn enter_fragment_spread(
         &mut self,
-        ctx: &mut OperationVisitorContext<'a>,
+        ctx: &mut OperationVisitorContext<'doc>,
         err_ctx: &mut ValidationErrorContext,
         fragment_spread: &FragmentSpread,
     ) {
@@ -95,7 +95,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueDirectivesPerLoc
 
     fn enter_inline_fragment(
         &mut self,
-        ctx: &mut OperationVisitorContext<'a>,
+        ctx: &mut OperationVisitorContext<'doc>,
         err_ctx: &mut ValidationErrorContext,
         inline_fragment: &InlineFragment,
     ) {
@@ -108,7 +108,7 @@ impl ValidationRule for UniqueDirectivesPerLocation {
         "UniqueDirectivesPerLocation"
     }
 
-    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
         Box::new(UniqueDirectivesPerLocation::new())
     }
 }

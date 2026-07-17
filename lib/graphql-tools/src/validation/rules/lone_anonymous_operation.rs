@@ -23,7 +23,7 @@ impl LoneAnonymousOperation {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for LoneAnonymousOperation {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for LoneAnonymousOperation {
     fn enter_document(
         &mut self,
         _: &mut OperationVisitorContext,
@@ -97,7 +97,7 @@ impl ValidationRule for LoneAnonymousOperation {
         "LoneAnonymousOperation"
     }
 
-    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
         Box::new(LoneAnonymousOperation::new())
     }
 }

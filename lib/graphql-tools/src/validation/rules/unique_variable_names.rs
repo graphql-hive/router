@@ -14,11 +14,11 @@ use crate::validation::utils::{ValidationError, ValidationErrorContext};
 ///
 /// See https://spec.graphql.org/draft/#sec-Variable-Uniqueness
 #[derive(Default)]
-pub struct UniqueVariableNames<'a> {
-    found_records: HashMap<&'a str, Pos>,
+pub struct UniqueVariableNames<'doc> {
+    found_records: HashMap<&'doc str, Pos>,
 }
 
-impl<'a> UniqueVariableNames<'a> {
+impl UniqueVariableNames<'_> {
     pub fn new() -> Self {
         UniqueVariableNames {
             found_records: HashMap::new(),
@@ -26,7 +26,7 @@ impl<'a> UniqueVariableNames<'a> {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueVariableNames<'a> {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for UniqueVariableNames<'doc> {
     fn enter_operation_definition(
         &mut self,
         _: &mut OperationVisitorContext,
@@ -40,7 +40,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueVariableNames<'a
         &mut self,
         _: &mut OperationVisitorContext,
         user_context: &mut ValidationErrorContext,
-        variable_definition: &'a VariableDefinition,
+        variable_definition: &'doc VariableDefinition,
     ) {
         let error_code = self.error_code();
         match self.found_records.entry(&variable_definition.name) {
@@ -59,12 +59,12 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueVariableNames<'a
     }
 }
 
-impl<'v> ValidationRule for UniqueVariableNames<'v> {
+impl ValidationRule for UniqueVariableNames<'_> {
     fn error_code(&self) -> &'static str {
         "UniqueVariableNames"
     }
 
-    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
         Box::new(UniqueVariableNames::new())
     }
 }

@@ -10,16 +10,16 @@ use crate::validation::utils::{ValidationError, ValidationErrorContext};
 /// A GraphQL document is only valid if all defined operations have unique names.
 ///
 /// See https://spec.graphql.org/draft/#sec-Operation-Name-Uniqueness
-pub struct UniqueOperationNames<'a> {
-    findings_counter: HashMap<&'a str, i32>,
+pub struct UniqueOperationNames<'doc> {
+    findings_counter: HashMap<&'doc str, i32>,
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueOperationNames<'a> {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for UniqueOperationNames<'doc> {
     fn enter_operation_definition(
         &mut self,
         _: &mut OperationVisitorContext,
         _: &mut ValidationErrorContext,
-        operation_definition: &'a OperationDefinition,
+        operation_definition: &'doc OperationDefinition,
     ) {
         if let Some(name) = operation_definition.node_name() {
             self.store_finding(name);
@@ -45,31 +45,31 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueOperationNames<'
     }
 }
 
-impl<'a> Default for UniqueOperationNames<'a> {
+impl Default for UniqueOperationNames<'_> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'a> UniqueOperationNames<'a> {
+impl<'doc> UniqueOperationNames<'doc> {
     pub fn new() -> Self {
         Self {
             findings_counter: HashMap::new(),
         }
     }
 
-    fn store_finding(&mut self, name: &'a str) {
+    fn store_finding(&mut self, name: &'doc str) {
         let value = *self.findings_counter.entry(name).or_insert(0);
         self.findings_counter.insert(name, value + 1);
     }
 }
 
-impl<'u> ValidationRule for UniqueOperationNames<'u> {
+impl ValidationRule for UniqueOperationNames<'_> {
     fn error_code(&self) -> &'static str {
         "UniqueOperationNames"
     }
 
-    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
         Box::new(UniqueOperationNames::new())
     }
 }

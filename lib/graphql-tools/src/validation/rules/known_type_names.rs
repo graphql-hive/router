@@ -23,7 +23,7 @@ impl KnownTypeNames {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownTypeNames {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for KnownTypeNames {
     fn enter_fragment_definition(
         &mut self,
         visitor_context: &mut crate::ast::OperationVisitorContext,
@@ -92,7 +92,7 @@ impl ValidationRule for KnownTypeNames {
         "KnownTypeNames"
     }
 
-    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
         Box::new(KnownTypeNames::new())
     }
 }

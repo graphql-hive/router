@@ -10,20 +10,20 @@ use std::collections::{HashMap, HashSet};
 /// and via fragment spreads, are defined by that operation.
 ///
 /// See https://spec.graphql.org/draft/#sec-All-Variable-Uses-Defined
-pub struct NoUndefinedVariables<'a> {
-    current_scope: Option<NoUndefinedVariablesScope<'a>>,
-    defined_variables: HashMap<Option<&'a str>, HashSet<&'a str>>,
-    used_variables: HashMap<NoUndefinedVariablesScope<'a>, Vec<&'a str>>,
-    spreads: HashMap<NoUndefinedVariablesScope<'a>, Vec<&'a str>>,
+pub struct NoUndefinedVariables<'doc> {
+    current_scope: Option<NoUndefinedVariablesScope<'doc>>,
+    defined_variables: HashMap<Option<&'doc str>, HashSet<&'doc str>>,
+    used_variables: HashMap<NoUndefinedVariablesScope<'doc>, Vec<&'doc str>>,
+    spreads: HashMap<NoUndefinedVariablesScope<'doc>, Vec<&'doc str>>,
 }
 
-impl<'a> Default for NoUndefinedVariables<'a> {
+impl Default for NoUndefinedVariables<'_> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'a> NoUndefinedVariables<'a> {
+impl NoUndefinedVariables<'_> {
     pub fn new() -> Self {
         Self {
             current_scope: None,
@@ -34,13 +34,13 @@ impl<'a> NoUndefinedVariables<'a> {
     }
 }
 
-impl<'a> NoUndefinedVariables<'a> {
+impl<'doc> NoUndefinedVariables<'doc> {
     fn find_undefined_vars(
         &self,
-        from: &NoUndefinedVariablesScope<'a>,
+        from: &NoUndefinedVariablesScope<'doc>,
         defined: &HashSet<&str>,
-        unused: &mut HashSet<&'a str>,
-        visited: &mut HashSet<NoUndefinedVariablesScope<'a>>,
+        unused: &mut HashSet<&'doc str>,
+        visited: &mut HashSet<NoUndefinedVariablesScope<'doc>>,
     ) {
         if visited.contains(from) {
             return;
@@ -70,17 +70,17 @@ impl<'a> NoUndefinedVariables<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum NoUndefinedVariablesScope<'a> {
-    Operation(Option<&'a str>),
-    Fragment(&'a str),
+pub enum NoUndefinedVariablesScope<'doc> {
+    Operation(Option<&'doc str>),
+    Fragment(&'doc str),
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for NoUndefinedVariables<'a> {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for NoUndefinedVariables<'doc> {
     fn enter_operation_definition(
         &mut self,
         _: &mut OperationVisitorContext,
         _: &mut ValidationErrorContext,
-        operation_definition: &'a OperationDefinition,
+        operation_definition: &'doc OperationDefinition,
     ) {
         let op_name = operation_definition.node_name();
         self.current_scope = Some(NoUndefinedVariablesScope::Operation(op_name));
@@ -91,7 +91,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for NoUndefinedVariables<'
         &mut self,
         _: &mut OperationVisitorContext,
         _: &mut ValidationErrorContext,
-        fragment_definition: &'a query::FragmentDefinition,
+        fragment_definition: &'doc query::FragmentDefinition,
     ) {
         self.current_scope = Some(NoUndefinedVariablesScope::Fragment(
             &fragment_definition.name,
@@ -102,7 +102,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for NoUndefinedVariables<'
         &mut self,
         _: &mut OperationVisitorContext,
         _: &mut ValidationErrorContext,
-        fragment_spread: &'a query::FragmentSpread,
+        fragment_spread: &'doc query::FragmentSpread,
     ) {
         if let Some(scope) = &self.current_scope {
             self.spreads
@@ -116,7 +116,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for NoUndefinedVariables<'
         &mut self,
         _: &mut OperationVisitorContext,
         _: &mut ValidationErrorContext,
-        variable_definition: &'a query::VariableDefinition,
+        variable_definition: &'doc query::VariableDefinition,
     ) {
         if let Some(NoUndefinedVariablesScope::Operation(ref name)) = self.current_scope {
             if let Some(vars) = self.defined_variables.get_mut(name) {
@@ -129,7 +129,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for NoUndefinedVariables<'
         &mut self,
         _: &mut OperationVisitorContext,
         _: &mut ValidationErrorContext,
-        (_arg_name, arg_value): &'a (String, query::Value),
+        (_arg_name, arg_value): &'doc (String, query::Value),
     ) {
         if let Some(ref scope) = self.current_scope {
             self.used_variables
@@ -178,12 +178,12 @@ fn error_message(var_name: &str, op_name: &Option<&str>) -> String {
     }
 }
 
-impl<'n> ValidationRule for NoUndefinedVariables<'n> {
+impl ValidationRule for NoUndefinedVariables<'_> {
     fn error_code(&self) -> &'static str {
         "NoUndefinedVariables"
     }
 
-    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
         Box::new(NoUndefinedVariables::new())
     }
 }

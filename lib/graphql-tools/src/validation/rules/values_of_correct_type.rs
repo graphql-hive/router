@@ -102,10 +102,10 @@ impl ValuesOfCorrectType {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for ValuesOfCorrectType {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for ValuesOfCorrectType {
     fn enter_null_value(
         &mut self,
-        visitor_context: &mut OperationVisitorContext<'a>,
+        visitor_context: &mut OperationVisitorContext<'doc>,
         user_context: &mut ValidationErrorContext,
         _: (),
     ) {
@@ -122,7 +122,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for ValuesOfCorrectType {
 
     fn enter_object_value(
         &mut self,
-        visitor_context: &mut OperationVisitorContext<'a>,
+        visitor_context: &mut OperationVisitorContext<'doc>,
         user_context: &mut ValidationErrorContext,
         object_value: &[(String, Value)],
     ) {
@@ -163,7 +163,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for ValuesOfCorrectType {
 
     fn enter_enum_value(
         &mut self,
-        visitor_context: &mut OperationVisitorContext<'a>,
+        visitor_context: &mut OperationVisitorContext<'doc>,
         user_context: &mut ValidationErrorContext,
         value: &String,
     ) {
@@ -172,7 +172,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for ValuesOfCorrectType {
 
     fn enter_scalar_value(
         &mut self,
-        visitor_context: &mut OperationVisitorContext<'a>,
+        visitor_context: &mut OperationVisitorContext<'doc>,
         user_context: &mut ValidationErrorContext,
         value: &Value,
     ) {
@@ -185,7 +185,7 @@ impl ValidationRule for ValuesOfCorrectType {
         "ValuesOfCorrectType"
     }
 
-    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
         Box::new(ValuesOfCorrectType::new())
     }
 }

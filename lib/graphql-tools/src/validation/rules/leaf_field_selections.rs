@@ -23,7 +23,7 @@ impl LeafFieldSelections {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for LeafFieldSelections {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for LeafFieldSelections {
     fn enter_field(
         &mut self,
         visitor_context: &mut OperationVisitorContext,
@@ -68,7 +68,7 @@ impl ValidationRule for LeafFieldSelections {
         "LeafFieldSelections"
     }
 
-    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
         Box::new(LeafFieldSelections::new())
     }
 }

@@ -24,7 +24,7 @@ impl FieldsOnCorrectType {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for FieldsOnCorrectType {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for FieldsOnCorrectType {
     fn enter_operation_definition(
         &mut self,
         _: &mut OperationVisitorContext,
@@ -80,7 +80,7 @@ impl ValidationRule for FieldsOnCorrectType {
         "FieldsOnCorrectType"
     }
 
-    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
         Box::new(FieldsOnCorrectType::new())
     }
 }

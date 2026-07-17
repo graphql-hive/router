@@ -25,7 +25,7 @@ impl UniqueInputFieldNames {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueInputFieldNames {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for UniqueInputFieldNames {
     fn enter_object_value(
         &mut self,
         _: &mut OperationVisitorContext,
@@ -53,7 +53,7 @@ impl ValidationRule for UniqueInputFieldNames {
         "UniqueInputFieldNames"
     }
 
-    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
         Box::new(UniqueInputFieldNames::new())
     }
 }

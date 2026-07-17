@@ -23,7 +23,7 @@ impl KnownFragmentNames {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownFragmentNames {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for KnownFragmentNames {
     fn enter_fragment_spread(
         &mut self,
         visitor_context: &mut OperationVisitorContext,
@@ -48,7 +48,7 @@ impl ValidationRule for KnownFragmentNames {
         "KnownFragmentNames"
     }
 
-    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
         Box::new(KnownFragmentNames::new())
     }
 }

@@ -18,7 +18,7 @@ impl VariablesAreInputTypes {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for VariablesAreInputTypes {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for VariablesAreInputTypes {
     fn enter_variable_definition(
         &mut self,
         context: &mut OperationVisitorContext,
@@ -48,7 +48,7 @@ impl ValidationRule for VariablesAreInputTypes {
         "VariablesAreInputTypes"
     }
 
-    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
         Box::new(VariablesAreInputTypes::new())
     }
 }

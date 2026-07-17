@@ -14,14 +14,14 @@ use super::ValidationRule;
 ///
 /// See https://spec.graphql.org/draft/#sec-All-Variable-Usages-are-Allowed
 #[derive(Default)]
-pub struct VariablesInAllowedPosition<'a> {
-    spreads: HashMap<Scope<'a>, HashSet<&'a str>>,
-    variable_usages: HashMap<Scope<'a>, Vec<(&'a str, &'a Type, bool)>>,
-    variable_defs: HashMap<Scope<'a>, Vec<&'a VariableDefinition>>,
-    current_scope: Option<Scope<'a>>,
+pub struct VariablesInAllowedPosition<'doc> {
+    spreads: HashMap<Scope<'doc>, HashSet<&'doc str>>,
+    variable_usages: HashMap<Scope<'doc>, Vec<(&'doc str, &'doc Type, bool)>>,
+    variable_defs: HashMap<Scope<'doc>, Vec<&'doc VariableDefinition>>,
+    current_scope: Option<Scope<'doc>>,
 }
 
-impl<'a> VariablesInAllowedPosition<'a> {
+impl<'doc> VariablesInAllowedPosition<'doc> {
     pub fn new() -> Self {
         VariablesInAllowedPosition {
             spreads: HashMap::new(),
@@ -33,11 +33,11 @@ impl<'a> VariablesInAllowedPosition<'a> {
 
     fn collect_incorrect_usages(
         &self,
-        from: &Scope<'a>,
+        from: &Scope<'doc>,
         var_defs: &Vec<&VariableDefinition>,
         visitor_context: &mut OperationVisitorContext,
         user_context: &mut ValidationErrorContext,
-        visited: &mut HashSet<Scope<'a>>,
+        visited: &mut HashSet<Scope<'doc>>,
     ) {
         if visited.contains(from) {
             return;
@@ -108,15 +108,15 @@ impl<'a> VariablesInAllowedPosition<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Scope<'a> {
-    Operation(Option<&'a str>),
-    Fragment(&'a str),
+pub enum Scope<'doc> {
+    Operation(Option<&'doc str>),
+    Fragment(&'doc str),
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for VariablesInAllowedPosition<'a> {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for VariablesInAllowedPosition<'doc> {
     fn leave_document(
         &mut self,
-        visitor_context: &mut OperationVisitorContext<'a>,
+        visitor_context: &mut OperationVisitorContext<'doc>,
         user_context: &mut ValidationErrorContext,
         _: &crate::static_graphql::query::Document,
     ) {
@@ -133,27 +133,27 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for VariablesInAllowedPosi
 
     fn enter_fragment_definition(
         &mut self,
-        _: &mut OperationVisitorContext<'a>,
+        _: &mut OperationVisitorContext<'doc>,
         _: &mut ValidationErrorContext,
-        fragment_definition: &'a crate::static_graphql::query::FragmentDefinition,
+        fragment_definition: &'doc crate::static_graphql::query::FragmentDefinition,
     ) {
         self.current_scope = Some(Scope::Fragment(&fragment_definition.name));
     }
 
     fn enter_operation_definition(
         &mut self,
-        _: &mut OperationVisitorContext<'a>,
+        _: &mut OperationVisitorContext<'doc>,
         _: &mut ValidationErrorContext,
-        operation_definition: &'a crate::static_graphql::query::OperationDefinition,
+        operation_definition: &'doc crate::static_graphql::query::OperationDefinition,
     ) {
         self.current_scope = Some(Scope::Operation(operation_definition.node_name()));
     }
 
     fn enter_fragment_spread(
         &mut self,
-        _: &mut OperationVisitorContext<'a>,
+        _: &mut OperationVisitorContext<'doc>,
         _: &mut ValidationErrorContext,
-        fragment_spread: &'a crate::static_graphql::query::FragmentSpread,
+        fragment_spread: &'doc crate::static_graphql::query::FragmentSpread,
     ) {
         if let Some(scope) = &self.current_scope {
             self.spreads
@@ -165,9 +165,9 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for VariablesInAllowedPosi
 
     fn enter_variable_definition(
         &mut self,
-        _: &mut OperationVisitorContext<'a>,
+        _: &mut OperationVisitorContext<'doc>,
         _: &mut ValidationErrorContext,
-        variable_definition: &'a VariableDefinition,
+        variable_definition: &'doc VariableDefinition,
     ) {
         if let Some(ref scope) = self.current_scope {
             self.variable_defs
@@ -179,9 +179,9 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for VariablesInAllowedPosi
 
     fn enter_variable_value(
         &mut self,
-        visitor_context: &mut OperationVisitorContext<'a>,
+        visitor_context: &mut OperationVisitorContext<'doc>,
         _: &mut ValidationErrorContext,
-        variable_name: &'a str,
+        variable_name: &'doc str,
     ) {
         if let (Some(scope), Some(input_type)) = (
             &self.current_scope,
@@ -196,12 +196,12 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for VariablesInAllowedPosi
     }
 }
 
-impl<'v> ValidationRule for VariablesInAllowedPosition<'v> {
+impl ValidationRule for VariablesInAllowedPosition<'_> {
     fn error_code(&self) -> &'static str {
         "VariablesInAllowedPosition"
     }
 
-    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
         Box::new(VariablesInAllowedPosition::new())
     }
 }

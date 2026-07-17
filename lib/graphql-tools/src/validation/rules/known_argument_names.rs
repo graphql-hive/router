@@ -10,23 +10,23 @@ use crate::validation::utils::{ValidationError, ValidationErrorContext};
 ///
 /// See https://spec.graphql.org/draft/#sec-Argument-Names
 /// See https://spec.graphql.org/draft/#sec-Directives-Are-In-Valid-Locations
-pub struct KnownArgumentNames<'a> {
-    current_known_arguments: Option<(ArgumentParent<'a>, &'a Vec<InputValue>)>,
+pub struct KnownArgumentNames<'doc> {
+    current_known_arguments: Option<(ArgumentParent<'doc>, &'doc Vec<InputValue>)>,
 }
 
 #[derive(Debug)]
-enum ArgumentParent<'a> {
-    Field(&'a str, &'a TypeDefinition),
-    Directive(&'a str),
+enum ArgumentParent<'doc> {
+    Field(&'doc str, &'doc TypeDefinition),
+    Directive(&'doc str),
 }
 
-impl<'a> Default for KnownArgumentNames<'a> {
+impl Default for KnownArgumentNames<'_> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'a> KnownArgumentNames<'a> {
+impl KnownArgumentNames<'_> {
     pub fn new() -> Self {
         KnownArgumentNames {
             current_known_arguments: None,
@@ -34,10 +34,10 @@ impl<'a> KnownArgumentNames<'a> {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownArgumentNames<'a> {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for KnownArgumentNames<'doc> {
     fn enter_directive(
         &mut self,
-        visitor_context: &mut OperationVisitorContext<'a>,
+        visitor_context: &mut OperationVisitorContext<'doc>,
         _: &mut ValidationErrorContext,
         directive: &Directive,
     ) {
@@ -60,7 +60,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownArgumentNames<'a>
 
     fn enter_field(
         &mut self,
-        visitor_context: &mut OperationVisitorContext<'a>,
+        visitor_context: &mut OperationVisitorContext<'doc>,
         _: &mut ValidationErrorContext,
         field: &crate::static_graphql::query::Field,
     ) {
@@ -120,12 +120,12 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownArgumentNames<'a>
     }
 }
 
-impl<'k> ValidationRule for KnownArgumentNames<'k> {
+impl ValidationRule for KnownArgumentNames<'_> {
     fn error_code(&self) -> &'static str {
         "KnownArgumentNames"
     }
 
-    fn visitor<'a>(&self) -> super::ValidationVisitor<'a> {
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
         Box::new(KnownArgumentNames::new())
     }
 }
