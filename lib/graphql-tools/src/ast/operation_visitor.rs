@@ -326,21 +326,20 @@ fn visit_input_value<'a, Visitor, UserContext>(
         Value::Object(v) => {
             visitor.enter_object_value(context, user_context, v);
 
-            for (sub_key, sub_value) in v.iter() {
+            for pair in v {
                 let input_field = context
                     .current_input_type_literal()
                     .and_then(|v| context.schema.type_by_name(v.inner_type()))
-                    .and_then(|v| v.input_field_by_name(sub_key));
+                    .and_then(|v| v.input_field_by_name(&pair.0));
                 let input_type = input_field.map(|field| &field.value_type);
                 let has_default = input_field
                     .and_then(|field| field.default_value.as_ref())
                     .is_some();
 
                 context.with_input_type_and_default(input_type, has_default, |context| {
-                    let param = &(sub_key.clone(), sub_value.clone());
-                    visitor.enter_object_field(context, user_context, param);
-                    visit_input_value(visitor, sub_value, context, user_context);
-                    visitor.leave_object_field(context, user_context, param);
+                    visitor.enter_object_field(context, user_context, pair);
+                    visit_input_value(visitor, &pair.1, context, user_context);
+                    visitor.leave_object_field(context, user_context, pair);
                 });
             }
 
