@@ -312,9 +312,21 @@ impl Value {
             (Value::Enum(a), Value::Enum(b)) => a.eq(b),
             (Value::List(a), Value::List(b)) => a.iter().zip(b.iter()).all(|(a, b)| a.compare(b)),
             (Value::Object(a), Value::Object(b)) => {
-                a.len() == b.len()
-                    && a.iter()
-                        .all(|(k_a, v_a)| b.iter().any(|(k_b, v_b)| k_a == k_b && v_a.compare(v_b)))
+                if a.len() != b.len() {
+                    return false;
+                }
+                let mut matched = vec![false; b.len()];
+                for (k_a, v_a) in a.iter() {
+                    let found = b
+                        .iter()
+                        .enumerate()
+                        .find(|(idx, (k_b, v_b))| !matched[*idx] && k_a == k_b && v_a.compare(v_b));
+                    match found {
+                        Some((idx, _)) => matched[idx] = true,
+                        None => return false,
+                    }
+                }
+                true
             }
             (Value::Variable(a), Value::Variable(b)) => a.eq(b),
             _ => false,
