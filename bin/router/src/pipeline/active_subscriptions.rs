@@ -44,7 +44,7 @@ impl ActiveSubscriptions {
         guard: Option<SharedRouterResponseGuard>,
     ) -> (ProducerHandle, broadcast::Receiver<SubscriptionEvent>) {
         let (sender, receiver) = broadcast::channel(self.broadcast_capacity);
-        let id = Ulid::new().to_string();
+        let id = Ulid::gen().to_string();
         self.map.insert(id.clone(), sender.clone());
 
         let handle = ProducerHandle {

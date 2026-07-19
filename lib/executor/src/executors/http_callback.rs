@@ -167,8 +167,8 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
     > {
         let custom_scalar_paths: Option<CustomScalarPaths> =
             execution_request.custom_scalar_paths.cloned();
-        let subscription_id = Ulid::new().to_string();
-        let verifier = Ulid::new().to_string();
+        let subscription_id = Ulid::gen().to_string();
+        let verifier = Ulid::gen().to_string();
 
         let body = self.build_request_body(&mut execution_request, &subscription_id, &verifier)?;
 
