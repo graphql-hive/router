@@ -53,16 +53,16 @@ tokio-util = { version = "0.7.16" }
 tokio-stream = { version = "0.1.17" }
 rand = "0.10.1"
 jsonwebtoken = { version = "10.4.0", features = ["rust_crypto"] }
-ntex = { version = "=3.10.0", features = ["tokio", "rustls"] }
+ntex = { version = "=3.10.1", features = ["tokio", "rustls"] }
 ntex-http = { version = "=1.2.0"}
 ntex-codec = { version = "=1.2.1"}
 ntex-io = { version = "=3.13.1"}
 ntex-net = { version = "=3.13.0"}
 ntex-router = { version = "=1.0.0"}
-ntex-bytes = { version = "=1.7.6"}
+ntex-bytes = { version = "=1.8.0"}
 ntex-dispatcher = { version = "=3.2.1"}
 ntex-error = { version = "=2.3.0" }
-ntex-h2 = { version = "=3.12.0" }
+ntex-h2 = { version = "=3.12.1" }
 ntex-rt = { version = "=3.15.4" }
 ntex-macros = { version = "=3.3.0" }
 ntex-server = { version = "=3.10.4" }
