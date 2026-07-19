@@ -1,6 +1,6 @@
 use super::ValidationRule;
 use crate::ast::ext::AstNodeWithName;
-use crate::ast::{visit_document, OperationVisitor, OperationVisitorContext};
+use crate::ast::{OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::{FragmentDefinition, FragmentSpread};
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
 use std::collections::{HashMap, HashSet};
@@ -31,25 +31,25 @@ impl NoFragmentsCycle {
     /// This does a straight-forward DFS to find cycles.
     /// It does not terminate when a cycle was found but continues to explore
     /// the graph to find all possible cycles.
-    fn detect_cycles<'a>(
+    fn detect_cycles<'doc>(
         &mut self,
-        root: &'a FragmentDefinition,
-        spread_paths: &mut Vec<&'a FragmentSpread>,
-        spread_path_index_by_name: &mut HashMap<&'a str, usize>,
-        known_fragments: &'a HashMap<&'a str, &'a FragmentDefinition>,
+        root: &'doc FragmentDefinition,
+        spread_paths: &mut Vec<&'doc FragmentSpread>,
+        spread_path_index_by_name: &mut HashMap<&'doc str, usize>,
+        known_fragments: &'doc HashMap<&'doc str, &'doc FragmentDefinition>,
         error_context: &mut ValidationErrorContext,
     ) {
         // iterative DFS to avoid stack overflow on deep acyclic chains.
         // Frame::EnterSpread pushes one spread onto spread_paths then either recurses into the
         // target fragment or reports a cycle, Frame::PopSpread undoes that push on the way back.
-        enum Frame<'a> {
-            EnterFragment(&'a FragmentDefinition),
-            ExitFragment(&'a str), // removes fragment from spread_path_index_by_name
-            EnterSpread(&'a FragmentSpread), // push spread onto spread_paths
-            PopSpread,             // pop spread from spread_paths
+        enum Frame<'doc> {
+            EnterFragment(&'doc FragmentDefinition),
+            ExitFragment(&'doc str), // removes fragment from spread_path_index_by_name
+            EnterSpread(&'doc FragmentSpread), // push spread onto spread_paths
+            PopSpread,               // pop spread from spread_paths
         }
 
-        let mut stack: Vec<Frame<'a>> = vec![Frame::EnterFragment(root)];
+        let mut stack: Vec<Frame<'doc>> = vec![Frame::EnterFragment(root)];
 
         while let Some(frame) = stack.pop() {
             match frame {
@@ -133,7 +133,7 @@ impl NoFragmentsCycle {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for NoFragmentsCycle {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for NoFragmentsCycle {
     fn enter_fragment_definition(
         &mut self,
         visitor_context: &mut OperationVisitorContext,
@@ -154,21 +154,12 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for NoFragmentsCycle {
 }
 
 impl ValidationRule for NoFragmentsCycle {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "NoFragmentsCycle"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut NoFragmentsCycle::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
+        Box::new(NoFragmentsCycle::new())
     }
 }
 

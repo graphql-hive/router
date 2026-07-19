@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
 use graphql_tools::{
-    ast::OperationVisitorContext,
-    static_graphql::query::Definition,
+    ast::{OperationVisitor, OperationVisitorContext},
+    static_graphql::query::{Definition, Document, FragmentDefinition},
     validation::{
-        rules::ValidationRule,
+        rules::{ValidationRule, ValidationVisitor},
         utils::{ValidationError, ValidationErrorContext},
     },
 };
@@ -17,42 +17,24 @@ pub struct MaxAliasesRule {
 }
 
 impl ValidationRule for MaxAliasesRule {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "MAX_ALIASES_EXCEEDED"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext<'_>,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        let mut visitor = MaxAliasesVisitor {
-            config: &self.config,
-            visited_fragments: HashMap::with_capacity(ctx.known_fragments.len()),
-            ctx,
-        };
-        for definition in &ctx.operation.definitions {
-            let Definition::Operation(op) = definition else {
-                continue;
-            };
-
-            // First start counting aliases from the operation definition
-            // `op.into()` will get `CountableNode`, then `count_aliases` will
-            // start counting aliases nestedly
-            if let Err(err) = visitor.count_aliases(op.into()) {
-                error_collector.report_error(err);
-            }
-        }
+    fn visitor<'doc>(&self) -> ValidationVisitor<'doc> {
+        Box::new(MaxAliasesVisitor {
+            config: self.config.clone(),
+            visited_fragments: HashMap::new(),
+        })
     }
 }
 
-struct MaxAliasesVisitor<'a, 'b> {
-    config: &'b MaxAliasesRuleConfig,
-    visited_fragments: HashMap<&'a str, VisitedFragment>,
-    ctx: &'b OperationVisitorContext<'a>,
+struct MaxAliasesVisitor<'doc> {
+    config: MaxAliasesRuleConfig,
+    visited_fragments: HashMap<&'doc str, VisitedFragment>,
 }
 
-impl<'a> MaxAliasesVisitor<'a, '_> {
+impl<'doc> MaxAliasesVisitor<'doc> {
     fn check_limit(&self, count: usize) -> Result<usize, ValidationError> {
         if count > self.config.n {
             Err(ValidationError {
@@ -64,9 +46,11 @@ impl<'a> MaxAliasesVisitor<'a, '_> {
             Ok(count)
         }
     }
+
     fn count_aliases(
         &mut self,
-        countable_node: CountableNode<'a>,
+        known_fragments: &HashMap<&'doc str, &'doc FragmentDefinition>,
+        countable_node: CountableNode<'doc>,
     ) -> Result<usize, ValidationError> {
         // Start with 0
         let mut alias_count: usize = 0;
@@ -80,8 +64,8 @@ impl<'a> MaxAliasesVisitor<'a, '_> {
         // If it is a node that has selections, iterate over the selection set, and get their number of aliases
         if let Some(selection_set) = countable_node.selection_set() {
             for selection in &selection_set.items {
-                let countable_node: CountableNode<'a> = selection.into();
-                let child_aliases = self.count_aliases(countable_node)?;
+                let countable_node: CountableNode<'doc> = selection.into();
+                let child_aliases = self.count_aliases(known_fragments, countable_node)?;
                 alias_count = self.check_limit(alias_count + child_aliases)?;
             }
         }
@@ -104,10 +88,11 @@ impl<'a> MaxAliasesVisitor<'a, '_> {
                 .insert(fragment_name, VisitedFragment::Visiting);
 
             // If the fragment is found, get the original Fragment Definition and convert it to CountableNode
-            if let Some(fragment_def) = self.ctx.known_fragments.get(fragment_name) {
-                let countable_node: CountableNode<'a> = fragment_def.into();
+            if let Some(fragment_def) = known_fragments.get(fragment_name).copied() {
+                let countable_node: CountableNode<'doc> =
+                    CountableNode::FragmentDefinition(fragment_def);
                 // Count aliases of the fragment
-                let fragment_alias_count = self.count_aliases(countable_node)?;
+                let fragment_alias_count = self.count_aliases(known_fragments, countable_node)?;
 
                 // Update it with the actual count
                 self.visited_fragments.insert(
@@ -119,6 +104,30 @@ impl<'a> MaxAliasesVisitor<'a, '_> {
         }
 
         Ok(alias_count)
+    }
+}
+
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for MaxAliasesVisitor<'doc> {
+    fn enter_document(
+        &mut self,
+        context: &mut OperationVisitorContext<'doc>,
+        user_context: &mut ValidationErrorContext,
+        document: &'doc Document,
+    ) {
+        self.visited_fragments = HashMap::with_capacity(context.known_fragments.len());
+
+        for definition in &document.definitions {
+            let Definition::Operation(op) = definition else {
+                continue;
+            };
+
+            // First start counting aliases from the operation definition
+            // `op.into()` will get `CountableNode`, then `count_aliases` will
+            // start counting aliases nestedly
+            if let Err(err) = self.count_aliases(&context.known_fragments, op.into()) {
+                user_context.report_error(err);
+            }
+        }
     }
 }
 

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use crate::parser::query::TypeCondition;
 
@@ -19,6 +19,7 @@ pub struct OperationVisitorContext<'a> {
     input_type_stack: Vec<Option<&'a schema::TypeDefinition>>,
     type_literal_stack: Vec<Option<Type>>,
     input_type_literal_stack: Vec<Option<&'a Type>>,
+    input_type_default_stack: Vec<bool>,
     field_stack: Vec<Option<&'a schema::Field>>,
 }
 
@@ -32,6 +33,7 @@ impl<'a> OperationVisitorContext<'a> {
             input_type_stack: vec![],
             type_literal_stack: vec![],
             input_type_literal_stack: vec![],
+            input_type_default_stack: vec![],
             field_stack: vec![],
             known_fragments: HashMap::from_iter(operation.definitions.iter().filter_map(|def| {
                 match def {
@@ -96,6 +98,17 @@ impl<'a> OperationVisitorContext<'a> {
     where
         Func: FnOnce(&mut OperationVisitorContext<'a>),
     {
+        self.with_input_type_and_default(t, false, func);
+    }
+
+    pub fn with_input_type_and_default<Func>(
+        &mut self,
+        t: Option<&'a Type>,
+        has_default: bool,
+        func: Func,
+    ) where
+        Func: FnOnce(&mut OperationVisitorContext<'a>),
+    {
         if let Some(t) = t {
             self.input_type_stack
                 .push(self.schema.type_by_name(t.inner_type()));
@@ -104,9 +117,15 @@ impl<'a> OperationVisitorContext<'a> {
         }
 
         self.input_type_literal_stack.push(t);
+        self.input_type_default_stack.push(has_default);
         func(self);
+        self.input_type_default_stack.pop();
         self.input_type_literal_stack.pop();
         self.input_type_stack.pop();
+    }
+
+    pub fn current_input_type_has_default(&self) -> bool {
+        *self.input_type_default_stack.last().unwrap_or(&false)
     }
 
     pub fn current_type(&self) -> Option<&schema::TypeDefinition> {
@@ -253,11 +272,13 @@ fn visit_arguments<'a, Visitor, UserContext>(
     Visitor: OperationVisitor<'a, UserContext>,
 {
     for argument in arguments {
-        let arg_type = arguments_definition
-            .and_then(|argument_defs| argument_defs.iter().find(|a| a.name.eq(&argument.0)))
-            .map(|a| &a.value_type);
+        let arg_def = arguments_definition
+            .and_then(|argument_defs| argument_defs.iter().find(|a| a.name.eq(&argument.0)));
 
-        context.with_input_type(arg_type, |context| {
+        let arg_type = arg_def.map(|a| &a.value_type);
+        let has_default = arg_def.and_then(|a| a.default_value.as_ref()).is_some();
+
+        context.with_input_type_and_default(arg_type, has_default, |context| {
             visitor.enter_argument(context, user_context, argument);
             visit_input_value(visitor, &argument.1, context, user_context);
             visitor.leave_argument(context, user_context, argument);
@@ -305,18 +326,20 @@ fn visit_input_value<'a, Visitor, UserContext>(
         Value::Object(v) => {
             visitor.enter_object_value(context, user_context, v);
 
-            for (sub_key, sub_value) in v.iter() {
-                let input_type = context
+            for pair in v {
+                let input_field = context
                     .current_input_type_literal()
                     .and_then(|v| context.schema.type_by_name(v.inner_type()))
-                    .and_then(|v| v.input_field_by_name(sub_key))
-                    .map(|v| &v.value_type);
+                    .and_then(|v| v.input_field_by_name(&pair.0));
+                let input_type = input_field.map(|field| &field.value_type);
+                let has_default = input_field
+                    .and_then(|field| field.default_value.as_ref())
+                    .is_some();
 
-                context.with_input_type(input_type, |context| {
-                    let param = &(sub_key.clone(), sub_value.clone());
-                    visitor.enter_object_field(context, user_context, param);
-                    visit_input_value(visitor, sub_value, context, user_context);
-                    visitor.leave_object_field(context, user_context, param);
+                context.with_input_type_and_default(input_type, has_default, |context| {
+                    visitor.enter_object_field(context, user_context, pair);
+                    visit_input_value(visitor, &pair.1, context, user_context);
+                    visitor.leave_object_field(context, user_context, pair);
                 });
             }
 
@@ -705,14 +728,14 @@ pub trait OperationVisitor<'a, UserContext = ()> {
         &mut self,
         _: &mut OperationVisitorContext<'a>,
         _: &mut UserContext,
-        _: &BTreeMap<String, Value>,
+        _: &[(String, Value)],
     ) {
     }
     fn leave_object_value(
         &mut self,
         _: &mut OperationVisitorContext<'a>,
         _: &mut UserContext,
-        _: &BTreeMap<String, Value>,
+        _: &[(String, Value)],
     ) {
     }
 

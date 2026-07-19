@@ -220,7 +220,7 @@ directive @onSubscription on SUBSCRIPTION
 directive @onFragmentDefinition on FRAGMENT_DEFINITION
 directive @onFragmentSpread on FRAGMENT_SPREAD
 directive @onInlineFragment on INLINE_FRAGMENT
-directive @testDirective on FIELD | FRAGMENT_DEFINITION 
+directive @testDirective on FIELD | FRAGMENT_DEFINITION
 
 # doesn't work see https://github.com/graphql-rust/graphql-parser/issues/60
 # directive @onVariableDefinition on VARIABLE_DEFINITION
@@ -242,25 +242,6 @@ pub fn get_messages(validation_errors: &[ValidationError]) -> Vec<&String> {
         .iter()
         .map(|m| &m.message)
         .collect::<Vec<&String>>()
-}
-
-#[cfg(test)]
-pub fn test_operation_without_schema<'a>(
-    operation: &'a str,
-    plan: &'a mut ValidationPlan,
-) -> Vec<ValidationError> {
-    let schema_ast = crate::parser::parse_schema(
-        "
-type Query {
-  dummy: String
-}
-",
-    )
-    .expect("Failed to parse schema");
-
-    let operation_ast = crate::parser::parse_query(operation).unwrap().into_static();
-
-    validate(&schema_ast, &operation_ast, plan)
 }
 
 #[cfg(test)]

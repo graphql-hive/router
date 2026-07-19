@@ -45,9 +45,9 @@
     }
 */
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
-use hive_router::graphql_tools::ast::{visit_document, OperationVisitor, OperationVisitorContext};
+use hive_router::graphql_tools::ast::{OperationVisitor, OperationVisitorContext};
 use hive_router::graphql_tools::parser::schema::Definition;
 use hive_router::graphql_tools::static_graphql::schema::{TypeDefinition, Value};
 use hive_router::graphql_tools::validation::rules::ValidationRule;
@@ -158,22 +158,14 @@ struct OneOfValidationRule {
 }
 
 impl ValidationRule for OneOfValidationRule {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "TOO_MANY_FIELDS_SET_IN_ONEOF"
     }
-    fn validate(
-        &self,
-        op_ctx: &mut OperationVisitorContext<'_>,
-        validation_error_context: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut OneOfValidation {
-                one_of_types: self.one_of_types.clone(),
-            },
-            op_ctx.operation,
-            op_ctx,
-            validation_error_context,
-        );
+
+    fn visitor<'a>(&self) -> graphql_tools::validation::rules::ValidationVisitor<'a> {
+        Box::new(OneOfValidation {
+            one_of_types: self.one_of_types.clone(),
+        })
     }
 }
 
@@ -186,7 +178,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for OneOfValidation {
         &mut self,
         visitor_context: &mut OperationVisitorContext<'a>,
         user_context: &mut ValidationErrorContext,
-        fields: &BTreeMap<String, graphql_tools::static_graphql::query::Value>,
+        fields: &[(String, graphql_tools::static_graphql::query::Value)],
     ) {
         if let Some(TypeDefinition::InputObject(input_type)) = visitor_context.current_input_type()
         {

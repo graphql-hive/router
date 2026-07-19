@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::ValidationRule;
-use crate::ast::{visit_document, AstNodeWithName, OperationVisitor, OperationVisitorContext};
+use crate::ast::{AstNodeWithName, OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::{self, OperationDefinition};
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
 
@@ -11,20 +11,20 @@ use crate::validation::utils::{ValidationError, ValidationErrorContext};
 /// are used, either directly or within a spread fragment.
 ///
 /// See https://spec.graphql.org/draft/#sec-All-Variables-Used
-pub struct NoUnusedVariables<'a> {
-    current_scope: Option<NoUnusedVariablesScope<'a>>,
-    defined_variables: HashMap<Option<&'a str>, HashSet<&'a str>>,
-    used_variables: HashMap<NoUnusedVariablesScope<'a>, Vec<&'a str>>,
-    spreads: HashMap<NoUnusedVariablesScope<'a>, Vec<&'a str>>,
+pub struct NoUnusedVariables<'doc> {
+    current_scope: Option<NoUnusedVariablesScope<'doc>>,
+    defined_variables: HashMap<Option<&'doc str>, HashSet<&'doc str>>,
+    used_variables: HashMap<NoUnusedVariablesScope<'doc>, Vec<&'doc str>>,
+    spreads: HashMap<NoUnusedVariablesScope<'doc>, Vec<&'doc str>>,
 }
 
-impl<'a> Default for NoUnusedVariables<'a> {
+impl Default for NoUnusedVariables<'_> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'a> NoUnusedVariables<'a> {
+impl NoUnusedVariables<'_> {
     pub fn new() -> Self {
         Self {
             current_scope: None,
@@ -35,13 +35,13 @@ impl<'a> NoUnusedVariables<'a> {
     }
 }
 
-impl<'a> NoUnusedVariables<'a> {
+impl<'doc> NoUnusedVariables<'doc> {
     fn find_used_vars(
         &self,
-        from: &NoUnusedVariablesScope<'a>,
+        from: &NoUnusedVariablesScope<'doc>,
         defined: &HashSet<&str>,
-        used: &mut HashSet<&'a str>,
-        visited: &mut HashSet<NoUnusedVariablesScope<'a>>,
+        used: &mut HashSet<&'doc str>,
+        visited: &mut HashSet<NoUnusedVariablesScope<'doc>>,
     ) {
         if visited.contains(from) {
             return;
@@ -71,17 +71,17 @@ impl<'a> NoUnusedVariables<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum NoUnusedVariablesScope<'a> {
-    Operation(Option<&'a str>),
-    Fragment(&'a str),
+pub enum NoUnusedVariablesScope<'doc> {
+    Operation(Option<&'doc str>),
+    Fragment(&'doc str),
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for NoUnusedVariables<'a> {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for NoUnusedVariables<'doc> {
     fn enter_operation_definition(
         &mut self,
         _: &mut OperationVisitorContext,
         _: &mut ValidationErrorContext,
-        operation_definition: &'a OperationDefinition,
+        operation_definition: &'doc OperationDefinition,
     ) {
         let op_name = operation_definition.node_name();
         self.current_scope = Some(NoUnusedVariablesScope::Operation(op_name));
@@ -92,7 +92,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for NoUnusedVariables<'a> 
         &mut self,
         _: &mut OperationVisitorContext,
         _: &mut ValidationErrorContext,
-        fragment_definition: &'a query::FragmentDefinition,
+        fragment_definition: &'doc query::FragmentDefinition,
     ) {
         self.current_scope = Some(NoUnusedVariablesScope::Fragment(&fragment_definition.name));
     }
@@ -101,7 +101,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for NoUnusedVariables<'a> 
         &mut self,
         _: &mut OperationVisitorContext,
         _: &mut ValidationErrorContext,
-        fragment_spread: &'a query::FragmentSpread,
+        fragment_spread: &'doc query::FragmentSpread,
     ) {
         if let Some(scope) = &self.current_scope {
             self.spreads
@@ -115,7 +115,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for NoUnusedVariables<'a> 
         &mut self,
         _: &mut OperationVisitorContext,
         _: &mut ValidationErrorContext,
-        variable_definition: &'a query::VariableDefinition,
+        variable_definition: &'doc query::VariableDefinition,
     ) {
         if let Some(NoUnusedVariablesScope::Operation(ref name)) = self.current_scope {
             if let Some(vars) = self.defined_variables.get_mut(name) {
@@ -128,7 +128,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for NoUnusedVariables<'a> 
         &mut self,
         _: &mut OperationVisitorContext,
         _: &mut ValidationErrorContext,
-        (_arg_name, arg_value): &'a (String, query::Value),
+        (_arg_name, arg_value): &'doc (String, query::Value),
     ) {
         if let Some(ref scope) = self.current_scope {
             self.used_variables
@@ -180,22 +180,13 @@ fn error_message(var_name: &str, op_name: &Option<&str>) -> String {
     }
 }
 
-impl<'n> ValidationRule for NoUnusedVariables<'n> {
-    fn error_code<'a>(&self) -> &'a str {
+impl ValidationRule for NoUnusedVariables<'_> {
+    fn error_code(&self) -> &'static str {
         "NoUnusedVariables"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut NoUnusedVariables::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
+        Box::new(NoUnusedVariables::new())
     }
 }
 

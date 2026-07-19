@@ -139,6 +139,21 @@ mod tests {
     }
 
     #[test]
+    fn arguments_map_is_order_independent() {
+        let first = ArgumentsMap::from(vec![
+            ("a".to_string(), Value::Int(1)),
+            ("b".to_string(), Value::Int(2)),
+        ]);
+        let second = ArgumentsMap::from(vec![
+            ("b".to_string(), Value::Int(2)),
+            ("a".to_string(), Value::Int(1)),
+        ]);
+
+        assert_eq!(first, second);
+        assert_eq!(first.hash_u64(), second.hash_u64());
+    }
+
+    #[test]
     fn parse_and_render_mutation_with_escaped_string_argument() {
         // End-to-end check that a string argument whose decoded value contains
         // GraphQL-special characters (quotes, backslashes, newlines) round-trips

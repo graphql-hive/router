@@ -1,5 +1,5 @@
 use super::ValidationRule;
-use crate::ast::{visit_document, OperationVisitor, OperationVisitorContext};
+use crate::ast::{OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::*;
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
 
@@ -23,7 +23,7 @@ impl KnownFragmentNames {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownFragmentNames {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for KnownFragmentNames {
     fn enter_fragment_spread(
         &mut self,
         visitor_context: &mut OperationVisitorContext,
@@ -44,21 +44,12 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for KnownFragmentNames {
 }
 
 impl ValidationRule for KnownFragmentNames {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "KnownFragmentNames"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut KnownFragmentNames::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
+        Box::new(KnownFragmentNames::new())
     }
 }
 

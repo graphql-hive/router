@@ -5,7 +5,7 @@ use crate::static_graphql::query::{
     Directive, Field, FragmentDefinition, FragmentSpread, InlineFragment, OperationDefinition,
 };
 use crate::{
-    ast::{visit_document, OperationVisitor, OperationVisitorContext},
+    ast::{OperationVisitor, OperationVisitorContext},
     validation::utils::{ValidationError, ValidationErrorContext},
 };
 
@@ -56,10 +56,10 @@ impl UniqueDirectivesPerLocation {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueDirectivesPerLocation {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for UniqueDirectivesPerLocation {
     fn enter_operation_definition(
         &mut self,
-        ctx: &mut OperationVisitorContext<'a>,
+        ctx: &mut OperationVisitorContext<'doc>,
         err_ctx: &mut ValidationErrorContext,
         operation: &OperationDefinition,
     ) {
@@ -68,7 +68,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueDirectivesPerLoc
 
     fn enter_field(
         &mut self,
-        ctx: &mut OperationVisitorContext<'a>,
+        ctx: &mut OperationVisitorContext<'doc>,
         err_ctx: &mut ValidationErrorContext,
         field: &Field,
     ) {
@@ -77,7 +77,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueDirectivesPerLoc
 
     fn enter_fragment_definition(
         &mut self,
-        ctx: &mut OperationVisitorContext<'a>,
+        ctx: &mut OperationVisitorContext<'doc>,
         err_ctx: &mut ValidationErrorContext,
         fragment: &FragmentDefinition,
     ) {
@@ -86,7 +86,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueDirectivesPerLoc
 
     fn enter_fragment_spread(
         &mut self,
-        ctx: &mut OperationVisitorContext<'a>,
+        ctx: &mut OperationVisitorContext<'doc>,
         err_ctx: &mut ValidationErrorContext,
         fragment_spread: &FragmentSpread,
     ) {
@@ -95,7 +95,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueDirectivesPerLoc
 
     fn enter_inline_fragment(
         &mut self,
-        ctx: &mut OperationVisitorContext<'a>,
+        ctx: &mut OperationVisitorContext<'doc>,
         err_ctx: &mut ValidationErrorContext,
         inline_fragment: &InlineFragment,
     ) {
@@ -104,21 +104,12 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueDirectivesPerLoc
 }
 
 impl ValidationRule for UniqueDirectivesPerLocation {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "UniqueDirectivesPerLocation"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut UniqueDirectivesPerLocation::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
+        Box::new(UniqueDirectivesPerLocation::new())
     }
 }
 

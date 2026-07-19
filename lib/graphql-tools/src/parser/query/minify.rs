@@ -672,7 +672,7 @@ mod tests {
             &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
         );
 
-        insta::assert_snapshot!(minified_document, @r#"query queryName($foo:ComplexType$site:Site=MOBILE){whoever123is:node(id:[123 456]){id...on User@defer{field2{id alias:field1(first:10 after:$foo)@include(if:$foo){id...frag}}}...@skip(unless:$foo){id}...{id}}}mutation likeStory{like(story:123)@defer{story{id}}}subscription StoryLikeSubscription($input:StoryLikeSubscribeInput){storyLikeSubscribe(input:$input){story{likers{count}likeSentence{text}}}}fragment frag on Friend{foo(size:$size bar:$b obj:{block:"block string uses \"\"\"" key:"value"})}{unnamed(truthy:true falsey:false nullish:null)query}"#);
+        insta::assert_snapshot!(minified_document, @r#"query queryName($foo:ComplexType$site:Site=MOBILE){whoever123is:node(id:[123 456]){id...on User@defer{field2{id alias:field1(first:10 after:$foo)@include(if:$foo){id...frag}}}...@skip(unless:$foo){id}...{id}}}mutation likeStory{like(story:123)@defer{story{id}}}subscription StoryLikeSubscription($input:StoryLikeSubscribeInput){storyLikeSubscribe(input:$input){story{likers{count}likeSentence{text}}}}fragment frag on Friend{foo(size:$size bar:$b obj:{key:"value" block:"block string uses \"\"\""})}{unnamed(truthy:true falsey:false nullish:null)query}"#);
 
         // The output is different because the parsed AST normalizes multiline strings,
         // while minify_query preserves the original formatting.

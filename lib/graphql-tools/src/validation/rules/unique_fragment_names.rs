@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use super::ValidationRule;
-use crate::ast::{visit_document, AstNodeWithName, OperationVisitor, OperationVisitorContext};
+use crate::ast::{AstNodeWithName, OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::*;
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
 
@@ -10,66 +10,67 @@ use crate::validation::utils::{ValidationError, ValidationErrorContext};
 /// A GraphQL document is only valid if all defined fragments have unique names.
 ///
 /// See https://spec.graphql.org/draft/#sec-Fragment-Name-Uniqueness
-pub struct UniqueFragmentNames<'a> {
-    findings_counter: HashMap<&'a str, i32>,
+pub struct UniqueFragmentNames<'doc> {
+    findings_counter: HashMap<&'doc str, i32>,
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueFragmentNames<'a> {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for UniqueFragmentNames<'doc> {
     fn enter_fragment_definition(
         &mut self,
         _: &mut OperationVisitorContext,
         _: &mut ValidationErrorContext,
-        fragment: &'a FragmentDefinition,
+        fragment: &'doc FragmentDefinition,
     ) {
         if let Some(name) = fragment.node_name() {
             self.store_finding(name);
         }
     }
+
+    fn leave_document(
+        &mut self,
+        _: &mut OperationVisitorContext,
+        user_context: &mut ValidationErrorContext,
+        _: &Document,
+    ) {
+        self.findings_counter
+            .iter()
+            .filter(|(_, count)| **count > 1)
+            .for_each(|(name, _)| {
+                user_context.report_error(ValidationError {
+                    error_code: self.error_code(),
+                    message: format!("There can be only one fragment named \"{}\".", name),
+                    locations: vec![],
+                });
+            });
+    }
 }
 
-impl<'a> Default for UniqueFragmentNames<'a> {
+impl Default for UniqueFragmentNames<'_> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'a> UniqueFragmentNames<'a> {
+impl<'doc> UniqueFragmentNames<'doc> {
     pub fn new() -> Self {
         Self {
             findings_counter: HashMap::new(),
         }
     }
 
-    fn store_finding(&mut self, name: &'a str) {
+    fn store_finding(&mut self, name: &'doc str) {
         let value = *self.findings_counter.entry(name).or_insert(0);
         self.findings_counter.insert(name, value + 1);
     }
 }
 
-impl<'u> ValidationRule for UniqueFragmentNames<'u> {
-    fn error_code<'a>(&self) -> &'a str {
+impl ValidationRule for UniqueFragmentNames<'_> {
+    fn error_code(&self) -> &'static str {
         "UniqueFragmentNames"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        let mut rule = UniqueFragmentNames::new();
-
-        visit_document(&mut rule, ctx.operation, ctx, error_collector);
-
-        rule.findings_counter
-            .into_iter()
-            .filter(|(_key, value)| *value > 1)
-            .for_each(|(key, _value)| {
-                error_collector.report_error(ValidationError {
-                    error_code: self.error_code(),
-                    message: format!("There can be only one fragment named \"{}\".", key),
-                    locations: vec![],
-                })
-            })
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
+        Box::new(UniqueFragmentNames::new())
     }
 }
 
