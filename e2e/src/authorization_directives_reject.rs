@@ -198,13 +198,6 @@ mod authorization_directives_in_reject_mode_e2e_tests {
               "message": "Unauthorized field or type",
               "extensions": {
                 "code": "UNAUTHORIZED_FIELD_OR_TYPE",
-                "affectedPath": "me"
-              }
-            },
-            {
-              "message": "Unauthorized field or type",
-              "extensions": {
-                "code": "UNAUTHORIZED_FIELD_OR_TYPE",
                 "affectedPath": "topProducts.shippingEstimate"
               }
             },
@@ -213,6 +206,13 @@ mod authorization_directives_in_reject_mode_e2e_tests {
               "extensions": {
                 "code": "UNAUTHORIZED_FIELD_OR_TYPE",
                 "affectedPath": "topProducts.reviews.body"
+              }
+            },
+            {
+              "message": "Unauthorized field or type",
+              "extensions": {
+                "code": "UNAUTHORIZED_FIELD_OR_TYPE",
+                "affectedPath": "me"
               }
             }
           ]

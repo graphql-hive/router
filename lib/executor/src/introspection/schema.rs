@@ -71,6 +71,9 @@ pub struct SchemaMetadata {
     pub scalar_types: HashSet<String>,
     pub union_types: HashSet<String>,
     pub interface_types: HashSet<String>,
+    pub query_type: Option<String>,
+    pub mutation_type: Option<String>,
+    pub subscription_type: Option<String>,
 }
 
 impl SchemaMetadata {
@@ -144,8 +147,22 @@ impl SchemaWithMetadata for ConsumerSchema {
         let mut union_types: HashSet<String> = HashSet::default();
         let mut interface_types: HashSet<String> = HashSet::default();
 
+        let mut query_type: Option<String> = None;
+        let mut mutation_type: Option<String> = None;
+        let mut subscription_type: Option<String> = None;
+        let mut found_schema_definition: bool = false;
+
         for definition in &self.document.definitions {
             match definition {
+                Definition::SchemaDefinition(schema_definition) => {
+                    found_schema_definition = true;
+                    query_type = schema_definition.query.as_deref().map(|n| n.to_string());
+                    mutation_type = schema_definition.mutation.as_deref().map(|n| n.to_string());
+                    subscription_type = schema_definition
+                        .subscription
+                        .as_deref()
+                        .map(|n| n.to_string());
+                }
                 Definition::TypeDefinition(TypeDefinition::Enum(enum_type)) => {
                     let name = enum_type.name.to_string();
                     let mut values = HashSet::default();
@@ -156,6 +173,22 @@ impl SchemaWithMetadata for ConsumerSchema {
                 }
                 Definition::TypeDefinition(TypeDefinition::Object(object_type)) => {
                     let name = object_type.name.to_string();
+
+                    if !found_schema_definition {
+                        match name.as_str() {
+                            "Query" => {
+                                query_type = Some(name.clone());
+                            }
+                            "Mutation" => {
+                                mutation_type = Some(name.clone());
+                            }
+                            "Subscription" => {
+                                subscription_type = Some(name.clone());
+                            }
+                            _ => {}
+                        }
+                    }
+
                     object_types.insert(name.clone());
                     let fields = type_fields.entry(name).or_default();
                     for field in &object_type.fields {
@@ -240,6 +273,9 @@ impl SchemaWithMetadata for ConsumerSchema {
             scalar_types,
             union_types,
             interface_types,
+            query_type,
+            mutation_type,
+            subscription_type,
         }
     }
 }

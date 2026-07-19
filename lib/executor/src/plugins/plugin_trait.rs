@@ -1,6 +1,7 @@
 use crate::{
     hooks::{
         on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult},
+        on_graphql_analysis::{OnGraphqlAnalysisHookPayload, OnGraphqlAnalysisHookResult},
         on_graphql_error::{OnGraphQLErrorHookPayload, OnGraphQLErrorHookResult},
         on_graphql_params::{OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult},
         on_graphql_parse::{OnGraphQLParseHookResult, OnGraphQLParseStartHookPayload},
@@ -410,6 +411,13 @@ pub trait RouterPlugin: Send + Sync + 'static {
         start_payload.proceed()
     }
     #[inline]
+    async fn on_graphql_analysis<'exec>(
+        &'exec self,
+        _payload: &mut OnGraphqlAnalysisHookPayload<'exec>,
+    ) -> OnGraphqlAnalysisHookResult {
+        OnGraphqlAnalysisHookResult::Proceed
+    }
+    #[inline]
     async fn on_query_plan<'exec>(
         &'exec self,
         start_payload: OnQueryPlanStartHookPayload<'exec>,
@@ -473,6 +481,10 @@ pub trait DynRouterPlugin: Send + Sync + 'static {
         &'exec self,
         start_payload: OnGraphQLValidationStartHookPayload<'exec>,
     ) -> OnGraphQLValidationStartHookResult<'exec>;
+    async fn on_graphql_analysis<'exec>(
+        &'exec self,
+        payload: &mut OnGraphqlAnalysisHookPayload<'exec>,
+    ) -> OnGraphqlAnalysisHookResult;
     async fn on_query_plan<'exec>(
         &'exec self,
         start_payload: OnQueryPlanStartHookPayload<'exec>,
@@ -532,6 +544,12 @@ where
         start_payload: OnGraphQLValidationStartHookPayload<'exec>,
     ) -> OnGraphQLValidationStartHookResult<'exec> {
         RouterPlugin::on_graphql_validation(self, start_payload).await
+    }
+    async fn on_graphql_analysis<'exec>(
+        &'exec self,
+        payload: &mut OnGraphqlAnalysisHookPayload<'exec>,
+    ) -> OnGraphqlAnalysisHookResult {
+        RouterPlugin::on_graphql_analysis(self, payload).await
     }
     #[inline]
     async fn on_query_plan<'exec>(

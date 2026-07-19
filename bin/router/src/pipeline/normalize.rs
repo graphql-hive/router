@@ -16,8 +16,14 @@ use xxhash_rust::xxh3::Xxh3;
 
 use crate::cache_state::{CacheHitMiss, EntryResultHitMissExt};
 use crate::pipeline::error::PipelineError;
+use crate::pipeline::nullify::rebuilder::{
+    rebuild_nulled_operation, rebuild_nulled_projection_plan,
+};
 use crate::pipeline::parser::GraphQLParserPayload;
+use crate::pipeline::trie::Trie;
 use crate::schema_state::SchemaState;
+use hive_router_plan_executor::operation_filter::OperationFilterOutput;
+use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use tracing::{trace, Instrument};
 
 #[derive(Debug, Clone)]
@@ -48,6 +54,49 @@ impl<'a> From<&'a OperationIdentity> for GraphQLSpanOperationIdentity<'a> {
             operation_type: op_id.operation_type.as_str(),
             client_document_hash: &op_id.client_document_hash,
         }
+    }
+}
+
+impl GraphQLNormalizationPayload {
+    pub(crate) fn with_operation(
+        &self,
+        new_operation: OperationDefinition,
+        new_projection_plan: Vec<FieldProjectionPlan>,
+    ) -> Arc<GraphQLNormalizationPayload> {
+        let hashes =
+            hash_normalized_operation(&new_operation, self.operation_for_introspection.as_deref());
+        Arc::new(GraphQLNormalizationPayload {
+            operation_for_plan: Arc::new(new_operation),
+            operation_for_plan_hash: hashes.operation_for_plan_hash,
+            operation_for_introspection: self.operation_for_introspection.clone(),
+            operation_for_introspection_hash: hashes.operation_for_introspection_hash,
+            normalized_operation_hash: hashes.combined_operation_hash,
+            root_type_name: self.root_type_name,
+            projection_plan: Arc::new(new_projection_plan),
+            operation_identity: self.operation_identity.clone(),
+        })
+    }
+}
+
+/// OperationFilterOutput is defined in the executor crate,
+/// so we extend it, to have a nice API to produce a new GraphQLNormalizationPayload,
+/// based on the filter output and the original payload.
+pub(crate) trait FilterOutputExt<'exec> {
+    fn apply_to(
+        self,
+        payload: &GraphQLNormalizationPayload,
+    ) -> (Arc<GraphQLNormalizationPayload>, Vec<GraphQLError>);
+}
+
+impl<'exec> FilterOutputExt<'exec> for OperationFilterOutput<'exec> {
+    fn apply_to(
+        self,
+        payload: &GraphQLNormalizationPayload,
+    ) -> (Arc<GraphQLNormalizationPayload>, Vec<GraphQLError>) {
+        let trie = Trie::from_paths(&self.rejected_paths);
+        let new_op = rebuild_nulled_operation(&payload.operation_for_plan, &trie);
+        let new_projection = rebuild_nulled_projection_plan(&payload.projection_plan, &trie);
+        (payload.with_operation(new_op, new_projection), self.errors)
     }
 }
 

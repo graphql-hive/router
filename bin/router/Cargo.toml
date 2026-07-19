@@ -84,7 +84,6 @@ ulid = "1.2.1"
 tokio-util = { workspace = true }
 cookie = "0.18.1"
 arc-swap = { workspace = true }
-lasso2 = "0.8.2"
 anyhow = { workspace = true }
 combine = { workspace = true }
 strum = { workspace = true }

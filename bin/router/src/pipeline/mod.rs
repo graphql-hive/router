@@ -14,8 +14,13 @@ use hive_router_plan_executor::{
         plan::{CoerceVariablesPayload, PlanExecutionOutput, QueryPlanExecutionResult},
     },
     headers::response::{ResponseHeaderAggregator, ResponseHeaderSink},
-    hooks::{on_graphql_params::GraphQLParams, on_supergraph_load::SupergraphData},
+    hooks::{
+        on_graphql_analysis::{OnGraphqlAnalysisHookPayload, OnGraphqlAnalysisHookResult},
+        on_graphql_params::GraphQLParams,
+        on_supergraph_load::SupergraphData,
+    },
     plugin_context::{PluginContext, PluginRequestState},
+    plugins::hooks,
     request_context::{RequestContextExt, SharedRequestContext},
 };
 use hive_router_query_planner::{
@@ -56,7 +61,7 @@ use crate::{
         execution_request::{GetQueryStr, OperationPreparation, OperationPreparationResult},
         header::{RequestAccepts, ResponseMode, TEXT_HTML_MIME},
         introspection_policy::handle_introspection_policy,
-        normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
+        normalize::{normalize_request_with_cache, FilterOutputExt, GraphQLNormalizationPayload},
         parser::{parse_operation_with_cache, ParseResult},
         progressive_override::RequestOverrideContext,
         query_plan::{plan_operation_with_cache, QueryPlanResult},
@@ -91,6 +96,7 @@ pub mod introspection_policy;
 pub mod long_lived_client_limit;
 pub mod multipart_subscribe;
 pub mod normalize;
+pub mod nullify;
 pub mod parser;
 pub mod persisted_documents;
 pub mod progressive_override;
@@ -98,6 +104,7 @@ pub mod query_plan;
 pub mod request_extensions;
 pub mod sse;
 pub mod timeout;
+pub(crate) mod trie;
 pub mod usage_reporting;
 pub mod validation;
 pub mod websocket_server;
@@ -612,12 +619,13 @@ pub async fn execute_pipeline<'exec>(
         handle_introspection_policy(&shared_state.introspection_policy, &client_request_details)?;
     }
 
+    let normalize_payload = normalize_payload.clone();
     let cancellation_token =
         CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
 
-    let (normalize_payload, authorization_errors) = enforce_operation_authorization(
+    let (mut normalize_payload, authorization_errors) = enforce_operation_authorization(
         &shared_state.router_config,
-        normalize_payload,
+        &normalize_payload,
         &supergraph.authorization,
         &supergraph.metadata,
         &variable_payload,
@@ -673,6 +681,38 @@ pub async fn execute_pipeline<'exec>(
         }
     }
 
+    let client_request_details = Arc::new(client_request_details.freeze());
+
+    let mut plugin_graphql_errors = Vec::new();
+    if let Some(plugin_req_state) = &plugin_req_state {
+        let mut analysis_payload = OnGraphqlAnalysisHookPayload::new(
+            &plugin_req_state.router_http_request,
+            &plugin_req_state.context,
+            plugin_req_state
+                .request_context
+                .for_plugin::<hooks::OnGraphqlAnalysis>(),
+            &normalize_payload.operation_for_plan,
+            client_request_details.clone(),
+            graphql_params,
+            &supergraph.metadata,
+            &variable_payload,
+        );
+
+        for plugin in plugin_req_state.plugins.iter() {
+            match plugin.on_graphql_analysis(&mut analysis_payload).await {
+                OnGraphqlAnalysisHookResult::Proceed => {}
+                OnGraphqlAnalysisHookResult::EndWithResponse(response) => {
+                    return Ok(QueryPlanExecutionResult::Single(response));
+                }
+            }
+        }
+
+        let filter_output = analysis_payload.run_operation_filters()?;
+        if filter_output.has_changes() {
+            (normalize_payload, plugin_graphql_errors) = filter_output.apply_to(&normalize_payload);
+        }
+    }
+
     let query_plan_result = plan_operation_with_cache(
         supergraph,
         schema_state,
@@ -711,13 +751,16 @@ pub async fn execute_pipeline<'exec>(
         None => None,
     };
 
-    let client_request_details = client_request_details.freeze();
     let planned_request = PlannedRequest {
         normalized_payload: normalize_payload,
         query_plan_payload: &query_plan_payload,
         variable_payload: variable_payload.clone(),
-        client_request_details: client_request_details.into(),
-        authorization_errors,
+        client_request_details: client_request_details.clone(),
+        initial_errors: authorization_errors
+            .iter()
+            .map(|e| e.into())
+            .chain(plugin_graphql_errors)
+            .collect(),
         demand_control_execution_context,
         plugin_req_state,
     };

@@ -92,14 +92,17 @@ fn authorization_benchmark(c: &mut Criterion) {
         b.iter(|| {
             let jwt_req_details = JwtRequestDetails::Unauthenticated;
 
-            black_box(apply_authorization_to_operation(
-                bubble_up.normalized_payload,
-                bubble_up.auth_metadata,
-                bubble_up.schema_metadata,
-                bubble_up.variable_payload,
-                &jwt_req_details,
-                false,
-            ));
+            black_box(
+                apply_authorization_to_operation(
+                    bubble_up.normalized_payload,
+                    bubble_up.auth_metadata,
+                    bubble_up.schema_metadata,
+                    bubble_up.variable_payload,
+                    &jwt_req_details,
+                    false,
+                )
+                .unwrap(),
+            );
         })
     });
 
@@ -122,14 +125,17 @@ fn authorization_benchmark(c: &mut Criterion) {
         b.iter(|| {
             let jwt_req_details = JwtRequestDetails::Unauthenticated;
 
-            black_box(apply_authorization_to_operation(
-                complex.normalized_payload,
-                complex.auth_metadata,
-                complex.schema_metadata,
-                complex.variable_payload,
-                &jwt_req_details,
-                false,
-            ));
+            black_box(
+                apply_authorization_to_operation(
+                    complex.normalized_payload,
+                    complex.auth_metadata,
+                    complex.schema_metadata,
+                    complex.variable_payload,
+                    &jwt_req_details,
+                    false,
+                )
+                .unwrap(),
+            );
         })
     });
 
@@ -157,14 +163,17 @@ fn authorization_benchmark(c: &mut Criterion) {
                 scopes: Some(vec!["read:shipping".to_string()]),
             };
 
-            black_box(apply_authorization_to_operation(
-                complex_partially.normalized_payload,
-                complex_partially.auth_metadata,
-                complex_partially.schema_metadata,
-                complex_partially.variable_payload,
-                &jwt_req_details,
-                false,
-            ));
+            black_box(
+                apply_authorization_to_operation(
+                    complex_partially.normalized_payload,
+                    complex_partially.auth_metadata,
+                    complex_partially.schema_metadata,
+                    complex_partially.variable_payload,
+                    &jwt_req_details,
+                    false,
+                )
+                .unwrap(),
+            );
         })
     });
 
@@ -238,14 +247,17 @@ fn authorization_benchmark(c: &mut Criterion) {
                 ]),
             };
 
-            black_box(apply_authorization_to_operation(
-                large_mostly_auth.normalized_payload,
-                large_mostly_auth.auth_metadata,
-                large_mostly_auth.schema_metadata,
-                large_mostly_auth.variable_payload,
-                &jwt_req_details,
-                false,
-            ));
+            black_box(
+                apply_authorization_to_operation(
+                    large_mostly_auth.normalized_payload,
+                    large_mostly_auth.auth_metadata,
+                    large_mostly_auth.schema_metadata,
+                    large_mostly_auth.variable_payload,
+                    &jwt_req_details,
+                    false,
+                )
+                .unwrap(),
+            );
         })
     });
 
@@ -306,14 +318,17 @@ fn authorization_benchmark(c: &mut Criterion) {
                 scopes: Some(vec![]),
             };
 
-            black_box(apply_authorization_to_operation(
-                large_partially_denied.normalized_payload,
-                large_partially_denied.auth_metadata,
-                large_partially_denied.schema_metadata,
-                large_partially_denied.variable_payload,
-                &jwt_req_details,
-                false,
-            ));
+            black_box(
+                apply_authorization_to_operation(
+                    large_partially_denied.normalized_payload,
+                    large_partially_denied.auth_metadata,
+                    large_partially_denied.schema_metadata,
+                    large_partially_denied.variable_payload,
+                    &jwt_req_details,
+                    false,
+                )
+                .unwrap(),
+            );
         })
     });
 
@@ -385,14 +400,17 @@ fn authorization_benchmark(c: &mut Criterion) {
                 scopes: Some(vec!["read:price".to_string(), "read:shipping".to_string()]),
             };
 
-            black_box(apply_authorization_to_operation(
-                deep_nested.normalized_payload,
-                deep_nested.auth_metadata,
-                deep_nested.schema_metadata,
-                deep_nested.variable_payload,
-                &jwt_req_details,
-                false,
-            ));
+            black_box(
+                apply_authorization_to_operation(
+                    deep_nested.normalized_payload,
+                    deep_nested.auth_metadata,
+                    deep_nested.schema_metadata,
+                    deep_nested.variable_payload,
+                    &jwt_req_details,
+                    false,
+                )
+                .unwrap(),
+            );
         })
     });
 
@@ -440,14 +458,17 @@ fn authorization_benchmark(c: &mut Criterion) {
         b.iter(|| {
             let jwt_req_details = JwtRequestDetails::Unauthenticated;
 
-            black_box(apply_authorization_to_operation(
-                large_unauth.normalized_payload,
-                large_unauth.auth_metadata,
-                large_unauth.schema_metadata,
-                large_unauth.variable_payload,
-                &jwt_req_details,
-                false,
-            ));
+            black_box(
+                apply_authorization_to_operation(
+                    large_unauth.normalized_payload,
+                    large_unauth.auth_metadata,
+                    large_unauth.schema_metadata,
+                    large_unauth.variable_payload,
+                    &jwt_req_details,
+                    false,
+                )
+                .unwrap(),
+            );
         })
     });
 
@@ -484,14 +505,17 @@ fn authorization_benchmark(c: &mut Criterion) {
         b.iter(|| {
             let jwt_req_details = JwtRequestDetails::Unauthenticated;
 
-            black_box(apply_authorization_to_operation(
-                interface_auth_inline_unauth.normalized_payload,
-                interface_auth_inline_unauth.auth_metadata,
-                interface_auth_inline_unauth.schema_metadata,
-                interface_auth_inline_unauth.variable_payload,
-                &jwt_req_details,
-                false,
-            ));
+            black_box(
+                apply_authorization_to_operation(
+                    interface_auth_inline_unauth.normalized_payload,
+                    interface_auth_inline_unauth.auth_metadata,
+                    interface_auth_inline_unauth.schema_metadata,
+                    interface_auth_inline_unauth.variable_payload,
+                    &jwt_req_details,
+                    false,
+                )
+                .unwrap(),
+            );
         })
     });
 
@@ -534,14 +558,17 @@ fn authorization_benchmark(c: &mut Criterion) {
                 scopes: Some(vec![]),
             };
 
-            black_box(apply_authorization_to_operation(
-                interface_auth_inline_auth.normalized_payload,
-                interface_auth_inline_auth.auth_metadata,
-                interface_auth_inline_auth.schema_metadata,
-                interface_auth_inline_auth.variable_payload,
-                &jwt_req_details,
-                false,
-            ));
+            black_box(
+                apply_authorization_to_operation(
+                    interface_auth_inline_auth.normalized_payload,
+                    interface_auth_inline_auth.auth_metadata,
+                    interface_auth_inline_auth.schema_metadata,
+                    interface_auth_inline_auth.variable_payload,
+                    &jwt_req_details,
+                    false,
+                )
+                .unwrap(),
+            );
         })
     });
 }

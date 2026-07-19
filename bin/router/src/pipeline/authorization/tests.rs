@@ -9,6 +9,7 @@ use hive_router_plan_executor::{
         schema::{SchemaMetadata, SchemaWithMetadata},
     },
     projection::plan::FieldProjectionPlan,
+    response::graphql_error::GraphQLError,
 };
 use hive_router_query_planner::{
     ast::normalization::normalize_operation,
@@ -19,7 +20,8 @@ use hive_router_query_planner::{
 
 use crate::pipeline::{
     authorization::{
-        apply_authorization_to_operation, metadata::AuthorizationMetadataExt, AuthorizationDecision,
+        apply_authorization_to_operation, metadata::AuthorizationMetadataExt,
+        AuthorizationDecision, AuthorizationError,
     },
     normalize::{hash_normalized_operation, GraphQLNormalizationPayload, OperationIdentity},
 };
@@ -32,6 +34,20 @@ struct SupergraphTestData {
 
 impl Display for AuthorizationDecision {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fn print_errors(errors: &[AuthorizationError]) -> Vec<String> {
+            errors
+                .iter()
+                .map(GraphQLError::from)
+                .map(|e| {
+                    format!(
+                        "{} @ {}",
+                        e.message,
+                        e.extensions.affected_path.as_deref().unwrap_or_default()
+                    )
+                })
+                .collect()
+        }
+
         match self {
             AuthorizationDecision::NoChange => write!(f, "[NoChange]"),
             AuthorizationDecision::Modified {
@@ -47,15 +63,11 @@ impl Display for AuthorizationDecision {
                     } else {
                         new_operation_definition.to_string()
                     },
-                    errors.iter().map(|e| e.path.clone()).collect::<Vec<_>>()
+                    print_errors(errors)
                 )
             }
             AuthorizationDecision::Reject { errors } => {
-                write!(
-                    f,
-                    "[Reject]\n\nErrors: {:?}",
-                    errors.iter().map(|e| e.path.clone()).collect::<Vec<_>>()
-                )
+                write!(f, "[Reject]\n\nErrors: {:?}", print_errors(errors))
             }
         }
     }
@@ -110,6 +122,7 @@ impl SupergraphTestData {
             &jwt,
             false,
         )
+        .expect("test schema/operation should only reference fields declared in the schema")
     }
 }
 
@@ -211,7 +224,7 @@ mod field_authorization {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: {posts{title}}
-            Errors:    ["me"]
+            Errors:    ["Unauthorized field or type @ me"]
             "#);
         }
 
@@ -235,7 +248,7 @@ mod field_authorization {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: {posts{title}}
-            Errors:    ["my_account"]
+            Errors:    ["Unauthorized field or type @ my_account"]
             "#);
         }
 
@@ -257,7 +270,7 @@ mod field_authorization {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: {posts{title}}
-            Errors:    ["posts.internalNotes"]
+            Errors:    ["Unauthorized field or type @ posts.internalNotes"]
             "#);
         }
 
@@ -284,7 +297,7 @@ mod field_authorization {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: {posts{title}}
-            Errors:    ["posts.comments"]
+            Errors:    ["Unauthorized field or type @ posts.comments"]
             "#);
         }
     }
@@ -330,9 +343,9 @@ mod type_authorization {
 
             let decision = supergraph_data.decide(None, query);
             insta::assert_snapshot!(decision, @r#"
-              [Modified]
-              Operation: <empty>
-              Errors:    ["node"]
+            [Modified]
+            Operation: <empty>
+            Errors:    ["Unauthorized field or type @ node"]
             "#);
         }
 
@@ -349,9 +362,9 @@ mod type_authorization {
 
             let decision = supergraph_data.decide(Some(vec!["a"]), query);
             insta::assert_snapshot!(decision, @r#"
-              [Modified]
-              Operation: <empty>
-              Errors:    ["node"]
+            [Modified]
+            Operation: <empty>
+            Errors:    ["Unauthorized field or type @ node"]
             "#);
         }
 
@@ -385,9 +398,9 @@ mod type_authorization {
 
             let decision = supergraph_data.decide(None, query);
             insta::assert_snapshot!(decision, @r#"
-              [Modified]
-              Operation: <empty>
-              Errors:    ["node"]
+            [Modified]
+            Operation: <empty>
+            Errors:    ["Unauthorized field or type @ node"]
             "#);
         }
 
@@ -411,7 +424,7 @@ mod type_authorization {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["node"]
+            Errors:    ["Unauthorized field or type @ node"]
             "#);
         }
 
@@ -435,14 +448,14 @@ mod type_authorization {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["node"]
+            Errors:    ["Unauthorized field or type @ node"]
             "#);
 
             let decision = supergraph_data.decide(Some(vec!["a", "b"]), query);
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["node"]
+            Errors:    ["Unauthorized field or type @ node"]
             "#);
         }
 
@@ -510,7 +523,7 @@ mod type_authorization {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: {media{score}}
-            Errors:    ["media.id"]
+            Errors:    ["Unauthorized field or type @ media.id"]
             "#);
         }
 
@@ -536,7 +549,7 @@ mod type_authorization {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: {media{...on Book{score} ...on Movie{score}}}
-            Errors:    ["media.id", "media.id"]
+            Errors:    ["Unauthorized field or type @ media.id", "Unauthorized field or type @ media.id"]
             "#);
         }
 
@@ -556,7 +569,7 @@ mod type_authorization {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["media.id", "media.title"]
+            Errors:    ["Unauthorized field or type @ media.id", "Unauthorized field or type @ media.title"]
             "#);
         }
 
@@ -600,7 +613,7 @@ mod type_authorization {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["post"]
+            Errors:    ["Unauthorized field or type @ post"]
             "#);
         }
 
@@ -623,7 +636,7 @@ mod type_authorization {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["post"]
+            Errors:    ["Unauthorized field or type @ post"]
             "#);
         }
 
@@ -642,7 +655,7 @@ mod type_authorization {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["post"]
+            Errors:    ["Unauthorized field or type @ post"]
             "#);
         }
 
@@ -661,7 +674,7 @@ mod type_authorization {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["post.title"]
+            Errors:    ["Unauthorized field or type @ post.title"]
             "#);
         }
 
@@ -717,7 +730,7 @@ mod type_authorization {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["media"]
+            Errors:    ["Unauthorized field or type @ media"]
             "#);
         }
 
@@ -741,7 +754,7 @@ mod type_authorization {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["media"]
+            Errors:    ["Unauthorized field or type @ media"]
             "#);
         }
 
@@ -765,7 +778,7 @@ mod type_authorization {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["media"]
+            Errors:    ["Unauthorized field or type @ media"]
             "#);
         }
 
@@ -854,7 +867,7 @@ mod fragments {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: {posts{title}}
-            Errors:    ["node"]
+            Errors:    ["Unauthorized field or type @ node"]
             "#);
         }
 
@@ -880,7 +893,7 @@ mod fragments {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: {posts{title} node(id: "id"){id ...on User{uid: id}}}
-            Errors:    ["node.username"]
+            Errors:    ["Unauthorized field or type @ node.username"]
             "#);
         }
 
@@ -932,9 +945,9 @@ mod fragments {
 
             let decision = supergraph_data.decide(None, query);
             insta::assert_snapshot!(decision, @r#"
-              [Modified]
-              Operation: {posts{title}}
-              Errors:    ["posts.comments"]
+            [Modified]
+            Operation: {posts{title}}
+            Errors:    ["Unauthorized field or type @ posts.comments"]
             "#);
         }
 
@@ -960,9 +973,9 @@ mod fragments {
 
             let decision = supergraph_data.decide(None, query);
             insta::assert_snapshot!(decision, @r#"
-              [Modified]
-              Operation: {posts{title}}
-              Errors:    ["node"]
+            [Modified]
+            Operation: {posts{title}}
+            Errors:    ["Unauthorized field or type @ node"]
             "#);
         }
 
@@ -988,9 +1001,9 @@ mod fragments {
 
             let decision = supergraph_data.decide(Some(vec!["read:user"]), query);
             insta::assert_snapshot!(decision, @r#"
-              [Modified]
-              Operation: {posts{title} node(id: "id"){id ...on User{uid: id}}}
-              Errors:    ["node.username"]
+            [Modified]
+            Operation: {posts{title} node(id: "id"){id ...on User{uid: id}}}
+            Errors:    ["Unauthorized field or type @ node.username"]
             "#);
         }
 
@@ -1061,9 +1074,9 @@ mod variable_cleanup {
 
         let decision = supergraph_data.decide(None, query);
         insta::assert_snapshot!(decision, @r#"
-          [Modified]
-          Operation: {version}
-          Errors:    ["node"]
+        [Modified]
+        Operation: {version}
+        Errors:    ["Unauthorized field or type @ node"]
         "#);
     }
 }
@@ -1123,7 +1136,7 @@ mod mutations {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["createPost"]
+            Errors:    ["Unauthorized field or type @ createPost"]
             "#);
         }
 
@@ -1143,7 +1156,7 @@ mod mutations {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["createPost"]
+            Errors:    ["Unauthorized field or type @ createPost"]
             "#);
         }
 
@@ -1163,7 +1176,7 @@ mod mutations {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: mutation{deletePost(id: "1")}
-            Errors:    ["createPost"]
+            Errors:    ["Unauthorized field or type @ createPost"]
             "#);
         }
 
@@ -1186,7 +1199,7 @@ mod mutations {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: mutation{deletePost(id: "2")}
-            Errors:    ["createPost", "publishPost"]
+            Errors:    ["Unauthorized field or type @ createPost", "Unauthorized field or type @ publishPost"]
             "#);
         }
     }
@@ -1277,7 +1290,7 @@ mod mutations {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: mutation{createPost(content: "World", title: "Hello"){id title} deletePost(id: "2")}
-            Errors:    ["publishPost"]
+            Errors:    ["Unauthorized field or type @ publishPost"]
             "#);
         }
     }
@@ -1302,7 +1315,7 @@ mod mutations {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: mutation($id:ID!){deletePost(id: $id)}
-            Errors:    ["createPost"]
+            Errors:    ["Unauthorized field or type @ createPost"]
             "#);
         }
 
@@ -1365,7 +1378,7 @@ mod mutations {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["createUser"]
+            Errors:    ["Unauthorized field or type @ createUser"]
             "#);
         }
 
@@ -1407,7 +1420,7 @@ mod mutations {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: mutation{createPost(content: "World", title: "Hello"){id title}}
-            Errors:    ["createUser"]
+            Errors:    ["Unauthorized field or type @ createUser"]
             "#);
         }
     }
@@ -1471,7 +1484,7 @@ mod authenticated_directive {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: {publicPosts{id title}}
-            Errors:    ["me"]
+            Errors:    ["Unauthorized field or type @ me"]
             "#);
         }
 
@@ -1513,7 +1526,7 @@ mod authenticated_directive {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["profile"]
+            Errors:    ["Unauthorized field or type @ profile"]
             "#);
         }
     }
@@ -1541,7 +1554,7 @@ mod authenticated_directive {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: {publicPosts{id title}}
-            Errors:    ["publicPosts.author"]
+            Errors:    ["Unauthorized field or type @ publicPosts.author"]
             "#);
         }
 
@@ -1607,7 +1620,7 @@ mod authenticated_directive {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["createPost"]
+            Errors:    ["Unauthorized field or type @ createPost"]
             "#);
         }
 
@@ -1648,7 +1661,7 @@ mod authenticated_directive {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["createPost", "updateProfile"]
+            Errors:    ["Unauthorized field or type @ createPost", "Unauthorized field or type @ updateProfile"]
             "#);
         }
     }
@@ -1689,7 +1702,7 @@ mod authenticated_directive {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["posts"]
+            Errors:    ["Unauthorized field or type @ posts"]
             "#);
         }
 
@@ -1730,7 +1743,7 @@ mod authenticated_directive {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["posts", "me"]
+            Errors:    ["Unauthorized field or type @ posts", "Unauthorized field or type @ me"]
             "#);
         }
     }
@@ -1811,7 +1824,7 @@ mod authenticated_directive {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["user"]
+            Errors:    ["Unauthorized field or type @ user"]
             "#);
         }
 
@@ -1831,7 +1844,7 @@ mod authenticated_directive {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["createUser"]
+            Errors:    ["Unauthorized field or type @ createUser"]
             "#);
         }
 
@@ -1861,7 +1874,7 @@ mod authenticated_directive {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["requiredUser", "optionalUser", "requiredPosts", "optionalPosts"]
+            Errors:    ["Unauthorized field or type @ requiredUser", "Unauthorized field or type @ optionalUser", "Unauthorized field or type @ requiredPosts", "Unauthorized field or type @ optionalPosts"]
             "#);
         }
 
@@ -1902,7 +1915,7 @@ mod authenticated_directive {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["user", "posts"]
+            Errors:    ["Unauthorized field or type @ user", "Unauthorized field or type @ posts"]
             "#);
         }
 
@@ -1919,7 +1932,7 @@ mod authenticated_directive {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["deletePost"]
+            Errors:    ["Unauthorized field or type @ deletePost"]
             "#);
         }
 
@@ -1960,7 +1973,46 @@ mod authenticated_directive {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: {publicData}
-            Errors:    ["privateUser", "optionalUser"]
+            Errors:    ["Unauthorized field or type @ privateUser", "Unauthorized field or type @ optionalUser"]
+            "#);
+        }
+
+        #[test]
+        fn bubbling_stops_at_nearest_nullable_ancestor() {
+            let schema = r#"
+                type Query {
+                    me: User
+                    publicData: String
+                }
+
+                type User {
+                    id: ID!
+                    posts: Posts
+                }
+
+                type Posts {
+                    title: String! @authenticated
+                }
+            "#;
+
+            let supergraph_data = build_supergraph_data(schema);
+            let query = "
+                query {
+                    me {
+                        id
+                        posts {
+                            title
+                        }
+                    }
+                    publicData
+                }
+            ";
+
+            let decision = supergraph_data.decide(None, query);
+            insta::assert_snapshot!(decision, @r#"
+            [Modified]
+            Operation: {me{id} publicData}
+            Errors:    ["Unauthorized field or type @ me.posts.title"]
             "#);
         }
     }
@@ -2004,7 +2056,7 @@ mod authenticated_directive {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["publicPosts"]
+            Errors:    ["Unauthorized field or type @ publicPosts"]
             "#);
 
             let mutation = "
@@ -2019,7 +2071,7 @@ mod authenticated_directive {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["createPost"]
+            Errors:    ["Unauthorized field or type @ createPost"]
             "#);
         }
 
@@ -2105,7 +2157,7 @@ mod authenticated_directive {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: {publicPosts{id title}}
-            Errors:    ["adminPanel"]
+            Errors:    ["Unauthorized field or type @ adminPanel"]
             "#);
         }
 
@@ -2129,7 +2181,7 @@ mod authenticated_directive {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: {publicPosts{id}}
-            Errors:    ["adminPanel"]
+            Errors:    ["Unauthorized field or type @ adminPanel"]
             "#);
         }
 
@@ -2175,7 +2227,7 @@ mod authenticated_directive {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: {adminPanel{settings{theme}}}
-            Errors:    ["adminPanel.users"]
+            Errors:    ["Unauthorized field or type @ adminPanel.users"]
             "#);
         }
 
@@ -2224,7 +2276,7 @@ mod authenticated_directive {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: {publicPosts{id}}
-            Errors:    ["profile"]
+            Errors:    ["Unauthorized field or type @ profile"]
             "#);
         }
     }

@@ -13,6 +13,7 @@ use hive_router_plan_executor::{
     },
     headers::errors::HeaderRuleRuntimeError,
     hooks::on_graphql_error::handle_graphql_errors_with_plugins,
+    operation_filter::OperationFilterError,
     plugin_context::PluginContext,
     request_context::{RequestContextError, RequestContextExt},
     response::graphql_error::GraphQLError,
@@ -193,6 +194,9 @@ pub enum PipelineError {
 
     #[error("Request context error")]
     RequestContextError(#[from] RequestContextError),
+
+    #[error(transparent)]
+    OperationFilterFailed(#[from] OperationFilterError),
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -301,6 +305,7 @@ impl PipelineError {
             (Self::NoSupergraphAvailable { .. }, _) => StatusCode::SERVICE_UNAVAILABLE,
             (Self::CoprocessorError(err), _) => err.status_code(),
             (Self::RequestContextError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+            (Self::OperationFilterFailed(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }
