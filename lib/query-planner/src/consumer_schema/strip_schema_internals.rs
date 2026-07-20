@@ -86,8 +86,8 @@ impl<'a, T: Text<'a> + Clone> SchemaTransformer<'a, T> for StripSchemaInternals 
         &mut self,
         document: &Document<'a, T>,
     ) -> TransformedValue<Document<'a, T>> {
-        let new_doc = Document {
-            definitions: document
+        let new_doc = Document::new(
+            document
                 .definitions
                 .iter()
                 .filter(|def| match def {
@@ -117,7 +117,7 @@ impl<'a, T: Text<'a> + Clone> SchemaTransformer<'a, T> for StripSchemaInternals 
                 })
                 .cloned()
                 .collect(),
-        };
+        );
 
         self.default_transform_document(&new_doc)
     }

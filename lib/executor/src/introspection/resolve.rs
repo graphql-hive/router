@@ -13,7 +13,6 @@ use hive_router_query_planner::ast::{
     selection_set::{FieldSelection, SelectionSet},
     value::Value as AstValue,
 };
-use hive_router_query_planner::state::supergraph_state::OperationKind;
 use sonic_rs::JsonValueTrait;
 
 use crate::execution::plan::CoerceVariablesPayload;
@@ -559,9 +558,13 @@ fn resolve_schema_selections<'exec>(
                 }
                 "queryType" => {
                     let query_type = ctx
-                        .schema
-                        .type_by_name(ctx.schema.query_type_name())
-                        .expect("Query type not found");
+                        .metadata
+                        .query_type_name
+                        .as_ref()
+                        .and_then(|name| ctx.schema.type_by_name(name))
+                        // SAFETY: The query type is guaranteed to exist,
+                        // every schema has a query type.
+                        .expect("invariant violation: query type is guaranteed to exist because every schema must have a query type");
                     resolve_type_definition(query_type, &inner_field.selections, ctx)
                 }
                 "mutationType" => ctx
@@ -611,19 +614,9 @@ pub fn resolve_introspection<'exec>(
     ctx: &'exec IntrospectionContext,
 ) -> Value<'exec> {
     let root_selection_set = &operation_definition.selection_set;
-
-    let root_type_name = operation_definition
-        .operation_kind
-        .as_ref()
-        .map(|kind| match kind {
-            OperationKind::Query => ctx.schema.query_type_name(),
-            OperationKind::Mutation => ctx.schema.mutation_type_name().unwrap_or("Mutation"),
-            OperationKind::Subscription => ctx
-                .schema
-                .subscription_type_name()
-                .unwrap_or("Subscription"),
-        })
-        .unwrap_or_else(|| ctx.schema.query_type_name());
+    let root_type_name = ctx
+        .metadata
+        .expect_root_type_name(operation_definition.operation_kind.as_ref());
 
     let mut data =
         resolve_root_introspection_selections(root_type_name, &root_selection_set.items, ctx);

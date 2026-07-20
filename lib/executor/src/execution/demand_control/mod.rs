@@ -278,7 +278,8 @@ pub fn compile_actual_subgraph_cost_plan(
     supergraph_state: &SupergraphState,
 ) -> CompiledSubgraphActualCostPlan {
     let operation_def = &operation.document.operation;
-    let root_type_name = supergraph_state.root_type_name(operation_def.operation_kind.as_ref());
+    let root_type_name =
+        supergraph_state.expect_root_type_name(operation_def.operation_kind.as_ref());
 
     // Detect if every top-level selection is a `_entities` field (with or without alias).
     // This covers FlattenFetch (single `_entities`) and BatchFetch (multiple `_eN: _entities`).

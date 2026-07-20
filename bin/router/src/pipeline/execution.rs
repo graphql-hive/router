@@ -132,7 +132,8 @@ pub async fn execute_plan<'exec>(
             extensions,
             client_request: planned_request.client_request_details,
             introspection_context: introspection_context.into(),
-            operation_type_name: planned_request.normalized_payload.root_type_name,
+            operation_type_name: planned_request.normalized_payload.root_type_name.clone(),
+            operation_kind: planned_request.normalized_payload.operation_kind.clone(),
             jwt_auth_forwarding: jwt_auth_forwarding.map(|j| j.into()),
             graphql_error_recorder: app_state.telemetry_context.metrics.graphql.error_recorder(),
             demand_control_context: planned_request

@@ -12,6 +12,9 @@ pub enum NormalizationError {
     #[error("An operation was expected, but none were present.")]
     OperationNotFound,
 
+    #[error("Type for operation kind '{kind}' not found.")]
+    TypeForOperationNotFound { kind: String },
+
     #[error("Schema type '{type_name}' not found.")]
     SchemaTypeNotFound { type_name: String },
 

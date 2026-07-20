@@ -551,6 +551,7 @@ impl Graph {
                             tail,
                             Edge::SubgraphEntrypoint {
                                 name: state.resolve_graph_id(graph_id)?,
+                                operation_kind: root_type.clone(),
                             },
                         );
                     }

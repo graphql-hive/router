@@ -69,7 +69,7 @@ use crate::{
     },
     planner::error::QueryPlanError,
     planner::plan_nodes::{
-        custom_scalar_paths_for_type_selection, BatchFetchNode, CustomScalarPaths, EntityBatch,
+        custom_scalar_paths_for_entities_selection, BatchFetchNode, CustomScalarPaths, EntityBatch,
         EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
     },
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
@@ -170,8 +170,7 @@ impl<'a> BatchFetchBuilder<'a> {
                 omit_from_response: false,
             }));
 
-        if let Some(alias_paths) = custom_scalar_paths_for_type_selection(
-            &representative.type_name,
+        if let Some(alias_paths) = custom_scalar_paths_for_entities_selection(
             &representative.entities_selection,
             supergraph,
         ) {
@@ -313,7 +312,6 @@ struct EntityFetch {
     service_name: String,
     flatten_path: FlattenNodePath,
     variable_usages: Option<BTreeSet<String>>,
-    type_name: String,
     requires: SelectionSet,
     entities_selection: SelectionSet,
     input_rewrites: Option<Vec<FetchRewrite>>,
@@ -407,16 +405,6 @@ impl EntityFetch {
             service_name: fetch_node.service_name.clone(),
             flatten_path: flatten_node.path.clone(),
             variable_usages: fetch_node.variable_usages.clone(),
-            type_name: entities_selection
-                .items
-                .iter()
-                .find_map(|item| match item {
-                    SelectionItem::InlineFragment(fragment) => {
-                        Some(fragment.type_condition.clone())
-                    }
-                    _ => None,
-                })
-                .unwrap_or_else(|| "Query".to_string()),
             requires,
             entities_selection,
             input_rewrites,

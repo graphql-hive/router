@@ -1,11 +1,30 @@
 use graphql_tools::parser::query as query_ast;
 
-use crate::state::supergraph_state::SupergraphState;
+use crate::{
+    ast::normalization::error::NormalizationError, state::supergraph_state::SupergraphState,
+};
 
 pub struct RootTypes<'a> {
     pub query: Option<&'a str>,
     pub mutation: Option<&'a str>,
     pub subscription: Option<&'a str>,
+}
+
+impl<'a> RootTypes<'a> {
+    pub fn query_type_name(&self) -> Result<&'a str, NormalizationError> {
+        self.query
+            .ok_or_else(|| NormalizationError::TypeForOperationNotFound {
+                kind: "query".to_string(),
+            })
+    }
+
+    pub fn mutation_type_name(&self) -> Option<&'a str> {
+        self.mutation
+    }
+
+    pub fn subscription_type_name(&self) -> Option<&'a str> {
+        self.subscription
+    }
 }
 
 pub struct NormalizationContext<'a> {
@@ -14,20 +33,6 @@ pub struct NormalizationContext<'a> {
     pub supergraph: &'a SupergraphState,
     pub root_types: RootTypes<'a>,
     pub subgraph_name: Option<&'a String>,
-}
-
-impl<'a> NormalizationContext<'a> {
-    pub fn query_type_name(&self) -> &'a str {
-        self.root_types.query.unwrap_or("Query")
-    }
-
-    pub fn mutation_type_name(&self) -> &'a str {
-        self.root_types.mutation.unwrap_or("Mutation")
-    }
-
-    pub fn subscription_type_name(&self) -> &'a str {
-        self.root_types.subscription.unwrap_or("Subscription")
-    }
 }
 
 impl<'a> From<&'a SupergraphState> for RootTypes<'a> {

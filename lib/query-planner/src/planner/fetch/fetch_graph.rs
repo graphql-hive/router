@@ -306,6 +306,7 @@ fn create_noop_fetch_step(
         flags,
         condition: None,
         kind: FetchStepKind::Root,
+        operation_kind: OperationKind::Query,
         input_rewrites: None,
         output_rewrites: None,
         variable_usages: None,
@@ -345,6 +346,7 @@ fn create_fetch_step_for_entity_call(
         flags,
         condition: condition.cloned(),
         kind: FetchStepKind::Entity,
+        operation_kind: OperationKind::Query,
         input_rewrites: None,
         output_rewrites: None,
         variable_usages: None,
@@ -354,11 +356,14 @@ fn create_fetch_step_for_entity_call(
     })
 }
 
+// TODO: simplfy args
+#[allow(clippy::too_many_arguments)]
 fn create_fetch_step_for_root_move(
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     root_step_index: NodeIndex,
     subgraph_name: &SubgraphName,
     type_name: &str,
+    operation_kind: OperationKind,
     mutation_field_position: MutationFieldPosition,
     response_path: &MergePath,
     condition: Option<&Condition>,
@@ -372,6 +377,7 @@ fn create_fetch_step_for_root_move(
         flags: FetchStepFlags::empty(),
         condition: condition.cloned(),
         kind: FetchStepKind::Root,
+        operation_kind,
         variable_usages: None,
         variable_definitions: None,
         input_rewrites: None,
@@ -1024,6 +1030,7 @@ fn process_subgraph_entrypoint_edge(
     parent_fetch_step_index: NodeIndex,
     subgraph_name: &SubgraphName,
     type_name: &str,
+    operation_kind: OperationKind,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     let fetch_step_index = create_fetch_step_for_root_move(
@@ -1031,6 +1038,7 @@ fn process_subgraph_entrypoint_edge(
         parent_fetch_step_index,
         subgraph_name,
         type_name,
+        operation_kind,
         query_node.mutation_field_position,
         &MergePath::default(),
         None,
@@ -1145,6 +1153,7 @@ fn process_subgraph_reentry(
         parent_fetch_step_index,
         subgraph_name,
         type_name,
+        OperationKind::Query,
         query_node.mutation_field_position,
         &child_response_path,
         condition,
@@ -1822,7 +1831,10 @@ fn process_query_node(
         let edge = graph.edge(edge_index)?;
 
         match edge {
-            Edge::SubgraphEntrypoint { name, .. } => {
+            Edge::SubgraphEntrypoint {
+                name,
+                operation_kind,
+            } => {
                 let tail_node_index = graph.get_edge_tail(&edge_index)?;
                 let tail_node = graph.node(tail_node_index)?;
                 let type_name = match tail_node {
@@ -1841,6 +1853,7 @@ fn process_query_node(
                     parent_fetch_step_index,
                     name,
                     type_name,
+                    operation_kind.clone(),
                     created_from_requires,
                 )
             }

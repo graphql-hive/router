@@ -78,8 +78,13 @@ impl SupergraphTestData {
         let parsed_query = parse_query(operation).unwrap();
         let doc = normalize_operation(&self.supergraph_state, &parsed_query, None).unwrap();
         let operation = doc.operation;
+        let operation_kind = operation
+            .operation_kind
+            .clone()
+            .unwrap_or(OperationKind::Query);
         let (root_type_name, projection_plan) =
             FieldProjectionPlan::from_operation(&operation, &self.schema_metadata);
+        let root_type_name = root_type_name.to_string();
         let partitioned_operation = partition_operation(operation);
         let operation_for_plan = Arc::new(partitioned_operation.downstream_operation);
         let operation_for_introspection =
@@ -90,6 +95,7 @@ impl SupergraphTestData {
 
         let payload = GraphQLNormalizationPayload {
             root_type_name,
+            operation_kind,
             projection_plan: Arc::new(projection_plan),
             operation_for_plan,
             operation_for_plan_hash: hashes.operation_for_plan_hash,

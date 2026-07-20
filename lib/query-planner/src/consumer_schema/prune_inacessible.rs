@@ -36,8 +36,8 @@ impl<'a, T: Text<'a> + Clone> SchemaTransformer<'a, T> for PruneInaccessible {
         &mut self,
         document: &Document<'a, T>,
     ) -> TransformedValue<Document<'a, T>> {
-        let new_doc = Document {
-            definitions: document
+        let new_doc = Document::new(
+            document
                 .definitions
                 .iter()
                 .filter(|def| match def {
@@ -65,7 +65,7 @@ impl<'a, T: Text<'a> + Clone> SchemaTransformer<'a, T> for PruneInaccessible {
                 })
                 .cloned()
                 .collect(),
-        };
+        );
 
         self.default_transform_document(&new_doc)
     }
@@ -127,5 +127,66 @@ impl<'a, T: Text<'a> + Clone> SchemaTransformer<'a, T> for PruneInaccessible {
             .collect();
 
         self.default_transform_fields(&new_fields)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::parsing::parse_schema;
+
+    #[test]
+    fn prune_preserves_root_type_names() {
+        let schema = parse_schema(
+            "
+            type Query { hello: String }
+            type Mutation { doThing: String }
+            type Subscription { onThing: String }
+            ",
+        );
+
+        let result = PruneInaccessible::prune(&schema);
+
+        assert_eq!(result.query_type_name().map(|s| s.as_str()), Some("Query"));
+        assert_eq!(
+            result.mutation_type_name().map(|s| s.as_str()),
+            Some("Mutation")
+        );
+        assert_eq!(
+            result.subscription_type_name().map(|s| s.as_str()),
+            Some("Subscription")
+        );
+    }
+
+    #[test]
+    fn prune_preserves_renamed_root_type_names() {
+        let schema = parse_schema(
+            "
+            schema {
+              query: RootQuery
+              mutation: RootMutation
+              subscription: RootSubscription
+            }
+
+            type RootQuery { hello: String }
+            type RootMutation { doThing: String }
+            type RootSubscription { onThing: String }
+            ",
+        );
+
+        let result = PruneInaccessible::prune(&schema);
+
+        assert_eq!(
+            result.query_type_name().map(|s| s.as_str()),
+            Some("RootQuery")
+        );
+        assert_eq!(
+            result.mutation_type_name().map(|s| s.as_str()),
+            Some("RootMutation")
+        );
+        assert_eq!(
+            result.subscription_type_name().map(|s| s.as_str()),
+            Some("RootSubscription")
+        );
     }
 }

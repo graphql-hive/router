@@ -127,7 +127,11 @@ impl<'a> QueryGenerator<'a> {
 
     pub fn generate(mut self) -> QueryCase {
         let operation_name = "GeneratedQuery".to_string();
-        let root = self.schema.query_type_name().to_string();
+        let root = self
+            .schema
+            .query_type_name()
+            .expect("schema must have a query type")
+            .to_string();
         let selections = self.selection_set_for_type(&root, 0, SelectionContext::Root);
 
         let variables_json = self.render_variables_json();

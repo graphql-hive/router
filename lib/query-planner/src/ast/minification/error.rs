@@ -2,6 +2,8 @@
 pub enum MinificationError {
     #[error("Type not found: {0}")]
     TypeNotFound(String),
+    #[error("Type not found for operation kind: {0}")]
+    TypeForOperationNotFound(String),
     #[error("Field '{0}' not found in type '{1}'")]
     FieldNotFound(String, String),
     #[error("Unsupported fragment spread")]

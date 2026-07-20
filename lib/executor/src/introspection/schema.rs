@@ -4,7 +4,9 @@ use graphql_tools::parser::{
     query::Type,
     schema::{Definition, TypeDefinition},
 };
-use hive_router_query_planner::consumer_schema::ConsumerSchema;
+use hive_router_query_planner::{
+    consumer_schema::ConsumerSchema, state::supergraph_state::OperationKind,
+};
 
 #[derive(Debug)]
 pub struct FieldTypeInfo {
@@ -71,9 +73,9 @@ pub struct SchemaMetadata {
     pub scalar_types: HashSet<String>,
     pub union_types: HashSet<String>,
     pub interface_types: HashSet<String>,
-    pub query_type: Option<String>,
-    pub mutation_type: Option<String>,
-    pub subscription_type: Option<String>,
+    pub query_type_name: Option<String>,
+    pub mutation_type_name: Option<String>,
+    pub subscription_type_name: Option<String>,
 }
 
 impl SchemaMetadata {
@@ -101,6 +103,28 @@ impl SchemaMetadata {
     /// Returns None if the type is not an interface or has no implementors.
     pub fn get_possible_types(&self, interface_name: &str) -> Option<&HashSet<String>> {
         self.possible_types.map.get(interface_name)
+    }
+
+    /// panics if the root type is not found for the given operation kind.
+    /// Use only when you are sure the root type is present,
+    /// like after the operation was validated to have matching root type.
+    pub fn expect_root_type_name(&self, operation_kind: Option<&OperationKind>) -> &str {
+        let root_type_name = match operation_kind {
+            None | Some(OperationKind::Query) => &self.query_type_name,
+            Some(OperationKind::Mutation) => &self.mutation_type_name,
+            Some(OperationKind::Subscription) => &self.subscription_type_name,
+        };
+
+        root_type_name
+            .as_deref()
+            // SAFETY: The root type is guaranteed to exist for the given operation kind,
+            // as the operation was validated.
+            .unwrap_or_else(|| {
+                panic!(
+                    "Root type not found for operation kind: {:?}",
+                    operation_kind
+                )
+            })
     }
 }
 
@@ -147,24 +171,11 @@ impl SchemaWithMetadata for ConsumerSchema {
         let mut union_types: HashSet<String> = HashSet::default();
         let mut interface_types: HashSet<String> = HashSet::default();
 
-        let mut query_type: Option<String> = None;
-        let mut mutation_type: Option<String> = None;
-        let mut subscription_type: Option<String> = None;
-        let mut found_schema_definition: bool = false;
-
         for definition in &self.document.definitions {
             match definition {
-                Definition::SchemaDefinition(schema_definition) => {
-                    found_schema_definition = true;
-                    query_type = schema_definition.query.as_deref().map(|n| n.to_string());
-                    mutation_type = schema_definition.mutation.as_deref().map(|n| n.to_string());
-                    subscription_type = schema_definition
-                        .subscription
-                        .as_deref()
-                        .map(|n| n.to_string());
-                }
                 Definition::TypeDefinition(TypeDefinition::Enum(enum_type)) => {
                     let name = enum_type.name.to_string();
+
                     let mut values = HashSet::default();
                     for enum_value in &enum_type.values {
                         values.insert(enum_value.name.to_string());
@@ -173,22 +184,6 @@ impl SchemaWithMetadata for ConsumerSchema {
                 }
                 Definition::TypeDefinition(TypeDefinition::Object(object_type)) => {
                     let name = object_type.name.to_string();
-
-                    if !found_schema_definition {
-                        match name.as_str() {
-                            "Query" => {
-                                query_type = Some(name.clone());
-                            }
-                            "Mutation" => {
-                                mutation_type = Some(name.clone());
-                            }
-                            "Subscription" => {
-                                subscription_type = Some(name.clone());
-                            }
-                            _ => {}
-                        }
-                    }
-
                     object_types.insert(name.clone());
                     let fields = type_fields.entry(name).or_default();
                     for field in &object_type.fields {
@@ -247,6 +242,10 @@ impl SchemaWithMetadata for ConsumerSchema {
             }
         }
 
+        let query_type_name = self.document.query_type_name().cloned();
+        let mutation_type_name = self.document.mutation_type_name().cloned();
+        let subscription_type_name = self.document.subscription_type_name().cloned();
+
         let mut final_possible_types: HashMap<String, HashSet<String>> = HashMap::default();
         // Re-iterate over the possible_types
         for (definition_name_of_x, first_possible_types_of_x) in &first_possible_types {
@@ -273,9 +272,9 @@ impl SchemaWithMetadata for ConsumerSchema {
             scalar_types,
             union_types,
             interface_types,
-            query_type,
-            mutation_type,
-            subscription_type,
+            query_type_name,
+            mutation_type_name,
+            subscription_type_name,
         }
     }
 }

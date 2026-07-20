@@ -10,6 +10,50 @@ pub struct Document<'a, T: Text<'a>> {
     pub definitions: Vec<Definition<'a, T>>,
 }
 
+impl<'a, T: Text<'a>> Document<'a, T> {
+    pub fn new(definitions: Vec<Definition<'a, T>>) -> Self {
+        Document { definitions }
+    }
+
+    pub fn query_type_name(&self) -> Option<&T::Value> {
+        self.root_type_name("Query", |sd| &sd.query)
+    }
+
+    pub fn mutation_type_name(&self) -> Option<&T::Value> {
+        self.root_type_name("Mutation", |sd| &sd.mutation)
+    }
+
+    pub fn subscription_type_name(&self) -> Option<&T::Value> {
+        self.root_type_name("Subscription", |sd| &sd.subscription)
+    }
+
+    fn root_type_name(
+        &self,
+        default_name: &str,
+        schema_definition_field: impl for<'s> Fn(&'s SchemaDefinition<'a, T>) -> &'s Option<T::Value>,
+    ) -> Option<&T::Value> {
+        let mut fallback = None;
+
+        for definition in &self.definitions {
+            match definition {
+                Definition::SchemaDefinition(schema_definition) => {
+                    if let Some(name) = schema_definition_field(schema_definition).as_ref() {
+                        return Some(name);
+                    }
+                }
+                Definition::TypeDefinition(TypeDefinition::Object(object))
+                    if fallback.is_none() && object.name.as_ref() == default_name =>
+                {
+                    fallback = Some(&object.name);
+                }
+                _ => {}
+            }
+        }
+
+        fallback
+    }
+}
+
 impl<'a> Document<'a, String> {
     pub fn into_static(self) -> Document<'static, String> {
         // To support both reference and owned values in the AST,

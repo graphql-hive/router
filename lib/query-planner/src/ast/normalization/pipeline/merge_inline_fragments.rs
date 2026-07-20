@@ -11,46 +11,57 @@ use crate::utils::ast::equal_directives_arr;
 #[inline]
 pub fn merge_inline_fragments(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
     let supergraph = ctx.supergraph;
-    let query_type_name = ctx.query_type_name().to_string();
-    let mutation_type_name = ctx.mutation_type_name().to_string();
-    let subscription_type_name = ctx.subscription_type_name().to_string();
+    let query_type_name = ctx.root_types.query_type_name()?;
 
     for definition in &mut ctx.document.definitions {
         match definition {
             Definition::Operation(op_def) => match op_def {
                 OperationDefinition::SelectionSet(selection_set) => {
-                    let root_def = supergraph
-                        .definitions
-                        .get(query_type_name.as_str())
-                        .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
-                            type_name: query_type_name.clone(),
+                    let root_def =
+                        supergraph.definitions.get(query_type_name).ok_or_else(|| {
+                            NormalizationError::SchemaTypeNotFound {
+                                type_name: query_type_name.to_string(),
+                            }
                         })?;
                     handle_selection_set(supergraph, selection_set, root_def)?;
                 }
                 OperationDefinition::Query(Query { selection_set, .. }) => {
-                    let root_def = supergraph
-                        .definitions
-                        .get(query_type_name.as_str())
-                        .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
-                            type_name: query_type_name.clone(),
+                    let root_def =
+                        supergraph.definitions.get(query_type_name).ok_or_else(|| {
+                            NormalizationError::SchemaTypeNotFound {
+                                type_name: query_type_name.to_string(),
+                            }
                         })?;
                     handle_selection_set(supergraph, selection_set, root_def)?;
                 }
                 OperationDefinition::Mutation(Mutation { selection_set, .. }) => {
-                    let root_def = supergraph
-                        .definitions
-                        .get(mutation_type_name.as_str())
-                        .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
-                            type_name: mutation_type_name.clone(),
+                    let mutation_type_name =
+                        ctx.root_types.mutation_type_name().ok_or_else(|| {
+                            NormalizationError::TypeForOperationNotFound {
+                                kind: "mutation".to_string(),
+                            }
                         })?;
+                    let root_def =
+                        supergraph
+                            .definitions
+                            .get(mutation_type_name)
+                            .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
+                                type_name: mutation_type_name.to_string(),
+                            })?;
                     handle_selection_set(supergraph, selection_set, root_def)?;
                 }
                 OperationDefinition::Subscription(Subscription { selection_set, .. }) => {
+                    let subscription_type_name = ctx
+                        .root_types
+                        .subscription_type_name()
+                        .ok_or_else(|| NormalizationError::TypeForOperationNotFound {
+                            kind: "subscription".to_string(),
+                        })?;
                     let root_def = supergraph
                         .definitions
-                        .get(subscription_type_name.as_str())
+                        .get(subscription_type_name)
                         .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
-                            type_name: subscription_type_name.clone(),
+                            type_name: subscription_type_name.to_string(),
                         })?;
                     handle_selection_set(supergraph, selection_set, root_def)?;
                 }
