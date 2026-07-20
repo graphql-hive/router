@@ -2378,7 +2378,7 @@ dependencies = [
 
 [[package]]
 name = "graphql-tools"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "combine",
  "criterion",
@@ -2555,7 +2555,7 @@ dependencies = [
 
 [[package]]
 name = "hive-console-sdk"
-version = "0.3.17"
+version = "0.3.18"
 dependencies = [
  "ahash",
  "anyhow",
@@ -2594,7 +2594,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router"
-version = "0.0.83"
+version = "0.0.84"
 dependencies = [
  "ahash",
  "anyhow",
@@ -2699,7 +2699,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-internal"
-version = "0.0.36"
+version = "0.0.37"
 dependencies = [
  "ahash",
  "async-trait",
@@ -2742,7 +2742,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-plan-executor"
-version = "6.22.1"
+version = "6.23.0"
 dependencies = [
  "ahash",
  "async-stream",
@@ -2792,7 +2792,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-query-planner"
-version = "2.10.9"
+version = "2.10.10"
 dependencies = [
  "bitflags 2.13.0",
  "criterion",
@@ -3942,7 +3942,7 @@ dependencies = [
 
 [[package]]
 name = "node-addon"
-version = "0.0.41"
+version = "0.0.42"
 dependencies = [
  "graphql-tools",
  "hive-router-query-planner",
