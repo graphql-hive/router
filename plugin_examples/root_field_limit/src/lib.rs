@@ -3,7 +3,7 @@ use hive_router::query_planner::ast::selection_item::SelectionItem;
 use hive_router::{
     async_trait,
     graphql_tools::{
-        ast::{visit_document, OperationVisitor, OperationVisitorContext},
+        ast::{OperationVisitor, OperationVisitorContext},
         static_graphql,
         validation::{
             rules::ValidationRule,
@@ -135,23 +135,15 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for RootFieldSelections {
 }
 
 impl ValidationRule for RootFieldLimitRule {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "TOO_MANY_ROOT_FIELDS"
     }
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext<'_>,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut RootFieldSelections {
-                max_root_fields: self.max_root_fields,
-                count: 0,
-            },
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+
+    fn visitor<'a>(&self) -> hive_router::graphql_tools::validation::rules::ValidationVisitor<'a> {
+        Box::new(RootFieldSelections {
+            max_root_fields: self.max_root_fields,
+            count: 0,
+        })
     }
 }
 

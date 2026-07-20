@@ -1,5 +1,5 @@
 use super::ValidationRule;
-use crate::ast::{visit_document, OperationVisitor, OperationVisitorContext};
+use crate::ast::{OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::*;
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
 
@@ -24,7 +24,7 @@ impl FragmentsOnCompositeTypes {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for FragmentsOnCompositeTypes {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for FragmentsOnCompositeTypes {
     fn enter_inline_fragment(
         &mut self,
         visitor_context: &mut OperationVisitorContext,
@@ -71,21 +71,12 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for FragmentsOnCompositeTy
 }
 
 impl ValidationRule for FragmentsOnCompositeTypes {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "FragmentsOnCompositeTypes"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut FragmentsOnCompositeTypes::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
+        Box::new(FragmentsOnCompositeTypes::new())
     }
 }
 

@@ -94,54 +94,20 @@ impl schema::Document {
         None
     }
 
-    fn schema_definition(&self) -> &schema::SchemaDefinition {
-        lazy_static! {
-            static ref DEFAULT_SCHEMA_DEF: schema::SchemaDefinition = {
-                schema::SchemaDefinition {
-                    query: Some("Query".to_string()),
-                    ..Default::default()
-                }
-            };
-        }
-        self.definitions
-            .iter()
-            .find_map(|definition| match definition {
-                schema::Definition::SchemaDefinition(schema_definition) => Some(schema_definition),
-                _ => None,
-            })
-            .unwrap_or(&*DEFAULT_SCHEMA_DEF)
-    }
-
     pub fn query_type(&self) -> &ObjectType {
-        let schema_definition = self.schema_definition();
-        self.object_type_by_name(
-            schema_definition
-                .query
-                .as_ref()
-                .unwrap_or(&QUERY_TYPE_DEFAULT_NAME),
-        )
-        .unwrap()
+        self.query_type_name()
+            .and_then(|name| self.object_type_by_name(name))
+            .expect("invariant violation: every valid schema must define a query type")
     }
 
     pub fn mutation_type(&self) -> Option<&ObjectType> {
-        let schema_definition = self.schema_definition();
-        self.object_type_by_name(
-            schema_definition
-                .mutation
-                .as_ref()
-                .unwrap_or(&MUTATION_TYPE_DEFAULT_NAME),
-        )
+        self.mutation_type_name()
+            .and_then(|name| self.object_type_by_name(name))
     }
 
     pub fn subscription_type(&self) -> Option<&ObjectType> {
-        let schema_definition = self.schema_definition();
-
-        self.object_type_by_name(
-            schema_definition
-                .subscription
-                .as_ref()
-                .unwrap_or(&SUBSCRIPTION_TYPE_DEFAULT_NAME),
-        )
+        self.subscription_type_name()
+            .and_then(|name| self.object_type_by_name(name))
     }
 
     fn object_type_by_name(&self, name: &str) -> Option<&ObjectType> {
@@ -241,34 +207,6 @@ impl schema::Document {
 
         false
     }
-
-    pub fn query_type_name(&self) -> &str {
-        "Query"
-    }
-
-    pub fn mutation_type_name(&self) -> Option<&str> {
-        for def in &self.definitions {
-            if let schema::Definition::SchemaDefinition(schema_def) = def {
-                if let Some(name) = schema_def.mutation.as_ref() {
-                    return Some(name.as_str());
-                }
-            }
-        }
-
-        self.type_by_name("Mutation").map(|typ| typ.name())
-    }
-
-    pub fn subscription_type_name(&self) -> Option<&str> {
-        for def in &self.definitions {
-            if let schema::Definition::SchemaDefinition(schema_def) = def {
-                if let Some(name) = schema_def.subscription.as_ref() {
-                    return Some(name.as_str());
-                }
-            }
-        }
-
-        self.type_by_name("Subscription").map(|typ| typ.name())
-    }
 }
 
 impl Type {
@@ -312,7 +250,21 @@ impl Value {
             (Value::Enum(a), Value::Enum(b)) => a.eq(b),
             (Value::List(a), Value::List(b)) => a.iter().zip(b.iter()).all(|(a, b)| a.compare(b)),
             (Value::Object(a), Value::Object(b)) => {
-                a.iter().zip(b.iter()).all(|(a, b)| a.1.compare(b.1))
+                if a.len() != b.len() {
+                    return false;
+                }
+                let mut matched = vec![false; b.len()];
+                for (k_a, v_a) in a.iter() {
+                    let found = b
+                        .iter()
+                        .enumerate()
+                        .find(|(idx, (k_b, v_b))| !matched[*idx] && k_a == k_b && v_a.compare(v_b));
+                    match found {
+                        Some((idx, _)) => matched[idx] = true,
+                        None => return false,
+                    }
+                }
+                true
             }
             (Value::Variable(a), Value::Variable(b)) => a.eq(b),
             _ => false,
@@ -323,7 +275,10 @@ impl Value {
         match self {
             Value::Variable(v) => vec![v],
             Value::List(list) => list.iter().flat_map(|v| v.variables_in_use()).collect(),
-            Value::Object(object) => object.values().flat_map(|v| v.variables_in_use()).collect(),
+            Value::Object(object) => object
+                .iter()
+                .flat_map(|(_, v)| v.variables_in_use())
+                .collect(),
             _ => vec![],
         }
     }

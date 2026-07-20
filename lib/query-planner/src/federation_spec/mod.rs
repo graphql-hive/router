@@ -44,8 +44,8 @@ fn normalize_fields_argument_value_mut(
         None,
         Some(RootTypes {
             query: Some(type_name),
-            mutation: None,
-            subscription: None,
+            mutation: supergraph.mutation_type.as_deref(),
+            subscription: supergraph.subscription_type.as_deref(),
         }),
         Some(subgraph_name),
     )

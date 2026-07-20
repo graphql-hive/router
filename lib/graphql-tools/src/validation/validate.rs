@@ -6,12 +6,12 @@ use std::{
 use xxhash_rust::xxh3::Xxh3;
 
 use super::{
-    rules::ValidationRule,
+    rules::{ValidationRule, ValidationVisitors},
     utils::{ValidationError, ValidationErrorContext},
 };
 
 use crate::{
-    ast::OperationVisitorContext,
+    ast::{visit_document, OperationVisitorContext},
     static_graphql::{query, schema},
 };
 
@@ -75,10 +75,20 @@ pub fn validate<'a>(
     let mut error_collector = ValidationErrorContext::new();
     let mut validation_context = OperationVisitorContext::new(operation, schema);
 
-    validation_plan
-        .rules
-        .iter()
-        .for_each(|rule| rule.validate(&mut validation_context, &mut error_collector));
+    let mut visitor_instances = Vec::with_capacity(validation_plan.rules.len());
+    for rule in &validation_plan.rules {
+        visitor_instances.push(rule.visitor());
+    }
+    let mut visitors = ValidationVisitors::new(visitor_instances);
+
+    if !visitors.is_empty() {
+        visit_document(
+            &mut visitors,
+            operation,
+            &mut validation_context,
+            &mut error_collector,
+        );
+    }
 
     error_collector.errors
 }
@@ -98,18 +108,18 @@ fn cyclic_fragment_should_never_loop() {
             ...parents
           }
         }
-        
+
         fragment bark on Dog {
           barkVolume
           ...parents
         }
-        
+
         fragment parents on Dog {
           mother {
             ...bark
           }
         }
-        
+
     ",
         TEST_SCHEMA,
         &mut default_plan,
@@ -137,7 +147,7 @@ fn simple_self_reference_fragment_should_not_loop() {
             ...DogFields
           }
         }
-        
+
         fragment DogFields on Dog {
           mother {
             ...DogFields
@@ -175,7 +185,7 @@ fn fragment_loop_through_multiple_frags() {
             ...DogFields1
           }
         }
-        
+
         fragment DogFields1 on Dog {
           barks
           ...DogFields2

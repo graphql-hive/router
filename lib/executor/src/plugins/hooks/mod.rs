@@ -1,4 +1,5 @@
 pub mod on_execute;
+pub mod on_graphql_analysis;
 pub mod on_graphql_error;
 pub mod on_graphql_params;
 pub mod on_graphql_parse;
@@ -16,6 +17,7 @@ mod sealed {
 
 pub trait HookMarker: sealed::Sealed {}
 
+pub struct OnGraphqlAnalysis;
 pub struct OnHttpRequest;
 pub struct OnGraphqlParams;
 pub struct OnGraphqlParse;
@@ -26,6 +28,7 @@ pub struct OnSubgraphExecute;
 pub struct OnSubgraphHttp;
 pub struct OnGraphqlError;
 
+impl sealed::Sealed for OnGraphqlAnalysis {}
 impl sealed::Sealed for OnHttpRequest {}
 impl sealed::Sealed for OnGraphqlParams {}
 impl sealed::Sealed for OnGraphqlParse {}
@@ -36,6 +39,7 @@ impl sealed::Sealed for OnSubgraphExecute {}
 impl sealed::Sealed for OnSubgraphHttp {}
 impl sealed::Sealed for OnGraphqlError {}
 
+impl HookMarker for OnGraphqlAnalysis {}
 impl HookMarker for OnHttpRequest {}
 impl HookMarker for OnGraphqlParams {}
 impl HookMarker for OnGraphqlParse {}

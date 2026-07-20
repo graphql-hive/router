@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use crate::parser::Pos;
 
 use super::ValidationRule;
-use crate::ast::{visit_document, OperationVisitor, OperationVisitorContext};
+use crate::ast::{OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::*;
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
 
@@ -14,11 +14,11 @@ use crate::validation::utils::{ValidationError, ValidationErrorContext};
 ///
 /// See https://spec.graphql.org/draft/#sec-Variable-Uniqueness
 #[derive(Default)]
-pub struct UniqueVariableNames<'a> {
-    found_records: HashMap<&'a str, Pos>,
+pub struct UniqueVariableNames<'doc> {
+    found_records: HashMap<&'doc str, Pos>,
 }
 
-impl<'a> UniqueVariableNames<'a> {
+impl UniqueVariableNames<'_> {
     pub fn new() -> Self {
         UniqueVariableNames {
             found_records: HashMap::new(),
@@ -26,7 +26,7 @@ impl<'a> UniqueVariableNames<'a> {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueVariableNames<'a> {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for UniqueVariableNames<'doc> {
     fn enter_operation_definition(
         &mut self,
         _: &mut OperationVisitorContext,
@@ -40,7 +40,7 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueVariableNames<'a
         &mut self,
         _: &mut OperationVisitorContext,
         user_context: &mut ValidationErrorContext,
-        variable_definition: &'a VariableDefinition,
+        variable_definition: &'doc VariableDefinition,
     ) {
         let error_code = self.error_code();
         match self.found_records.entry(&variable_definition.name) {
@@ -59,22 +59,13 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueVariableNames<'a
     }
 }
 
-impl<'v> ValidationRule for UniqueVariableNames<'v> {
-    fn error_code<'a>(&self) -> &'a str {
+impl ValidationRule for UniqueVariableNames<'_> {
+    fn error_code(&self) -> &'static str {
         "UniqueVariableNames"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut UniqueVariableNames::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
+        Box::new(UniqueVariableNames::new())
     }
 }
 

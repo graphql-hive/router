@@ -40,6 +40,13 @@ impl ConsumerSchema {
         let introspection_schema = include_str!("introspection_schema.graphql");
         let mut parsed_introspection_schema =
             graphql_tools::parser::schema::parse_schema(introspection_schema).unwrap();
+
+        let query_type_name = result
+            .query_type_name()
+            .map(|name| name.to_string())
+            // SAFETY: Supergraph is guaranteed to have a query type, it's one of the validation rules
+            .expect("Query type not found in schema");
+
         parsed_introspection_schema
             .definitions
             .iter_mut()
@@ -54,7 +61,7 @@ impl ConsumerSchema {
                                     query_def,
                                 )) = d
                                 {
-                                    query_def.name == "Query"
+                                    query_def.name == query_type_name
                                 } else {
                                     false
                                 }

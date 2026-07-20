@@ -39,18 +39,27 @@ impl Display for FetchStepSelections<SingleTypeFetchStep> {
     }
 }
 
-impl From<&FetchStepSelections<MultiTypeFetchStep>> for SelectionSet {
-    fn from(value: &FetchStepSelections<MultiTypeFetchStep>) -> Self {
-        if value.selections.len() == 1 {
-            let (type_name, selections) = value.selections.iter().next().unwrap();
+impl FetchStepSelections<MultiTypeFetchStep> {
+    /// Meant for input and output of entity calls.
+    pub fn to_non_root_selection_set(&self) -> SelectionSet {
+        self.wrap_in_type_fragments()
+    }
 
-            if type_name == "Query" || type_name == "Mutation" || type_name == "Subscription" {
+    pub fn to_root_selection_set(&self, root_type_name: &str) -> SelectionSet {
+        if self.selections.len() == 1 {
+            let (type_name, selections) = self.selections.iter().next().unwrap();
+
+            if type_name == root_type_name {
                 return selections.clone();
             }
         }
 
+        self.wrap_in_type_fragments()
+    }
+
+    fn wrap_in_type_fragments(&self) -> SelectionSet {
         SelectionSet {
-            items: value
+            items: self
                 .selections
                 .iter()
                 .map(|(type_name, selections)| {
@@ -131,7 +140,7 @@ fn clear_top_level_fragment_conditions(type_name: &str, selection_set: &mut Sele
 }
 
 /// Attempts to lift a common condition from the top-level inline fragments for
-/// `type_name` into the wrapper `... on Type` fragment we build in `From`.
+/// `type_name` into the wrapper `... on Type` fragment we build in `wrap_in_type_fragments`.
 ///
 /// Lifting is valid when every top-level item is an inline fragment on the same
 /// type and they all share the same condition. That condition may be
@@ -648,7 +657,7 @@ mod tests {
             "#,
         );
         insta::assert_snapshot!(
-            format!("{}", PrettySelectionSet((&fetch_selections).into())),
+            format!("{}", PrettySelectionSet(fetch_selections.to_non_root_selection_set())),
             @r#"
               ... on Book @skip(if: $title) {
                 sku
@@ -673,7 +682,7 @@ mod tests {
         );
 
         insta::assert_snapshot!(
-          format!("{}", PrettySelectionSet((&fetch_selections).into())),
+          format!("{}", PrettySelectionSet(fetch_selections.to_non_root_selection_set())),
             @r#"
               ... on Book @include(if: $x) {
                 ... on Book {
@@ -703,7 +712,7 @@ mod tests {
         );
 
         insta::assert_snapshot!(
-          format!("{}", PrettySelectionSet((&fetch_selections).into())),
+          format!("{}", PrettySelectionSet(fetch_selections.to_non_root_selection_set())),
             @r#"
               ... on Book {
                 ... on Book @include(if: $x) {
@@ -733,7 +742,7 @@ mod tests {
         );
 
         insta::assert_snapshot!(
-          format!("{}", PrettySelectionSet((&fetch_selections).into())),
+          format!("{}", PrettySelectionSet(fetch_selections.to_non_root_selection_set())),
             @r#"
               ... on Book @include(if: $x) {
                 title

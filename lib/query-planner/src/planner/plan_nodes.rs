@@ -302,20 +302,35 @@ fn custom_scalar_paths_from_fetch_output(
     state.into_custom_scalar_paths()
 }
 
-pub fn custom_scalar_paths_for_type_selection(
-    type_name: &str,
+/// A dedicated function to produce custom scalar paths based on a `_entities` selection set.
+///
+/// Why? The regular `custom_scalar_paths_for_type_selection` requires a starting type name,
+/// which is not available for `_entities` selections.
+///
+/// The entity calls are always built from top-level `... on Type` fragments,
+/// so the starting type name is not needed.
+///
+/// Each fragment is visited using its own type condition.
+pub fn custom_scalar_paths_for_entities_selection(
     selection_set: &SelectionSet,
     supergraph: &SupergraphState,
 ) -> Option<CustomScalarPaths> {
     let mut state = CustomScalarPathState::default();
     let mut response_path = Vec::new();
-    collect_custom_scalar_path_state(
-        &mut state,
-        &mut response_path,
-        type_name,
-        selection_set,
-        supergraph,
-    );
+
+    for item in &selection_set.items {
+        if let SelectionItem::InlineFragment(fragment) = item {
+            response_path.clear();
+            collect_custom_scalar_path_state(
+                &mut state,
+                &mut response_path,
+                &fragment.type_condition,
+                &fragment.selections,
+                supergraph,
+            );
+        }
+    }
+
     state.into_custom_scalar_paths()
 }
 
@@ -638,7 +653,7 @@ impl PlanNode {
 fn create_input_selection_set(
     input_selections: &FetchStepSelections<MultiTypeFetchStep>,
 ) -> SelectionSet {
-    let selection_set: SelectionSet = input_selections.into();
+    let selection_set = input_selections.to_non_root_selection_set();
 
     selection_set.strip_for_plan_input()
 }
@@ -666,7 +681,7 @@ fn create_output_operation(
         selection_set: SelectionSet {
             items: vec![SelectionItem::Field(FieldSelection {
                 name: "_entities".to_string(),
-                selections: (&step.output).into(),
+                selections: step.output.to_non_root_selection_set(),
                 alias: None,
                 arguments: Some(
                     (
@@ -685,17 +700,6 @@ fn create_output_operation(
     let document = minify_operation(operation_def, supergraph).expect("Failed to minify");
 
     SubgraphFetchOperation::from_anonymous_operation(document)
-}
-
-impl From<&FetchStepData<MultiTypeFetchStep>> for OperationKind {
-    fn from(step: &FetchStepData<MultiTypeFetchStep>) -> Self {
-        match step.input.iter().next().unwrap().0.as_str() {
-            "Query" => OperationKind::Query,
-            "Mutation" => OperationKind::Mutation,
-            "Subscription" => OperationKind::Subscription,
-            _ => OperationKind::Query,
-        }
-    }
 }
 
 impl FetchNode {
@@ -720,10 +724,11 @@ impl FetchNode {
                 output_rewrites: step.output_rewrites.clone(),
             },
             false => {
+                let root_type_name = supergraph.expect_root_type_name(Some(&step.operation_kind));
                 let operation_def = OperationDefinition {
                     name: None,
-                    operation_kind: Some(step.into()),
-                    selection_set: (&step.output).into(),
+                    operation_kind: Some(step.operation_kind.clone()),
+                    selection_set: step.output.to_root_selection_set(root_type_name),
                     variable_definitions: step.variable_definitions.clone(),
                 };
                 let document =
@@ -733,7 +738,7 @@ impl FetchNode {
                     id: step.id,
                     service_name: step.service_name.0.clone(),
                     variable_usages: step.variable_usages.clone(),
-                    operation_kind: Some(step.into()),
+                    operation_kind: Some(step.operation_kind.clone()),
                     operation: SubgraphFetchOperation::from_anonymous_operation(document),
                     custom_scalar_paths: custom_scalar_paths_from_fetch_output(
                         &step.output,

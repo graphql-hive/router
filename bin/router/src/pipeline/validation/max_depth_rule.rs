@@ -1,10 +1,10 @@
 use std::{cmp, collections::HashMap};
 
 use graphql_tools::{
-    ast::OperationVisitorContext,
-    static_graphql::query::{Definition, Selection},
+    ast::{OperationVisitor, OperationVisitorContext},
+    static_graphql::query::{Definition, Document, FragmentDefinition, Selection},
     validation::{
-        rules::ValidationRule,
+        rules::{ValidationRule, ValidationVisitor},
         utils::{ValidationError, ValidationErrorContext},
     },
 };
@@ -17,38 +17,24 @@ pub struct MaxDepthRule {
 }
 
 impl ValidationRule for MaxDepthRule {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "MAX_DEPTH_EXCEEDED"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext<'_>,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        let mut visitor = MaxDepthVisitor {
-            config: &self.config,
-            visited_fragments: HashMap::with_capacity(ctx.known_fragments.len()),
-            ctx,
-        };
-        for definition in &ctx.operation.definitions {
-            let Definition::Operation(op) = definition else {
-                continue;
-            };
-            if let Err(err) = visitor.count_depth(op.into(), None) {
-                error_collector.report_error(err);
-            }
-        }
+    fn visitor<'doc>(&self) -> ValidationVisitor<'doc> {
+        Box::new(MaxDepthVisitor {
+            config: self.config.clone(),
+            visited_fragments: HashMap::new(),
+        })
     }
 }
 
-struct MaxDepthVisitor<'a, 'b> {
-    config: &'b MaxDepthRuleConfig,
-    visited_fragments: HashMap<&'a str, VisitedFragment>,
-    ctx: &'b OperationVisitorContext<'a>,
+struct MaxDepthVisitor<'doc> {
+    config: MaxDepthRuleConfig,
+    visited_fragments: HashMap<&'doc str, VisitedFragment>,
 }
 
-impl<'a> MaxDepthVisitor<'a, '_> {
+impl<'doc> MaxDepthVisitor<'doc> {
     fn check_limit(&self, count: usize) -> Result<usize, ValidationError> {
         if count > self.config.n {
             Err(ValidationError {
@@ -60,9 +46,11 @@ impl<'a> MaxDepthVisitor<'a, '_> {
             Ok(count)
         }
     }
+
     fn count_depth(
         &mut self,
-        node: CountableNode<'a>,
+        known_fragments: &HashMap<&'doc str, &'doc FragmentDefinition>,
+        node: CountableNode<'doc>,
         parent_depth: Option<usize>,
     ) -> Result<usize, ValidationError> {
         // If introspection queries are to be ignored, skip them from the root
@@ -97,7 +85,11 @@ impl<'a> MaxDepthVisitor<'a, '_> {
 
                 depth = cmp::max(
                     depth,
-                    self.count_depth(child.into(), Some(parent_depth + increase_by))?,
+                    self.count_depth(
+                        known_fragments,
+                        child.into(),
+                        Some(parent_depth + increase_by),
+                    )?,
                 );
             }
         }
@@ -128,9 +120,9 @@ impl<'a> MaxDepthVisitor<'a, '_> {
                 .insert(fragment_name, VisitedFragment::Visiting);
 
             // Look up the fragment definition by its name
-            if let Some(fragment) = self.ctx.known_fragments.get(fragment_name) {
+            if let Some(fragment) = known_fragments.get(fragment_name) {
                 // Count the depth of the fragment
-                let fragment_depth = self.count_depth(fragment.into(), Some(0))?;
+                let fragment_depth = self.count_depth(known_fragments, fragment.into(), Some(0))?;
 
                 // Update it with the actual depth.
                 self.visited_fragments
@@ -144,6 +136,26 @@ impl<'a> MaxDepthVisitor<'a, '_> {
         }
 
         Ok(depth)
+    }
+}
+
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for MaxDepthVisitor<'doc> {
+    fn enter_document(
+        &mut self,
+        context: &mut OperationVisitorContext<'doc>,
+        user_context: &mut ValidationErrorContext,
+        document: &'doc Document,
+    ) {
+        self.visited_fragments = HashMap::with_capacity(context.known_fragments.len());
+
+        for definition in &document.definitions {
+            let Definition::Operation(op) = definition else {
+                continue;
+            };
+            if let Err(err) = self.count_depth(&context.known_fragments, op.into(), None) {
+                user_context.report_error(err);
+            }
+        }
     }
 }
 

@@ -6,6 +6,7 @@ pub mod extensions;
 pub mod headers;
 pub mod introspection;
 pub mod json_writer;
+pub mod operation_filter;
 pub mod plugins;
 pub mod projection;
 pub mod request_context;

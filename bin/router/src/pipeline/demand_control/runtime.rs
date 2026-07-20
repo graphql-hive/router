@@ -291,7 +291,7 @@ impl DemandControlRuntime {
         actual_plans_by_fetch_hash: &mut Option<AHashMap<u64, CompiledSubgraphActualCostPlan>>,
     ) -> FormulaFetchNode {
         let default_list_size = self.default_list_size_for_subgraph(service_name);
-        let root_type = supergraph_state.root_type_name(operation_kind);
+        let root_type = supergraph_state.expect_root_type_name(operation_kind);
         if let Some(actual_plans_by_fetch_hash) = actual_plans_by_fetch_hash {
             actual_plans_by_fetch_hash
                 .entry(operation.hash)

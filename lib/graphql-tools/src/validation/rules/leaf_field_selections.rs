@@ -1,6 +1,6 @@
 use super::ValidationRule;
 use crate::{
-    ast::{visit_document, OperationVisitor, OperationVisitorContext},
+    ast::{OperationVisitor, OperationVisitorContext},
     validation::utils::{ValidationError, ValidationErrorContext},
 };
 
@@ -23,7 +23,7 @@ impl LeafFieldSelections {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for LeafFieldSelections {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for LeafFieldSelections {
     fn enter_field(
         &mut self,
         visitor_context: &mut OperationVisitorContext,
@@ -64,21 +64,12 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for LeafFieldSelections {
 }
 
 impl ValidationRule for LeafFieldSelections {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "LeafFieldSelections"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut LeafFieldSelections::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
+        Box::new(LeafFieldSelections::new())
     }
 }
 
@@ -90,6 +81,22 @@ fn valid_scalar_selection() {
     let errors = test_operation_with_schema(
         "fragment scalarSelection on Dog {
           barks
+        }",
+        TEST_SCHEMA,
+        &mut plan,
+    );
+
+    assert_eq!(get_messages(&errors).len(), 0);
+}
+
+#[test]
+fn valid_scalar_selection_with_args() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(LeafFieldSelections {}));
+    let errors = test_operation_with_schema(
+        "fragment scalarSelectionWithArgs on Dog {
+          doesKnowCommand(dogCommand: SIT)
         }",
         TEST_SCHEMA,
         &mut plan,

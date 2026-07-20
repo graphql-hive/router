@@ -1,5 +1,7 @@
+use std::collections::{HashMap, HashSet, VecDeque};
+
 use super::ValidationRule;
-use crate::ast::{visit_document, OperationVisitor, OperationVisitorContext};
+use crate::ast::{OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::*;
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
 
@@ -9,19 +11,48 @@ use crate::validation::utils::{ValidationError, ValidationErrorContext};
 /// within operations, or spread within other fragments spread within operations.
 ///
 /// See https://spec.graphql.org/draft/#sec-Fragments-Must-Be-Used
-pub struct NoUnusedFragments<'a> {
-    fragments_in_use: Vec<&'a str>,
+pub struct NoUnusedFragments<'doc> {
+    fragments_in_use: Vec<&'doc str>,
+    current_fragment_spreads: Vec<&'doc str>,
+    current_fragment: Option<&'doc str>,
+    fragment_spreads: HashMap<&'doc str, Vec<&'doc str>>,
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for NoUnusedFragments<'a> {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for NoUnusedFragments<'doc> {
+    fn enter_fragment_definition(
+        &mut self,
+        _: &mut OperationVisitorContext,
+        _: &mut ValidationErrorContext,
+        fragment: &'doc FragmentDefinition,
+    ) {
+        self.current_fragment = Some(fragment.name.as_str());
+        self.current_fragment_spreads = Vec::new();
+    }
+
+    fn leave_fragment_definition(
+        &mut self,
+        _: &mut OperationVisitorContext,
+        _: &mut ValidationErrorContext,
+        _: &FragmentDefinition,
+    ) {
+        if let Some(name) = self.current_fragment.take() {
+            self.fragment_spreads
+                .insert(name, std::mem::take(&mut self.current_fragment_spreads));
+        }
+    }
+
     fn enter_fragment_spread(
         &mut self,
         _: &mut OperationVisitorContext,
         _: &mut ValidationErrorContext,
-        fragment_spread: &'a FragmentSpread,
+        fragment_spread: &'doc FragmentSpread,
     ) {
-        self.fragments_in_use
-            .push(fragment_spread.fragment_name.as_str());
+        let name = fragment_spread.fragment_name.as_str();
+        if self.current_fragment.is_some() {
+            self.current_fragment_spreads.push(name);
+        } else {
+            self.fragments_in_use.push(name);
+        }
     }
 
     fn leave_document(
@@ -30,10 +61,29 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for NoUnusedFragments<'a> 
         user_context: &mut ValidationErrorContext,
         _document: &Document,
     ) {
+        let mut reachable: HashSet<&str> = HashSet::new();
+        let mut queue: VecDeque<&str> = self.fragments_in_use.iter().copied().collect();
+
+        while let Some(frag) = queue.pop_front() {
+            if !reachable.insert(frag) {
+                continue;
+            }
+
+            let Some(spreads) = self.fragment_spreads.get(frag) else {
+                continue;
+            };
+
+            for spread in spreads {
+                if !reachable.contains(spread) {
+                    queue.push_back(spread);
+                }
+            }
+        }
+
         visitor_context
             .known_fragments
             .keys()
-            .filter(|fragment_name| !self.fragments_in_use.contains(fragment_name))
+            .filter(|fragment_name| !reachable.contains(*fragment_name))
             .for_each(|unused_fragment_name| {
                 user_context.report_error(ValidationError {
                     error_code: self.error_code(),
@@ -44,36 +94,30 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for NoUnusedFragments<'a> 
     }
 }
 
-impl<'a> Default for NoUnusedFragments<'a> {
+impl Default for NoUnusedFragments<'_> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'a> NoUnusedFragments<'a> {
+impl NoUnusedFragments<'_> {
     pub fn new() -> Self {
         NoUnusedFragments {
             fragments_in_use: Vec::new(),
+            current_fragment_spreads: Vec::new(),
+            current_fragment: None,
+            fragment_spreads: HashMap::new(),
         }
     }
 }
 
-impl<'n> ValidationRule for NoUnusedFragments<'n> {
-    fn error_code<'a>(&self) -> &'a str {
+impl ValidationRule for NoUnusedFragments<'_> {
+    fn error_code(&self) -> &'static str {
         "NoUnusedFragments"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut NoUnusedFragments::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
+        Box::new(NoUnusedFragments::new())
     }
 }
 
@@ -183,9 +227,7 @@ fn contains_unknown_fragments() {
     assert_eq!(messages.len(), 2);
 }
 
-// TODO: Fix this one :( It's not working
 #[test]
-#[ignore = "Fix this one :( It's not working"]
 fn contains_unknown_fragments_with_ref_cycle() {
     use crate::validation::test_utils::*;
 
@@ -226,13 +268,8 @@ fn contains_unknown_fragments_with_ref_cycle() {
 
     let messages = get_messages(&errors);
     assert_eq!(messages.len(), 2);
-    assert_eq!(
-        messages,
-        vec![
-            "Fragment \"Unused1\" is never used.",
-            "Fragment \"Unused2\" is never used."
-        ]
-    );
+    assert!(messages.contains(&&"Fragment \"Unused1\" is never used.".to_owned()));
+    assert!(messages.contains(&&"Fragment \"Unused2\" is never used.".to_owned()));
 }
 
 #[test]

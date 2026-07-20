@@ -226,16 +226,23 @@ impl FieldProjectionCondition {
 
 impl FieldProjectionPlan {
     #[instrument(level = "trace", skip_all)]
-    pub fn from_operation(
-        operation: &OperationDefinition,
-        schema_metadata: &SchemaMetadata,
-    ) -> (&'static str, Vec<FieldProjectionPlan>) {
+    pub fn from_operation<'a>(
+        operation: &'a OperationDefinition,
+        schema_metadata: &'a SchemaMetadata,
+    ) -> (&'a str, Vec<FieldProjectionPlan>) {
         let root_type_name = match operation.operation_kind {
-            Some(OperationKind::Query) => "Query",
-            Some(OperationKind::Mutation) => "Mutation",
-            Some(OperationKind::Subscription) => "Subscription",
-            None => "Query",
-        };
+            None | Some(OperationKind::Query) => schema_metadata.query_type_name.as_ref(),
+            Some(OperationKind::Mutation) => schema_metadata.mutation_type_name.as_ref(),
+            Some(OperationKind::Subscription) => schema_metadata.subscription_type_name.as_ref(),
+        }
+        .unwrap_or_else(|| {
+            // SAFETY: operation was validated already,
+            // so the matching root type should be present
+            panic!(
+                "No root type found for operation kind: {:?}",
+                operation.operation_kind
+            );
+        });
 
         let mut plans = Self::from_selection_set(
             &operation.selection_set,

@@ -116,6 +116,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.84 (2026-07-20)
+
+### Fixes
+
+#### Add an `on_graphql_analysis` plugin hook with safe operation filtering
+
+Plugin authors can now inspect and filter operation fields after normalization and immediately before query planning. Fields can be kept or nulled with a GraphQL error while the router consistently updates the operation and response projection plan, making the hook suitable for authorization, rate limiting, progressive overrides, and similar policies.
+
+#### Improve GraphQL operation validation
+
+- **Faster validation (2-3x):** rules now share a single `OperationVisitor` pass over the operation document instead of each rule visiting it independently.
+- **New `UniqueInputFieldNames` rule:** input object fields are now kept as a list rather than a map, so duplicate fields are no longer silently deduplicated before validation. A query like `{ field(input: { value: 1, value: 2 }) }` is now correctly rejected.
+- **Fixed `VariablesInAllowedPosition`:** now accounts for default values on variables, field arguments, and input object fields. Nullable variables used in a non-null argument that defines a default are no longer incorrectly rejected.
+
 ## 0.0.83 (2026-07-13)
 
 ### Fixes

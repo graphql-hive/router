@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::parser::Pos;
 
 use super::ValidationRule;
-use crate::ast::{visit_document, OperationVisitor, OperationVisitorContext};
+use crate::ast::{OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::Value;
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
 
@@ -27,7 +27,7 @@ impl UniqueArgumentNames {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for UniqueArgumentNames {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for UniqueArgumentNames {
     fn enter_field(
         &mut self,
         _: &mut OperationVisitorContext,
@@ -84,21 +84,12 @@ fn collect_from_arguments(
 }
 
 impl ValidationRule for UniqueArgumentNames {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "UniqueArgumentNames"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut UniqueArgumentNames::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
+        Box::new(UniqueArgumentNames::new())
     }
 }
 

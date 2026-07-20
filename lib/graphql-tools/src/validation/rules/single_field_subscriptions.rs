@@ -1,5 +1,5 @@
 use super::ValidationRule;
-use crate::ast::{collect_fields, visit_document, OperationVisitor, OperationVisitorContext};
+use crate::ast::{collect_fields, OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::OperationDefinition;
 use crate::static_graphql::schema::TypeDefinition;
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
@@ -23,7 +23,7 @@ impl SingleFieldSubscriptions {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for SingleFieldSubscriptions {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for SingleFieldSubscriptions {
     fn enter_operation_definition(
         &mut self,
         visitor_context: &mut OperationVisitorContext,
@@ -88,21 +88,12 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for SingleFieldSubscriptio
 }
 
 impl ValidationRule for SingleFieldSubscriptions {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "SingleFieldSubscriptions"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut SingleFieldSubscriptions::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
+        Box::new(SingleFieldSubscriptions::new())
     }
 }
 
@@ -416,7 +407,7 @@ fn fails_with_introspection_field_in_anonymous_subscription() {
 
     let mut plan = create_plan_from_rule(Box::new(SingleFieldSubscriptions {}));
     let errors = test_operation_with_schema(
-        "subscription { 
+        "subscription {
           __typename
         }",
         TEST_SCHEMA_SUBSCRIPTION,

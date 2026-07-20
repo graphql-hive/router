@@ -1,4 +1,3 @@
-use crate::pipeline::authorization::AuthorizationError;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::schema_state::SelectedSupergraph;
@@ -18,6 +17,7 @@ use hive_router_plan_executor::headers::response::ResponseHeaderSink;
 
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
+use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use http::HeaderName;
 use sonic_rs::json;
@@ -38,7 +38,7 @@ pub struct PlannedRequest<'req> {
     pub query_plan_payload: &'req QueryPlan,
     pub variable_payload: Arc<CoerceVariablesPayload>,
     pub client_request_details: Arc<ClientRequestDetails<'req>>,
-    pub authorization_errors: Vec<AuthorizationError>,
+    pub initial_errors: Vec<GraphQLError>,
     pub demand_control_execution_context: Option<DemandControlExecutionContext>,
     pub plugin_req_state: Option<PluginRequestState<'req>>,
 }
@@ -133,18 +133,15 @@ pub async fn execute_plan<'exec>(
             extensions,
             client_request: planned_request.client_request_details,
             introspection_context: introspection_context.into(),
-            operation_type_name: planned_request.normalized_payload.root_type_name,
+            operation_type_name: planned_request.normalized_payload.root_type_name.clone(),
+            operation_kind: planned_request.normalized_payload.operation_kind.clone(),
             jwt_auth_forwarding: jwt_auth_forwarding.map(|j| j.into()),
             graphql_error_recorder: app_state.telemetry_context.metrics.graphql.error_recorder(),
             demand_control_context: planned_request
                 .demand_control_execution_context
                 .map(|d| d.into()),
             executors: Arc::clone(&supergraph.runtime.subgraph_executor_map),
-            initial_errors: planned_request
-                .authorization_errors
-                .iter()
-                .map(|e| e.into())
-                .collect(),
+            initial_errors: planned_request.initial_errors,
             span,
             plugin_req_state: planned_request.plugin_req_state,
             operation_name_factory: OperationNameFactory::new(

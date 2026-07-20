@@ -82,22 +82,24 @@ pub trait SchemaTransformer<'a, T: Text<'a> + Clone> {
         &mut self,
         document: &Document<'a, T>,
     ) -> TransformedValue<Document<'a, T>> {
-        let mut next_document = Document {
-            definitions: Vec::new(),
-        };
+        // We collect a list of definitions first, and construct the `Document` at the end,
+        // because when `Document` is created, we store the root types in it.
+        // If we'd construct the empty `Document` first, the root types would be empty,
+        // or had to be recomputed from `.definitions` after each change.
+        let mut transformed_definitions = Vec::with_capacity(document.definitions.len());
         let mut has_changes = false;
 
         for definition in document.definitions.clone() {
             match self.transform_definition(&definition) {
-                Transformed::Keep => next_document.definitions.push(definition),
+                Transformed::Keep => transformed_definitions.push(definition),
                 Transformed::Replace(replacement) => {
                     has_changes = true;
-                    next_document.definitions.push(replacement)
+                    transformed_definitions.push(replacement)
                 }
             }
         }
         if has_changes {
-            TransformedValue::Replace(next_document)
+            TransformedValue::Replace(Document::new(transformed_definitions))
         } else {
             TransformedValue::Keep
         }

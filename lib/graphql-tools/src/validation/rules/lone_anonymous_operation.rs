@@ -1,5 +1,5 @@
 use super::ValidationRule;
-use crate::ast::{visit_document, OperationVisitor, OperationVisitorContext};
+use crate::ast::{OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::*;
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
 
@@ -23,7 +23,7 @@ impl LoneAnonymousOperation {
     }
 }
 
-impl<'a> OperationVisitor<'a, ValidationErrorContext> for LoneAnonymousOperation {
+impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for LoneAnonymousOperation {
     fn enter_document(
         &mut self,
         _: &mut OperationVisitorContext,
@@ -93,21 +93,12 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for LoneAnonymousOperation
 }
 
 impl ValidationRule for LoneAnonymousOperation {
-    fn error_code<'a>(&self) -> &'a str {
+    fn error_code(&self) -> &'static str {
         "LoneAnonymousOperation"
     }
 
-    fn validate(
-        &self,
-        ctx: &mut OperationVisitorContext,
-        error_collector: &mut ValidationErrorContext,
-    ) {
-        visit_document(
-            &mut LoneAnonymousOperation::new(),
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+    fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
+        Box::new(LoneAnonymousOperation::new())
     }
 }
 

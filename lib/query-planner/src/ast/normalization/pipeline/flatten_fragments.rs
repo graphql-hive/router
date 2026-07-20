@@ -26,9 +26,7 @@ pub type PossibleTypesMap<'a> = HashMap<&'a str, HashSet<&'a str>>;
 #[inline]
 pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
     let possible_types = build_possible_types_map(ctx);
-    let query_type_name = ctx.query_type_name();
-    let mutation_type_name = ctx.mutation_type_name();
-    let subscription_type_name = ctx.subscription_type_name();
+    let query_type_name = ctx.root_types.query_type_name()?;
 
     for definition in &mut ctx.document.definitions {
         if let Definition::Operation(op_def) = definition {
@@ -37,12 +35,22 @@ pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), Normaliza
                 OperationDefinition::Query(Query { selection_set, .. }) => {
                     (query_type_name, selection_set)
                 }
-                OperationDefinition::Mutation(Mutation { selection_set, .. }) => {
-                    (mutation_type_name, selection_set)
-                }
-                OperationDefinition::Subscription(Subscription { selection_set, .. }) => {
-                    (subscription_type_name, selection_set)
-                }
+                OperationDefinition::Mutation(Mutation { selection_set, .. }) => (
+                    ctx.root_types.mutation_type_name().ok_or_else(|| {
+                        NormalizationError::TypeForOperationNotFound {
+                            kind: "mutation".to_string(),
+                        }
+                    })?,
+                    selection_set,
+                ),
+                OperationDefinition::Subscription(Subscription { selection_set, .. }) => (
+                    ctx.root_types.subscription_type_name().ok_or_else(|| {
+                        NormalizationError::TypeForOperationNotFound {
+                            kind: "subscription".to_string(),
+                        }
+                    })?,
+                    selection_set,
+                ),
             };
 
             let root_type_def =

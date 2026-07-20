@@ -68,9 +68,9 @@ pub fn ast_hash(query: &OperationDefinition) -> u64 {
 impl ASTHash for &OperationKind {
     fn ast_hash<H: Hasher, const ORDER_INDEPENDENT: bool>(&self, hasher: &mut H) {
         match self {
-            OperationKind::Query => "Query".hash(hasher),
-            OperationKind::Mutation => "Mutation".hash(hasher),
-            OperationKind::Subscription => "Subscription".hash(hasher),
+            OperationKind::Query => "kind:query".hash(hasher),
+            OperationKind::Mutation => "kind:mutation".hash(hasher),
+            OperationKind::Subscription => "kind:subscription".hash(hasher),
         }
     }
 }
@@ -430,7 +430,7 @@ mod tests {
 
         // Snapshot test: compare against a known, pre-calculated hash.
         // If the hashing logic changes, this value will need to be updated.
-        let expected_hash = 3221166439930069003;
+        let expected_hash = 4628017135056249916;
         assert_eq!(
             hash1, expected_hash,
             "AST hash does not match the snapshot value. If this change is intentional, update the snapshot."

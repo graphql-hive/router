@@ -7,8 +7,9 @@ use std::{
 use petgraph::graph::EdgeReference as GraphEdgeReference;
 
 use crate::{
-    ast::type_aware_selection::TypeAwareSelection, federation_spec::directives::JoinFieldDirective,
-    state::supergraph_state::SubgraphName,
+    ast::type_aware_selection::TypeAwareSelection,
+    federation_spec::directives::JoinFieldDirective,
+    state::supergraph_state::{OperationKind, SubgraphName},
 };
 
 #[derive(Debug)]
@@ -159,6 +160,7 @@ impl Display for OverrideLabel {
 pub enum Edge {
     SubgraphEntrypoint {
         name: SubgraphName,
+        operation_kind: OperationKind,
     },
     FieldMove(Box<FieldMove>),
     ReentryMove(ReentryMove),
