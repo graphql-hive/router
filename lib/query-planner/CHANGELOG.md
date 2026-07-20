@@ -30,6 +30,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 2.10.10 (2026-07-20)
+
+### Fixes
+
+#### Improve GraphQL operation validation
+
+- **Faster validation (2-3x):** rules now share a single `OperationVisitor` pass over the operation document instead of each rule visiting it independently.
+- **New `UniqueInputFieldNames` rule:** input object fields are now kept as a list rather than a map, so duplicate fields are no longer silently deduplicated before validation. A query like `{ field(input: { value: 1, value: 2 }) }` is now correctly rejected.
+- **Fixed `VariablesInAllowedPosition`:** now accounts for default values on variables, field arguments, and input object fields. Nullable variables used in a non-null argument that defines a default are no longer incorrectly rejected.
+
 ## 2.10.9 (2026-07-07)
 
 ### Fixes
