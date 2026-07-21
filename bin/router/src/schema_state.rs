@@ -803,6 +803,45 @@ mod plugin_runtime_cache_tests {
     }
 
     #[test]
+    fn concurrent_resolves_build_one_runtime() {
+        let state = Arc::new(test_schema_state());
+        let owner = test_owner();
+        let snapshot = owner.snapshot();
+        // make all worker threads hit the empty runtime cache at roughly the same time
+        let barrier = Arc::new(std::sync::Barrier::new(9));
+
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let state = state.clone();
+                let snapshot = snapshot.clone();
+                let barrier = barrier.clone();
+
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    // every thread enters resolve_runtime, where the mutex must serialize the
+                    // cache miss, runtime build, and insertion
+                    state.resolve_runtime(&snapshot).unwrap()
+                })
+            })
+            .collect();
+
+        // release all eight workers together after they are ready
+        barrier.wait();
+
+        let runtimes: Vec<_> = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect();
+
+        // the first thread builds while holding the mutex, then every other thread observes
+        // its cache entry instead of building and inserting another runtime
+        assert!(runtimes[1..]
+            .iter()
+            .all(|runtime| Arc::ptr_eq(&runtimes[0], runtime)));
+        assert_eq!(state.runtime_cache.lock().unwrap().len(), 1);
+    }
+
+    #[test]
     fn distinct_supergraph_instances_get_distinct_runtimes() {
         let state = test_schema_state();
 
