@@ -35,6 +35,7 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 xxhash-rust = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
+tokio-util = { workspace = true }
 dashmap = { workspace = true }
 serde_json = { workspace = true }
 recloser = { workspace = true }

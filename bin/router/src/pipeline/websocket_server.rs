@@ -70,19 +70,21 @@ pub async fn ws_index(
     };
 
     ws::start(
-        req,
+        req.clone(),
         accepted_subprotocol,
         fn_factory_with_config(move |sink: ws::WsSink| {
             let schema_state = schema_state.clone();
             let shared_state = shared_state.clone();
             let plugin_context = plugin_context.clone();
             let request_context = request_context.clone();
+            let req = req.clone();
             async move {
                 ws_service(
                     accepted_subprotocol.is_some(),
                     sink,
                     schema_state,
                     shared_state,
+                    req,
                     plugin_context,
                     request_context,
                 )
@@ -93,11 +95,13 @@ pub async fn ws_index(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn ws_service(
     has_accepted_subprotocol: bool,
     sink: ws::WsSink,
     schema_state: Arc<SchemaState>,
     shared_state: Arc<RouterSharedState>,
+    req: HttpRequest,
     plugin_context: Option<Arc<PluginContext>>,
     request_context: SharedRequestContext,
 ) -> Result<impl Service<ws::Frame, Response = Option<ws::Message>, Error = io::Error>, web::Error>
@@ -157,6 +161,7 @@ async fn ws_service(
         let request_context = request_context.clone();
         let ws_uri = ws_uri.clone();
         let ws_path = ws_path.clone();
+        let req = req.clone();
         async move {
             match parse_frame_to_text(frame, &state) {
                 Ok(text) => Ok(handle_text_frame(
@@ -165,6 +170,7 @@ async fn ws_service(
                     state,
                     &schema_state,
                     &shared_state,
+                    &req,
                     plugin_context,
                     &request_context,
                     &ws_uri,
@@ -222,11 +228,27 @@ async fn handle_text_frame(
     state: WsStateRef,
     schema_state: &Arc<SchemaState>,
     shared_state: &Arc<RouterSharedState>,
+    req: &HttpRequest,
     plugin_context: Option<Arc<PluginContext>>,
     request_context: &SharedRequestContext,
     ws_uri: &http::Uri,
     ws_path: &Path<http::Uri>,
 ) -> Option<ws::Message> {
+    // IMPORTANT: we intentionally check if a supergraph is selected this "late" because
+    // browsers cannot interpret a rejected HTTP Upgrade request and will show a cryptic
+    // error to clients. instead, we accept the connection but close it immediately if no
+    // supergraph is available, which results in a more understandable error
+    let supergraph = match schema_state.select_supergraph(req) {
+        Ok(supergraph) => supergraph,
+        Err(err) => {
+            error!(err = ?err, "Supergraph runtime error");
+            return Some(
+                CloseCode::InternalServerError(Some("Supergraph runtime error".to_string())).into(),
+            );
+        }
+    };
+    let supergraph = supergraph.as_ref();
+
     // TODO: cover response header aggregation for WS
     let response_header_sink = ResponseHeaderSink::default();
     let client_msg: ClientMessage = match sonic_rs::from_str(&text) {
@@ -276,22 +298,31 @@ async fn handle_text_frame(
             let span_clone = operation_span.clone();
 
             let result = async {
-                let maybe_supergraph = schema_state.current_supergraph();
-                let supergraph = match maybe_supergraph.as_ref() {
-                    Some(supergraph) => supergraph,
-                    None => {
-                        warn!(
-                            "No supergraph available yet, unable to process client subscribe message"
-                        );
-                        return Some(ServerMessage::error(
-                            &id,
-                            &[GraphQLError::from_message_and_extensions(
-                                "No supergraph available yet".to_string(),
-                                GraphQLErrorExtensions::new_from_code("SERVICE_UNAVAILABLE"),
-                            )],
-                        ));
-                    }
+                let Some(supergraph) = supergraph else {
+                    // IMPORTANT: we dont do this earlier because router might be loading the
+                    // supergraph as we speak, so we simply reject the operation request instead
+                    warn!("No supergraph available yet, unable to process client subscribe message");
+                    return Some(ServerMessage::error(
+                        &id,
+                        &[GraphQLError::from_message_and_extensions(
+                            "No supergraph available yet".to_string(),
+                            GraphQLErrorExtensions::new_from_code("SERVICE_UNAVAILABLE"),
+                        )],
+                    ));
                 };
+
+                if supergraph.snapshot.is_retired() {
+                    // the supergraph selected at upgrade time has since been retired (configured
+                    // reload, or the owning plugin dropped/replaced its variant) - reject new
+                    // operations on this connection rather than create work from a stale schema.
+                    return Some(ServerMessage::error(
+                        &id,
+                        &[GraphQLError::from_message_and_extensions(
+                            "Supergraph used by this connection has been retired".to_string(),
+                            GraphQLErrorExtensions::new_from_code("SERVICE_UNAVAILABLE"),
+                        )],
+                    ));
+                }
 
                 let config = &shared_state.router_config.websocket;
 
@@ -430,7 +461,8 @@ async fn handle_text_frame(
                 }
 
                 let normalize_payload = match normalize_request_with_cache(
-                    supergraph,
+                    &supergraph.snapshot,
+                    &supergraph.runtime,
                     schema_state,
                     &payload,
                     &parser_payload,
@@ -469,7 +501,7 @@ async fn handle_text_frame(
                         ws_uri.path(),
                         headers.as_ref(),
                         &shared_state.in_flight_requests_header_policy,
-                        supergraph.schema_checksum(),
+                        supergraph.snapshot.cache_id,
                         normalize_payload.normalized_operation_hash,
                         variables_hash,
                         extensions_hash,
@@ -555,7 +587,7 @@ async fn handle_text_frame(
                         headers: headers_vec,
                     };
                     usage_reporting::collect_usage_report(
-                        supergraph.supergraph_schema.clone(),
+                        supergraph.snapshot.supergraph_schema.clone(),
                         started_at.elapsed(),
                         client_name,
                         client_version,

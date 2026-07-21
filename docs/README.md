@@ -2815,6 +2815,25 @@ poll_interval: null
 ```
 
 
+   
+**Option 4 (alternative):** 
+No configured supergraph source. A plugin must select a supergraph for every GraphQL
+request and WebSocket upgrade that needs one, via `set_supergraph` in
+`on_http_request`.
+
+There is deliberately no fallback: if no plugin supplies one, the request fails with
+the same `NO_SUPERGRAPH_AVAILABLE` response the router uses while a configured supergraph
+hasn't loaded yet.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**source**|`string`|Constant Value: `"plugin"`<br/>|yes|
+
+**Additional Properties:** not allowed  
+
 <a name="option2retry_policy"></a>
 ## Option 2: retry\_policy: object
 

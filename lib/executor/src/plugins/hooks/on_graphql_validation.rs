@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use graphql_tools::{
-    static_graphql::{query::Document as QueryDocument, schema::Document as SchemaDocument},
+    static_graphql::query::Document as QueryDocument,
     validation::{rules::ValidationRule, utils::ValidationError, validate::ValidationPlan},
 };
 use hive_router_query_planner::consumer_schema::ConsumerSchema;
@@ -32,12 +32,8 @@ pub struct OnGraphQLValidationStartHookPayload<'exec> {
     /// [Learn more about the context data sharing in the docs](https://the-guild.dev/graphql/hive/docs/router/extensibility/plugin_system#context-data-sharing)
     pub context: &'exec PluginContext,
     pub request_context: RequestContextApi,
-    /// The GraphQL Schema that the document will be validated against.
-    /// This is not the same with the supergraph. This is the public schema exposed by the router to the clients, which is generated from the supergraph and can be modified by the plugins.
-    /// The plugins can replace the input schema to be used for validation
-    /// and the new schema will be used in the validation process instead of the original one.
-    ///
-    /// [See an example to see when to override the schema](https://github.com/graphql-hive/router/blob/main/plugin_examples/feature_flags/src/plugin.rs)
+    /// The GraphQL schema that the document will be validated against.
+    /// This is the public schema exposed by the router, not the supergraph.
     pub schema: Arc<ConsumerSchema>,
     /// Parsed GraphQL document from the query string in the GraphQL parameters.
     /// It contains the Abstract Syntax Tree (AST) representation of the GraphQL query, mutation, or subscription
@@ -68,14 +64,6 @@ impl OnGraphQLValidationStartHookPayload<'_> {
         validation_plan: TValidationPlan,
     ) -> Self {
         self.validation_plan = Arc::new(validation_plan.into());
-        self
-    }
-    /// Override the GraphQL Schema that the document will be validated against.
-    /// [See an example to see when to override the schema](https://github.com/graphql-hive/router/blob/main/plugin_examples/feature_flags/src/plugin.rs)
-    pub fn with_schema<TSchema: Into<Arc<SchemaDocument>>>(mut self, schema: TSchema) -> Self {
-        let schema: Arc<SchemaDocument> = schema.into();
-        let new_consumer_schema = ConsumerSchema::from(schema);
-        self.schema = new_consumer_schema.into();
         self
     }
 }

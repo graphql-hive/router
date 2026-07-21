@@ -40,6 +40,7 @@ use crate::{
         progressive_override::LabelEvaluationError,
         sse,
     },
+    schema_state::RouterSupergraphRuntimeError,
     RouterSharedState,
 };
 
@@ -197,6 +198,10 @@ pub enum PipelineError {
 
     #[error(transparent)]
     OperationFilterFailed(#[from] OperationFilterError),
+
+    #[error("Supergraph runtime error")]
+    #[strum(serialize = "SUPERGRAPH_RUNTIME_ERROR")]
+    RouterSupergraphRuntimeError(#[from] RouterSupergraphRuntimeError),
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -305,7 +310,10 @@ impl PipelineError {
             (Self::NoSupergraphAvailable { .. }, _) => StatusCode::SERVICE_UNAVAILABLE,
             (Self::CoprocessorError(err), _) => err.status_code(),
             (Self::RequestContextError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+
             (Self::OperationFilterFailed(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+
+            (Self::RouterSupergraphRuntimeError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }

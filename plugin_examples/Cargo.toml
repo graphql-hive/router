@@ -19,7 +19,8 @@ members = [
   "non_standard_request",
   "incoming_request_deduplication",
   "error_mapping",
-  "field_nulling",
+  "replace_schema",
+  "field_nulling"
 ]
 
 [workspace.dependencies]

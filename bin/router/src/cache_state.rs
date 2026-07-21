@@ -1,20 +1,10 @@
 use std::sync::Arc;
 
-use graphql_tools::validation::utils::ValidationError;
 use hive_router_internal::telemetry::TelemetryContext;
-use hive_router_query_planner::planner::plan_nodes::QueryPlan;
-use moka::future::Cache;
 use moka::Entry;
 
-use crate::pipeline::normalize::GraphQLNormalizationPayload;
-use crate::pipeline::parser::ParseCacheEntry;
-
-pub struct CacheState {
-    pub parse_cache: Cache<u64, ParseCacheEntry>,
-    pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
-    pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
-    pub plan_cache: Cache<u64, Arc<QueryPlan>>,
-}
+use crate::schema_state::SchemaState;
+use crate::shared_state::RouterSharedState;
 
 #[derive(Clone, Copy, Debug)]
 pub enum CacheHitMiss {
@@ -65,50 +55,40 @@ impl<K, V> EntryValueHitMissExt<V> for Entry<K, V> {
     }
 }
 
-impl CacheState {
-    pub fn new() -> Self {
-        Self {
-            parse_cache: Cache::new(1000),
-            validate_cache: Cache::new(1000),
-            normalize_cache: Cache::new(1000),
-            plan_cache: Cache::new(1000),
-        }
-    }
-
-    pub fn on_schema_change(&self) {
-        self.plan_cache.invalidate_all();
-        self.validate_cache.invalidate_all();
-        self.normalize_cache.invalidate_all();
-    }
-}
-
 pub fn register_cache_size_observers(
     telemetry_context: Arc<TelemetryContext>,
-    cache_state: Arc<CacheState>,
+    shared_state: Arc<RouterSharedState>,
+    schema_state: Arc<SchemaState>,
 ) {
     let metrics = &telemetry_context.metrics.cache;
 
-    let parse_cache = Arc::clone(&cache_state);
     metrics
         .parse
-        .observe_size_with(move || parse_cache.parse_cache.entry_count());
+        .observe_size_with(move || shared_state.parse_cache.entry_count());
 
-    let normalize_cache = Arc::clone(&cache_state);
-    metrics
-        .normalize
-        .observe_size_with(move || normalize_cache.normalize_cache.entry_count());
+    // validate/normalize/plan caches live on `RouterSupergraphRuntime` (one per supergraph variant,
+    // dropped with it on retirement) rather than on the shared state, so sum entry counts across
+    // every runtime currently alive (the configured default plus any plugin-selected ones still cached)
 
-    let validate_cache = Arc::clone(&cache_state);
-    metrics
-        .validate
-        .observe_size_with(move || validate_cache.validate_cache.entry_count());
+    let validate_schema_state = Arc::clone(&schema_state);
+    metrics.validate.observe_size_with(move || {
+        let mut total = 0;
+        validate_schema_state
+            .for_each_runtime(|runtime| total += runtime.validate_cache.entry_count());
+        total
+    });
 
-    let plan_cache = Arc::clone(&cache_state);
-    metrics
-        .plan
-        .observe_size_with(move || plan_cache.plan_cache.entry_count());
+    let normalize_schema_state = Arc::clone(&schema_state);
+    metrics.normalize.observe_size_with(move || {
+        let mut total = 0;
+        normalize_schema_state
+            .for_each_runtime(|runtime| total += runtime.normalize_cache.entry_count());
+        total
+    });
 
-    // The demand-control formula cache is owned by `DemandControlRuntime` (it is
-    // schema-scoped), so its size observer is registered in
-    // `SchemaState::new_from_config` instead.
+    metrics.plan.observe_size_with(move || {
+        let mut total = 0;
+        schema_state.for_each_runtime(|runtime| total += runtime.plan_cache.entry_count());
+        total
+    });
 }

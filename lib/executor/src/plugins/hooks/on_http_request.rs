@@ -2,8 +2,10 @@ use ntex::{
     http::Response,
     web::{self, DefaultError, WebRequest},
 };
+use std::sync::Arc;
 
 use crate::{
+    hooks::on_supergraph_load::Supergraph,
     plugin_context::PluginContext,
     plugin_trait::{EndHookPayload, EndHookResult, StartHookPayload, StartHookResult},
     request_context::RequestContextPluginApi,
@@ -69,6 +71,32 @@ pub struct OnHttpRequestHookPayload<'req> {
     /// ```
     pub context: &'req PluginContext,
     pub request_context: RequestContextApi,
+}
+
+impl<'req> OnHttpRequestHookPayload<'req> {
+    /// Selects the supergraph used for this request. Set this to swap the entire GraphQL schema
+    /// (and everything derived from it: validation, introspection, planning, execution) for a
+    /// different one, on a per-request basis, e.g. to serve a different set of fields depending
+    /// on the caller.
+    ///
+    /// The plugin owns construction, retention, replacement and removal of every
+    /// `Arc<Supergraph>` it selects from. This method stores a cheap, read-only snapshot in
+    /// request extensions and never retains the owner `Arc` itself. A later plugin can replace
+    /// that snapshot, preserving normal last-write-wins hook behavior. This means a
+    /// plugin can drop or replace a variant at any time: new requests simply stop being able to
+    /// select it, existing in-flight requests already holding a snapshot finish normally, and any
+    /// active subscriptions selected from it are closed with a schema-reload error.
+    ///
+    /// ### Example
+    ///
+    /// ```ignore
+    /// payload.set_supergraph(supergraph.clone());
+    /// ```
+    pub fn set_supergraph(&self, supergraph: Arc<Supergraph>) {
+        self.router_http_request
+            .extensions_mut()
+            .insert(supergraph.snapshot());
+    }
 }
 
 impl<'req> StartHookPayload<OnHttpResponseHookPayload<'req>, Response>

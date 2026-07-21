@@ -17,11 +17,11 @@ use hive_router_plan_executor::{
     hooks::{
         on_graphql_analysis::{OnGraphqlAnalysisHookPayload, OnGraphqlAnalysisHookResult},
         on_graphql_params::GraphQLParams,
-        on_supergraph_load::SupergraphData,
     },
     plugin_context::{PluginContext, PluginRequestState},
     plugins::hooks,
     request_context::{RequestContextExt, SharedRequestContext},
+    response::graphql_error::GraphQLError,
 };
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
@@ -70,7 +70,7 @@ use crate::{
         },
         validation::validate_operation_with_cache,
     },
-    schema_state::SchemaState,
+    schema_state::{SchemaState, SelectedSupergraph},
     shared_state::{
         RouterRequestDedupeHeaderPolicy, RouterSharedState, SharedRouterResponse,
         SharedRouterResponseGuard, SharedRouterSingleResponse, SharedRouterStreamResponse,
@@ -224,14 +224,14 @@ pub async fn graphql_request_handler(
             &parser_payload.hive_operation_hash,
         );
 
-        let Some(ref supergraph) = **schema_state.current_supergraph() else {
+        let Some(supergraph) = schema_state.select_supergraph(req)? else {
             return Err(PipelineError::NoSupergraphAvailable {
                 response_headers: vec![(RETRY_AFTER, HeaderValue::from_static("10"))],
             });
         };
 
         if let Some(response) = validate_operation_with_cache(
-            supergraph,
+            &supergraph,
             schema_state,
             shared_state,
             &parser_payload,
@@ -249,7 +249,8 @@ pub async fn graphql_request_handler(
             );
 
             // Set initial state for progressive overrides in request context
-            let progressive_overrides = &supergraph.planner.supergraph.progressive_overrides;
+            let progressive_overrides =
+                &supergraph.snapshot.planner.supergraph.progressive_overrides;
             if !progressive_overrides.flags.is_empty() {
                 ctx.progressive_override.unresolved_labels =
                     Some(progressive_overrides.flags.clone());
@@ -259,7 +260,7 @@ pub async fn graphql_request_handler(
         if let Some(coprocessor_runtime) = shared_state.coprocessor.as_ref() {
             let performed_mutations = match coprocessor_runtime
                 .on_graphql_request(req, &mut request_headers, &mut graphql_params, || {
-                    supergraph.public_schema.sdl.clone()
+                    supergraph.snapshot.public_schema.sdl.clone()
                 })
                 .await?
             {
@@ -289,7 +290,8 @@ pub async fn graphql_request_handler(
         }
 
         let normalize_payload = normalize_request_with_cache(
-            supergraph,
+            &supergraph.snapshot,
+            &supergraph.runtime,
             schema_state,
             &graphql_params,
             &parser_payload,
@@ -355,13 +357,12 @@ pub async fn graphql_request_handler(
                 .as_ref()
                 .map_or(0, hash_graphql_extensions);
 
-            let schema_checksum = supergraph.schema_checksum();
             Some(inbound_request_fingerprint(
                 req.method(),
                 req.path(),
                 &request_headers,
                 &shared_state.in_flight_requests_header_policy,
-                schema_checksum,
+                supergraph.snapshot.cache_id,
                 normalize_payload.normalized_operation_hash,
                 variables_hash,
                 extensions_hash,
@@ -381,7 +382,7 @@ pub async fn graphql_request_handler(
                 path_params,
                 graphql_params,
                 &normalize_payload,
-                supergraph,
+                &supergraph,
                 shared_state,
                 schema_state,
                 operation_span,
@@ -414,7 +415,7 @@ pub async fn graphql_request_handler(
 
         if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
             usage_reporting::collect_usage_report(
-                supergraph.supergraph_schema.clone(),
+                supergraph.snapshot.supergraph_schema.clone(),
                 started_at.elapsed(),
                 client_name,
                 client_version,
@@ -454,7 +455,7 @@ pub async fn execute_planned_request<'exec>(
     path_params: PathParams<'exec>,
     mut graphql_params: GraphQLParams,
     normalize_payload: &Arc<GraphQLNormalizationPayload>,
-    supergraph: &'exec SupergraphData,
+    supergraph: &'exec SelectedSupergraph,
     shared_state: &'exec Arc<RouterSharedState>,
     schema_state: &'exec Arc<SchemaState>,
     operation_span: GraphQLOperationSpan,
@@ -481,8 +482,11 @@ pub async fn execute_planned_request<'exec>(
     };
     jwt_request_details.update_request_context(request_context)?;
 
-    let variable_payload =
-        coerce_request_variables(supergraph, &mut graphql_params.variables, normalize_payload)?;
+    let variable_payload = coerce_request_variables(
+        &supergraph.snapshot,
+        &mut graphql_params.variables,
+        normalize_payload,
+    )?;
 
     let client_request_details = MutableClientRequestDetails {
         method,
@@ -533,14 +537,38 @@ pub async fn execute_planned_request<'exec>(
             let sender = producer_handle.sender().clone();
 
             let mut body_stream = result.body;
+            let supergraph = supergraph.clone();
             rt::spawn(async move {
-                while let Some(chunk) = body_stream.next().await {
-                    if !producer_handle.send(SubscriptionEvent::Raw(bytes::Bytes::from(chunk))) {
-                        // all receivers gone, stop draining
-                        break;
+                loop {
+                    tokio::select! {
+                        chunk = body_stream.next() => {
+                            match chunk {
+                                Some(chunk) => {
+                                    if !producer_handle.send(SubscriptionEvent::Raw(bytes::Bytes::from(chunk))) {
+                                        // all receivers gone, stop draining
+                                        break;
+                                    }
+                                }
+                                None => break,
+                            }
+                        }
+                        _ = supergraph.snapshot.retired() => {
+                            // the supergraph this subscription was selected from has been
+                            // retired (configured reload, or the owning plugin dropped/replaced
+                            // its variant) - terminate with the same error a full reload used to
+                            // broadcast, then stop draining.
+                            producer_handle.send(SubscriptionEvent::Error(vec![
+                                GraphQLError::from_message_and_code(
+                                    "subscription has been closed due to a schema reload",
+                                    "SUBSCRIPTION_SCHEMA_RELOAD",
+                                )
+                            ]));
+                            break;
+                        }
                     }
                 }
                 // dropping producer_handle closes the broadcast channel
+                drop(supergraph);
             });
 
             let headers = materialize_shared_response_headers(
@@ -606,7 +634,7 @@ pub async fn execute_pipeline<'exec>(
     graphql_params: &GraphQLParams,
     normalize_payload: &Arc<GraphQLNormalizationPayload>,
     variable_payload: CoerceVariablesPayload,
-    supergraph: &SupergraphData,
+    supergraph: &SelectedSupergraph,
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
     operation_span: GraphQLOperationSpan,
@@ -625,8 +653,8 @@ pub async fn execute_pipeline<'exec>(
     let (mut normalize_payload, authorization_errors) = enforce_operation_authorization(
         &shared_state.router_config,
         &normalize_payload,
-        &supergraph.authorization,
-        &supergraph.metadata,
+        &supergraph.runtime.authorization,
+        &supergraph.snapshot.metadata,
         &variable_payload,
         &client_request_details.jwt,
     )?;
@@ -647,7 +675,7 @@ pub async fn execute_pipeline<'exec>(
                 },
                 graphql_params,
                 request_context,
-                || supergraph.public_schema.sdl.clone(),
+                || supergraph.snapshot.public_schema.sdl.clone(),
             )
             .await?
         {
@@ -693,7 +721,7 @@ pub async fn execute_pipeline<'exec>(
             &normalize_payload.operation_for_plan,
             client_request_details.clone(),
             graphql_params,
-            &supergraph.metadata,
+            &supergraph.snapshot.metadata,
             &variable_payload,
         );
 
@@ -731,10 +759,11 @@ pub async fn execute_pipeline<'exec>(
 
     let variable_payload = Arc::new(variable_payload);
 
-    let demand_control_execution_context = match schema_state.demand_control_runtime.as_ref() {
-        Some(runtime) => match runtime
+    let demand_control_execution_context = match supergraph.runtime.demand_control_runtime.as_ref()
+    {
+        Some(demand_control_runtime) => match demand_control_runtime
             .evaluate(
-                supergraph,
+                &supergraph.snapshot,
                 &variable_payload,
                 &query_plan_payload,
                 normalize_payload.operation_for_plan.as_ref(),
@@ -780,7 +809,7 @@ pub fn inbound_request_fingerprint(
     path: &str,
     request_headers: &HeaderMap,
     dedupe_header_policy: &RouterRequestDedupeHeaderPolicy,
-    schema_checksum: u64,
+    supergraph_cache_id: u64,
     normalized_operation_hash: u64,
     variables_hash: u64,
     extensions_hash: u64,
@@ -801,7 +830,7 @@ pub fn inbound_request_fingerprint(
     method.hash(&mut hasher);
     path.hash(&mut hasher);
     headers.hash(&mut hasher);
-    schema_checksum.hash(&mut hasher);
+    supergraph_cache_id.hash(&mut hasher);
     normalized_operation_hash.hash(&mut hasher);
     variables_hash.hash(&mut hasher);
     extensions_hash.hash(&mut hasher);

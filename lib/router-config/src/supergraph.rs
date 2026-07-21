@@ -91,6 +91,15 @@ pub enum SupergraphSource {
         #[schemars(with = "String")]
         poll_interval: Option<Duration>,
     },
+    /// No configured supergraph source. A plugin must select a supergraph for every GraphQL
+    /// request and WebSocket upgrade that needs one, via `set_supergraph` in
+    /// `on_http_request`.
+    ///
+    /// There is deliberately no fallback: if no plugin supplies one, the request fails with
+    /// the same `NO_SUPERGRAPH_AVAILABLE` response the router uses while a configured supergraph
+    /// hasn't loaded yet.
+    #[serde(rename = "plugin")]
+    Plugin,
 }
 
 fn default_accept_invalid_certs() -> bool {
@@ -115,6 +124,7 @@ impl SupergraphSource {
             SupergraphSource::File { .. } => "file",
             SupergraphSource::HiveConsole { .. } => "hive",
             SupergraphSource::Storage { storage_id, .. } => storage_id.as_str(),
+            SupergraphSource::Plugin => "plugin",
         }
     }
 }

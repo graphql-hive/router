@@ -91,5 +91,8 @@ pub fn resolve_from_config(
             //     retry_policy.max_retries,
             // )?)
         }
+        // there is no loader for a source that's entirely plugin-provided, this should never
+        // be called in when the `supergraph.source = plugin`
+        SupergraphSource::Plugin => Err(LoadSupergraphError::NoLoaderForPluginSource),
     }
 }

@@ -64,28 +64,27 @@ where
     ) -> Result<Self::Response, Self::Error> {
         let shared_state = req.app_state::<Arc<RouterSharedState>>().cloned();
 
-        // Determine if the request should be handled by plugins.
-        // The exceptions are:
-        // - health endpoint
-        // - readiness endpoint
-        // - prometheus endpoint (if it's on the same port)
-        let should_run = {
-            let path = req.path();
-            path != self.paths.health
-                && path != self.paths.readiness
-                && self.prometheus_endpoint.as_deref() != Some(path)
-        };
-
-        if !should_run {
+        // The prometheus endpoint (if it's on the same port) bypasses both plugins and the
+        // coprocessor entirely.
+        if self.prometheus_endpoint.as_deref() == Some(req.path()) {
             return ctx.call(&self.service, req).await;
         }
+
+        // Health and readiness run the plugin `on_http_request`/`on_end` chain (so a
+        // plugin-selected supergraph can be resolved for readiness), but never the coprocessor
+        let is_health = req.path() == self.paths.health;
+        let is_probe = is_health || req.path() == self.paths.readiness;
 
         let request_context = SharedRequestContext::default();
         req.write_request_context(request_context.clone());
 
-        let coprocessor_runtime = shared_state
-            .as_ref()
-            .and_then(|shared_state| shared_state.coprocessor.as_ref());
+        let coprocessor_runtime = if is_probe {
+            None
+        } else {
+            shared_state
+                .as_ref()
+                .and_then(|shared_state| shared_state.coprocessor.as_ref())
+        };
 
         let plugins = shared_state
             .as_ref()

@@ -49,7 +49,7 @@ use crate::{
     telemetry::{HeaderExtractor, PrometheusAttached},
 };
 
-use crate::cache_state::{register_cache_size_observers, CacheState};
+use crate::cache_state::register_cache_size_observers;
 pub use crate::plugins::registry::PluginRegistry;
 pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 pub use arc_swap::ArcSwap;
@@ -220,11 +220,13 @@ async fn graphql_endpoint_dispatch(
         if let Some(coprocessor_runtime) = app_state.coprocessor.as_ref() {
             response = match coprocessor_runtime
                 .on_graphql_response(response, request, || {
-                    schema_state
-                        .current_supergraph()
-                        .as_ref()
-                        .as_ref()
-                        .map(|supergraph| supergraph.public_schema.sdl.clone())
+                    // reuse the exact snapshot execution already resolved and stored on the
+                    // request - never re-resolve here, which could observe a different
+                    // generation than the one that actually executed the operation
+                    request
+                        .extensions()
+                        .get::<crate::schema_state::SelectedSupergraph>()
+                        .map(|selected| selected.snapshot.public_schema.sdl.clone())
                 })
                 .await
             {
@@ -440,23 +442,18 @@ pub async fn configure_app_from_config(
     let storage_manager = Arc::new(StorageManager::new(&router_config.storages)?);
     let router_config_arc = Arc::new(router_config);
     let telemetry_context_arc = Arc::new(telemetry_context);
-    let cache_state = Arc::new(CacheState::new());
-
-    if router_config_arc.telemetry.metrics.is_enabled() {
-        register_cache_size_observers(telemetry_context_arc.clone(), cache_state.clone());
-    }
 
     let schema_state = SchemaState::new_from_config(
         bg_tasks_manager,
         telemetry_context_arc.clone(),
         router_config_arc.clone(),
         plugins_arc.clone(),
-        cache_state.clone(),
         active_subscriptions.clone(),
         storage_manager.clone(),
     )
     .await?;
     let schema_state_arc = Arc::new(schema_state);
+
     let mut validation_plan = default_rules_validation_plan();
     if let Some(max_depth_config) = &router_config_arc.limits.max_depth {
         validation_plan.add_rule(Box::new(MaxDepthRule {
@@ -493,18 +490,26 @@ pub async fn configure_app_from_config(
         ));
     }
 
+    let metrics_enabled = router_config_arc.telemetry.metrics.is_enabled();
     let shared_state = Arc::new(RouterSharedState::new(
         router_config_arc,
         persisted_documents_runtime,
         jwt_runtime,
         hive_usage_agent,
         validation_plan,
-        telemetry_context_arc,
+        telemetry_context_arc.clone(),
         plugins_arc,
-        cache_state,
         active_subscriptions.clone(),
         storage_manager,
     )?);
+
+    if metrics_enabled {
+        register_cache_size_observers(
+            telemetry_context_arc,
+            shared_state.clone(),
+            schema_state_arc.clone(),
+        );
+    }
 
     Ok((shared_state, schema_state_arc))
 }

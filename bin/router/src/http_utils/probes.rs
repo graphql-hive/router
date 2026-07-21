@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use ntex::web::{self, Responder};
+use ntex::web::{self, HttpRequest, Responder};
 
 use crate::schema_state::SchemaState;
 
@@ -9,9 +9,10 @@ pub async fn health_check_handler() -> impl Responder {
 }
 
 pub async fn readiness_check_handler(
+    req: HttpRequest,
     schema_state: web::types::State<Arc<SchemaState>>,
 ) -> impl Responder {
-    if schema_state.is_ready() {
+    if schema_state.is_ready(&req) {
         web::HttpResponse::Ok()
     } else {
         web::HttpResponse::ServiceUnavailable()

@@ -30,7 +30,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::HashSet, sync::Arc};
 use tracing::debug;
 
-use crate::cache_state::CacheState;
 use crate::jwt::context::JwtTokenPayload;
 use crate::jwt::JwtAuthRuntime;
 use crate::pipeline::active_subscriptions::{ActiveSubscriptions, SubscriptionEvent};
@@ -341,11 +340,10 @@ impl RouterSharedState {
         validation_plan: ValidationPlan,
         telemetry_context: Arc<TelemetryContext>,
         plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
-        cache_state: Arc<CacheState>,
         active_subscriptions: ActiveSubscriptions,
         storage_manager: Arc<StorageManager>,
     ) -> Result<Self, SharedStateError> {
-        let parse_cache = cache_state.parse_cache.clone();
+        let parse_cache = Cache::new(1000);
         let coprocessor = router_config
             .coprocessor
             .as_ref()

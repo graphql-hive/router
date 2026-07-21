@@ -1,5 +1,6 @@
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
+use crate::schema_state::SelectedSupergraph;
 use crate::shared_state::RouterSharedState;
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLExecuteSpan, GraphQLOperationSpan,
@@ -13,7 +14,7 @@ use hive_router_plan_executor::execution::plan::{
     QueryPlanExecutionOpts, QueryPlanExecutionResult,
 };
 use hive_router_plan_executor::headers::response::ResponseHeaderSink;
-use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
+
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_plan_executor::response::graphql_error::GraphQLError;
@@ -44,7 +45,7 @@ pub struct PlannedRequest<'req> {
 
 #[inline]
 pub async fn execute_plan<'exec>(
-    supergraph: &SupergraphData,
+    supergraph: &SelectedSupergraph,
     app_state: &RouterSharedState,
     planned_request: PlannedRequest<'exec>,
     span: GraphQLOperationSpan,
@@ -57,8 +58,8 @@ pub async fn execute_plan<'exec>(
             .normalized_payload
             .operation_for_introspection
             .clone(),
-        schema: Arc::clone(&supergraph.planner.consumer_schema.document),
-        metadata: Arc::clone(&supergraph.metadata),
+        schema: Arc::clone(&supergraph.snapshot.planner.consumer_schema.document),
+        metadata: Arc::clone(&supergraph.snapshot.metadata),
         variables: planned_request.variable_payload.clone(),
     };
     async {
@@ -139,12 +140,12 @@ pub async fn execute_plan<'exec>(
             demand_control_context: planned_request
                 .demand_control_execution_context
                 .map(|d| d.into()),
-            executors: Arc::clone(&supergraph.subgraph_executor_map),
+            executors: Arc::clone(&supergraph.runtime.subgraph_executor_map),
             initial_errors: planned_request.initial_errors,
             span,
             plugin_req_state: planned_request.plugin_req_state,
             operation_name_factory: OperationNameFactory::new(
-                supergraph.operation_name_forward_config.clone(),
+                supergraph.runtime.operation_name_forward_config.clone(),
                 operation_name,
             ),
             response_header_sink,

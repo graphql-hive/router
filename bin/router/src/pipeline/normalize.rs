@@ -5,7 +5,7 @@ use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLNormalizeSpan, GraphQLSpanOperationIdentity,
 };
 use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
-use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
+use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphSnapshot;
 use hive_router_plan_executor::introspection::partition::partition_operation;
 use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
 use hive_router_query_planner::ast::normalization::error::NormalizationError;
@@ -21,7 +21,7 @@ use crate::pipeline::nullify::rebuilder::{
 };
 use crate::pipeline::parser::GraphQLParserPayload;
 use crate::pipeline::trie::Trie;
-use crate::schema_state::SchemaState;
+use crate::schema_state::{RouterSupergraphRuntime, SchemaState};
 use hive_router_plan_executor::operation_filter::OperationFilterOutput;
 use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use tracing::{trace, Instrument};
@@ -134,7 +134,8 @@ pub struct NormalizedOperationHashes {
 
 #[inline]
 pub async fn normalize_request_with_cache(
-    supergraph: &SupergraphData,
+    supergraph: &SupergraphSnapshot,
+    runtime: &RouterSupergraphRuntime,
     schema_state: &SchemaState,
     graphql_params: &GraphQLParams,
     parser_payload: &GraphQLParserPayload,
@@ -153,7 +154,7 @@ pub async fn normalize_request_with_cache(
             None => parser_payload.cache_key,
         };
 
-        schema_state
+        runtime
             .normalize_cache
             .entry(cache_key)
             .or_try_insert_with::<_, NormalizationError>(async {

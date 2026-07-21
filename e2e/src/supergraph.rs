@@ -105,7 +105,7 @@ mod supergraph_e2e_tests {
     }
 
     #[ntex::test]
-    async fn should_clear_internal_caches_when_supergraph_changes() {
+    async fn reloading_supergraph_gets_isolated_runtime_caches() {
         let mut server = mockito::Server::new_async().await;
         let host = server.host_with_port();
         let mock1 = server
@@ -134,23 +134,32 @@ mod supergraph_e2e_tests {
             .await
             .expect("Expected mock1 to be matched");
 
+        // introspection needs no subgraph resolution, so it works against this bare
+        // (subgraph-less) test schema and can be reused verbatim after the reload below - any
+        // difference in its result proves the swap took effect, and the old runtime's caches
+        // being untouched proves the new runtime doesn't share (or evict from) the old one's
+        let introspect_query = r#"{ __type(name: "Query") { fields { name } } }"#;
+
         // wait for caches to populate
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
             // we keep making requests to ensure the cache because its flakey
             let res = router
-                .send_graphql_request("{ __schema { types { name } } }", None, None)
+                .send_graphql_request(introspect_query, None, None)
                 .await;
             assert!(res.status().is_success(), "Expected 200 OK");
 
-            router
+            let runtime_before_reload = router
                 .schema_state()
+                .configured_runtime()
+                .expect("configured runtime to exist");
+            runtime_before_reload
                 .normalize_cache
                 .run_pending_tasks()
                 .await;
-            router.schema_state().plan_cache.run_pending_tasks().await;
-            if router.schema_state().plan_cache.entry_count() >= 1
-                && router.schema_state().normalize_cache.entry_count() >= 1
+            runtime_before_reload.plan_cache.run_pending_tasks().await;
+            if runtime_before_reload.plan_cache.entry_count() >= 1
+                && runtime_before_reload.normalize_cache.entry_count() >= 1
             {
                 break;
             }
@@ -158,11 +167,20 @@ mod supergraph_e2e_tests {
             assert!(
                 std::time::Instant::now() < deadline,
                 "timed out waiting for caches to populate: plan={}, normalize={}",
-                router.schema_state().plan_cache.entry_count(),
-                router.schema_state().normalize_cache.entry_count()
+                runtime_before_reload.plan_cache.entry_count(),
+                runtime_before_reload.normalize_cache.entry_count()
             );
             ntex::time::sleep(Duration::from_millis(50)).await;
         }
+
+        let runtime_before_reload = router
+            .schema_state()
+            .configured_runtime()
+            .expect("configured runtime to exist");
+        let plan_entries_before_reload = runtime_before_reload.plan_cache.entry_count();
+        let normalize_entries_before_reload = runtime_before_reload.normalize_cache.entry_count();
+        assert!(plan_entries_before_reload >= 1);
+        assert!(normalize_entries_before_reload >= 1);
 
         mock1.remove();
 
@@ -178,28 +196,63 @@ mod supergraph_e2e_tests {
             .await
             .expect("Expected mock2 to be matched");
 
-        // wait for cache invalidation to be reflected
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        loop {
-            router
-                .schema_state()
-                .normalize_cache
-                .run_pending_tasks()
-                .await;
-            router.schema_state().plan_cache.run_pending_tasks().await;
-            if router.schema_state().plan_cache.entry_count() == 0
-                && router.schema_state().normalize_cache.entry_count() == 0
-            {
-                break;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "timed out waiting for caches to clear: plan={}, normalize={}",
-                router.schema_state().plan_cache.entry_count(),
-                router.schema_state().normalize_cache.entry_count()
-            );
-            ntex::time::sleep(Duration::from_millis(50)).await;
-        }
+        // wait for the router to finish applying the new supergraph state before asserting - the
+        // mock being matched only means the poller fetched the sdl, not that the router has
+        // finished rebuilding its query planner.
+        router.wait_for_ready(None).await;
+
+        // same query text as before the reload, but it must reflect the *new* schema - proving
+        // the swap took effect for new requests without needing to force-clear any cache.
+        let res = router
+            .send_graphql_request(introspect_query, None, None)
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        let body = res.json_body().await;
+        let fields: Vec<&str> = body["data"]["__type"]["fields"]
+            .as_array()
+            .expect("fields array")
+            .iter()
+            .map(|f| f["name"].as_str().expect("field name"))
+            .collect();
+        assert_eq!(fields, vec!["dummyNew"]);
+
+        let runtime_after_reload = router
+            .schema_state()
+            .configured_runtime()
+            .expect("configured runtime to exist");
+        runtime_after_reload
+            .normalize_cache
+            .run_pending_tasks()
+            .await;
+        runtime_after_reload.plan_cache.run_pending_tasks().await;
+
+        // the reload publishes a new runtime with its own, freshly built caches - it isn't the
+        // same runtime whose cache we sampled above
+        assert!(!std::sync::Arc::ptr_eq(
+            &runtime_before_reload,
+            &runtime_after_reload
+        ));
+        assert!(
+            runtime_after_reload.plan_cache.entry_count() >= 1,
+            "expected the new runtime's plan cache to be populated by the request above"
+        );
+        assert!(
+            runtime_after_reload.normalize_cache.entry_count() >= 1,
+            "expected the new runtime's normalize cache to be populated by the request above"
+        );
+
+        // the old runtime (and its caches) is untouched by the reload - nothing evicted or
+        // rewrote its entries just because a new supergraph is now configured
+        assert_eq!(
+            runtime_before_reload.plan_cache.entry_count(),
+            plan_entries_before_reload,
+            "expected the old runtime's plan cache to be left alone by the reload"
+        );
+        assert_eq!(
+            runtime_before_reload.normalize_cache.entry_count(),
+            normalize_entries_before_reload,
+            "expected the old runtime's normalize cache to be left alone by the reload"
+        );
     }
 
     /// In this test we are testing that the supergraph is not changed for in-flight requests.

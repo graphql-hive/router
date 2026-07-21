@@ -16,7 +16,7 @@ use hive_router_plan_executor::execution::demand_control::{
     DemandControlExecutionOperationContext, DemandControlExecutionSubgraphsContext,
 };
 use hive_router_plan_executor::execution::plan::CoerceVariablesPayload;
-use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
+use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphSnapshot;
 use hive_router_query_planner::ast::operation::{OperationDefinition, SubgraphFetchOperation};
 use hive_router_query_planner::planner::plan_nodes::{PlanNode, QueryPlan};
 use hive_router_query_planner::state::supergraph_state::{OperationKind, SupergraphState};
@@ -85,17 +85,13 @@ impl DemandControlRuntime {
     pub fn formula_cache(&self) -> &Cache<u64, Arc<DemandControlFormulaPlan>> {
         &self.formula_cache
     }
-
-    pub fn invalidate_formula_cache(&self) {
-        self.formula_cache.invalidate_all();
-    }
 }
 
 impl DemandControlRuntime {
     #[allow(clippy::too_many_arguments)]
     pub async fn evaluate<'exec>(
         &self,
-        supergraph: &'exec SupergraphData,
+        supergraph: &'exec SupergraphSnapshot,
         variable_payload: &'exec CoerceVariablesPayload,
         query_plan: &'exec QueryPlan,
         operation_for_plan: &'exec OperationDefinition,
