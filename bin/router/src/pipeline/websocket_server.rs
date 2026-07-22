@@ -304,33 +304,6 @@ async fn handle_text_frame(
             let span_clone = operation_span.clone();
 
             let result = async {
-                let Some(supergraph) = supergraph else {
-                    // IMPORTANT: we dont do this earlier because router might be loading the
-                    // supergraph as we speak, so we simply reject the operation request instead
-                    error!(target: targets::WEBSOCKET_SERVER, "No supergraph available yet, unable to process client subscribe message");
-
-                    return Some(ServerMessage::error(
-                        &id,
-                        &[GraphQLError::from_message_and_extensions(
-                            "No supergraph available yet".to_string(),
-                            GraphQLErrorExtensions::new_from_code("SERVICE_UNAVAILABLE"),
-                        )],
-                    ));
-                };
-
-                if supergraph.snapshot.is_retired() {
-                    // the supergraph selected at upgrade time has since been retired (configured
-                    // reload, or the owning plugin dropped/replaced its variant) - reject new
-                    // operations on this connection rather than create work from a stale schema.
-                    return Some(ServerMessage::error(
-                        &id,
-                        &[GraphQLError::from_message_and_extensions(
-                            "Supergraph used by this connection has been retired".to_string(),
-                            GraphQLErrorExtensions::new_from_code("SERVICE_UNAVAILABLE"),
-                        )],
-                    ));
-                }
-
                 let config = &shared_state.router_config.websocket;
 
                 let connection_init_headers = if config.headers.accepts_connection_headers() {
@@ -376,6 +349,34 @@ async fn handle_text_frame(
                 }
 
                 let inner_res = async {
+                  let _summary = summary::SummaryOnDrop::new(started_at);
+                  let Some(supergraph) = supergraph else {
+                      // IMPORTANT: we dont do this earlier because router might be loading the
+                      // supergraph as we speak, so we simply reject the operation request instead
+                      error!(target: targets::WEBSOCKET_SERVER, "No supergraph available yet, unable to process client subscribe message");
+
+                      return Some(ServerMessage::error(
+                          &id,
+                          &[GraphQLError::from_message_and_extensions(
+                              "No supergraph available yet".to_string(),
+                              GraphQLErrorExtensions::new_from_code("SERVICE_UNAVAILABLE"),
+                          )],
+                      ));
+                  };
+
+                  if supergraph.snapshot.is_retired() {
+                      // the supergraph selected at upgrade time has since been retired (configured
+                      // reload, or the owning plugin dropped/replaced its variant) - reject new
+                      // operations on this connection rather than create work from a stale schema.
+                      return Some(ServerMessage::error(
+                          &id,
+                          &[GraphQLError::from_message_and_extensions(
+                              "Supergraph used by this connection has been retired".to_string(),
+                              GraphQLErrorExtensions::new_from_code("SERVICE_UNAVAILABLE"),
+                          )],
+                      ));
+                  }
+
                   let payload = GraphQLParams {
                       query: Some(payload.query),
                       operation_name: payload.operation_name,
@@ -637,14 +638,7 @@ async fn handle_text_frame(
 
                   debug!(target: targets::GRAPHQL_EXECUTION, error_count = shared_response.error_count(), "graphql request completed");
 
-                  summary::record(|s| {
-                      s.error_count.store(
-                          shared_response.error_count() as u32,
-                          std::sync::atomic::Ordering::Relaxed,
-                      );
-                      s.set_duration(started_at.elapsed());
-                  });
-                  summary::emit();
+                  summary::record(|s| s.set_error_count(shared_response.error_count() as u32));
 
                   match shared_response {
                       SharedRouterResponse::Single(response) => {
