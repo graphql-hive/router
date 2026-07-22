@@ -27,7 +27,7 @@ impl Default for RequestIdentifierExtractor {
 }
 
 pub struct RequestIdentifiers {
-    req_id: RequestId,
+    req_id: String,
     trace_id: Option<String>,
 }
 
@@ -81,14 +81,14 @@ impl RequestIdentifierExtractor {
         None
     }
 
-    fn extract_req_id(&self, headers: &impl HeaderLookup) -> RequestId {
+    fn extract_req_id(&self, headers: &impl HeaderLookup) -> String {
         if let Some(req_id_header) = headers.lookup_str(self.cfg.id_header.get_header_ref()) {
-            return RequestId::FromRequest(req_id_header.to_string());
+            return req_id_header.to_string();
         }
 
         match self.generator.next_id() {
             Ok(id) => {
-                return RequestId::Generated(id.to_string());
+                return id.to_string();
             }
             Err(e) => {
                 warn!(
@@ -104,7 +104,7 @@ impl RequestIdentifierExtractor {
             .expect("time went backwards, please confirm your system/os clock")
             .as_secs();
 
-        RequestId::Generated(format!("{}", timestamp))
+        format!("{}", timestamp)
     }
 }
 
@@ -129,20 +129,6 @@ impl HeaderLookup for ntex::http::HeaderMap {
 impl HeaderLookup for HttpRequest {
     fn lookup_str(&self, name: &HeaderName) -> Option<&str> {
         self.headers().lookup_str(name)
-    }
-}
-
-enum RequestId {
-    FromRequest(String),
-    Generated(String),
-}
-
-impl RequestId {
-    pub fn as_str(&self) -> &str {
-        match self {
-            RequestId::FromRequest(s) => s.as_str(),
-            RequestId::Generated(s) => s.as_str(),
-        }
     }
 }
 
