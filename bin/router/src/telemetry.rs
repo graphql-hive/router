@@ -400,7 +400,10 @@ where
 {
     let stdout_stream = std::io::stdout();
     let is_terminal = stdout_stream.is_terminal();
-    let (stdout_writer, stdout_guard) = tracing_appender::non_blocking(stdout_stream);
+    let (stdout_writer, stdout_guard) =
+        tracing_appender::non_blocking::NonBlockingBuilder::default()
+            .lossy(false)
+            .finish(stdout_stream);
     let targets_filter = create_targets_filter(&config.level, config.log_internals);
     let ignore_otel_filter = create_ignore_otel_filter();
     let env_filter =
