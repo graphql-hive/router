@@ -168,7 +168,7 @@ pub async fn parse_operation_with_cache(
                         }
                     }
 
-                    warn!(target: targets::GRAPHQL_PARSING, error = ?err, "failed to parse GraphQL operation");
+                    debug!(target: targets::GRAPHQL_PARSING, error = ?err, "failed to parse GraphQL operation");
 
                     ParserCacheError::ParseError(Arc::new(err))
                 })?;
