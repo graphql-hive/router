@@ -69,7 +69,7 @@ use hive_router_internal::background_tasks::{BackgroundTask, CancellationToken};
 use hive_router_internal::telemetry::{
     logging::{
         request_id::WithRequestIdentifiers,
-        summary::{self, RequestSummary, WithRequestSummary},
+        summary::{self, WithRequestSummary},
         targets,
     },
     otel::{opentelemetry, tracing_opentelemetry::OpenTelemetrySpanExt},
@@ -213,7 +213,7 @@ async fn graphql_endpoint_handler(
         inner_res
     }
     .with_request_id(request_identifiers)
-    .with_request_summary(Arc::new(RequestSummary::default()))
+    .with_request_summary()
     .await;
 
     let graphql_operation = read_graphql_operation_metric_identity(&request);
