@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use tokio::task::futures::TaskLocalFuture;
-use tracing::info;
+use tracing::{info, Level};
 
 use crate::telemetry::logging::targets;
 
@@ -130,19 +130,41 @@ tokio::task_local! {
     pub static REQUEST_SUMMARY: Arc<RequestSummary>;
 }
 
+/// Whether the summary log target is live. A single cached callsite, so when the
+/// target is filtered off (e.g. `router::request=off`) this is a cheap atomic load.
+#[inline]
+pub fn is_enabled() -> bool {
+    tracing::enabled!(target: targets::SUMMARY, Level::INFO)
+}
+
 pub fn record(f: impl FnOnce(&RequestSummary)) {
+    if !is_enabled() {
+        return;
+    }
     let _ = REQUEST_SUMMARY.try_with(|summary| f(summary));
 }
 
 pub fn emit() {
+    if !is_enabled() {
+        return;
+    }
     let _ = REQUEST_SUMMARY.try_with(|summary| summary.emit());
 }
 
+fn disabled_summary() -> Arc<RequestSummary> {
+    static DISABLED: OnceLock<Arc<RequestSummary>> = OnceLock::new();
+    DISABLED
+        .get_or_init(|| Arc::new(RequestSummary::default()))
+        .clone()
+}
+
 pub trait WithRequestSummary: Future + Sized {
-    fn with_request_summary(
-        self,
-        summary: Arc<RequestSummary>,
-    ) -> TaskLocalFuture<Arc<RequestSummary>, Self> {
+    fn with_request_summary(self) -> TaskLocalFuture<Arc<RequestSummary>, Self> {
+        let summary = if is_enabled() {
+            Arc::new(RequestSummary::default())
+        } else {
+            disabled_summary()
+        };
         REQUEST_SUMMARY.scope(summary, self)
     }
 }

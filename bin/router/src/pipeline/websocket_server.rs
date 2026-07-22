@@ -50,7 +50,7 @@ use crate::schema_state::SchemaState;
 use crate::shared_state::{RouterSharedState, SharedRouterResponse};
 use crate::telemetry::HeaderExtractor;
 use hive_router_internal::telemetry::logging::request_id::WithRequestIdentifiers;
-use hive_router_internal::telemetry::logging::summary::{self, RequestSummary, WithRequestSummary};
+use hive_router_internal::telemetry::logging::summary::{self, WithRequestSummary};
 use hive_router_internal::telemetry::logging::targets;
 
 type WsStateRef = Rc<RefCell<WsState<tokio::sync::mpsc::Sender<()>>>>;
@@ -728,7 +728,7 @@ async fn handle_text_frame(
                           None
                       }
                   }
-                }.with_request_id(request_identifiers.clone()).with_request_summary(Arc::new(RequestSummary::default())).await;
+                }.with_request_id(request_identifiers.clone()).with_request_summary().await;
 
                 inner_res
             }
