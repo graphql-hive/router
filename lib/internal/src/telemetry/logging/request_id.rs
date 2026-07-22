@@ -81,8 +81,25 @@ impl RequestIdentifierExtractor {
         None
     }
 
+    fn sanitize_request_id(raw: &str) -> Option<&str> {
+        const MAX_LEN: usize = 128;
+
+        if raw.is_empty() || raw.len() > MAX_LEN {
+            return None;
+        }
+
+        let valid = raw.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'+' | b'/' | b'=')
+        });
+
+        valid.then_some(raw)
+    }
+
     fn extract_req_id(&self, headers: &impl HeaderLookup) -> String {
-        if let Some(req_id_header) = headers.lookup_str(self.cfg.id_header.get_header_ref()) {
+        if let Some(req_id_header) = headers
+            .lookup_str(self.cfg.id_header.get_header_ref())
+            .and_then(Self::sanitize_request_id)
+        {
             return req_id_header.to_string();
         }
 
