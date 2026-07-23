@@ -166,6 +166,7 @@ async fn graphql_endpoint_handler(
 
     let started_at = std::time::Instant::now();
     let response = async {
+        let _summary = summary::SummaryOnDrop::new(started_at);
         debug!(
             target: targets::HTTP_SERVER,
             method = request.method().as_str(),
@@ -205,10 +206,7 @@ async fn graphql_endpoint_handler(
                 .store(status_code, std::sync::atomic::Ordering::Relaxed);
             s.payload_bytes
                 .store(payload_bytes, std::sync::atomic::Ordering::Relaxed);
-            s.set_duration(started_at.elapsed());
         });
-
-        summary::emit();
 
         inner_res
     }
