@@ -66,14 +66,14 @@ pub struct SubgraphErrorMaskingConfig {
     /// Whether to redact the `error_message` in errors, for that specific subgraph.
     ///
     /// Configuring this will override the global `all.error_message` setting.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     /// Whether to redact the `extensions` in errors, for that specific subgraph.
     /// Configuring this will override the global `all.extensions` setting.
     ///
     /// You may pick the execution mode by setting `mode: allow` or `mode: deny`.
     /// Note: only root-level fields are supported.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extensions: Option<ExtensionsMaskingConfig>,
 }
 

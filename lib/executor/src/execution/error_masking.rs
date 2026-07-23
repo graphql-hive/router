@@ -25,7 +25,7 @@ impl ErrorMaskingRuntime {
                 .unwrap_or(self.default_error_masking);
 
             if should_mask_message {
-                err.message = self.redacted_error_message.clone();
+                err.message.clone_from(&self.redacted_error_message);
             }
 
             let extensions_masking_config = self
