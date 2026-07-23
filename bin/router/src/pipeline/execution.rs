@@ -1,4 +1,4 @@
-use crate::pipeline::error::PipelineError;
+use crate::pipeline::error::{InternalPipelineError, PipelineError};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::schema_state::SelectedSupergraph;
 use crate::shared_state::RouterSharedState;
@@ -92,7 +92,7 @@ pub async fn execute_plan<'exec>(
             let body = sonic_rs::to_vec(&json!({
                 "extensions": extensions,
             }))
-            .map_err(PipelineError::QueryPlanSerializationFailed)?;
+            .map_err(InternalPipelineError::QueryPlanSerializationFailed)?;
 
             return Ok(QueryPlanExecutionResult::Single(PlanExecutionOutput {
                 body,

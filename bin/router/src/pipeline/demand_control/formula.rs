@@ -20,7 +20,7 @@ use tracing::warn;
 
 use std::{collections::BTreeMap, fmt, sync::Arc};
 
-use crate::pipeline::error::PipelineError;
+use crate::pipeline::error::{ClientPipelineError, PipelineError};
 
 /// Size overrides threaded from a parent @listSize(sizedFields:[…]) down to children.
 /// Each entry is (remaining path from the current selection, size expression).
@@ -303,10 +303,11 @@ fn eval_cost_expr(
                         "rejecting operation: expected exactly one slicing argument for @listSize"
                     );
 
-                    Err(PipelineError::CostInvalidSlicingArguments {
+                    Err(ClientPipelineError::CostInvalidSlicingArguments {
                         field_name: field_name.clone(),
                         found: resolved_count,
-                    })
+                    }
+                    .into())
                 }
             } else {
                 let mut max_value: Option<u64> = None;

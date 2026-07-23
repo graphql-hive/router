@@ -10,7 +10,7 @@ use hive_router_internal::expressions::{ToVrlValue, ValueOrProgram};
 use hive_router_plan_executor::execution::client_request_details::ntex_header_map_to_vrl_value;
 use ntex::web::HttpRequest;
 
-use crate::pipeline::error::PipelineError;
+use crate::pipeline::error::{InternalPipelineError, PipelineError};
 use crate::pipeline::persisted_documents::extract::DocumentIdResolver;
 use crate::pipeline::persisted_documents::resolve::storage::{
     StorageManifestReloadTask, StorageResolver,
@@ -142,6 +142,10 @@ impl PersistedDocumentsRuntime {
                     });
                 })
             })
-            .map_err(PipelineError::PersistedDocumentIdExpressionEvaluationError)
+            .map_err(|e| {
+                PipelineError::Internal(
+                    InternalPipelineError::PersistedDocumentIdExpressionEvaluationError(e),
+                )
+            })
     }
 }

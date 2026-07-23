@@ -7,7 +7,7 @@ use hive_router_plan_executor::variables::collect_variables;
 use sonic_rs::Value;
 use tracing::{trace, warn};
 
-use crate::pipeline::error::PipelineError;
+use crate::pipeline::error::{ClientPipelineError, PipelineError};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 
 #[inline]
@@ -38,7 +38,7 @@ pub fn coerce_request_variables(
                 "failed to collect variables from incoming request: {}",
                 err_msg
             );
-            Err(PipelineError::VariablesCoercionError(err_msg))
+            Err(ClientPipelineError::VariablesCoercionError(err_msg).into())
         }
     }
 }

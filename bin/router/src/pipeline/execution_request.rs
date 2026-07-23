@@ -19,7 +19,7 @@ use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, Visitor};
 use std::sync::Arc;
 use tracing::{info, trace, warn};
 
-use crate::pipeline::error::PipelineError;
+use crate::pipeline::error::{ClientPipelineError, InternalPipelineError, PipelineError};
 use crate::pipeline::header::SingleContentType;
 use crate::pipeline::persisted_documents::extract::{
     DocumentIdResolver, DocumentIdResolverInput, HttpRequestContext, DOCUMENT_ID_FIELD,
@@ -256,7 +256,7 @@ impl TryInto<GraphQLParams> for GraphQLGetInput {
             Some(v_str) if !v_str.is_empty() => match sonic_rs::from_str(v_str) {
                 Ok(vars) => vars,
                 Err(e) => {
-                    return Err(PipelineError::FailedToParseVariables(e));
+                    return Err(ClientPipelineError::FailedToParseVariables(e).into());
                 }
             },
             _ => HashMap::new(),
@@ -266,7 +266,7 @@ impl TryInto<GraphQLParams> for GraphQLGetInput {
             Some(e_str) if !e_str.is_empty() => match sonic_rs::from_str(e_str) {
                 Ok(exts) => Some(exts),
                 Err(e) => {
-                    return Err(PipelineError::FailedToParseExtensions(e));
+                    return Err(ClientPipelineError::FailedToParseExtensions(e).into());
                 }
             },
             _ => None,
@@ -291,7 +291,7 @@ impl GetQueryStr for GraphQLParams {
     fn get_query(&self) -> Result<&str, PipelineError> {
         self.query
             .as_deref()
-            .ok_or(PipelineError::GetMissingQueryParam("query"))
+            .ok_or(ClientPipelineError::GetMissingQueryParam("query").into())
     }
 }
 
@@ -451,9 +451,7 @@ impl<'a> OperationPreparation<'a> {
             Method::POST => self.decode_post(),
             _ => {
                 warn!("unsupported HTTP method: {}", self.req.method());
-                Err(PipelineError::UnsupportedHttpMethod(
-                    self.req.method().to_owned(),
-                ))
+                Err(ClientPipelineError::UnsupportedHttpMethod(self.req.method().to_owned()).into())
             }
         }
     }
@@ -481,18 +479,18 @@ impl<'a> OperationPreparation<'a> {
             Some(value) => {
                 let content_type_str = value
                     .to_str()
-                    .map_err(|_| PipelineError::InvalidHeaderValue(CONTENT_TYPE))?;
+                    .map_err(|_| ClientPipelineError::InvalidHeaderValue(CONTENT_TYPE))?;
                 if !content_type_str.contains(SingleContentType::JSON.as_ref()) {
                     warn!(
                         "Invalid content type on a POST request: {}",
                         content_type_str
                     );
-                    return Err(PipelineError::UnsupportedContentType);
+                    return Err(ClientPipelineError::UnsupportedContentType.into());
                 }
             }
             None => {
                 trace!("POST without content type detected");
-                return Err(PipelineError::MissingContentTypeHeader);
+                return Err(ClientPipelineError::MissingContentTypeHeader.into());
             }
         }
 
@@ -501,7 +499,7 @@ impl<'a> OperationPreparation<'a> {
         let post_input =
             GraphQLPostBodySeed::new(&self.persisted_documents_runtime.document_id_resolver)
                 .deserialize(&mut deserializer)
-                .map_err(PipelineError::FailedToParseBody)?;
+                .map_err(ClientPipelineError::FailedToParseBody)?;
 
         // Calling end() is important to ensure there is no trailing garbage after the JSON payload.
         // Without calling it, this might be accepted:
@@ -510,7 +508,7 @@ impl<'a> OperationPreparation<'a> {
         // {"query":"{ me { id } }"}{"another":"object"}
         deserializer
             .end()
-            .map_err(PipelineError::FailedToParseBody)?;
+            .map_err(ClientPipelineError::FailedToParseBody)?;
 
         Ok(PreparedOperation::from_post(
             post_input,
@@ -551,7 +549,7 @@ impl<'a> OperationPreparation<'a> {
                 // If require_id is set, clear the query to make the document ID-based resolution mandatory.
                 prepared_operation.graphql_params.query = None;
                 if prepared_operation.resolved_document_id.is_none() {
-                    return Err(PipelineError::PersistedDocumentIdRequired);
+                    return Err(ClientPipelineError::PersistedDocumentIdRequired.into());
                 }
                 return Ok(());
             }
@@ -577,9 +575,9 @@ impl<'a> OperationPreparation<'a> {
                 .persisted_document_resolver
                 .as_ref()
                 .ok_or_else(|| {
-                    PipelineError::PersistedDocumentResolution(
+                    PipelineError::Internal(InternalPipelineError::PersistedDocumentResolution(
                         "Persisted documents storage is not configured".to_string(),
-                    )
+                    ))
                 })?;
 
             let resolved = resolver
@@ -617,7 +615,7 @@ mod tests {
     use ntex::web::HttpRequest;
 
     use super::{OperationPreparation, PreparedOperation};
-    use crate::pipeline::error::PipelineError;
+    use crate::pipeline::error::{ClientPipelineError, PipelineError};
     use crate::pipeline::persisted_documents::extract::DocumentIdResolver;
     use crate::pipeline::persisted_documents::resolve::{
         PersistedDocumentResolveInput, PersistedDocumentResolver, PersistedDocumentResolverError,
@@ -761,7 +759,10 @@ mod tests {
             .enforce_require_id_policy(&mut op)
             .expect_err("missing id should fail");
 
-        assert!(matches!(err, PipelineError::PersistedDocumentIdRequired));
+        assert!(matches!(
+            err,
+            PipelineError::Client(ClientPipelineError::PersistedDocumentIdRequired)
+        ));
     }
 
     #[test]
@@ -931,6 +932,9 @@ mod tests {
             .enforce_require_id_policy(&mut op)
             .expect_err("skip_enforcement=false should still enforce require_id");
 
-        assert!(matches!(err, PipelineError::PersistedDocumentIdRequired));
+        assert!(matches!(
+            err,
+            PipelineError::Client(ClientPipelineError::PersistedDocumentIdRequired)
+        ));
     }
 }

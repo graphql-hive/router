@@ -6,7 +6,10 @@ use ntex::{
     web,
 };
 
-use crate::{pipeline::error::PipelineError, RouterSharedState};
+use crate::{
+    pipeline::error::{InternalPipelineError, PipelineError},
+    RouterSharedState,
+};
 
 #[inline]
 pub async fn handle_timeout<TFuture: Future<Output = Result<web::HttpResponse, PipelineError>>>(
@@ -23,7 +26,7 @@ pub async fn handle_timeout<TFuture: Future<Output = Result<web::HttpResponse, P
 
     match select(timeout, res_fut).await {
         // If the timeout future completes first, return a timeout error response.
-        Either::Left(_) => Err(PipelineError::TimeoutError),
+        Either::Left(_) => Err(InternalPipelineError::TimeoutError.into()),
         // If the request handler future completes first, return its response.
         Either::Right(res) => res,
     }

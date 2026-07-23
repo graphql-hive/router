@@ -23,7 +23,7 @@ use hive_router_query_planner::utils::parsing::{
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::cache_state::{CacheHitMiss, EntryResultHitMissExt};
-use crate::pipeline::error::{ParserCacheError, PipelineError};
+use crate::pipeline::error::{InternalPipelineError, ParserCacheError, PipelineError};
 use crate::pipeline::execution_request::GetQueryStr;
 use crate::shared_state::RouterSharedState;
 use tracing::{error, trace, Instrument};
@@ -44,7 +44,7 @@ impl ParseCacheEntry {
         let minified_arc = {
             Arc::new(minify_query(query_str).map_err(|err| {
                 error!("Failed to minify parsed GraphQL operation: {}", err);
-                PipelineError::FailedToMinifyParsedOperation(err.to_string())
+                InternalPipelineError::FailedToMinifyParsedOperation(err.to_string())
             })?)
         };
         let hive_normalized_operation = hive_sdk_normalize_operation(&parsed_arc);
@@ -54,7 +54,7 @@ impl ParseCacheEntry {
                     "Failed to minify GraphQL operation normalized for Hive SDK: {}",
                     err
                 );
-                PipelineError::FailedToMinifyParsedOperation(err.to_string())
+                InternalPipelineError::FailedToMinifyParsedOperation(err.to_string())
             })?;
         Ok(ParseCacheEntry {
             document: parsed_arc,

@@ -24,7 +24,7 @@ use http::{HeaderName, HeaderValue};
 use moka::future::Cache;
 use tracing::{debug, info, warn};
 
-use crate::pipeline::error::PipelineError;
+use crate::pipeline::error::{ClientPipelineError, PipelineError};
 
 use super::formula::{
     compile_cost_expr_for_operation, evaluate_formula_plan, DemandControlFormulaPlan,
@@ -156,9 +156,10 @@ impl DemandControlRuntime {
                             .push((header_name.get_header_ref().to_owned(), max_cost.into()));
                     }
 
-                    return Err(PipelineError::CostEstimatedTooExpensive {
+                    return Err(ClientPipelineError::CostEstimatedTooExpensive {
                         response_headers: err_extra_headers,
-                    });
+                    }
+                    .into());
                 }
                 DemandControlMode::Measure => {
                     info!(

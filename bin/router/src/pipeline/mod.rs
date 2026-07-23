@@ -56,7 +56,7 @@ use crate::{
         client_identification::identify_client,
         coerce_variables::coerce_request_variables,
         csrf_prevention::perform_csrf_prevention,
-        error::PipelineError,
+        error::{ClientPipelineError, InternalPipelineError, PipelineError},
         execution::{execute_plan, PlannedRequest},
         execution_request::{GetQueryStr, OperationPreparation, OperationPreparationResult},
         header::{RequestAccepts, ResponseMode, TEXT_HTML_MIME},
@@ -225,9 +225,10 @@ pub async fn graphql_request_handler(
         );
 
         let Some(supergraph) = schema_state.select_supergraph(req)? else {
-            return Err(PipelineError::NoSupergraphAvailable {
+            return Err(InternalPipelineError::NoSupergraphAvailable {
                 response_headers: vec![(RETRY_AFTER, HeaderValue::from_static("10"))],
-            });
+            }
+            .into());
         };
 
         if let Some(response) = validate_operation_with_cache(
@@ -322,7 +323,7 @@ pub async fn graphql_request_handler(
                 normalize_payload.operation_for_plan.operation_kind
             {
                 error!("Mutation is not allowed over GET, stopping");
-                return Err(PipelineError::MutationNotAllowedOverHttpGet);
+                return Err(ClientPipelineError::MutationNotAllowedOverHttpGet.into());
             }
         }
 
@@ -335,7 +336,7 @@ pub async fn graphql_request_handler(
             && (!shared_state.router_config.subscriptions.enabled || !response_mode.can_stream())
         {
             // check early, even though we check again planned execution below
-            return Err(PipelineError::SubscriptionsNotSupported);
+            return Err(ClientPipelineError::SubscriptionsNotSupported.into());
         }
 
         let request_dedupe_enabled = shared_state
@@ -527,7 +528,7 @@ pub async fn execute_planned_request<'exec>(
             // might choose to not deduplicate across transport boundaries
             let stream_content_type = response_mode
                 .stream_content_type()
-                .ok_or(PipelineError::SubscriptionsTransportNotSupported)?;
+                .ok_or(ClientPipelineError::SubscriptionsTransportNotSupported)?;
 
             let (producer_handle, receiver) = shared_state.active_subscriptions.register(guard);
 
@@ -587,7 +588,7 @@ pub async fn execute_planned_request<'exec>(
             let single_content_type = response_mode.
                 single_content_type().
                 // TODO: streaming single responses
-                ok_or(PipelineError::UnsupportedContentType)?.
+                ok_or(ClientPipelineError::UnsupportedContentType)?.
                 clone();
 
             // drop the `guard` as soon as the response is ready

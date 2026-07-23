@@ -46,8 +46,21 @@ use crate::{
 
 pub type PipelineErrorAdditionalHeaders = Vec<(HeaderName, HeaderValue)>;
 
-#[derive(Debug, thiserror::Error, IntoStaticStr)]
+/// Umbrella pipeline error, split by origin so client-caused failures (safe to
+/// report verbatim) stay separate from internal failures (whose details must be
+/// redacted before reaching the client). Message redaction is handled per-arm.
+#[derive(Debug, thiserror::Error)]
 pub enum PipelineError {
+    #[error(transparent)]
+    Client(#[from] ClientPipelineError),
+    #[error(transparent)]
+    Internal(#[from] InternalPipelineError),
+}
+
+/// Errors caused by the caller's request. Their messages describe the caller's
+/// own input and are safe to expose.
+#[derive(Debug, thiserror::Error, IntoStaticStr)]
+pub enum ClientPipelineError {
     // HTTP-related errors
     #[error("Unsupported HTTP method: {0}")]
     #[strum(serialize = "METHOD_NOT_ALLOWED")]
@@ -95,15 +108,6 @@ pub enum PipelineError {
     #[error("{0}")]
     #[strum(serialize = "PERSISTED_DOCUMENT_EXTRACTION_FAILED")]
     PersistedDocumentExtraction(String),
-    #[error("{0}")]
-    #[strum(serialize = "PERSISTED_DOCUMENT_RESOLUTION_FAILED")]
-    PersistedDocumentResolution(String),
-    #[error("Failed to evaluate persisted document require_id expression: {0}")]
-    #[strum(serialize = "PERSISTED_DOCUMENT_ID_EXPRESSION_EVALUATION_ERROR")]
-    PersistedDocumentIdExpressionEvaluationError(ProgramResolutionError<BooleanConversionError>),
-    #[error("Failed to minify parsed GraphQL operation: {0}")]
-    #[strum(serialize = "GRAPHQL_PARSE_MINIFY_FAILED")]
-    FailedToMinifyParsedOperation(String),
     #[error("Failed to normalize GraphQL operation")]
     #[strum(serialize = "OPERATION_RESOLUTION_FAILURE")]
     NormalizationError(#[from] Arc<NormalizationError>),
@@ -116,15 +120,6 @@ pub enum PipelineError {
     #[error("Authorization failed")]
     #[strum(serialize = "UNAUTHORIZED_OPERATION")]
     AuthorizationFailed(Vec<AuthorizationError>),
-    #[error("Failed to execute a plan: {0}")]
-    #[strum(serialize = "PLAN_EXECUTION_FAILED")]
-    PlanExecutionError(#[from] PlanExecutionError),
-    #[error("Failed to produce a plan: {0}")]
-    #[strum(serialize = "QUERY_PLAN_BUILD_FAILED")]
-    PlannerError(#[from] Arc<PlannerError>),
-    #[error(transparent)]
-    #[strum(serialize = "OVERRIDE_LABEL_EVALUATION_FAILED")]
-    LabelEvaluationError(#[from] LabelEvaluationError),
 
     // HTTP Security-related errors
     #[error("Required CSRF header(s) not present")]
@@ -135,14 +130,8 @@ pub enum PipelineError {
     #[error(transparent)]
     #[strum(serialize = "JWT_ERROR")]
     JwtError(#[from] JwtError),
-    #[error("Failed to forward jwt: {0}")]
-    #[strum(serialize = "JWT_FORWARDING_ERROR")]
-    JwtForwardingError(#[from] JwtForwardingError),
 
     // Introspection permission errors
-    #[error("Failed to evaluate introspection expression: {0}")]
-    #[strum(serialize = "INTROSPECTION_PERMISSION_EVALUATION_ERROR")]
-    IntrospectionPermissionEvaluationError(String),
     #[error("Introspection queries are disabled")]
     #[strum(serialize = "INTROSPECTION_DISABLED")]
     IntrospectionDisabled,
@@ -158,6 +147,49 @@ pub enum PipelineError {
     #[error(transparent)]
     #[strum(serialize = "READ_BODY_STREAM_ERROR")]
     ReadBodyStreamError(#[from] ReadBodyStreamError),
+
+    // Demand Control
+    #[error("Operation estimated cost exceeds max cost")]
+    #[strum(serialize = "COST_ESTIMATED_TOO_EXPENSIVE")]
+    CostEstimatedTooExpensive {
+        response_headers: PipelineErrorAdditionalHeaders,
+    },
+    #[error(
+        "Exactly one slicing argument is required for field '{field_name}', but found {found}"
+    )]
+    #[strum(serialize = "COST_INVALID_SLICING_ARGUMENTS")]
+    CostInvalidSlicingArguments { field_name: String, found: usize },
+}
+
+/// Errors caused by the router or upstream infrastructure. Their details may
+/// leak internals and must be redacted before reaching the client.
+#[derive(Debug, thiserror::Error, IntoStaticStr)]
+pub enum InternalPipelineError {
+    #[error("{0}")]
+    #[strum(serialize = "PERSISTED_DOCUMENT_RESOLUTION_FAILED")]
+    PersistedDocumentResolution(String),
+    #[error("Failed to evaluate persisted document require_id expression: {0}")]
+    #[strum(serialize = "PERSISTED_DOCUMENT_ID_EXPRESSION_EVALUATION_ERROR")]
+    PersistedDocumentIdExpressionEvaluationError(ProgramResolutionError<BooleanConversionError>),
+    #[error("Failed to minify parsed GraphQL operation: {0}")]
+    #[strum(serialize = "GRAPHQL_PARSE_MINIFY_FAILED")]
+    FailedToMinifyParsedOperation(String),
+    #[error("Failed to execute a plan: {0}")]
+    #[strum(serialize = "PLAN_EXECUTION_FAILED")]
+    PlanExecutionError(#[from] PlanExecutionError),
+    #[error("Failed to produce a plan: {0}")]
+    #[strum(serialize = "QUERY_PLAN_BUILD_FAILED")]
+    PlannerError(#[from] Arc<PlannerError>),
+    #[error(transparent)]
+    #[strum(serialize = "OVERRIDE_LABEL_EVALUATION_FAILED")]
+    LabelEvaluationError(#[from] LabelEvaluationError),
+    #[error("Failed to forward jwt: {0}")]
+    #[strum(serialize = "JWT_FORWARDING_ERROR")]
+    JwtForwardingError(#[from] JwtForwardingError),
+
+    #[error("Failed to evaluate introspection expression: {0}")]
+    #[strum(serialize = "INTROSPECTION_PERMISSION_EVALUATION_ERROR")]
+    IntrospectionPermissionEvaluationError(String),
 
     #[error("Request timed out")]
     #[strum(serialize = "GATEWAY_TIMEOUT")]
@@ -177,19 +209,6 @@ pub enum PipelineError {
         response_headers: PipelineErrorAdditionalHeaders,
     },
 
-    // Demand Control
-    #[error("Operation estimated cost exceeds max cost")]
-    #[strum(serialize = "COST_ESTIMATED_TOO_EXPENSIVE")]
-    CostEstimatedTooExpensive {
-        response_headers: PipelineErrorAdditionalHeaders,
-    },
-
-    #[error(
-        "Exactly one slicing argument is required for field '{field_name}', but found {found}"
-    )]
-    #[strum(serialize = "COST_INVALID_SLICING_ARGUMENTS")]
-    CostInvalidSlicingArguments { field_name: String, found: usize },
-
     #[error(transparent)]
     CoprocessorError(#[from] CoprocessorError),
 
@@ -204,6 +223,38 @@ pub enum PipelineError {
     RouterSupergraphRuntimeError(#[from] RouterSupergraphRuntimeError),
 }
 
+macro_rules! pipeline_from {
+    ($variant:ident, $($leaf:ty),+ $(,)?) => {
+        $(impl From<$leaf> for PipelineError {
+            fn from(value: $leaf) -> Self {
+                PipelineError::$variant(value.into())
+            }
+        })+
+    };
+}
+
+// Preserve `?`/`.into()` ergonomics: leaf errors convert straight to the umbrella.
+pipeline_from!(
+    Client,
+    QueryPayloadError,
+    Arc<graphql_tools::parser::query::ParseError>,
+    Arc<NormalizationError>,
+    JwtError,
+    ReadBodyStreamError,
+);
+pipeline_from!(
+    Internal,
+    PlanExecutionError,
+    Arc<PlannerError>,
+    LabelEvaluationError,
+    JwtForwardingError,
+    HeaderRuleRuntimeError,
+    CoprocessorError,
+    RequestContextError,
+    OperationFilterError,
+    RouterSupergraphRuntimeError,
+);
+
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum ParserCacheError {
     #[error("Failed to parse GraphQL operation: {0}")]
@@ -217,12 +268,14 @@ pub enum ParserCacheError {
 impl From<Arc<ParserCacheError>> for PipelineError {
     fn from(value: Arc<ParserCacheError>) -> Self {
         match value.as_ref() {
-            ParserCacheError::ParseError(err) => PipelineError::FailedToParseOperation(err.clone()),
+            ParserCacheError::ParseError(err) => {
+                ClientPipelineError::FailedToParseOperation(err.clone()).into()
+            }
             ParserCacheError::MinifyError(err) => {
-                PipelineError::FailedToMinifyParsedOperation(err.clone())
+                InternalPipelineError::FailedToMinifyParsedOperation(err.clone()).into()
             }
             ParserCacheError::ValidationErrors(errs) => {
-                PipelineError::ValidationErrors(errs.clone())
+                ClientPipelineError::ValidationErrors(errs.clone()).into()
             }
         }
     }
@@ -231,8 +284,37 @@ impl From<Arc<ParserCacheError>> for PipelineError {
 impl PipelineError {
     pub fn additional_response_headers(&self) -> Option<&Vec<(HeaderName, HeaderValue)>> {
         match self {
-            PipelineError::CostEstimatedTooExpensive { response_headers } => Some(response_headers),
-            PipelineError::NoSupergraphAvailable { response_headers } => Some(response_headers),
+            Self::Client(err) => err.additional_response_headers(),
+            Self::Internal(err) => err.additional_response_headers(),
+        }
+    }
+
+    pub fn graphql_error_code(&self) -> &'static str {
+        match self {
+            Self::Client(err) => err.graphql_error_code(),
+            Self::Internal(err) => err.graphql_error_code(),
+        }
+    }
+
+    pub fn graphql_error_message(&self) -> String {
+        match self {
+            Self::Client(err) => err.graphql_error_message(),
+            Self::Internal(err) => err.graphql_error_message(),
+        }
+    }
+
+    pub fn default_status_code(&self, prefer_ok: bool) -> StatusCode {
+        match self {
+            Self::Client(err) => err.default_status_code(prefer_ok),
+            Self::Internal(err) => err.default_status_code(prefer_ok),
+        }
+    }
+}
+
+impl ClientPipelineError {
+    pub fn additional_response_headers(&self) -> Option<&Vec<(HeaderName, HeaderValue)>> {
+        match self {
+            Self::CostEstimatedTooExpensive { response_headers } => Some(response_headers),
             _ => None,
         }
     }
@@ -240,8 +322,66 @@ impl PipelineError {
     pub fn graphql_error_code(&self) -> &'static str {
         match self {
             Self::JwtError(err) => err.error_code(),
-            Self::PlanExecutionError(err) => err.error_code(),
             Self::ReadBodyStreamError(err) => err.error_code(),
+            _ => self.into(),
+        }
+    }
+
+    pub fn graphql_error_message(&self) -> String {
+        self.to_string()
+    }
+
+    pub fn default_status_code(&self, prefer_ok: bool) -> StatusCode {
+        match (self, prefer_ok) {
+            (Self::UnsupportedHttpMethod(_), _) => StatusCode::METHOD_NOT_ALLOWED,
+            (Self::InvalidHeaderValue(_), _) => StatusCode::BAD_REQUEST,
+            (Self::GetUnprocessableQueryParams(_), _) => StatusCode::BAD_REQUEST,
+            (Self::GetMissingQueryParam(_), _) => StatusCode::BAD_REQUEST,
+            (Self::FailedToParseBody(_), _) => StatusCode::BAD_REQUEST,
+            (Self::FailedToParseVariables(_), _) => StatusCode::BAD_REQUEST,
+            (Self::FailedToParseExtensions(_), _) => StatusCode::BAD_REQUEST,
+            (Self::PersistedDocumentNotFound(_), false) => StatusCode::BAD_REQUEST,
+            (Self::PersistedDocumentNotFound(_), true) => StatusCode::OK,
+            (Self::PersistedDocumentIdRequired, false) => StatusCode::BAD_REQUEST,
+            (Self::PersistedDocumentIdRequired, true) => StatusCode::OK,
+            (Self::PersistedDocumentExtraction(_), false) => StatusCode::BAD_REQUEST,
+            (Self::PersistedDocumentExtraction(_), true) => StatusCode::OK,
+            (Self::FailedToParseOperation(_), false) => StatusCode::BAD_REQUEST,
+            (Self::FailedToParseOperation(_), true) => StatusCode::OK,
+            (Self::NormalizationError(_), _) => StatusCode::BAD_REQUEST,
+            (Self::VariablesCoercionError(_), false) => StatusCode::BAD_REQUEST,
+            (Self::VariablesCoercionError(_), true) => StatusCode::OK,
+            (Self::MutationNotAllowedOverHttpGet, _) => StatusCode::METHOD_NOT_ALLOWED,
+            (Self::ValidationErrors(_), true) => StatusCode::OK,
+            (Self::ValidationErrors(_), false) => StatusCode::BAD_REQUEST,
+            (Self::CostEstimatedTooExpensive { .. }, true) => StatusCode::OK,
+            (Self::CostEstimatedTooExpensive { .. }, false) => StatusCode::BAD_REQUEST,
+            (Self::CostInvalidSlicingArguments { .. }, true) => StatusCode::OK,
+            (Self::CostInvalidSlicingArguments { .. }, false) => StatusCode::BAD_REQUEST,
+            (Self::AuthorizationFailed(_), _) => StatusCode::FORBIDDEN,
+            (Self::MissingContentTypeHeader, _) => StatusCode::NOT_ACCEPTABLE,
+            (Self::UnsupportedContentType, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            (Self::CsrfPreventionFailed, _) => StatusCode::FORBIDDEN,
+            (Self::JwtError(err), _) => err.status_code(),
+            (Self::IntrospectionDisabled, _) => StatusCode::FORBIDDEN,
+            (Self::SubscriptionsNotSupported, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            (Self::SubscriptionsTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
+            (Self::ReadBodyStreamError(err), _) => err.status_code(),
+        }
+    }
+}
+
+impl InternalPipelineError {
+    pub fn additional_response_headers(&self) -> Option<&Vec<(HeaderName, HeaderValue)>> {
+        match self {
+            Self::NoSupergraphAvailable { response_headers } => Some(response_headers),
+            _ => None,
+        }
+    }
+
+    pub fn graphql_error_code(&self) -> &'static str {
+        match self {
+            Self::PlanExecutionError(err) => err.error_code(),
             Self::CoprocessorError(err) => err.error_code(),
             _ => self.into(),
         }
@@ -261,58 +401,22 @@ impl PipelineError {
             (Self::PlanExecutionError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::LabelEvaluationError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::JwtForwardingError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
-            (Self::UnsupportedHttpMethod(_), _) => StatusCode::METHOD_NOT_ALLOWED,
-            (Self::InvalidHeaderValue(_), _) => StatusCode::BAD_REQUEST,
-            (Self::GetUnprocessableQueryParams(_), _) => StatusCode::BAD_REQUEST,
-            (Self::GetMissingQueryParam(_), _) => StatusCode::BAD_REQUEST,
-            (Self::FailedToParseBody(_), _) => StatusCode::BAD_REQUEST,
-            (Self::FailedToParseVariables(_), _) => StatusCode::BAD_REQUEST,
-            (Self::FailedToParseExtensions(_), _) => StatusCode::BAD_REQUEST,
-            (Self::PersistedDocumentNotFound(_), false) => StatusCode::BAD_REQUEST,
-            (Self::PersistedDocumentNotFound(_), true) => StatusCode::OK,
-            (Self::PersistedDocumentIdRequired, false) => StatusCode::BAD_REQUEST,
-            (Self::PersistedDocumentIdRequired, true) => StatusCode::OK,
-            (Self::PersistedDocumentExtraction(_), false) => StatusCode::BAD_REQUEST,
-            (Self::PersistedDocumentExtraction(_), true) => StatusCode::OK,
             (Self::PersistedDocumentResolution(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::PersistedDocumentIdExpressionEvaluationError(_), _) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
-            (Self::FailedToParseOperation(_), false) => StatusCode::BAD_REQUEST,
-            (Self::FailedToParseOperation(_), true) => StatusCode::OK,
             (Self::FailedToMinifyParsedOperation(_), false) => StatusCode::BAD_REQUEST,
             (Self::FailedToMinifyParsedOperation(_), true) => StatusCode::OK,
-            (Self::NormalizationError(_), _) => StatusCode::BAD_REQUEST,
-            (Self::VariablesCoercionError(_), false) => StatusCode::BAD_REQUEST,
-            (Self::VariablesCoercionError(_), true) => StatusCode::OK,
-            (Self::MutationNotAllowedOverHttpGet, _) => StatusCode::METHOD_NOT_ALLOWED,
-            (Self::ValidationErrors(_), true) => StatusCode::OK,
-            (Self::ValidationErrors(_), false) => StatusCode::BAD_REQUEST,
-            (Self::CostEstimatedTooExpensive { .. }, true) => StatusCode::OK,
-            (Self::CostEstimatedTooExpensive { .. }, false) => StatusCode::BAD_REQUEST,
-            (Self::CostInvalidSlicingArguments { .. }, true) => StatusCode::OK,
-            (Self::CostInvalidSlicingArguments { .. }, false) => StatusCode::BAD_REQUEST,
-            (Self::AuthorizationFailed(_), _) => StatusCode::FORBIDDEN,
-            (Self::MissingContentTypeHeader, _) => StatusCode::NOT_ACCEPTABLE,
-            (Self::UnsupportedContentType, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            (Self::CsrfPreventionFailed, _) => StatusCode::FORBIDDEN,
-            (Self::JwtError(err), _) => err.status_code(),
             (Self::IntrospectionPermissionEvaluationError(_), _) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
-            (Self::IntrospectionDisabled, _) => StatusCode::FORBIDDEN,
-            (Self::SubscriptionsNotSupported, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            (Self::SubscriptionsTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
-            (Self::ReadBodyStreamError(err), _) => err.status_code(),
             (Self::TimeoutError, _) => StatusCode::GATEWAY_TIMEOUT,
             (Self::HeaderPropagation(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::QueryPlanSerializationFailed(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::NoSupergraphAvailable { .. }, _) => StatusCode::SERVICE_UNAVAILABLE,
             (Self::CoprocessorError(err), _) => err.status_code(),
             (Self::RequestContextError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
-
             (Self::OperationFilterFailed(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
-
             (Self::RouterSupergraphRuntimeError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -343,14 +447,16 @@ pub fn handle_pipeline_error(
     }
 
     let mut errors = match err {
-        PipelineError::ValidationErrors(ref validation_errors) => {
+        PipelineError::Client(ClientPipelineError::ValidationErrors(ref validation_errors)) => {
             validation_errors.iter().map(|error| error.into()).collect()
         }
-        PipelineError::AuthorizationFailed(ref authorization_errors) => authorization_errors
+        PipelineError::Client(ClientPipelineError::AuthorizationFailed(
+            ref authorization_errors,
+        )) => authorization_errors
             .iter()
             .map(|error| error.into())
             .collect(),
-        PipelineError::CostEstimatedTooExpensive { .. } => {
+        PipelineError::Client(ClientPipelineError::CostEstimatedTooExpensive { .. }) => {
             vec![GraphQLError::from_message_and_code(
                 err.graphql_error_message(),
                 "COST_ESTIMATED_TOO_EXPENSIVE",

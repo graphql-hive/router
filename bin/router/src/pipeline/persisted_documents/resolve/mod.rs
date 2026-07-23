@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use crate::pipeline::error::PipelineError;
+use crate::pipeline::error::{ClientPipelineError, InternalPipelineError, PipelineError};
 use crate::pipeline::persisted_documents::resolve::shared_file_manifest::FileManifestError;
 use crate::pipeline::persisted_documents::types::{ClientIdentity, PersistedDocumentId};
 use crate::storage::error::StorageError;
@@ -46,14 +46,16 @@ impl From<PersistedDocumentResolverError> for PipelineError {
     fn from(value: PersistedDocumentResolverError) -> Self {
         match value {
             PersistedDocumentResolverError::NotFound(document_id) => {
-                PipelineError::PersistedDocumentNotFound(document_id)
+                ClientPipelineError::PersistedDocumentNotFound(document_id).into()
             }
             PersistedDocumentResolverError::Hive(HiveResolverError::InvalidDocumentIdFormat(_))
             | PersistedDocumentResolverError::Hive(HiveResolverError::ClientIdentityMissing)
             | PersistedDocumentResolverError::Hive(HiveResolverError::ClientIdentityPartial) => {
-                PipelineError::PersistedDocumentExtraction(value.to_string())
+                ClientPipelineError::PersistedDocumentExtraction(value.to_string()).into()
             }
-            other => PipelineError::PersistedDocumentResolution(other.to_string()),
+            other => {
+                InternalPipelineError::PersistedDocumentResolution(other.to_string()).into()
+            }
         }
     }
 }

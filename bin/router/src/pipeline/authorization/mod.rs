@@ -12,7 +12,7 @@ pub mod metadata;
 
 use std::sync::Arc;
 
-use crate::pipeline::error::PipelineError;
+use crate::pipeline::error::{ClientPipelineError, PipelineError};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::nullify::rebuilder::{
     rebuild_nulled_operation, rebuild_nulled_projection_plan,
@@ -194,7 +194,7 @@ pub fn enforce_operation_authorization(
             errors,
         ),
         AuthorizationDecision::Reject { errors } => {
-            return Err(PipelineError::AuthorizationFailed(errors));
+            return Err(ClientPipelineError::AuthorizationFailed(errors).into());
         }
     })
 }

@@ -2,7 +2,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use crate::cache_state::{CacheHitMiss, EntryValueHitMissExt};
-use crate::pipeline::error::PipelineError;
+use crate::pipeline::error::{ClientPipelineError, PipelineError};
 use crate::pipeline::parser::GraphQLParserPayload;
 use crate::schema_state::SelectedSupergraph;
 use crate::shared_state::RouterSharedState;
@@ -152,7 +152,7 @@ pub async fn validate_operation_with_cache(
             );
             trace!("Validation errors: {:?}", errors);
 
-            return Err(PipelineError::ValidationErrors(errors));
+            return Err(ClientPipelineError::ValidationErrors(errors).into());
         }
 
         Ok(None)

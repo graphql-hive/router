@@ -38,7 +38,7 @@ use hive_router_query_planner::state::supergraph_state::OperationKind;
 
 use crate::jwt::errors::JwtError;
 use crate::pipeline::active_subscriptions::SubscriptionEvent;
-use crate::pipeline::error::PipelineError;
+use crate::pipeline::error::{ClientPipelineError, PipelineError};
 use crate::pipeline::execute_planned_request;
 use crate::pipeline::header::{ResponseMode, SingleContentType, StreamContentType};
 use crate::pipeline::{
@@ -479,7 +479,10 @@ async fn handle_text_frame(
                 );
 
                 if is_subscription && !shared_state.router_config.subscriptions.enabled {
-                    return Some(PipelineError::SubscriptionsNotSupported.into_server_message(&id, shared_state));
+                    return Some(
+                        PipelineError::Client(ClientPipelineError::SubscriptionsNotSupported)
+                            .into_server_message(&id, shared_state),
+                    );
                 }
 
                 let request_dedupe_enabled =
@@ -551,7 +554,7 @@ async fn handle_text_frame(
                     };
                     let (shared_response, _role) = match result {
                         Ok(result) => result,
-                        Err(PipelineError::JwtError(err)) => {
+                        Err(PipelineError::Client(ClientPipelineError::JwtError(err))) => {
                             let _ = sink.send(err.clone().into_server_message(&id, shared_state)).await;
                             // we report error as graphql error, but we also close the
                             // connection since we're dealing with auth so let's be safe
@@ -563,7 +566,7 @@ async fn handle_text_frame(
                 } else {
                     match exec(None).await {
                         Ok(result) => result,
-                        Err(PipelineError::JwtError(err)) => {
+                        Err(PipelineError::Client(ClientPipelineError::JwtError(err))) => {
                             let _ = sink.send(err.clone().into_server_message(&id, shared_state)).await;
                             // we report error as graphql error, but we also close the
                             // connection since we're dealing with auth so let's be safe

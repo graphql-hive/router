@@ -34,7 +34,7 @@ use crate::jwt::context::JwtTokenPayload;
 use crate::jwt::JwtAuthRuntime;
 use crate::pipeline::active_subscriptions::{ActiveSubscriptions, SubscriptionEvent};
 use crate::pipeline::cors::{CORSConfigError, Cors};
-use crate::pipeline::error::PipelineError;
+use crate::pipeline::error::{ClientPipelineError, PipelineError};
 use crate::pipeline::header::{ResponseMode, StreamContentType};
 use crate::pipeline::introspection_policy::compile_introspection_policy;
 use crate::pipeline::multipart_subscribe::{
@@ -118,7 +118,7 @@ impl SharedRouterResponse {
             SharedRouterResponse::Stream(stream) => {
                 let stream_content_type = response_mode
                     .stream_content_type()
-                    .ok_or(PipelineError::SubscriptionsTransportNotSupported)?;
+                    .ok_or(ClientPipelineError::SubscriptionsTransportNotSupported)?;
                 Ok(stream.into_response(stream_content_type, metrics))
             }
         }
