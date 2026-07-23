@@ -29,7 +29,7 @@
 |[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"allow_only_http2":false,"circuit_breaker":null,"dedupe_enabled":true,"forward_operation_name":false,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}}`<br/>||
 |[**websocket**](#websocket)|`object`|Configuration of router's WebSocket server.<br/>Default: `{"enabled":false,"headers":{"persist":false,"source":"connection"},"path":null}`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -236,6 +236,7 @@ websocket:
 
 ```
 
+   
 <a name="authorization"></a>
 ## authorization: object
 
@@ -245,7 +246,7 @@ websocket:
 |----|----|-----------|--------|
 |[**directives**](#authorizationdirectives)|`object`||yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -256,6 +257,7 @@ directives:
 
 ```
 
+   
 <a name="authorizationdirectives"></a>
 ### authorization\.directives: object
 
@@ -266,7 +268,7 @@ directives:
 |**enabled**|`boolean`|Default: `true`<br/>||
 |[**unauthorized**](#authorizationdirectivesunauthorized)|`object`|Default: `{"mode":"filter"}`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -276,6 +278,7 @@ unauthorized:
 
 ```
 
+   
 <a name="authorizationdirectivesunauthorized"></a>
 #### authorization\.directives\.unauthorized: object
 
@@ -285,7 +288,7 @@ unauthorized:
 |----|----|-----------|--------|
 |**mode**|`string`|Default: `"filter"`<br/>Enum: `"filter"`, `"reject"`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -293,6 +296,7 @@ mode: filter
 
 ```
 
+   
 <a name="coprocessor"></a>
 ## coprocessor: object,null
 
@@ -308,7 +312,8 @@ Configuration for coprocessor.
 |**timeout**|`string`|Per-stage timeout for a coprocessor call.<br/><br/>Defaults to `1s`.<br/>Default: `"1s"`<br/>|no|
 |**url**|`string`|Endpoint for the external coprocessor service.<br/><br/>Supported formats:<br/>- `http://host[:port][/path]`<br/>- `unix:///absolute/path/to/socket.sock`<br/>- `unix:///absolute/path/to/socket.sock?path=/request/path`<br/>|yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="coprocessorstages"></a>
 ### coprocessor\.stages: object
 
@@ -322,7 +327,7 @@ Stage-specific configuration.
 |[**graphql**](#coprocessorstagesgraphql)|`object`|Hooks around GraphQL processing<br/>Default: `{}`<br/>||
 |[**router**](#coprocessorstagesrouter)|`object`|Hooks around the router HTTP boundary<br/>Default: `{}`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -331,6 +336,7 @@ router: {}
 
 ```
 
+   
 <a name="coprocessorstagesgraphql"></a>
 #### coprocessor\.stages\.graphql: object
 
@@ -345,7 +351,8 @@ Hooks around GraphQL processing
 |[**request**](#coprocessorstagesgraphqlrequest)|`object`, `null`|Configuration for `graphql.request` hook.<br/>||
 |[**response**](#coprocessorstagesgraphqlresponse)|`object`, `null`|Configuration for `graphql.response` hook.<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="coprocessorstagesgraphqlanalysis"></a>
 ##### coprocessor\.stages\.graphql\.analysis: object,null
 
@@ -359,7 +366,8 @@ Configuration for `graphql.analysis` hook.
 |**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
 |[**include**](#coprocessorstagesgraphqlanalysisinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="coprocessorstagesgraphqlanalysisinclude"></a>
 ###### coprocessor\.stages\.graphql\.analysis\.include: object
 
@@ -377,7 +385,7 @@ Selects which fields are included in the coprocessor payload for this hook.
 |**path**|`boolean`|Include request path.<br/>Default: `false`<br/>||
 |**sdl**|`boolean`|Include the current public schema SDL.<br/>Default: `false`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -390,6 +398,7 @@ sdl: false
 
 ```
 
+   
 <a name="coprocessorstagesgraphqlrequest"></a>
 ##### coprocessor\.stages\.graphql\.request: object,null
 
@@ -403,7 +412,8 @@ Configuration for `graphql.request` hook.
 |**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
 |[**include**](#coprocessorstagesgraphqlrequestinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="coprocessorstagesgraphqlrequestinclude"></a>
 ###### coprocessor\.stages\.graphql\.request\.include: object
 
@@ -421,7 +431,7 @@ Selects which fields are included in the coprocessor payload for this hook.
 |**path**|`boolean`|Include request path.<br/>Default: `false`<br/>||
 |**sdl**|`boolean`|Include the current public schema SDL.<br/>Default: `false`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -434,6 +444,7 @@ sdl: false
 
 ```
 
+   
 <a name="coprocessorstagesgraphqlresponse"></a>
 ##### coprocessor\.stages\.graphql\.response: object,null
 
@@ -447,7 +458,8 @@ Configuration for `graphql.response` hook.
 |**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
 |[**include**](#coprocessorstagesgraphqlresponseinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="coprocessorstagesgraphqlresponseinclude"></a>
 ###### coprocessor\.stages\.graphql\.response\.include: object
 
@@ -464,7 +476,7 @@ Selects which fields are included in the coprocessor payload for this hook.
 |**sdl**|`boolean`|Include the current public schema SDL.<br/>Default: `false`<br/>||
 |**status\_code**|`boolean`|Include response status code.<br/>Default: `false`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -476,6 +488,7 @@ status_code: false
 
 ```
 
+   
 <a name="coprocessorstagesrouter"></a>
 #### coprocessor\.stages\.router: object
 
@@ -489,7 +502,8 @@ Hooks around the router HTTP boundary
 |[**request**](#coprocessorstagesrouterrequest)|`object`, `null`|Configuration for `router.request` hook.<br/>||
 |[**response**](#coprocessorstagesrouterresponse)|`object`, `null`|Configuration for `router.response` hook.<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="coprocessorstagesrouterrequest"></a>
 ##### coprocessor\.stages\.router\.request: object,null
 
@@ -503,7 +517,8 @@ Configuration for `router.request` hook.
 |**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
 |[**include**](#coprocessorstagesrouterrequestinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="coprocessorstagesrouterrequestinclude"></a>
 ###### coprocessor\.stages\.router\.request\.include: object
 
@@ -520,7 +535,7 @@ Selects which fields are included in the coprocessor payload for this hook.
 |**method**|`boolean`|Include inbound HTTP request method.<br/>Default: `false`<br/>||
 |**path**|`boolean`|Include inbound HTTP request path.<br/>Default: `false`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -532,6 +547,7 @@ path: false
 
 ```
 
+   
 <a name="coprocessorstagesrouterresponse"></a>
 ##### coprocessor\.stages\.router\.response: object,null
 
@@ -545,7 +561,8 @@ Configuration for `router.response` hook.
 |**condition**||Optional condition expression.<br/><br/>The hook runs only when this expression evaluates to `true`.<br/>||
 |[**include**](#coprocessorstagesrouterresponseinclude)|`object`|Selects which fields are included in the coprocessor payload for this hook.<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="coprocessorstagesrouterresponseinclude"></a>
 ###### coprocessor\.stages\.router\.response\.include: object
 
@@ -561,7 +578,7 @@ Selects which fields are included in the coprocessor payload for this hook.
 |**headers**|`boolean`|Include outbound HTTP response headers.<br/>Default: `false`<br/>||
 |**status\_code**|`boolean`|Include outbound HTTP response status code.<br/>Default: `false`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -572,6 +589,7 @@ status_code: false
 
 ```
 
+   
 <a name="cors"></a>
 ## cors: object
 
@@ -622,6 +640,7 @@ policies: []
 
 ```
 
+   
 <a name="corsallow_headers"></a>
 ### cors\.allow\_headers\[\]: array,null
 
@@ -633,7 +652,8 @@ Example: ["Content-Type", "Authorization"]
 
 **Items**
 
-**Item Type:** `string`  
+**Item Type:** `string`   
+   
 <a name="corsexpose_headers"></a>
 ### cors\.expose\_headers\[\]: array,null
 
@@ -645,7 +665,8 @@ Example: ["X-Custom-Header", "X-Another-Header"]
 
 **Items**
 
-**Item Type:** `string`  
+**Item Type:** `string`   
+   
 <a name="corsmethods"></a>
 ### cors\.methods\[\]: array,null
 
@@ -657,7 +678,8 @@ Example: ["GET", "POST", "OPTIONS"]
 
 **Items**
 
-**Item Type:** `string`  
+**Item Type:** `string`   
+   
 <a name="corspolicies"></a>
 ### cors\.policies\[\]: array
 
@@ -723,6 +745,7 @@ Here's a breakdown of how inheritance works for each field:
 
 ```
 
+   
 <a name="corspoliciesallow_headers"></a>
 #### cors\.policies\[\]\.allow\_headers\[\]: array,null
 
@@ -734,7 +757,8 @@ Example: ["Content-Type", "Authorization"]
 
 **Items**
 
-**Item Type:** `string`  
+**Item Type:** `string`   
+   
 <a name="corspoliciesexpose_headers"></a>
 #### cors\.policies\[\]\.expose\_headers\[\]: array,null
 
@@ -746,7 +770,8 @@ Example: ["X-Custom-Header", "X-Another-Header"]
 
 **Items**
 
-**Item Type:** `string`  
+**Item Type:** `string`   
+   
 <a name="corspoliciesmatch_origin"></a>
 #### cors\.policies\[\]\.match\_origin\[\]: array,null
 
@@ -758,7 +783,8 @@ Example: "^https://.*\.example\.com$", "^http://localhost:\d+$"
 
 **Items**
 
-**Item Type:** `string`  
+**Item Type:** `string`   
+   
 <a name="corspoliciesmethods"></a>
 #### cors\.policies\[\]\.methods\[\]: array,null
 
@@ -770,7 +796,8 @@ Example: ["GET", "POST", "OPTIONS"]
 
 **Items**
 
-**Item Type:** `string`  
+**Item Type:** `string`   
+   
 <a name="corspoliciesorigins"></a>
 #### cors\.policies\[\]\.origins\[\]: array,null
 
@@ -782,7 +809,8 @@ Example: "https://example.com", "http://localhost:3000"
 
 **Items**
 
-**Item Type:** `string`  
+**Item Type:** `string`   
+   
 <a name="corspoliciespreflight_response_headers"></a>
 #### cors\.policies\[\]\.preflight\_response\_headers: object
 
@@ -801,6 +829,7 @@ See `cors.preflight_response_headers` for details and caveats.
 |----|----|-----------|--------|
 |**Additional Properties**|`string`|||
 
+   
 <a name="corspreflight_response_headers"></a>
 ### cors\.preflight\_response\_headers: object
 
@@ -830,6 +859,7 @@ preflight_response_headers:
 |----|----|-----------|--------|
 |**Additional Properties**|`string`|||
 
+   
 <a name="csrf"></a>
 ## csrf: object
 
@@ -852,6 +882,7 @@ required_headers:
 
 ```
 
+   
 <a name="csrfrequired_headers"></a>
 ### csrf\.required\_headers\[\]: array
 
@@ -865,8 +896,9 @@ Header names are case-insensitive.
 
 A valid HTTP header name, according to RFC 7230.
 
-**Item Type:** `string`  
-**Item Pattern:** `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`  
+**Item Type:** `string`   
+**Item Pattern:** `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`   
+   
 <a name="demand_control"></a>
 ## demand\_control: object,null
 
@@ -880,7 +912,8 @@ A valid HTTP header name, according to RFC 7230.
 |[**operation\_cost**](#demand_controloperation_cost)|`object`|Configuration for operation cost limits.<br/>|yes|
 |[**subgraphs\_budget**](#demand_controlsubgraphs_budget)|`object`|Subgraph cost limit configuration, including the mode to use for subgraph budget enforcement.<br/>|yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="demand_controldefault_list_size"></a>
 ### demand\_control\.default\_list\_size: object
 
@@ -894,7 +927,7 @@ The default list size to use when `@listSize` is not specified in the schema.
 |**all**|`integer`, `null`|Default list size for fields in the supergraph that have no `@listSize` directive.<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 |[**subgraphs**](#demand_controldefault_list_sizesubgraphs)|`object`, `null`|Per-subgraph overrides. Keys are subgraph names.<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -902,6 +935,7 @@ all: null
 
 ```
 
+   
 <a name="demand_controldefault_list_sizesubgraphs"></a>
 #### demand\_control\.default\_list\_size\.subgraphs: object,null
 
@@ -914,6 +948,7 @@ Per-subgraph overrides. Keys are subgraph names.
 |----|----|-----------|--------|
 |**Additional Properties**|`integer`|Format: `"uint"`<br/>Minimum: `0`<br/>||
 
+   
 <a name="demand_controloperation_cost"></a>
 ### demand\_control\.operation\_cost: object
 
@@ -941,6 +976,7 @@ expose_headers:
 
 ```
 
+   
 <a name="demand_controloperation_costexpose_headers"></a>
 #### demand\_control\.operation\_cost\.expose\_headers: object
 
@@ -958,7 +994,7 @@ Defaults to none.
 |**estimated**|`string`, `null`|A valid HTTP header name, according to RFC 7230.<br/>Pattern: `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`<br/>||
 |**max**|`string`, `null`|A valid HTTP header name, according to RFC 7230.<br/>Pattern: `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -968,6 +1004,7 @@ max: null
 
 ```
 
+   
 <a name="demand_controlsubgraphs_budget"></a>
 ### demand\_control\.subgraphs\_budget: object
 
@@ -982,7 +1019,8 @@ Subgraph cost limit configuration, including the mode to use for subgraph budget
 |**mode**|`string`|The mode to use for subgraph budget enforcement.<br/><br/>In `mode: enforce`, when a subgraph limit is exceeded:<br/>- The router **continues** executing the rest of the query plan.<br/>- The specific subgraph fetch is skipped and a `SUBGRAPH_COST_ESTIMATED_TOO_EXPENSIVE` error is added to the response.<br/>- The fetch call assumes error, and returns `null` as subgraph response.<br/><br/>This kind of enforcement is applied to each subgraph fetch individually, during execution,<br/>in order to prevent false-positives from exceeding the limit.<br/><br/>In `mode: measure`, subgraph limits are never enforced.<br/>Enum: `"enforce"`, `"measure"`<br/>|yes|
 |[**subgraphs**](#demand_controlsubgraphs_budgetsubgraphs)|`object`, `null`|Per-subgraph overrides. Keys are subgraph names.<br/>|no|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="demand_controlsubgraphs_budgetsubgraphs"></a>
 #### demand\_control\.subgraphs\_budget\.subgraphs: object,null
 
@@ -995,6 +1033,7 @@ Per-subgraph overrides. Keys are subgraph names.
 |----|----|-----------|--------|
 |**Additional Properties**|`integer`|Format: `"uint"`<br/>Minimum: `0`<br/>||
 
+   
 <a name="headers"></a>
 ## headers: object
 
@@ -1030,6 +1069,7 @@ subgraphs:
 
 ```
 
+   
 <a name="headersall"></a>
 ### headers\.all: object,null
 
@@ -1043,6 +1083,7 @@ Rules applied to all subgraphs (global defaults).
 |[**request**](#headersallrequest)|`array`|Rules that shape the **request** sent from the router to subgraphs.<br/>||
 |[**response**](#headersallresponse)|`array`|Rules that shape the **response** sent from the router back to the client.<br/>||
 
+   
 <a name="headersallrequest"></a>
 #### headers\.all\.request\[\]: array,null
 
@@ -1054,7 +1095,7 @@ Rules that shape the **request** sent from the router to subgraphs.
 
 Request-header rules (applied before sending to a subgraph).
 
-   
+   
 **Option 1 (alternative):** 
 Forward headers from the client request into the subgraph request.
 
@@ -1069,9 +1110,9 @@ to refine the final output.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**propagate**](#option1propagate)|`object`|Propagate headers from the client request to subgraph requests.<br/>|yes|
+|[**propagate**](#headersallrequestpropagate-option1)|`object`|Propagate headers from the client request to subgraph requests.<br/>|yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -1080,7 +1121,7 @@ propagate: {}
 ```
 
 
-   
+   
 **Option 2 (alternative):** 
 Remove headers before sending the request to a subgraph.
 
@@ -1092,9 +1133,9 @@ Useful to drop sensitive or irrelevant headers, or to undo a previous
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**remove**](#option2remove)|`object`|Remove headers matched by the specification.<br/>|yes|
+|[**remove**](#headersallrequestremove-option2)|`object`|Remove headers matched by the specification.<br/>|yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -1103,7 +1144,7 @@ remove: {}
 ```
 
 
-   
+   
 **Option 3 (alternative):** 
 Add or overwrite a header with a static value.
 
@@ -1116,9 +1157,9 @@ Add or overwrite a header with a static value.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**insert**](#option3insert)|`object`|Insert a header with a static value.<br/>|yes|
+|[**insert**](#headersallrequestinsert-option3)|`object`|Insert a header with a static value.<br/>|yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -1127,8 +1168,76 @@ insert: {}
 ```
 
 
-<a name="option1propagate"></a>
-## Option 1: propagate: object
+   
+<a name="headersallrequestinsert-option3"></a>
+##### headers\.all\.request\[\]\.insert: object (Option 3)
+
+Insert a header with a static value.
+
+### Examples
+```yaml
+- insert:
+    name: x-env
+    value: prod
+```
+
+```yaml
+- insert:
+    name: set-cookie
+    value: "a=1; Path=/"
+# If another Set-Cookie exists, this creates another header line (never joined)
+```
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**name**|`string`|Header name to insert or overwrite (case-insensitive).<br/>|yes|
+
+   
+**Option 1 (optional):** 
+Static value provided in the config.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**value**|`string`||yes|
+
+
+   
+**Option 2 (optional):** 
+A dynamic value computed by a VRL expression.
+
+This allows you to generate header values based on the incoming request,
+subgraph name, and (for response rules) subgraph response headers.
+The expression has access to a context object with `.request`, `.subgraph`,
+and `.response.headers` fields.
+
+For more information on the available functions and syntax, see the
+[VRL documentation](https://vrl.dev/).
+
+### Example
+```yaml
+# Insert a header with a value derived from another header.
+- insert:
+    name: x-auth-scheme
+    expression: 'split(.request.headers.authorization, " ")[0] ?? "none"'
+```
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**expression**|`string`||yes|
+
+
+   
+<a name="headersallrequestpropagate-option1"></a>
+##### headers\.all\.request\[\]\.propagate: object (Option 1)
 
 Propagate headers from the client request to subgraph requests.
 
@@ -1161,22 +1270,24 @@ propagate:
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**default**|`string`, `null`|If the header is missing, set a default value.<br/>Applied only when **none** of the matched headers exist.<br/>||
-|[**exclude**](#option1propagateexclude)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>||
+|[**exclude**](#headersallrequestpropagateexclude-option1)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>||
 |**matching**||Match headers by regex pattern(s) (OR).<br/>||
 |**named**||Match headers by exact name (OR).<br/>||
 |**rename**|`string`, `null`|Optionally rename the header when forwarding.<br/>||
 
-<a name="option1propagateexclude"></a>
-### Option 1: propagate\.exclude\[\]: array,null
+   
+<a name="headersallrequestpropagateexclude-option1"></a>
+###### headers\.all\.request\[\]\.propagate\.exclude\[\]: array,null (Option 1)
 
 Exclude headers matching these regexes, applied after `matching`.
 
 
 **Items**
 
-**Item Type:** `string`  
-<a name="option2remove"></a>
-## Option 2: remove: object
+**Item Type:** `string`   
+   
+<a name="headersallrequestremove-option2"></a>
+##### headers\.all\.request\[\]\.remove: object (Option 2)
 
 Remove headers matched by the specification.
 
@@ -1185,21 +1296,105 @@ Remove headers matched by the specification.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**exclude**](#option2removeexclude)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>||
+|[**exclude**](#headersallrequestremoveexclude-option2)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>||
 |**matching**||Match headers by regex pattern(s) (OR).<br/>||
 |**named**||Match headers by exact name (OR).<br/>||
 
-<a name="option2removeexclude"></a>
-### Option 2: remove\.exclude\[\]: array,null
+   
+<a name="headersallrequestremoveexclude-option2"></a>
+###### headers\.all\.request\[\]\.remove\.exclude\[\]: array,null (Option 2)
 
 Exclude headers matching these regexes, applied after `matching`.
 
 
 **Items**
 
-**Item Type:** `string`  
-<a name="option3insert"></a>
-## Option 3: insert: object
+**Item Type:** `string`   
+   
+<a name="headersallresponse"></a>
+#### headers\.all\.response\[\]: array,null
+
+Rules that shape the **response** sent from the router back to the client.
+
+
+**Items**
+
+
+Response-header rules (applied before sending back to the client).
+
+   
+**Option 1 (alternative):** 
+Forward headers from subgraph responses into the final client response.
+
+- If multiple subgraphs provide the same header, `algorithm` controls
+  how values are merged.
+- If **no** subgraph provides a matching header, `default` is used (when provided).
+- If `rename` is set, the header is returned under the new name.
+
+**Never-join headers** (e.g. `set-cookie`) are never comma-joined:
+multiple values are returned as separate header fields regardless of `algorithm`.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**propagate**](#headersallresponsepropagate-option1)|`object`|Propagate headers from subgraph responses to the final client response.<br/>|yes|
+
+**Additional Properties:** not allowed   
+**Example**
+
+```yaml
+propagate: {}
+
+```
+
+
+   
+**Option 2 (alternative):** 
+Remove headers before sending the response to the client.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**remove**](#headersallresponseremove-option2)|`object`|Remove headers matched by the specification.<br/>|yes|
+
+**Additional Properties:** not allowed   
+**Example**
+
+```yaml
+remove: {}
+
+```
+
+
+   
+**Option 3 (alternative):** 
+Add or overwrite a header in the response to the client.
+
+For never-join headers, appends another occurrence (multiple lines).
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**insert**](#headersallresponseinsert-option3)|`object`|Insert a header with a static value.<br/>|yes|
+
+**Additional Properties:** not allowed   
+**Example**
+
+```yaml
+insert: {}
+
+```
+
+
+   
+<a name="headersallresponseinsert-option3"></a>
+##### headers\.all\.response\[\]\.insert: object (Option 3)
 
 Insert a header with a static value.
 
@@ -1222,9 +1417,10 @@ Insert a header with a static value.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|**algorithm**||How to merge values across multiple subgraph responses.<br/>Default: `Last` (overwrite).<br/>|no|
 |**name**|`string`|Header name to insert or overwrite (case-insensitive).<br/>|yes|
 
-   
+   
 **Option 1 (optional):** 
 Static value provided in the config.
 
@@ -1236,7 +1432,7 @@ Static value provided in the config.
 |**value**|`string`||yes|
 
 
-   
+   
 **Option 2 (optional):** 
 A dynamic value computed by a VRL expression.
 
@@ -1264,89 +1460,9 @@ For more information on the available functions and syntax, see the
 |**expression**|`string`||yes|
 
 
-<a name="headersallresponse"></a>
-#### headers\.all\.response\[\]: array,null
-
-Rules that shape the **response** sent from the router back to the client.
-
-
-**Items**
-
-
-Response-header rules (applied before sending back to the client).
-
-   
-**Option 1 (alternative):** 
-Forward headers from subgraph responses into the final client response.
-
-- If multiple subgraphs provide the same header, `algorithm` controls
-  how values are merged.
-- If **no** subgraph provides a matching header, `default` is used (when provided).
-- If `rename` is set, the header is returned under the new name.
-
-**Never-join headers** (e.g. `set-cookie`) are never comma-joined:
-multiple values are returned as separate header fields regardless of `algorithm`.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**propagate**](#option1propagate)|`object`|Propagate headers from subgraph responses to the final client response.<br/>|yes|
-
-**Additional Properties:** not allowed  
-**Example**
-
-```yaml
-propagate: {}
-
-```
-
-
-   
-**Option 2 (alternative):** 
-Remove headers before sending the response to the client.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**remove**](#option2remove)|`object`|Remove headers matched by the specification.<br/>|yes|
-
-**Additional Properties:** not allowed  
-**Example**
-
-```yaml
-remove: {}
-
-```
-
-
-   
-**Option 3 (alternative):** 
-Add or overwrite a header in the response to the client.
-
-For never-join headers, appends another occurrence (multiple lines).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**insert**](#option3insert)|`object`|Insert a header with a static value.<br/>|yes|
-
-**Additional Properties:** not allowed  
-**Example**
-
-```yaml
-insert: {}
-
-```
-
-
-<a name="option1propagate"></a>
-## Option 1: propagate: object
+   
+<a name="headersallresponsepropagate-option1"></a>
+##### headers\.all\.response\[\]\.propagate: object (Option 1)
 
 Propagate headers from subgraph responses to the final client response.
 
@@ -1389,22 +1505,24 @@ propagate:
 |----|----|-----------|--------|
 |**algorithm**||How to merge values across multiple subgraph responses.<br/>|yes|
 |**default**|`string`, `null`|If no subgraph returns the header, set this default value.<br/>|no|
-|[**exclude**](#option1propagateexclude)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>|no|
+|[**exclude**](#headersallresponsepropagateexclude-option1)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>|no|
 |**matching**||Match headers by regex pattern(s) (OR).<br/>|no|
 |**named**||Match headers by exact name (OR).<br/>|no|
 |**rename**|`string`, `null`|Optionally rename the header when returning it to the client.<br/>|no|
 
-<a name="option1propagateexclude"></a>
-### Option 1: propagate\.exclude\[\]: array,null
+   
+<a name="headersallresponsepropagateexclude-option1"></a>
+###### headers\.all\.response\[\]\.propagate\.exclude\[\]: array,null (Option 1)
 
 Exclude headers matching these regexes, applied after `matching`.
 
 
 **Items**
 
-**Item Type:** `string`  
-<a name="option2remove"></a>
-## Option 2: remove: object
+**Item Type:** `string`   
+   
+<a name="headersallresponseremove-option2"></a>
+##### headers\.all\.response\[\]\.remove: object (Option 2)
 
 Remove headers matched by the specification.
 
@@ -1413,86 +1531,21 @@ Remove headers matched by the specification.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**exclude**](#option2removeexclude)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>||
+|[**exclude**](#headersallresponseremoveexclude-option2)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>||
 |**matching**||Match headers by regex pattern(s) (OR).<br/>||
 |**named**||Match headers by exact name (OR).<br/>||
 
-<a name="option2removeexclude"></a>
-### Option 2: remove\.exclude\[\]: array,null
+   
+<a name="headersallresponseremoveexclude-option2"></a>
+###### headers\.all\.response\[\]\.remove\.exclude\[\]: array,null (Option 2)
 
 Exclude headers matching these regexes, applied after `matching`.
 
 
 **Items**
 
-**Item Type:** `string`  
-<a name="option3insert"></a>
-## Option 3: insert: object
-
-Insert a header with a static value.
-
-### Examples
-```yaml
-- insert:
-    name: x-env
-    value: prod
-```
-
-```yaml
-- insert:
-    name: set-cookie
-    value: "a=1; Path=/"
-# If another Set-Cookie exists, this creates another header line (never joined)
-```
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**algorithm**||How to merge values across multiple subgraph responses.<br/>Default: `Last` (overwrite).<br/>|no|
-|**name**|`string`|Header name to insert or overwrite (case-insensitive).<br/>|yes|
-
-   
-**Option 1 (optional):** 
-Static value provided in the config.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**value**|`string`||yes|
-
-
-   
-**Option 2 (optional):** 
-A dynamic value computed by a VRL expression.
-
-This allows you to generate header values based on the incoming request,
-subgraph name, and (for response rules) subgraph response headers.
-The expression has access to a context object with `.request`, `.subgraph`,
-and `.response.headers` fields.
-
-For more information on the available functions and syntax, see the
-[VRL documentation](https://vrl.dev/).
-
-### Example
-```yaml
-# Insert a header with a value derived from another header.
-- insert:
-    name: x-auth-scheme
-    expression: 'split(.request.headers.authorization, " ")[0] ?? "none"'
-```
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**expression**|`string`||yes|
-
-
+**Item Type:** `string`   
+   
 <a name="headerssubgraphs"></a>
 ### headers\.subgraphs: object,null
 
@@ -1509,6 +1562,7 @@ override the result of global rules for that subgraph.
 |----|----|-----------|--------|
 |[**Additional Properties**](#headerssubgraphsadditionalproperties)|`object`|Rules for a single scope (global or per-subgraph).<br/>||
 
+   
 <a name="headerssubgraphsadditionalproperties"></a>
 #### headers\.subgraphs\.additionalProperties: object
 
@@ -1525,6 +1579,7 @@ and **response** (to clients). Within each list, rules are applied in order.
 |[**request**](#headerssubgraphsadditionalpropertiesrequest)|`array`|Rules that shape the **request** sent from the router to subgraphs.<br/>||
 |[**response**](#headerssubgraphsadditionalpropertiesresponse)|`array`|Rules that shape the **response** sent from the router back to the client.<br/>||
 
+   
 <a name="headerssubgraphsadditionalpropertiesrequest"></a>
 ##### headers\.subgraphs\.additionalProperties\.request\[\]: array,null
 
@@ -1536,7 +1591,7 @@ Rules that shape the **request** sent from the router to subgraphs.
 
 Request-header rules (applied before sending to a subgraph).
 
-   
+   
 **Option 1 (alternative):** 
 Forward headers from the client request into the subgraph request.
 
@@ -1551,9 +1606,9 @@ to refine the final output.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**propagate**](#option1propagate)|`object`|Propagate headers from the client request to subgraph requests.<br/>|yes|
+|[**propagate**](#headerssubgraphsadditionalpropertiesrequestpropagate-option1)|`object`|Propagate headers from the client request to subgraph requests.<br/>|yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -1562,7 +1617,7 @@ propagate: {}
 ```
 
 
-   
+   
 **Option 2 (alternative):** 
 Remove headers before sending the request to a subgraph.
 
@@ -1574,9 +1629,9 @@ Useful to drop sensitive or irrelevant headers, or to undo a previous
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**remove**](#option2remove)|`object`|Remove headers matched by the specification.<br/>|yes|
+|[**remove**](#headerssubgraphsadditionalpropertiesrequestremove-option2)|`object`|Remove headers matched by the specification.<br/>|yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -1585,7 +1640,7 @@ remove: {}
 ```
 
 
-   
+   
 **Option 3 (alternative):** 
 Add or overwrite a header with a static value.
 
@@ -1598,9 +1653,9 @@ Add or overwrite a header with a static value.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**insert**](#option3insert)|`object`|Insert a header with a static value.<br/>|yes|
+|[**insert**](#headerssubgraphsadditionalpropertiesrequestinsert-option3)|`object`|Insert a header with a static value.<br/>|yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -1609,8 +1664,76 @@ insert: {}
 ```
 
 
-<a name="option1propagate"></a>
-## Option 1: propagate: object
+   
+<a name="headerssubgraphsadditionalpropertiesrequestinsert-option3"></a>
+###### headers\.subgraphs\.additionalProperties\.request\[\]\.insert: object (Option 3)
+
+Insert a header with a static value.
+
+### Examples
+```yaml
+- insert:
+    name: x-env
+    value: prod
+```
+
+```yaml
+- insert:
+    name: set-cookie
+    value: "a=1; Path=/"
+# If another Set-Cookie exists, this creates another header line (never joined)
+```
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**name**|`string`|Header name to insert or overwrite (case-insensitive).<br/>|yes|
+
+   
+**Option 1 (optional):** 
+Static value provided in the config.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**value**|`string`||yes|
+
+
+   
+**Option 2 (optional):** 
+A dynamic value computed by a VRL expression.
+
+This allows you to generate header values based on the incoming request,
+subgraph name, and (for response rules) subgraph response headers.
+The expression has access to a context object with `.request`, `.subgraph`,
+and `.response.headers` fields.
+
+For more information on the available functions and syntax, see the
+[VRL documentation](https://vrl.dev/).
+
+### Example
+```yaml
+# Insert a header with a value derived from another header.
+- insert:
+    name: x-auth-scheme
+    expression: 'split(.request.headers.authorization, " ")[0] ?? "none"'
+```
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**expression**|`string`||yes|
+
+
+   
+<a name="headerssubgraphsadditionalpropertiesrequestpropagate-option1"></a>
+###### headers\.subgraphs\.additionalProperties\.request\[\]\.propagate: object (Option 1)
 
 Propagate headers from the client request to subgraph requests.
 
@@ -1643,22 +1766,24 @@ propagate:
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**default**|`string`, `null`|If the header is missing, set a default value.<br/>Applied only when **none** of the matched headers exist.<br/>||
-|[**exclude**](#option1propagateexclude)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>||
+|[**exclude**](#headerssubgraphsadditionalpropertiesrequestpropagateexclude-option1)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>||
 |**matching**||Match headers by regex pattern(s) (OR).<br/>||
 |**named**||Match headers by exact name (OR).<br/>||
 |**rename**|`string`, `null`|Optionally rename the header when forwarding.<br/>||
 
-<a name="option1propagateexclude"></a>
-### Option 1: propagate\.exclude\[\]: array,null
+   
+<a name="headerssubgraphsadditionalpropertiesrequestpropagateexclude-option1"></a>
+####### headers\.subgraphs\.additionalProperties\.request\[\]\.propagate\.exclude\[\]: array,null (Option 1)
 
 Exclude headers matching these regexes, applied after `matching`.
 
 
 **Items**
 
-**Item Type:** `string`  
-<a name="option2remove"></a>
-## Option 2: remove: object
+**Item Type:** `string`   
+   
+<a name="headerssubgraphsadditionalpropertiesrequestremove-option2"></a>
+###### headers\.subgraphs\.additionalProperties\.request\[\]\.remove: object (Option 2)
 
 Remove headers matched by the specification.
 
@@ -1667,21 +1792,105 @@ Remove headers matched by the specification.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**exclude**](#option2removeexclude)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>||
+|[**exclude**](#headerssubgraphsadditionalpropertiesrequestremoveexclude-option2)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>||
 |**matching**||Match headers by regex pattern(s) (OR).<br/>||
 |**named**||Match headers by exact name (OR).<br/>||
 
-<a name="option2removeexclude"></a>
-### Option 2: remove\.exclude\[\]: array,null
+   
+<a name="headerssubgraphsadditionalpropertiesrequestremoveexclude-option2"></a>
+####### headers\.subgraphs\.additionalProperties\.request\[\]\.remove\.exclude\[\]: array,null (Option 2)
 
 Exclude headers matching these regexes, applied after `matching`.
 
 
 **Items**
 
-**Item Type:** `string`  
-<a name="option3insert"></a>
-## Option 3: insert: object
+**Item Type:** `string`   
+   
+<a name="headerssubgraphsadditionalpropertiesresponse"></a>
+##### headers\.subgraphs\.additionalProperties\.response\[\]: array,null
+
+Rules that shape the **response** sent from the router back to the client.
+
+
+**Items**
+
+
+Response-header rules (applied before sending back to the client).
+
+   
+**Option 1 (alternative):** 
+Forward headers from subgraph responses into the final client response.
+
+- If multiple subgraphs provide the same header, `algorithm` controls
+  how values are merged.
+- If **no** subgraph provides a matching header, `default` is used (when provided).
+- If `rename` is set, the header is returned under the new name.
+
+**Never-join headers** (e.g. `set-cookie`) are never comma-joined:
+multiple values are returned as separate header fields regardless of `algorithm`.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**propagate**](#headerssubgraphsadditionalpropertiesresponsepropagate-option1)|`object`|Propagate headers from subgraph responses to the final client response.<br/>|yes|
+
+**Additional Properties:** not allowed   
+**Example**
+
+```yaml
+propagate: {}
+
+```
+
+
+   
+**Option 2 (alternative):** 
+Remove headers before sending the response to the client.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**remove**](#headerssubgraphsadditionalpropertiesresponseremove-option2)|`object`|Remove headers matched by the specification.<br/>|yes|
+
+**Additional Properties:** not allowed   
+**Example**
+
+```yaml
+remove: {}
+
+```
+
+
+   
+**Option 3 (alternative):** 
+Add or overwrite a header in the response to the client.
+
+For never-join headers, appends another occurrence (multiple lines).
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**insert**](#headerssubgraphsadditionalpropertiesresponseinsert-option3)|`object`|Insert a header with a static value.<br/>|yes|
+
+**Additional Properties:** not allowed   
+**Example**
+
+```yaml
+insert: {}
+
+```
+
+
+   
+<a name="headerssubgraphsadditionalpropertiesresponseinsert-option3"></a>
+###### headers\.subgraphs\.additionalProperties\.response\[\]\.insert: object (Option 3)
 
 Insert a header with a static value.
 
@@ -1704,9 +1913,10 @@ Insert a header with a static value.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|**algorithm**||How to merge values across multiple subgraph responses.<br/>Default: `Last` (overwrite).<br/>|no|
 |**name**|`string`|Header name to insert or overwrite (case-insensitive).<br/>|yes|
 
-   
+   
 **Option 1 (optional):** 
 Static value provided in the config.
 
@@ -1718,7 +1928,7 @@ Static value provided in the config.
 |**value**|`string`||yes|
 
 
-   
+   
 **Option 2 (optional):** 
 A dynamic value computed by a VRL expression.
 
@@ -1746,89 +1956,9 @@ For more information on the available functions and syntax, see the
 |**expression**|`string`||yes|
 
 
-<a name="headerssubgraphsadditionalpropertiesresponse"></a>
-##### headers\.subgraphs\.additionalProperties\.response\[\]: array,null
-
-Rules that shape the **response** sent from the router back to the client.
-
-
-**Items**
-
-
-Response-header rules (applied before sending back to the client).
-
-   
-**Option 1 (alternative):** 
-Forward headers from subgraph responses into the final client response.
-
-- If multiple subgraphs provide the same header, `algorithm` controls
-  how values are merged.
-- If **no** subgraph provides a matching header, `default` is used (when provided).
-- If `rename` is set, the header is returned under the new name.
-
-**Never-join headers** (e.g. `set-cookie`) are never comma-joined:
-multiple values are returned as separate header fields regardless of `algorithm`.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**propagate**](#option1propagate)|`object`|Propagate headers from subgraph responses to the final client response.<br/>|yes|
-
-**Additional Properties:** not allowed  
-**Example**
-
-```yaml
-propagate: {}
-
-```
-
-
-   
-**Option 2 (alternative):** 
-Remove headers before sending the response to the client.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**remove**](#option2remove)|`object`|Remove headers matched by the specification.<br/>|yes|
-
-**Additional Properties:** not allowed  
-**Example**
-
-```yaml
-remove: {}
-
-```
-
-
-   
-**Option 3 (alternative):** 
-Add or overwrite a header in the response to the client.
-
-For never-join headers, appends another occurrence (multiple lines).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**insert**](#option3insert)|`object`|Insert a header with a static value.<br/>|yes|
-
-**Additional Properties:** not allowed  
-**Example**
-
-```yaml
-insert: {}
-
-```
-
-
-<a name="option1propagate"></a>
-## Option 1: propagate: object
+   
+<a name="headerssubgraphsadditionalpropertiesresponsepropagate-option1"></a>
+###### headers\.subgraphs\.additionalProperties\.response\[\]\.propagate: object (Option 1)
 
 Propagate headers from subgraph responses to the final client response.
 
@@ -1871,22 +2001,24 @@ propagate:
 |----|----|-----------|--------|
 |**algorithm**||How to merge values across multiple subgraph responses.<br/>|yes|
 |**default**|`string`, `null`|If no subgraph returns the header, set this default value.<br/>|no|
-|[**exclude**](#option1propagateexclude)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>|no|
+|[**exclude**](#headerssubgraphsadditionalpropertiesresponsepropagateexclude-option1)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>|no|
 |**matching**||Match headers by regex pattern(s) (OR).<br/>|no|
 |**named**||Match headers by exact name (OR).<br/>|no|
 |**rename**|`string`, `null`|Optionally rename the header when returning it to the client.<br/>|no|
 
-<a name="option1propagateexclude"></a>
-### Option 1: propagate\.exclude\[\]: array,null
+   
+<a name="headerssubgraphsadditionalpropertiesresponsepropagateexclude-option1"></a>
+####### headers\.subgraphs\.additionalProperties\.response\[\]\.propagate\.exclude\[\]: array,null (Option 1)
 
 Exclude headers matching these regexes, applied after `matching`.
 
 
 **Items**
 
-**Item Type:** `string`  
-<a name="option2remove"></a>
-## Option 2: remove: object
+**Item Type:** `string`   
+   
+<a name="headerssubgraphsadditionalpropertiesresponseremove-option2"></a>
+###### headers\.subgraphs\.additionalProperties\.response\[\]\.remove: object (Option 2)
 
 Remove headers matched by the specification.
 
@@ -1895,86 +2027,21 @@ Remove headers matched by the specification.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**exclude**](#option2removeexclude)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>||
+|[**exclude**](#headerssubgraphsadditionalpropertiesresponseremoveexclude-option2)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>||
 |**matching**||Match headers by regex pattern(s) (OR).<br/>||
 |**named**||Match headers by exact name (OR).<br/>||
 
-<a name="option2removeexclude"></a>
-### Option 2: remove\.exclude\[\]: array,null
+   
+<a name="headerssubgraphsadditionalpropertiesresponseremoveexclude-option2"></a>
+####### headers\.subgraphs\.additionalProperties\.response\[\]\.remove\.exclude\[\]: array,null (Option 2)
 
 Exclude headers matching these regexes, applied after `matching`.
 
 
 **Items**
 
-**Item Type:** `string`  
-<a name="option3insert"></a>
-## Option 3: insert: object
-
-Insert a header with a static value.
-
-### Examples
-```yaml
-- insert:
-    name: x-env
-    value: prod
-```
-
-```yaml
-- insert:
-    name: set-cookie
-    value: "a=1; Path=/"
-# If another Set-Cookie exists, this creates another header line (never joined)
-```
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**algorithm**||How to merge values across multiple subgraph responses.<br/>Default: `Last` (overwrite).<br/>|no|
-|**name**|`string`|Header name to insert or overwrite (case-insensitive).<br/>|yes|
-
-   
-**Option 1 (optional):** 
-Static value provided in the config.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**value**|`string`||yes|
-
-
-   
-**Option 2 (optional):** 
-A dynamic value computed by a VRL expression.
-
-This allows you to generate header values based on the incoming request,
-subgraph name, and (for response rules) subgraph response headers.
-The expression has access to a context object with `.request`, `.subgraph`,
-and `.response.headers` fields.
-
-For more information on the available functions and syntax, see the
-[VRL documentation](https://vrl.dev/).
-
-### Example
-```yaml
-# Insert a header with a value derived from another header.
-- insert:
-    name: x-auth-scheme
-    expression: 'split(.request.headers.authorization, " ")[0] ?? "none"'
-```
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**expression**|`string`||yes|
-
-
+**Item Type:** `string`   
+   
 <a name="http"></a>
 ## http: object
 
@@ -1990,7 +2057,7 @@ Configuration for the HTTP server/listener.
 |**port**|`integer`|The port to bind the HTTP server to.<br/><br/>Can also be set via the `PORT` environment variable.<br/><br/>If you are running the router inside a Docker container, please ensure that the port is exposed correctly using `-p <host_port>:<container_port>` flag.<br/>Default: `4000`<br/>Format: `"uint16"`<br/>Minimum: `0`<br/>Maximum: `65535`<br/>||
 |**workers**|`integer`, `null`|The number of worker threads to use for the HTTP server. Must be at least `1`.<br/><br/>Defaults to the number of physical CPU cores available to the process.<br/><br/>Useful in containerized environments (e.g., Kubernetes) where the number of<br/>physical cores reported by the OS is higher than the actual CPU limit<br/>assigned to the container. In such cases, you should set this to match the<br/>container's CPU limit to avoid oversubscribing worker threads.<br/><br/>Can also be set via the `ROUTER_HTTP_WORKERS` environment variable.<br/>Format: `"uint"`<br/>Minimum: `1`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -2000,6 +2067,7 @@ port: 4000
 
 ```
 
+   
 <a name="jwt"></a>
 ## jwt: object
 
@@ -2019,7 +2087,7 @@ Configuration for JWT authentication plugin.
 |[**lookup\_locations**](#jwtlookup_locations)|`array`|A list of locations to look up for the JWT token in the incoming HTTP request.<br/>Default: `{"name":"authorization","prefix":"Bearer","source":"header"}`<br/>|no|
 |**require\_authentication**|`boolean`, `null`|If set to `true`, the entire request will be rejected if the JWT token is not present in the request.<br/>|no|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -2047,6 +2115,7 @@ lookup_locations:
 
 ```
 
+   
 <a name="jwtallowed_algorithms"></a>
 ### jwt\.allowed\_algorithms\[\]: array,null
 
@@ -2056,7 +2125,7 @@ If not specified, the default list of all supported algorithms in [`jsonwebtoken
 
 **Items**
 
-**Item Type:** `string`  
+**Item Type:** `string`   
 **Example**
 
 ```yaml
@@ -2075,6 +2144,7 @@ If not specified, the default list of all supported algorithms in [`jsonwebtoken
 
 ```
 
+   
 <a name="jwtaudiences"></a>
 ### jwt\.audiences\[\]: array,null
 
@@ -2084,7 +2154,8 @@ If this field is set, the token's `aud` field must be one of the values in this 
 
 **Items**
 
-**Item Type:** `string`  
+**Item Type:** `string`   
+   
 <a name="jwtforward_claims_to_upstream_extensions"></a>
 ### jwt\.forward\_claims\_to\_upstream\_extensions: object
 
@@ -2106,6 +2177,7 @@ field_name: jwt
 
 ```
 
+   
 <a name="jwtissuers"></a>
 ### jwt\.issuers\[\]: array,null
 
@@ -2115,7 +2187,8 @@ If specified, it has to match the `iss` field in JWT, otherwise the token's `iss
 
 **Items**
 
-**Item Type:** `string`  
+**Item Type:** `string`   
+   
 <a name="jwtjwks_providers"></a>
 ### jwt\.jwks\_providers\[\]: array
 
@@ -2125,7 +2198,7 @@ Can be either a path to a local JSON of the file-system, or a URL to a remote JW
 
 **Items**
 
-   
+   
 **Option 1 (alternative):** 
 A local file on the file-system. This file will be read once on startup and cached.
 
@@ -2138,7 +2211,7 @@ A local file on the file-system. This file will be read once on startup and cach
 |**source**|`string`|Constant Value: `"file"`<br/>|yes|
 
 
-   
+   
 **Option 2 (alternative):** 
 A remote JWKS provider. The JWKS will be fetched via HTTP/HTTPS and cached.
 
@@ -2160,6 +2233,7 @@ polling_interval: 10m
 ```
 
 
+   
 <a name="jwtlookup_locations"></a>
 ### jwt\.lookup\_locations\[\]: array
 
@@ -2169,7 +2243,7 @@ The first one that is found will be used.
 
 **Items**
 
-   
+   
 **Option 1 (alternative):** 
 **Properties**
 
@@ -2180,7 +2254,7 @@ The first one that is found will be used.
 |**source**|`string`|Constant Value: `"header"`<br/>|yes|
 
 
-   
+   
 **Option 2 (alternative):** 
 **Properties**
 
@@ -2199,6 +2273,7 @@ The first one that is found will be used.
 
 ```
 
+   
 <a name="laboratory"></a>
 ## laboratory: object
 
@@ -2211,7 +2286,7 @@ Configuration for the Hive Laboratory interface.
 |----|----|-----------|--------|
 |**enabled**|`boolean`|Enables/disables the Hive Laboratory interface. By default, the Hive Laboratory interface is enabled.<br/><br/>You can override this setting by setting the `LABORATORY_ENABLED` environment variable to `true` or `false`.<br/>Default: `true`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -2219,6 +2294,7 @@ enabled: true
 
 ```
 
+   
 <a name="limits"></a>
 ## limits: object
 
@@ -2242,6 +2318,7 @@ max_request_body_size: 2 MB
 
 ```
 
+   
 <a name="limitsmax_aliases"></a>
 ### limits\.max\_aliases: object,null
 
@@ -2257,6 +2334,7 @@ It is used to prevent too many aliases that could lead to overfetching or DOS at
 |----|----|-----------|--------|
 |**n**|`integer`|Aliases threshold<br/>Format: `"uint"`<br/>Minimum: `0`<br/>|yes|
 
+   
 <a name="limitsmax_depth"></a>
 ### limits\.max\_depth: object,null
 
@@ -2274,6 +2352,7 @@ It is used to prevent too large queries that could lead to overfetching or DOS a
 |**ignore\_introspection**|`boolean`|Ignore the depth of introspection queries.<br/>Default: `true`<br/>|no|
 |**n**|`integer`|Depth threshold<br/>Format: `"uint"`<br/>Minimum: `0`<br/>|yes|
 
+   
 <a name="limitsmax_directives"></a>
 ### limits\.max\_directives: object,null
 
@@ -2289,6 +2368,7 @@ It is used to prevent too many directives that could lead to overfetching or DOS
 |----|----|-----------|--------|
 |**n**|`integer`|Directives threshold<br/>Format: `"uint"`<br/>Minimum: `0`<br/>|yes|
 
+   
 <a name="limitsmax_tokens"></a>
 ### limits\.max\_tokens: object,null
 
@@ -2304,6 +2384,7 @@ It is used to prevent too large queries that could lead to overfetching or DOS a
 |----|----|-----------|--------|
 |**n**|`integer`|Tokens threshold<br/>Format: `"uint"`<br/>Minimum: `0`<br/>|yes|
 
+   
 <a name="log"></a>
 ## log: object
 
@@ -2320,7 +2401,7 @@ The router is configured to be mostly silent (`info`) level, and will print only
 |**format**|`string`|The format of the log messages.<br/><br/>Can also be set via the `LOG_FORMAT` environment variable.<br/>Default: `"json"`<br/>Enum: `"pretty-tree"`, `"pretty-compact"`, `"json"`<br/>||
 |**level**|`string`|The level of logging to use.<br/><br/>Can also be set via the `LOG_LEVEL` environment variable.<br/>Default: `"info"`<br/>Enum: `"trace"`, `"debug"`, `"info"`, `"warn"`, `"error"`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -2330,6 +2411,7 @@ level: info
 
 ```
 
+   
 <a name="override_labels"></a>
 ## override\_labels: object
 
@@ -2342,6 +2424,7 @@ Configuration for overriding labels.
 |----|----|-----------|--------|
 |**Additional Properties**||Defines the value for a label override.<br/><br/>It can be a simple boolean,<br/>or an object containing the expression that evaluates to a boolean.<br/>||
 
+   
 <a name="override_subgraph_urls"></a>
 ## override\_subgraph\_urls: object
 
@@ -2355,7 +2438,7 @@ Configuration for overriding subgraph URLs.
 |[**all**](#override_subgraph_urlsall)|`object`, `null`|Default URL override for all subgraphs.<br/>|yes|
 |[**subgraphs**](#override_subgraph_urlssubgraphs)|`object`|URL overrides for specific subgraphs.<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -2377,6 +2460,7 @@ subgraphs:
 
 ```
 
+   
 <a name="override_subgraph_urlsall"></a>
 ### override\_subgraph\_urls\.all: object,null
 
@@ -2392,7 +2476,8 @@ This override is used when a subgraph does not have its own override in
 |----|----|-----------|--------|
 |[**url**](#override_subgraph_urlsallurl)|`object`||yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="override_subgraph_urlsallurl"></a>
 #### override\_subgraph\_urls\.all\.url: object
 
@@ -2402,7 +2487,8 @@ This override is used when a subgraph does not have its own override in
 |----|----|-----------|--------|
 |**expression**|`string`||yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="override_subgraph_urlssubgraphs"></a>
 ### override\_subgraph\_urls\.subgraphs: object
 
@@ -2421,6 +2507,7 @@ Each subgraph can use:
 |----|----|-----------|--------|
 |[**Additional Properties**](#override_subgraph_urlssubgraphsadditionalproperties)|`object`||yes|
 
+   
 <a name="override_subgraph_urlssubgraphsadditionalproperties"></a>
 #### override\_subgraph\_urls\.subgraphs\.additionalProperties: object
 
@@ -2430,7 +2517,8 @@ Each subgraph can use:
 |----|----|-----------|--------|
 |**url**|||yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="persisted_documents"></a>
 ## persisted\_documents: object
 
@@ -2458,12 +2546,13 @@ storage: null
 
 ```
 
+   
 <a name="persisted_documentsselectors"></a>
 ### persisted\_documents\.selectors\[\]: array,null
 
 **Items**
 
-   
+   
 **Option 1 (alternative):** 
 **Properties**
 
@@ -2473,7 +2562,7 @@ storage: null
 |**type**|`string`|Constant Value: `"json_path"`<br/>|yes|
 
 
-   
+   
 **Option 2 (alternative):** 
 **Properties**
 
@@ -2483,7 +2572,7 @@ storage: null
 |**type**|`string`|Constant Value: `"url_path_param"`<br/>|yes|
 
 
-   
+   
 **Option 3 (alternative):** 
 **Properties**
 
@@ -2500,6 +2589,7 @@ storage: null
 
 ```
 
+   
 <a name="plugins"></a>
 ## plugins: object
 
@@ -2512,6 +2602,7 @@ Configuration for custom plugins
 |----|----|-----------|--------|
 |[**Additional Properties**](#pluginsadditionalproperties)|`object`|||
 
+   
 <a name="pluginsadditionalproperties"></a>
 ### plugins\.additionalProperties: object
 
@@ -2523,7 +2614,7 @@ Configuration for custom plugins
 |**enabled**|`boolean`|Default: `true`<br/>||
 |**warn\_on\_error**|`boolean`|Default: `false`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -2533,6 +2624,7 @@ warn_on_error: false
 
 ```
 
+   
 <a name="query_planner"></a>
 ## query\_planner: object
 
@@ -2547,7 +2639,7 @@ Query planning configuration.
 |**experimental\_abstract\_type\_folding**|`boolean`|Enables an experimental feature that folds matching object-type inline fragments<br/>into an interface fragment, even when that interface is not the field's declared return type.<br/><br/>The fold is only applied when the concrete object branches select the same fields and<br/>exactly match the interface members in the target subgraph.<br/><br/>Can also be set via the `QUERY_PLANNER_EXPERIMENTAL_ABSTRACT_TYPE_FOLDING` environment variable.<br/><br/>Default: false.<br/>Default: `false`<br/>||
 |**timeout**|`string`|The maximum time for the query planner to create an execution plan.<br/>This acts as a safeguard against overly complex or malicious queries that could degrade server performance.<br/>When the timeout is reached, the planning process is cancelled.<br/><br/>Default: 10s.<br/>Default: `"10s"`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -2557,6 +2649,7 @@ timeout: 10s
 
 ```
 
+   
 <a name="response_extensions"></a>
 ## response\_extensions: object
 
@@ -2569,6 +2662,7 @@ Configuration for propagating subgraph response's `extensions` to the client.
 |----|----|-----------|--------|
 |[**propagate**](#response_extensionspropagate)|`object`, `null`|Rules for propagating subgraph response `extensions` to the client.<br/>||
 
+   
 <a name="response_extensionspropagate"></a>
 ### response\_extensions\.propagate: object,null
 
@@ -2582,6 +2676,7 @@ Rules for propagating subgraph response `extensions` to the client.
 |**algorithm**||How to merge an extension key seen across multiple subgraph responses.<br/>Default: `last`.<br/>Default: `"last"`<br/>||
 |[**allow**](#response_extensionspropagateallow)|`string[]`|Top-level extension keys allowed to propagate. When omitted, all keys<br/>||
 
+   
 <a name="response_extensionspropagateallow"></a>
 #### response\_extensions\.propagate\.allow\[\]: array,null
 
@@ -2594,7 +2689,8 @@ never be propagated from subgraphs regardless of this list.
 
 **Items**
 
-**Item Type:** `string`  
+**Item Type:** `string`   
+   
 <a name="storages"></a>
 ## storages: object
 
@@ -2618,6 +2714,7 @@ storages:
 |----|----|-----------|--------|
 |**Additional Properties**||||
 
+   
 <a name="subscriptions"></a>
 ## subscriptions: object
 
@@ -2634,7 +2731,7 @@ Configuration for subscriptions.
 |**subgraph\_buffer\_capacity**|`integer`|The capacity of the per-subscription buffer between a subgraph and the router's<br/>processing pipeline.<br/><br/>When a subscription is established, the router reads events from the subgraph (over<br/>HTTP streaming or WebSocket) and runs each one through entity resolution before fanning<br/>it out to listeners. If that processing is slower than the rate at which the subgraph<br/>emits events, this buffer absorbs the difference so the subgraph is never throttled by<br/>the router's processing speed.<br/><br/>When the buffer is full, the newest event is dropped (and logged) instead of slowing<br/>down or tearing down the connection to the subgraph. The subscription stays alive and<br/>the subgraph keeps emitting unaffected.<br/><br/>A larger capacity gives the router more headroom to catch up during bursts at the cost<br/>of memory and potentially staler events under sustained backpressure. A smaller capacity<br/>keeps memory minimal and drops eagerly, which is appropriate when only the latest events<br/>matter.<br/><br/>Defaults to 1024.<br/>Default: `1024`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 |[**websocket**](#subscriptionswebsocket)|`object`, `null`|Configuration for subgraphs using WebSocket protocol.<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -2644,6 +2741,7 @@ subgraph_buffer_capacity: 0
 
 ```
 
+   
 <a name="subscriptionscallback"></a>
 ### subscriptions\.callback: object,null
 
@@ -2660,7 +2758,8 @@ Configuration for subgraphs using the HTTP Callback protocol.
 |**public\_url**||The public URL that subgraphs will use to send callback messages to this router.<br/><br/>Your public_url must match the server address combined with the router's path.<br/>Meaning, if your server is `http://localhost:4000` and the path is `/callback`,<br/>your `public_url` should be `http://localhost:4000/callback`.<br/><br/>Can be a static URL string or a VRL expression. Expressions are useful for<br/>service discovery in horizontally scaled deployments where the URL can be<br/>read from an environment variable:<br/><br/>```yaml<br/>public_url:<br/>  expression: 'env("ROUTER_PUBLIC_URL")'<br/>```<br/>|yes|
 |[**subgraphs**](#subscriptionscallbacksubgraphs)|`string[]`|The list of subgraph names that use the HTTP callback protocol.<br/>Default: <br/>|no|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="subscriptionscallbacksubgraphs"></a>
 #### subscriptions\.callback\.subgraphs\[\]: array
 
@@ -2669,8 +2768,9 @@ The list of subgraph names that use the HTTP callback protocol.
 
 **Items**
 
-**Item Type:** `string`  
-**Unique Items:** yes  
+**Item Type:** `string`   
+**Unique Items:** yes   
+   
 <a name="subscriptionswebsocket"></a>
 ### subscriptions\.websocket: object,null
 
@@ -2684,7 +2784,8 @@ Configuration for subgraphs using WebSocket protocol.
 |[**all**](#subscriptionswebsocketall)|`object`, `null`|The default configuration that will be applied to all subgraphs using<br/>||
 |[**subgraphs**](#subscriptionswebsocketsubgraphs)|`object`|Optional per-subgraph configurations that will override the default configuration for specific subgraphs.<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="subscriptionswebsocketall"></a>
 #### subscriptions\.websocket\.all: object,null
 
@@ -2700,7 +2801,8 @@ When specified, all subgraphs (not claimed by `callback`) will use the WebSocket
 |----|----|-----------|--------|
 |**path**|`string`, `null`|Determines the URL path to use for the subscription endpoint:<br/><br/>- For WebSocket connections, the URL will be `ws://<subgraph-url><path>`.<br/>- If `path` is not set, the default subgraph URL is used, with the scheme adjusted to `ws`<br/>  for WebSocket connections where applicable.<br/><br/>Note to always provide the absolute path starting with a `/`, e.g., `/ws`.<br/><br/>For example, if the subgraph URL is `http://example.com/graphql` and the path is set to `/ws`,<br/>the resulting WebSocket URL will be `ws://example.com/ws`.<br/>Pattern: `^/`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="subscriptionswebsocketsubgraphs"></a>
 #### subscriptions\.websocket\.subgraphs: object
 
@@ -2713,6 +2815,7 @@ Optional per-subgraph configurations that will override the default configuratio
 |----|----|-----------|--------|
 |[**Additional Properties**](#subscriptionswebsocketsubgraphsadditionalproperties)|`object`|WebSocket configuration for a specific subgraph or the default for all subgraphs.<br/>||
 
+   
 <a name="subscriptionswebsocketsubgraphsadditionalproperties"></a>
 ##### subscriptions\.websocket\.subgraphs\.additionalProperties: object
 
@@ -2725,7 +2828,7 @@ WebSocket configuration for a specific subgraph or the default for all subgraphs
 |----|----|-----------|--------|
 |**path**|`string`, `null`|Determines the URL path to use for the subscription endpoint:<br/><br/>- For WebSocket connections, the URL will be `ws://<subgraph-url><path>`.<br/>- If `path` is not set, the default subgraph URL is used, with the scheme adjusted to `ws`<br/>  for WebSocket connections where applicable.<br/><br/>Note to always provide the absolute path starting with a `/`, e.g., `/ws`.<br/><br/>For example, if the subgraph URL is `http://example.com/graphql` and the path is set to `/ws`,<br/>the resulting WebSocket URL will be `ws://example.com/ws`.<br/>Pattern: `^/`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -2733,6 +2836,7 @@ path: null
 
 ```
 
+   
 <a name="supergraph"></a>
 ## supergraph: object
 
@@ -2740,7 +2844,7 @@ Configuration for the Federation supergraph source. By default, the router will 
 Each source has a different set of configuration, depending on the source type.
 
 
-   
+   
 **Option 1 (alternative):** 
 Loads a supergraph from the filesystem.
 The path can be either absolute or relative to the router's working directory.
@@ -2754,7 +2858,7 @@ The path can be either absolute or relative to the router's working directory.
 |**poll\_interval**|`string`|Optional interval at which the file should be polled for changes.<br/>If not provided, the file will only be loaded once when the router starts.<br/>|no|
 |**source**|`string`|Constant Value: `"file"`<br/>|yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -2763,7 +2867,7 @@ poll_interval: null
 ```
 
 
-   
+   
 **Option 2 (alternative):** 
 Loads a supergraph from Hive Console CDN.
 
@@ -2778,10 +2882,10 @@ Loads a supergraph from Hive Console CDN.
 |**key**|`string`, `null`|The CDN Access Token with from the Hive Console target.<br/><br/>Can also be set using the `HIVE_CDN_KEY` environment variable.<br/>|no|
 |**poll\_interval**|`string`|Interval at which the Hive Console should be polled for changes.<br/><br/>Can also be set using the `HIVE_CDN_POLL_INTERVAL` environment variable.<br/>Default: `"10s"`<br/>|no|
 |**request\_timeout**|`string`|Request timeout for the Hive Console CDN requests.<br/>Default: `"1m"`<br/>|no|
-|[**retry\_policy**](#option2retry_policy)|`object`|Interval at which the Hive Console should be polled for changes.<br/>Default: `{"max_retries":10}`<br/>|yes|
+|[**retry\_policy**](#supergraphretry_policy-option2)|`object`|Interval at which the Hive Console should be polled for changes.<br/>Default: `{"max_retries":10}`<br/>|yes|
 |**source**|`string`|Constant Value: `"hive"`<br/>|yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -2795,7 +2899,7 @@ retry_policy:
 ```
 
 
-   
+   
 **Option 3 (alternative):** 
 **Properties**
 
@@ -2806,7 +2910,7 @@ retry_policy:
 |**source**|`string`|Constant Value: `"storage"`<br/>|yes|
 |**storage\_id**|`string`|The storage id as it was defined in the config file, under `storages:` field.<br/>|yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -2815,7 +2919,7 @@ poll_interval: null
 ```
 
 
-   
+   
 **Option 4 (alternative):** 
 No configured supergraph source. A plugin must select a supergraph for every GraphQL
 request and WebSocket upgrade that needs one, via `set_supergraph` in
@@ -2832,10 +2936,11 @@ hasn't loaded yet.
 |----|----|-----------|--------|
 |**source**|`string`|Constant Value: `"plugin"`<br/>|yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 
-<a name="option2retry_policy"></a>
-## Option 2: retry\_policy: object
+   
+<a name="supergraphretry_policy-option2"></a>
+### supergraph\.retry\_policy: object (Option 2)
 
 Interval at which the Hive Console should be polled for changes.
 
@@ -2855,6 +2960,7 @@ max_retries: 10
 
 ```
 
+   
 <a name="telemetry"></a>
 ## telemetry: object
 
@@ -2868,7 +2974,7 @@ max_retries: 10
 |[**resource**](#telemetryresource)|`object`|Default: `{"attributes":{}}`<br/>||
 |[**tracing**](#telemetrytracing)|`object`|Default: `{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -2943,6 +3049,7 @@ tracing:
 
 ```
 
+   
 <a name="telemetryclient_identification"></a>
 ### telemetry\.client\_identification: object
 
@@ -2954,7 +3061,7 @@ tracing:
 |**name\_header**|`string`|A valid HTTP header name, according to RFC 7230.<br/>Default: `"graphql-client-name"`<br/>Pattern: `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`<br/>||
 |**version\_header**|`string`|A valid HTTP header name, according to RFC 7230.<br/>Default: `"graphql-client-version"`<br/>Pattern: `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -2964,6 +3071,7 @@ version_header: graphql-client-version
 
 ```
 
+   
 <a name="telemetryhive"></a>
 ### telemetry\.hive: object,null
 
@@ -2976,7 +3084,7 @@ version_header: graphql-client-version
 |[**tracing**](#telemetryhivetracing)|`object`|Default: `{"batch_processor":{"max_concurrent_exports":1,"max_export_batch_size":500,"max_export_timeout":"5s","max_queue_size":20000,"max_spans_per_trace":1000,"max_traces_in_memory":30000,"scheduled_delay":"5s"},"enabled":false,"endpoint":"https://api.graphql-hive.com/otel/v1/traces"}`<br/>||
 |[**usage\_reporting**](#telemetryhiveusage_reporting)|`object`|Default: `{"accept_invalid_certs":false,"buffer_size":1000,"connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":null,"flush_interval":"5s","request_timeout":"15s","sampling":{"at_least_once":null,"rate":"100%"}}`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -2984,6 +3092,7 @@ version_header: graphql-client-version
 
 ```
 
+   
 <a name="telemetryhivetracing"></a>
 #### telemetry\.hive\.tracing: object
 
@@ -2995,7 +3104,7 @@ version_header: graphql-client-version
 |**enabled**|`boolean`|Default: `false`<br/>||
 |**endpoint**||Default: `"https://api.graphql-hive.com/otel/v1/traces"`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3012,6 +3121,7 @@ endpoint: https://api.graphql-hive.com/otel/v1/traces
 
 ```
 
+   
 <a name="telemetryhivetracingbatch_processor"></a>
 ##### telemetry\.hive\.tracing\.batch\_processor: object
 
@@ -3027,7 +3137,7 @@ endpoint: https://api.graphql-hive.com/otel/v1/traces
 |**max\_traces\_in\_memory**|`integer`|Maximum number of unique traces to keep in memory simultaneously.<br/><br/>If this limit is reached, the processor will attempt to flush ready traces.<br/>If no traces are ready, new spans for new traces will be dropped to preserve memory.<br/>Spans for existing traces will still be accepted.<br/>Default: `30000`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
 |**scheduled\_delay**|`string`|Maximum time to wait before exporting ready traces if the batch size<br/>hasn't been reached.<br/>Default: `"5s"`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3041,6 +3151,7 @@ scheduled_delay: 5s
 
 ```
 
+   
 <a name="telemetryhiveusage_reporting"></a>
 #### telemetry\.hive\.usage\_reporting: object
 
@@ -3058,7 +3169,7 @@ scheduled_delay: 5s
 |**request\_timeout**|`string`|A timeout for the entire request to Hive Console<br/>Default: 15 seconds<br/>Default: `"15s"`<br/>||
 |[**sampling**](#telemetryhiveusage_reportingsampling)|`object`|Sample rate to determine sampling.<br/>Default: `{"at_least_once":null,"rate":"100%"}`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3076,6 +3187,7 @@ sampling:
 
 ```
 
+   
 <a name="telemetryhiveusage_reportingsampling"></a>
 ##### telemetry\.hive\.usage\_reporting\.sampling: object
 
@@ -3093,7 +3205,7 @@ Default: 100%
 |[**at\_least\_once**](#telemetryhiveusage_reportingsamplingat_least_once)|`object`, `null`|At-least-once sampling configuration.<br/>|yes|
 |**rate**|`string`|Default: `"100%"`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3102,6 +3214,7 @@ rate: 100%
 
 ```
 
+   
 <a name="telemetryhiveusage_reportingsamplingat_least_once"></a>
 ###### telemetry\.hive\.usage\_reporting\.sampling\.at\_least\_once: object,null
 
@@ -3123,7 +3236,7 @@ Disabled by default.
 |**key**||The key used for at-least-once sampling, to determine unique operations.<br/><br/>Possible values:<br/> - `operation_name`: the name of the GraphQL operation<br/> - `operation_type`: the type<br/> - `operation_body`: the body<br/><br/><br/>You can also provide multiple values. In that case, the router combines them<br/>into one key.<br/><br/>No default value.<br/>|yes|
 |**max\_distinct\_keys**|`integer`|Maximum number of unique keys kept in memory for at-least-once sampling.<br/>When the limit is reached, older keys may be removed.<br/><br/>Every key consumes 16 bytes of memory.<br/><br/>Defaults to 100k.<br/>Default: `100000`<br/>Format: `"uint64"`<br/>Minimum: `0`<br/>|no|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3131,6 +3244,7 @@ Disabled by default.
 
 ```
 
+   
 <a name="telemetrymetrics"></a>
 ### telemetry\.metrics: object
 
@@ -3144,7 +3258,7 @@ Configures metrics collection, processing, and export.
 |[**exporters**](#telemetrymetricsexporters)|`array`|List of metrics exporters.<br/>Default: <br/>||
 |[**instrumentation**](#telemetrymetricsinstrumentation)|`object`|Controls metrics instrumentation behavior, such as histogram aggregation.<br/>Default: `{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3194,6 +3308,7 @@ instrumentation:
 
 ```
 
+   
 <a name="telemetrymetricsexporters"></a>
 #### telemetry\.metrics\.exporters\[\]: array
 
@@ -3204,7 +3319,7 @@ Metrics are enabled when at least one exporter is configured and enabled.
 
 **Items**
 
-   
+   
 **Option 1 (alternative):** 
 **Properties**
 
@@ -3212,15 +3327,15 @@ Metrics are enabled when at least one exporter is configured and enabled.
 |----|----|-----------|--------|
 |**enabled**|`boolean`|Enables or disables this OTLP metrics exporter.<br/><br/>Default: `true`.<br/>Default: `true`<br/>|no|
 |**endpoint**||OTLP endpoint URL.<br/><br/>Can be a static value or an expression.<br/>Default: `""`<br/>|no|
-|[**grpc**](#option1grpc)|`object`, `null`|gRPC-specific OTLP settings.<br/>|no|
-|[**http**](#option1http)|`object`, `null`|HTTP-specific OTLP settings.<br/>|no|
+|[**grpc**](#telemetrymetricsexportersgrpc-option1)|`object`, `null`|gRPC-specific OTLP settings.<br/>|no|
+|[**http**](#telemetrymetricsexportershttp-option1)|`object`, `null`|HTTP-specific OTLP settings.<br/>|no|
 |**interval**|`string`|Interval between periodic metric export attempts.<br/><br/>Default: `60s`.<br/>Default: `"1m"`<br/>|no|
 |**kind**|`string`|Constant Value: `"otlp"`<br/>|yes|
 |**max\_export\_timeout**|`string`|Maximum time allowed for a single metrics export attempt.<br/><br/>Default: `5s`.<br/>Default: `"5s"`<br/>|no|
 |**protocol**|`string`|Transport protocol used for OTLP metrics export.<br/>Enum: `"grpc"`, `"http"`<br/>|yes|
 |**temporality**||Aggregation temporality used for this OTLP exporter.<br/><br/>Default: `cumulative`.<br/>Default: `"cumulative"`<br/>|no|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3235,7 +3350,7 @@ temporality: cumulative
 ```
 
 
-   
+   
 **Option 2 (alternative):** 
 **Properties**
 
@@ -3246,7 +3361,7 @@ temporality: cumulative
 |**path**|`string`|Default: `"/metrics"`<br/>|no|
 |**port**|`integer`, `null`|Format: `"uint16"`<br/>Minimum: `0`<br/>Maximum: `65535`<br/>|no|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3257,8 +3372,9 @@ port: null
 ```
 
 
-<a name="option1grpc"></a>
-## Option 1: grpc: object,null
+   
+<a name="telemetrymetricsexportersgrpc-option1"></a>
+##### telemetry\.metrics\.exporters\[\]\.grpc: object,null (Option 1)
 
 gRPC-specific OTLP settings.
 
@@ -3267,10 +3383,10 @@ gRPC-specific OTLP settings.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**metadata**](#option1grpcmetadata)|`object`|Default: `{}`<br/>||
-|[**tls**](#option1grpctls)|`object`|Default: `{"ca":null,"cert":null,"domain_name":null,"key":null}`<br/>||
+|[**metadata**](#telemetrymetricsexportersgrpcmetadata-option1)|`object`|Default: `{}`<br/>||
+|[**tls**](#telemetrymetricsexportersgrpctls-option1)|`object`|Default: `{"ca":null,"cert":null,"domain_name":null,"key":null}`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3278,8 +3394,9 @@ gRPC-specific OTLP settings.
 
 ```
 
-<a name="option1grpcmetadata"></a>
-### Option 1: grpc\.metadata: object
+   
+<a name="telemetrymetricsexportersgrpcmetadata-option1"></a>
+###### telemetry\.metrics\.exporters\[\]\.grpc\.metadata: object (Option 1)
 
 **Additional Properties**
 
@@ -3287,8 +3404,9 @@ gRPC-specific OTLP settings.
 |----|----|-----------|--------|
 |**Additional Properties**||||
 
-<a name="option1grpctls"></a>
-### Option 1: grpc\.tls: object
+   
+<a name="telemetrymetricsexportersgrpctls-option1"></a>
+###### telemetry\.metrics\.exporters\[\]\.grpc\.tls: object (Option 1)
 
 **Properties**
 
@@ -3299,7 +3417,7 @@ gRPC-specific OTLP settings.
 |**domain\_name**|`string`, `null`|The domain name used to verify the server's TLS certificate.<br/>||
 |**key**|`string`, `null`|The path to the client's private key file.<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3310,8 +3428,9 @@ key: null
 
 ```
 
-<a name="option1http"></a>
-## Option 1: http: object,null
+   
+<a name="telemetrymetricsexportershttp-option1"></a>
+##### telemetry\.metrics\.exporters\[\]\.http: object,null (Option 1)
 
 HTTP-specific OTLP settings.
 
@@ -3320,9 +3439,9 @@ HTTP-specific OTLP settings.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**headers**](#option1httpheaders)|`object`|Default: `{}`<br/>||
+|[**headers**](#telemetrymetricsexportershttpheaders-option1)|`object`|Default: `{}`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3330,8 +3449,9 @@ HTTP-specific OTLP settings.
 
 ```
 
-<a name="option1httpheaders"></a>
-### Option 1: http\.headers: object
+   
+<a name="telemetrymetricsexportershttpheaders-option1"></a>
+###### telemetry\.metrics\.exporters\[\]\.http\.headers: object (Option 1)
 
 **Additional Properties**
 
@@ -3339,6 +3459,7 @@ HTTP-specific OTLP settings.
 |----|----|-----------|--------|
 |**Additional Properties**||||
 
+   
 <a name="telemetrymetricsinstrumentation"></a>
 #### telemetry\.metrics\.instrumentation: object
 
@@ -3352,7 +3473,7 @@ Controls metrics instrumentation behavior, such as histogram aggregation.
 |[**common**](#telemetrymetricsinstrumentationcommon)|`object`|Default: `{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}}`<br/>||
 |[**instruments**](#telemetrymetricsinstrumentationinstruments)|`object`|Default: `{}`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3400,6 +3521,7 @@ instruments: {}
 
 ```
 
+   
 <a name="telemetrymetricsinstrumentationcommon"></a>
 ##### telemetry\.metrics\.instrumentation\.common: object
 
@@ -3409,7 +3531,7 @@ instruments: {}
 |----|----|-----------|--------|
 |**histogram**||Default: `{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3455,6 +3577,7 @@ histogram:
 
 ```
 
+   
 <a name="telemetrymetricsinstrumentationinstruments"></a>
 ##### telemetry\.metrics\.instrumentation\.instruments: object
 
@@ -3464,6 +3587,7 @@ histogram:
 |----|----|-----------|--------|
 |**Additional Properties**||||
 
+   
 <a name="telemetryresource"></a>
 ### telemetry\.resource: object
 
@@ -3473,7 +3597,7 @@ histogram:
 |----|----|-----------|--------|
 |[**attributes**](#telemetryresourceattributes)|`object`|Default: `{}`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3481,6 +3605,7 @@ attributes: {}
 
 ```
 
+   
 <a name="telemetryresourceattributes"></a>
 #### telemetry\.resource\.attributes: object
 
@@ -3490,6 +3615,7 @@ attributes: {}
 |----|----|-----------|--------|
 |**Additional Properties**||||
 
+   
 <a name="telemetrytracing"></a>
 ### telemetry\.tracing: object
 
@@ -3502,7 +3628,7 @@ attributes: {}
 |[**instrumentation**](#telemetrytracinginstrumentation)|`object`|Default: `{"spans":{"mode":"spec_compliant"}}`<br/>||
 |[**propagation**](#telemetrytracingpropagation)|`object`|Default: `{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3525,6 +3651,7 @@ propagation:
 
 ```
 
+   
 <a name="telemetrytracingcollect"></a>
 #### telemetry\.tracing\.collect: object
 
@@ -3539,7 +3666,7 @@ propagation:
 |**parent\_based\_sampler**|`boolean`|Default: `false`<br/>||
 |**sampling**|`number`|Can also be set via the `TELEMETRY_TRACING_SAMPLING_RATE` environment variable.<br/>Default: `1`<br/>Format: `"double"`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3552,26 +3679,27 @@ sampling: 1
 
 ```
 
+   
 <a name="telemetrytracingexporters"></a>
 #### telemetry\.tracing\.exporters\[\]: array
 
 **Items**
 
-   
+   
 **Option 1 (alternative):** 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**batch\_processor**](#option1batch_processor)|`object`|Default: `{"max_concurrent_exports":1,"max_export_batch_size":512,"max_export_timeout":"5s","max_queue_size":2048,"scheduled_delay":"5s"}`<br/>|no|
+|[**batch\_processor**](#telemetrytracingexportersbatch_processor-option1)|`object`|Default: `{"max_concurrent_exports":1,"max_export_batch_size":512,"max_export_timeout":"5s","max_queue_size":2048,"scheduled_delay":"5s"}`<br/>|no|
 |**enabled**|`boolean`|Default: `true`<br/>|no|
 |**endpoint**||Default: `""`<br/>|no|
-|[**grpc**](#option1grpc)|`object`, `null`||no|
-|[**http**](#option1http)|`object`, `null`||no|
+|[**grpc**](#telemetrytracingexportersgrpc-option1)|`object`, `null`||no|
+|[**http**](#telemetrytracingexportershttp-option1)|`object`, `null`||no|
 |**kind**|`string`|Constant Value: `"otlp"`<br/>|yes|
 |**protocol**|`string`|Enum: `"grpc"`, `"http"`<br/>|yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3589,17 +3717,17 @@ http: null
 ```
 
 
-   
+   
 **Option 2 (alternative):** 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**batch\_processor**](#option2batch_processor)|`object`|Default: `{"max_concurrent_exports":1,"max_export_batch_size":512,"max_export_timeout":"5s","max_queue_size":2048,"scheduled_delay":"5s"}`<br/>|no|
+|[**batch\_processor**](#telemetrytracingexportersbatch_processor-option2)|`object`|Default: `{"max_concurrent_exports":1,"max_export_batch_size":512,"max_export_timeout":"5s","max_queue_size":2048,"scheduled_delay":"5s"}`<br/>|no|
 |**enabled**|`boolean`|Default: `true`<br/>|no|
 |**kind**|`string`|Constant Value: `"stdout"`<br/>|yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3614,8 +3742,9 @@ enabled: true
 ```
 
 
-<a name="option1batch_processor"></a>
-## Option 1: batch\_processor: object
+   
+<a name="telemetrytracingexportersbatch_processor-option1"></a>
+##### telemetry\.tracing\.exporters\[\]\.batch\_processor: object (Option 1)
 
 **Properties**
 
@@ -3627,7 +3756,7 @@ enabled: true
 |**max\_queue\_size**|`integer`|Default: `2048`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
 |**scheduled\_delay**|`string`|Default: `"5s"`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3639,17 +3768,44 @@ scheduled_delay: 5s
 
 ```
 
-<a name="option1grpc"></a>
-## Option 1: grpc: object,null
+   
+<a name="telemetrytracingexportersbatch_processor-option2"></a>
+##### telemetry\.tracing\.exporters\[\]\.batch\_processor: object (Option 2)
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**metadata**](#option1grpcmetadata)|`object`|Default: `{}`<br/>||
-|[**tls**](#option1grpctls)|`object`|Default: `{"ca":null,"cert":null,"domain_name":null,"key":null}`<br/>||
+|**max\_concurrent\_exports**|`integer`|Default: `1`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_export\_batch\_size**|`integer`|Default: `512`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_export\_timeout**|`string`|Default: `"5s"`<br/>||
+|**max\_queue\_size**|`integer`|Default: `2048`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**scheduled\_delay**|`string`|Default: `"5s"`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+**Example**
+
+```yaml
+max_concurrent_exports: 1
+max_export_batch_size: 512
+max_export_timeout: 5s
+max_queue_size: 2048
+scheduled_delay: 5s
+
+```
+
+   
+<a name="telemetrytracingexportersgrpc-option1"></a>
+##### telemetry\.tracing\.exporters\[\]\.grpc: object,null (Option 1)
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**metadata**](#telemetrytracingexportersgrpcmetadata-option1)|`object`|Default: `{}`<br/>||
+|[**tls**](#telemetrytracingexportersgrpctls-option1)|`object`|Default: `{"ca":null,"cert":null,"domain_name":null,"key":null}`<br/>||
+
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3657,8 +3813,9 @@ scheduled_delay: 5s
 
 ```
 
-<a name="option1grpcmetadata"></a>
-### Option 1: grpc\.metadata: object
+   
+<a name="telemetrytracingexportersgrpcmetadata-option1"></a>
+###### telemetry\.tracing\.exporters\[\]\.grpc\.metadata: object (Option 1)
 
 **Additional Properties**
 
@@ -3666,8 +3823,9 @@ scheduled_delay: 5s
 |----|----|-----------|--------|
 |**Additional Properties**||||
 
-<a name="option1grpctls"></a>
-### Option 1: grpc\.tls: object
+   
+<a name="telemetrytracingexportersgrpctls-option1"></a>
+###### telemetry\.tracing\.exporters\[\]\.grpc\.tls: object (Option 1)
 
 **Properties**
 
@@ -3678,7 +3836,7 @@ scheduled_delay: 5s
 |**domain\_name**|`string`, `null`|The domain name used to verify the server's TLS certificate.<br/>||
 |**key**|`string`, `null`|The path to the client's private key file.<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3689,16 +3847,17 @@ key: null
 
 ```
 
-<a name="option1http"></a>
-## Option 1: http: object,null
+   
+<a name="telemetrytracingexportershttp-option1"></a>
+##### telemetry\.tracing\.exporters\[\]\.http: object,null (Option 1)
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**headers**](#option1httpheaders)|`object`|Default: `{}`<br/>||
+|[**headers**](#telemetrytracingexportershttpheaders-option1)|`object`|Default: `{}`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3706,8 +3865,9 @@ key: null
 
 ```
 
-<a name="option1httpheaders"></a>
-### Option 1: http\.headers: object
+   
+<a name="telemetrytracingexportershttpheaders-option1"></a>
+###### telemetry\.tracing\.exporters\[\]\.http\.headers: object (Option 1)
 
 **Additional Properties**
 
@@ -3715,31 +3875,7 @@ key: null
 |----|----|-----------|--------|
 |**Additional Properties**||||
 
-<a name="option2batch_processor"></a>
-## Option 2: batch\_processor: object
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**max\_concurrent\_exports**|`integer`|Default: `1`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
-|**max\_export\_batch\_size**|`integer`|Default: `512`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
-|**max\_export\_timeout**|`string`|Default: `"5s"`<br/>||
-|**max\_queue\_size**|`integer`|Default: `2048`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
-|**scheduled\_delay**|`string`|Default: `"5s"`<br/>||
-
-**Additional Properties:** not allowed  
-**Example**
-
-```yaml
-max_concurrent_exports: 1
-max_export_batch_size: 512
-max_export_timeout: 5s
-max_queue_size: 2048
-scheduled_delay: 5s
-
-```
-
+   
 <a name="telemetrytracinginstrumentation"></a>
 #### telemetry\.tracing\.instrumentation: object
 
@@ -3749,7 +3885,7 @@ scheduled_delay: 5s
 |----|----|-----------|--------|
 |[**spans**](#telemetrytracinginstrumentationspans)|`object`|Default: `{"mode":"spec_compliant"}`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3758,6 +3894,7 @@ spans:
 
 ```
 
+   
 <a name="telemetrytracinginstrumentationspans"></a>
 ##### telemetry\.tracing\.instrumentation\.spans: object
 
@@ -3767,7 +3904,7 @@ spans:
 |----|----|-----------|--------|
 |**mode**||Controls which semantic conventions are emitted on spans.<br/>Default: SpecCompliant (only stable attributes).<br/>Default: `"spec_compliant"`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3775,6 +3912,7 @@ mode: spec_compliant
 
 ```
 
+   
 <a name="telemetrytracingpropagation"></a>
 #### telemetry\.tracing\.propagation: object
 
@@ -3787,7 +3925,7 @@ mode: spec_compliant
 |**jaeger**|`boolean`|Default: `false`<br/>||
 |**trace\_context**|`boolean`|Default: `true`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3798,6 +3936,7 @@ trace_context: true
 
 ```
 
+   
 <a name="traffic_shaping"></a>
 ## traffic\_shaping: object
 
@@ -3813,7 +3952,7 @@ Configuration for the traffic-shaping of the executor. Use these configurations 
 |[**router**](#traffic_shapingrouter)|`object`|Configuration for the router itself, e.g., for handling incoming requests, or other router-level traffic shaping configurations.<br/>Default: `{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}`<br/>||
 |[**subgraphs**](#traffic_shapingsubgraphs)|`object`|Optional per-subgraph configurations that will override the default configuration for specific subgraphs.<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3834,6 +3973,7 @@ router:
 
 ```
 
+   
 <a name="traffic_shapingall"></a>
 ### traffic\_shaping\.all: object
 
@@ -3852,7 +3992,7 @@ The default configuration that will be applied to all subgraphs, unless overridd
 |**request\_timeout**||Optional timeout configuration for requests to subgraphs.<br/><br/>Example with a fixed duration:<br/>```yaml<br/>  timeout:<br/>    duration: 5s<br/>```<br/><br/>Or with a VRL expression that can return a duration based on the operation kind:<br/>```yaml<br/>  timeout:<br/>    expression: \|<br/>     if (.request.operation.type == "mutation") {<br/>       "10s"<br/>     } else {<br/>       "15s"<br/>     }<br/>```<br/>Default: `"30s"`<br/>||
 |[**tls**](#traffic_shapingalltls)|`object`, `null`|||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3865,6 +4005,7 @@ request_timeout: 30s
 
 ```
 
+   
 <a name="traffic_shapingallcircuit_breaker"></a>
 #### traffic\_shaping\.all\.circuit\_breaker: object,null
 
@@ -3885,7 +4026,8 @@ The circuit breaker will be triggered based on the error rate of requests to the
 |**reset\_timeout**|`string`|The duration after which the circuit breaker will attempt to retry sending requests to the subgraph.<br/>Default: 30s<br/>||
 |**volume\_threshold**|`integer`, `null`|Size of the rolling sample used to decide whether the breaker<br/>should open while closed. The breaker fills this sample with the<br/>outcomes of the last `volume_threshold` requests; the next request<br/>after the sample is full is the one whose result is evaluated<br/>against `error_threshold`. In practice the breaker can trip only<br/>after at least `volume_threshold + 1` requests have been observed.<br/>Default: 5<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="traffic_shapingallcircuit_breakererror_status_codes"></a>
 ##### traffic\_shaping\.all\.circuit\_breaker\.error\_status\_codes\[\]: array,null
 
@@ -3918,17 +4060,18 @@ Default: `[500, 502, 503, 504]`
 
 Either an exact HTTP status code (integer 100-599 or its string form, e.g. 503) or a wildcard pattern: '[1-5]xx' (e.g. '5xx') or '[1-5][0-9]x' (e.g. '50x'). Case-insensitive.
 
-   
+   
 **Option 1 (alternative):** 
-**Type:** `integer`  
-**Minimum:** `100`  
-**Maximum:** `599`  
+**Type:** `integer`   
+**Minimum:** `100`   
+**Maximum:** `599`   
 
-   
+   
 **Option 2 (alternative):** 
-**Type:** `string`  
-**Pattern:** `^(?:[1-5][0-9][0-9]\|[1-5][xX][xX]\|[1-5][0-9][xX])$`  
+**Type:** `string`   
+**Pattern:** `^(?:[1-5][0-9][0-9]\|[1-5][xX][xX]\|[1-5][0-9][xX])$`   
 
+   
 <a name="traffic_shapingalltls"></a>
 #### traffic\_shaping\.all\.tls: object,null
 
@@ -3940,7 +4083,8 @@ Either an exact HTTP status code (integer 100-599 or its string form, e.g. 503) 
 |[**client\_auth**](#traffic_shapingalltlsclient_auth)|`object`, `null`||yes|
 |**insecure\_skip\_ca\_verification**|`boolean`|Default: `false`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="traffic_shapingalltlsclient_auth"></a>
 ##### traffic\_shaping\.all\.tls\.client\_auth: object,null
 
@@ -3951,7 +4095,8 @@ Either an exact HTTP status code (integer 100-599 or its string form, e.g. 503) 
 |**cert\_file**|||yes|
 |**key\_file**|`string`|Format: `"path"`<br/>|yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="traffic_shapingrouter"></a>
 ### traffic\_shaping\.router: object
 
@@ -3967,7 +4112,7 @@ Configuration for the router itself, e.g., for handling incoming requests, or ot
 |**request\_timeout**|`string`|Optional timeout configuration for incoming requests to the router.<br/>It starts from the moment the request is received by the router,<br/>and includes the entire processing of the request (validation, execution, etc.) until a response is sent back to the client.<br/>If a request takes longer than the specified duration, it will be aborted and a timeout error will be returned to the client.<br/>Default: `"1m"`<br/>||
 |[**tls**](#traffic_shapingroutertls)|`object`, `null`||yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3979,6 +4124,7 @@ request_timeout: 1m
 
 ```
 
+   
 <a name="traffic_shapingrouterdedupe"></a>
 #### traffic\_shaping\.router\.dedupe: object
 
@@ -3989,7 +4135,7 @@ request_timeout: 1m
 |**enabled**|`boolean`|Enables/disables in-flight request and active subscriptions deduplication at the router level.<br/><br/>When enabled, the router deduplicates both queries and subscriptions using the same<br/>fingerprint key (method, path, selected headers, schema checksum, normalized operation<br/>hash, variables, and extensions). The `headers` configuration below controls which<br/>headers participate in that key for all operation types.<br/><br/>For queries, concurrent HTTP requests that produce the same fingerprint share a single<br/>in-flight execution - only the first one runs, and the rest wait for and receive the<br/>same result.<br/><br/>For subscriptions, the mechanism is broadcast-based rather than request-sharing. The<br/>first client with a given fingerprint becomes the leader: it runs the upstream subscription<br/>and its events are fanned out through a broadcast channel backed by an active subscriptions<br/>registry. Any subsequent client that arrives with an identical fingerprint while that subscription<br/>is still active joins as a listener on the same broadcast channel instead of starting a new upstream<br/>connection. When all listeners have dropped and the leader finishes, the entry is removed from the<br/>registry.<br/><br/>WebSocket connections participate in the same deduplication space as HTTP. Each<br/>subscribe message is processed with a synthetic request assembled from the WebSocket<br/>path and the headers derived from the `websocket.headers` config. The fingerprint is computed<br/>from those synthetic headers using the same header policy, so a subscription started over HTTP<br/>and an identical one started over WebSocket will deduplicate against each other.<br/><br/>The deduplication is transport agnostic. A query over WebSocket would get deduplicated with an<br/>identical query over HTTP if they arrive at the same time and have the same fingerprint.<br/><br/>Note: `content-type` is part of the fingerprint when `headers` includes it (e.g. `all`).<br/>Since HTTP streaming clients send different `accept` headers than WebSocket clients,<br/>cross-transport deduplication for subscriptions only applies when `content-type` (and<br/>transport-specific headers) are excluded from the key. Configure `headers: none` or<br/>`headers: { include: [] }` (or exclude the relevant headers) to enable true cross-transport<br/>deduplication, where a WebSocket subscription and an SSE subscription with the same operation<br/>share a single upstream connection and the events are fanned out to both.<br/>Default: `false`<br/>||
 |**headers**||Header configuration participating in the dedupe key.<br/><br/>Accepted forms:<br/>- `all`<br/>- `none`<br/>- `{ include: ["authorization", "cookie"] }`<br/><br/>Header names are case-insensitive and validated as standard HTTP header names.<br/>Default: `"all"`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -3998,6 +4144,7 @@ headers: all
 
 ```
 
+   
 <a name="traffic_shapingroutertls"></a>
 #### traffic\_shaping\.router\.tls: object,null
 
@@ -4009,7 +4156,8 @@ headers: all
 |[**client\_auth**](#traffic_shapingroutertlsclient_auth)|`object`, `null`||yes|
 |**key\_file**|`string`|Format: `"path"`<br/>|yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="traffic_shapingroutertlsclient_auth"></a>
 ##### traffic\_shaping\.router\.tls\.client\_auth: object,null
 
@@ -4020,7 +4168,8 @@ headers: all
 |**cert\_file**|||yes|
 |**required**|`boolean`, `null`||no|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="traffic_shapingsubgraphs"></a>
 ### traffic\_shaping\.subgraphs: object
 
@@ -4033,6 +4182,7 @@ Optional per-subgraph configurations that will override the default configuratio
 |----|----|-----------|--------|
 |[**Additional Properties**](#traffic_shapingsubgraphsadditionalproperties)|`object`|||
 
+   
 <a name="traffic_shapingsubgraphsadditionalproperties"></a>
 #### traffic\_shaping\.subgraphs\.additionalProperties: object
 
@@ -4048,7 +4198,7 @@ Optional per-subgraph configurations that will override the default configuratio
 |**request\_timeout**||Optional timeout configuration for requests to subgraphs.<br/><br/>Example with a fixed duration:<br/>```yaml<br/>  timeout:<br/>    duration: 5s<br/>```<br/><br/>Or with a VRL expression that can return a duration based on the operation kind:<br/>```yaml<br/>  timeout:<br/>    expression: \|<br/>     if (.request.operation.type == "mutation") {<br/>       "10s"<br/>     } else {<br/>       "15s"<br/>     }<br/>```<br/>||
 |[**tls**](#traffic_shapingsubgraphsadditionalpropertiestls)|`object`, `null`|||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -4056,6 +4206,7 @@ forward_operation_name: null
 
 ```
 
+   
 <a name="traffic_shapingsubgraphsadditionalpropertiescircuit_breaker"></a>
 ##### traffic\_shaping\.subgraphs\.additionalProperties\.circuit\_breaker: object,null
 
@@ -4075,7 +4226,8 @@ The circuit breaker will be triggered based on the error rate of requests to the
 |**reset\_timeout**|`string`|The duration after which the circuit breaker will attempt to retry sending requests to the subgraph.<br/>Default: 30s<br/>||
 |**volume\_threshold**|`integer`, `null`|Size of the rolling sample used to decide whether the breaker<br/>should open while closed. The breaker fills this sample with the<br/>outcomes of the last `volume_threshold` requests; the next request<br/>after the sample is full is the one whose result is evaluated<br/>against `error_threshold`. In practice the breaker can trip only<br/>after at least `volume_threshold + 1` requests have been observed.<br/>Default: 5<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="traffic_shapingsubgraphsadditionalpropertiescircuit_breakererror_status_codes"></a>
 ###### traffic\_shaping\.subgraphs\.additionalProperties\.circuit\_breaker\.error\_status\_codes\[\]: array,null
 
@@ -4108,17 +4260,18 @@ Default: `[500, 502, 503, 504]`
 
 Either an exact HTTP status code (integer 100-599 or its string form, e.g. 503) or a wildcard pattern: '[1-5]xx' (e.g. '5xx') or '[1-5][0-9]x' (e.g. '50x'). Case-insensitive.
 
-   
+   
 **Option 1 (alternative):** 
-**Type:** `integer`  
-**Minimum:** `100`  
-**Maximum:** `599`  
+**Type:** `integer`   
+**Minimum:** `100`   
+**Maximum:** `599`   
 
-   
+   
 **Option 2 (alternative):** 
-**Type:** `string`  
-**Pattern:** `^(?:[1-5][0-9][0-9]\|[1-5][xX][xX]\|[1-5][0-9][xX])$`  
+**Type:** `string`   
+**Pattern:** `^(?:[1-5][0-9][0-9]\|[1-5][xX][xX]\|[1-5][0-9][xX])$`   
 
+   
 <a name="traffic_shapingsubgraphsadditionalpropertiestls"></a>
 ##### traffic\_shaping\.subgraphs\.additionalProperties\.tls: object,null
 
@@ -4130,7 +4283,8 @@ Either an exact HTTP status code (integer 100-599 or its string form, e.g. 503) 
 |[**client\_auth**](#traffic_shapingsubgraphsadditionalpropertiestlsclient_auth)|`object`, `null`||yes|
 |**insecure\_skip\_ca\_verification**|`boolean`|Default: `false`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="traffic_shapingsubgraphsadditionalpropertiestlsclient_auth"></a>
 ###### traffic\_shaping\.subgraphs\.additionalProperties\.tls\.client\_auth: object,null
 
@@ -4141,7 +4295,8 @@ Either an exact HTTP status code (integer 100-599 or its string form, e.g. 503) 
 |**cert\_file**|||yes|
 |**key\_file**|`string`|Format: `"path"`<br/>|yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
+   
 <a name="websocket"></a>
 ## websocket: object
 
@@ -4156,7 +4311,7 @@ Configuration of router's WebSocket server.
 |[**headers**](#websocketheaders)|`object`|Configuration for handling headers for WebSocket connections.<br/>Default: `{"persist":false,"source":"connection"}`<br/>|yes|
 |**path**|`string`, `null`|The path to use for the WebSocket endpoint on the router.<br/><br/>Note to always provide the absolute path starting with a `/`, e.g., `/ws`.<br/><br/>By default, the WebSocket endpoint will be available at the `http.graphql_endpoint` (defaults to `/graphql`)<br/>if no path is specified and the clients will connect using `ws://<router-url>/<graphql_endpoint>`.<br/>Pattern: `^/`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
@@ -4168,6 +4323,7 @@ path: null
 
 ```
 
+   
 <a name="websocketheaders"></a>
 ### websocket\.headers: object
 
@@ -4181,7 +4337,7 @@ Configuration for handling headers for WebSocket connections.
 |**persist**|`boolean`|Whether to persist merged headers for the duration of the WebSocket connection<br/>when using the `both` source (headers are accepted from multiple sources).<br/><br/>Only has effect when `source` is set to `both`.<br/><br/>This is useful when dealing with authentication using tokens that expire, where the<br/>initial connection might use one token, but subsequent operations might need to<br/>provide updated tokens in the operation extensions and then use that for further authentication.<br/><br/>For example:<br/><br/>1. Client connects with connection init payload containing an Authorization header with a token.<br/>2. Client sends a subscription operation with an updated Authorization header in the operation extensions.<br/>3. If `persist` is enabled, the updated Authorization header will be stored and used for subsequent operations.<br/>Default: `false`<br/>|no|
 |**source**||The source(s) from which to accept headers for WebSocket connections.<br/>|yes|
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
