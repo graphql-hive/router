@@ -3,6 +3,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::consts::ROUTER_VERSION;
 use async_trait::async_trait;
 use graphql_tools::parser::schema::Document;
 use hive_console_sdk::agent::usage_agent::{
@@ -14,12 +15,14 @@ use hive_router_config::{
     telemetry::hive::{is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig},
     usage_reporting::{UsageReportingExclude, UsageReportingSamplingKeyKind},
 };
-use hive_router_internal::background_tasks::{BackgroundTask, BackgroundTasksManager};
 use hive_router_internal::telemetry::utils::resolve_value_or_expression;
+use hive_router_internal::{
+    background_tasks::{BackgroundTask, BackgroundTasksManager},
+    telemetry::logging::targets,
+};
 use hive_router_query_planner::state::supergraph_state::OperationKind;
 use tokio_util::sync::CancellationToken;
-
-use crate::consts::ROUTER_VERSION;
+use tracing::error;
 
 #[derive(Debug, thiserror::Error)]
 pub enum UsageReportingError {
@@ -142,7 +145,7 @@ pub async fn collect_usage_report<'a>(
         .add_report_with_request(execution_report, request_details)
         .await
     {
-        tracing::error!("Failed to send usage report: {}", err);
+        error!(target: targets::HIVE_USAGE_REPORTING, error = ?err, "failed to send usage report to hive");
     }
 }
 

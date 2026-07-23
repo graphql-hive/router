@@ -1,4 +1,5 @@
 use crate::headers::{plan::HeaderAggregationStrategy, response::ResponseHeaderAggregator};
+use hive_router_internal::telemetry::logging::targets;
 use http::HeaderValue;
 use tracing::{debug, warn};
 
@@ -45,12 +46,13 @@ fn parse(header: &str) -> Option<CacheControl> {
                     Some(v) => match v.parse::<u32>() {
                         Ok(n) => Some(n),
                         Err(_) => {
-                            warn!(value = v, "cache-control max-age has non-numeric value");
+                            warn!(target: targets::CACHE_CONTROL, value = v, "cache-control max-age has non-numeric value");
                             return None;
                         }
                     },
                     None => {
-                        warn!("cache-control max-age is missing a value");
+                        warn!(target: targets::CACHE_CONTROL, "cache-control max-age is missing a value");
+
                         return None;
                     }
                 };
@@ -58,7 +60,7 @@ fn parse(header: &str) -> Option<CacheControl> {
             }
             v => {
                 // one invalid part is enough to stop parsing and discard the header
-                warn!(directive = v, "cache-control has unrecognized directive");
+                warn!(target: targets::CACHE_CONTROL, directive = v, "cache-control has unrecognized directive");
                 return None;
             }
         }
@@ -211,9 +213,11 @@ pub fn finalize(
         // no valid values found, but there were cache-control headers
         // do the safe thing and graceful thing - completely omit the header
         for v in values {
-            debug!(value = ?v, "invalid cache-control value");
+            debug!(target: targets::CACHE_CONTROL, value = ?v, "invalid cache-control value");
         }
-        warn!("no valid cache-control values found, removing header");
+
+        warn!(target: targets::CACHE_CONTROL, "no valid cache-control values found, removing header");
+
         aggregator.entries.remove(&http::header::CACHE_CONTROL);
     }
 }

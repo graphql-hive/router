@@ -1,5 +1,6 @@
 use futures::stream::{BoxStream, Stream};
 use futures_util::StreamExt;
+use hive_router_internal::telemetry::logging::targets;
 use ntex::rt;
 use tokio::sync::mpsc;
 use tracing::debug;
@@ -39,9 +40,11 @@ pub fn try_send_or_drop<T>(
             // NOTE: not warn to avoid log spam with an active slow consumer. users should rely
             // on the dropped_messages metric to detect slow consumers and tune accordingly
             debug!(
-                subgraph_name = %subgraph_name, endpoint = %endpoint,
+                target: targets::SUBSCRIPTIONS,
+                subgraph = subgraph_name, endpoint = %endpoint,
                 "Consumer for subgraph is too slow, dropping message",
             );
+
             telemetry_context
                 .metrics
                 .subscriptions
@@ -54,7 +57,8 @@ pub fn try_send_or_drop<T>(
             // not an error, just means there's nothing left to forward to.
             // TODO: since this is expected, is the debug log even necessary?
             debug!(
-                subgraph_name = %subgraph_name, endpoint = %endpoint,
+                target: targets::SUBSCRIPTIONS,
+                subgraph = subgraph_name, endpoint = %endpoint,
                 "Subscription buffer for subgraph has no more receivers, all consumers disconnected or unsubscribed; stopping upstream drain",
             );
             SendOutcome::Closed

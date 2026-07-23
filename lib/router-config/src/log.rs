@@ -1,7 +1,11 @@
 use std::str::FromStr;
 
+use http::HeaderName;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use tracing::level_filters::LevelFilter;
+
+use crate::primitives::http_header::HttpHeaderName;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
@@ -23,6 +27,22 @@ pub struct LoggingConfig {
     /// Can also be set via the `LOG_FILTER` environment variable.
     #[serde(default)]
     pub filter: Option<String>,
+
+    /// The correlation configuration for the logger.
+    ///
+    /// This is used to configure the correlation Request-ID header and W3C trace propagation.
+    #[serde(default)]
+    pub correlation: CorrelationConfig,
+
+    /// Whether to log internal crates events.
+    ///
+    /// This is useful for debugging purposes, but should be disabled in production.
+    #[serde(default = "default_log_internals")]
+    pub log_internals: bool,
+}
+
+fn default_log_internals() -> bool {
+    false
 }
 
 impl LoggingConfig {
@@ -34,6 +54,7 @@ impl LoggingConfig {
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
+    #[cfg(debug_assertions)]
     Trace,
     Debug,
     Info,
@@ -46,6 +67,7 @@ impl FromStr for LogLevel {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
+            #[cfg(debug_assertions)]
             "trace" => Ok(LogLevel::Trace),
             "debug" => Ok(LogLevel::Debug),
             "info" => Ok(LogLevel::Info),
@@ -71,6 +93,7 @@ impl Default for LogLevel {
 impl LogLevel {
     pub fn as_str(&self) -> &'static str {
         match self {
+            #[cfg(debug_assertions)]
             LogLevel::Trace => "trace",
             LogLevel::Debug => "debug",
             LogLevel::Info => "info",
@@ -80,12 +103,23 @@ impl LogLevel {
     }
 }
 
+impl From<&LogLevel> for LevelFilter {
+    fn from(val: &LogLevel) -> Self {
+        match val {
+            #[cfg(debug_assertions)]
+            LogLevel::Trace => LevelFilter::TRACE,
+            LogLevel::Debug => LevelFilter::DEBUG,
+            LogLevel::Info => LevelFilter::INFO,
+            LogLevel::Warn => LevelFilter::WARN,
+            LogLevel::Error => LevelFilter::ERROR,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub enum LogFormat {
-    #[serde(rename = "pretty-tree")]
-    PrettyTree,
-    #[serde(rename = "pretty-compact")]
-    PrettyCompact,
+    #[serde(rename = "text")]
+    Text,
     #[serde(rename = "json")]
     Json,
 }
@@ -93,8 +127,7 @@ pub enum LogFormat {
 impl LogFormat {
     pub fn as_str(&self) -> &'static str {
         match self {
-            LogFormat::PrettyTree => "pretty-tree",
-            LogFormat::PrettyCompact => "pretty-compact",
+            LogFormat::Text => "text",
             LogFormat::Json => "json",
         }
     }
@@ -105,8 +138,7 @@ impl FromStr for LogFormat {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "pretty-tree" => Ok(LogFormat::PrettyTree),
-            "pretty-compact" => Ok(LogFormat::PrettyCompact),
+            "text" => Ok(LogFormat::Text),
             "json" => Ok(LogFormat::Json),
             _ => Err(format!("Invalid log format: {}", s)),
         }
@@ -116,11 +148,37 @@ impl FromStr for LogFormat {
 impl Default for LogFormat {
     #[cfg(debug_assertions)]
     fn default() -> Self {
-        LogFormat::PrettyCompact
+        LogFormat::Text
     }
 
     #[cfg(not(debug_assertions))]
     fn default() -> Self {
         LogFormat::Json
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CorrelationConfig {
+    #[serde(default = "default_correlation_id_header")]
+    pub id_header: HttpHeaderName,
+    #[serde(default = "default_trace_propagation")]
+    pub trace_propagation: bool,
+}
+
+fn default_correlation_id_header() -> HttpHeaderName {
+    HttpHeaderName::from(HeaderName::from_static("x-request-id"))
+}
+
+fn default_trace_propagation() -> bool {
+    true
+}
+
+impl Default for CorrelationConfig {
+    fn default() -> Self {
+        Self {
+            id_header: default_correlation_id_header(),
+            trace_propagation: default_trace_propagation(),
+        }
     }
 }

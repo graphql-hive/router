@@ -7,6 +7,7 @@ use hive_router_config::traffic_shaping::{
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::expressions::{BooleanOrProgram, ExpressionCompileError};
 use hive_router_internal::inflight::{InFlightCleanupGuard, InFlightMap};
+use hive_router_internal::telemetry::logging::targets;
 use hive_router_internal::telemetry::metrics::catalog::values::SubscriptionEndReason;
 use hive_router_internal::telemetry::metrics::subscription_metrics::SubscriptionTransport;
 use hive_router_internal::telemetry::metrics::Metrics;
@@ -207,7 +208,7 @@ impl SharedRouterStreamResponse {
                         // NOTE: not warn to avoid log spam when receiver starts lagging.
                         // users should rely on the lagged_messages metric to detect slow
                         // consumers and tune accordingly
-                        debug!(lagged = n, "Broadcast receiver lagged, dropping message");
+                        debug!(target: targets::SUBSCRIPTIONS, lagged = n, "Broadcast receiver lagged, dropping message");
                         metrics.subscriptions.record_client_lag(transport, n);
                         continue;
                     }

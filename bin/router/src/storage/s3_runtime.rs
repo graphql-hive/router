@@ -2,10 +2,11 @@ use crate::storage::{error::StorageError, utils::resolve_value_or_expression};
 use crate::storage::{StorageGetResult, StorageRuntime};
 use async_trait::async_trait;
 use hive_router_config::storage::s3::{S3Credentials, S3StorageConfig};
+use hive_router_internal::telemetry::logging::targets;
 use object_store::aws::{AmazonS3, AmazonS3Builder, AmazonS3ConfigKey};
 use object_store::path::Path;
 use object_store::{GetOptions, ObjectStore, ObjectStoreExt};
-use tracing::warn;
+use tracing::error;
 
 pub struct S3StorageRuntime {
     storage_id: String,
@@ -169,7 +170,7 @@ impl StorageRuntime for S3StorageRuntime {
                 Ok((contents, etag))
             }
             Err(e) => {
-                warn!(error = %e, "failed to load contents from s3");
+                error!(target: targets::STORAGE, error = %e, "failed to load contents from s3");
 
                 Err(e.into())
             }
@@ -202,7 +203,7 @@ impl StorageRuntime for S3StorageRuntime {
             }
             Err(object_store::Error::NotModified { .. }) => Ok(StorageGetResult::NotModified),
             Err(e) => {
-                warn!(error = %e, "failed to load contents from s3");
+                error!(target: targets::STORAGE, error = %e, "failed to load contents from s3");
 
                 Err(e.into())
             }

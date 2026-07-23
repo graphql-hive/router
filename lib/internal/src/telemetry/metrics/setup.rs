@@ -33,6 +33,7 @@ use crate::{
     http::normalize_route_path,
     telemetry::{
         error::TelemetryError,
+        logging::targets,
         metrics::catalog::{
             all_metric_names, labels_for,
             units::{BYTES, DEMAND_CONTROL_COST_UNIT, SECONDS},
@@ -80,12 +81,15 @@ fn build_instrument_rules(
                 for (attribute_name, keep) in &instrument_config.attributes {
                     if !default_labels.contains(&attribute_name.as_str()) {
                         let valid_labels = default_labels.join(", ");
+
                         warn!(
+                            target: targets::TELEMETRY,
                             metric = metric_name,
                             attribute = attribute_name,
                             valid_labels = %valid_labels,
                             "Unknown metric attribute in metrics.instrumentation.instruments, ignoring"
                         );
+
                         continue;
                     }
 

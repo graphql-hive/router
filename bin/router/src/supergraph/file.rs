@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use hive_router_config::primitives::file_path::FilePath;
+use hive_router_internal::telemetry::logging::targets;
 use tokio::{fs, sync::RwLock};
 use tracing::{debug, trace};
 
@@ -41,24 +42,28 @@ impl SupergraphLoader for SupergraphFileLoader {
     async fn load(&self) -> Result<ReloadSupergraphResult, LoadSupergraphError> {
         let result = if self.poll_interval.is_some() {
             debug!(
-                "Loading supergraph from file path: '{}' and checking metadata for polling",
-                self.file_path.absolute
+                target: targets::SUPERGRAPH,
+                path = ?self.file_path.absolute,
+                interval_ms = ?self.poll_interval.as_ref().map(|i| i.as_millis()),
+                "Loading supergraph from file, and checking metadata for polling",
             );
 
             self.load_with_polling().await
         } else {
             debug!(
-                "Loading supergraph from file path: '{}'",
-                self.file_path.absolute
+              target: targets::SUPERGRAPH,
+              path = ?self.file_path.absolute,
+                "Loading supergraph from file",
             );
 
             self.load_without_polling().await
         };
 
         trace!(
-            "Supergraph loaded from file path: '{}', result: {:?}",
-            self.file_path.absolute,
-            result
+          target: targets::SUPERGRAPH,
+          path = ?self.file_path.absolute,
+          result = ?result,
+          "Supergraph loaded from file",
         );
 
         result
@@ -75,8 +80,9 @@ impl SupergraphFileLoader {
         poll_interval: Option<Duration>,
     ) -> Result<Box<Self>, LoadSupergraphError> {
         debug!(
-            "Creating supergraph source from file path: '{}'",
-            file_path.absolute
+          target: targets::SUPERGRAPH,
+          path = ?file_path.absolute,
+          "Creating supergraph source from file",
         );
 
         Ok(Box::new(Self {

@@ -15,7 +15,7 @@
 |[**jwt**](#jwt)|`object`|Configuration for JWT authentication plugin.<br/>|yes|
 |[**laboratory**](#laboratory)|`object`|Configuration for the Hive Laboratory interface.<br/>Default: `{"enabled":true}`<br/>||
 |[**limits**](#limits)|`object`|Configuration for checking the limits such as query depth, complexity, etc.<br/>Default: `{"max_request_body_size":"2 MB"}`<br/>||
-|[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"filter":null,"format":"json","level":"info"}`<br/>||
+|[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"correlation":{"id_header":"x-request-id","trace_propagation":true},"filter":null,"format":"json","level":"info","log_internals":false}`<br/>||
 |[**override\_labels**](#override_labels)|`object`|Configuration for overriding labels.<br/>||
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**persisted\_documents**](#persisted_documents)|`object`|Configuration for persisted documents extraction and resolution.<br/>Default: `{"enabled":false,"log_missing_id":false,"require_id":false,"selectors":null,"storage":null}`<br/>||
@@ -105,9 +105,13 @@ laboratory:
 limits:
   max_request_body_size: 2 MB
 log:
+  correlation:
+    id_header: x-request-id
+    trace_propagation: true
   filter: null
   format: json
   level: info
+  log_internals: false
 override_labels: {}
 override_subgraph_urls:
   subgraphs:
@@ -2316,17 +2320,47 @@ The router is configured to be mostly silent (`info`) level, and will print only
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|[**correlation**](#logcorrelation)|`object`|The correlation configuration for the logger.<br/>Default: `{"id_header":"x-request-id","trace_propagation":true}`<br/>||
 |**filter**|`string`, `null`|The filter to apply to log messages.<br/><br/>Can also be set via the `LOG_FILTER` environment variable.<br/>||
-|**format**|`string`|The format of the log messages.<br/><br/>Can also be set via the `LOG_FORMAT` environment variable.<br/>Default: `"json"`<br/>Enum: `"pretty-tree"`, `"pretty-compact"`, `"json"`<br/>||
-|**level**|`string`|The level of logging to use.<br/><br/>Can also be set via the `LOG_LEVEL` environment variable.<br/>Default: `"info"`<br/>Enum: `"trace"`, `"debug"`, `"info"`, `"warn"`, `"error"`<br/>||
+|**format**|`string`|The format of the log messages.<br/><br/>Can also be set via the `LOG_FORMAT` environment variable.<br/>Default: `"json"`<br/>Enum: `"text"`, `"json"`<br/>||
+|**level**|`string`|The level of logging to use.<br/><br/>Can also be set via the `LOG_LEVEL` environment variable.<br/>Default: `"info"`<br/>Enum: `"debug"`, `"info"`, `"warn"`, `"error"`<br/>||
+|**log\_internals**|`boolean`|Whether to log internal crates events.<br/><br/>This is useful for debugging purposes, but should be disabled in production.<br/>Default: `false`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
+correlation:
+  id_header: x-request-id
+  trace_propagation: true
 filter: null
 format: json
 level: info
+log_internals: false
+
+```
+
+<a name="logcorrelation"></a>
+### log\.correlation: object
+
+The correlation configuration for the logger.
+
+This is used to configure the correlation Request-ID header and W3C trace propagation.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**id\_header**|`string`|A valid HTTP header name, according to RFC 7230.<br/>Default: `"x-request-id"`<br/>Pattern: `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`<br/>||
+|**trace\_propagation**|`boolean`|Default: `true`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+id_header: x-request-id
+trace_propagation: true
 
 ```
 

@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use ntex::rt::{spawn, JoinHandle};
 use std::future::Future;
 pub use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{debug, info};
+
+use crate::telemetry::logging::targets;
 
 #[async_trait]
 pub trait BackgroundTask: Send + Sync {
@@ -33,7 +35,12 @@ impl BackgroundTasksManager {
     where
         T: BackgroundTask + 'static,
     {
-        info!("registering background task: {}", task.id());
+        info!(
+            target: targets::CORE,
+            task_id = task.id(),
+            "registering background task"
+        );
+
         let child_token = self.cancellation_token.clone();
         let handle = spawn(async move {
             task.run(child_token).await;
@@ -49,11 +56,17 @@ impl BackgroundTasksManager {
     }
 
     pub fn shutdown(&mut self) {
-        info!("shutdown triggered, stopping all background tasks...");
+        debug!(
+            target: targets::CORE,
+            "shutdown triggered, stopping all background tasks..."
+        );
         self.cancellation_token.cancel();
         for handle in self.handles.drain(..) {
             handle.cancel();
         }
-        info!("all background tasks have been shut down gracefully.");
+        info!(
+            target: targets::CORE,
+            "all background tasks have been shut down gracefully."
+        );
     }
 }

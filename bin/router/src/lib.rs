@@ -12,9 +12,14 @@ mod supergraph;
 pub mod telemetry;
 mod utils;
 
+use http::{
+    header::{ACCEPT, CONTENT_TYPE, USER_AGENT},
+    HeaderName,
+};
+use ntex_http::body::{BodySize, MessageBody};
 use std::ops::ControlFlow;
 use std::sync::Arc;
-use tracing::error;
+use tracing::{debug, error};
 
 use crate::{
     consts::ROUTER_VERSION,
@@ -62,8 +67,14 @@ use hive_router_config::{load_config, subscriptions::CallbackConfig, HiveRouterC
 pub use hive_router_internal::background_tasks;
 use hive_router_internal::background_tasks::{BackgroundTask, CancellationToken};
 use hive_router_internal::telemetry::{
-    otel::tracing_opentelemetry::OpenTelemetrySpanExt,
-    traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
+    logging::{
+        request_id::WithRequestIdentifiers,
+        summary::{self, WithRequestSummary},
+        targets,
+    },
+    otel::{opentelemetry, tracing_opentelemetry::OpenTelemetrySpanExt},
+    traces::spans::http_request::HttpServerRequestSpan,
+    TelemetryContext,
 };
 pub use hive_router_internal::BoxError;
 use hive_router_internal::{
@@ -120,20 +131,88 @@ impl BackgroundTask for CallbackServer {
     }
 }
 
+#[inline]
+fn obtain_header_value<'a>(
+    header_map: &'a ntex::http::HeaderMap,
+    header_name: &HeaderName,
+) -> &'a str {
+    header_map
+        .get(header_name)
+        .map(|h| h.to_str().unwrap_or(""))
+        .unwrap_or("")
+}
+
 async fn graphql_endpoint_handler(
     mut request: HttpRequest,
     body_stream: web::types::Payload,
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> web::HttpResponse {
+    let parent_ctx = app_state
+        .telemetry_context
+        .extract_context(&HeaderExtractor(request.headers()));
+    let request_identifiers = Arc::new(
+        app_state
+            .telemetry_context
+            .logging_correlation_extractor
+            .extract(&request, &parent_ctx),
+    );
+
     let http_request_capture = app_state
         .telemetry_context
         .metrics
         .http_server
         .capture_request(&request);
 
-    let response =
-        graphql_endpoint_dispatch(&mut request, body_stream, schema_state, app_state.clone()).await;
+    let started_at = std::time::Instant::now();
+    let response = async {
+        let _summary = summary::SummaryOnDrop::new(started_at);
+        debug!(
+            target: targets::HTTP_SERVER,
+            method = request.method().as_str(),
+            path = request.path(),
+            query_string = request.query_string(),
+            content_type = obtain_header_value(request.headers(), &CONTENT_TYPE),
+            accept = obtain_header_value(request.headers(), &ACCEPT),
+            user_agent = obtain_header_value(request.headers(), &USER_AGENT),
+            "http request started",
+        );
+
+        let inner_res = graphql_endpoint_dispatch(
+            &mut request,
+            body_stream,
+            schema_state,
+            app_state.clone(),
+            parent_ctx,
+        )
+        .await;
+
+        let status_code = inner_res.status().as_u16();
+        let payload_bytes = match inner_res.body().size() {
+            BodySize::Empty | BodySize::None => 0,
+            BodySize::Sized(size) => i64::try_from(size).unwrap_or(i64::MAX),
+            BodySize::Stream => -1,
+        };
+
+        debug!(
+            target: targets::HTTP_SERVER,
+            status_code,
+            payload_bytes,
+            "http request completed",
+        );
+
+        summary::record(|s| {
+            s.status_code
+                .store(status_code, std::sync::atomic::Ordering::Relaxed);
+            s.payload_bytes
+                .store(payload_bytes, std::sync::atomic::Ordering::Relaxed);
+        });
+
+        inner_res
+    }
+    .with_request_id(request_identifiers)
+    .with_request_summary()
+    .await;
 
     let graphql_operation = read_graphql_operation_metric_identity(&request);
     let graphql_operation_name = graphql_operation
@@ -161,10 +240,8 @@ async fn graphql_endpoint_dispatch(
     body_stream: web::types::Payload,
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
+    parent_ctx: opentelemetry::Context,
 ) -> web::HttpResponse {
-    let parent_ctx = app_state
-        .telemetry_context
-        .extract_context(&HeaderExtractor(request.headers()));
     let root_http_request_span = HttpServerRequestSpan::from_request(
         request,
         &app_state
@@ -209,7 +286,7 @@ async fn graphql_endpoint_dispatch(
             .take()
             .modify_client_response_headers(response.headers_mut())
         {
-            error!(error = %err, "Failed to apply response header rules to the outgoing client response");
+            error!(target: targets::HEADER_MANIPULATION, error = %err, "failed to apply response header rules to the outgoing client response");
         }
 
         // Apply CORS headers to the final response if CORS is configured.
@@ -234,7 +311,7 @@ async fn graphql_endpoint_dispatch(
                     ControlFlow::Break(updated_response) | ControlFlow::Continue(updated_response),
                 ) => updated_response,
                 Err(error) => {
-                    warn!(%error, "coprocessor graphql.response stage failed");
+                    warn!(target: targets::COPROCESSOR, error = ?error, "coprocessor graphql.response stage failed");
                     write_graphql_response_metric_status(request, GraphQLResponseStatus::Error);
                     handle_pipeline_error(error.into(), request, &app_state, &response_mode)
                 }
@@ -265,7 +342,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
         .prometheus
         .as_ref()
         .and_then(|prom| prom.to_attached());
-    info!("hive-router@{} starting...", ROUTER_VERSION);
+    info!(target: targets::CORE, version = ROUTER_VERSION, "hive-router starting...");
     let addr = router_config.address();
     let graphql_path = router_config.graphql_path().to_string();
     let websocket_path = router_config.websocket_path().map(|p| p.to_string());
@@ -306,8 +383,9 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
             });
             if let Some(workers) = workers {
                 info!(
-                    "configuring HTTP callback server with {} worker(s)",
-                    workers
+                    target: targets::CORE,
+                    workers_count = workers,
+                    "configuring HTTP callback server worker(s)",
                 );
                 cb_server_builder = cb_server_builder.workers(workers.get());
             }
@@ -360,7 +438,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     });
 
     if let Some(workers) = workers {
-        info!("configuring HTTP server with {} worker(s)", workers);
+        info!(target: targets::CORE, workers_count = workers, "configuring HTTP server worker(s)");
         server = server.workers(workers.get());
     }
 
@@ -400,7 +478,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     .await
     .map_err(RouterInitError::HttpServerStartError);
 
-    info!("server stopped, clearing background tasks");
+    info!(target: targets::CORE, "router stopped, clearing background tasks");
     bg_tasks_manager.shutdown();
     telemetry.graceful_shutdown().await;
 
@@ -411,7 +489,8 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
 
 pub async fn invoke_shutdown_hooks(shared_state: &RouterSharedState) {
     if let Some(plugins) = &shared_state.plugins {
-        info!("invoking plugin shutdown hooks");
+        debug!(target: targets::CORE, "invoking plugin shutdown hooks");
+
         for plugin in plugins.as_ref() {
             plugin.on_shutdown().await;
         }
@@ -653,7 +732,7 @@ pub fn init_rustls_crypto_provider() {
         .install_default()
         .is_err()
     {
-        warn!("Rustls crypto provider already installed");
+        error!(target: targets::TLS, "rustls crypto provider already installed, ignoring");
     }
 }
 

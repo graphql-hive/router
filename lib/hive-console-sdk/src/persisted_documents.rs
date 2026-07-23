@@ -11,7 +11,9 @@ use reqwest_middleware::ClientBuilder;
 use reqwest_middleware::ClientWithMiddleware;
 use reqwest_retry::RetryTransientMiddleware;
 use retry_policies::policies::ExponentialBackoff;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
+
+const PERSISTED_DOCUMENTS_TARGET: &str = "console_sdk::persisted_documents";
 
 #[derive(Debug)]
 pub struct PersistedDocumentsManager {
@@ -115,9 +117,10 @@ impl PersistedDocumentsManager {
     ) -> Result<String, PersistedDocumentsError> {
         let cdn_document_id = str::replace(document_id, "~", "/");
         let cdn_artifact_url = format!("{}/apps/{}", endpoint, cdn_document_id);
-        info!(
-            "Fetching document {} from CDN: {}",
-            document_id, cdn_artifact_url
+        debug!(
+            target: PERSISTED_DOCUMENTS_TARGET,
+            document_id, cdn_artifact_url,
+            "Fetching document from CDN",
         );
         let response_fut = self.client.get(cdn_artifact_url).send();
 
@@ -134,20 +137,23 @@ impl PersistedDocumentsManager {
                 .text()
                 .await
                 .map_err(|e| PersistedDocumentsError::FailedToReadCDNResponse(e.to_string()))?;
-            debug!("Document fetched from CDN: {}", document);
+            debug!(target: PERSISTED_DOCUMENTS_TARGET, document, document_id, "Document fetched from CDN");
 
             return Ok(document);
         }
 
         let status = response.status();
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unavailable".to_string());
 
         warn!(
-            "Document fetch from CDN failed: HTTP {}, Body: {:?}",
-            status,
-            response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unavailable".to_string())
+            target: PERSISTED_DOCUMENTS_TARGET,
+            document_id,
+            status = status.as_u16(),
+            body,
+            "Document fetch from CDN failed",
         );
 
         Err(PersistedDocumentsError::DocumentNotFound)
@@ -161,9 +167,11 @@ impl PersistedDocumentsManager {
         if let Some(negative_cache) = &self.negative_cache {
             if negative_cache.get(document_id).await.is_some() {
                 debug!(
-                    "Document {} found in negative cache, skipping CDN fetch",
-                    document_id
+                    target: PERSISTED_DOCUMENTS_TARGET,
+                    document_id,
+                    "Document found in negative cache, skipping CDN fetch",
                 );
+
                 return Err(PersistedDocumentsError::DocumentNotFound);
             }
         }
@@ -176,8 +184,9 @@ impl PersistedDocumentsManager {
             .cache
             .try_get_with_by_ref(document_id, async {
                 debug!(
-                    "Document {} not found in cache. Fetching from CDN",
-                    document_id
+                    target: PERSISTED_DOCUMENTS_TARGET,
+                    document_id,
+                    "Document not found in cache. Fetching from CDN",
                 );
 
                 let mut last_error: Option<PersistedDocumentsError> = None;

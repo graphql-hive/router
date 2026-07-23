@@ -3,6 +3,8 @@
 //! OpenTelemetry state.
 //!
 //! It also re-exports the OTEL types used across crates to avoid deep dependency chains.
+use hive_router_config::log::LoggingConfig;
+use hive_router_config::telemetry::tracing::TracingPropagationConfig;
 use hive_router_config::telemetry::TelemetryConfig;
 use opentelemetry::metrics::Meter;
 use opentelemetry::trace::TracerProvider;
@@ -15,11 +17,13 @@ use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::Layer;
 
+use crate::telemetry::logging::request_id::RequestIdentifierExtractor;
 use crate::telemetry::metrics::Metrics;
 use crate::telemetry::propagation::HeaderMapInjector;
 use crate::telemetry::traces::build_trace_provider;
 
 pub mod error;
+pub mod logging;
 pub mod metrics;
 pub mod otel;
 pub mod propagation;
@@ -42,18 +46,21 @@ pub struct TelemetryContext {
     propagator: Option<Arc<TextMapCompositePropagator>>,
     pub metrics: Arc<Metrics>,
     meter: Option<Meter>,
+    pub logging_correlation_extractor: RequestIdentifierExtractor,
 }
 
 impl TelemetryContext {
     /// Creates a telemetry context from tracing propagation config
     pub fn from_propagation_config(
-        config: &hive_router_config::telemetry::tracing::TracingPropagationConfig,
+        telemetry_config: &TracingPropagationConfig,
+        log_config: &LoggingConfig,
     ) -> Self {
-        Self::from_propagation_config_with_meter(config, None)
+        Self::from_propagation_config_with_meter(telemetry_config, log_config, None)
     }
 
     pub fn from_propagation_config_with_meter(
-        config: &hive_router_config::telemetry::tracing::TracingPropagationConfig,
+        telemetry_config: &TracingPropagationConfig,
+        log_config: &LoggingConfig,
         meter: Option<Meter>,
     ) -> Self {
         use otel::opentelemetry_jaeger_propagator::Propagator as JaegerPropagator;
@@ -62,29 +69,33 @@ impl TelemetryContext {
 
         let mut propagators: Vec<Box<dyn TextMapPropagator + Send + Sync>> = Vec::new();
 
-        if config.trace_context {
+        if telemetry_config.trace_context {
             propagators.push(Box::new(TraceContextPropagator::new()));
         }
 
-        if config.baggage {
+        if telemetry_config.baggage {
             propagators.push(Box::new(BaggagePropagator::new()));
         }
 
-        if config.b3 {
+        if telemetry_config.b3 {
             propagators.push(Box::new(B3Propagator::new()));
         }
 
-        if config.jaeger {
+        if telemetry_config.jaeger {
             propagators.push(Box::new(JaegerPropagator::new()));
         }
 
         let metrics = Arc::new(Metrics::new(meter.as_ref()));
+
+        let logging_correlation_extractor =
+            RequestIdentifierExtractor::new(log_config.correlation.clone());
 
         if propagators.is_empty() {
             return Self {
                 propagator: None,
                 metrics,
                 meter,
+                logging_correlation_extractor,
             };
         }
 
@@ -92,6 +103,7 @@ impl TelemetryContext {
             propagator: Some(Arc::new(TextMapCompositePropagator::new(propagators))),
             metrics,
             meter,
+            logging_correlation_extractor,
         }
     }
 
@@ -147,7 +159,6 @@ where
     }
 
     let traces_provider = build_trace_provider(config, id_generator, resource.clone())?;
-
     let tracer = traces_provider.tracer_with_scope(scope);
     let traces_layer = tracing_opentelemetry::layer()
         .with_tracer(tracer)

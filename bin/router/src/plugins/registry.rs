@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
 use hive_router_config::HiveRouterConfig;
-use hive_router_internal::{background_tasks::BackgroundTasksManager, BoxError};
+use hive_router_internal::{
+    background_tasks::BackgroundTasksManager, telemetry::logging::targets, BoxError,
+};
 use hive_router_plan_executor::{
     hooks::on_plugin_init::OnPluginInitPayload,
     plugin_trait::{RouterPlugin, RouterPluginBoxed},
 };
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 type PluginFactory = Box<
     dyn Fn(
@@ -77,18 +79,21 @@ impl PluginRegistry {
                 match plugin_init_result {
                     Err(plugin_init_error) => {
                         if plugin_config_value.warn_on_error {
-                            warn!("Plugin initialization error: {}", plugin_init_error);
+                            warn!(target: targets::PLUGIN_SYSTEM, error = ?plugin_init_error, "plugin initialization error");
+
                             continue;
                         } else {
+                            error!(target: targets::PLUGIN_SYSTEM, error = ?plugin_init_error, "plugin initialization error");
+
                             return Err(plugin_init_error);
                         }
                     }
                     Ok(maybe_plugin) => {
                         if let Some(plugin) = maybe_plugin {
-                            info!("Plugin '{}' successfully enabled", plugin_name);
+                            info!(target: targets::PLUGIN_SYSTEM, plugin_name, "plugin successfully enabled");
                             plugins_unordered.push((plugin_name.as_str(), plugin));
                         } else {
-                            warn!("Plugin '{}' disabled during initialization", plugin_name);
+                            warn!(target: targets::PLUGIN_SYSTEM, plugin_name, "plugin disabled during initialization");
                         }
                     }
                 }

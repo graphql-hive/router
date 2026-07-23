@@ -1,3 +1,5 @@
+use crate::telemetry::logging::targets;
+
 use super::spans::{attributes, kind::HiveSpanKind};
 use hive_router_config::telemetry::tracing::SpansSemanticConventionsMode;
 use opentelemetry::KeyValue;
@@ -250,14 +252,14 @@ impl<E: SpanExporter> SpanExporter for HttpCompatibilityExporter<E> {
     }
 
     fn shutdown(&mut self) -> OTelSdkResult {
-        tracing::info!(
-            component = "telemetry",
+        tracing::debug!(
+            target: targets::TELEMETRY,
             layer = "http_compat_exporter",
             "shutdown scheduled"
         );
         let result = self.inner.shutdown();
         tracing::info!(
-            component = "telemetry",
+            target: targets::TELEMETRY,
             layer = "http_compat_exporter",
             "shutdown completed"
         );

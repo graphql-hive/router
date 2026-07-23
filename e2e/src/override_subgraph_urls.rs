@@ -111,17 +111,27 @@ mod override_subgraph_urls_e2e_tests {
         insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "data": {
-            "users": null
-          },
-          "errors": [
-            {
-              "message": "Failed to send request to subgraph: client error (Connect)",
-              "extensions": {
-                "code": "SUBREQUEST_HTTP_ERROR",
-                "service": "accounts"
+            "users": [
+              {
+                "id": "1"
+              },
+              {
+                "id": "2"
+              },
+              {
+                "id": "3"
+              },
+              {
+                "id": "4"
+              },
+              {
+                "id": "5"
+              },
+              {
+                "id": "6"
               }
-            }
-          ]
+            ]
+          }
         }
         "#);
 

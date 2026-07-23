@@ -13,6 +13,8 @@ pub struct EnvVarOverrides {
     pub log_format: Option<LogFormat>,
     #[envconfig(from = "LOG_FILTER")]
     pub log_filter: Option<String>,
+    #[envconfig(from = "LOG_INTERNALS")]
+    pub log_internals: Option<bool>,
 
     // Laboratory overrides
     #[envconfig(from = "LABORATORY_ENABLED")]
@@ -71,36 +73,42 @@ pub enum EnvVarOverridesError {
     MissingRequiredEnvVar(&'static str),
 }
 
+const CONFIG_LOGGING_TARGET: &str = "router::config";
+
 impl EnvVarOverrides {
     pub fn apply_overrides<T: BuilderState>(
         mut self,
         mut config: ConfigBuilder<T>,
     ) -> Result<ConfigBuilder<T>, EnvVarOverridesError> {
         if let Some(log_level) = self.log_level.take() {
-            debug!("[config-override] 'log.level' = {:?}", log_level);
+            debug!(target: CONFIG_LOGGING_TARGET, value = ?log_level, "overriding 'log.level'");
             config = config.set_override("log.level", log_level.as_str())?;
         }
         if let Some(log_format) = self.log_format.take() {
-            debug!("[config-override] 'log.format' = {:?}", log_format);
+            debug!(target: CONFIG_LOGGING_TARGET, value = ?log_format, "overriding 'log.format'");
             config = config.set_override("log.format", log_format.as_str())?;
         }
         if let Some(log_filter) = self.log_filter.take() {
-            debug!("[config-override] 'log.filter' = {:?}", log_filter);
+            debug!(target: CONFIG_LOGGING_TARGET, value = ?log_filter, "overriding 'log.filter'");
             config = config.set_override("log.filter", log_filter)?;
+        }
+        if let Some(log_internals) = self.log_internals.take() {
+            debug!(target: CONFIG_LOGGING_TARGET, value = log_internals, "overriding 'log.log_internals'");
+            config = config.set_override("log.log_internals", log_internals)?;
         }
 
         if let Some(http_port) = self.http_port.take() {
-            debug!("[config-override] 'http.port' = {}", http_port);
+            debug!(target: CONFIG_LOGGING_TARGET, value = http_port, "overriding 'http.port'");
             config = config.set_override("http.port", http_port)?;
         }
 
         if let Some(http_host) = self.http_host.take() {
-            debug!("[config-override] 'http.host' = {}", http_host);
+            debug!(target: CONFIG_LOGGING_TARGET, value = http_host, "overriding 'http.host'");
             config = config.set_override("http.host", http_host)?;
         }
 
         if let Some(http_workers) = self.http_workers.take() {
-            debug!("[config-override] 'http.workers' = {}", http_workers);
+            debug!(target: CONFIG_LOGGING_TARGET, value = http_workers, "overriding 'http.workers'");
             // cast to u64 because the `config` crate doesn't implement `Into<Value>` for `usize`;
             // the value is then deserialized into `Option<NonZeroUsize>`, which rejects `0`.
             config = config.set_override("http.workers", http_workers as u64)?;
@@ -111,11 +119,13 @@ impl EnvVarOverrides {
         }
 
         if let Some(supergraph_file_path) = self.supergraph_file_path.take() {
+            debug!(target: CONFIG_LOGGING_TARGET, value = supergraph_file_path, "overriding 'supergraph.path'");
             config = config.set_override("supergraph.source", "file")?;
             config = config.set_override("supergraph.path", supergraph_file_path)?;
         }
 
         if let Some(hive_console_cdn_endpoint) = self.hive_console_cdn_endpoint.take() {
+            debug!(target: CONFIG_LOGGING_TARGET, value = hive_console_cdn_endpoint, "overriding 'hive_console_cdn_endpoint'");
             config = config.set_override("supergraph.source", "hive")?;
 
             if hive_console_cdn_endpoint.contains(",") {
@@ -129,6 +139,7 @@ impl EnvVarOverrides {
             }
 
             if let Some(hive_console_cdn_key) = self.hive_console_cdn_key.take() {
+                debug!(target: CONFIG_LOGGING_TARGET, "overriding 'hive_console_cdn_key'");
                 config = config.set_override("supergraph.key", hive_console_cdn_key)?;
             } else {
                 return Err(EnvVarOverridesError::MissingRequiredEnvVar("HIVE_CDN_KEY"));
@@ -136,56 +147,59 @@ impl EnvVarOverrides {
 
             if let Some(hive_console_cdn_poll_interval) = self.hive_console_cdn_poll_interval.take()
             {
+                debug!(target: CONFIG_LOGGING_TARGET, value = hive_console_cdn_poll_interval, "overriding 'hive_console_cdn_poll_interval'");
                 config = config
                     .set_override("supergraph.poll_interval", hive_console_cdn_poll_interval)?;
             }
         }
 
         if let Some(enabled) = self.hive_tracing_enabled.take() {
+            debug!(target: CONFIG_LOGGING_TARGET, value = enabled, "overriding 'hive_tracing_enabled'");
             config = config.set_override("telemetry.hive.tracing.enabled", enabled)?;
         }
 
         if let Some(enabled) = self.hive_usage_reporting_enabled.take() {
+            debug!(target: CONFIG_LOGGING_TARGET, value = enabled, "overriding 'hive_usage_reporting_enabled'");
             config = config.set_override("telemetry.hive.usage_reporting.enabled", enabled)?;
         }
 
         if let Some(hive_access_token) = self.hive_access_token.take() {
+            debug!(target: CONFIG_LOGGING_TARGET, "overriding 'hive_access_token'");
             config = config.set_override("telemetry.hive.token", hive_access_token)?;
         }
 
         if let Some(hive_target) = self.hive_target.take() {
+            debug!(target: CONFIG_LOGGING_TARGET, value = hive_target, "overriding 'hive_target'");
             config = config.set_override("telemetry.hive.target", hive_target)?;
         }
 
         if let Some(tracing_sampling_rate) = self.tracing_sampling_rate.take() {
-            debug!(
-                "[config-override] 'telemetry.tracing.collect.sampling' = {}",
-                tracing_sampling_rate
-            );
+            debug!(target: CONFIG_LOGGING_TARGET, value = tracing_sampling_rate, "overriding 'tracing_sampling_rate'");
+
             config =
                 config.set_override("telemetry.tracing.collect.sampling", tracing_sampling_rate)?;
         }
 
         // Laboratory overrides
         if let Some(laboratory_enabled) = self.laboratory_enabled.take() {
+            debug!(target: CONFIG_LOGGING_TARGET, value = laboratory_enabled, "overriding 'laboratory_enabled'");
             config = config.set_override("laboratory.enabled", laboratory_enabled)?;
         }
 
         if let Some(websocket_enabled) = self.websocket_enabled.take() {
+            debug!(target: CONFIG_LOGGING_TARGET, value = websocket_enabled, "overriding 'websocket_enabled'");
             config = config.set_override("websocket.enabled", websocket_enabled)?;
         }
 
         if let Some(subscriptions_enabled) = self.subscriptions_enabled.take() {
+            debug!(target: CONFIG_LOGGING_TARGET, value = subscriptions_enabled, "overriding 'subscriptions_enabled'");
             config = config.set_override("subscriptions.enabled", subscriptions_enabled)?;
         }
 
         if let Some(experimental_abstract_type_folding) =
             self.query_planner_experimental_abstract_type_folding.take()
         {
-            debug!(
-                "[config-override] 'query_planner.experimental_abstract_type_folding' = {}",
-                experimental_abstract_type_folding
-            );
+            debug!(target: CONFIG_LOGGING_TARGET, value = experimental_abstract_type_folding, "overriding 'experimental_abstract_type_folding'");
             config = config.set_override(
                 "query_planner.experimental_abstract_type_folding",
                 experimental_abstract_type_folding,

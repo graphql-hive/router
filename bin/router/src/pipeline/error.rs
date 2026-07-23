@@ -6,6 +6,7 @@ use hive_console_sdk::expressions::{
     values::boolean::BooleanConversionError, ProgramResolutionError,
 };
 use hive_router_internal::http::ReadBodyStreamError;
+use hive_router_internal::telemetry::logging::summary;
 use hive_router_plan_executor::{
     coprocessor::CoprocessorError,
     execution::{
@@ -325,6 +326,17 @@ pub fn handle_pipeline_error(
     shared_state: &RouterSharedState,
     response_mode: &ResponseMode,
 ) -> web::HttpResponse {
+    let error_count = match &err {
+        PipelineError::ValidationErrors(errors) => errors.len() as u32,
+        PipelineError::AuthorizationFailed(errors) => errors.len() as u32,
+        _ => 1,
+    };
+
+    summary::record(|s| {
+        s.set_response_code(err.graphql_error_code());
+        s.set_error_count(error_count);
+    });
+
     let status = if matches!(response_mode, ResponseMode::StreamOnly(_)) {
         // alwats status OK for streaming response modes, because we accept
         // the stream and then stream the error from within the stream by default

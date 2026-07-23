@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use hive_router_internal::json::MapAccessSerdeExt;
+use hive_router_internal::telemetry::logging::targets;
 use hive_router_internal::telemetry::metrics::Metrics;
 use hive_router_plan_executor::hooks::on_graphql_params::{
     GraphQLParams, OnGraphQLParamsEndHookPayload, OnGraphQLParamsStartHookPayload,
@@ -17,7 +18,7 @@ use ntex::web::types::Query;
 use ntex::web::HttpRequest;
 use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, Visitor};
 use std::sync::Arc;
-use tracing::{info, trace, warn};
+use tracing::{debug, warn};
 
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::header::SingleContentType;
@@ -385,7 +386,8 @@ impl<'a> OperationPreparation<'a> {
             && self.log_missing_id_requests
             && operation.resolved_document_id.is_none()
         {
-            info!(
+            debug!(
+                target: targets::PERSISTED_DOCUMENTS,
                 event = "persisted_documents.missing_id_request",
                 method = %self.req.method(),
                 path = %self.req.uri().path(),
@@ -450,7 +452,8 @@ impl<'a> OperationPreparation<'a> {
             Method::GET => self.decode_get(),
             Method::POST => self.decode_post(),
             _ => {
-                warn!("unsupported HTTP method: {}", self.req.method());
+                warn!(target: targets::HTTP_SERVER, method = ?self.req.method(), "unsupported HTTP method");
+
                 Err(PipelineError::UnsupportedHttpMethod(
                     self.req.method().to_owned(),
                 ))
@@ -484,14 +487,17 @@ impl<'a> OperationPreparation<'a> {
                     .map_err(|_| PipelineError::InvalidHeaderValue(CONTENT_TYPE))?;
                 if !content_type_str.contains(SingleContentType::JSON.as_ref()) {
                     warn!(
-                        "Invalid content type on a POST request: {}",
-                        content_type_str
+                        target: targets::HTTP_SERVER,
+                        content_type = content_type_str,
+                        "invalid content type on a POST request",
                     );
+
                     return Err(PipelineError::UnsupportedContentType);
                 }
             }
             None => {
-                trace!("POST without content type detected");
+                warn!(target: targets::HTTP_SERVER, "POST without content type detected");
+
                 return Err(PipelineError::MissingContentTypeHeader);
             }
         }

@@ -13,6 +13,8 @@ use crate::{
 
 #[async_trait]
 pub trait SubgraphExecutor {
+    fn executor_name(&self) -> &str;
+
     fn endpoint(&self) -> &Uri;
 
     async fn execute<'a>(

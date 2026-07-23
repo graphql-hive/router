@@ -8,6 +8,7 @@ use tokio::sync::RwLock;
 
 use crate::supergraph_fetcher::{
     builder::SupergraphFetcherBuilder, SupergraphFetcher, SupergraphFetcherError,
+    SUPERGRAPH_FETCHER_TARGET,
 };
 
 #[derive(Debug)]
@@ -80,9 +81,11 @@ impl SupergraphFetcher<SupergraphFetcherSyncState> {
                                                 }
                                                 Err(err) => {
                                                     tracing::error!(
-                                                        "Error determining sleep duration for retry: {}",
-                                                        err
+                                                        target: SUPERGRAPH_FETCHER_TARGET,
+                                                        error = ?err,
+                                                        "Error determining sleep duration for retry",
                                                     );
+
                                                     // If elapsed time cannot be determined, do not wait
                                                     return Err(e);
                                                 }

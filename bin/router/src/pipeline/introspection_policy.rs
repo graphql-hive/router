@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
 
 use hive_router_config::introspection_policy::IntrospectionPermissionConfig;
-use hive_router_internal::expressions::{
-    BooleanOrProgram, CompileExpression, ExpressionCompileError, ProgramHints,
+use hive_router_internal::{
+    expressions::{BooleanOrProgram, CompileExpression, ExpressionCompileError, ProgramHints},
+    telemetry::logging::targets,
 };
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetailsView;
-use tracing::debug;
+use tracing::warn;
 use vrl::core::Value as VrlValue;
 
 use crate::pipeline::error::PipelineError;
@@ -39,7 +40,11 @@ pub fn handle_introspection_policy(
         .map_err(|e| PipelineError::IntrospectionPermissionEvaluationError(e.to_string()))?;
 
     if !is_enabled {
-        debug!("graphql request rejected because introspection is disabled");
+        warn!(
+            target: targets::INTROSPECTION,
+            "graphql request rejected because introspection is disabled"
+        );
+
         Err(PipelineError::IntrospectionDisabled)
     } else {
         Ok(())
