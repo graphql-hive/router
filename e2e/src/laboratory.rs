@@ -8,7 +8,7 @@ mod laboratory_e2e_tests {
 
     /// Fetches the Laboratory page the way a browser would.
     async fn fetch_laboratory_html(router: &TestRouter<Started>) -> String {
-        let mut res = router
+        let res = router
             .serv()
             .get(router.graphql_path())
             .header(http::header::ACCEPT, "text/html")
@@ -139,7 +139,7 @@ mod laboratory_e2e_tests {
 
         // With the Laboratory disabled, content negotiation ignores the `text/html` preference
         // and the request falls through to regular GraphQL handling.
-        let mut res = router
+        let res = router
             .serv()
             .get(router.graphql_path())
             .header(http::header::ACCEPT, "text/html")
