@@ -1,7 +1,8 @@
 #[cfg(test)]
 mod error_masking_e2e_tests {
     use crate::testkit::{
-        ClientResponseExt, EnvVarsGuard, RequestLike, ResponseLike, TestRouter, TestSubgraphs,
+        some_header_map, ClientResponseExt, EnvVarsGuard, RequestLike, ResponseLike, TestRouter,
+        TestSubgraphs,
     };
 
     fn failing_products_subgraph(req: RequestLike) -> Option<ResponseLike> {
@@ -925,5 +926,181 @@ mod error_masking_e2e_tests {
         }
         "#
         );
+    }
+
+    // Break the source subgraph stream after 3 events (via `x-break-after` header),
+    // so the failure happens mid-stream and hits the masking-eligible streaming error branch.
+    fn subscription_config(error_masking: &str) -> String {
+        format!(
+            r#"
+            supergraph:
+                source: file
+                path: supergraph.graphql
+            subscriptions:
+                enabled: true
+            headers:
+                all:
+                    request:
+                        - propagate:
+                            named: x-break-after
+            {error_masking}
+            "#
+        )
+    }
+
+    static SUBSCRIPTION_QUERY: &str = "subscription { reviewAdded(intervalInMs: 100) { id } }";
+
+    fn subscription_request_headers() -> Option<http::HeaderMap> {
+        some_header_map! {
+            http::header::ACCEPT => "text/event-stream",
+            http::header::HeaderName::from_static("x-break-after") => "3"
+        }
+    }
+
+    #[ntex::test]
+    async fn subscription_stream_error_masked_by_default() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(subscription_config(""))
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(SUBSCRIPTION_QUERY, None, subscription_request_headers())
+            .await;
+
+        assert_eq!(res.status(), 200, "Expected 200 OK");
+
+        insta::assert_snapshot!(res.string_body().await, @r#"
+        event: next
+        data: {"data":{"reviewAdded":{"id":"1"}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"2"}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"3"}}}
+
+        event: next
+        data: {"errors":[{"message":"Unexpected error","extensions":{"code":"SUBGRAPH_SUBSCRIPTION_SSE_STREAM_ERROR","service":"reviews"}}]}
+
+        event: complete
+        "#);
+    }
+
+    #[ntex::test]
+    async fn subscription_stream_error_masking_disabled() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(subscription_config(
+                r#"error_masking:
+                enabled: false"#,
+            ))
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(SUBSCRIPTION_QUERY, None, subscription_request_headers())
+            .await;
+
+        assert_eq!(res.status(), 200, "Expected 200 OK");
+
+        insta::assert_snapshot!(res.string_body().await, @r#"
+        event: next
+        data: {"data":{"reviewAdded":{"id":"1"}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"2"}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"3"}}}
+
+        event: next
+        data: {"errors":[{"message":"Error reading SSE subscription stream: Stream read error: error reading a body from connection","extensions":{"code":"SUBGRAPH_SUBSCRIPTION_SSE_STREAM_ERROR","service":"reviews"}}]}
+
+        event: complete
+        "#);
+    }
+
+    // Subgraph-originated errors surface inside each streamed event (via entity resolution),
+    // and must be masked just like in the query/mutation path.
+    #[ntex::test]
+    async fn subscription_subgraph_error_masked_by_default() {
+        use sonic_rs::json;
+
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(|req| {
+                if req.path.contains("products") {
+                    Some(ResponseLike::new(
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        Some(r#"{"errors":[{"message":"Something Went Wrong!"}]}"#.to_string()),
+                        some_header_map! {
+                            http::header::CONTENT_TYPE => "application/json"
+                        },
+                    ))
+                } else {
+                    None
+                }
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"
+                subscription ($upc: String!) {
+                    reviewAddedForProduct(productUpc: $upc, intervalInMs: 0) {
+                        product {
+                            name
+                        }
+                    }
+                }
+                "#,
+                Some(json!({ "upc": "2" })),
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream"
+                },
+            )
+            .await;
+
+        assert_eq!(res.status(), 200, "Expected 200 OK");
+
+        insta::assert_snapshot!(res.string_body().await, @r#"
+        event: next
+        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Unexpected error","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","service":"products","affectedPath":"reviewAddedForProduct.product"}},{"message":"Unexpected error","extensions":{"code":"SUBREQUEST_HTTP_ERROR","service":"products","affectedPath":"reviewAddedForProduct.product","http":{"status":500}}}]}
+
+        event: next
+        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Unexpected error","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","service":"products","affectedPath":"reviewAddedForProduct.product"}},{"message":"Unexpected error","extensions":{"code":"SUBREQUEST_HTTP_ERROR","service":"products","affectedPath":"reviewAddedForProduct.product","http":{"status":500}}}]}
+
+        event: next
+        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Unexpected error","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","service":"products","affectedPath":"reviewAddedForProduct.product"}},{"message":"Unexpected error","extensions":{"code":"SUBREQUEST_HTTP_ERROR","service":"products","affectedPath":"reviewAddedForProduct.product","http":{"status":500}}}]}
+
+        event: next
+        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Unexpected error","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","service":"products","affectedPath":"reviewAddedForProduct.product"}},{"message":"Unexpected error","extensions":{"code":"SUBREQUEST_HTTP_ERROR","service":"products","affectedPath":"reviewAddedForProduct.product","http":{"status":500}}}]}
+
+        event: complete
+        "#);
     }
 }
