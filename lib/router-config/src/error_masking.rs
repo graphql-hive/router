@@ -66,7 +66,7 @@ pub struct SubgraphErrorMaskingConfig {
     /// Whether to redact the `error_message` in errors, for that specific subgraph.
     ///
     /// Configuring this will override the global `all.error_message` setting.
-    #[serde(default = "default_subgraph_redact_error_message")]
+    #[serde(default)]
     pub error_message: Option<bool>,
     /// Whether to redact the `extensions` in errors, for that specific subgraph.
     /// Configuring this will override the global `all.extensions` setting.
@@ -75,19 +75,6 @@ pub struct SubgraphErrorMaskingConfig {
     /// Note: only root-level fields are supported.
     #[serde(default)]
     pub extensions: Option<ExtensionsMaskingConfig>,
-}
-
-fn default_subgraph_redact_error_message() -> Option<bool> {
-    None
-}
-
-impl Default for SubgraphErrorMaskingConfig {
-    fn default() -> Self {
-        Self {
-            error_message: default_subgraph_redact_error_message(),
-            extensions: None,
-        }
-    }
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]

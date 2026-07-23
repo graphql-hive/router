@@ -59,11 +59,7 @@ impl ErrorMaskingRuntime {
                         .collect()
                 })
                 .unwrap_or_default(),
-            default_extensions_masking: config
-                .all
-                .extensions
-                .as_ref()
-                .map(Self::compile_extensions_config),
+            default_extensions_masking: config.all.extensions.as_ref().map(|v| v.into()),
             per_subgraph_extensions_masking: config
                 .subgraphs
                 .as_ref()
@@ -71,25 +67,11 @@ impl ErrorMaskingRuntime {
                     subgraphs
                         .iter()
                         .map(|(name, cfg)| {
-                            (
-                                name.clone(),
-                                cfg.extensions.as_ref().map(Self::compile_extensions_config),
-                            )
+                            (name.clone(), cfg.extensions.as_ref().map(|v| v.into()))
                         })
                         .collect()
                 })
                 .unwrap_or_default(),
-        }
-    }
-
-    fn compile_extensions_config(
-        extensions_config: &ExtensionsMaskingConfig,
-    ) -> RedactExtensionsPlan {
-        match extensions_config {
-            ExtensionsMaskingConfig::AllowList { keys } => {
-                RedactExtensionsPlan::Allow(keys.clone())
-            }
-            ExtensionsMaskingConfig::DenyList { keys } => RedactExtensionsPlan::Deny(keys.clone()),
         }
     }
 }
@@ -97,6 +79,15 @@ impl ErrorMaskingRuntime {
 enum RedactExtensionsPlan {
     Allow(Vec<String>),
     Deny(Vec<String>),
+}
+
+impl From<&ExtensionsMaskingConfig> for RedactExtensionsPlan {
+    fn from(config: &ExtensionsMaskingConfig) -> Self {
+        match config {
+            ExtensionsMaskingConfig::AllowList { keys } => Self::Allow(keys.clone()),
+            ExtensionsMaskingConfig::DenyList { keys } => Self::Deny(keys.clone()),
+        }
+    }
 }
 
 impl RedactExtensionsPlan {
