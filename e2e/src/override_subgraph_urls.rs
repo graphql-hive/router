@@ -64,6 +64,9 @@ mod override_subgraph_urls_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                error_masking:
+                    all:
+                      enabled: false
                 override_subgraph_urls:
                     subgraphs:
                         accounts:

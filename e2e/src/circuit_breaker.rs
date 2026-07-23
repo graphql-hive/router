@@ -86,6 +86,9 @@ mod circuit_breaker_e2e_tests {
         supergraph:
           source: file
           path: supergraph.graphql
+        error_masking:
+          all:
+            enabled: false
         traffic_shaping:
           all:
             request_timeout: 200ms
@@ -246,6 +249,9 @@ mod circuit_breaker_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                error_masking:
+                  all:
+                    enabled: false
                 traffic_shaping:
                     all:
                         circuit_breaker:
@@ -336,6 +342,9 @@ mod circuit_breaker_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                error_masking:
+                  all:
+                    enabled: false
                 traffic_shaping:
                     all:
                         circuit_breaker:
@@ -443,6 +452,9 @@ mod circuit_breaker_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                error_masking:
+                  all:
+                    enabled: false
                 traffic_shaping:
                     all:
                         circuit_breaker:
@@ -540,6 +552,9 @@ mod circuit_breaker_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                error_masking:
+                  all:
+                    enabled: false
                 traffic_shaping:
                     all:
                         circuit_breaker:
@@ -608,6 +623,9 @@ mod circuit_breaker_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                error_masking:
+                  all:
+                    enabled: false
                 traffic_shaping:
                     all:
                         circuit_breaker:
@@ -671,6 +689,9 @@ mod circuit_breaker_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                error_masking:
+                  all:
+                    enabled: false
                 traffic_shaping:
                     all:
                         circuit_breaker:
@@ -740,6 +761,9 @@ mod circuit_breaker_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                error_masking:
+                  all:
+                    enabled: false
                 traffic_shaping:
                     all:
                         request_timeout: 500ms
@@ -1332,6 +1356,9 @@ mod circuit_breaker_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                error_masking:
+                  all:
+                    enabled: false
                 traffic_shaping:
                     all:
                         circuit_breaker:
@@ -1408,6 +1435,9 @@ mod circuit_breaker_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                error_masking:
+                  all:
+                    enabled: false
                 traffic_shaping:
                     all:
                         circuit_breaker:
@@ -1490,6 +1520,9 @@ mod circuit_breaker_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                error_masking:
+                  all:
+                    enabled: false
                 traffic_shaping:
                     all:
                         circuit_breaker:
@@ -1579,6 +1612,9 @@ mod circuit_breaker_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                error_masking:
+                  all:
+                    enabled: false
                 traffic_shaping:
                     all:
                         circuit_breaker:
@@ -1755,6 +1791,9 @@ mod circuit_breaker_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                error_masking:
+                  all:
+                    enabled: false
                 traffic_shaping:
                     all:
                         circuit_breaker:

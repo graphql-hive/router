@@ -16,3 +16,6 @@ traffic_shaping:
           } else {
             .default
           }
+error_masking:
+  all:
+    enabled: false
