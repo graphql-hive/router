@@ -330,7 +330,7 @@ pub struct RouterSharedState {
     /// The storage manager for the router.
     pub storage_manager: Arc<StorageManager>,
     /// The error masking configuration for the router.
-    pub error_masking: Arc<ErrorMaskingRuntime>,
+    pub error_masking: Arc<Option<ErrorMaskingRuntime>>,
 }
 
 impl RouterSharedState {

@@ -5,6 +5,13 @@ use std::collections::HashMap;
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ErrorMaskingConfig {
+    /// A switch for enabling or disabling error masking feature completely.
+    ///
+    /// Defaults to `true`.
+    ///
+    /// You can also disable it by setting the `DISABLE_SUBGRAPH_ERROR_MASKING=true` environment variable.
+    #[serde(default = "default_feature_enabled")]
+    pub enabled: bool,
     /// The error message to redact in subgraph errors. The default is "Unexpected error".
     #[serde(default = "default_redacted_error_message")]
     pub redacted_error_message: String,
@@ -17,6 +24,10 @@ pub struct ErrorMaskingConfig {
     pub subgraphs: Option<HashMap<String, SubgraphErrorMaskingConfig>>,
 }
 
+fn default_feature_enabled() -> bool {
+    true
+}
+
 fn default_redacted_error_message() -> String {
     "Unexpected error".to_string()
 }
@@ -27,6 +38,7 @@ impl Default for ErrorMaskingConfig {
             redacted_error_message: default_redacted_error_message(),
             all: AllErrorMaskingConfig::default(),
             subgraphs: None,
+            enabled: default_feature_enabled(),
         }
     }
 }
@@ -35,8 +47,6 @@ impl Default for ErrorMaskingConfig {
 #[serde(deny_unknown_fields)]
 pub struct AllErrorMaskingConfig {
     /// Whether to redact the error message in subgraph errors. The default is `true`.
-    ///
-    /// This field can be set to `false`, in order to disable error masking, by setting the `DISABLE_SUBGRAPH_ERROR_MASKING=true` environment variable.
     #[serde(default = "default_redact_error_message")]
     pub enabled: bool,
     /// Whether to redact the `extensions` in errors.

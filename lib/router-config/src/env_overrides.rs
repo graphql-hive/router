@@ -202,10 +202,8 @@ impl EnvVarOverrides {
                 disable_subgraph_error_masking
             );
 
-            config = config.set_override(
-                "error_masking.all.error_message",
-                !disable_subgraph_error_masking,
-            )?;
+            config =
+                config.set_override("error_masking.enabled", !disable_subgraph_error_masking)?;
         }
 
         Ok(config)

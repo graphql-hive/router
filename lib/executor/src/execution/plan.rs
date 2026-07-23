@@ -135,7 +135,7 @@ pub struct QueryPlanExecutionOpts<'exec> {
     pub plugin_req_state: Option<PluginRequestState<'exec>>,
     pub operation_name_factory: OperationNameFactory,
     pub response_header_sink: ResponseHeaderSink,
-    pub error_masking_runtime: Arc<ErrorMaskingRuntime>,
+    pub error_masking_runtime: Arc<Option<ErrorMaskingRuntime>>,
 }
 
 pub struct PlanSubscriptionOutput {
@@ -642,8 +642,10 @@ async fn execute_query_plan_with_data<'exec>(
         }
     }
 
-    for error in &mut errors {
-        opts.error_masking_runtime.apply(error);
+    if let Some(error_masking_runtime) = opts.error_masking_runtime.as_ref() {
+        for error in &mut errors {
+            error_masking_runtime.apply(error);
+        }
     }
 
     let body = project_by_operation(
