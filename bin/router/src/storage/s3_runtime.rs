@@ -21,8 +21,42 @@ impl S3StorageRuntime {
     }
 
     fn build_client(config: &S3StorageConfig) -> Result<AmazonS3, StorageError> {
-        let mut builder = AmazonS3Builder::new()
-            .with_bucket_name(&resolve_value_or_expression(&config.bucket, "bucket")?);
+        // When no credentials are configured, seed the whole builder from the
+        // standard `AWS_*` environment variables so the ambient runtime works
+        // out of the box — most importantly EKS IRSA, where the pod identity
+        // webhook injects `AWS_WEB_IDENTITY_TOKEN_FILE` and `AWS_ROLE_ARN`.
+        //
+        // When credentials *are* configured explicitly we must NOT pull
+        // credentials from the environment: `from_env` would otherwise mix
+        // env-derived credentials into the configured ones — e.g. an env
+        // `AWS_SESSION_TOKEN` attaching itself to configured static keys, or
+        // env static keys taking object_store's internal precedence over a
+        // configured `web_identity` role. We still honour non-credential env
+        // vars (region, endpoint) as a fallback when they are not set in the
+        // config, so explicit credentials don't disable that convenience.
+        let mut builder = match &config.credentials {
+            None => AmazonS3Builder::from_env(),
+            Some(_) => {
+                let mut b = AmazonS3Builder::new();
+                if config.region.is_none() {
+                    if let Ok(region) = std::env::var("AWS_REGION")
+                        .or_else(|_| std::env::var("AWS_DEFAULT_REGION"))
+                    {
+                        b = b.with_region(region);
+                    }
+                }
+                if config.endpoint.is_none() {
+                    if let Ok(endpoint) = std::env::var("AWS_ENDPOINT_URL")
+                        .or_else(|_| std::env::var("AWS_ENDPOINT"))
+                    {
+                        b = b.with_endpoint(endpoint);
+                    }
+                }
+                b
+            }
+        };
+        builder =
+            builder.with_bucket_name(&resolve_value_or_expression(&config.bucket, "bucket")?);
 
         if let Some(region) = &config.region {
             builder = builder.with_region(&resolve_value_or_expression(region, "region")?);
