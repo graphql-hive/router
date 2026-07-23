@@ -176,6 +176,20 @@ impl FailedExecutionResult {
     }
 }
 
+#[inline]
+fn serialize_masked_failure(
+    mut error: GraphQLError,
+    error_masking_runtime: &Option<ErrorMaskingRuntime>,
+) -> Vec<u8> {
+    if let Some(runtime) = error_masking_runtime {
+        runtime.apply(&mut error);
+    }
+    FailedExecutionResult {
+        errors: vec![error],
+    }
+    .serialize()
+}
+
 fn early_http_response_into_execution_output(
     response: EarlyHTTPResponse,
     response_header_sink: &ResponseHeaderSink,
@@ -328,6 +342,7 @@ pub async fn execute_query_plan<'exec>(
         let client_jwt = opts.client_request.jwt.clone();
         let client_path_params = opts.client_request.path_params.into_owned();
         let response_header_sink = opts.response_header_sink.clone();
+        let error_masking_runtime = opts.error_masking_runtime.clone();
 
         let operation_name_factory = opts.operation_name_factory.clone();
 
@@ -352,9 +367,7 @@ pub async fn execute_query_plan<'exec>(
                         // we cannot guarantee that the subgraph will recover and clients might
                         // simply ignore errors wasting the router's resources
                         log_plan_execution_error(err);
-                        yield FailedExecutionResult {
-                            errors: vec![err.into()],
-                        }.serialize();
+                        yield serialize_masked_failure(err.into(), error_masking_runtime.as_ref());
                         return;
                     }
                 };
@@ -402,9 +415,7 @@ pub async fn execute_query_plan<'exec>(
                     Err(ref err) => {
                         // fatal error, stream it and stop
                         log_plan_execution_error(err);
-                        yield FailedExecutionResult {
-                            errors: vec![err.into()],
-                        }.serialize();
+                        yield serialize_masked_failure(err.into(), error_masking_runtime.as_ref());
                         return;
                     }
                 }
