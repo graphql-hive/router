@@ -170,3 +170,20 @@ pub trait WithRequestSummary: Future + Sized {
 }
 
 impl<F: Future> WithRequestSummary for F {}
+
+/// Emits the request summary when dropped, recording request duration from `started_at`.
+pub struct SummaryOnDrop {
+    started_at: std::time::Instant,
+}
+
+impl SummaryOnDrop {
+    pub fn new(started_at: std::time::Instant) -> Self {
+        Self { started_at }
+    }
+}
+impl Drop for SummaryOnDrop {
+    fn drop(&mut self) {
+        record(|s| s.set_duration(self.started_at.elapsed()));
+        emit();
+    }
+}
