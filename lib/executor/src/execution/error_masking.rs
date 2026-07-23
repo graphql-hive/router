@@ -40,8 +40,12 @@ impl ErrorMaskingRuntime {
         }
     }
 
-    pub fn compile_from_config(config: &ErrorMaskingConfig) -> Self {
-        Self {
+    pub fn compile_from_config(config: &ErrorMaskingConfig) -> Option<Self> {
+        if !config.enabled {
+            return None;
+        }
+
+        Some(Self {
             redacted_error_message: config.redacted_error_message.clone(),
             default_error_masking: config.all.enabled,
             per_subgraph_error_masking: config
@@ -69,7 +73,7 @@ impl ErrorMaskingRuntime {
                         .collect()
                 })
                 .unwrap_or_default(),
-        }
+        })
     }
 }
 
