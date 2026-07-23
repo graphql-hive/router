@@ -1,4 +1,12 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.43 (2026-07-23)
+
+### Fixes
+
+#### Support custom GraphQL root type names
+
+Hive Router now reads `query`, `mutation`, and `subscription` root type names from the schema instead of assuming they are named `Query`, `Mutation`, and `Subscription`.
+
 ## 0.0.42 (2026-07-20)
 
 ### Fixes
