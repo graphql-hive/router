@@ -18,4 +18,4 @@ traffic_shaping:
           }
 error_masking:
   all:
-    error_message: false
+    enabled: false

@@ -14,7 +14,7 @@ mod subgraph_budgets_tests {
             path: supergraph.graphql
         error_masking:
           all:
-            error_message: false
+            enabled: false
         demand_control:
             enabled: true
             operation_cost:

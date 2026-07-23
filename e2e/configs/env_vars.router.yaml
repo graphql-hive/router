@@ -15,4 +15,4 @@ headers:
           expression: env("ROUTER_ENV_HEADER", "default")
 error_masking:
   all:
-    error_message: false
+    enabled: false
