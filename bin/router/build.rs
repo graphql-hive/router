@@ -123,7 +123,107 @@ fn build_inline_laboratory_html(dist_dir: &Path, product_logo: &Path) -> String 
 
 {js_contents}
 
-      HiveLaboratory.renderLaboratory(window.document.querySelector("#root"));
+      // The router always replaces this placeholder, with {{}} when nothing is configured.
+      var hiveRouterSeed = {{}};
+      try {{
+        hiveRouterSeed = JSON.parse("__LABORATORY_PROPS__");
+      }} catch (error) {{
+        console.warn("Failed to read the Laboratory configuration", error);
+      }}
+
+      // Merges the seed with what the Laboratory has already persisted, so seeding does not
+      // discard the user's own tabs and operations.
+      function hiveRouterLaboratoryProps(seed) {{
+        var STORAGE_NAMESPACE = "hive-laboratory";
+        var SEEDED_TABS_KEY = "hive-router:seeded-tab-ids";
+        var props = {{}};
+
+        function readStored(key) {{
+          try {{
+            var raw = window.localStorage.getItem(STORAGE_NAMESPACE + ":" + key);
+            return raw ? JSON.parse(raw) : null;
+          }} catch (error) {{
+            return null;
+          }}
+        }}
+
+        // The preflight script is operator-controlled, so the configured value always wins.
+        if (seed.preflight) {{
+          props.defaultPreflight = seed.preflight;
+        }}
+
+        var seededOperations = seed.operations || [];
+        if (seededOperations.length > 0) {{
+          var storedOperations = readStored("operations") || [];
+          var storedTabs = readStored("tabs") || [];
+
+          var seededOperationIds = seededOperations.map(function (operation) {{
+            return operation.id;
+          }});
+
+          // Seeded operations are refreshed from config; user-created ones are kept.
+          props.defaultOperations = seededOperations.concat(
+            storedOperations.filter(function (operation) {{
+              return seededOperationIds.indexOf(operation.id) === -1;
+            }})
+          );
+
+          // A seeded tab opens only the first time this browser sees it, so closing it makes it
+          // stay closed while newly configured operations still show up.
+          var alreadySeededTabIds = [];
+          try {{
+            alreadySeededTabIds =
+              JSON.parse(window.localStorage.getItem(SEEDED_TABS_KEY)) || [];
+          }} catch (error) {{
+            alreadySeededTabIds = [];
+          }}
+
+          var openTabIds = storedTabs.map(function (tab) {{
+            return tab.id;
+          }});
+          var newTabs = (seed.tabs || []).filter(function (tab) {{
+            return (
+              openTabIds.indexOf(tab.id) === -1 &&
+              alreadySeededTabIds.indexOf(tab.id) === -1
+            );
+          }});
+
+          props.defaultTabs = storedTabs.concat(newTabs);
+
+          try {{
+            var seenTabIds = alreadySeededTabIds.slice();
+            (seed.tabs || []).forEach(function (tab) {{
+              if (seenTabIds.indexOf(tab.id) === -1) {{
+                seenTabIds.push(tab.id);
+              }}
+            }});
+            window.localStorage.setItem(SEEDED_TABS_KEY, JSON.stringify(seenTabIds));
+          }} catch (error) {{
+            // Best-effort: unavailable storage only means a closed seeded tab may re-open later.
+          }}
+
+          // Keep the user where they left off, unless a brand new operation was just seeded.
+          var storedActiveTabId = readStored("activeTabId");
+          var storedTabIsStillOpen = props.defaultTabs.some(function (tab) {{
+            return tab.id === storedActiveTabId;
+          }});
+
+          if (newTabs.length > 0) {{
+            props.defaultActiveTabId = newTabs[0].id;
+          }} else if (storedTabIsStillOpen) {{
+            props.defaultActiveTabId = storedActiveTabId;
+          }} else if (seed.activeTabId) {{
+            props.defaultActiveTabId = seed.activeTabId;
+          }}
+        }}
+
+        return props;
+      }}
+
+      HiveLaboratory.renderLaboratory(
+        window.document.querySelector("#root"),
+        hiveRouterLaboratoryProps(hiveRouterSeed)
+      );
     </script>
   </body>
 </html>
