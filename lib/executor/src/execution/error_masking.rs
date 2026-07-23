@@ -43,7 +43,7 @@ impl ErrorMaskingRuntime {
     pub fn compile_from_config(config: &ErrorMaskingConfig) -> Self {
         Self {
             redacted_error_message: config.redacted_error_message.clone(),
-            default_error_masking: config.all.error_message,
+            default_error_masking: config.all.enabled,
             per_subgraph_error_masking: config
                 .subgraphs
                 .as_ref()
@@ -51,10 +51,7 @@ impl ErrorMaskingRuntime {
                     subgraphs
                         .iter()
                         .map(|(name, cfg)| {
-                            (
-                                name.clone(),
-                                cfg.error_message.unwrap_or(config.all.error_message),
-                            )
+                            (name.clone(), cfg.enabled.unwrap_or(config.all.enabled))
                         })
                         .collect()
                 })

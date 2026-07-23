@@ -38,7 +38,7 @@ pub struct AllErrorMaskingConfig {
     ///
     /// This field can be set to `false`, in order to disable error masking, by setting the `DISABLE_SUBGRAPH_ERROR_MASKING=true` environment variable.
     #[serde(default = "default_redact_error_message")]
-    pub error_message: bool,
+    pub enabled: bool,
     /// Whether to redact the `extensions` in errors.
     ///
     /// You may pick the execution mode by setting `mode: allow` or `mode: deny`.
@@ -54,7 +54,7 @@ fn default_redact_error_message() -> bool {
 impl Default for AllErrorMaskingConfig {
     fn default() -> Self {
         Self {
-            error_message: true,
+            enabled: true,
             extensions: None,
         }
     }
@@ -67,7 +67,7 @@ pub struct SubgraphErrorMaskingConfig {
     ///
     /// Configuring this will override the global `all.error_message` setting.
     #[serde(default)]
-    pub error_message: Option<bool>,
+    pub enabled: Option<bool>,
     /// Whether to redact the `extensions` in errors, for that specific subgraph.
     /// Configuring this will override the global `all.extensions` setting.
     ///

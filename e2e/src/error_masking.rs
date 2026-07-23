@@ -55,7 +55,7 @@ mod error_masking_e2e_tests {
                   path: supergraph.graphql
                 error_masking:
                   all:
-                    error_message: true
+                    enabled: true
                 override_subgraph_urls:
                   subgraphs:
                     accounts:
@@ -242,7 +242,7 @@ mod error_masking_e2e_tests {
                 &subgraphs.url(),
                 r#"error_masking:
                 all:
-                  error_message: false
+                  enabled: false
             "#,
             ))
             .build()
@@ -321,7 +321,7 @@ mod error_masking_e2e_tests {
                 &subgraphs.url(),
                 r#"error_masking:
                 all:
-                  error_message: true # enabled here, but disabled via env var
+                  enabled: true # enabled here, but disabled via env var
             "#,
             ))
             .build()
@@ -468,7 +468,7 @@ mod error_masking_e2e_tests {
                 &subgraphs.url(),
                 r#"error_masking:
                 all:
-                  error_message: true
+                  enabled: true
                   extensions:
                     mode: allow
                     keys:
@@ -551,7 +551,7 @@ mod error_masking_e2e_tests {
                     url: "http://0.0.0.0:1000/products"
               error_masking:
                 all:
-                  error_message: true
+                  enabled: true
                   extensions:
                     mode: deny
                     keys:
@@ -629,7 +629,7 @@ mod error_masking_e2e_tests {
                     url: "http://0.0.0.0:1000/products"
               error_masking:
                 all:
-                  error_message: true
+                  enabled: true
                   extensions:
                     mode: deny
                     keys:
@@ -714,10 +714,10 @@ mod error_masking_e2e_tests {
                     url: "http://0.0.0.0:1000/products"
               error_masking:
                 all:
-                  error_message: true
+                  enabled: true
                 subgraphs:
                   products:
-                    error_message: false
+                    enabled: false
             "#,
             ))
             .build()
@@ -782,14 +782,14 @@ mod error_masking_e2e_tests {
                 &subgraphs.url(),
                 r#"error_masking:
                 all:
-                  error_message: true
+                  enabled: true
                   extensions:
                     mode: allow
                     keys:
                       - code
                 subgraphs:
                   products:
-                    error_message: false
+                    enabled: false
             "#,
             ))
             .build()
@@ -868,13 +868,13 @@ mod error_masking_e2e_tests {
                     url: "http://0.0.0.0:1000/products"
               error_masking:
                 all:
-                  error_message: true
+                  enabled: true
                   extensions:
                     mode: allow
                     keys: [] # allow none!
                 subgraphs:
                   products:
-                    error_message: false
+                    enabled: false
                     extensions:
                       mode: deny
                       keys: [] # dont deny anything!
