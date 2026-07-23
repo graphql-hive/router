@@ -24,7 +24,7 @@ error_masking:
         - code
   subgraphs:
     products:
-      error_message: false
+      enabled: false
 ```
 
 - `error_message` toggles message redaction; `extensions` redacts extension keys via an `allow`/`deny` list.

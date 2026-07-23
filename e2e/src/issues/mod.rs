@@ -1290,7 +1290,7 @@ mod issues_e2e_tests {
                     path: src/issues/supergraph.non-null-root-field.graphql
                   error_masking:
                     all:
-                      error_message: false
+                      enabled: false
                   override_subgraph_urls:
                     subgraphs:
                       accounts:
@@ -1434,7 +1434,7 @@ mod issues_e2e_tests {
                     path: src/issues/supergraph.error-and-null-propagation.graphql
                   error_masking:
                     all:
-                      error_message: false
+                      enabled: false
                   override_subgraph_urls:
                     subgraphs:
                       accounts:
@@ -1696,7 +1696,7 @@ mod issues_e2e_tests {
                     path: src/issues/supergraph.error-and-null-propagation.graphql
                   error_masking:
                     all:
-                      error_message: false
+                      enabled: false
                   override_subgraph_urls:
                     subgraphs:
                       accounts:
@@ -2809,7 +2809,7 @@ mod issues_e2e_tests {
                     path: src/issues/supergraph.interface-shared-field.graphql
                   error_masking:
                     all:
-                      error_message: false
+                      enabled: false
                   override_subgraph_urls:
                     subgraphs:
                       a:
@@ -2898,7 +2898,7 @@ mod issues_e2e_tests {
                     path: src/issues/supergraph.union-shared-field.graphql
                   error_masking:
                     all:
-                      error_message: false
+                      enabled: false
                   override_subgraph_urls:
                     subgraphs:
                       a:
