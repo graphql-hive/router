@@ -30,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 2.10.11 (2026-07-23)
+
+### Fixes
+
+#### Support custom GraphQL root type names
+
+Hive Router now reads `query`, `mutation`, and `subscription` root type names from the schema instead of assuming they are named `Query`, `Mutation`, and `Subscription`.
+
 ## 2.10.10 (2026-07-20)
 
 ### Fixes

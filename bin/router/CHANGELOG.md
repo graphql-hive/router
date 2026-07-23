@@ -116,6 +116,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.85 (2026-07-23)
+
+### Features
+
+#### Health and readiness now pass through the plugin `on_http_request` chain and its `on_end` callbacks
+
+This is required because readiness in plugin-only mode must allow the plugin to select a supergraph for that specific readiness request.
+
+Coprocessors still do not run for health or readiness.
+
+### Fixes
+
+#### Drop `with_schema` from the `on_graphql_validation` plugin hook
+
+Remove `OnGraphQLValidationStartHookPayload::with_schema`. Replacing only the validation schema was unsafe because parsing, introspection, normalization, planning, demand control, execution, coprocessors, and schema-aware caches continued using the request's original supergraph.
+
+Plugins that need a request-specific schema should construct and retain an `Arc<Supergraph>`, then select it in `on_http_request`:
+
+```rust
+fn on_http_request<'req>(
+    &'req self,
+    payload: OnHttpRequestHookPayload<'req>,
+) -> OnHttpRequestHookResult<'req> {
+    payload.set_supergraph(self.supergraph_for_request(&payload));
+    payload.proceed()
+}
+```
+
+Build each variant with `Supergraph::from_sdl` or `Supergraph::from_document` outside the request hot path and reuse the same `Arc<Supergraph>`. The router snapshots the selected supergraph and applies it to the complete request pipeline.
+
+See `plugin_examples/replace_schema` for overriding a configured default and `plugin_examples/feature_flags` for plugin-only supergraph selection.
+
+#### Select a supergraph in the `on_http_request` plugin hook
+
+Add `OnHttpRequestHookPayload::set_supergraph`, allowing a plugin to select a stable `Arc<Supergraph>` for an HTTP request or WebSocket upgrade. The selected supergraph is used consistently for validation, introspection, normalization, planning, demand control, execution, coprocessors, usage reporting, and request deduplication.
+
+`Supergraph` contains schema-derived state only and can be built with `Supergraph::from_sdl` or `Supergraph::from_document`. Router-specific state, including subgraph executors and schema-aware caches, remains owned by the router. The router builds configured runtimes eagerly and plugin-selected runtimes lazily, reusing them through a bounded FIFO cache.
+
+Plugins own the lifetime of their supergraphs. Dropping the last `Arc<Supergraph>` retires that supergraph: ordinary in-flight requests finish from their snapshots, active subscriptions close with the schema-reload error, and the router removes any cached plugin runtime in the background. Runtime eviction (when the internal bounded FIFO cache of supergraph runtimes evicts) does not retire a supergraph - if reused later, the router will rebuild the internal supergraph runtime.
+
+See `plugin_examples/replace_schema` for overriding a configured default and `plugin_examples/feature_flags` for plugin-only supergraph selection.
+
+#### Support custom GraphQL root type names
+
+Hive Router now reads `query`, `mutation`, and `subscription` root type names from the schema instead of assuming they are named `Query`, `Mutation`, and `Subscription`.
+
+#### Upgrade to latest laboratory
+
+[@graphql-hive/laboratory@0.2.0](https://github.com/graphql-hive/console/releases/tag/%40graphql-hive%2Flaboratory%400.2.0)
+
+Remove the request retry setting from the laboratory.
+
+Retries are the wrong primitive for an interactive GraphQL IDE (the
+user re-runs operations, and schema introspection already polls), and the underlying HTTP executor
+retried on any GraphQL errors response while dropping request headers on the retry, so retries
+went out unauthenticated. Existing persisted retry values are ignored automatically.
+
 ## 0.0.84 (2026-07-20)
 
 ### Fixes
