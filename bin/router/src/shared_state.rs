@@ -30,6 +30,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::HashSet, sync::Arc};
 use tracing::debug;
 
+#[cfg(not(feature = "graphiql"))]
+use crate::http_utils::laboratory::{render_laboratory_html, LaboratoryConfigError};
 use crate::jwt::context::JwtTokenPayload;
 use crate::jwt::JwtAuthRuntime;
 use crate::pipeline::active_subscriptions::{ActiveSubscriptions, SubscriptionEvent};
@@ -328,6 +330,10 @@ pub struct RouterSharedState {
     pub active_subscriptions: ActiveSubscriptions,
     /// The storage manager for the router.
     pub storage_manager: Arc<StorageManager>,
+    /// The Laboratory page, with any configured seed values already injected. Rendered once
+    /// because the config cannot change while the router runs, and held as [`Bytes`] so serving
+    /// the multi-megabyte page is a refcount bump rather than a copy.
+    pub laboratory_html: Bytes,
 }
 
 impl RouterSharedState {
@@ -356,6 +362,8 @@ impl RouterSharedState {
                 .map_err(Box::new)
             })
             .transpose()?;
+
+        let laboratory_html = render_laboratory_page(&router_config.laboratory)?;
 
         Ok(Self {
             validation_plan: Arc::new(validation_plan),
@@ -392,8 +400,40 @@ impl RouterSharedState {
             long_lived_client_count: Arc::new(AtomicUsize::new(0)),
             active_subscriptions,
             storage_manager,
+            laboratory_html,
         })
     }
+}
+
+#[cfg(not(feature = "graphiql"))]
+fn render_laboratory_page(
+    config: &hive_router_config::laboratory::LaboratoryConfig,
+) -> Result<Bytes, SharedStateError> {
+    let html = render_laboratory_html(crate::LABORATORY_HTML, config).map_err(Box::new)?;
+
+    Ok(Bytes::from(html))
+}
+
+/// The `graphiql` feature swaps the Laboratory for a static GraphiQL page, which has nowhere to
+/// put the seed values.
+#[cfg(feature = "graphiql")]
+fn render_laboratory_page(
+    config: &hive_router_config::laboratory::LaboratoryConfig,
+) -> Result<Bytes, SharedStateError> {
+    // An empty script is what setting only LABORATORY_PREFLIGHT_ENABLED produces, and is not
+    // worth warning about.
+    let has_preflight = config
+        .preflight
+        .as_ref()
+        .is_some_and(|preflight| !preflight.script.trim().is_empty());
+
+    if has_preflight || !config.operations.is_empty() {
+        tracing::warn!(
+            "'laboratory.preflight' and 'laboratory.operations' are ignored because this router was built with the 'graphiql' feature."
+        );
+    }
+
+    Ok(Bytes::from_static(crate::LABORATORY_HTML.as_bytes()))
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -412,6 +452,9 @@ pub enum SharedStateError {
     IntrospectionPolicyCompile(#[from] Box<ExpressionCompileError>),
     #[error("invalid coprocessor config: {0}")]
     CoprocessorRuntime(#[from] Box<CoprocessorError>),
+    #[cfg(not(feature = "graphiql"))]
+    #[error("invalid laboratory config: {0}")]
+    LaboratoryConfig(#[from] Box<LaboratoryConfigError>),
 }
 
 #[cfg(test)]

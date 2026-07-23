@@ -45,6 +45,8 @@ mod issues;
 #[cfg(test)]
 mod jwt;
 #[cfg(test)]
+mod laboratory;
+#[cfg(test)]
 mod max_aliases;
 #[cfg(test)]
 mod max_depth;

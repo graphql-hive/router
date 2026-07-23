@@ -17,6 +17,8 @@ pub struct EnvVarOverrides {
     // Laboratory overrides
     #[envconfig(from = "LABORATORY_ENABLED")]
     pub laboratory_enabled: Option<bool>,
+    #[envconfig(from = "LABORATORY_PREFLIGHT_ENABLED")]
+    pub laboratory_preflight_enabled: Option<bool>,
 
     // WebSocket overrides
     #[envconfig(from = "WEBSOCKET_ENABLED")]
@@ -171,6 +173,14 @@ impl EnvVarOverrides {
             config = config.set_override("laboratory.enabled", laboratory_enabled)?;
         }
 
+        if let Some(preflight_enabled) = self.laboratory_preflight_enabled.take() {
+            debug!(
+                "[config-override] 'laboratory.preflight.enabled' = {}",
+                preflight_enabled
+            );
+            config = config.set_override("laboratory.preflight.enabled", preflight_enabled)?;
+        }
+
         if let Some(websocket_enabled) = self.websocket_enabled.take() {
             config = config.set_override("websocket.enabled", websocket_enabled)?;
         }
@@ -278,5 +288,50 @@ query_planner:
         .unwrap();
 
         assert!(config.query_planner.experimental_abstract_type_folding);
+    }
+
+    #[test]
+    fn laboratory_preflight_enabled_override_wins_over_config_file_value() {
+        let config = EnvVarOverrides {
+            laboratory_preflight_enabled: Some(false),
+            ..Default::default()
+        }
+        .apply_overrides(Config::builder().add_source(File::from_str(
+            r#"
+laboratory:
+  preflight:
+    enabled: true
+    script: "lab.request.headers.set('X-Env', 'staging');"
+"#,
+            FileFormat::Yaml,
+        )))
+        .unwrap()
+        .build()
+        .unwrap()
+        .try_deserialize::<HiveRouterConfig>()
+        .unwrap();
+
+        let preflight = config
+            .laboratory
+            .preflight
+            .expect("preflight should be present");
+        assert!(!preflight.enabled);
+        // The override must not discard the configured script.
+        assert!(preflight.script.contains("X-Env"));
+    }
+
+    #[test]
+    fn laboratory_preflight_enabled_override_without_a_configured_script() {
+        let config = config_from_overrides(EnvVarOverrides {
+            laboratory_preflight_enabled: Some(true),
+            ..Default::default()
+        });
+
+        let preflight = config
+            .laboratory
+            .preflight
+            .expect("preflight should be present");
+        assert!(preflight.enabled);
+        assert_eq!(preflight.script, "");
     }
 }

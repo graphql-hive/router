@@ -75,7 +75,6 @@ use crate::{
         RouterRequestDedupeHeaderPolicy, RouterSharedState, SharedRouterResponse,
         SharedRouterResponseGuard, SharedRouterSingleResponse, SharedRouterStreamResponse,
     },
-    LABORATORY_HTML,
 };
 
 use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
@@ -137,7 +136,7 @@ pub async fn graphql_request_handler(
     if *response_mode == ResponseMode::Laboratory {
         return Ok(web::HttpResponse::Ok()
             .header(CONTENT_TYPE, TEXT_HTML_MIME)
-            .body(LABORATORY_HTML));
+            .body(shared_state.laboratory_html.clone()));
     }
 
     let started_at = Instant::now();
