@@ -203,9 +203,9 @@ dependencies = [
 
 [[package]]
 name = "apollo-federation"
-version = "2.16.0"
+version = "2.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2880158195c37036555e5903e0b2dec6b14f7a452a4986d8a3f381298f1d87d0"
+checksum = "0650919367f7f56a348a7c096ecb8bfbbc5c0db0dc6d3ee0aeba51db1f522963"
 dependencies = [
  "apollo-compiler",
  "derive_more",
@@ -253,9 +253,9 @@ dependencies = [
 
 [[package]]
 name = "apollo-router"
-version = "2.16.0"
+version = "2.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c0ee942d38bef335a4a9a1ff1a7b460f4c4850a632f56e366e9c234fd486edb"
+checksum = "3f398e64754ec83c1dabd74e05a642c369ca26890aae5cf48825ccd760ae27c0"
 dependencies = [
  "addr2line",
  "ahash",
@@ -2965,7 +2965,7 @@ dependencies = [
 
 [[package]]
 name = "graphql-tools"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "combine",
  "itoa",
@@ -2997,7 +2997,7 @@ checksum = "aa0141e66c8d0302f8a586df12ad5d0cf87c0fa8c391f2f5b5dc296312dce569"
 dependencies = [
  "graphql-introspection-query",
  "graphql-parser",
- "heck 0.5.0",
+ "heck 0.4.1",
  "proc-macro2",
  "quote",
  "serde",
@@ -5611,8 +5611,8 @@ version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "343d3bd7056eda839b03204e68deff7d1b13aba7af2b2fd16890697274262ee7"
 dependencies = [
- "heck 0.5.0",
- "itertools 0.14.0",
+ "heck 0.4.1",
+ "itertools 0.11.0",
  "log",
  "multimap 0.10.1",
  "petgraph 0.8.3",
@@ -5633,7 +5633,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.11.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -5646,7 +5646,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27c6023962132f4b30eb4c172c91ce92d933da334c59c23cddee82358ddafb0b"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.11.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -7115,7 +7115,7 @@ version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
