@@ -2284,6 +2284,7 @@ Configuration for the Hive Laboratory interface.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|[**collections**](#laboratorycollections)|`object[]`|Collections to pre-populate the Laboratory with.<br/>||
 |**enabled**|`boolean`|Enables/disables the Hive Laboratory interface. By default, the Hive Laboratory interface is enabled.<br/><br/>You can override this setting by setting the `LABORATORY_ENABLED` environment variable to `true` or `false`.<br/>Default: `true`<br/>||
 |[**operations**](#laboratoryoperations)|`object[]`|Operations to pre-populate the Laboratory with.<br/>||
 |[**preflight**](#laboratorypreflight)|`object`, `null`|A script that runs in the browser before every operation executed from the Laboratory.<br/>||
@@ -2293,6 +2294,82 @@ Configuration for the Hive Laboratory interface.
 
 ```yaml
 enabled: true
+
+```
+
+   
+<a name="laboratorycollections"></a>
+### laboratory\.collections\[\]: array
+
+Collections to pre-populate the Laboratory with.
+
+A collection is a named, reusable group of operations shown in the Laboratory's sidebar. Use
+this to hand users a labelled set of standard queries they can browse and run.
+
+Seeded collections are refreshed from this configuration on every page load: a user can edit
+one during a session, but it resets on reload. To change a seeded collection permanently,
+change it here in the router configuration. Collections a user creates themselves are never
+touched.
+
+> Seeded collections are embedded in the HTML page served to every browser that opens the
+> Laboratory and are visible via "view source". Do not put secrets in `headers`.
+
+```yaml
+laboratory:
+  collections:
+    - name: Onboarding
+      operations:
+        - name: GetHello
+          query: |
+            query GetHello {
+              hello
+            }
+          headers: '{"X-Env": "staging"}'
+```
+
+
+**Items**
+
+**Item Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**name**|`string`|The name of the collection. Used as the sidebar label, and must be unique across all seeded<br/>collections.<br/>|yes|
+|[**operations**](#laboratorycollectionsoperations)|`object[]`|The operations in this collection. Operation names must be unique within the collection.<br/>|no|
+
+**Item Additional Properties:** not allowed   
+**Example**
+
+```yaml
+- operations:
+    - {}
+
+```
+
+   
+<a name="laboratorycollectionsoperations"></a>
+#### laboratory\.collections\[\]\.operations\[\]: array
+
+The operations in this collection. Operation names must be unique within the collection.
+
+
+**Items**
+
+**Item Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**extensions**|`string`, `null`|The operation's GraphQL extensions, as a JSON object encoded in a string.<br/><br/>Supports `{{name}}` references to the Laboratory's environment variables.<br/>|no|
+|**headers**|`string`, `null`|Headers to send with this operation, as a JSON object encoded in a string.<br/><br/>These apply only to this operation, and are merged on top of any headers set by the<br/>preflight script. To set headers on every operation, use `preflight` instead.<br/><br/>Supports `{{name}}` references to the Laboratory's environment variables.<br/>|no|
+|**name**|`string`|The name of the operation. Used as the tab title, and must be unique across all seeded<br/>operations.<br/>|yes|
+|**query**|`string`|The GraphQL document of the operation.<br/>|yes|
+|**variables**|`string`, `null`|The operation's variables, as a JSON object encoded in a string.<br/><br/>Supports `{{name}}` references to the Laboratory's environment variables.<br/>|no|
+
+**Item Additional Properties:** not allowed   
+**Example**
+
+```yaml
+- {}
 
 ```
 
