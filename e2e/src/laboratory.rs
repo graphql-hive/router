@@ -125,6 +125,38 @@ mod laboratory_e2e_tests {
     }
 
     #[ntex::test]
+    async fn injects_a_configured_collection() {
+        let router = start_router(
+            r#"
+            laboratory:
+              enabled: true
+              collections:
+                - name: Onboarding
+                  operations:
+                    - name: GetHello
+                      query: "query GetHello { hello }"
+                      headers: '{"X-Env": "staging"}'
+            "#,
+        )
+        .await;
+
+        let html = fetch_laboratory_html(&router).await;
+
+        assert!(
+            html.contains("router-seed-collection:Onboarding"),
+            "the seeded collection should reach the page"
+        );
+        assert!(
+            html.contains("router-seed-op:Onboarding:GetHello"),
+            "the collection operation should use its namespaced id"
+        );
+        assert!(
+            html.contains("query GetHello"),
+            "the collection operation query should be present"
+        );
+    }
+
+    #[ntex::test]
     async fn does_not_serve_the_laboratory_when_it_is_disabled() {
         let router = start_router(
             r#"
