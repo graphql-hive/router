@@ -104,6 +104,33 @@ pub struct LaboratoryConfig {
     /// ```
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub operations: Vec<LaboratoryOperationConfig>,
+    /// Collections to pre-populate the Laboratory with.
+    ///
+    /// A collection is a named, reusable group of operations shown in the Laboratory's sidebar. Use
+    /// this to hand users a labelled set of standard queries they can browse and run.
+    ///
+    /// Seeded collections are refreshed from this configuration on every page load: a user can edit
+    /// one during a session, but it resets on reload. To change a seeded collection permanently,
+    /// change it here in the router configuration. Collections a user creates themselves are never
+    /// touched.
+    ///
+    /// > Seeded collections are embedded in the HTML page served to every browser that opens the
+    /// > Laboratory and are visible via "view source". Do not put secrets in `headers`.
+    ///
+    /// ```yaml
+    /// laboratory:
+    ///   collections:
+    ///     - name: Onboarding
+    ///       operations:
+    ///         - name: GetHello
+    ///           query: |
+    ///             query GetHello {
+    ///               hello
+    ///             }
+    ///           headers: '{"X-Env": "staging"}'
+    /// ```
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub collections: Vec<LaboratoryCollectionConfig>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -148,6 +175,17 @@ pub struct LaboratoryOperationConfig {
     pub extensions: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct LaboratoryCollectionConfig {
+    /// The name of the collection. Used as the sidebar label, and must be unique across all seeded
+    /// collections.
+    pub name: String,
+    /// The operations in this collection. Operation names must be unique within the collection.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub operations: Vec<LaboratoryOperationConfig>,
+}
+
 fn default_laboratory_enabled() -> bool {
     true
 }
@@ -162,6 +200,7 @@ impl Default for LaboratoryConfig {
             enabled: default_laboratory_enabled(),
             preflight: None,
             operations: Vec::new(),
+            collections: Vec::new(),
         }
     }
 }
@@ -245,6 +284,59 @@ operations:
     }
 
     #[test]
+    fn parses_collections() {
+        let config = parse(
+            r#"
+collections:
+  - name: Onboarding
+    operations:
+      - name: GetHello
+        query: "query GetHello { hello }"
+        headers: '{"X-Env": "staging"}'
+      - name: ListUsers
+        query: "query ListUsers { users { id } }"
+  - name: Admin
+    operations:
+      - name: PurgeCache
+        query: "mutation PurgeCache { purge }"
+"#,
+        )
+        .expect("should parse");
+
+        assert_eq!(config.collections.len(), 2);
+
+        let onboarding = &config.collections[0];
+        assert_eq!(onboarding.name, "Onboarding");
+        assert_eq!(onboarding.operations.len(), 2);
+        assert_eq!(onboarding.operations[0].name, "GetHello");
+        assert_eq!(
+            onboarding.operations[0].headers.as_deref(),
+            Some(r#"{"X-Env": "staging"}"#)
+        );
+
+        assert_eq!(config.collections[1].name, "Admin");
+        assert_eq!(config.collections[1].operations.len(), 1);
+    }
+
+    #[test]
+    fn parses_a_config_with_only_collections() {
+        let config = parse(
+            r#"
+collections:
+  - name: Onboarding
+    operations:
+      - name: GetHello
+        query: "query GetHello { hello }"
+"#,
+        )
+        .expect("should parse");
+
+        assert!(config.preflight.is_none());
+        assert!(config.operations.is_empty());
+        assert_eq!(config.collections.len(), 1);
+    }
+
+    #[test]
     fn rejects_unknown_fields() {
         let error = parse(
             r#"
@@ -255,5 +347,20 @@ default_headers:
         .expect_err("unknown fields should be rejected");
 
         assert!(error.to_string().contains("default_headers"));
+    }
+
+    #[test]
+    fn rejects_unknown_fields_inside_a_collection() {
+        let error = parse(
+            r#"
+collections:
+  - name: Onboarding
+    description: not a real field
+    operations: []
+"#,
+        )
+        .expect_err("unknown collection fields should be rejected");
+
+        assert!(error.to_string().contains("description"));
     }
 }
