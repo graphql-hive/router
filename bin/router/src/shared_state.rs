@@ -427,9 +427,9 @@ fn render_laboratory_page(
         .as_ref()
         .is_some_and(|preflight| !preflight.script.trim().is_empty());
 
-    if has_preflight || !config.operations.is_empty() {
+    if has_preflight || !config.operations.is_empty() || !config.collections.is_empty() {
         tracing::warn!(
-            "'laboratory.preflight' and 'laboratory.operations' are ignored because this router was built with the 'graphiql' feature."
+            "'laboratory.preflight', 'laboratory.operations' and 'laboratory.collections' are ignored because this router was built with the 'graphiql' feature."
         );
     }
 

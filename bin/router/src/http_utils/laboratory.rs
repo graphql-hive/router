@@ -4,13 +4,20 @@
 //! Everything injected here is served to every browser that opens the Laboratory and is visible
 //! via "view source". It is a convenience for Laboratory users, not a place for secrets.
 
-use hive_router_config::laboratory::{LaboratoryConfig, LaboratoryOperationConfig};
+use hive_router_config::laboratory::{
+    LaboratoryCollectionConfig, LaboratoryConfig, LaboratoryOperationConfig,
+};
 use serde::Serialize;
 use sonic_rs::{JsonType, JsonValueTrait};
 use std::collections::HashSet;
 
 /// Sits inside a JavaScript string literal in the generated page.
 const PROPS_PLACEHOLDER: &str = "__LABORATORY_PROPS__";
+
+/// The Laboratory needs a parseable `createdAt` on a collection but (as of 0.2.0) never displays or
+/// sorts by a seeded one's value. Epoch is a deliberate sentinel: if a future version surfaces it,
+/// "1970" reads as a placeholder rather than a plausible-but-wrong date.
+const SEEDED_COLLECTION_CREATED_AT: &str = "1970-01-01T00:00:00.000Z";
 
 /// The page merges this with the state the Laboratory has already persisted in the browser, so it
 /// is deliberately not the shape of the Laboratory's own props.
@@ -25,6 +32,8 @@ pub struct LaboratorySeed {
     tabs: Vec<SeedTab>,
     #[serde(skip_serializing_if = "Option::is_none")]
     active_tab_id: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    collections: Vec<SeedCollection>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -60,26 +69,59 @@ struct SeedTabData {
     name: String,
 }
 
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct SeedCollection {
+    id: String,
+    name: String,
+    created_at: &'static str,
+    operations: Vec<SeedCollectionOperation>,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct SeedCollectionOperation {
+    id: String,
+    name: String,
+    query: String,
+    created_at: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    variables: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    headers: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extensions: Option<String>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum LaboratoryConfigError {
     #[error("laboratory.operations contains more than one operation named '{0}'")]
     DuplicateOperationName(String),
-    #[error("laboratory.operations[{index}].name must not be empty")]
-    EmptyOperationName { index: usize },
+    #[error("laboratory.collections contains more than one collection named '{0}'")]
+    DuplicateCollectionName(String),
     #[error(
-        "laboratory.operations[{index}] ('{name}') has an invalid '{field}': it must be a JSON object encoded in a string, for example '{{\"key\": \"value\"}}' ({source})"
+        "laboratory collection '{collection}' contains more than one operation named '{operation}'"
+    )]
+    DuplicateCollectionOperationName {
+        collection: String,
+        operation: String,
+    },
+    #[error("{location}.name must not be empty")]
+    EmptyName { location: String },
+    #[error(
+        "{location} ('{name}') has an invalid '{field}': it must be a JSON object encoded in a string, for example '{{\"key\": \"value\"}}' ({source})"
     )]
     InvalidJsonObject {
-        index: usize,
+        location: String,
         name: String,
         field: &'static str,
         source: sonic_rs::Error,
     },
     #[error(
-        "laboratory.operations[{index}] ('{name}') has an invalid '{field}': it must be a JSON object, not {actual}"
+        "{location} ('{name}') has an invalid '{field}': it must be a JSON object, not {actual}"
     )]
     NotAJsonObject {
-        index: usize,
+        location: String,
         name: String,
         field: &'static str,
         actual: &'static str,
@@ -99,12 +141,37 @@ fn tab_seed_id(name: &str) -> String {
     format!("router-seed-tab:{name}")
 }
 
+/// Name-derived so the merge recognises a seeded collection across reloads. Collection names are
+/// validated unique, so this single trailing segment needs no encoding.
+fn collection_seed_id(name: &str) -> String {
+    format!("router-seed-collection:{name}")
+}
+
+/// Namespaced by collection so the same operation name may appear in two collections. Each segment
+/// is encoded so a `:` in a name cannot make two distinct operations produce the same id.
+fn collection_operation_seed_id(collection: &str, operation: &str) -> String {
+    format!(
+        "router-seed-op:{}:{}",
+        encode_id_segment(collection),
+        encode_id_segment(operation)
+    )
+}
+
+/// Escapes `%` and `:` so an id segment cannot contain the separator.
+///
+/// `%` must be encoded first: encoding `:` first would turn a literal `%3A` and a real `:` into the
+/// same `%253A`, reintroducing the collision this exists to prevent.
+fn encode_id_segment(segment: &str) -> String {
+    segment.replace('%', "%25").replace(':', "%3A")
+}
+
 /// The Laboratory calls `JSON.parse` on these fields, so validating here turns a confusing
-/// browser-side failure into a startup error naming the offending operation.
+/// browser-side failure into a startup error naming the offending operation. `location` is the
+/// config path of the operation, e.g. `laboratory.operations[0]`.
 fn validate_json_object(
     value: &Option<String>,
     field: &'static str,
-    index: usize,
+    location: &str,
     name: &str,
 ) -> Result<(), LaboratoryConfigError> {
     let Some(value) = value else {
@@ -117,7 +184,7 @@ fn validate_json_object(
 
     let parsed: sonic_rs::Value =
         sonic_rs::from_str(value).map_err(|source| LaboratoryConfigError::InvalidJsonObject {
-            index,
+            location: location.to_string(),
             name: name.to_string(),
             field,
             source,
@@ -128,7 +195,7 @@ fn validate_json_object(
     }
 
     Err(LaboratoryConfigError::NotAJsonObject {
-        index,
+        location: location.to_string(),
         name: name.to_string(),
         field,
         actual: json_type_name(parsed.get_type()),
@@ -150,13 +217,7 @@ fn build_operation(
     index: usize,
     operation: &LaboratoryOperationConfig,
 ) -> Result<(SeedOperation, SeedTab), LaboratoryConfigError> {
-    if operation.name.trim().is_empty() {
-        return Err(LaboratoryConfigError::EmptyOperationName { index });
-    }
-
-    validate_json_object(&operation.variables, "variables", index, &operation.name)?;
-    validate_json_object(&operation.headers, "headers", index, &operation.name)?;
-    validate_json_object(&operation.extensions, "extensions", index, &operation.name)?;
+    validate_operation_fields(&format!("laboratory.operations[{index}]"), operation)?;
 
     let id = operation_seed_id(&operation.name);
 
@@ -179,6 +240,73 @@ fn build_operation(
     };
 
     Ok((seed_operation, tab))
+}
+
+/// Rejects a blank name and any field that is not a JSON object, naming the offending operation by
+/// its config `location`. Shared by top-level operations and collection operations.
+fn validate_operation_fields(
+    location: &str,
+    operation: &LaboratoryOperationConfig,
+) -> Result<(), LaboratoryConfigError> {
+    if operation.name.trim().is_empty() {
+        return Err(LaboratoryConfigError::EmptyName {
+            location: location.to_string(),
+        });
+    }
+
+    validate_json_object(&operation.variables, "variables", location, &operation.name)?;
+    validate_json_object(&operation.headers, "headers", location, &operation.name)?;
+    validate_json_object(
+        &operation.extensions,
+        "extensions",
+        location,
+        &operation.name,
+    )?;
+
+    Ok(())
+}
+
+fn build_collection(
+    index: usize,
+    collection: &LaboratoryCollectionConfig,
+) -> Result<SeedCollection, LaboratoryConfigError> {
+    if collection.name.trim().is_empty() {
+        return Err(LaboratoryConfigError::EmptyName {
+            location: format!("laboratory.collections[{index}]"),
+        });
+    }
+
+    let mut seen_names = HashSet::with_capacity(collection.operations.len());
+    let mut operations = Vec::with_capacity(collection.operations.len());
+
+    for (op_index, operation) in collection.operations.iter().enumerate() {
+        let location = format!("laboratory.collections[{index}].operations[{op_index}]");
+        validate_operation_fields(&location, operation)?;
+
+        if !seen_names.insert(operation.name.as_str()) {
+            return Err(LaboratoryConfigError::DuplicateCollectionOperationName {
+                collection: collection.name.clone(),
+                operation: operation.name.clone(),
+            });
+        }
+
+        operations.push(SeedCollectionOperation {
+            id: collection_operation_seed_id(&collection.name, &operation.name),
+            name: operation.name.clone(),
+            query: operation.query.clone(),
+            created_at: SEEDED_COLLECTION_CREATED_AT,
+            variables: operation.variables.clone(),
+            headers: operation.headers.clone(),
+            extensions: operation.extensions.clone(),
+        });
+    }
+
+    Ok(SeedCollection {
+        id: collection_seed_id(&collection.name),
+        name: collection.name.clone(),
+        created_at: SEEDED_COLLECTION_CREATED_AT,
+        operations,
+    })
 }
 
 pub fn build_laboratory_seed(
@@ -215,11 +343,27 @@ pub fn build_laboratory_seed(
 
     let active_tab_id = tabs.first().map(|tab| tab.id.clone());
 
+    let mut seen_collection_names = HashSet::with_capacity(config.collections.len());
+    let mut collections = Vec::with_capacity(config.collections.len());
+
+    for (index, collection) in config.collections.iter().enumerate() {
+        let seed_collection = build_collection(index, collection)?;
+
+        if !seen_collection_names.insert(collection.name.as_str()) {
+            return Err(LaboratoryConfigError::DuplicateCollectionName(
+                collection.name.clone(),
+            ));
+        }
+
+        collections.push(seed_collection);
+    }
+
     Ok(LaboratorySeed {
         preflight,
         operations,
         tabs,
         active_tab_id,
+        collections,
     })
 }
 
@@ -280,6 +424,23 @@ mod tests {
     fn config_with_operations(operations: Vec<LaboratoryOperationConfig>) -> LaboratoryConfig {
         LaboratoryConfig {
             operations,
+            ..Default::default()
+        }
+    }
+
+    fn collection(
+        name: &str,
+        operations: Vec<LaboratoryOperationConfig>,
+    ) -> LaboratoryCollectionConfig {
+        LaboratoryCollectionConfig {
+            name: name.to_string(),
+            operations,
+        }
+    }
+
+    fn config_with_collections(collections: Vec<LaboratoryCollectionConfig>) -> LaboratoryConfig {
+        LaboratoryConfig {
+            collections,
             ..Default::default()
         }
     }
@@ -362,7 +523,7 @@ mod tests {
             "the laboratory storage namespace changed"
         );
 
-        for key in ["operations", "tabs", "activeTabId"] {
+        for key in ["operations", "tabs", "activeTabId", "collections"] {
             assert!(
                 page.contains(&format!("readStored(\"{key}\")")),
                 "the page no longer reads the '{key}' laboratory storage key"
@@ -391,6 +552,7 @@ mod tests {
                 script: "lab.request.headers.set('X-Env', 'staging');".to_string(),
             }),
             operations: vec![operation("GetHello")],
+            collections: vec![collection("Onboarding", vec![operation("ListUsers")])],
             ..Default::default()
         };
 
@@ -401,7 +563,7 @@ mod tests {
 
         assert_eq!(
             fields.len(),
-            4,
+            5,
             "every seed field must be populated for this test to be meaningful"
         );
 
@@ -516,8 +678,8 @@ mod tests {
 
         assert!(
             matches!(
-                error,
-                LaboratoryConfigError::EmptyOperationName { index: 0 }
+                &error,
+                LaboratoryConfigError::EmptyName { location } if location == "laboratory.operations[0]"
             ),
             "unexpected error: {error}"
         );
@@ -534,6 +696,196 @@ mod tests {
         assert!(
             matches!(error, LaboratoryConfigError::DuplicateOperationName(name) if name == "GetHello"),
             "unexpected error"
+        );
+    }
+
+    #[test]
+    fn seeds_a_collection_with_namespaced_operation_ids() {
+        let seed = build_laboratory_seed(&config_with_collections(vec![collection(
+            "Onboarding",
+            vec![operation("GetHello"), operation("ListUsers")],
+        )]))
+        .expect("should build");
+
+        assert_eq!(seed.collections.len(), 1);
+        let coll = &seed.collections[0];
+        assert_eq!(coll.id, "router-seed-collection:Onboarding");
+        assert_eq!(coll.name, "Onboarding");
+        assert_eq!(coll.created_at, SEEDED_COLLECTION_CREATED_AT);
+        assert_eq!(coll.operations.len(), 2);
+        assert_eq!(coll.operations[0].id, "router-seed-op:Onboarding:GetHello");
+        assert_eq!(coll.operations[0].created_at, SEEDED_COLLECTION_CREATED_AT);
+
+        // Collections are self-contained: they do not add top-level operations or tabs.
+        assert!(seed.operations.is_empty());
+        assert!(seed.tabs.is_empty());
+    }
+
+    #[test]
+    fn the_same_operation_name_in_two_collections_gets_distinct_ids() {
+        let seed = build_laboratory_seed(&config_with_collections(vec![
+            collection("A", vec![operation("GetHello")]),
+            collection("B", vec![operation("GetHello")]),
+        ]))
+        .expect("should build");
+
+        assert_ne!(seed.collections[0].id, seed.collections[1].id);
+        assert_ne!(
+            seed.collections[0].operations[0].id,
+            seed.collections[1].operations[0].id
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_collection_names() {
+        let error = build_laboratory_seed(&config_with_collections(vec![
+            collection("Onboarding", vec![operation("A")]),
+            collection("Onboarding", vec![operation("B")]),
+        ]))
+        .expect_err("duplicate collection names should be rejected");
+
+        assert!(
+            matches!(&error, LaboratoryConfigError::DuplicateCollectionName(name) if name == "Onboarding"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_operation_names_within_a_collection() {
+        let error = build_laboratory_seed(&config_with_collections(vec![collection(
+            "Onboarding",
+            vec![operation("GetHello"), operation("GetHello")],
+        )]))
+        .expect_err("duplicate operation names within a collection should be rejected");
+
+        assert!(
+            matches!(
+                &error,
+                LaboratoryConfigError::DuplicateCollectionOperationName { collection, operation }
+                    if collection == "Onboarding" && operation == "GetHello"
+            ),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn reports_a_blank_collection_name_with_its_location() {
+        let error = build_laboratory_seed(&config_with_collections(vec![collection(
+            "  ",
+            vec![operation("A")],
+        )]))
+        .expect_err("a blank collection name should be rejected");
+
+        assert!(
+            matches!(&error, LaboratoryConfigError::EmptyName { location } if location == "laboratory.collections[0]"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn rejects_non_object_headers_in_a_collection_operation_with_its_location() {
+        let mut op = operation("GetHello");
+        op.headers = Some("not json".to_string());
+
+        let error = build_laboratory_seed(&config_with_collections(vec![collection(
+            "Onboarding",
+            vec![op],
+        )]))
+        .expect_err("invalid JSON in a collection operation should be rejected");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("laboratory.collections[0].operations[0]"),
+            "the error should name the collection path: {message}"
+        );
+        assert!(message.contains("'headers'"), "unexpected error: {message}");
+    }
+
+    #[test]
+    fn collection_created_at_serializes_as_camel_case() {
+        // `createdAt` is nested, so the top-level field test does not cover a serde rename on it.
+        // The Laboratory calls `new Date(createdAt)`, so the key name and value both matter.
+        let json = sonic_rs::to_string(
+            &build_laboratory_seed(&config_with_collections(vec![collection(
+                "Onboarding",
+                vec![operation("GetHello")],
+            )]))
+            .expect("should build"),
+        )
+        .expect("should serialize");
+
+        let expected = format!("\"createdAt\":\"{SEEDED_COLLECTION_CREATED_AT}\"");
+        assert!(
+            json.contains(&expected),
+            "the collection and its operation must serialize createdAt as camelCase: {json}"
+        );
+        // Both the collection and its one operation carry it.
+        assert_eq!(json.matches(&expected).count(), 2, "{json}");
+        assert!(
+            !json.contains("created_at"),
+            "createdAt must not serialize as snake_case: {json}"
+        );
+    }
+
+    #[test]
+    fn collection_operation_ids_cannot_collide_when_names_contain_a_colon() {
+        // collection "a:b" op "c"  vs  collection "a" op "b:c" would collide under a naive join.
+        let seed = build_laboratory_seed(&config_with_collections(vec![
+            collection("a:b", vec![operation("c")]),
+            collection("a", vec![operation("b:c")]),
+        ]))
+        .expect("should build");
+
+        assert_ne!(
+            seed.collections[0].operations[0].id, seed.collections[1].operations[0].id,
+            "colon-containing names produced a colliding operation id"
+        );
+    }
+
+    #[test]
+    fn id_encoding_stays_injective_for_percent_and_colon() {
+        // Pins the encode order: a literal "%3A" and a real ":" must not collapse to the same id.
+        let seed = build_laboratory_seed(&config_with_collections(vec![collection(
+            "C",
+            vec![operation("%3A"), operation(":")],
+        )]))
+        .expect("should build");
+
+        assert_ne!(
+            seed.collections[0].operations[0].id, seed.collections[0].operations[1].id,
+            "'%3A' and ':' produced a colliding operation id (encode order regressed)"
+        );
+    }
+
+    #[test]
+    fn reports_a_blank_collection_operation_name_with_its_location() {
+        let error = build_laboratory_seed(&config_with_collections(vec![collection(
+            "Onboarding",
+            vec![operation("  ")],
+        )]))
+        .expect_err("a blank collection operation name should be rejected");
+
+        assert!(
+            matches!(&error, LaboratoryConfigError::EmptyName { location } if location == "laboratory.collections[0].operations[0]"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn a_config_with_only_collections_is_injected() {
+        let html = render_laboratory_html(
+            TEMPLATE,
+            &config_with_collections(vec![collection("Onboarding", vec![operation("GetHello")])]),
+        )
+        .expect("should render");
+
+        assert!(
+            !html.contains(PROPS_PLACEHOLDER),
+            "the placeholder must be replaced when only collections are configured"
+        );
+        assert!(
+            html.contains("router-seed-collection:Onboarding"),
+            "the seeded collection must reach the page"
         );
     }
 
@@ -598,6 +950,28 @@ mod tests {
         );
 
         assert_eq!(parse_injected_seed(&html).preflight.unwrap().script, script);
+    }
+
+    #[test]
+    fn a_collection_operation_query_cannot_break_out_of_the_element() {
+        let mut op = operation("Evil");
+        op.query = "query { field } // </script><script>alert(1)</script>".to_string();
+
+        let html = render_laboratory_html(
+            TEMPLATE,
+            &config_with_collections(vec![collection("Onboarding", vec![op])]),
+        )
+        .unwrap();
+
+        assert!(
+            !html.to_lowercase().contains("</script><script>"),
+            "the collection query escaped the string literal: {html}"
+        );
+        assert_eq!(
+            html.to_lowercase().matches("</script>").count(),
+            1,
+            "unexpected number of closing script tags: {html}"
+        );
     }
 
     #[test]

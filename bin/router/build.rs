@@ -152,6 +152,20 @@ fn build_inline_laboratory_html(dist_dir: &Path, product_logo: &Path) -> String 
           props.defaultPreflight = seed.preflight;
         }}
 
+        // Seeded collections are refreshed from config wholesale; user-created ones are kept.
+        var seededCollections = seed.collections || [];
+        if (seededCollections.length > 0) {{
+          var storedCollections = readStored("collections") || [];
+          var seededCollectionIds = seededCollections.map(function (collection) {{
+            return collection.id;
+          }});
+          props.defaultCollections = seededCollections.concat(
+            storedCollections.filter(function (collection) {{
+              return seededCollectionIds.indexOf(collection.id) === -1;
+            }})
+          );
+        }}
+
         var seededOperations = seed.operations || [];
         if (seededOperations.length > 0) {{
           var storedOperations = readStored("operations") || [];
