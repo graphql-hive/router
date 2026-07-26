@@ -9,6 +9,7 @@
 |[**cors**](#cors)|`object`|Configuration for CORS (Cross-Origin Resource Sharing).<br/>Default: `{"allow_any_origin":false,"allow_credentials":false,"enabled":false,"policies":[]}`<br/>|yes|
 |[**csrf**](#csrf)|`object`|Configuration for CSRF prevention.<br/>Default: `{"enabled":false,"required_headers":[]}`<br/>||
 |[**demand\_control**](#demand_control)|`object`, `null`||yes|
+|[**error\_masking**](#error_masking)|`object`|Configuration for error masking.<br/>Default: `{"all":{"enabled":true},"enabled":true,"redacted_error_message":"Unexpected error"}`<br/>||
 |[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"graphql_endpoint":"/graphql","host":"0.0.0.0","port":4000}`<br/>||
 |**introspection**||Configuration to enable or disable introspection queries.<br/>||
@@ -57,6 +58,11 @@ csrf:
   enabled: true
   required_headers:
     - x-csrf-token
+error_masking:
+  all:
+    enabled: true
+  enabled: true
+  redacted_error_message: Unexpected error
 headers:
   all:
     request:
@@ -1033,6 +1039,81 @@ Per-subgraph overrides. Keys are subgraph names.
 |----|----|-----------|--------|
 |**Additional Properties**|`integer`|Format: `"uint"`<br/>Minimum: `0`<br/>||
 
+   
+<a name="error_masking"></a>
+## error\_masking: object
+
+Configuration for error masking.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**all**](#error_maskingall)|`object`|The default error masking configuration for all subgraphs.<br/>Default: `{"enabled":true}`<br/>||
+|**enabled**|`boolean`|A switch for enabling or disabling error masking feature completely.<br/><br/>Defaults to `true`.<br/><br/>You can also disable it by setting the `DISABLE_SUBGRAPH_ERROR_MASKING=true` environment variable.<br/>Default: `true`<br/>||
+|**redacted\_error\_message**|`string`|The error message to redact in subgraph errors. The default is "Unexpected error".<br/>Default: `"Unexpected error"`<br/>||
+|[**subgraphs**](#error_maskingsubgraphs)|`object`, `null`|The error masking configuration for individual subgraphs.<br/>||
+
+**Additional Properties:** not allowed   
+**Example**
+
+```yaml
+all:
+  enabled: true
+enabled: true
+redacted_error_message: Unexpected error
+
+```
+
+   
+<a name="error_maskingall"></a>
+### error\_masking\.all: object
+
+The default error masking configuration for all subgraphs.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**enabled**|`boolean`|Whether to redact the error message in subgraph errors. The default is `true`.<br/>Default: `true`<br/>||
+|**extensions**||Whether to redact the `extensions` in errors.<br/><br/>You may pick the execution mode by setting `mode: allow` or `mode: deny`.<br/>Note: only root-level fields are supported.<br/>||
+
+**Additional Properties:** not allowed   
+**Example**
+
+```yaml
+enabled: true
+
+```
+
+   
+<a name="error_maskingsubgraphs"></a>
+### error\_masking\.subgraphs: object,null
+
+The error masking configuration for individual subgraphs.
+Any configuration field that will be specified here, will override the configuration in `all`.
+
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**Additional Properties**](#error_maskingsubgraphsadditionalproperties)|`object`|||
+
+   
+<a name="error_maskingsubgraphsadditionalproperties"></a>
+#### error\_masking\.subgraphs\.additionalProperties: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**enabled**|`boolean`, `null`|Whether to redact the `error_message` in errors, for that specific subgraph.<br/><br/>Configuring this will override the global `all.error_message` setting.<br/>||
+|**extensions**||Whether to redact the `extensions` in errors, for that specific subgraph.<br/>Configuring this will override the global `all.extensions` setting.<br/><br/>You may pick the execution mode by setting `mode: allow` or `mode: deny`.<br/>Note: only root-level fields are supported.<br/>||
+
+**Additional Properties:** not allowed   
    
 <a name="headers"></a>
 ## headers: object

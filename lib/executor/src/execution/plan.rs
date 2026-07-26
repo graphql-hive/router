@@ -34,6 +34,7 @@ use tracing::Instrument;
 
 use crate::execution::client_request_details::OperationDetails;
 use crate::execution::demand_control::DemandControlExecutionContext;
+use crate::execution::error_masking::ErrorMaskingRuntime;
 use crate::execution::operation_name::OperationNameFactory;
 use crate::headers::cache_control;
 use crate::{
@@ -134,6 +135,7 @@ pub struct QueryPlanExecutionOpts<'exec> {
     pub plugin_req_state: Option<PluginRequestState<'exec>>,
     pub operation_name_factory: OperationNameFactory,
     pub response_header_sink: ResponseHeaderSink,
+    pub error_masking_runtime: Arc<Option<ErrorMaskingRuntime>>,
 }
 
 pub struct PlanSubscriptionOutput {
@@ -172,6 +174,20 @@ impl FailedExecutionResult {
             .unwrap()
         })
     }
+}
+
+#[inline]
+fn serialize_masked_failure(
+    mut error: GraphQLError,
+    error_masking_runtime: &Option<ErrorMaskingRuntime>,
+) -> Vec<u8> {
+    if let Some(runtime) = error_masking_runtime {
+        runtime.apply(&mut error);
+    }
+    FailedExecutionResult {
+        errors: vec![error],
+    }
+    .serialize()
 }
 
 fn early_http_response_into_execution_output(
@@ -326,6 +342,7 @@ pub async fn execute_query_plan<'exec>(
         let client_jwt = opts.client_request.jwt.clone();
         let client_path_params = opts.client_request.path_params.into_owned();
         let response_header_sink = opts.response_header_sink.clone();
+        let error_masking_runtime = opts.error_masking_runtime.clone();
 
         let operation_name_factory = opts.operation_name_factory.clone();
 
@@ -350,9 +367,7 @@ pub async fn execute_query_plan<'exec>(
                         // we cannot guarantee that the subgraph will recover and clients might
                         // simply ignore errors wasting the router's resources
                         log_plan_execution_error(err);
-                        yield FailedExecutionResult {
-                            errors: vec![err.into()],
-                        }.serialize();
+                        yield serialize_masked_failure(err.into(), error_masking_runtime.as_ref());
                         return;
                     }
                 };
@@ -393,15 +408,14 @@ pub async fn execute_query_plan<'exec>(
                     operation_name_factory: operation_name_factory.clone(),
                     demand_control_context: opts.demand_control_context.clone(),
                     response_header_sink: response_header_sink.clone(),
+                    error_masking_runtime: opts.error_masking_runtime.clone(),
                 };
                 match execute_query_plan_with_data(response.data, opts).await {
                     Ok(result) => yield result.body,
                     Err(ref err) => {
                         // fatal error, stream it and stop
                         log_plan_execution_error(err);
-                        yield FailedExecutionResult {
-                            errors: vec![err.into()],
-                        }.serialize();
+                        yield serialize_masked_failure(err.into(), error_masking_runtime.as_ref());
                         return;
                     }
                 }
@@ -636,6 +650,12 @@ async fn execute_query_plan_with_data<'exec>(
 
             errors = new_errors;
             status_code = new_status_code;
+        }
+    }
+
+    if let Some(error_masking_runtime) = opts.error_masking_runtime.as_ref() {
+        for error in &mut errors {
+            error_masking_runtime.apply(error);
         }
     }
 

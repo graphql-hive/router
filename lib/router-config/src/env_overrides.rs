@@ -59,6 +59,10 @@ pub struct EnvVarOverrides {
     // Query planner overrides
     #[envconfig(from = "QUERY_PLANNER_EXPERIMENTAL_ABSTRACT_TYPE_FOLDING")]
     pub query_planner_experimental_abstract_type_folding: Option<bool>,
+
+    // Error masking
+    #[envconfig(from = "DISABLE_SUBGRAPH_ERROR_MASKING")]
+    pub disable_subgraph_error_masking: Option<bool>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -190,6 +194,16 @@ impl EnvVarOverrides {
                 "query_planner.experimental_abstract_type_folding",
                 experimental_abstract_type_folding,
             )?;
+        }
+
+        if let Some(disable_subgraph_error_masking) = self.disable_subgraph_error_masking.take() {
+            debug!(
+                "[config-override] 'disable_subgraph_error_masking' = {}",
+                disable_subgraph_error_masking
+            );
+
+            config =
+                config.set_override("error_masking.enabled", !disable_subgraph_error_masking)?;
         }
 
         Ok(config)

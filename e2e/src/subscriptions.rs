@@ -1122,6 +1122,9 @@ mod subscriptions_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                error_masking:
+                    all:
+                      enabled: false
                 subscriptions:
                     enabled: true
                 "#,
@@ -1346,6 +1349,8 @@ mod subscriptions_e2e_tests {
                     path: supergraph.graphql
                 subscriptions:
                     enabled: true
+                error_masking:
+                    enabled: false
                 headers:
                     all:
                         request:
