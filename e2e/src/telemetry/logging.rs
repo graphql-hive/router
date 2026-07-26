@@ -362,7 +362,7 @@ async fn test_logging_of_subscriptions() {
     {
       "duration_ms": "[duration_ms]",
       "error_count": 0,
-      "involved_subgraphs": "",
+      "involved_subgraphs": "reviews",
       "level": "INFO",
       "operation_hash": "a1424d79e11713f359a9772c62e72b7a",
       "operation_type": "subscription",
@@ -371,7 +371,7 @@ async fn test_logging_of_subscriptions() {
       "request_id": "[req_id]",
       "response_mode": "stream",
       "status_code": 200,
-      "subgraph_requests": 0,
+      "subgraph_requests": 1,
       "supergraph_identifier": 0,
       "target": "router::request",
       "timestamp": "[timestamp]"

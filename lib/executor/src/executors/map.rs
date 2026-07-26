@@ -350,10 +350,7 @@ impl SubgraphExecutorMap {
             Some(execution_result) => execution_result,
             None => {
                 debug!(target: targets::EXECUTOR, operation = execution_request.query, dedupe = execution_request.dedupe, subgraph = subgraph_name, executor = executor.executor_name(), "executing subgraph request");
-
-                if !execution_request.dedupe {
-                    summary::record(|s| s.record_subgraph(subgraph_name));
-                }
+                summary::record(|s| s.record_subgraph(subgraph_name));
 
                 let exec_fut = executor.execute(execution_request, timeout, plugin_req_state);
                 // Clone the circuit breaker out of the DashMap before awaiting to avoid
@@ -480,10 +477,7 @@ impl SubgraphExecutorMap {
         let executor = self.get_or_create_subscription_executor(subgraph_name, client_request)?;
         let timeout = self.resolve_subgraph_timeout(subgraph_name, client_request)?;
         debug!(target: targets::EXECUTOR, operation = execution_request.query, dedupe = execution_request.dedupe, subgraph = subgraph_name, executor = executor.executor_name(), "subscribing subgraph request");
-
-        if !execution_request.dedupe {
-            summary::record(|s| s.record_subgraph(subgraph_name));
-        }
+        summary::record(|s| s.record_subgraph(subgraph_name));
 
         let subscribe_fut = executor.subscribe(execution_request, timeout);
 
