@@ -107,7 +107,8 @@ pub struct LaboratoryConfig {
     /// Collections to pre-populate the Laboratory with.
     ///
     /// A collection is a named, reusable group of operations shown in the Laboratory's sidebar. Use
-    /// this to hand users a labelled set of standard queries they can browse and run.
+    /// this to hand users a labelled set of standard queries they can browse and run. Each
+    /// collection must contain at least one operation.
     ///
     /// Seeded collections are refreshed from this configuration on every page load: a user can edit
     /// one during a session, but it resets on reload. To change a seeded collection permanently,
@@ -225,6 +226,7 @@ mod tests {
         assert!(config.enabled);
         assert!(config.preflight.is_none());
         assert!(config.operations.is_empty());
+        assert!(config.collections.is_empty());
     }
 
     #[test]

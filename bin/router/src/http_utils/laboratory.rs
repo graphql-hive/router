@@ -108,6 +108,8 @@ pub enum LaboratoryConfigError {
     },
     #[error("{location}.name must not be empty")]
     EmptyName { location: String },
+    #[error("{location} ('{name}') must contain at least one operation")]
+    EmptyCollection { location: String, name: String },
     #[error(
         "{location} ('{name}') has an invalid '{field}': it must be a JSON object encoded in a string, for example '{{\"key\": \"value\"}}' ({source})"
     )]
@@ -273,6 +275,13 @@ fn build_collection(
     if collection.name.trim().is_empty() {
         return Err(LaboratoryConfigError::EmptyName {
             location: format!("laboratory.collections[{index}]"),
+        });
+    }
+
+    if collection.operations.is_empty() {
+        return Err(LaboratoryConfigError::EmptyCollection {
+            location: format!("laboratory.collections[{index}]"),
+            name: collection.name.clone(),
         });
     }
 
@@ -799,6 +808,48 @@ mod tests {
             "the error should name the collection path: {message}"
         );
         assert!(message.contains("'headers'"), "unexpected error: {message}");
+    }
+
+    #[test]
+    fn rejects_non_object_variables_in_a_collection_operation() {
+        // Covers the NotAJsonObject path and a non-`headers` field for collection operations.
+        let mut op = operation("GetHello");
+        op.variables = Some(r#"["a"]"#.to_string());
+
+        let error = build_laboratory_seed(&config_with_collections(vec![collection(
+            "Onboarding",
+            vec![op],
+        )]))
+        .expect_err("a JSON array in a collection operation should be rejected");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("laboratory.collections[0].operations[0]"),
+            "the error should name the collection path: {message}"
+        );
+        assert!(
+            message.contains("'variables'"),
+            "unexpected error: {message}"
+        );
+        assert!(message.contains("an array"), "unexpected error: {message}");
+    }
+
+    #[test]
+    fn rejects_an_empty_collection() {
+        let error = build_laboratory_seed(&config_with_collections(vec![collection(
+            "Onboarding",
+            vec![],
+        )]))
+        .expect_err("a collection with no operations should be rejected");
+
+        assert!(
+            matches!(
+                &error,
+                LaboratoryConfigError::EmptyCollection { location, name }
+                    if location == "laboratory.collections[0]" && name == "Onboarding"
+            ),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]
