@@ -13,6 +13,11 @@ updates:
         patterns:
           - "reqwest"
           - "reqwest-*"
+      futures:
+        patterns:
+          - "futures"
+          - "futures-util"
+          - "futures-core"
       tokio:
         patterns:
           - "tokio"
