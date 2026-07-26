@@ -476,6 +476,8 @@ impl SubgraphExecutorMap {
     > {
         let executor = self.get_or_create_subscription_executor(subgraph_name, client_request)?;
         let timeout = self.resolve_subgraph_timeout(subgraph_name, client_request)?;
+        debug!(target: targets::EXECUTOR, operation = execution_request.query, dedupe = execution_request.dedupe, subgraph = subgraph_name, executor = executor.executor_name(), "subscribing subgraph request");
+        summary::record(|s| s.record_subgraph(subgraph_name));
 
         let subscribe_fut = executor.subscribe(execution_request, timeout);
 
