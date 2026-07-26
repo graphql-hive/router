@@ -6,7 +6,7 @@ use std::{str::FromStr, sync::Arc};
 
 use cookie::Cookie;
 use hive_router_config::jwt_auth::{JwtAuthConfig, JwtAuthPluginLookupLocation};
-use hive_router_internal::background_tasks::BackgroundTasksManager;
+use hive_router_internal::{background_tasks::BackgroundTasksManager, telemetry::logging::targets};
 use http::header::COOKIE;
 use jsonwebtoken::{
     decode, decode_header,
@@ -94,7 +94,7 @@ impl JwtAuthRuntime {
                         let raw_cookies = match cookie_raw.to_str() {
                             Ok(cookies) => cookies.split(';'),
                             Err(e) => {
-                                warn!("jwt auth failed to convert cookie header to string, ignoring cookie. error: {}", e);
+                                warn!(target: targets::JWT, error = ?e, "jwt auth failed to convert cookie header to string, ignoring cookie");
                                 continue;
                             }
                         };
@@ -111,10 +111,7 @@ impl JwtAuthRuntime {
                                 Err(e) => {
                                     // Should we reject the entire request in case of invalid cookies?
                                     // I think it's better to consider this as a user error? maybe return 400?
-                                    warn!(
-                       "jwt auth failed to parse cookie value, ignoring cookie. error: {}",
-                       e
-                     );
+                                    warn!(target: targets::JWT, error = ?e, "jwt auth failed to parse cookie value, ignoring cookie");
                                 }
                             }
                         }
@@ -173,7 +170,7 @@ impl JwtAuthRuntime {
                     .map(|token_data| (token_data, maybe_prefix, token))
             }
             Err(e) => {
-                warn!("jwt plugin failed to lookup token. error: {}", e);
+                warn!(target: targets::JWT, error = ?e, "jwt plugin failed to lookup token");
 
                 Err(JwtError::LookupFailed(e))
             }
@@ -311,7 +308,7 @@ impl JwtAuthRuntime {
                 token_prefix: maybe_prefix,
             })),
             Err(err) => {
-                warn!("jwt token error: {:?}", err);
+                warn!(target: targets::JWT, error = ?err, "jwt token error");
                 if self.config.require_authentication.is_some_and(|v| v) {
                     Err((*err).clone())
                 } else {

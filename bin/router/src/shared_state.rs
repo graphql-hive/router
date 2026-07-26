@@ -7,11 +7,13 @@ use hive_router_config::traffic_shaping::{
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::expressions::{BooleanOrProgram, ExpressionCompileError};
 use hive_router_internal::inflight::{InFlightCleanupGuard, InFlightMap};
+use hive_router_internal::telemetry::logging::targets;
 use hive_router_internal::telemetry::metrics::catalog::values::SubscriptionEndReason;
 use hive_router_internal::telemetry::metrics::subscription_metrics::SubscriptionTransport;
 use hive_router_internal::telemetry::metrics::Metrics;
 use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::coprocessor::{CoprocessorError, CoprocessorRuntime};
+use hive_router_plan_executor::execution::error_masking::ErrorMaskingRuntime;
 use hive_router_plan_executor::execution::plan::FailedExecutionResult;
 use hive_router_plan_executor::extensions::{
     compile::compile_extensions_plan, plan::ExtensionsPlan,
@@ -209,7 +211,7 @@ impl SharedRouterStreamResponse {
                         // NOTE: not warn to avoid log spam when receiver starts lagging.
                         // users should rely on the lagged_messages metric to detect slow
                         // consumers and tune accordingly
-                        debug!(lagged = n, "Broadcast receiver lagged, dropping message");
+                        debug!(target: targets::SUBSCRIPTIONS, lagged = n, "Broadcast receiver lagged, dropping message");
                         metrics.subscriptions.record_client_lag(transport, n);
                         continue;
                     }
@@ -334,6 +336,8 @@ pub struct RouterSharedState {
     /// because the config cannot change while the router runs, and held as [`Bytes`] so serving
     /// the multi-megabyte page is a refcount bump rather than a copy.
     pub laboratory_html: Bytes,
+    /// The error masking configuration for the router.
+    pub error_masking: Arc<Option<ErrorMaskingRuntime>>,
 }
 
 impl RouterSharedState {
@@ -362,6 +366,9 @@ impl RouterSharedState {
                 .map_err(Box::new)
             })
             .transpose()?;
+        let error_masking = Arc::new(ErrorMaskingRuntime::compile_from_config(
+            &router_config.error_masking,
+        ));
 
         let laboratory_html = render_laboratory_page(&router_config.laboratory)?;
 
@@ -401,6 +408,7 @@ impl RouterSharedState {
             active_subscriptions,
             storage_manager,
             laboratory_html,
+            error_masking,
         })
     }
 }

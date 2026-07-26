@@ -1,4 +1,5 @@
 use ahash::HashSet;
+use hive_router_internal::telemetry::logging::targets;
 use indexmap::IndexMap;
 use std::fmt::{Display, Formatter as FmtFormatter, Result as FmtResult};
 use std::sync::Arc;
@@ -137,14 +138,17 @@ pub struct FieldProjectionPlan {
 #[cfg(debug_assertions)]
 fn debug_plans_vec(plans: &[FieldProjectionPlan]) {
     for (i, plan) in plans.iter().enumerate() {
-        tracing::trace!("plan {}:\n{}", i, plan);
+        use hive_router_internal::telemetry::logging::targets;
+
+        tracing::trace!(target: targets::GRAPHQL_EXECUTION, "plan {}:\n{}", i, plan);
     }
 }
 
 #[cfg(debug_assertions)]
 fn debug_plans_map(plans: &SelectionVariants) {
     for (i, (key, plans)) in plans.iter().enumerate() {
-        tracing::trace!("key {}: {}", i, key);
+        use hive_router_internal::telemetry::logging::targets;
+        tracing::trace!(target: targets::GRAPHQL_EXECUTION, "key {}: {}", i, key);
         debug_plans_vec(plans);
     }
 }
@@ -337,7 +341,8 @@ impl FieldProjectionPlan {
     ) -> Vec<FieldProjectionPlan> {
         #[cfg(debug_assertions)]
         {
-            tracing::trace!("input:\n");
+            use hive_router_internal::telemetry::logging::targets;
+            tracing::trace!(target: targets::GRAPHQL_EXECUTION, "input:\n");
             debug_plans_map(&field_selections);
         }
         let mut concrete_types: Option<Vec<String>> = None;
@@ -377,7 +382,8 @@ impl FieldProjectionPlan {
 
         #[cfg(debug_assertions)]
         {
-            tracing::trace!("output:\n");
+            use hive_router_internal::telemetry::logging::targets;
+            tracing::trace!(target: targets::GRAPHQL_EXECUTION, "output:\n");
             debug_plans_vec(&resolved);
         }
 
@@ -754,7 +760,7 @@ impl FieldProjectionPlan {
                 // This case should not be reached during initial plan construction,
                 // as `Null` is only introduced during the authorization step.
                 // If we merge a plan, it's always to combine selections.
-                warn!("Merging plans with `Null` value source is not supported during initial plan construction.");
+                warn!(target: targets::GRAPHQL_EXECUTION, "Merging plans with `Null` value source is not supported during initial plan construction.");
                 existing_plan.value = ProjectionValueSource::Null;
             }
         }
@@ -832,9 +838,11 @@ impl FieldProjectionPlan {
                 Some(fields) => fields,
                 None => {
                     warn!(
-                        "No fields found for type `{}` in schema metadata.",
-                        parent_type_name
+                        target: targets::GRAPHQL_EXECUTION,
+                        parent_type_name,
+                        "No fields found for type in schema metadata",
                     );
+
                     return;
                 }
             };
@@ -842,9 +850,11 @@ impl FieldProjectionPlan {
                 Some(f) => (f.output_type_name.clone(), f.nullability.clone()),
                 None => {
                     warn!(
-                        "Field `{}` not found in type `{}` in schema metadata.",
-                        field_name, parent_type_name
+                        target: targets::GRAPHQL_EXECUTION,
+                        field_name, parent_type_name,
+                        "Field not found in type in schema metadata",
                     );
+
                     return;
                 }
             }

@@ -16,6 +16,9 @@ mod error_handling_e2e_tests {
                   supergraph:
                     source: file
                     path: supergraph.graphql
+                  error_masking:
+                    all:
+                      enabled: false
                   override_subgraph_urls:
                     subgraphs:
                       accounts:
@@ -119,6 +122,9 @@ mod error_handling_e2e_tests {
                   supergraph:
                     source: file
                     path: supergraph.graphql
+                  error_masking:
+                    all:
+                      enabled: false
                   override_subgraph_urls:
                     subgraphs:
                       accounts:
@@ -221,6 +227,9 @@ mod error_handling_e2e_tests {
                   supergraph:
                     source: file
                     path: supergraph.graphql
+                  error_masking:
+                    all:
+                      enabled: false
                   override_subgraph_urls:
                     subgraphs:
                       accounts:
@@ -312,6 +321,9 @@ mod error_handling_e2e_tests {
                   supergraph:
                     source: file
                     path: supergraph.graphql
+                  error_masking:
+                    all:
+                      enabled: false
                   override_subgraph_urls:
                     subgraphs:
                       accounts:
@@ -403,6 +415,9 @@ mod error_handling_e2e_tests {
                   supergraph:
                     source: file
                     path: supergraph.graphql
+                  error_masking:
+                    all:
+                      enabled: false
                   override_subgraph_urls:
                     subgraphs:
                       accounts:
@@ -494,6 +509,9 @@ mod error_handling_e2e_tests {
                   supergraph:
                     source: file
                     path: supergraph.graphql
+                  error_masking:
+                    all:
+                      enabled: false
                   override_subgraph_urls:
                     subgraphs:
                       accounts:
@@ -585,6 +603,9 @@ mod error_handling_e2e_tests {
                   supergraph:
                     source: file
                     path: supergraph.graphql
+                  error_masking:
+                    all:
+                      enabled: false
                   override_subgraph_urls:
                     subgraphs:
                       accounts:

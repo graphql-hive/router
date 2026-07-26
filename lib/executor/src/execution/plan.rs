@@ -12,6 +12,7 @@ use futures::{
     FutureExt, StreamExt,
 };
 use hive_router_internal::graphql::ObservedError;
+use hive_router_internal::telemetry::logging::{summary, targets};
 use hive_router_internal::telemetry::metrics::graphql_metrics::GraphQLErrorMetricsRecorder;
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
@@ -30,10 +31,11 @@ use hive_router_query_planner::{
 use http::{HeaderMap, StatusCode};
 use serde::Serialize;
 use sonic_rs::{JsonValueTrait, ValueRef};
-use tracing::Instrument;
+use tracing::{debug, error, warn, Instrument};
 
 use crate::execution::client_request_details::OperationDetails;
 use crate::execution::demand_control::DemandControlExecutionContext;
+use crate::execution::error_masking::ErrorMaskingRuntime;
 use crate::execution::operation_name::OperationNameFactory;
 use crate::headers::cache_control;
 use crate::{
@@ -134,6 +136,7 @@ pub struct QueryPlanExecutionOpts<'exec> {
     pub plugin_req_state: Option<PluginRequestState<'exec>>,
     pub operation_name_factory: OperationNameFactory,
     pub response_header_sink: ResponseHeaderSink,
+    pub error_masking_runtime: Arc<Option<ErrorMaskingRuntime>>,
 }
 
 pub struct PlanSubscriptionOutput {
@@ -162,7 +165,8 @@ impl FailedExecutionResult {
     pub fn serialize(&self) -> Vec<u8> {
         sonic_rs::to_vec(&self).unwrap_or_else(|err| {
             // should never happen. result should always serialize - but hey, no unwraps
-            tracing::error!("Failed to serialize pipeline error to response: {}", err);
+            error!(target: targets::CORE, error = ?err, "Failed to serialize pipeline error to response");
+
             sonic_rs::to_vec(&FailedExecutionResult {
                 errors: vec![GraphQLError::from_message_and_code(
                     "Failed to serialize error response",
@@ -172,6 +176,20 @@ impl FailedExecutionResult {
             .unwrap()
         })
     }
+}
+
+#[inline]
+fn serialize_masked_failure(
+    mut error: GraphQLError,
+    error_masking_runtime: &Option<ErrorMaskingRuntime>,
+) -> Vec<u8> {
+    if let Some(runtime) = error_masking_runtime {
+        runtime.apply(&mut error);
+    }
+    FailedExecutionResult {
+        errors: vec![error],
+    }
+    .serialize()
 }
 
 fn early_http_response_into_execution_output(
@@ -191,15 +209,21 @@ fn early_http_response_into_execution_output(
     }
 }
 
+#[inline]
 fn log_plan_execution_error(error: &PlanExecutionError) {
     if let Some(subgraph_name) = error.subgraph_name() {
-        tracing::error!(
-            "Error executing plan with subgraph '{}': {}",
-            subgraph_name,
-            error
+        error!(
+            target: targets::GRAPHQL_EXECUTION,
+            subgraph = ?subgraph_name,
+            error = ?error,
+            "Error executing step",
         );
     } else {
-        tracing::error!("Error executing plan: {}", error);
+        error!(
+            target: targets::GRAPHQL_EXECUTION,
+            error = ?error,
+            "Error executing step",
+        );
     }
 }
 
@@ -326,6 +350,7 @@ pub async fn execute_query_plan<'exec>(
         let client_jwt = opts.client_request.jwt.clone();
         let client_path_params = opts.client_request.path_params.into_owned();
         let response_header_sink = opts.response_header_sink.clone();
+        let error_masking_runtime = opts.error_masking_runtime.clone();
 
         let operation_name_factory = opts.operation_name_factory.clone();
 
@@ -350,9 +375,7 @@ pub async fn execute_query_plan<'exec>(
                         // we cannot guarantee that the subgraph will recover and clients might
                         // simply ignore errors wasting the router's resources
                         log_plan_execution_error(err);
-                        yield FailedExecutionResult {
-                            errors: vec![err.into()],
-                        }.serialize();
+                        yield serialize_masked_failure(err.into(), error_masking_runtime.as_ref());
                         return;
                     }
                 };
@@ -393,15 +416,14 @@ pub async fn execute_query_plan<'exec>(
                     operation_name_factory: operation_name_factory.clone(),
                     demand_control_context: opts.demand_control_context.clone(),
                     response_header_sink: response_header_sink.clone(),
+                    error_masking_runtime: opts.error_masking_runtime.clone(),
                 };
                 match execute_query_plan_with_data(response.data, opts).await {
                     Ok(result) => yield result.body,
                     Err(ref err) => {
                         // fatal error, stream it and stop
                         log_plan_execution_error(err);
-                        yield FailedExecutionResult {
-                            errors: vec![err.into()],
-                        }.serialize();
+                        yield serialize_masked_failure(err.into(), error_masking_runtime.as_ref());
                         return;
                     }
                 }
@@ -529,6 +551,8 @@ async fn execute_query_plan_with_data<'exec>(
 
     let mut data = exec_ctx.data;
     let mut errors = exec_ctx.errors;
+
+    summary::record(|s| s.set_partial_response(error_count > 0 && !data.is_null()));
     let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
 
     let mut demand_control_cost = None;
@@ -546,7 +570,8 @@ async fn execute_query_plan_with_data<'exec>(
         });
 
         if actual > demand_control.operation.operation_max_cost {
-            tracing::info!(
+            warn!(
+                target: targets::DEMAND_CONTROL,
                 operation_name = ?opts.operation_for_plan.name.as_deref(),
                 actual_cost = actual,
                 estimated_cost = demand_control.evaluation.estimated_cost,
@@ -636,6 +661,12 @@ async fn execute_query_plan_with_data<'exec>(
 
             errors = new_errors;
             status_code = new_status_code;
+        }
+    }
+
+    if let Some(error_masking_runtime) = opts.error_masking_runtime.as_ref() {
+        for error in &mut errors {
+            error_masking_runtime.apply(error);
         }
     }
 
@@ -891,10 +922,12 @@ impl<'exec> Executor<'exec> {
                 {
                     // All alias lists are empty, so nothing to fetch.
                     // We skip the network call to save time.
-                    tracing::trace!(
+                    debug!(
+                        target: targets::GRAPHQL_EXECUTION,
                         alias_count = aliases.len(),
                         "Skipping batched entity fetch with no representations"
                     );
+
                     return None;
                 }
 
@@ -1269,6 +1302,7 @@ impl<'exec> Executor<'exec> {
                         }
 
                         tracing::trace!(
+                            target: targets::GRAPHQL_EXECUTION,
                             alias_count = aliases.len(),
                             "Patched entity batch alias results"
                         );
@@ -1885,6 +1919,7 @@ mod tests {
             HiveRouterConfig::default().into(),
             Arc::new(TelemetryContext::from_propagation_config(
                 &Default::default(),
+                &Default::default(),
             )),
             Arc::new(DashMap::new()),
         )
@@ -2005,6 +2040,7 @@ mod tests {
                 &subgraph_endpoint_map,
                 HiveRouterConfig::default().into(),
                 Arc::new(TelemetryContext::from_propagation_config(
+                    &Default::default(),
                     &Default::default(),
                 )),
                 Arc::new(DashMap::new()),

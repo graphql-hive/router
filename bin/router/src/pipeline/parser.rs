@@ -6,6 +6,7 @@ use graphql_tools::parser::minify_query;
 use graphql_tools::parser::query::{Definition, Document, OperationDefinition};
 use graphql_tools::validation::utils::ValidationError;
 use hive_console_sdk::agent::utils::normalize_operation as hive_sdk_normalize_operation;
+use hive_router_internal::telemetry::logging::targets;
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLParseSpan, GraphQLSpanOperationIdentity,
 };
@@ -26,7 +27,7 @@ use crate::cache_state::{CacheHitMiss, EntryResultHitMissExt};
 use crate::pipeline::error::{ParserCacheError, PipelineError};
 use crate::pipeline::execution_request::GetQueryStr;
 use crate::shared_state::RouterSharedState;
-use tracing::{error, trace, Instrument};
+use tracing::{debug, error, warn, Instrument};
 
 #[derive(Clone)]
 pub struct ParseCacheEntry {
@@ -43,7 +44,7 @@ impl ParseCacheEntry {
     ) -> Result<Self, PipelineError> {
         let minified_arc = {
             Arc::new(minify_query(query_str).map_err(|err| {
-                error!("Failed to minify parsed GraphQL operation: {}", err);
+                error!(target: targets::GRAPHQL_PARSING, error = ?err, "failed to minify parsed GraphQL operation");
                 PipelineError::FailedToMinifyParsedOperation(err.to_string())
             })?)
         };
@@ -51,8 +52,9 @@ impl ParseCacheEntry {
         let hive_minified =
             minify_query(hive_normalized_operation.to_string().as_ref()).map_err(|err| {
                 error!(
-                    "Failed to minify GraphQL operation normalized for Hive SDK: {}",
-                    err
+                    target: targets::GRAPHQL_PARSING,
+                    error = ?err,
+                    "failed to minify GraphQL operation normalized for Hive SDK"
                 );
                 PipelineError::FailedToMinifyParsedOperation(err.to_string())
             })?;
@@ -116,6 +118,8 @@ pub async fn parse_operation_with_cache(
                         // continue to next plugin
                     }
                     StartControlFlow::EndWithResponse(response) => {
+                        debug!(target: targets::GRAPHQL_PARSING, "plugin returned early response during parsing phase");
+
                         return Ok(ParseResult::EarlyResponse(response));
                     }
                     StartControlFlow::OnEnd(callback) => {
@@ -151,6 +155,8 @@ pub async fn parse_operation_with_cache(
                         err.0.errors.first()
                     {
                         if *msg == "Token limit exceeded" {
+                            warn!(target: targets::GRAPHQL_PARSING, "token limit exceeded");
+
                             return ParserCacheError::ValidationErrors(
                                 vec![ValidationError {
                                     locations: vec![err.0.position],
@@ -161,22 +167,23 @@ pub async fn parse_operation_with_cache(
                             );
                         }
                     }
-                    error!("Failed to parse GraphQL operation: {}", err);
+
+                    debug!(target: targets::GRAPHQL_PARSING, error = ?err, "failed to parse GraphQL operation");
+
                     ParserCacheError::ParseError(Arc::new(err))
                 })?;
-                trace!("successfully parsed GraphQL operation");
+
                 let parsed_arc = Arc::new(parsed);
                 let minified_arc = Arc::new(minify_query(query_str).map_err(|err| {
-                    error!("Failed to minify parsed GraphQL operation: {}", err);
+                    error!(target: targets::GRAPHQL_PARSING, error = ?err, "failed to minify parsed GraphQL operation");
+
                     ParserCacheError::MinifyError(err.to_string())
                 })?);
                 let hive_normalized_operation = hive_sdk_normalize_operation(&parsed_arc);
                 let hive_minified = minify_query(hive_normalized_operation.to_string().as_ref())
                     .map_err(|err| {
-                        error!(
-                            "Failed to minify GraphQL operation normalized for Hive SDK: {}",
-                            err
-                        );
+                        error!(target: targets::GRAPHQL_PARSING, error = ?err, "failed to minify GraphQL operation normalized for Hive SDK");
+
                         ParserCacheError::MinifyError(err.to_string())
                     })?;
 
@@ -219,6 +226,8 @@ pub async fn parse_operation_with_cache(
                         // continue to next callback
                     }
                     EndControlFlow::EndWithResponse(response) => {
+                      debug!(target: targets::GRAPHQL_PARSING, "plugin returned early response during parsing phase (on-end)");
+
                         return Ok(ParseResult::EarlyResponse(response));
                     }
                 }

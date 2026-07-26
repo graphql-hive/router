@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use dashmap::DashMap;
+use hive_router_internal::telemetry::logging::targets;
 use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use tokio::sync::broadcast;
 use tracing::trace;
@@ -54,7 +55,7 @@ impl ActiveSubscriptions {
             _guard: guard,
         };
 
-        trace!(subscription_id = %id, "registered new subscription");
+        trace!(target: targets::SUBSCRIPTIONS, subscription_id = %id, "registered new subscription");
 
         (handle, receiver)
     }
@@ -93,6 +94,6 @@ impl ProducerHandle {
 impl Drop for ProducerHandle {
     fn drop(&mut self) {
         self.map.remove(&self.id);
-        trace!(subscription_id = %self.id, "producer dropped, upstream closed");
+        trace!(target: targets::SUBSCRIPTIONS, subscription_id = %self.id, "producer dropped, upstream closed");
     }
 }

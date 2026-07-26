@@ -1,5 +1,6 @@
 use bytes::Bytes as BytesLib;
 use dashmap::mapref::one::Ref;
+use hive_router_internal::telemetry::logging::targets;
 use hive_router_internal::telemetry::metrics::subscription_metrics::SubscriptionTransport;
 use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::executors::http_callback::{
@@ -48,38 +49,46 @@ struct CallbackPayload<'a> {
 
 #[derive(thiserror::Error, Debug)]
 pub enum CallbackError {
-    #[error(
-        "Invalid or missing {} header, expected {}",
-        SUBSCRIPTION_PROTOCOL_HEADER,
-        CALLBACK_PROTOCOL_VERSION
-    )]
+    #[error("Invalid or missing protocol header")]
     InvalidProtocolHeader,
-    #[error("Failed to parse callback payload: {0}")]
+    #[error("Failed to parse callback payload")]
     PayloadParseError(#[from] sonic_rs::Error),
-    #[error("Subscription ID mismatch: path='{path}', body='{body}'")]
+    #[error("Subscription ID mismatch")]
     SubscriptionIdMismatch { path: String, body: String },
-    #[error("Missing payload in next message for subscription ID '{subscription_id}'")]
+    #[error("Missing payload in next message for subscription ID")]
     MissingPayload { subscription_id: String },
-    #[error(
-        "Subscription not found, may have been terminated for subscription ID '{subscription_id}'"
-    )]
+    #[error("Subscription not found, may have been terminated for subscription ID")]
     SubscriptionNotFound { subscription_id: String },
-    #[error("Invalid verifier for subscription ID '{subscription_id}'")]
+    #[error("Invalid verifier for subscription ID")]
     InvalidVerifier { subscription_id: String },
-    #[error("Subscription receiver dropped for subscription ID '{subscription_id}'")]
+    #[error("Subscription receiver dropped for subscription ID")]
     SubscriptionDropped { subscription_id: String },
 }
 
 impl CallbackError {
     fn log(&self) {
         match self {
-            CallbackError::InvalidProtocolHeader => warn!("{}", self),
-            CallbackError::PayloadParseError(_) => error!("{}", self),
-            CallbackError::SubscriptionIdMismatch { .. } => warn!("{}", self),
-            CallbackError::MissingPayload { .. } => warn!("{}", self),
-            CallbackError::SubscriptionNotFound { .. } => warn!("{}", self),
-            CallbackError::InvalidVerifier { .. } => warn!("{}", self),
-            CallbackError::SubscriptionDropped { .. } => debug!("{}", self),
+            CallbackError::InvalidProtocolHeader => {
+                warn!(target: targets::SUBSCRIPTIONS, "{}", self)
+            }
+            CallbackError::PayloadParseError(err) => {
+                error!(target: targets::SUBSCRIPTIONS, error = ?err, "{}", self)
+            }
+            CallbackError::SubscriptionIdMismatch { path, body } => {
+                warn!(target: targets::SUBSCRIPTIONS, path, body, "{}", self)
+            }
+            CallbackError::MissingPayload { subscription_id } => {
+                warn!(target: targets::SUBSCRIPTIONS, subscription_id, "{}", self)
+            }
+            CallbackError::SubscriptionNotFound { subscription_id } => {
+                warn!(target: targets::SUBSCRIPTIONS, subscription_id, "{}", self)
+            }
+            CallbackError::InvalidVerifier { subscription_id } => {
+                warn!(target: targets::SUBSCRIPTIONS, subscription_id, "{}", self)
+            }
+            CallbackError::SubscriptionDropped { subscription_id } => {
+                debug!(target: targets::SUBSCRIPTIONS, subscription_id, "{}", self)
+            }
         }
     }
 }
@@ -136,7 +145,7 @@ fn validate_payload(
 }
 
 fn handle_check(subscription_id: &str, subscription: &Ref<'_, String, CallbackSubscription>) {
-    trace!(subscription_id = %subscription_id, "Received check message");
+    trace!(target: targets::SUBSCRIPTIONS, subscription_id = %subscription_id, "Received check message");
     subscription.record_heartbeat();
 }
 
@@ -147,7 +156,7 @@ fn handle_next(
     callback_subscriptions: &CallbackSubscriptionsMap,
     telemetry_context: &TelemetryContext,
 ) -> Result<(), CallbackError> {
-    trace!(subscription_id = %subscription_id, "Received next message");
+    trace!(target: targets::SUBSCRIPTIONS, subscription_id = %subscription_id, "Received next message");
 
     let data = match &payload.payload {
         Some(p) => BytesLib::copy_from_slice(p.as_raw_str().as_bytes()),
@@ -170,7 +179,11 @@ fn handle_next(
         // as the websocket/http drainers, the dropped-message metric already covers this.
         SendOutcome::Sent | SendOutcome::Dropped => Ok(()),
         SendOutcome::Closed => {
-            debug!(subscription_id = %subscription_id, "Subscription receiver dropped");
+            debug!(
+                target: targets::SUBSCRIPTIONS,
+                subscription_id, "Subscription receiver dropped"
+            );
+
             drop(subscription);
             callback_subscriptions.remove(subscription_id);
             Err(CallbackError::SubscriptionDropped {
@@ -186,7 +199,7 @@ fn handle_complete(
     subscription: Ref<'_, String, CallbackSubscription>,
     callback_subscriptions: &CallbackSubscriptionsMap,
 ) {
-    trace!(subscription_id = %subscription_id, "Received complete message");
+    trace!(target: targets::SUBSCRIPTIONS, subscription_id = %subscription_id, "Received complete message");
     // if the buffer is full or closed we ignore and remove the subscription, we dont send
     // the final error message because the client is already unable to consume
     let _ = subscription.sender.try_send(CallbackMessage::Complete {

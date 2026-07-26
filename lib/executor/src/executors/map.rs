@@ -15,14 +15,20 @@ use hive_router_config::{
     traffic_shaping::{DurationOrExpression, StatusCodeMatcher},
     HiveRouterConfig,
 };
-use hive_router_internal::expressions::{
-    vrl::{core::Value as VrlValue, prelude::Function},
-    ExpressionCompileError, ProgramHints, ValueOrProgram,
-};
-use hive_router_internal::expressions::{CompileExpression, DurationOrProgram, ExecutableProgram};
 use hive_router_internal::{
     expressions::vrl::compiler::Program as VrlProgram, inflight::InFlightMap,
     telemetry::TelemetryContext,
+};
+use hive_router_internal::{
+    expressions::{
+        vrl::{core::Value as VrlValue, prelude::Function},
+        ExpressionCompileError, ProgramHints, ValueOrProgram,
+    },
+    telemetry::logging::targets,
+};
+use hive_router_internal::{
+    expressions::{CompileExpression, DurationOrProgram, ExecutableProgram},
+    telemetry::logging::summary,
 };
 use http::{StatusCode, Uri};
 use hyper_util::{
@@ -31,6 +37,7 @@ use hyper_util::{
 };
 use recloser::AsyncRecloser;
 use tokio::sync::Semaphore;
+use tracing::{debug, error};
 
 use crate::{
     execution::{
@@ -277,7 +284,8 @@ impl SubgraphExecutorMap {
                 match demand_control_opts.subgraphs.enforcement_mode {
                     DemandControlMode::Enforce => {
                         tracing::warn!(
-                            subgraph_name,
+                            target: targets::DEMAND_CONTROL,
+                            subgraph = subgraph_name,
                             estimated_cost,
                             subgraph_max_cost = *subgraph_max_cost,
                             "skipping subgraph fetch: estimated cost exceeds subgraph budget"
@@ -286,8 +294,9 @@ impl SubgraphExecutorMap {
                         return Err(SubgraphExecutorError::CostEstimatedTooExpensive);
                     }
                     DemandControlMode::Measure => {
-                        tracing::info!(
-                            subgraph_name,
+                        tracing::warn!(
+                            target: targets::DEMAND_CONTROL,
+                            subgraph = subgraph_name,
                             estimated_cost,
                             subgraph_max_cost = *subgraph_max_cost,
                             "subgraph budget exceeded: estimated cost exceeds subgraph budget (not enforced)"
@@ -323,6 +332,7 @@ impl SubgraphExecutorMap {
                         // continue to next plugin
                     }
                     StartControlFlow::EndWithResponse(response) => {
+                        debug!(target: targets::EXECUTOR, subgraph = subgraph_name, "execution was skipped due to response override by a plugin");
                         execution_result = Some(response);
                         break;
                     }
@@ -339,6 +349,9 @@ impl SubgraphExecutorMap {
         let mut execution_result = match execution_result {
             Some(execution_result) => execution_result,
             None => {
+                debug!(target: targets::EXECUTOR, operation = execution_request.query, dedupe = execution_request.dedupe, subgraph = subgraph_name, executor = executor.executor_name(), "executing subgraph request");
+                summary::record(|s| s.record_subgraph(subgraph_name));
+
                 let exec_fut = executor.execute(execution_request, timeout, plugin_req_state);
                 // Clone the circuit breaker out of the DashMap before awaiting to avoid
                 // holding the shard read-lock across an await point (potential deadlock).
@@ -390,6 +403,7 @@ impl SubgraphExecutorMap {
                                     }
                                 }
                                 Err(recloser::Error::Rejected) => {
+                                    error!(target: targets::EXECUTOR, subgraph = subgraph_name, executor = executor.executor_name(), "circuit breaker rejected");
                                     circuit_breaker_metrics.record_short_circuit(subgraph_name);
                                     Err(SubgraphExecutorError::CircuitBreakerRejected)
                                 }
@@ -398,10 +412,10 @@ impl SubgraphExecutorMap {
                                     Ok(res)
                                 }
                             })
-                            .await?
+                            .await
                     }
-                    None => exec_fut.await?,
-                }
+                    None => exec_fut.await,
+                }?
             }
         };
 
@@ -433,6 +447,21 @@ impl SubgraphExecutorMap {
             }
         }
 
+        let error_count = execution_result
+            .errors
+            .as_ref()
+            .map(|e| e.len())
+            .unwrap_or(0);
+
+        debug!(target: targets::EXECUTOR,
+          subgraph = subgraph_name,
+          executor = executor.executor_name(),
+          error_count,
+          partial_response = error_count > 0 && !execution_result.data.is_null(),
+          http_status = execution_result.status.map(|s| s.as_u16()).unwrap_or(0),
+          "subgraph execution completed"
+        );
+
         Ok(execution_result)
     }
 
@@ -446,8 +475,9 @@ impl SubgraphExecutorMap {
         SubgraphExecutorError,
     > {
         let executor = self.get_or_create_subscription_executor(subgraph_name, client_request)?;
-
         let timeout = self.resolve_subgraph_timeout(subgraph_name, client_request)?;
+        debug!(target: targets::EXECUTOR, operation = execution_request.query, dedupe = execution_request.dedupe, subgraph = subgraph_name, executor = executor.executor_name(), "subscribing subgraph request");
+        summary::record(|s| s.record_subgraph(subgraph_name));
 
         let subscribe_fut = executor.subscribe(execution_request, timeout);
 

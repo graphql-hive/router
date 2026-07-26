@@ -1,6 +1,7 @@
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use hive_router_internal::telemetry::logging::targets;
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLNormalizeSpan, GraphQLSpanOperationIdentity,
 };
@@ -24,7 +25,7 @@ use crate::pipeline::trie::Trie;
 use crate::schema_state::{RouterSupergraphRuntime, SchemaState};
 use hive_router_plan_executor::operation_filter::OperationFilterOutput;
 use hive_router_plan_executor::response::graphql_error::GraphQLError;
-use tracing::{trace, Instrument};
+use tracing::{debug, Instrument};
 
 #[derive(Debug, Clone)]
 pub struct GraphQLNormalizationPayload {
@@ -164,10 +165,11 @@ pub async fn normalize_request_with_cache(
                     graphql_params.operation_name.as_deref(),
                 )?;
 
-                trace!(
-                    "Successfully normalized GraphQL operation (operation name={:?}): {}",
-                    doc.operation_name,
-                    doc.operation
+                debug!(
+                    target: targets::GRAPHQL_NORMALIZATION,
+                    operation_name = ?doc.operation_name,
+                    result = %doc.operation,
+                    "successfully normalized GraphQL operation"
                 );
 
                 let operation = doc.operation;

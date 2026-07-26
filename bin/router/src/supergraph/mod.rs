@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use hive_router_config::supergraph::SupergraphSource;
+use hive_router_internal::telemetry::logging::targets;
 
 use crate::{
     storage::{utils::resolve_value_or_expression, StorageManager},
@@ -23,8 +24,9 @@ pub fn resolve_from_config(
     storage_manager: Arc<StorageManager>,
 ) -> Result<Box<dyn SupergraphLoader + Send + Sync>, LoadSupergraphError> {
     debug!(
-        "Creating supergraph loader from source {}",
-        config.source_name()
+      target: targets::SUPERGRAPH,
+      source = config.source_name(),
+      "Creating supergraph loader",
     );
 
     match config {

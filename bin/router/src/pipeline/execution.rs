@@ -149,6 +149,7 @@ pub async fn execute_plan<'exec>(
                 operation_name,
             ),
             response_header_sink,
+            error_masking_runtime: app_state.error_masking.clone(),
         })
         .await?;
 
