@@ -192,7 +192,7 @@ pub fn parse_frame_to_text<T>(
         )))),
         ws::Frame::Close(reason) => {
             if let Some(close_reason) = reason {
-                warn!(target: targets::WEBSOCKET_CLIENT, code = ?close_reason.code, description = ?close_reason.description, "WebSocket connection closed");
+                debug!(target: targets::WEBSOCKET_CLIENT, code = ?close_reason.code, description = ?close_reason.description, "WebSocket connection closed");
             }
 
             Err(FrameNotParsedToText::Closed)
