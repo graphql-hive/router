@@ -11,6 +11,7 @@ use std::{
 };
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
+use tracing::debug;
 
 use crate::expressions::lib::FromVrlValue;
 use crate::{
@@ -24,6 +25,8 @@ use crate::{
 };
 use vrl::{compiler::Program as VrlProgram, core::Value as VrlValue, value::KeyString};
 use xxhash_rust::xxh3::Xxh3;
+
+const USAGE_REPORTING_TARGET: &str = "console_sdk::usage_reporting";
 
 #[derive(Debug, Clone, Default)]
 pub enum OperationType {
@@ -188,13 +191,16 @@ impl UsageAgentInner {
             match operation {
                 Err(e) => {
                     tracing::warn!(
-                        "Dropping operation \"{}\" (phase: PROCESSING): {}",
-                        op.operation_name
+                        target: USAGE_REPORTING_TARGET,
+                        error = ?e,
+                        operation_name = op.operation_name
                             .clone()
                             .or_else(|| Some("anonymous".to_string()))
                             .unwrap(),
-                        e
+                        phase = "PROCESSING",
+                        "Dropping operation",
                     );
+
                     continue;
                 }
                 Ok(operation) => match operation {
@@ -250,7 +256,9 @@ impl UsageAgentInner {
                     }
                     None => {
                         tracing::debug!(
-                            "Dropping operation (phase: PROCESSING): probably introspection query"
+                            target: USAGE_REPORTING_TARGET,
+                            phase = "PROCESSING",
+                            "Dropping operation, probably introspection query"
                         );
                     }
                 },
@@ -346,13 +354,16 @@ impl UsageAgentExt for UsageAgent {
     async fn start_flush_interval(&self, token: &CancellationToken) {
         loop {
             tokio::time::sleep(self.inner().flush_interval).await;
+
             if token.is_cancelled() {
-                println!("Shutting down.");
+                debug!(target: USAGE_REPORTING_TARGET, "Shutting down.");
+
                 return;
             }
+
             self.flush()
                 .await
-                .unwrap_or_else(|e| tracing::error!("Failed to flush usage reports: {}", e));
+                .unwrap_or_else(|e| tracing::error!(target: USAGE_REPORTING_TARGET, error = ?e, "Failed to flush usage reports"));
         }
     }
 
@@ -365,23 +376,27 @@ impl UsageAgentExt for UsageAgent {
 
         if inner.should_exclude(&execution_report, request.as_ref())? {
             tracing::debug!(
-                "Excluding report for operation \"{}\" based on exclude expression evaluation",
-                execution_report
+                target: USAGE_REPORTING_TARGET,
+                operation_name = execution_report
                     .operation_name
                     .as_deref()
-                    .unwrap_or("anonymous")
+                    .unwrap_or("anonymous"),
+                "Excluding report for operation based on exclude expression evaluation",
             );
+
             return Ok(());
         }
 
         if !inner.should_sample(&execution_report) {
             tracing::debug!(
-                "Sampling dropped report for operation \"{}\"",
-                execution_report
+                target: USAGE_REPORTING_TARGET,
+                operation_name = execution_report
                     .operation_name
                     .as_deref()
-                    .unwrap_or("anonymous")
+                    .unwrap_or("anonymous"),
+                "Sampling dropped report for operation",
             );
+
             return Ok(());
         }
 
@@ -535,7 +550,7 @@ pub fn get_vrl_value_from_execution_report_and_request(
 impl AsyncDrop for UsageAgentInner {
     async fn async_drop(&mut self) {
         if let Err(e) = self.flush().await {
-            tracing::error!("Failed to flush usage reports during drop: {}", e);
+            tracing::error!(target: USAGE_REPORTING_TARGET, error = ?e, "Failed to flush usage reports during drop");
         }
     }
 }

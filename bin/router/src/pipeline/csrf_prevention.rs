@@ -1,5 +1,7 @@
 use hive_router_config::csrf::CSRFPreventionConfig;
+use hive_router_internal::telemetry::logging::targets;
 use ntex::web::HttpRequest;
+use tracing::warn;
 
 use crate::pipeline::error::PipelineError;
 
@@ -39,6 +41,8 @@ pub fn perform_csrf_prevention(
     if has_required_header {
         Ok(())
     } else {
+        warn!(target: targets::HTTP_SERVER, "csrf failed: missing required header");
+
         Err(PipelineError::CsrfPreventionFailed)
     }
 }

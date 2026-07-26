@@ -1,5 +1,8 @@
 use hive_router_config::jwt_auth::{JwksProviderSourceConfig, JwtAuthConfig};
-use hive_router_internal::background_tasks::{BackgroundTask, BackgroundTasksManager};
+use hive_router_internal::{
+    background_tasks::{BackgroundTask, BackgroundTasksManager},
+    telemetry::logging::targets,
+};
 use sonic_rs::from_str;
 use std::sync::{Arc, RwLock};
 use tokio::fs::read_to_string;
@@ -29,7 +32,7 @@ impl JwksManager {
             .filter_map(|v| match v.get_jwk_set() {
                 Ok(set) => Some(set),
                 Err(err) => {
-                    error!("Failed to use JWK set: {}, ignoring", err);
+                    error!(target: targets::JWT, error = ?err, "failed to use jwt set, ignoring this set");
 
                     None
                 }
@@ -79,9 +82,10 @@ impl BackgroundTask for JwksSourceTask {
             ..
         } = &self.0.config
         {
-            debug!(
-                "Starting remote jwks polling for source: {:?}",
-                self.0.config
+            info!(
+                target: targets::JWT,
+                source = ?self.0.config,
+                "starting remote jwks polling for source",
             );
             let mut tokio_interval = tokio::time::interval(*interval);
 
@@ -90,10 +94,10 @@ impl BackgroundTask for JwksSourceTask {
                     _ = tokio_interval.tick() => { match self.0.load_and_store_jwks().await {
                         Ok(_) => {}
                         Err(err) => {
-                            error!("Failed to load remote jwks: {}", err);
+                            error!(target: targets::JWT, error = ?err, source = ?self.0.config, "failed to load remote jwks");
                         }
                     } }
-                    _ = token.cancelled() => { info!("Jwks source shutting down."); return; }
+                    _ = token.cancelled() => { info!(target: targets::JWT, "jwks source shutting down."); return; }
                 }
             }
         }
@@ -117,7 +121,7 @@ impl JwksSource {
         let jwks_str = match &self.config {
             JwksProviderSourceConfig::Remote { url, .. } => {
                 let client = reqwest::Client::new();
-                debug!("loading jwks from a remote source: {}", url);
+                debug!(target: targets::JWT, url = ?url, "loading jwks from a remote source");
 
                 let response_text = client
                     .get(url)
@@ -131,7 +135,7 @@ impl JwksSource {
                 response_text
             }
             JwksProviderSourceConfig::File { file, .. } => {
-                debug!("loading jwks from a file source: {}", file.absolute);
+                debug!(target: targets::JWT, path = ?file.absolute, "loading jwks from a file source");
 
                 let file_contents = read_to_string(&file.absolute)
                     .await

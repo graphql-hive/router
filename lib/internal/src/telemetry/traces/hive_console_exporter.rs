@@ -42,6 +42,7 @@ use opentelemetry::{KeyValue, TraceId};
 use opentelemetry_sdk::error::OTelSdkResult;
 use opentelemetry_sdk::trace::{SpanData, SpanExporter};
 
+use crate::telemetry::logging::targets;
 use crate::telemetry::traces::spans::{attributes, kind::HiveSpanKind};
 
 /// Map of attributes to be renamed when normalizing http.server spans to graphql.operation spans.
@@ -211,7 +212,8 @@ impl<E: SpanExporter> HiveConsoleExporter<E> {
             else {
                 let trace_id = batch[http_idx].span_context.trace_id();
                 tracing::error!(
-                    component = "hive_console_exporter",
+                    target: targets::TELEMETRY,
+                    layer = "hive_console_exporter",
                     trace_id = ?trace_id,
                     "No matching graphql.operation span found for http.server span"
                 );
@@ -275,7 +277,8 @@ impl<E: SpanExporter> HiveConsoleExporter<E> {
                 .copied()
             else {
                 tracing::error!(
-                    component = "hive_console_exporter",
+                    target: targets::TELEMETRY,
+                    layer = "hive_console_exporter",
                     trace_id = ?trace_id,
                     "No matching http.client or http.inflight span found for graphql.subgraph.operation"
                 );
@@ -313,7 +316,8 @@ impl<E: SpanExporter> HiveConsoleExporter<E> {
                 .position(|kv| kv.key.as_str() == source_key)
             else {
                 tracing::debug!(
-                    component = "hive_console_exporter",
+                    target: targets::TELEMETRY,
+                    layer = "hive_console_exporter",
                     attribute_key = %source_key,
                     "Attribute not found in source span"
                 );
@@ -340,7 +344,8 @@ impl<E: SpanExporter> HiveConsoleExporter<E> {
                 .position(|kv| kv.key.as_str() == old_key)
             else {
                 tracing::debug!(
-                    component = "hive_console_exporter",
+                    target: targets::TELEMETRY,
+                    layer = "hive_console_exporter",
                     attribute_key = %old_key,
                     "Attribute not found for renaming"
                 );
@@ -450,14 +455,14 @@ impl<E: SpanExporter> SpanExporter for HiveConsoleExporter<E> {
     }
 
     fn shutdown(&mut self) -> OTelSdkResult {
-        tracing::info!(
-            component = "telemetry",
+        tracing::debug!(
+            target: targets::TELEMETRY,
             layer = "hive_console_exporter",
             "shutdown scheduled"
         );
         let result = self.inner.shutdown();
         tracing::info!(
-            component = "telemetry",
+            target: targets::TELEMETRY,
             layer = "hive_console_exporter",
             "shutdown completed"
         );

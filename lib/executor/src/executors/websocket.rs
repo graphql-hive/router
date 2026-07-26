@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use futures::channel::oneshot;
 use futures::stream::BoxStream;
 use futures_util::StreamExt;
+use hive_router_internal::telemetry::logging::targets;
 use ntex::rt;
 use tokio::sync::mpsc;
 use tracing::debug;
@@ -47,6 +48,10 @@ impl WsSubgraphExecutor {
 
 #[async_trait]
 impl SubgraphExecutor for WsSubgraphExecutor {
+    fn executor_name(&self) -> &str {
+        "websocket"
+    }
+
     fn endpoint(&self) -> &http::Uri {
         &self.endpoint
     }
@@ -62,8 +67,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         let tls_config = self.tls_config.clone();
         let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
         debug!(
-            "establishing WebSocket connection to subgraph {} at {}",
-            subgraph_name, endpoint
+            target: targets::WEBSOCKET_CLIENT,
+            subgraph = subgraph_name, endpoint = %endpoint,
+            "establishing WebSocket connection to subgraph"
         );
 
         let (subscribe_payload, init_payload) = build_subscribe_payload(execution_request);
@@ -100,8 +106,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 };
 
                 debug!(
-                    "WebSocket connection to subgraph {} at {} established",
-                    subgraph_name, endpoint
+                    target: targets::WEBSOCKET_CLIENT,
+                    subgraph = subgraph_name, endpoint = %endpoint,
+                    "WebSocket connection to subgraph established"
                 );
 
                 let mut stream = client
@@ -146,8 +153,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         let (subscribe_payload, init_payload) = build_subscribe_payload(execution_request);
 
         debug!(
-            "establishing WebSocket subscription connection to subgraph {} at {}",
-            self.subgraph_name, self.endpoint
+            target: targets::WEBSOCKET_CLIENT,
+            subgraph = self.subgraph_name, endpoint = %self.endpoint,
+            "establishing WebSocket subscription connection to subgraph"
         );
 
         let subgraph_name_for_metrics = self.subgraph_name.clone();
@@ -183,8 +191,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
             };
 
             debug!(
-                "WebSocket subscription connection to subgraph {} at {} established",
-                subgraph_name, endpoint
+                target: targets::WEBSOCKET_CLIENT,
+                subgraph = subgraph_name, endpoint = %endpoint,
+                "WebSocket subscription connection to subgraph established"
             );
 
             let _conn_guard = telemetry_context

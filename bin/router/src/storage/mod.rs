@@ -1,6 +1,7 @@
 use crate::storage::error::StorageError;
 use async_trait::async_trait;
 use hive_router_config::storage::{StorageConfigMap, StorageSourceConfig};
+use hive_router_internal::telemetry::logging::targets;
 use object_store::path::Path;
 use std::{collections::HashMap, sync::Arc};
 use tracing::debug;
@@ -18,7 +19,7 @@ impl StorageManager {
         let mut storage_runtimes: HashMap<String, Arc<Box<dyn StorageRuntime>>> = HashMap::new();
 
         for (id, config) in config_map {
-            debug!(storage_id = id, config = ?config, "creating storage runtime");
+            debug!(target: targets::STORAGE, storage_id = id, config = ?config, "creating storage runtime");
 
             storage_runtimes.insert(
                 id.to_string(),

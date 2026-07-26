@@ -1,3 +1,4 @@
+use hive_router_internal::telemetry::logging::targets;
 /// Common types and messages for the GraphQL over WebSocket Transport Protocol
 /// as per the spec: https://github.com/enisdenjo/graphql-ws/blob/master/PROTOCOL.md
 use ntex::ws;
@@ -247,7 +248,8 @@ impl From<ClientMessage> for ws::Message {
         match sonic_rs::to_string(&msg) {
             Ok(text) => ws::Message::Text(text.into()),
             Err(e) => {
-                error!("Failed to serialize client message to JSON: {}", e);
+                error!(target: targets::WEBSOCKET_CLIENT, error = ?e, "Failed to serialize client message to JSON");
+
                 CloseCode::InternalServerError(None).into()
             }
         }
@@ -416,7 +418,8 @@ impl ServerMessage {
         let payload = match sonic_rs::from_slice(body) {
             Ok(value) => value,
             Err(err) => {
-                error!("Failed to serialize plan execution output body: {}", err);
+                error!(target: targets::WEBSOCKET_CLIENT, error = ?err, "Failed to serialize plan execution output body");
+
                 return CloseCode::InternalServerError(None).into();
             }
         };
@@ -445,7 +448,7 @@ impl From<ServerMessage> for ws::Message {
         match sonic_rs::to_string(&msg) {
             Ok(text) => ws::Message::Text(text.into()),
             Err(e) => {
-                error!("Failed to serialize server message to JSON: {}", e);
+                error!(target: targets::WEBSOCKET_CLIENT, error = ?e, "Failed to serialize server message to JSON");
                 CloseCode::InternalServerError(None).into()
             }
         }

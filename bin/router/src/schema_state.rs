@@ -9,6 +9,7 @@ use graphql_tools::validation::utils::ValidationError;
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
 use hive_router_internal::authorization::metadata::AuthorizationMetadata;
 use hive_router_internal::background_tasks::{BackgroundTask, BackgroundTasksManager};
+use hive_router_internal::telemetry::logging::targets;
 use hive_router_internal::telemetry::{metrics::Metrics, TelemetryContext};
 use hive_router_plan_executor::execution::operation_name::OperationNameForwardConfig;
 use hive_router_plan_executor::executors::http_callback::{
@@ -36,7 +37,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, info, trace};
 
 use crate::{
     pipeline::authorization::AuthorizationMetadataError,
@@ -215,13 +216,14 @@ impl SchemaState {
                 runtime,
             };
 
+            debug!(target: targets::SUPERGRAPH, internal_id = selected.snapshot.cache_id, "supergraph was set from a plugin");
+
             req.extensions_mut().insert(selected.clone());
 
             return Ok(Some(selected));
         }
 
         // no plugin-selected supergraph, fall back to the router's configured default
-
         let selected = self
             .configured
             .load()
@@ -230,6 +232,8 @@ impl SchemaState {
             .map(SelectedSupergraph::from);
 
         if let Some(selected) = &selected {
+            debug!(target: targets::SUPERGRAPH, "using supergraph from the configured default");
+
             req.extensions_mut().insert(selected.clone());
         }
 
@@ -550,7 +554,7 @@ impl BackgroundTask for SupergraphBackgroundLoaderTask {
         let supergraph_metrics = &self.0.metrics.supergraph;
         loop {
             if token.is_cancelled() {
-                trace!("Background task cancelled");
+                trace!(target: targets::SUPERGRAPH, "background task cancelled");
 
                 break;
             }
@@ -558,35 +562,33 @@ impl BackgroundTask for SupergraphBackgroundLoaderTask {
             let poll_capture = supergraph_metrics.capture_poll();
             match self.0.loader.load().await {
                 Ok(ReloadSupergraphResult::Unchanged) => {
-                    debug!("Supergraph fetched successfully with no changes");
+                    debug!(target: targets::SUPERGRAPH, "supergraph fetched successfully with no changes");
                     poll_capture.finish_not_modified();
                 }
                 Ok(ReloadSupergraphResult::Changed { new_sdl }) => {
-                    debug!("Supergraph loaded successfully with changes, updating...");
+                    info!(target: targets::SUPERGRAPH, "supergraph loaded successfully with changes, updating...");
 
                     if self.0.sender.clone().send(new_sdl).await.is_err() {
-                        error!("Failed to send new supergraph SDL: receiver dropped.");
+                        error!(target: targets::SUPERGRAPH, "failed to send new supergraph SDL: receiver dropped");
                         poll_capture.finish_error();
+
                         break;
                     }
 
                     poll_capture.finish_updated();
                 }
                 Err(err) => {
-                    error!("Failed to load supergraph: {}", err);
+                    error!(target: targets::SUPERGRAPH, error = ?err, "failed to load supergraph");
                     poll_capture.finish_error();
                 }
             }
 
             if let Some(interval) = self.0.loader.reload_interval() {
-                debug!(
-                    "waiting for {:?}ms before checking again for supergraph changes",
-                    interval.as_millis()
-                );
+                debug!(target: targets::SUPERGRAPH, interval_ms = interval.as_millis(), "waiting before checking again for supergraph changes");
 
                 ntex::time::sleep(*interval).await;
             } else {
-                debug!("poll interval not configured for supergraph changes, breaking");
+                debug!(target: targets::SUPERGRAPH, "poll interval not configured for supergraph changes, skipping");
 
                 break;
             }
@@ -710,7 +712,7 @@ impl BackgroundTask for CallbackHeartbeatEnforcerTask {
         loop {
             tokio::select! {
                 _ = token.cancelled() => {
-                    debug!("heartbeat enforcer cancelled, stopping");
+                    debug!(target: targets::HTTP_CALLBACK, "heartbeat enforcer cancelled, stopping");
                     return;
                 }
                 _ = ntex::time::sleep(self.heartbeat_interval) => {}
@@ -740,9 +742,11 @@ impl BackgroundTask for CallbackHeartbeatEnforcerTask {
             // separate iter so that we dont mess up the slice while looping
             for id in timed_out {
                 debug!(
+                    target: targets::HTTP_CALLBACK,
                     subscription_id = %id,
                     "terminating subscription due to http callback subgraph missed heartbeat"
                 );
+
                 if let Some((_, sub)) = self.callback_subscriptions.remove(&id) {
                     // we dont care about the result of this send, if it fails it means the client
                     // is already gone or too slow, either way we just terminate the subscription
@@ -772,6 +776,7 @@ mod plugin_runtime_cache_tests {
             runtime_cache_cleanup: None,
             router_config: Arc::new(HiveRouterConfig::default()),
             telemetry_context: Arc::new(TelemetryContext::from_propagation_config(
+                &Default::default(),
                 &Default::default(),
             )),
             callback_subscriptions: Arc::new(DashMap::new()),
@@ -1015,6 +1020,7 @@ mod plugin_runtime_cache_tests {
                         &owner.snapshot(),
                         &Arc::new(HiveRouterConfig::default()),
                         &Arc::new(TelemetryContext::from_propagation_config(
+                            &Default::default(),
                             &Default::default(),
                         )),
                         &Arc::new(DashMap::new()),
