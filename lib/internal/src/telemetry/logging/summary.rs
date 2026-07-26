@@ -242,7 +242,7 @@ impl Drop for SummaryOnDrop {
 
 /// Used to track the body of a response, so the summary is emitted when the stream
 /// terminates (or the client disconnects) instead of when the response was built.
-/// Streamed bodies have no known size upfront, so the bytes sent to the client are summed here.
+/// Streamed bodies have no known size upfront, so the bytes sent to the client are also summed here.
 struct SummaryTrackedBody {
     body: ResponseBody<Body>,
     summary: SummaryOnDrop,
