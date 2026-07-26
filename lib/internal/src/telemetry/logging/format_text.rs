@@ -36,9 +36,9 @@ where
             writer.write_str(line)?;
 
             let _ = REQUEST_IDENTIFIERS.try_with(|ids| -> std::fmt::Result {
-                write!(writer, " request_id={}", ids.req_id())?;
+                write!(writer, " request_id={:?}", ids.req_id())?;
                 if let Some(trace_id) = ids.trace_id() {
-                    write!(writer, " trace_id={}", trace_id)?;
+                    write!(writer, " trace_id={:?}", trace_id)?;
                 }
                 Ok(())
             });
