@@ -213,9 +213,16 @@ impl SummaryOnDrop {
         response.map_body(|_, body| {
             ResponseBody::Body(Body::from_message(SummaryTrackedBody {
                 body,
-                _summary: self,
+                summary: self,
+                payload_bytes: 0,
             }))
         })
+    }
+
+    fn record(&self, f: impl FnOnce(&RequestSummary)) {
+        if let Some(summary) = &self.summary {
+            f(summary);
+        }
     }
 }
 
@@ -235,9 +242,11 @@ impl Drop for SummaryOnDrop {
 
 /// Used to track the body of a response, so the summary is emitted when the stream
 /// terminates (or the client disconnects) instead of when the response was built.
+/// Streamed bodies have no known size upfront, so the bytes sent to the client are summed here.
 struct SummaryTrackedBody {
     body: ResponseBody<Body>,
-    _summary: SummaryOnDrop,
+    summary: SummaryOnDrop,
+    payload_bytes: i64,
 }
 
 impl MessageBody for SummaryTrackedBody {
@@ -249,6 +258,19 @@ impl MessageBody for SummaryTrackedBody {
         &mut self,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Bytes, Rc<dyn Error>>>> {
-        self.body.poll_next_chunk(cx)
+        let poll = self.body.poll_next_chunk(cx);
+        if let Poll::Ready(Some(Ok(chunk))) = &poll {
+            self.payload_bytes = self.payload_bytes.saturating_add(chunk.len() as i64);
+        }
+        poll
+    }
+}
+
+impl Drop for SummaryTrackedBody {
+    fn drop(&mut self) {
+        // runs before the `SummaryOnDrop` field is dropped, so the total is part of the summary
+        let payload_bytes = self.payload_bytes;
+        self.summary
+            .record(|s| s.payload_bytes.store(payload_bytes, Relaxed));
     }
 }
