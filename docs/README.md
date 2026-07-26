@@ -2502,6 +2502,7 @@ log_internals: false
 
 ```
 
+   
 <a name="logcorrelation"></a>
 ### log\.correlation: object
 
@@ -2517,7 +2518,7 @@ This is used to configure the correlation Request-ID header and W3C trace propag
 |**id\_header**|`string`|A valid HTTP header name, according to RFC 7230.<br/>Default: `"x-request-id"`<br/>Pattern: `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`<br/>||
 |**trace\_propagation**|`boolean`|Default: `true`<br/>||
 
-**Additional Properties:** not allowed  
+**Additional Properties:** not allowed   
 **Example**
 
 ```yaml
