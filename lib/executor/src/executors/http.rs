@@ -17,7 +17,7 @@ use crate::response::subgraph_response::SubgraphResponse;
 use futures::stream::BoxStream;
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::inflight::InFlightRole;
-use hive_router_internal::telemetry::logging::{summary, targets};
+use hive_router_internal::telemetry::logging::targets;
 use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
 use hive_router_internal::telemetry::metrics::http_client_metrics::HttpClientRequestStateCapture;
 use hive_router_internal::telemetry::metrics::subscription_metrics::SubscriptionTransport;
@@ -228,7 +228,6 @@ async fn send_request<'a>(
     *req.headers_mut() = headers;
 
     debug!(target: targets::HTTP_CLIENT, endpoint = ?endpoint, subgraph = subgraph_name, "making http request");
-    summary::record(|s| s.record_subgraph(subgraph_name));
 
     let http_request_span = HttpClientRequestSpan::from_request(&req);
     let mut http_request_capture = telemetry_context.metrics.http_client.capture_request(

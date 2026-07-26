@@ -15,7 +15,6 @@ use hive_router_config::{
     traffic_shaping::{DurationOrExpression, StatusCodeMatcher},
     HiveRouterConfig,
 };
-use hive_router_internal::expressions::{CompileExpression, DurationOrProgram, ExecutableProgram};
 use hive_router_internal::{
     expressions::vrl::compiler::Program as VrlProgram, inflight::InFlightMap,
     telemetry::TelemetryContext,
@@ -26,6 +25,10 @@ use hive_router_internal::{
         ExpressionCompileError, ProgramHints, ValueOrProgram,
     },
     telemetry::logging::targets,
+};
+use hive_router_internal::{
+    expressions::{CompileExpression, DurationOrProgram, ExecutableProgram},
+    telemetry::logging::summary,
 };
 use http::{StatusCode, Uri};
 use hyper_util::{
@@ -347,6 +350,7 @@ impl SubgraphExecutorMap {
             Some(execution_result) => execution_result,
             None => {
                 debug!(target: targets::EXECUTOR, operation = execution_request.query, dedupe = execution_request.dedupe, subgraph = subgraph_name, executor = executor.executor_name(), "executing subgraph request");
+                summary::record(|s| s.record_subgraph(subgraph_name));
 
                 let exec_fut = executor.execute(execution_request, timeout, plugin_req_state);
                 // Clone the circuit breaker out of the DashMap before awaiting to avoid
