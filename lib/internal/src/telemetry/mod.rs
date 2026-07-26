@@ -167,7 +167,9 @@ where
         .with_threads(false)
         // Drop events from tracing macros (info!, error!, etc.),
         // but accept those from span.add_event()
-        .with_filter(filter_fn(|metadata| metadata.is_span()));
+        .with_filter(filter_fn(|metadata| {
+            metadata.is_span() && *metadata.level() <= tracing::Level::INFO
+        }));
 
     Ok(Some((traces_layer, traces_provider)))
 }
