@@ -50,6 +50,7 @@ use crate::schema_state::SchemaState;
 use crate::shared_state::{RouterSharedState, SharedRouterResponse};
 use crate::telemetry::HeaderExtractor;
 use hive_router_internal::telemetry::logging::request_id::WithRequestIdentifiers;
+use hive_router_internal::telemetry::logging::scope::RequestLogScope;
 use hive_router_internal::telemetry::logging::summary::{self, WithRequestSummary};
 use hive_router_internal::telemetry::logging::targets;
 
@@ -672,7 +673,8 @@ async fn handle_text_frame(
                           // must be spawned - blocking the frame handler would prevent
                           // ClientMessage::Complete from being received and processed,
                           // making cancellation impossible
-                          rt::spawn(async move {
+                          let log_scope = RequestLogScope::capture();
+                          rt::spawn(log_scope.scope(async move {
                               let _guard = guard;
                               let mut client_op_guard = client_op_guard;
                               let mut cancelled = false;
@@ -717,7 +719,7 @@ async fn handle_text_frame(
                                   trace!(target: targets::WEBSOCKET_SERVER, id = %id_for_loop, "Subscription completed");
                                   let _ = sink.send(ServerMessage::complete(&id_for_loop)).await;
                               }
-                          }.with_request_id(request_identifiers.clone()));
+                          }));
 
                           None
                       }

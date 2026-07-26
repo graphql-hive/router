@@ -1,6 +1,6 @@
 use futures::stream::{BoxStream, Stream};
 use futures_util::StreamExt;
-use hive_router_internal::telemetry::logging::targets;
+use hive_router_internal::telemetry::logging::{scope::RequestLogScope, targets};
 use ntex::rt;
 use tokio::sync::mpsc;
 use tracing::debug;
@@ -120,8 +120,10 @@ where
     let (tx, mut rx) = mpsc::channel::<SubscriptionItem>(buffer_size);
 
     // ntex::rt::spawn keeps the drainer on the local ntex runtime, matching the rest of the
-    // subscription pipeline.
-    drop(rt::spawn(async move {
+    // subscription pipeline. the logging context is carried over so logs / access log stay correlated
+    // with the request that opened the subscription.
+    let log_scope = RequestLogScope::capture();
+    drop(rt::spawn(log_scope.scope(async move {
         drain_into(
             source,
             tx,
@@ -131,7 +133,7 @@ where
             &endpoint,
         )
         .await;
-    }));
+    })));
 
     Box::pin(async_stream::stream! {
         while let Some(item) = rx.recv().await {

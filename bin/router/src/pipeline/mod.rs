@@ -2,7 +2,7 @@ use futures::StreamExt;
 use hive_router_internal::{
     http::read_body_stream,
     telemetry::{
-        logging::{summary, targets},
+        logging::{scope::RequestLogScope, summary, targets},
         traces::spans::{graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan},
     },
 };
@@ -584,7 +584,10 @@ pub async fn execute_planned_request<'exec>(
 
             let mut body_stream = result.body;
             let supergraph = supergraph.clone();
-            rt::spawn(async move {
+            // the pump drives per-event execution (entity resolution), so it keeps the logging
+            // context of the request that created the subscription
+            let log_scope = RequestLogScope::capture();
+            rt::spawn(log_scope.scope(async move {
                 loop {
                     tokio::select! {
                         chunk = body_stream.next() => {
@@ -615,7 +618,7 @@ pub async fn execute_planned_request<'exec>(
                 }
                 // dropping producer_handle closes the broadcast channel
                 drop(supergraph);
-            });
+            }));
 
             let headers = materialize_shared_response_headers(
                 stream_content_type.as_ref(),
