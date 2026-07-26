@@ -1,3 +1,65 @@
+## 0.0.38 (2026-07-26)
+
+### Fixes
+
+#### Logger improvements and access logs
+
+Reworked the router's logging for lower overhead and clearer output.
+
+- **Access logs:** at the default `info` level the router now emits a single per-request summary (`router::request` target) with operation, subgraph, error, status, payload size, and duration fields.
+- **Correlation:** every log line carries `request_id` (from the `log.correlation.id_header`, default `x-request-id`, or generated when absent) and `trace_id` (from the W3C `traceparent` context when `log.correlation.trace_propagation` is enabled).
+- **Explicit targets:** all logs use `router::*` targets, so `log.filter` (or `LOG_FILTER`) can raise or mute individual subsystems. To disable access logs entirely, set `LOG_FILTER=router::request=off`.
+- **Internal crates:** logs from dependencies like `ntex` and `hyper` are now suppressed unless `log.log_internals` (or `LOG_INTERNALS`) is enabled.
+- **Structured output:** flat JSON/text with no nested fields, formatted directly into buffers.
+
+**Breaking changes:**
+
+- The `trace` log level is no longer available in release builds.
+- The `pretty-tree` and `pretty-compact` log formats were removed; only `text` and `json` remain.
+
+#### Support custom GraphQL root type names
+
+Hive Router now reads `query`, `mutation`, and `subscription` root type names from the schema instead of assuming they are named `Query`, `Mutation`, and `Subscription`.
+
+#### Subgraph Error Masking
+
+Mask subgraph errors before they reach clients, preventing internal details from leaking.
+
+Masking is **enabled by default**: subgraph error messages are replaced with `"Unexpected error"`. It runs last in the pipeline, so metrics, tracing, and logging still see the original error.
+
+Configure it under `error_masking`:
+
+```yaml
+error_masking:
+  enabled: true # enabled by default 
+  redacted_error_message: "Unexpected error"
+  all: # default config, unless you override it with subgraph-specific 
+    enabled: true
+    extensions:
+      mode: allow # allow | deny
+      keys:
+        - code
+  subgraphs:
+    products:
+      enabled: false
+```
+
+- `error_message` toggles message redaction; `extensions` redacts extension keys via an `allow`/`deny` list.
+- `subgraphs.<name>` overrides `all` per subgraph, inheriting any field it doesn't set.
+- Set `DISABLE_SUBGRAPH_ERROR_MASKING=true` to disable message masking without editing the config.
+
+[Documentation](http://the-guild.dev/graphql/hive/docs/router/security/error-masking)
+
+Fixes https://github.com/graphql-hive/router/issues/1194
+
+#### Add `supergraph.source: plugin` for deployments where plugins are the only source of supergraphs
+
+This source creates no loader and has no configured fallback. Readiness, GraphQL requests, and WebSocket upgrades return service unavailable until the request's plugin selects a usable supergraph.
+
+HTTP readiness checks invoke plugin's `on_http_request`, in order for the readiness check to pass - a supergraph must be selected even during that readiness request.
+
+See `plugin_examples/feature_flags` for `supergraph.source: plugin` with all variants selected by the plugin.
+
 ## 0.0.37 (2026-07-20)
 
 ### Fixes
