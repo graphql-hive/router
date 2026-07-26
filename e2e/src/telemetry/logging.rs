@@ -373,6 +373,91 @@ async fn test_logging_of_subscriptions() {
 }
 
 #[ntex::test]
+async fn should_report_correct_duration_for_stream_subscription() {
+    use futures::StreamExt;
+
+    let subgraphs = TestSubgraphs::builder()
+        .with_http_streaming_subscriptions_protocol(
+            subgraphs::HTTPStreamingSubscriptionProtocol::SseOnly,
+        )
+        .build()
+        .start()
+        .await;
+
+    let router = TestRouter::builder()
+        .with_subgraphs(&subgraphs)
+        .inline_config(
+            r#"
+          supergraph:
+              source: file
+              path: supergraph.graphql
+          subscriptions:
+              enabled: true
+          log:
+              level: info
+              format: json
+          "#,
+        )
+        .build()
+        .start()
+        .await;
+
+    let (stdout_log, stream_lifetime) = async {
+        let mut res = router
+            .send_graphql_request(
+                r#"
+              subscription {
+                  reviewAdded(intervalInMs: 100) {
+                      id
+                  }
+              }
+              "#,
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream"
+                },
+            )
+            .await;
+
+        assert_eq!(res.status(), 200, "Expected 200 OK");
+
+        let started_at = std::time::Instant::now();
+        let mut body = Vec::new();
+        while let Some(chunk) = res.next().await {
+            body.extend_from_slice(&chunk.expect("stream chunk"));
+        }
+        let elapsed = started_at.elapsed();
+
+        let body_str = String::from_utf8(body).unwrap();
+        assert!(
+            body_str.contains("event: complete"),
+            "stream did not complete: {body_str}"
+        );
+
+        elapsed
+    }
+    .capture_stdout_json_and_result()
+    .await;
+
+    let stream_lifetime_ms = stream_lifetime.as_millis() as u64;
+    assert!(
+        stream_lifetime_ms >= 500,
+        "test setup: expected the stream to stay open for a while, got {stream_lifetime_ms}ms"
+    );
+
+    let req_summary = log_line_by_target(&stdout_log, targets::SUMMARY);
+    let duration_ms = req_summary
+        .get("duration_ms")
+        .and_then(Value::as_u64)
+        .expect("duration_ms must be a number");
+
+    assert!(
+        duration_ms >= stream_lifetime_ms,
+        "expected the reported duration_ms ({duration_ms}) to cover the real stream lifetime ({stream_lifetime_ms}ms)"
+    );
+}
+
+#[ntex::test]
 async fn json_log_default_attrs() {
     let (_subgraphs, router) = setup_router(router_with_stdout_logging("json", "debug")).await;
 
