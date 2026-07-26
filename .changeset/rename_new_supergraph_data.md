@@ -1,5 +1,6 @@
 ---
 hive-router-plan-executor: major
+hive-router: patch
 ---
 
 # Rename `on_supergraph_load` end hook payload `new_supergraph_data` field to `new_supergraph`

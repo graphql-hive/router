@@ -1,5 +1,8 @@
 ---
 hive-router-config: minor
+hive-router-internal: patch
+hive-router-plan-executor: patch
+hive-router: patch
 ---
 
 # Add `supergraph.source: plugin` for deployments where plugins are the only source of supergraphs
