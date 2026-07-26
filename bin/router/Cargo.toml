@@ -80,7 +80,7 @@ percent-encoding = "2.3.2"
 matchit = "0.9.2"
 
 moka = { workspace = true }
-ulid = "2.0.1"
+ulid = "3.0.0"
 tokio-util = { workspace = true }
 cookie = "0.18.1"
 arc-swap = { workspace = true }
