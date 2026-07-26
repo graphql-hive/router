@@ -416,6 +416,9 @@ async fn should_report_correct_duration_for_stream_subscription() {
               subscription {
                   reviewAdded(intervalInMs: 100) {
                       id
+                      author {
+                        name
+                      }
                   }
               }
               "#,
@@ -462,16 +465,16 @@ async fn should_report_correct_duration_for_stream_subscription() {
     {
       "duration_ms": "[duration_ms]",
       "error_count": 0,
-      "involved_subgraphs": "",
+      "involved_subgraphs": "accounts,reviews",
       "level": "INFO",
-      "operation_hash": "0f4606130af68151b6397f7ad2b31652",
+      "operation_hash": "c50dfe39a0ad9aa5c81975d677b2c072",
       "operation_type": "subscription",
       "partial_response": false,
       "payload_bytes": -1,
       "request_id": "123",
       "response_mode": "stream",
       "status_code": 200,
-      "subgraph_requests": 0,
+      "subgraph_requests": 12,
       "supergraph_identifier": 0,
       "target": "router::request",
       "timestamp": "[timestamp]"
