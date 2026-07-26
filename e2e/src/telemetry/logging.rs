@@ -318,26 +318,33 @@ async fn test_logging_of_subscriptions() {
         .start()
         .await;
 
-    let (stdout_log, res) = router
-        .send_graphql_request(
-            r#"
-          subscription {
-              reviewAdded(intervalInMs: 0) {
-                  product {
-                      upc
+    let (stdout_log, status) = async {
+        let res = router
+            .send_graphql_request(
+                r#"
+              subscription {
+                  reviewAdded(intervalInMs: 0) {
+                      product {
+                          upc
+                      }
                   }
               }
-          }
-          "#,
-            None,
-            some_header_map! {
-                http::header::ACCEPT => "text/event-stream"
-            },
-        )
-        .capture_stdout_json_and_result()
-        .await;
+              "#,
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream"
+                },
+            )
+            .await;
 
-    assert_eq!(res.status(), 200, "Expected 200 OK");
+        let status = res.status();
+        res.body().await.expect("stream body");
+        status
+    }
+    .capture_stdout_json_and_result()
+    .await;
+
+    assert_eq!(status, 200, "Expected 200 OK");
 
     let lines = stdout_log
         .lines_json
@@ -414,7 +421,8 @@ async fn should_report_correct_duration_for_stream_subscription() {
               "#,
                 None,
                 some_header_map! {
-                    http::header::ACCEPT => "text/event-stream"
+                    http::header::ACCEPT => "text/event-stream",
+                    "x-request-id" => "123",
                 },
             )
             .await;
@@ -446,6 +454,30 @@ async fn should_report_correct_duration_for_stream_subscription() {
     );
 
     let req_summary = log_line_by_target(&stdout_log, targets::SUMMARY);
+
+    assert_json_snapshot!(req_summary, {
+      ".timestamp" => "[timestamp]",
+      ".duration_ms" => "[duration_ms]"
+    }, @r#"
+    {
+      "duration_ms": "[duration_ms]",
+      "error_count": 0,
+      "involved_subgraphs": "",
+      "level": "INFO",
+      "operation_hash": "0f4606130af68151b6397f7ad2b31652",
+      "operation_type": "subscription",
+      "partial_response": false,
+      "payload_bytes": -1,
+      "request_id": "123",
+      "response_mode": "stream",
+      "status_code": 200,
+      "subgraph_requests": 0,
+      "supergraph_identifier": 0,
+      "target": "router::request",
+      "timestamp": "[timestamp]"
+    }
+    "#);
+
     let duration_ms = req_summary
         .get("duration_ms")
         .and_then(Value::as_u64)
