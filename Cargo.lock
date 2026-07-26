@@ -6859,7 +6859,7 @@ checksum = "90bcd9b6dfb17bf52cefb3db84a111267d8f2db88087d9cd1a46aa57de3cfcc1"
 dependencies = [
  "chrono",
  "pnet_datalink",
- "thiserror 2.0.18",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -7492,7 +7492,7 @@ checksum = "050686193eb999b4bb3bc2acfa891a13da00f79734704c4b8b4ef1a10b368a3c"
 dependencies = [
  "crossbeam-channel",
  "symlink",
- "thiserror 2.0.18",
+ "thiserror 2.0.19",
  "time",
  "tracing-subscriber",
 ]
