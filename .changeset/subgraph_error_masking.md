@@ -15,9 +15,10 @@ Configure it under `error_masking`:
 
 ```yaml
 error_masking:
+  enabled: true # enabled by default 
   redacted_error_message: "Unexpected error"
-  all:
-    error_message: true
+  all: # default config, unless you override it with subgraph-specific 
+    enabled: true
     extensions:
       mode: allow # allow | deny
       keys:
