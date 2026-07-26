@@ -1,14 +1,21 @@
 use std::collections::HashSet;
+use std::error::Error;
 use std::future::Future;
+use std::rc::Rc;
 use std::sync::atomic::{
     AtomicBool, AtomicI64, AtomicU16, AtomicU32, AtomicU64, Ordering::Relaxed,
 };
 use std::sync::{Arc, Mutex, OnceLock};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
+use ntex::http::body::{Body, BodySize, MessageBody, ResponseBody};
+use ntex::util::Bytes;
+use ntex::web::HttpResponse;
 use tokio::task::futures::TaskLocalFuture;
 use tracing::{info, Level};
 
+use crate::telemetry::logging::request_id::{RequestIdentifiers, REQUEST_IDENTIFIERS};
 use crate::telemetry::logging::targets;
 
 #[derive(Default)]
@@ -172,18 +179,76 @@ pub trait WithRequestSummary: Future + Sized {
 impl<F: Future> WithRequestSummary for F {}
 
 /// Emits the request summary when dropped, recording request duration from `started_at`.
+///
+/// The summary and the request identifiers are captured by value, so the guard can outlive the
+/// task-local scope of the request - required for streamed responses, whose body is polled by
+/// the server long after the handler future resolved.
 pub struct SummaryOnDrop {
     started_at: std::time::Instant,
+    summary: Option<Arc<RequestSummary>>,
+    request_ids: Option<Arc<RequestIdentifiers>>,
 }
 
 impl SummaryOnDrop {
     pub fn new(started_at: std::time::Instant) -> Self {
-        Self { started_at }
+        let (summary, request_ids) = if is_enabled() {
+            (
+                REQUEST_SUMMARY.try_with(Arc::clone).ok(),
+                REQUEST_IDENTIFIERS.try_with(Arc::clone).ok(),
+            )
+        } else {
+            (None, None)
+        };
+
+        Self {
+            started_at,
+            summary,
+            request_ids,
+        }
+    }
+
+    /// Moves the guard into a streamed response body, so the summary is emitted when the stream
+    /// terminates (or the client disconnects) instead of when the response was built.
+    pub fn attach_to_response(self, response: HttpResponse) -> HttpResponse {
+        response.map_body(|_, body| {
+            ResponseBody::Body(Body::from_message(SummaryTrackedBody {
+                body,
+                _summary: self,
+            }))
+        })
     }
 }
+
 impl Drop for SummaryOnDrop {
     fn drop(&mut self) {
-        record(|s| s.set_duration(self.started_at.elapsed()));
-        emit();
+        let Some(summary) = self.summary.take() else {
+            return;
+        };
+        summary.set_duration(self.started_at.elapsed());
+
+        match self.request_ids.take() {
+            Some(ids) => REQUEST_IDENTIFIERS.sync_scope(ids, || summary.emit()),
+            None => summary.emit(),
+        }
+    }
+}
+
+/// Used to track the body of a response, so the summary is emitted when the stream
+/// terminates (or the client disconnects) instead of when the response was built.
+struct SummaryTrackedBody {
+    body: ResponseBody<Body>,
+    _summary: SummaryOnDrop,
+}
+
+impl MessageBody for SummaryTrackedBody {
+    fn size(&self) -> BodySize {
+        self.body.size()
+    }
+
+    fn poll_next_chunk(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Bytes, Rc<dyn Error>>>> {
+        self.body.poll_next_chunk(cx)
     }
 }

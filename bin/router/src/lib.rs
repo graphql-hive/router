@@ -165,8 +165,8 @@ async fn graphql_endpoint_handler(
         .capture_request(&request);
 
     let started_at = std::time::Instant::now();
-    let response = async {
-        let _summary = summary::SummaryOnDrop::new(started_at);
+    let (response_mode, mut response, summary_guard) = async {
+        let summary_guard = summary::SummaryOnDrop::new(started_at);
         debug!(
             target: targets::HTTP_SERVER,
             method = request.method().as_str(),
@@ -178,7 +178,7 @@ async fn graphql_endpoint_handler(
             "http request started",
         );
 
-        let inner_res = graphql_endpoint_dispatch(
+        let (response_mode, inner_res) = graphql_endpoint_dispatch(
             &mut request,
             body_stream,
             schema_state,
@@ -208,11 +208,18 @@ async fn graphql_endpoint_handler(
                 .store(payload_bytes, std::sync::atomic::Ordering::Relaxed);
         });
 
-        inner_res
+        (response_mode, inner_res, summary_guard)
     }
     .with_request_id(request_identifiers)
     .with_request_summary()
     .await;
+
+    // for streamed responses the summary must be emitted when the stream ends, not now
+    // we do that by attaching the summary guard to the response body, so it will be emitted
+    // when the stream terminates (or the client disconnects)
+    if response_mode.can_stream() {
+        response = summary_guard.attach_to_response(response);
+    }
 
     let graphql_operation = read_graphql_operation_metric_identity(&request);
     let graphql_operation_name = graphql_operation
@@ -241,7 +248,7 @@ async fn graphql_endpoint_dispatch(
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
     parent_ctx: opentelemetry::Context,
-) -> web::HttpResponse {
+) -> (ResponseMode, web::HttpResponse) {
     let root_http_request_span = HttpServerRequestSpan::from_request(
         request,
         &app_state
@@ -320,7 +327,7 @@ async fn graphql_endpoint_dispatch(
 
         root_http_request_span.record_response(&response);
 
-        response
+        (response_mode, response)
     }
     .instrument(root_http_request_span.clone())
     .await
