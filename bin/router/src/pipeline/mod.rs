@@ -62,6 +62,9 @@ use crate::{
         execution_request::{GetQueryStr, OperationPreparation, OperationPreparationResult},
         header::{RequestAccepts, ResponseMode, TEXT_HTML_MIME},
         introspection_policy::handle_introspection_policy,
+        long_lived_client_limit::{
+            too_many_long_lived_clients_response, try_reserve_long_lived_client,
+        },
         normalize::{normalize_request_with_cache, FilterOutputExt, GraphQLNormalizationPayload},
         parser::{parse_operation_with_cache, ParseResult},
         progressive_override::RequestOverrideContext,
@@ -378,6 +381,27 @@ pub async fn graphql_request_handler(
             return Err(PipelineError::SubscriptionsNotSupported);
         }
 
+        // subscriptions over HTTP hold a streaming response open, so they count
+        // toward the long-lived client limit. the slot is reserved here - before
+        // any planning or execution work - and released when the client stream
+        // ends. the parsed operation kind is used instead of the `Accept` header
+        // because clients like urql advertise streaming support on every
+        // operation, and regular queries must not count toward the limit.
+        let long_lived_client_guard = if is_subscription {
+            match try_reserve_long_lived_client(shared_state) {
+                Ok(guard) => guard,
+                Err(_) => {
+                    debug!(
+                        target: targets::HTTP_SERVER,
+                        "rejecting subscription, long-lived client limit reached"
+                    );
+                    return Ok(too_many_long_lived_clients_response());
+                }
+            }
+        } else {
+            None
+        };
+
         let request_dedupe_enabled = shared_state
             .router_config
             .traffic_shaping
@@ -484,7 +508,11 @@ pub async fn graphql_request_handler(
             s.set_error_count(shared_response.error_count() as u32);
         });
 
-        shared_response.into_response(response_mode, &shared_state.telemetry_context.metrics)
+        shared_response.into_response(
+            response_mode,
+            &shared_state.telemetry_context.metrics,
+            long_lived_client_guard,
+        )
     }
     .instrument(span_clone)
     .await

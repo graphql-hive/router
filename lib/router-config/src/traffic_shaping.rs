@@ -240,9 +240,9 @@ pub struct TrafficShapingRouterConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tls: Option<ServerTLSConfig>,
 
-    /// Maximum number of concurrent long-lived clients (WebSocket connections and HTTP streaming responses).
-    /// Regular non-streaming requests are not counted toward this limit.
-    /// When the limit is reached, new WebSocket and streaming HTTP requests are rejected with 503.
+    /// Maximum number of concurrent long-lived clients (WebSocket connections and HTTP streaming responses, e.g. subscriptions over SSE or multipart).
+    /// Regular non-streaming requests are not counted toward this limit, even when their `Accept` header advertises support for streaming response formats.
+    /// When the limit is reached, new WebSocket connections and HTTP subscription requests are rejected with 503.
     /// If both WebSockets and Subscriptions are disabled, this setting has no effect.
     #[serde(default = "default_max_long_lived_clients")]
     pub max_long_lived_clients: usize,

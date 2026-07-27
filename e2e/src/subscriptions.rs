@@ -1833,6 +1833,84 @@ mod subscriptions_e2e_tests {
     }
 
     #[ntex::test]
+    async fn max_long_lived_clients_ignores_regular_queries() {
+        use futures::StreamExt;
+
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                traffic_shaping:
+                    router:
+                        max_long_lived_clients: 2
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let subscription = r#"
+            subscription {
+                reviewAdded(intervalInMs: 200) {
+                    id
+                }
+            }
+        "#;
+        let subscription_headers = some_header_map! {
+            http::header::ACCEPT => "text/event-stream"
+        };
+
+        // exhaust the limit with real subscriptions
+        let mut sub1 = router
+            .send_graphql_request(subscription, None, subscription_headers.clone())
+            .await;
+        assert!(sub1.status().is_success(), "sub1 should be accepted");
+        let _ = sub1.next().await;
+
+        let mut sub2 = router
+            .send_graphql_request(subscription, None, subscription_headers.clone())
+            .await;
+        assert!(sub2.status().is_success(), "sub2 should be accepted");
+        let _ = sub2.next().await;
+
+        // clients like urql advertise streaming support on every operation.
+        // a regular query must not count toward - or be rejected by - the
+        // long-lived client limit, even with the limit exhausted.
+        let query_headers = some_header_map! {
+            http::header::ACCEPT =>
+                "application/graphql-response+json, application/json, text/event-stream, multipart/mixed"
+        };
+        let query_response = router
+            .send_graphql_request("{ me { id } }", None, query_headers.clone())
+            .await;
+        assert!(
+            query_response.status().is_success(),
+            "regular queries should not be rejected by the long-lived client limit"
+        );
+        let body = query_response.string_body().await;
+        assert!(
+            body.contains(r#""me""#),
+            "regular query should return data, got: {body}"
+        );
+
+        // while a new subscription must still be rejected
+        let sub3 = router
+            .send_graphql_request(subscription, None, subscription_headers.clone())
+            .await;
+        assert_eq!(
+            sub3.status(),
+            reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            "sub3 should be rejected with 503 when the limit is reached"
+        );
+    }
+
+    #[ntex::test]
     async fn backpressure_http_subgraph_drops_messages_not_subscription() {
         let subgraphs = TestSubgraphs::builder()
             // delay will slow down entity resolution, which will fill the
