@@ -12,12 +12,13 @@ use opentelemetry::{InstrumentationScope, KeyValue};
 use opentelemetry_sdk::{trace::IdGenerator, Resource};
 use std::env;
 use std::sync::Arc;
-use tracing::Subscriber;
+use tracing::{warn, Subscriber};
 use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::Layer;
 
 use crate::telemetry::logging::request_id::RequestIdentifierExtractor;
+use crate::telemetry::logging::targets;
 use crate::telemetry::metrics::Metrics;
 use crate::telemetry::propagation::HeaderMapInjector;
 use crate::telemetry::traces::build_trace_provider;
@@ -63,8 +64,10 @@ impl TelemetryContext {
         log_config: &LoggingConfig,
         meter: Option<Meter>,
     ) -> Self {
+        #[allow(deprecated)]
         use otel::opentelemetry_jaeger_propagator::Propagator as JaegerPropagator;
         use otel::opentelemetry_sdk::propagation::{BaggagePropagator, TraceContextPropagator};
+        #[allow(deprecated)]
         use otel::opentelemetry_zipkin::Propagator as B3Propagator;
 
         let mut propagators: Vec<Box<dyn TextMapPropagator + Send + Sync>> = Vec::new();
@@ -78,10 +81,14 @@ impl TelemetryContext {
         }
 
         if telemetry_config.b3 {
+            warn!(target = targets::TELEMETRY, "Zipkin exporter is deprecated. Use the OTLP exporter instead. Refer to https://zipkin.io/pages/architecture.html for Zipkin's native OTLP support.");
+            #[allow(deprecated)]
             propagators.push(Box::new(B3Propagator::new()));
         }
 
         if telemetry_config.jaeger {
+            warn!(target = targets::TELEMETRY, "Jaeger propagation format is deprecated. Use W3C TraceContext propagation instead. See https://www.jaegertracing.io/sdk-migration/#propagation-format");
+            #[allow(deprecated)]
             propagators.push(Box::new(JaegerPropagator::new()));
         }
 
