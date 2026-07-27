@@ -9,7 +9,7 @@ use hive_router_config::laboratory::{
 };
 use serde::Serialize;
 use sonic_rs::{JsonType, JsonValueTrait};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 /// Sits inside a JavaScript string literal in the generated page.
 const PROPS_PLACEHOLDER: &str = "__LABORATORY_PROPS__";
@@ -237,15 +237,16 @@ fn build_operation(
         name: operation.name.clone(),
         query: operation.query.clone(),
         variables: operation.variables.clone(),
-        headers: operation.headers.clone(),
+        headers: serialize_headers(&operation.headers),
         extensions: operation.extensions.clone(),
     };
 
     Ok((seed_operation, tab))
 }
 
-/// Rejects a blank name and any field that is not a JSON object, naming the offending operation by
-/// its config `location`. Shared by top-level operations and collection operations.
+/// Rejects a blank name and any `variables`/`extensions` that are not a JSON object, naming the
+/// offending operation by its config `location`. Shared by top-level and collection operations.
+/// `headers` is a typed map in config, so it needs no JSON validation here.
 fn validate_operation_fields(
     location: &str,
     operation: &LaboratoryOperationConfig,
@@ -257,7 +258,6 @@ fn validate_operation_fields(
     }
 
     validate_json_object(&operation.variables, "variables", location, &operation.name)?;
-    validate_json_object(&operation.headers, "headers", location, &operation.name)?;
     validate_json_object(
         &operation.extensions,
         "extensions",
@@ -266,6 +266,15 @@ fn validate_operation_fields(
     )?;
 
     Ok(())
+}
+
+/// Serializes the operation's header map to the JSON string the Laboratory stores for an
+/// operation. An empty map is treated as no headers.
+fn serialize_headers(headers: &Option<BTreeMap<String, String>>) -> Option<String> {
+    headers
+        .as_ref()
+        .filter(|map| !map.is_empty())
+        .map(|map| sonic_rs::to_string(map).expect("a header map is always serializable"))
 }
 
 fn build_collection(
@@ -305,7 +314,7 @@ fn build_collection(
             query: operation.query.clone(),
             created_at: SEEDED_COLLECTION_CREATED_AT,
             variables: operation.variables.clone(),
-            headers: operation.headers.clone(),
+            headers: serialize_headers(&operation.headers),
             extensions: operation.extensions.clone(),
         });
     }
@@ -792,25 +801,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_object_headers_in_a_collection_operation_with_its_location() {
-        let mut op = operation("GetHello");
-        op.headers = Some("not json".to_string());
-
-        let error = build_laboratory_seed(&config_with_collections(vec![collection(
-            "Onboarding",
-            vec![op],
-        )]))
-        .expect_err("invalid JSON in a collection operation should be rejected");
-
-        let message = error.to_string();
-        assert!(
-            message.contains("laboratory.collections[0].operations[0]"),
-            "the error should name the collection path: {message}"
-        );
-        assert!(message.contains("'headers'"), "unexpected error: {message}");
-    }
-
-    #[test]
     fn rejects_non_object_variables_in_a_collection_operation() {
         // Covers the NotAJsonObject path and a non-`headers` field for collection operations.
         let mut op = operation("GetHello");
@@ -941,19 +931,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_headers_that_are_not_json() {
-        let mut operation = operation("GetHello");
-        operation.headers = Some("not json".to_string());
-
-        let error = build_laboratory_seed(&config_with_operations(vec![operation]))
-            .expect_err("invalid JSON should be rejected");
-
-        let message = error.to_string();
-        assert!(message.contains("'headers'"), "unexpected error: {message}");
-        assert!(message.contains("GetHello"), "unexpected error: {message}");
-    }
-
-    #[test]
     fn rejects_json_that_is_not_an_object() {
         let mut operation = operation("GetHello");
         operation.variables = Some(r#"["a"]"#.to_string());
@@ -966,13 +943,42 @@ mod tests {
     }
 
     #[test]
-    fn accepts_an_empty_json_object() {
+    fn accepts_empty_json_objects_for_variables_and_extensions() {
         let mut operation = operation("GetHello");
         operation.variables = Some("{}".to_string());
-        operation.headers = Some(r#"{"X-Env": "staging"}"#.to_string());
+        operation.extensions = Some("{}".to_string());
 
         build_laboratory_seed(&config_with_operations(vec![operation]))
             .expect("valid JSON objects should be accepted");
+    }
+
+    #[test]
+    fn a_headers_map_serializes_to_a_json_string() {
+        let mut operation = operation("GetHello");
+        operation.headers = Some(BTreeMap::from([
+            ("X-Team".to_string(), "payments".to_string()),
+            ("X-Env".to_string(), "staging".to_string()),
+        ]));
+
+        let seed =
+            build_laboratory_seed(&config_with_operations(vec![operation])).expect("should build");
+
+        // BTreeMap sorts keys, so the injected JSON string is deterministic.
+        assert_eq!(
+            seed.operations[0].headers.as_deref(),
+            Some(r#"{"X-Env":"staging","X-Team":"payments"}"#)
+        );
+    }
+
+    #[test]
+    fn an_empty_headers_map_is_treated_as_no_headers() {
+        let mut operation = operation("GetHello");
+        operation.headers = Some(BTreeMap::new());
+
+        let seed =
+            build_laboratory_seed(&config_with_operations(vec![operation])).expect("should build");
+
+        assert!(seed.operations[0].headers.is_none());
     }
 
     #[test]

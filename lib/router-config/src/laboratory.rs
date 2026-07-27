@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -100,7 +102,8 @@ pub struct LaboratoryConfig {
     ///           hello
     ///         }
     ///       variables: '{}'
-    ///       headers: '{"X-Env": "staging"}'
+    ///       headers:
+    ///         X-Env: staging
     /// ```
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub operations: Vec<LaboratoryOperationConfig>,
@@ -128,7 +131,8 @@ pub struct LaboratoryConfig {
     ///             query GetHello {
     ///               hello
     ///             }
-    ///           headers: '{"X-Env": "staging"}'
+    ///           headers:
+    ///             X-Env: staging
     /// ```
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub collections: Vec<LaboratoryCollectionConfig>,
@@ -161,14 +165,14 @@ pub struct LaboratoryOperationConfig {
     /// Supports `{{name}}` references to the Laboratory's environment variables.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variables: Option<String>,
-    /// Headers to send with this operation, as a JSON object encoded in a string.
+    /// Headers to send with this operation, as a map of header name to value.
     ///
     /// These apply only to this operation, and are merged on top of any headers set by the
     /// preflight script. To set headers on every operation, use `preflight` instead.
     ///
-    /// Supports `{{name}}` references to the Laboratory's environment variables.
+    /// Values support `{{name}}` references to the Laboratory's environment variables.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub headers: Option<String>,
+    pub headers: Option<BTreeMap<String, String>>,
     /// The operation's GraphQL extensions, as a JSON object encoded in a string.
     ///
     /// Supports `{{name}}` references to the Laboratory's environment variables.
@@ -268,7 +272,8 @@ preflight:
 operations:
   - name: GetHello
     query: "query GetHello { hello }"
-    headers: '{"X-Env": "staging"}'
+    headers:
+      X-Env: staging
 "#,
         )
         .expect("should parse");
@@ -278,8 +283,8 @@ operations:
         assert_eq!(operation.name, "GetHello");
         assert_eq!(operation.query, "query GetHello { hello }");
         assert_eq!(
-            operation.headers.as_deref(),
-            Some(r#"{"X-Env": "staging"}"#)
+            operation.headers.as_ref().and_then(|h| h.get("X-Env")),
+            Some(&"staging".to_string())
         );
         assert!(operation.variables.is_none());
         assert!(operation.extensions.is_none());
@@ -294,7 +299,8 @@ collections:
     operations:
       - name: GetHello
         query: "query GetHello { hello }"
-        headers: '{"X-Env": "staging"}'
+        headers:
+          X-Env: staging
       - name: ListUsers
         query: "query ListUsers { users { id } }"
   - name: Admin
@@ -312,8 +318,11 @@ collections:
         assert_eq!(onboarding.operations.len(), 2);
         assert_eq!(onboarding.operations[0].name, "GetHello");
         assert_eq!(
-            onboarding.operations[0].headers.as_deref(),
-            Some(r#"{"X-Env": "staging"}"#)
+            onboarding.operations[0]
+                .headers
+                .as_ref()
+                .and_then(|h| h.get("X-Env")),
+            Some(&"staging".to_string())
         );
 
         assert_eq!(config.collections[1].name, "Admin");

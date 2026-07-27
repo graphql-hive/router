@@ -103,7 +103,8 @@ mod laboratory_e2e_tests {
                     query GetHello {
                       hello
                     }
-                  headers: '{"X-Env": "staging"}'
+                  headers:
+                    X-Env: staging
             "#,
         )
         .await;
@@ -135,7 +136,8 @@ mod laboratory_e2e_tests {
                   operations:
                     - name: GetHello
                       query: "query GetHello { hello }"
-                      headers: '{"X-Env": "staging"}'
+                      headers:
+                        X-Env: staging
             "#,
         )
         .await;
