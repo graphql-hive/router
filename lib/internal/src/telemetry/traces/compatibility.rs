@@ -251,7 +251,7 @@ impl<E: SpanExporter> SpanExporter for HttpCompatibilityExporter<E> {
         self.inner.export(processed_batch).await
     }
 
-    fn shutdown(&mut self) -> OTelSdkResult {
+    fn shutdown(&self) -> OTelSdkResult {
         tracing::debug!(
             target: targets::TELEMETRY,
             layer = "http_compat_exporter",
@@ -266,7 +266,7 @@ impl<E: SpanExporter> SpanExporter for HttpCompatibilityExporter<E> {
         result
     }
 
-    fn force_flush(&mut self) -> OTelSdkResult {
+    fn force_flush(&self) -> OTelSdkResult {
         self.inner.force_flush()
     }
 

@@ -19,11 +19,11 @@ impl SpanExporter for NoopExporter {
         Ok(())
     }
 
-    fn shutdown(&mut self) -> opentelemetry_sdk::error::OTelSdkResult {
+    fn shutdown(&self) -> opentelemetry_sdk::error::OTelSdkResult {
         Ok(())
     }
 
-    fn force_flush(&mut self) -> opentelemetry_sdk::error::OTelSdkResult {
+    fn force_flush(&self) -> opentelemetry_sdk::error::OTelSdkResult {
         Ok(())
     }
 

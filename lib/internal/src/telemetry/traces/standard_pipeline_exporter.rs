@@ -67,11 +67,11 @@ impl<E: SpanExporter> SpanExporter for StandardPipelineExporter<E> {
         self.inner.export(processed_batch).await
     }
 
-    fn shutdown(&mut self) -> OTelSdkResult {
+    fn shutdown(&self) -> OTelSdkResult {
         self.inner.shutdown()
     }
 
-    fn force_flush(&mut self) -> OTelSdkResult {
+    fn force_flush(&self) -> OTelSdkResult {
         self.inner.force_flush()
     }
 
