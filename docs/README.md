@@ -2410,7 +2410,8 @@ laboratory:
             query GetHello {
               hello
             }
-          headers: '{"X-Env": "staging"}'
+          headers:
+            X-Env: staging
 ```
 
 
@@ -2446,7 +2447,7 @@ The operations in this collection. Operation names must be unique within the col
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**extensions**|`string`, `null`|The operation's GraphQL extensions, as a JSON object encoded in a string.<br/><br/>Supports `{{name}}` references to the Laboratory's environment variables.<br/>|no|
-|**headers**|`string`, `null`|Headers to send with this operation, as a JSON object encoded in a string.<br/><br/>These apply only to this operation, and are merged on top of any headers set by the<br/>preflight script. To set headers on every operation, use `preflight` instead.<br/><br/>Supports `{{name}}` references to the Laboratory's environment variables.<br/>|no|
+|[**headers**](#laboratorycollectionsoperationsheaders)|`object`, `null`|Headers to send with this operation, as a map of header name to value.<br/>|no|
 |**name**|`string`|The name of the operation. Used as the tab title, and must be unique across all seeded<br/>operations.<br/>|yes|
 |**query**|`string`|The GraphQL document of the operation.<br/>|yes|
 |**variables**|`string`, `null`|The operation's variables, as a JSON object encoded in a string.<br/><br/>Supports `{{name}}` references to the Laboratory's environment variables.<br/>|no|
@@ -2458,6 +2459,24 @@ The operations in this collection. Operation names must be unique within the col
 - {}
 
 ```
+
+   
+<a name="laboratorycollectionsoperationsheaders"></a>
+##### laboratory\.collections\[\]\.operations\[\]\.headers: object,null
+
+Headers to send with this operation, as a map of header name to value.
+
+These apply only to this operation, and are merged on top of any headers set by the
+preflight script. To set headers on every operation, use `preflight` instead.
+
+Values support `{{name}}` references to the Laboratory's environment variables.
+
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**|`string`|||
 
    
 <a name="laboratoryoperations"></a>
@@ -2482,7 +2501,8 @@ laboratory:
           hello
         }
       variables: '{}'
-      headers: '{"X-Env": "staging"}'
+      headers:
+        X-Env: staging
 ```
 
 
@@ -2493,7 +2513,7 @@ laboratory:
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**extensions**|`string`, `null`|The operation's GraphQL extensions, as a JSON object encoded in a string.<br/><br/>Supports `{{name}}` references to the Laboratory's environment variables.<br/>|no|
-|**headers**|`string`, `null`|Headers to send with this operation, as a JSON object encoded in a string.<br/><br/>These apply only to this operation, and are merged on top of any headers set by the<br/>preflight script. To set headers on every operation, use `preflight` instead.<br/><br/>Supports `{{name}}` references to the Laboratory's environment variables.<br/>|no|
+|[**headers**](#laboratoryoperationsheaders)|`object`, `null`|Headers to send with this operation, as a map of header name to value.<br/>|no|
 |**name**|`string`|The name of the operation. Used as the tab title, and must be unique across all seeded<br/>operations.<br/>|yes|
 |**query**|`string`|The GraphQL document of the operation.<br/>|yes|
 |**variables**|`string`, `null`|The operation's variables, as a JSON object encoded in a string.<br/><br/>Supports `{{name}}` references to the Laboratory's environment variables.<br/>|no|
@@ -2505,6 +2525,24 @@ laboratory:
 - {}
 
 ```
+
+   
+<a name="laboratoryoperationsheaders"></a>
+#### laboratory\.operations\[\]\.headers: object,null
+
+Headers to send with this operation, as a map of header name to value.
+
+These apply only to this operation, and are merged on top of any headers set by the
+preflight script. To set headers on every operation, use `preflight` instead.
+
+Values support `{{name}}` references to the Laboratory's environment variables.
+
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**|`string`|||
 
    
 <a name="laboratorypreflight"></a>
