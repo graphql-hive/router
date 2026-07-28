@@ -386,7 +386,8 @@ impl SubgraphExecutorMap {
                     // the resolved endpoint is part of the key so the same inbound identity
                     // cannot share a connection across different subgraph destinations
                     let id = WebSocketConnectionId {
-                        endpoint: self.websocket_endpoint(subgraph_name, &endpoint_uri)?,
+                        endpoint: self
+                            .convert_to_websocket_endpoint(subgraph_name, &endpoint_uri)?,
                         fingerprint,
                     };
                     // this lookup returns initialized entries only. a missing or connecting
@@ -714,7 +715,7 @@ impl SubgraphExecutorMap {
     /// The configured WebSocket path takes precedence over the resolved endpoint path. This must
     /// match the endpoint built for `WsSubgraphExecutor`, otherwise subscriptions would populate a
     /// different pool key than query and mutation execution looks up.
-    fn websocket_endpoint(
+    fn convert_to_websocket_endpoint(
         &self,
         subgraph_name: &str,
         endpoint_uri: &Uri,
@@ -822,7 +823,8 @@ impl SubgraphExecutorMap {
                 Ok(http_executor)
             }
             SubscriptionProtocol::WebSocket => {
-                let ws_endpoint_uri = self.websocket_endpoint(subgraph_name, &endpoint_uri)?;
+                let ws_endpoint_uri =
+                    self.convert_to_websocket_endpoint(subgraph_name, &endpoint_uri)?;
 
                 // Resolve TLS config for the subgraph (merging global + per-subgraph)
                 let tls_config = get_merged_tls_config(
