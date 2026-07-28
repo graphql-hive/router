@@ -83,6 +83,7 @@ pub struct SubscribePayload {
     pub extensions: Option<HashMap<String, Value>>,
 }
 
+// TODO: can we instead impl the Into/From trait?
 pub fn build_subscribe_payload(
     execution_request: SubgraphExecutionRequest<'_>,
 ) -> SubscribePayload {
@@ -129,6 +130,7 @@ pub fn build_subscribe_payload(
     }
 }
 
+// TODO: can we instead impl the Into/From trait?
 pub fn build_connection_init_payload(headers: http::HeaderMap) -> Option<ConnectionInitPayload> {
     (!headers.is_empty()).then(|| headers.into())
 }
