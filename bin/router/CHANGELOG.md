@@ -116,6 +116,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.86 (2026-07-28)
+
+### Fixes
+
+#### Regular queries no longer count toward `max_long_lived_clients`
+
+The long-lived client limit (`traffic_shaping.router.max_long_lived_clients`) classified requests from the `Accept` header alone, so clients that advertise streaming support on every operation (e.g. urql sends `..., text/event-stream, multipart/mixed`) had all of their queries and mutations counted against — and, past the limit, rejected by — the limit.
+
+Long-lived clients are now counted where they actually become known:
+
+- **WebSocket connections** are still reserved at upgrade time.
+- **HTTP subscriptions** reserve a slot once the parsed operation is known to be a subscription — still before any planning/execution work — and release it when the client stream ends.
+
+Regular queries and mutations never count toward the limit, regardless of their `Accept` header, matching the documented behavior. Over-limit rejections keep the same response (`503`, `Retry-After: 5`, `Too many long-lived clients`) and now happen inside the request span, so they are visible to tracing.
+
+#### Replaced logging request-id generator
+
+Version `0.0.85` introduced new logging runtime that uses `Sonyflake` crate to generate request-id in requests that doesn't have it passed via HTTP headers. 
+
+The `Sonyflake` runtime can fail on some OS configurations. 
+
+This change replaces the `Sonyflake` runtime with `uuid` generator, that's more fail-safe.
+
 ## 0.0.85 (2026-07-26)
 
 ### Features
