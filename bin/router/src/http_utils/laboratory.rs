@@ -23,8 +23,6 @@ const SEEDED_COLLECTION_CREATED_AT: &str = "1970-01-01T00:00:00.000Z";
 #[derive(Debug, Default, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LaboratorySeed {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    preflight: Option<SeedPreflight>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     operations: Vec<SeedOperation>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -33,12 +31,6 @@ pub struct LaboratorySeed {
     active_tab_id: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     collections: Vec<SeedCollection>,
-}
-
-#[derive(Debug, Serialize, PartialEq)]
-struct SeedPreflight {
-    enabled: bool,
-    script: String,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -257,16 +249,6 @@ fn build_collection(
 pub fn build_laboratory_seed(
     config: &LaboratoryConfig,
 ) -> Result<LaboratorySeed, LaboratoryConfigError> {
-    let preflight = config
-        .preflight
-        .as_ref()
-        // An empty script is the same as no preflight at all.
-        .filter(|preflight| !preflight.script.trim().is_empty())
-        .map(|preflight| SeedPreflight {
-            enabled: preflight.enabled,
-            script: preflight.script.clone(),
-        });
-
     let mut seen_names = HashSet::with_capacity(config.operations.len());
     let mut operations = Vec::with_capacity(config.operations.len());
     let mut tabs = Vec::with_capacity(config.operations.len());
@@ -304,7 +286,6 @@ pub fn build_laboratory_seed(
     }
 
     Ok(LaboratorySeed {
-        preflight,
         operations,
         tabs,
         active_tab_id,
@@ -352,8 +333,6 @@ pub fn render_laboratory_html(
 
 #[cfg(test)]
 mod tests {
-    use hive_router_config::laboratory::LaboratoryPreflightConfig;
-
     use super::*;
 
     fn operation(name: &str) -> LaboratoryOperationConfig {
@@ -386,16 +365,6 @@ mod tests {
     fn config_with_collections(collections: Vec<LaboratoryCollectionConfig>) -> LaboratoryConfig {
         LaboratoryConfig {
             collections,
-            ..Default::default()
-        }
-    }
-
-    fn config_with_script(script: &str) -> LaboratoryConfig {
-        LaboratoryConfig {
-            preflight: Some(LaboratoryPreflightConfig {
-                enabled: true,
-                script: script.to_string(),
-            }),
             ..Default::default()
         }
     }
@@ -437,20 +406,15 @@ mod tests {
         unescaped
     }
 
-    /// Mirrors [`LaboratorySeed`] so tests assert on what the browser parses, not on the
-    /// serialized form.
-    #[derive(serde::Deserialize)]
-    struct ParsedSeed {
-        preflight: Option<ParsedPreflight>,
-    }
-
-    #[derive(serde::Deserialize)]
-    struct ParsedPreflight {
-        script: String,
-    }
-
-    fn parse_injected_seed(html: &str) -> ParsedSeed {
-        sonic_rs::from_str(&extract_injected_json(html)).expect("should be valid JSON")
+    /// Returns a seeded operation's `query` as the browser sees it after `JSON.parse` — the
+    /// round-trip through injection, escaping and parsing.
+    fn injected_operation_query(html: &str, index: usize) -> String {
+        let seed: serde_json::Value =
+            serde_json::from_str(&extract_injected_json(html)).expect("should be valid JSON");
+        seed["operations"][index]["query"]
+            .as_str()
+            .expect("query should be present")
+            .to_string()
     }
 
     const TEMPLATE: &str = r#"<script>JSON.parse("__LABORATORY_PROPS__");</script>"#;
@@ -492,10 +456,6 @@ mod tests {
     #[test]
     fn every_seed_field_is_read_by_the_generated_page() {
         let config = LaboratoryConfig {
-            preflight: Some(LaboratoryPreflightConfig {
-                enabled: true,
-                script: "lab.request.headers.set('X-Env', 'staging');".to_string(),
-            }),
             operations: vec![operation("GetHello")],
             collections: vec![collection("Onboarding", vec![operation("ListUsers")])],
             ..Default::default()
@@ -508,7 +468,7 @@ mod tests {
 
         assert_eq!(
             fields.len(),
-            5,
+            4,
             "every seed field must be populated for this test to be meaningful"
         );
 
@@ -530,13 +490,6 @@ mod tests {
             !html.contains(PROPS_PLACEHOLDER),
             "the placeholder must always be replaced"
         );
-        assert_eq!(extract_injected_json(&html), "{}");
-    }
-
-    #[test]
-    fn an_empty_preflight_script_does_not_count_as_a_seed() {
-        let html = render_laboratory_html(TEMPLATE, &config_with_script("   \n  ")).unwrap();
-
         assert_eq!(extract_injected_json(&html), "{}");
     }
 
@@ -901,31 +854,30 @@ mod tests {
     }
 
     #[test]
-    fn a_script_containing_a_closing_script_tag_cannot_break_out_of_the_element() {
-        let script = r#"
-            // </script><script>alert('xss')</script>
-            const html = `<!-- ${'</SCRIPT'} -->`;
-            lab.request.headers.set('X-Quote', "a \"quoted\" value");
-        "#;
+    fn a_configured_value_cannot_break_out_of_the_script_element() {
+        let mut op = operation("Evil");
+        op.query =
+            "query { field } // </script><script>alert('xss')</script> <!-- ${'</SCRIPT'} -->"
+                .to_string();
 
-        let html = render_laboratory_html(TEMPLATE, &config_with_script(script)).unwrap();
+        let html = render_laboratory_html(TEMPLATE, &config_with_operations(vec![op])).unwrap();
 
         assert!(
             !html.to_lowercase().contains("</script><script>"),
-            "the injected script escaped the string literal: {html}"
+            "the injected value escaped the string literal: {html}"
         );
         assert!(
             !html.contains("<!--"),
-            "the injected script emitted an HTML comment: {html}"
+            "the injected value emitted an HTML comment: {html}"
         );
-
         assert_eq!(
             html.to_lowercase().matches("</script>").count(),
             1,
             "unexpected number of closing script tags: {html}"
         );
 
-        assert_eq!(parse_injected_seed(&html).preflight.unwrap().script, script);
+        // The browser still parses back exactly the configured value.
+        assert!(injected_operation_query(&html, 0).contains("</script><script>"));
     }
 
     #[test]
@@ -953,31 +905,15 @@ mod tests {
     #[test]
     fn line_separators_survive_the_round_trip() {
         // U+2028 is valid inside JSON but terminates a JavaScript string literal.
-        let script = "lab.environment.set('a', '\u{2028}\u{2029}');";
+        let mut op = operation("Sep");
+        op.query = "query { field } # \u{2028}\u{2029}".to_string();
 
-        let html = render_laboratory_html(TEMPLATE, &config_with_script(script)).unwrap();
+        let html = render_laboratory_html(TEMPLATE, &config_with_operations(vec![op])).unwrap();
 
         assert_eq!(
-            parse_injected_seed(&html).preflight.unwrap().script,
-            script,
+            injected_operation_query(&html, 0),
+            "query { field } # \u{2028}\u{2029}",
             "line separators must survive"
         );
-    }
-
-    #[test]
-    fn a_disabled_preflight_is_still_injected() {
-        let config = LaboratoryConfig {
-            preflight: Some(LaboratoryPreflightConfig {
-                enabled: false,
-                script: "lab.request.headers.set('X-Env', 'staging');".to_string(),
-            }),
-            ..Default::default()
-        };
-
-        let seed = build_laboratory_seed(&config).unwrap();
-        let preflight = seed.preflight.expect("preflight should be present");
-
-        // Shown in the preflight panel but not run, so operators can ship an opt-in script.
-        assert!(!preflight.enabled);
     }
 }

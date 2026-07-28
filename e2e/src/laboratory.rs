@@ -63,35 +63,6 @@ mod laboratory_e2e_tests {
     }
 
     #[ntex::test]
-    async fn injects_the_configured_preflight_script() {
-        let router = start_router(
-            r#"
-            laboratory:
-              enabled: true
-              preflight:
-                script: |
-                  lab.request.headers.set('X-Env', 'staging');
-            "#,
-        )
-        .await;
-
-        let html = fetch_laboratory_html(&router).await;
-
-        assert!(
-            !html.contains("__LABORATORY_PROPS__"),
-            "the placeholder should have been replaced"
-        );
-        assert!(
-            html.contains("lab.request.headers.set('X-Env', 'staging');"),
-            "the preflight script should be present in the page"
-        );
-        assert!(
-            html.contains("\\\"enabled\\\":true"),
-            "the preflight should be enabled"
-        );
-    }
-
-    #[ntex::test]
     async fn injects_the_configured_operation_and_its_tab() {
         let router = start_router(
             r#"
@@ -164,9 +135,9 @@ mod laboratory_e2e_tests {
             r#"
             laboratory:
               enabled: false
-              preflight:
-                script: |
-                  lab.request.headers.set('X-Env', 'staging');
+              operations:
+                - name: GetHello
+                  query: "query GetHello { hello }"
             "#,
         )
         .await;
@@ -189,8 +160,8 @@ mod laboratory_e2e_tests {
         let body = String::from_utf8(body.to_vec()).expect("should be valid UTF-8");
 
         assert!(
-            !body.contains("lab.request.headers.set"),
-            "the preflight script must not be served when the laboratory is disabled"
+            !body.contains("router-seed:GetHello"),
+            "the seeded operation must not be served when the laboratory is disabled"
         );
     }
 }

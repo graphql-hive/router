@@ -435,16 +435,9 @@ fn render_laboratory_page(
 fn render_laboratory_page(
     config: &hive_router_config::laboratory::LaboratoryConfig,
 ) -> Result<Bytes, SharedStateError> {
-    // An empty script is what setting only LABORATORY_PREFLIGHT_ENABLED produces, and is not
-    // worth warning about.
-    let has_preflight = config
-        .preflight
-        .as_ref()
-        .is_some_and(|preflight| !preflight.script.trim().is_empty());
-
-    if has_preflight || !config.operations.is_empty() || !config.collections.is_empty() {
+    if !config.operations.is_empty() || !config.collections.is_empty() {
         tracing::warn!(
-            "'laboratory.preflight', 'laboratory.operations' and 'laboratory.collections' are ignored because this router was built with the 'graphiql' feature."
+            "'laboratory.operations' and 'laboratory.collections' are ignored because this router was built with the 'graphiql' feature."
         );
     }
 

@@ -147,11 +147,6 @@ fn build_inline_laboratory_html(dist_dir: &Path, product_logo: &Path) -> String 
           }}
         }}
 
-        // The preflight script is operator-controlled, so the configured value always wins.
-        if (seed.preflight) {{
-          props.defaultPreflight = seed.preflight;
-        }}
-
         // Seeded collections are refreshed from config wholesale; user-created ones are kept.
         var seededCollections = seed.collections || [];
         if (seededCollections.length > 0) {{
