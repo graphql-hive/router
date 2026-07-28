@@ -122,7 +122,7 @@ where
 pub struct LongLivedClientLimitReached;
 
 impl From<LongLivedClientLimitReached> for web::HttpResponse {
-    fn from(val: LongLivedClientLimitReached) -> Self {
+    fn from(_: LongLivedClientLimitReached) -> Self {
         web::HttpResponse::build(StatusCode::SERVICE_UNAVAILABLE)
             .header(header::RETRY_AFTER, "5")
             .body("Too many long-lived clients")
