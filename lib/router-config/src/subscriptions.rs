@@ -193,6 +193,7 @@ impl SubscriptionsConfig {
     }
 
     /// Returns the pooled WebSocket idle timeout for a subgraph.
+    /// Defaults to 30 seconds.
     pub fn get_websocket_idle_timeout(&self, subgraph_name: &str) -> Duration {
         self.websocket
             .as_ref()
