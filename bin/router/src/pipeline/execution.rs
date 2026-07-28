@@ -13,6 +13,7 @@ use hive_router_plan_executor::execution::plan::{
     execute_query_plan, CoerceVariablesPayload, ExecutionResultExtensions, PlanExecutionOutput,
     QueryPlanExecutionOpts, QueryPlanExecutionResult,
 };
+use hive_router_plan_executor::executors::common::ConnectionFingerprint;
 use hive_router_plan_executor::headers::response::ResponseHeaderSink;
 
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
@@ -41,6 +42,7 @@ pub struct PlannedRequest<'req> {
     pub initial_errors: Vec<GraphQLError>,
     pub demand_control_execution_context: Option<DemandControlExecutionContext>,
     pub plugin_req_state: Option<PluginRequestState<'req>>,
+    pub connection_fingerprint: Option<ConnectionFingerprint>,
 }
 
 #[inline]
@@ -150,6 +152,7 @@ pub async fn execute_plan<'exec>(
             ),
             response_header_sink,
             error_masking_runtime: app_state.error_masking.clone(),
+            connection_fingerprint: planned_request.connection_fingerprint,
         })
         .await?;
 

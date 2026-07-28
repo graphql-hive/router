@@ -37,6 +37,7 @@ use crate::execution::client_request_details::OperationDetails;
 use crate::execution::demand_control::DemandControlExecutionContext;
 use crate::execution::error_masking::ErrorMaskingRuntime;
 use crate::execution::operation_name::OperationNameFactory;
+use crate::executors::common::ConnectionFingerprint;
 use crate::headers::cache_control;
 use crate::{
     execution::{
@@ -137,6 +138,7 @@ pub struct QueryPlanExecutionOpts<'exec> {
     pub operation_name_factory: OperationNameFactory,
     pub response_header_sink: ResponseHeaderSink,
     pub error_masking_runtime: Arc<Option<ErrorMaskingRuntime>>,
+    pub connection_fingerprint: Option<ConnectionFingerprint>,
 }
 
 pub struct PlanSubscriptionOutput {
@@ -302,6 +304,7 @@ pub async fn execute_query_plan<'exec>(
             raw_variable_values: None,
             extensions: None,
             custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
+            connection_fingerprint: opts.connection_fingerprint,
         };
 
         // TODO: otel instrumentation and stuff
@@ -417,6 +420,7 @@ pub async fn execute_query_plan<'exec>(
                     demand_control_context: opts.demand_control_context.clone(),
                     response_header_sink: response_header_sink.clone(),
                     error_masking_runtime: opts.error_masking_runtime.clone(),
+                    connection_fingerprint: opts.connection_fingerprint,
                 };
                 match execute_query_plan_with_data(response.data, opts).await {
                     Ok(result) => yield result.body,
@@ -526,6 +530,7 @@ async fn execute_query_plan_with_data<'exec>(
         demand_control_context: opts.demand_control_context.clone(),
         plugin_req_state: opts.plugin_req_state.as_ref(),
         operation_name_factory: &opts.operation_name_factory,
+        connection_fingerprint: opts.connection_fingerprint,
     };
 
     if let Some(node) = &opts.query_plan.node {
@@ -704,6 +709,7 @@ pub struct Executor<'exec> {
     pub demand_control_context: Option<Arc<DemandControlExecutionContext>>,
     pub plugin_req_state: Option<&'exec PluginRequestState<'exec>>,
     pub operation_name_factory: &'exec OperationNameFactory,
+    pub connection_fingerprint: Option<ConnectionFingerprint>,
 }
 
 pub enum ExecutionJob<'exec> {
@@ -1626,6 +1632,7 @@ impl<'exec> Executor<'exec> {
                 headers: headers_map,
                 extensions: None,
                 custom_scalar_paths: opts.custom_scalar_paths,
+                connection_fingerprint: self.connection_fingerprint,
             };
 
             let client_document_hash_str = opts.operation.hash.to_string();
@@ -1948,6 +1955,7 @@ mod tests {
             demand_control_context: None,
             plugin_req_state: None,
             operation_name_factory: &OperationNameFactory::default(),
+            connection_fingerprint: None,
         };
 
         let data: ResponseValue = sonic_rs::from_str(
@@ -2065,6 +2073,7 @@ mod tests {
             demand_control_context: None,
             plugin_req_state: None,
             operation_name_factory: &OperationNameFactory::default(),
+            connection_fingerprint: None,
         };
 
         let mock_a = subgraph_a

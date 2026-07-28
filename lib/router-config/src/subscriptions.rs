@@ -138,6 +138,14 @@ pub struct WebSocketConfig {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct WebSocketSubgraphConfig {
+    /// Controls how long an idle pooled WebSocket connection remains open.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "humantime_serde::option"
+    )]
+    #[schemars(with = "Option<String>")]
+    pub idle_timeout: Option<Duration>,
     /// Determines the URL path to use for the subscription endpoint:
     ///
     /// - For WebSocket connections, the URL will be `ws://<subgraph-url><path>`.
@@ -183,6 +191,19 @@ impl SubscriptionsConfig {
                 })
         })
     }
+
+    /// Returns the pooled WebSocket idle timeout for a subgraph.
+    pub fn get_websocket_idle_timeout(&self, subgraph_name: &str) -> Duration {
+        self.websocket
+            .as_ref()
+            .and_then(|ws| {
+                ws.subgraphs
+                    .get(subgraph_name)
+                    .and_then(|config| config.idle_timeout)
+                    .or_else(|| ws.all.as_ref().and_then(|config| config.idle_timeout))
+            })
+            .unwrap_or(Duration::from_secs(30))
+    }
 }
 
 #[cfg(test)]
@@ -218,6 +239,18 @@ mod tests {
         )
         .unwrap();
         assert_eq!(config.path.as_str(), "/callback");
+    }
+
+    #[test]
+    fn websocket_idle_timeout_is_inherited() {
+        let config = serde_json::from_str::<SubscriptionsConfig>(
+            r#"{"websocket":{"all":{"idle_timeout":"12s"},"subgraphs":{"products":{"path":"/ws"}}}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.get_websocket_idle_timeout("products"),
+            Duration::from_secs(12)
+        );
     }
 }
 

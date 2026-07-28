@@ -47,6 +47,41 @@ pub type SubgraphExecutorBoxedArc = Arc<Box<SubgraphExecutorType>>;
 
 pub type SubgraphRequestExtensions = HashMap<String, Value>;
 
+/// Identifies the inbound connection context that may be reused across GraphQL operations.
+///
+/// The hash covers the request method, path, selected inbound headers, and schema checksum. It
+/// deliberately excludes operation data, variables, and extensions so different operations from
+/// the same authenticated connection context can share an initialized subgraph connection.
+///
+/// This type is can be used as a connection pool key.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ConnectionFingerprint(u64);
+
+impl ConnectionFingerprint {
+    /// Wraps a hash produced from connection-scoped request inputs.
+    pub fn from_hash(hash: u64) -> Self {
+        Self(hash)
+    }
+}
+
+/// Identifies one complete inbound GraphQL request for in-flight request deduplication.
+///
+/// The hash extends a [`ConnectionFingerprint`] with the normalized operation, variables, and
+/// extensions hashes. Identical values may share one execution and its response. Different
+/// operations therefore have different request fingerprints even when they are eligible to share
+/// the same pooled connection.
+///
+/// This type is used only for request deduplication and must not be used as a connection pool key.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct InboundRequestFingerprint(u64);
+
+impl InboundRequestFingerprint {
+    /// Wraps a hash produced from a connection fingerprint and operation-scoped inputs.
+    pub fn from_hash(hash: u64) -> Self {
+        Self(hash)
+    }
+}
+
 pub struct SubgraphExecutionRequest<'a> {
     /// Holds the query string to be executed.
     /// The query string contains an anonymous GraphQL document.
@@ -61,6 +96,10 @@ pub struct SubgraphExecutionRequest<'a> {
     pub raw_variable_values: Option<Vec<(&'a str, Vec<u8>)>>,
     pub extensions: Option<SubgraphRequestExtensions>,
     pub custom_scalar_paths: Option<&'a CustomScalarPaths>,
+    /// Identifies an existing pooled connection that may execute this request.
+    ///
+    /// `None` disables pooled lookup and preserves the request's normal transport behavior.
+    pub connection_fingerprint: Option<ConnectionFingerprint>,
 }
 
 impl SubgraphExecutionRequest<'_> {

@@ -15,6 +15,7 @@ use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::coprocessor::{CoprocessorError, CoprocessorRuntime};
 use hive_router_plan_executor::execution::error_masking::ErrorMaskingRuntime;
 use hive_router_plan_executor::execution::plan::FailedExecutionResult;
+use hive_router_plan_executor::executors::common::InboundRequestFingerprint;
 use hive_router_plan_executor::extensions::{
     compile::compile_extensions_plan, plan::ExtensionsPlan,
 };
@@ -51,7 +52,7 @@ use crate::pipeline::sse;
 use crate::storage::StorageManager;
 
 pub type JwtClaimsCache = Cache<String, Arc<JwtTokenPayload>>;
-pub type RouterInflightRequestsMap = InFlightMap<u64, SharedRouterResponse>;
+pub type RouterInflightRequestsMap = InFlightMap<InboundRequestFingerprint, SharedRouterResponse>;
 
 #[derive(Clone)]
 pub enum RouterRequestDedupeHeaderPolicy {
@@ -96,7 +97,8 @@ impl From<&TrafficShapingRouterDedupeHeadersConfig> for RouterRequestDedupeHeade
     }
 }
 
-pub type SharedRouterResponseGuard = InFlightCleanupGuard<u64, SharedRouterResponse>;
+pub type SharedRouterResponseGuard =
+    InFlightCleanupGuard<InboundRequestFingerprint, SharedRouterResponse>;
 
 #[derive(Clone)]
 pub enum SharedRouterResponse {
@@ -331,6 +333,7 @@ pub struct RouterSharedState {
     pub plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
     pub in_flight_requests: RouterInflightRequestsMap,
     pub in_flight_requests_header_policy: RouterRequestDedupeHeaderPolicy,
+    pub websocket_connection_reuse_enabled: bool,
     /// Tracks the number of active long-lived clients (websockets + http streams)
     pub long_lived_client_count: Arc<AtomicUsize>,
     /// Tracks all active subscriptions from clients to the router.
@@ -403,6 +406,7 @@ impl RouterSharedState {
                 .dedupe
                 .headers)
                 .into(),
+            websocket_connection_reuse_enabled: router_config.subscriptions.websocket.is_some(),
             long_lived_client_count: Arc::new(AtomicUsize::new(0)),
             active_subscriptions,
             storage_manager,

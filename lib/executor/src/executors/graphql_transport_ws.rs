@@ -85,7 +85,7 @@ pub struct SubscribePayload {
 
 pub fn build_subscribe_payload(
     execution_request: SubgraphExecutionRequest<'_>,
-) -> (SubscribePayload, Option<ConnectionInitPayload>) {
+) -> SubscribePayload {
     let variables: Option<HashMap<String, Value>> = match &execution_request.variables {
         Some(variables) => {
             if variables.is_empty() {
@@ -121,18 +121,16 @@ pub fn build_subscribe_payload(
         }
         None => execution_request.query.to_string(),
     };
-    let subscribe_payload = SubscribePayload {
+    SubscribePayload {
         query,
-        operation_name: execution_request.operation_name.map(|s| s.to_string()),
+        operation_name: execution_request.operation_name,
         variables,
         extensions: execution_request.extensions,
-    };
-    let init_payload = if execution_request.headers.is_empty() {
-        None
-    } else {
-        Some(execution_request.headers.into())
-    };
-    (subscribe_payload, init_payload)
+    }
+}
+
+pub fn build_connection_init_payload(headers: http::HeaderMap) -> Option<ConnectionInitPayload> {
+    (!headers.is_empty()).then(|| headers.into())
 }
 
 #[derive(
@@ -475,6 +473,7 @@ mod tests {
             raw_variable_values: None,
             extensions: None,
             custom_scalar_paths: None,
+            connection_fingerprint: None,
         }
     }
 
@@ -486,7 +485,7 @@ mod tests {
             Some("GetMe_accounts_0".to_string()),
         );
 
-        let (payload, _) = build_subscribe_payload(request);
+        let payload = build_subscribe_payload(request);
 
         assert_eq!(payload.query, "query GetMe_accounts_0 { me { id } }");
         assert_eq!(payload.operation_name.as_deref(), Some("GetMe_accounts_0"));
@@ -496,7 +495,7 @@ mod tests {
     fn build_subscribe_payload_without_operation_name_keeps_original_query() {
         let request = make_request("query { me { id } }", 5, None);
 
-        let (payload, _) = build_subscribe_payload(request);
+        let payload = build_subscribe_payload(request);
 
         assert_eq!(payload.query, "query { me { id } }");
         assert_eq!(payload.operation_name, None);
@@ -506,7 +505,7 @@ mod tests {
     fn build_subscribe_payload_inlines_name_for_shorthand_query() {
         let request = make_request("{ me { id } }", 0, Some("GetMe_accounts_0".to_string()));
 
-        let (payload, _) = build_subscribe_payload(request);
+        let payload = build_subscribe_payload(request);
 
         assert_eq!(payload.query, "query GetMe_accounts_0 { me { id } }");
     }
