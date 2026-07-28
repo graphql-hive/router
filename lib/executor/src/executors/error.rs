@@ -89,9 +89,6 @@ pub enum SubgraphExecutorError {
     #[error("WebSocket executor arbiter channel closed unexpectedly")]
     #[strum(serialize = "SUBGRAPH_WEBSOCKET_ARBITER_CHANNEL_CLOSED")]
     WebSocketArbiterChannelClosed,
-    #[error("WebSocket command channel capacity must be greater than zero")]
-    #[strum(serialize = "SUBGRAPH_WEBSOCKET_INVALID_BUFFER_CAPACITY")]
-    WebSocketInvalidBufferCapacity,
     #[error("WebSocket client operation failed: {0}")]
     #[strum(serialize = "SUBGRAPH_WEBSOCKET_CLIENT_FAILURE")]
     WebSocketClientFailure(String),

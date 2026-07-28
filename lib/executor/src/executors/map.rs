@@ -50,6 +50,7 @@ use crate::{
         http_callback::{CallbackSubscriptionsMap, HttpCallbackSubgraphExecutor},
         tls::{build_https_client_config, build_https_connector, get_merged_tls_config},
         websocket::WsSubgraphExecutor,
+        websocket_pool::{WebSocketConnectionId, WebSocketPool},
     },
     hooks::on_subgraph_execute::{
         OnSubgraphExecuteEndHookPayload, OnSubgraphExecuteStartHookPayload,
@@ -165,6 +166,14 @@ pub struct SubgraphExecutorMap {
     telemetry_context: Arc<TelemetryContext>,
     /// Shared map of active HTTP callback subscriptions
     callback_subscriptions: CallbackSubscriptionsMap,
+    /// Shared pool of initialized subgraph WebSocket connections.
+    ///
+    /// See [`ConnectionFingerprint`] for more information about connection fingerprinting.
+    ///
+    /// Subscription executors populate it, while query and mutation execution only performs
+    /// initialized-only lookups. Pool keys include both the resolved endpoint and the inbound
+    /// connection fingerprint, preventing reuse across destinations or connection identities.
+    websocket_pool: Arc<WebSocketPool>,
 }
 impl SubgraphExecutorMap {
     pub fn new(
@@ -202,6 +211,7 @@ impl SubgraphExecutorMap {
             global_timeout,
             telemetry_context,
             callback_subscriptions: Arc::new(DashMap::new()),
+            websocket_pool: Arc::new(WebSocketPool::default()),
         })
     }
 
@@ -306,7 +316,12 @@ impl SubgraphExecutorMap {
             }
         }
 
-        let mut executor = self.get_or_create_http_executor(subgraph_name, client_request)?;
+        // resolve once because both the normal http executor and any websocket pool lookup must
+        // use the same destination, including request-dependent endpoint overrides
+        let endpoint_str = self.resolve_endpoint(subgraph_name, client_request)?;
+        let mut executor = self.get_or_create_http_executor(subgraph_name, &endpoint_str)?;
+        // keep the exact original executor so plugin replacement can be detected after hooks run
+        let http_executor = executor.clone();
 
         let timeout = self.resolve_subgraph_timeout(subgraph_name, client_request)?;
 
@@ -344,6 +359,54 @@ impl SubgraphExecutorMap {
             // Give the ownership back to variables
             execution_request = start_payload.execution_request;
             executor = start_payload.executor;
+        }
+
+        // plugins run before opportunistic websocket routing so their decisions always win
+        // over the router's transport preference
+        //
+        // a plugin can either return a response immediately or replace the executor. only
+        // consider the pool when neither happened and the original http executor is still
+        // selected. ptr_eq checks that exact executor identity without requiring trait-object
+        // equality
+        if execution_result.is_none() && Arc::ptr_eq(&executor, &http_executor) {
+            // requests without a connection fingerprint cannot safely match a pooled connection
+            if let Some(fingerprint) = execution_request.connection_fingerprint {
+                // only subgraphs configured for graphql-transport-ws can have matching entries
+                if self
+                    .config
+                    .subscriptions
+                    .get_protocol_for_subgraph(subgraph_name)
+                    == SubscriptionProtocol::WebSocket
+                {
+                    // TODO: somehow get rid of this parse thing, it should not run on every request
+                    // basically the WebSocketConnectionId fingerprint should be enough, right?
+                    let endpoint_uri = endpoint_str.parse::<Uri>().map_err(|e| {
+                        SubgraphExecutorError::EndpointParseFailure(endpoint_str.to_string(), e)
+                    })?;
+                    // the resolved endpoint is part of the key so the same inbound identity
+                    // cannot share a connection across different subgraph destinations
+                    let id = WebSocketConnectionId {
+                        endpoint: self.websocket_endpoint(subgraph_name, &endpoint_uri)?,
+                        fingerprint,
+                    };
+                    // this lookup returns initialized entries only. a missing or connecting
+                    // entry is an immediate http fallback; execute never creates or waits for a
+                    // websocket connection
+                    if let Some(pooled) = self.websocket_pool.get_initialized(&id) {
+                        self.telemetry_context
+                            .metrics
+                            .subscriptions
+                            .record_websocket_pool_execute_hit();
+                        executor =
+                            Arc::new(Box::new(pooled) as Box<dyn SubgraphExecutor + Send + Sync>);
+                    } else {
+                        self.telemetry_context
+                            .metrics
+                            .subscriptions
+                            .record_websocket_pool_execute_miss();
+                    }
+                }
+            }
         }
 
         let mut execution_result = match execution_result {
@@ -580,22 +643,25 @@ impl SubgraphExecutorMap {
         }
     }
 
+    /// Returns the HTTP executor for an already resolved endpoint.
+    ///
+    /// Endpoint resolution happens in `execute` so HTTP selection and WebSocket pool matching use
+    /// one destination. Resolving again could evaluate an endpoint expression twice and produce
+    /// mismatched transports.
     fn get_or_create_http_executor(
         &self,
         subgraph_name: &str,
-        client_request: &ClientRequestDetails<'_>,
+        endpoint_str: &str,
     ) -> Result<SubgraphExecutorBoxedArc, SubgraphExecutorError> {
-        let endpoint_str = self.resolve_endpoint(subgraph_name, client_request)?;
-
         if let Some(executor) = self
             .http_executors_by_subgraph
             .get(subgraph_name)
-            .and_then(|endpoints| endpoints.get(&endpoint_str).map(|e| e.clone()))
+            .and_then(|endpoints| endpoints.get(endpoint_str).map(|e| e.clone()))
         {
             return Ok(executor);
         }
 
-        self.register_executor(subgraph_name, &endpoint_str, false)
+        self.register_executor(subgraph_name, endpoint_str, false)
     }
 
     fn get_or_create_subscription_executor(
@@ -641,6 +707,55 @@ impl SubgraphExecutorMap {
     fn register_static_endpoint(&self, subgraph_name: &str, endpoint_str: &str) {
         self.static_endpoints_by_subgraph
             .insert(subgraph_name.to_string(), endpoint_str.to_string());
+    }
+
+    /// Converts a resolved HTTP endpoint into the exact WebSocket pool key endpoint.
+    ///
+    /// The configured WebSocket path takes precedence over the resolved endpoint path. This must
+    /// match the endpoint built for `WsSubgraphExecutor`, otherwise subscriptions would populate a
+    /// different pool key than query and mutation execution looks up.
+    fn websocket_endpoint(
+        &self,
+        subgraph_name: &str,
+        endpoint_uri: &Uri,
+    ) -> Result<Uri, SubgraphExecutorError> {
+        let ws_scheme = match endpoint_uri.scheme_str() {
+            Some("https") => "wss",
+            _ => "ws",
+        };
+        let path_and_query = self
+            .config
+            .subscriptions
+            .get_websocket_path(subgraph_name)
+            .or_else(|| endpoint_uri.path_and_query().map(|path| path.as_str()))
+            // fallback to default if neither is set, but this should never happen
+            .unwrap_or_default();
+
+        // build the final WebSocket URI
+        Uri::builder()
+            .scheme(ws_scheme)
+            .authority(
+                endpoint_uri
+                    .authority()
+                    .map(|authority| authority.as_str())
+                    .unwrap_or_default(),
+            )
+            .path_and_query(path_and_query)
+            .build()
+            .map_err(|error| {
+                SubgraphExecutorError::WebSocketEndpointBuildFailure(
+                    format!(
+                        "{}://{}{}",
+                        ws_scheme,
+                        endpoint_uri
+                            .authority()
+                            .map(|authority| authority.as_str())
+                            .unwrap_or_default(),
+                        path_and_query
+                    ),
+                    error,
+                )
+            })
     }
 
     /// Registers a subgraph executor for the given subgraph name and endpoint URL.
@@ -707,45 +822,7 @@ impl SubgraphExecutorMap {
                 Ok(http_executor)
             }
             SubscriptionProtocol::WebSocket => {
-                let ws_scheme = match endpoint_uri.scheme_str() {
-                    Some("https") => "wss",
-                    _ => "ws",
-                };
-
-                // take the path from the subscription config or use the one from the endpoint
-                let path_and_query = self
-                    .config
-                    .subscriptions
-                    .get_websocket_path(subgraph_name)
-                    .or_else(|| endpoint_uri.path_and_query().map(|pq| pq.as_str()))
-                    // fallback to default if neither is set, but this should never happen
-                    .unwrap_or_default();
-
-                // build the final WebSocket URI
-                let ws_endpoint_uri = Uri::builder()
-                    .scheme(ws_scheme)
-                    .authority(
-                        endpoint_uri
-                            .authority()
-                            .map(|a| a.as_str())
-                            .unwrap_or_default(),
-                    )
-                    .path_and_query(path_and_query)
-                    .build()
-                    .map_err(|e| {
-                        SubgraphExecutorError::WebSocketEndpointBuildFailure(
-                            format!(
-                                "{}://{}{}",
-                                ws_scheme,
-                                endpoint_uri
-                                    .authority()
-                                    .map(|a| a.as_str())
-                                    .unwrap_or_default(),
-                                path_and_query
-                            ),
-                            e,
-                        )
-                    })?;
+                let ws_endpoint_uri = self.websocket_endpoint(subgraph_name, &endpoint_uri)?;
 
                 // Resolve TLS config for the subgraph (merging global + per-subgraph)
                 let tls_config = get_merged_tls_config(
@@ -768,6 +845,12 @@ impl SubgraphExecutorMap {
                     ws_tls_config,
                     self.config.subscriptions.subgraph_buffer_capacity,
                     self.telemetry_context.clone(),
+                    // every websocket subscription executor contributes to the same pool so
+                    // normal execution can reuse connections initialized by subscriptions
+                    self.websocket_pool.clone(),
+                    self.config
+                        .subscriptions
+                        .get_websocket_idle_timeout(subgraph_name),
                 )
                 .to_boxed_arc();
 

@@ -333,7 +333,7 @@ pub struct RouterSharedState {
     pub plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
     pub in_flight_requests: RouterInflightRequestsMap,
     pub in_flight_requests_header_policy: RouterRequestDedupeHeaderPolicy,
-    pub websocket_connection_reuse_enabled: bool,
+    pub websocket_reuse_enabled: bool,
     /// Tracks the number of active long-lived clients (websockets + http streams)
     pub long_lived_client_count: Arc<AtomicUsize>,
     /// Tracks all active subscriptions from clients to the router.
@@ -406,7 +406,8 @@ impl RouterSharedState {
                 .dedupe
                 .headers)
                 .into(),
-            websocket_connection_reuse_enabled: router_config.subscriptions.websocket.is_some(),
+            // TODO: actually toggle, but decide how and where
+            websocket_reuse_enabled: router_config.subscriptions.websocket.is_some(),
             long_lived_client_count: Arc::new(AtomicUsize::new(0)),
             active_subscriptions,
             storage_manager,

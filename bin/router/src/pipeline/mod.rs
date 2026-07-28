@@ -411,7 +411,7 @@ pub async fn graphql_request_handler(
             .enabled;
 
         // establish a connection fingerprint only if dedupe or multiplexing is enabled
-        let connection_fingerprint = (request_dedupe_enabled || shared_state.websocket_connection_reuse_enabled)
+        let connection_fingerprint = (request_dedupe_enabled || shared_state.websocket_reuse_enabled)
             .then(|| connection_fingerprint(
                 req.method(),
                 req.path(),

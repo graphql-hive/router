@@ -503,7 +503,7 @@ async fn handle_text_frame(
                   let request_dedupe_enabled =
                       shared_state.router_config.traffic_shaping.router.dedupe.enabled;
 
-                  let connection_fingerprint = (request_dedupe_enabled || shared_state.websocket_connection_reuse_enabled)
+                  let connection_fingerprint = (request_dedupe_enabled || shared_state.websocket_reuse_enabled)
                     .then(|| connection_fingerprint(
                       &Method::POST,
                       ws_uri.path(),
