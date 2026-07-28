@@ -2446,11 +2446,11 @@ The operations in this collection. Operation names must be unique within the col
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**extensions**||The operation's GraphQL extensions, as a JSON object.<br/><br/>Values support `{{name}}` references to the Laboratory's environment variables; a templated<br/>value resolves to a string.<br/>|no|
+|[**extensions**](#laboratorycollectionsoperationsextensions)|`object`, `null`|The operation's GraphQL extensions, as a JSON object.<br/>|no|
 |[**headers**](#laboratorycollectionsoperationsheaders)|`object`, `null`|Headers to send with this operation, as a map of header name to value.<br/>|no|
 |**name**|`string`|The name of the operation. Used as the tab title, and must be unique across all seeded<br/>operations.<br/>|yes|
 |**query**|`string`|The GraphQL document of the operation.<br/>|yes|
-|**variables**||The operation's variables, as a JSON object (map of variable name to value). Values may be<br/>nested objects, arrays, numbers, booleans or strings.<br/><br/>Values support `{{name}}` references to the Laboratory's environment variables; a templated<br/>value resolves to a string.<br/>|no|
+|[**variables**](#laboratorycollectionsoperationsvariables)|`object`, `null`|The operation's variables, as a JSON object (map of variable name to value). Values may be<br/>|no|
 
 **Item Additional Properties:** not allowed   
 **Example**
@@ -2460,6 +2460,17 @@ The operations in this collection. Operation names must be unique within the col
 
 ```
 
+   
+<a name="laboratorycollectionsoperationsextensions"></a>
+##### laboratory\.collections\[\]\.operations\[\]\.extensions: object,null
+
+The operation's GraphQL extensions, as a JSON object.
+
+Values support `{{name}}` references to the Laboratory's environment variables; a templated
+value resolves to a string.
+
+
+**Additional Properties:** allowed   
    
 <a name="laboratorycollectionsoperationsheaders"></a>
 ##### laboratory\.collections\[\]\.operations\[\]\.headers: object,null
@@ -2478,6 +2489,18 @@ Values support `{{name}}` references to the Laboratory's environment variables.
 |----|----|-----------|--------|
 |**Additional Properties**|`string`|||
 
+   
+<a name="laboratorycollectionsoperationsvariables"></a>
+##### laboratory\.collections\[\]\.operations\[\]\.variables: object,null
+
+The operation's variables, as a JSON object (map of variable name to value). Values may be
+nested objects, arrays, numbers, booleans or strings.
+
+Values support `{{name}}` references to the Laboratory's environment variables; a templated
+value resolves to a string.
+
+
+**Additional Properties:** allowed   
    
 <a name="laboratoryoperations"></a>
 ### laboratory\.operations\[\]: array
@@ -2513,11 +2536,11 @@ laboratory:
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**extensions**||The operation's GraphQL extensions, as a JSON object.<br/><br/>Values support `{{name}}` references to the Laboratory's environment variables; a templated<br/>value resolves to a string.<br/>|no|
+|[**extensions**](#laboratoryoperationsextensions)|`object`, `null`|The operation's GraphQL extensions, as a JSON object.<br/>|no|
 |[**headers**](#laboratoryoperationsheaders)|`object`, `null`|Headers to send with this operation, as a map of header name to value.<br/>|no|
 |**name**|`string`|The name of the operation. Used as the tab title, and must be unique across all seeded<br/>operations.<br/>|yes|
 |**query**|`string`|The GraphQL document of the operation.<br/>|yes|
-|**variables**||The operation's variables, as a JSON object (map of variable name to value). Values may be<br/>nested objects, arrays, numbers, booleans or strings.<br/><br/>Values support `{{name}}` references to the Laboratory's environment variables; a templated<br/>value resolves to a string.<br/>|no|
+|[**variables**](#laboratoryoperationsvariables)|`object`, `null`|The operation's variables, as a JSON object (map of variable name to value). Values may be<br/>|no|
 
 **Item Additional Properties:** not allowed   
 **Example**
@@ -2527,6 +2550,17 @@ laboratory:
 
 ```
 
+   
+<a name="laboratoryoperationsextensions"></a>
+#### laboratory\.operations\[\]\.extensions: object,null
+
+The operation's GraphQL extensions, as a JSON object.
+
+Values support `{{name}}` references to the Laboratory's environment variables; a templated
+value resolves to a string.
+
+
+**Additional Properties:** allowed   
    
 <a name="laboratoryoperationsheaders"></a>
 #### laboratory\.operations\[\]\.headers: object,null
@@ -2545,6 +2579,18 @@ Values support `{{name}}` references to the Laboratory's environment variables.
 |----|----|-----------|--------|
 |**Additional Properties**|`string`|||
 
+   
+<a name="laboratoryoperationsvariables"></a>
+#### laboratory\.operations\[\]\.variables: object,null
+
+The operation's variables, as a JSON object (map of variable name to value). Values may be
+nested objects, arrays, numbers, booleans or strings.
+
+Values support `{{name}}` references to the Laboratory's environment variables; a templated
+value resolves to a string.
+
+
+**Additional Properties:** allowed   
    
 <a name="laboratorypreflight"></a>
 ### laboratory\.preflight: object,null
