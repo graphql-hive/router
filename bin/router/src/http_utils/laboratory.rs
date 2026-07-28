@@ -109,15 +109,6 @@ pub enum LaboratoryConfigError {
     EmptyName { location: String },
     #[error("{location} ('{name}') must contain at least one operation")]
     EmptyCollection { location: String, name: String },
-    #[error(
-        "{location} ('{name}') has an invalid '{field}': it must be a JSON object, not {actual}"
-    )]
-    NotAJsonObject {
-        location: String,
-        name: String,
-        field: &'static str,
-        actual: &'static str,
-    },
 }
 
 /// Stable across renders, so the page can recognise operations it has already seeded.
@@ -157,46 +148,15 @@ fn encode_id_segment(segment: &str) -> String {
     segment.replace('%', "%25").replace(':', "%3A")
 }
 
-/// GraphQL variables and extensions must be JSON objects. Rejecting a non-object here turns a
-/// confusing browser-side failure into a startup error naming the offending operation. `location`
-/// is the config path of the operation, e.g. `laboratory.operations[0]`. A null (omitted) value is
-/// allowed.
-fn validate_json_object(
-    value: &Option<serde_json::Value>,
-    field: &'static str,
-    location: &str,
-    name: &str,
-) -> Result<(), LaboratoryConfigError> {
-    match value {
-        None | Some(serde_json::Value::Null) | Some(serde_json::Value::Object(_)) => Ok(()),
-        Some(other) => Err(LaboratoryConfigError::NotAJsonObject {
-            location: location.to_string(),
-            name: name.to_string(),
-            field,
-            actual: json_value_type_name(other),
-        }),
-    }
-}
-
-fn json_value_type_name(value: &serde_json::Value) -> &'static str {
-    match value {
-        serde_json::Value::Array(_) => "an array",
-        serde_json::Value::String(_) => "a string",
-        serde_json::Value::Bool(_) => "a boolean",
-        serde_json::Value::Null => "null",
-        serde_json::Value::Number(_) => "a number",
-        serde_json::Value::Object(_) => "an object",
-    }
-}
-
-/// Serializes a variables/extensions value to the JSON string the Laboratory stores for an
-/// operation. Null and empty objects are treated as unset.
-fn serialize_json_value(value: &Option<serde_json::Value>) -> Option<String> {
-    value
-        .as_ref()
-        .filter(|value| !value.is_null())
-        .filter(|value| !value.as_object().is_some_and(|object| object.is_empty()))
-        .map(|value| sonic_rs::to_string(value).expect("a JSON value is always serializable"))
+/// Serializes an operation's map field (`headers`, `variables` or `extensions`) to the JSON string
+/// the Laboratory stores for an operation. An empty map is treated as unset.
+///
+/// The config types these fields as maps, so a non-object is already rejected at config load; no
+/// validation is needed here.
+fn serialize_map<V: Serialize>(map: &Option<BTreeMap<String, V>>) -> Option<String> {
+    map.as_ref()
+        .filter(|map| !map.is_empty())
+        .map(|map| sonic_rs::to_string(map).expect("a map is always serializable"))
 }
 
 fn build_operation(
@@ -220,17 +180,17 @@ fn build_operation(
         id,
         name: operation.name.clone(),
         query: operation.query.clone(),
-        variables: serialize_json_value(&operation.variables),
-        headers: serialize_headers(&operation.headers),
-        extensions: serialize_json_value(&operation.extensions),
+        variables: serialize_map(&operation.variables),
+        headers: serialize_map(&operation.headers),
+        extensions: serialize_map(&operation.extensions),
     };
 
     Ok((seed_operation, tab))
 }
 
-/// Rejects a blank name and any `variables`/`extensions` that are not a JSON object, naming the
-/// offending operation by its config `location`. Shared by top-level and collection operations.
-/// `headers` is a typed map in config, so it needs no JSON validation here.
+/// Rejects a blank operation name, naming the offending operation by its config `location`. Shared
+/// by top-level and collection operations. The map fields are typed in config, so they need no
+/// validation here.
 fn validate_operation_fields(
     location: &str,
     operation: &LaboratoryOperationConfig,
@@ -241,24 +201,7 @@ fn validate_operation_fields(
         });
     }
 
-    validate_json_object(&operation.variables, "variables", location, &operation.name)?;
-    validate_json_object(
-        &operation.extensions,
-        "extensions",
-        location,
-        &operation.name,
-    )?;
-
     Ok(())
-}
-
-/// Serializes the operation's header map to the JSON string the Laboratory stores for an
-/// operation. An empty map is treated as no headers.
-fn serialize_headers(headers: &Option<BTreeMap<String, String>>) -> Option<String> {
-    headers
-        .as_ref()
-        .filter(|map| !map.is_empty())
-        .map(|map| sonic_rs::to_string(map).expect("a header map is always serializable"))
 }
 
 fn build_collection(
@@ -297,9 +240,9 @@ fn build_collection(
             name: operation.name.clone(),
             query: operation.query.clone(),
             created_at: SEEDED_COLLECTION_CREATED_AT,
-            variables: serialize_json_value(&operation.variables),
-            headers: serialize_headers(&operation.headers),
-            extensions: serialize_json_value(&operation.extensions),
+            variables: serialize_map(&operation.variables),
+            headers: serialize_map(&operation.headers),
+            extensions: serialize_map(&operation.extensions),
         });
     }
 
@@ -785,30 +728,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_object_variables_in_a_collection_operation() {
-        // Variables must be a JSON object, not an array.
-        let mut op = operation("GetHello");
-        op.variables = Some(serde_json::json!(["a"]));
-
-        let error = build_laboratory_seed(&config_with_collections(vec![collection(
-            "Onboarding",
-            vec![op],
-        )]))
-        .expect_err("a JSON array in a collection operation should be rejected");
-
-        let message = error.to_string();
-        assert!(
-            message.contains("laboratory.collections[0].operations[0]"),
-            "the error should name the collection path: {message}"
-        );
-        assert!(
-            message.contains("'variables'"),
-            "unexpected error: {message}"
-        );
-        assert!(message.contains("an array"), "unexpected error: {message}");
-    }
-
-    #[test]
     fn rejects_an_empty_collection() {
         let error = build_laboratory_seed(&config_with_collections(vec![collection(
             "Onboarding",
@@ -915,28 +834,15 @@ mod tests {
     }
 
     #[test]
-    fn rejects_variables_that_are_not_an_object() {
-        let mut operation = operation("GetHello");
-        operation.variables = Some(serde_json::json!(["a"]));
-
-        let error = build_laboratory_seed(&config_with_operations(vec![operation]))
-            .expect_err("a JSON array should be rejected");
-
-        let message = error.to_string();
-        assert!(
-            message.contains("'variables'"),
-            "unexpected error: {message}"
-        );
-        assert!(message.contains("an array"), "unexpected error: {message}");
-    }
-
-    #[test]
     fn nested_variables_serialize_to_a_json_string() {
         let mut operation = operation("GetHello");
-        operation.variables = Some(serde_json::json!({
-            "filter": { "status": "active", "tags": ["a", "b"] },
-            "limit": 10,
-        }));
+        operation.variables = Some(BTreeMap::from([
+            (
+                "filter".to_string(),
+                serde_json::json!({ "status": "active", "tags": ["a", "b"] }),
+            ),
+            ("limit".to_string(), serde_json::json!(10)),
+        ]));
 
         let seed =
             build_laboratory_seed(&config_with_operations(vec![operation])).expect("should build");
@@ -955,8 +861,8 @@ mod tests {
     #[test]
     fn an_empty_variables_object_is_treated_as_unset() {
         let mut operation = operation("GetHello");
-        operation.variables = Some(serde_json::json!({}));
-        operation.extensions = Some(serde_json::json!({}));
+        operation.variables = Some(BTreeMap::new());
+        operation.extensions = Some(BTreeMap::new());
 
         let seed =
             build_laboratory_seed(&config_with_operations(vec![operation])).expect("should build");

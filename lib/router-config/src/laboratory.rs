@@ -167,7 +167,7 @@ pub struct LaboratoryOperationConfig {
     /// Values support `{{name}}` references to the Laboratory's environment variables; a templated
     /// value resolves to a string.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub variables: Option<serde_json::Value>,
+    pub variables: Option<BTreeMap<String, serde_json::Value>>,
     /// Headers to send with this operation, as a map of header name to value.
     ///
     /// These apply only to this operation, and are merged on top of any headers set by the
@@ -181,7 +181,7 @@ pub struct LaboratoryOperationConfig {
     /// Values support `{{name}}` references to the Laboratory's environment variables; a templated
     /// value resolves to a string.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub extensions: Option<serde_json::Value>,
+    pub extensions: Option<BTreeMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -319,6 +319,28 @@ operations:
         assert_eq!(variables["limit"], 10);
         assert_eq!(variables["filter"]["status"], "active");
         assert_eq!(variables["filter"]["tags"][0], "premium");
+    }
+
+    #[test]
+    fn rejects_non_object_variables_at_config_load() {
+        // Typing variables as a map means a non-object is rejected by config parsing itself,
+        // located to the field, with no custom validation needed.
+        let error = parse(
+            r#"
+operations:
+  - name: Search
+    query: "query Search { search }"
+    variables: [1, 2, 3]
+"#,
+        )
+        .expect_err("a non-object variables should be rejected by config parsing")
+        .to_string();
+
+        assert!(
+            error.contains("expected a map"),
+            "unexpected error: {error}"
+        );
+        assert!(error.contains("variables"), "unexpected error: {error}");
     }
 
     #[test]
