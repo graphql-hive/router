@@ -10,8 +10,13 @@ use hive_router_config::laboratory::{
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
 
-/// Sits inside a JavaScript string literal in the generated page.
+/// Sits inside a JavaScript string literal in the generated page. Carries the operations,
+/// collections and tabs seed, merged with the browser's stored state after the bundle loads.
 const PROPS_PLACEHOLDER: &str = "__LABORATORY_PROPS__";
+
+/// Sits inside a JavaScript string literal in the generated page, before the Laboratory bundle.
+/// Carries the global headers the page's `fetch` wrapper attaches to every router request.
+const GLOBAL_HEADERS_PLACEHOLDER: &str = "__LABORATORY_GLOBAL_HEADERS__";
 
 /// The Laboratory needs a parseable `createdAt` on a collection but (as of 0.2.0) never displays or
 /// sorts by a seeded one's value. Epoch is a deliberate sentinel: if a future version surfaces it,
@@ -319,16 +324,27 @@ fn escape_for_js_string_literal(value: &str) -> String {
     escaped
 }
 
-/// Always substitutes, emitting `{}` when there is nothing to seed. Leaving the placeholder in
-/// place would make the page's `JSON.parse` throw on every load of an unconfigured router.
+/// Always substitutes both placeholders, emitting `{}` when there is nothing to seed. Leaving a
+/// placeholder in place would make the page's `JSON.parse` throw on every load of an unconfigured
+/// router.
 pub fn render_laboratory_html(
     template: &str,
     config: &LaboratoryConfig,
 ) -> Result<String, LaboratoryConfigError> {
     let seed = build_laboratory_seed(config)?;
-    let json = sonic_rs::to_string(&seed).expect("laboratory seed is always serializable");
+    let seed_json = sonic_rs::to_string(&seed).expect("laboratory seed is always serializable");
 
-    Ok(template.replace(PROPS_PLACEHOLDER, &escape_for_js_string_literal(&json)))
+    // Serialized directly (not via `serialize_map`) so an empty map becomes `{}`, not nothing —
+    // the placeholder must always be replaced. The page's fetch wrapper skips an empty map.
+    let global_headers_json = sonic_rs::to_string(&config.global_headers)
+        .expect("laboratory global headers are always serializable");
+
+    Ok(template
+        .replace(PROPS_PLACEHOLDER, &escape_for_js_string_literal(&seed_json))
+        .replace(
+            GLOBAL_HEADERS_PLACEHOLDER,
+            &escape_for_js_string_literal(&global_headers_json),
+        ))
 }
 
 #[cfg(test)]
@@ -365,6 +381,16 @@ mod tests {
     fn config_with_collections(collections: Vec<LaboratoryCollectionConfig>) -> LaboratoryConfig {
         LaboratoryConfig {
             collections,
+            ..Default::default()
+        }
+    }
+
+    fn config_with_global_headers(headers: &[(&str, &str)]) -> LaboratoryConfig {
+        LaboratoryConfig {
+            global_headers: headers
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
             ..Default::default()
         }
     }
@@ -418,6 +444,87 @@ mod tests {
     }
 
     const TEMPLATE: &str = r#"<script>JSON.parse("__LABORATORY_PROPS__");</script>"#;
+
+    const GLOBAL_HEADERS_TEMPLATE: &str =
+        r#"<script>JSON.parse("__LABORATORY_GLOBAL_HEADERS__");</script>"#;
+
+    #[test]
+    fn injects_configured_global_headers() {
+        let html = render_laboratory_html(
+            GLOBAL_HEADERS_TEMPLATE,
+            &config_with_global_headers(&[("X-Env", "staging")]),
+        )
+        .unwrap();
+
+        assert!(
+            !html.contains(GLOBAL_HEADERS_PLACEHOLDER),
+            "the global-headers placeholder must be replaced"
+        );
+        // Round-trips through injection, escaping and parse as the page would see it.
+        let parsed: serde_json::Value =
+            serde_json::from_str(&extract_injected_json(&html)).expect("should be valid JSON");
+        assert_eq!(parsed["X-Env"], "staging");
+    }
+
+    #[test]
+    fn empty_global_headers_still_substitute_to_an_object() {
+        let html =
+            render_laboratory_html(GLOBAL_HEADERS_TEMPLATE, &LaboratoryConfig::default()).unwrap();
+
+        assert!(
+            !html.contains(GLOBAL_HEADERS_PLACEHOLDER),
+            "the placeholder must always be replaced"
+        );
+        assert_eq!(extract_injected_json(&html), "{}");
+    }
+
+    #[test]
+    fn a_global_header_value_cannot_break_out_of_the_script_element() {
+        let html = render_laboratory_html(
+            GLOBAL_HEADERS_TEMPLATE,
+            &config_with_global_headers(&[("X-Evil", "</script><script>alert(1)</script>")]),
+        )
+        .unwrap();
+
+        assert!(
+            !html.to_lowercase().contains("</script><script>"),
+            "the global header value escaped the string literal: {html}"
+        );
+        assert_eq!(
+            html.to_lowercase().matches("</script>").count(),
+            1,
+            "unexpected number of closing script tags: {html}"
+        );
+    }
+
+    /// The wrapper only works if it is installed before the bundle captures `globalThis.fetch`, and
+    /// only stays invisible if the library keeps capturing fetch at init. Both are load-bearing
+    /// assumptions about `LABORATORY_HTML`; a lab upgrade that breaks either fails here. This is a
+    /// coarse tripwire, not a behavioral test — only a browser can confirm the header is sent.
+    #[cfg(not(feature = "graphiql"))]
+    #[test]
+    fn the_global_headers_wrapper_is_installed_before_the_bundle() {
+        let page = crate::LABORATORY_HTML;
+
+        let wrapper = page
+            .find("window.fetch = function")
+            .expect("the fetch wrapper should be present");
+        let placeholder = page
+            .find(GLOBAL_HEADERS_PLACEHOLDER)
+            .expect("the global-headers placeholder should be present");
+        let bundle = page
+            .find("HiveLaboratory")
+            .expect("the laboratory bundle should be present");
+
+        assert!(
+            placeholder < bundle && wrapper < bundle,
+            "the global-headers wrapper must be installed before the bundle"
+        );
+        assert!(
+            page.contains("globalThis.fetch"),
+            "the bundle no longer captures globalThis.fetch — the wrapper may not be used"
+        );
+    }
 
     /// These strings are a contract with the Laboratory bundle and with already-seeded browsers.
     /// Nothing else fails on a rename: the page renders, it just stops recognising existing state.

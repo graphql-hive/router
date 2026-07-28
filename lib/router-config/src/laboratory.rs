@@ -11,6 +11,23 @@ pub struct LaboratoryConfig {
     /// You can override this setting by setting the `LABORATORY_ENABLED` environment variable to `true` or `false`.
     #[serde(default = "default_laboratory_enabled")]
     pub enabled: bool,
+    /// Headers sent on every request the Laboratory makes to the router, as a map of header name to
+    /// value.
+    ///
+    /// Unlike an operation's `headers`, these are not shown or editable in the Laboratory UI: they
+    /// are attached to the underlying request transport. A header set on an individual operation
+    /// overrides a global header of the same name.
+    ///
+    /// > These are embedded in the HTML page served to every browser that opens the Laboratory and
+    /// > are visible via "view source". Do not put secrets here.
+    ///
+    /// ```yaml
+    /// laboratory:
+    ///   global_headers:
+    ///     X-Env: staging
+    /// ```
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub global_headers: BTreeMap<String, String>,
     /// Operations to pre-populate the Laboratory with.
     ///
     /// Each operation opens in its own tab the first time a browser sees it. Operations the user
@@ -115,6 +132,7 @@ impl Default for LaboratoryConfig {
     fn default() -> Self {
         Self {
             enabled: default_laboratory_enabled(),
+            global_headers: BTreeMap::new(),
             operations: Vec::new(),
             collections: Vec::new(),
         }
@@ -139,8 +157,30 @@ mod tests {
         let config = parse("enabled: true").expect("should parse");
 
         assert!(config.enabled);
+        assert!(config.global_headers.is_empty());
         assert!(config.operations.is_empty());
         assert!(config.collections.is_empty());
+    }
+
+    #[test]
+    fn parses_global_headers() {
+        let config = parse(
+            r#"
+global_headers:
+  X-Env: staging
+  X-Team: payments
+"#,
+        )
+        .expect("should parse");
+
+        assert_eq!(
+            config.global_headers.get("X-Env"),
+            Some(&"staging".to_string())
+        );
+        assert_eq!(
+            config.global_headers.get("X-Team"),
+            Some(&"payments".to_string())
+        );
     }
 
     #[test]

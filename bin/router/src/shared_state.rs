@@ -435,9 +435,12 @@ fn render_laboratory_page(
 fn render_laboratory_page(
     config: &hive_router_config::laboratory::LaboratoryConfig,
 ) -> Result<Bytes, SharedStateError> {
-    if !config.operations.is_empty() || !config.collections.is_empty() {
+    if !config.operations.is_empty()
+        || !config.collections.is_empty()
+        || !config.global_headers.is_empty()
+    {
         tracing::warn!(
-            "'laboratory.operations' and 'laboratory.collections' are ignored because this router was built with the 'graphiql' feature."
+            "'laboratory.operations', 'laboratory.collections' and 'laboratory.global_headers' are ignored because this router was built with the 'graphiql' feature."
         );
     }
 

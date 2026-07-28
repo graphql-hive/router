@@ -121,6 +121,55 @@ fn build_inline_laboratory_html(dist_dir: &Path, product_logo: &Path) -> String 
         }},
       }};
 
+      // Global headers: attach configured headers to every request the Laboratory makes to this
+      // router, without showing them in the UI. Installed before the bundle so the bundle, which
+      // captures `globalThis.fetch` at init, uses this wrapper. The router replaces the placeholder
+      // with a header map (or {{}} when none are configured).
+      (function () {{
+        var globalHeaders = {{}};
+        try {{
+          globalHeaders = JSON.parse("__LABORATORY_GLOBAL_HEADERS__");
+        }} catch (error) {{
+          console.warn("Failed to read the Laboratory global headers", error);
+        }}
+        if (Object.keys(globalHeaders).length === 0) {{
+          return;
+        }}
+
+        function isSameOrigin(url) {{
+          try {{
+            return new URL(url, window.location.href).origin === window.location.origin;
+          }} catch (error) {{
+            // Fail closed: if the URL can't be parsed, don't add the headers.
+            return false;
+          }}
+        }}
+
+        try {{
+          // Built once; an invalid header name throws here (at install) rather than on every
+          // request, and the catch keeps a bad value from breaking the rest of the page.
+          var base = new Headers(globalHeaders);
+          var nativeFetch = window.fetch.bind(window);
+          window.fetch = function (input, init) {{
+            init = init || {{}};
+            var url = typeof input === "string" ? input : input && input.url;
+            // Only the router's own endpoint (same-origin) gets the global headers, so they never
+            // leak to a third-party endpoint a user repoints the Laboratory at.
+            if (isSameOrigin(url)) {{
+              var merged = new Headers(base);
+              // A per-operation header of the same name wins.
+              new Headers(init.headers || {{}}).forEach(function (value, key) {{
+                merged.set(key, value);
+              }});
+              init = Object.assign({{}}, init, {{ headers: merged }});
+            }}
+            return nativeFetch(input, init);
+          }};
+        }} catch (error) {{
+          console.warn("Failed to install Laboratory global headers", error);
+        }}
+      }})();
+
 {js_contents}
 
       // The router always replaces this placeholder, with {{}} when nothing is configured.

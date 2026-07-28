@@ -63,6 +63,30 @@ mod laboratory_e2e_tests {
     }
 
     #[ntex::test]
+    async fn injects_configured_global_headers() {
+        let router = start_router(
+            r#"
+            laboratory:
+              enabled: true
+              global_headers:
+                X-Env: staging
+            "#,
+        )
+        .await;
+
+        let html = fetch_laboratory_html(&router).await;
+
+        assert!(
+            !html.contains("__LABORATORY_GLOBAL_HEADERS__"),
+            "the global-headers placeholder should be replaced"
+        );
+        assert!(
+            html.contains("staging") && html.contains("window.fetch = function"),
+            "the global headers and the fetch wrapper should be present in the page"
+        );
+    }
+
+    #[ntex::test]
     async fn injects_the_configured_operation_and_its_tab() {
         let router = start_router(
             r#"
