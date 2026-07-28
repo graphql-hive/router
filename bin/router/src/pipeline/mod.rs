@@ -387,6 +387,8 @@ pub async fn graphql_request_handler(
         // ends. the parsed operation kind is used instead of the `Accept` header
         // because clients like urql advertise streaming support on every
         // operation, and regular queries must not count toward the limit.
+        // TODO: SharedRouterResponse::Stream should be used for long-lived connection count
+        // once we add support for things like @stream and @defer
         let long_lived_client_guard = if is_subscription {
             match try_reserve_long_lived_client(shared_state) {
                 Ok(guard) => guard,
