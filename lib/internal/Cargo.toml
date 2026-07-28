@@ -71,7 +71,7 @@ tracing = { workspace = true }
 tracing-opentelemetry.workspace = true
 tracing-subscriber = { workspace = true }
 tonic = { workspace = true }
-sonyflake = "0.5.1"
+ulid = { workspace = true }
 chrono = "0.4.45"
 
 [dev-dependencies]
