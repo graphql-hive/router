@@ -2371,6 +2371,7 @@ Configuration for the Hive Laboratory interface.
 |----|----|-----------|--------|
 |[**collections**](#laboratorycollections)|`object[]`|Collections to pre-populate the Laboratory with.<br/>||
 |**enabled**|`boolean`|Enables/disables the Hive Laboratory interface. By default, the Hive Laboratory interface is enabled.<br/><br/>You can override this setting by setting the `LABORATORY_ENABLED` environment variable to `true` or `false`.<br/>Default: `true`<br/>||
+|[**global\_headers**](#laboratoryglobal_headers)|`object`|Headers sent on every request the Laboratory makes to the router, as a map of header name to<br/>||
 |[**operations**](#laboratoryoperations)|`object[]`|Operations to pre-populate the Laboratory with.<br/>||
 
 **Additional Properties:** not allowed   
@@ -2498,6 +2499,33 @@ value resolves to a string.
 
 
 **Additional Properties:** allowed   
+   
+<a name="laboratoryglobal_headers"></a>
+### laboratory\.global\_headers: object
+
+Headers sent on every request the Laboratory makes to the router, as a map of header name to
+value.
+
+Unlike an operation's `headers`, these are not shown or editable in the Laboratory UI: they
+are attached to the underlying request transport. A header set on an individual operation
+overrides a global header of the same name.
+
+> These are embedded in the HTML page served to every browser that opens the Laboratory and
+> are visible via "view source". Do not put secrets here.
+
+```yaml
+laboratory:
+  global_headers:
+    X-Env: staging
+```
+
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**|`string`|||
+
    
 <a name="laboratoryoperations"></a>
 ### laboratory\.operations\[\]: array
