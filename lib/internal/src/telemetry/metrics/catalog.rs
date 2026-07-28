@@ -213,9 +213,30 @@ pub mod names {
         "hive.router.subscriptions.clients.lagged_messages_total";
     pub const SUBSCRIPTIONS_CLIENTS_SENT_MESSAGES_TOTAL: &str =
         "hive.router.subscriptions.clients.sent_messages_total";
+    pub const WEBSOCKET_POOL_INITIALIZATION_STARTED_TOTAL: &str =
+        "hive.router.websocket_pool.initialization_started_total";
+    pub const WEBSOCKET_POOL_INITIALIZATION_JOINED_TOTAL: &str =
+        "hive.router.websocket_pool.initialization_joined_total";
+    pub const WEBSOCKET_POOL_INITIALIZATION_FAILED_TOTAL: &str =
+        "hive.router.websocket_pool.initialization_failed_total";
+    pub const WEBSOCKET_POOL_SUBSCRIPTION_HITS_TOTAL: &str =
+        "hive.router.websocket_pool.subscription_hits_total";
+    pub const WEBSOCKET_POOL_EXECUTE_HITS_TOTAL: &str =
+        "hive.router.websocket_pool.execute_hits_total";
+    pub const WEBSOCKET_POOL_EXECUTE_MISSES_TOTAL: &str =
+        "hive.router.websocket_pool.execute_misses_total";
+    pub const WEBSOCKET_POOL_IDLE_EXPIRATIONS_TOTAL: &str =
+        "hive.router.websocket_pool.idle_expirations_total";
 }
 
 pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
+    (names::WEBSOCKET_POOL_INITIALIZATION_STARTED_TOTAL, &[]),
+    (names::WEBSOCKET_POOL_INITIALIZATION_JOINED_TOTAL, &[]),
+    (names::WEBSOCKET_POOL_INITIALIZATION_FAILED_TOTAL, &[]),
+    (names::WEBSOCKET_POOL_SUBSCRIPTION_HITS_TOTAL, &[]),
+    (names::WEBSOCKET_POOL_EXECUTE_HITS_TOTAL, &[]),
+    (names::WEBSOCKET_POOL_EXECUTE_MISSES_TOTAL, &[]),
+    (names::WEBSOCKET_POOL_IDLE_EXPIRATIONS_TOTAL, &[]),
     (
         names::SUBSCRIPTIONS_SUBGRAPHS_ACTIVE,
         &[labels::SUBGRAPH_NAME],
