@@ -1,22 +1,16 @@
-use std::{
-    future::Future,
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{future::Future, sync::Arc};
 
 use hive_router_config::log::CorrelationConfig;
 use http::{HeaderMap, HeaderName};
 use ntex::web::HttpRequest;
 use opentelemetry::trace::TraceContextExt;
-use sonyflake::Sonyflake;
 use tokio::task::futures::TaskLocalFuture;
-use tracing::warn;
+use uuid::Uuid;
 
-use crate::telemetry::{logging::targets, otel};
+use crate::telemetry::otel;
 
 #[derive(Clone)]
 pub struct RequestIdentifierExtractor {
-    generator: Sonyflake,
     cfg: CorrelationConfig,
 }
 
@@ -43,10 +37,7 @@ impl RequestIdentifiers {
 
 impl RequestIdentifierExtractor {
     pub fn new(cfg: CorrelationConfig) -> Self {
-        Self {
-            generator: Sonyflake::new().expect("Sonyflake generator should initialize successfully; ensure system clock is correct and network interfaces are available"),
-            cfg,
-        }
+        Self { cfg }
     }
 
     pub fn extract(
@@ -103,25 +94,7 @@ impl RequestIdentifierExtractor {
             return req_id_header.to_string();
         }
 
-        match self.generator.next_id() {
-            Ok(id) => {
-                return id.to_string();
-            }
-            Err(e) => {
-                warn!(
-                    target: targets::CORE,
-                    error = %e,
-                    "Failed to generate local request id, will fallback to timestamp"
-                );
-            }
-        }
-
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time went backwards, please confirm your system/os clock")
-            .as_secs();
-
-        format!("{}", timestamp)
+        Uuid::now_v7().to_string()
     }
 }
 
