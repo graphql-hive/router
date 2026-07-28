@@ -2446,11 +2446,11 @@ The operations in this collection. Operation names must be unique within the col
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**extensions**|`string`, `null`|The operation's GraphQL extensions, as a JSON object encoded in a string.<br/><br/>Supports `{{name}}` references to the Laboratory's environment variables.<br/>|no|
+|**extensions**||The operation's GraphQL extensions, as a JSON object.<br/><br/>Values support `{{name}}` references to the Laboratory's environment variables; a templated<br/>value resolves to a string.<br/>|no|
 |[**headers**](#laboratorycollectionsoperationsheaders)|`object`, `null`|Headers to send with this operation, as a map of header name to value.<br/>|no|
 |**name**|`string`|The name of the operation. Used as the tab title, and must be unique across all seeded<br/>operations.<br/>|yes|
 |**query**|`string`|The GraphQL document of the operation.<br/>|yes|
-|**variables**|`string`, `null`|The operation's variables, as a JSON object encoded in a string.<br/><br/>Supports `{{name}}` references to the Laboratory's environment variables.<br/>|no|
+|**variables**||The operation's variables, as a JSON object (map of variable name to value). Values may be<br/>nested objects, arrays, numbers, booleans or strings.<br/><br/>Values support `{{name}}` references to the Laboratory's environment variables; a templated<br/>value resolves to a string.<br/>|no|
 
 **Item Additional Properties:** not allowed   
 **Example**
@@ -2500,7 +2500,8 @@ laboratory:
         query GetHello {
           hello
         }
-      variables: '{}'
+      variables:
+        limit: 10
       headers:
         X-Env: staging
 ```
@@ -2512,11 +2513,11 @@ laboratory:
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**extensions**|`string`, `null`|The operation's GraphQL extensions, as a JSON object encoded in a string.<br/><br/>Supports `{{name}}` references to the Laboratory's environment variables.<br/>|no|
+|**extensions**||The operation's GraphQL extensions, as a JSON object.<br/><br/>Values support `{{name}}` references to the Laboratory's environment variables; a templated<br/>value resolves to a string.<br/>|no|
 |[**headers**](#laboratoryoperationsheaders)|`object`, `null`|Headers to send with this operation, as a map of header name to value.<br/>|no|
 |**name**|`string`|The name of the operation. Used as the tab title, and must be unique across all seeded<br/>operations.<br/>|yes|
 |**query**|`string`|The GraphQL document of the operation.<br/>|yes|
-|**variables**|`string`, `null`|The operation's variables, as a JSON object encoded in a string.<br/><br/>Supports `{{name}}` references to the Laboratory's environment variables.<br/>|no|
+|**variables**||The operation's variables, as a JSON object (map of variable name to value). Values may be<br/>nested objects, arrays, numbers, booleans or strings.<br/><br/>Values support `{{name}}` references to the Laboratory's environment variables; a templated<br/>value resolves to a string.<br/>|no|
 
 **Item Additional Properties:** not allowed   
 **Example**
