@@ -39,6 +39,7 @@ use crate::pipeline::cors::{CORSConfigError, Cors};
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::header::{ResponseMode, StreamContentType};
 use crate::pipeline::introspection_policy::compile_introspection_policy;
+use crate::pipeline::long_lived_client_limit::LongLivedClientGuard;
 use crate::pipeline::multipart_subscribe::{
     self, APOLLO_MULTIPART_HTTP_CONTENT_TYPE, INCREMENTAL_DELIVERY_CONTENT_TYPE,
 };
@@ -114,14 +115,17 @@ impl SharedRouterResponse {
         self,
         response_mode: &ResponseMode,
         metrics: &Arc<Metrics>,
+        long_lived_client_guard: Option<LongLivedClientGuard>,
     ) -> Result<web::HttpResponse, PipelineError> {
         match self {
+            // dropping the guard here would be a leak for streams, but singles
+            // are not long-lived clients so releasing the slot right away is correct
             SharedRouterResponse::Single(single) => Ok(single.into()),
             SharedRouterResponse::Stream(stream) => {
                 let stream_content_type = response_mode
                     .stream_content_type()
                     .ok_or(PipelineError::SubscriptionsTransportNotSupported)?;
-                Ok(stream.into_response(stream_content_type, metrics))
+                Ok(stream.into_response(stream_content_type, metrics, long_lived_client_guard))
             }
         }
     }
@@ -175,6 +179,7 @@ impl SharedRouterStreamResponse {
         self,
         stream_content_type: &StreamContentType,
         metrics: &Arc<Metrics>,
+        long_lived_client_guard: Option<LongLivedClientGuard>,
     ) -> web::HttpResponse {
         // leader already has a pre-subscribed receiver to avoid missing
         // any potential events emitted. joiners, on the other hand, subscribe
@@ -194,6 +199,8 @@ impl SharedRouterStreamResponse {
 
         let stream = Box::pin(async_stream::stream! {
             let _client_conn_guard = client_conn_guard;
+            // holds the long-lived client slot until this client's stream ends
+            let _long_lived_client_guard = long_lived_client_guard;
             loop {
                 match receiver.recv().await {
                     Ok(SubscriptionEvent::Raw(data)) => {
