@@ -62,9 +62,7 @@ use crate::{
         execution_request::{GetQueryStr, OperationPreparation, OperationPreparationResult},
         header::{RequestAccepts, ResponseMode, TEXT_HTML_MIME},
         introspection_policy::handle_introspection_policy,
-        long_lived_client_limit::{
-            too_many_long_lived_clients_response, try_reserve_long_lived_client,
-        },
+        long_lived_client_limit::try_reserve_long_lived_client,
         normalize::{normalize_request_with_cache, FilterOutputExt, GraphQLNormalizationPayload},
         parser::{parse_operation_with_cache, ParseResult},
         progressive_override::RequestOverrideContext,
@@ -392,12 +390,12 @@ pub async fn graphql_request_handler(
         let long_lived_client_guard = if is_subscription {
             match try_reserve_long_lived_client(shared_state) {
                 Ok(guard) => guard,
-                Err(_) => {
+                Err(error) => {
                     debug!(
                         target: targets::HTTP_SERVER,
                         "rejecting subscription, long-lived client limit reached"
                     );
-                    return Ok(too_many_long_lived_clients_response());
+                    return Ok(error.into());
                 }
             }
         } else {

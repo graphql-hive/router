@@ -96,7 +96,7 @@ where
             // limit disabled, nothing to track
             Ok(None) => return ctx.call(&self.service, req).await,
             Err(LongLivedClientLimitReached) => {
-                return Ok(req.into_response(too_many_long_lived_clients_response()));
+                return Ok(req.into_response(LongLivedClientLimitReached));
             }
         };
 
@@ -117,6 +117,14 @@ where
 
 /// The long-lived client limit has been reached, no slot could be reserved.
 pub struct LongLivedClientLimitReached;
+
+impl Into<web::HttpResponse> for LongLivedClientLimitReached {
+    fn into(self) -> web::HttpResponse {
+        web::HttpResponse::build(StatusCode::SERVICE_UNAVAILABLE)
+            .header(header::RETRY_AFTER, "5")
+            .body("Too many long-lived clients")
+    }
+}
 
 /// Tries to reserve a long-lived client slot against
 /// `traffic_shaping.router.max_long_lived_clients`.
@@ -149,12 +157,6 @@ pub fn try_reserve_long_lived_client(
         })
         .map(|_| Some(LongLivedClientGuard(counter)))
         .map_err(|_| LongLivedClientLimitReached)
-}
-
-pub fn too_many_long_lived_clients_response() -> web::HttpResponse {
-    web::HttpResponse::build(StatusCode::SERVICE_UNAVAILABLE)
-        .header(header::RETRY_AFTER, "5")
-        .body("Too many long-lived clients")
 }
 
 // decrements the counter when dropped
