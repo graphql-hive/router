@@ -64,7 +64,7 @@ sonic-simd = "0.1.2"
 async-stream = "0.3.6"
 futures-util = "0.3.31"
 ulid = { workspace = true }
-uuid = { version = "1.23.2", features = ["v4", "fast-rng"] }
+uuid = { workspace = true, features = ["v4", "fast-rng"] }
 
 [dev-dependencies]
 subgraphs = { path = "../../bench/subgraphs" }

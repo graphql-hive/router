@@ -71,7 +71,7 @@ tracing = { workspace = true }
 tracing-opentelemetry.workspace = true
 tracing-subscriber = { workspace = true }
 tonic = { workspace = true }
-ulid = { workspace = true }
+uuid = { workspace = true, features = ["v7", "fast-rng"] }
 chrono = "0.4.45"
 
 [dev-dependencies]

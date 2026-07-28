@@ -5,7 +5,7 @@ use http::{HeaderMap, HeaderName};
 use ntex::web::HttpRequest;
 use opentelemetry::trace::TraceContextExt;
 use tokio::task::futures::TaskLocalFuture;
-use ulid::Ulid;
+use uuid::Uuid;
 
 use crate::telemetry::otel;
 
@@ -94,7 +94,7 @@ impl RequestIdentifierExtractor {
             return req_id_header.to_string();
         }
 
-        Ulid::generate().to_string()
+        Uuid::now_v7().to_string()
     }
 }
 

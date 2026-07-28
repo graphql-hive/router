@@ -10,4 +10,4 @@ Version `0.0.85` introduced new logging runtime that uses `Sonyflake` crate to g
 
 The `Sonyflake` runtime can fail on some OS configurations. 
 
-This change replaces the `Sonyflake` runtime with `Ulid` generator, that's more fail-safe.
+This change replaces the `Sonyflake` runtime with `uuid` generator, that's more fail-safe.
