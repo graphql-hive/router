@@ -2372,7 +2372,6 @@ Configuration for the Hive Laboratory interface.
 |[**collections**](#laboratorycollections)|`object[]`|Collections to pre-populate the Laboratory with.<br/>||
 |**enabled**|`boolean`|Enables/disables the Hive Laboratory interface. By default, the Hive Laboratory interface is enabled.<br/><br/>You can override this setting by setting the `LABORATORY_ENABLED` environment variable to `true` or `false`.<br/>Default: `true`<br/>||
 |[**operations**](#laboratoryoperations)|`object[]`|Operations to pre-populate the Laboratory with.<br/>||
-|[**preflight**](#laboratorypreflight)|`object`, `null`|A script that runs in the browser before every operation executed from the Laboratory.<br/>||
 
 **Additional Properties:** not allowed   
 **Example**
@@ -2447,7 +2446,7 @@ The operations in this collection. Operation names must be unique within the col
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |[**extensions**](#laboratorycollectionsoperationsextensions)|`object`, `null`|The operation's GraphQL extensions, as a JSON object.<br/>|no|
-|[**headers**](#laboratorycollectionsoperationsheaders)|`object`, `null`|Headers to send with this operation, as a map of header name to value.<br/>|no|
+|[**headers**](#laboratorycollectionsoperationsheaders)|`object`, `null`|Headers to send with this operation, as a map of header name to value. These apply only to<br/>|no|
 |**name**|`string`|The name of the operation. Used as the tab title, and must be unique across all seeded<br/>operations.<br/>|yes|
 |**query**|`string`|The GraphQL document of the operation.<br/>|yes|
 |[**variables**](#laboratorycollectionsoperationsvariables)|`object`, `null`|The operation's variables, as a JSON object (map of variable name to value). Values may be<br/>|no|
@@ -2475,10 +2474,8 @@ value resolves to a string.
 <a name="laboratorycollectionsoperationsheaders"></a>
 ##### laboratory\.collections\[\]\.operations\[\]\.headers: object,null
 
-Headers to send with this operation, as a map of header name to value.
-
-These apply only to this operation, and are merged on top of any headers set by the
-preflight script. To set headers on every operation, use `preflight` instead.
+Headers to send with this operation, as a map of header name to value. These apply only to
+this operation.
 
 Values support `{{name}}` references to the Laboratory's environment variables.
 
@@ -2537,7 +2534,7 @@ laboratory:
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |[**extensions**](#laboratoryoperationsextensions)|`object`, `null`|The operation's GraphQL extensions, as a JSON object.<br/>|no|
-|[**headers**](#laboratoryoperationsheaders)|`object`, `null`|Headers to send with this operation, as a map of header name to value.<br/>|no|
+|[**headers**](#laboratoryoperationsheaders)|`object`, `null`|Headers to send with this operation, as a map of header name to value. These apply only to<br/>|no|
 |**name**|`string`|The name of the operation. Used as the tab title, and must be unique across all seeded<br/>operations.<br/>|yes|
 |**query**|`string`|The GraphQL document of the operation.<br/>|yes|
 |[**variables**](#laboratoryoperationsvariables)|`object`, `null`|The operation's variables, as a JSON object (map of variable name to value). Values may be<br/>|no|
@@ -2565,10 +2562,8 @@ value resolves to a string.
 <a name="laboratoryoperationsheaders"></a>
 #### laboratory\.operations\[\]\.headers: object,null
 
-Headers to send with this operation, as a map of header name to value.
-
-These apply only to this operation, and are merged on top of any headers set by the
-preflight script. To set headers on every operation, use `preflight` instead.
+Headers to send with this operation, as a map of header name to value. These apply only to
+this operation.
 
 Values support `{{name}}` references to the Laboratory's environment variables.
 
@@ -2591,90 +2586,6 @@ value resolves to a string.
 
 
 **Additional Properties:** allowed   
-   
-<a name="laboratorypreflight"></a>
-### laboratory\.preflight: object,null
-
-A script that runs in the browser before every operation executed from the Laboratory.
-
-This is the only way to apply headers to *every* operation, including operations the user
-creates later. Headers set by the preflight script are the base of the request; headers set
-on an individual operation are merged on top and win on conflict.
-
-> **The script source is public.** It is embedded in the HTML page served to every browser
-> that opens the Laboratory, and is visible via "view source". Never put a secret in it.
-> To handle secrets, use `lab.prompt` to ask the user for them at runtime, as shown below.
-> Preflight is a convenience for Laboratory users, not a router authentication mechanism.
-
-### Example: a static header for a development environment
-
-```yaml
-laboratory:
-  preflight:
-    script: |
-      lab.request.headers.set('X-Env', 'staging');
-```
-
-### Example: prompt for a token once, then reuse it
-
-The token is entered by the user and kept in the Laboratory's environment. It never appears
-in the router configuration or in the served page.
-
-```yaml
-laboratory:
-  preflight:
-    script: |
-      let token = lab.environment.get('token');
-      if (!token) {
-        token = await lab.prompt('Enter your API token', '');
-        lab.environment.set('token', token);
-      }
-      lab.request.headers.set('Authorization', `Bearer ${token}`);
-```
-
-### Example: sign the request with an HMAC
-
-`CryptoJS` is available in the script scope.
-
-```yaml
-laboratory:
-  preflight:
-    script: |
-      const secret = lab.environment.get('signing_key')
-        ?? await lab.prompt('Enter the signing key', '');
-      lab.environment.set('signing_key', secret);
-
-      const timestamp = String(Date.now());
-      const signature = CryptoJS.HmacSHA256(timestamp, secret).toString();
-      lab.request.headers.set('X-Timestamp', timestamp);
-      lab.request.headers.set('X-Signature', signature);
-```
-
-### Available API
-
-The script runs in an isolated web worker and may use `await` at the top level.
-
-- `lab.environment.get(key)` / `.set(key, value)` / `.delete(key)`: read and write the
-  Laboratory's environment variables. Values persist across runs.
-- `lab.request.headers`: a standard `Headers` object. Whatever it contains when the script
-  finishes becomes the base headers of the operation.
-- `lab.prompt(placeholder, defaultValue)`: returns a `Promise` that resolves with the value
-  the user enters.
-- `CryptoJS`: the full crypto-js library.
-- `console.log` / `.warn` / `.error` / `.info`: forwarded to the Laboratory's preflight log.
-
-Environment variables can also be referenced as `{{name}}` inside an operation's `headers`,
-`variables` and `extensions`.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**enabled**|`boolean`|Enables/disables the preflight script. By default, a configured preflight script is enabled.<br/><br/>You can override this setting by setting the `LABORATORY_PREFLIGHT_ENABLED` environment<br/>variable to `true` or `false`.<br/>Default: `true`<br/>||
-|**script**|`string`|The JavaScript source of the preflight script. An empty script is ignored.<br/>Default: `""`<br/>||
-
-**Additional Properties:** not allowed   
    
 <a name="limits"></a>
 ## limits: object
