@@ -8,7 +8,6 @@ use hive_router_config::laboratory::{
     LaboratoryCollectionConfig, LaboratoryConfig, LaboratoryOperationConfig,
 };
 use serde::Serialize;
-use sonic_rs::{JsonType, JsonValueTrait};
 use std::collections::{BTreeMap, HashSet};
 
 /// Sits inside a JavaScript string literal in the generated page.
@@ -111,15 +110,6 @@ pub enum LaboratoryConfigError {
     #[error("{location} ('{name}') must contain at least one operation")]
     EmptyCollection { location: String, name: String },
     #[error(
-        "{location} ('{name}') has an invalid '{field}': it must be a JSON object encoded in a string, for example '{{\"key\": \"value\"}}' ({source})"
-    )]
-    InvalidJsonObject {
-        location: String,
-        name: String,
-        field: &'static str,
-        source: sonic_rs::Error,
-    },
-    #[error(
         "{location} ('{name}') has an invalid '{field}': it must be a JSON object, not {actual}"
     )]
     NotAJsonObject {
@@ -167,52 +157,46 @@ fn encode_id_segment(segment: &str) -> String {
     segment.replace('%', "%25").replace(':', "%3A")
 }
 
-/// The Laboratory calls `JSON.parse` on these fields, so validating here turns a confusing
-/// browser-side failure into a startup error naming the offending operation. `location` is the
-/// config path of the operation, e.g. `laboratory.operations[0]`.
+/// GraphQL variables and extensions must be JSON objects. Rejecting a non-object here turns a
+/// confusing browser-side failure into a startup error naming the offending operation. `location`
+/// is the config path of the operation, e.g. `laboratory.operations[0]`. A null (omitted) value is
+/// allowed.
 fn validate_json_object(
-    value: &Option<String>,
+    value: &Option<serde_json::Value>,
     field: &'static str,
     location: &str,
     name: &str,
 ) -> Result<(), LaboratoryConfigError> {
-    let Some(value) = value else {
-        return Ok(());
-    };
-
-    if value.trim().is_empty() {
-        return Ok(());
-    }
-
-    let parsed: sonic_rs::Value =
-        sonic_rs::from_str(value).map_err(|source| LaboratoryConfigError::InvalidJsonObject {
+    match value {
+        None | Some(serde_json::Value::Null) | Some(serde_json::Value::Object(_)) => Ok(()),
+        Some(other) => Err(LaboratoryConfigError::NotAJsonObject {
             location: location.to_string(),
             name: name.to_string(),
             field,
-            source,
-        })?;
-
-    if parsed.get_type() == JsonType::Object {
-        return Ok(());
+            actual: json_value_type_name(other),
+        }),
     }
-
-    Err(LaboratoryConfigError::NotAJsonObject {
-        location: location.to_string(),
-        name: name.to_string(),
-        field,
-        actual: json_type_name(parsed.get_type()),
-    })
 }
 
-fn json_type_name(json_type: JsonType) -> &'static str {
-    match json_type {
-        JsonType::Array => "an array",
-        JsonType::String => "a string",
-        JsonType::Boolean => "a boolean",
-        JsonType::Null => "null",
-        JsonType::Number => "a number",
-        JsonType::Object => "an object",
+fn json_value_type_name(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Array(_) => "an array",
+        serde_json::Value::String(_) => "a string",
+        serde_json::Value::Bool(_) => "a boolean",
+        serde_json::Value::Null => "null",
+        serde_json::Value::Number(_) => "a number",
+        serde_json::Value::Object(_) => "an object",
     }
+}
+
+/// Serializes a variables/extensions value to the JSON string the Laboratory stores for an
+/// operation. Null and empty objects are treated as unset.
+fn serialize_json_value(value: &Option<serde_json::Value>) -> Option<String> {
+    value
+        .as_ref()
+        .filter(|value| !value.is_null())
+        .filter(|value| !value.as_object().is_some_and(|object| object.is_empty()))
+        .map(|value| sonic_rs::to_string(value).expect("a JSON value is always serializable"))
 }
 
 fn build_operation(
@@ -236,9 +220,9 @@ fn build_operation(
         id,
         name: operation.name.clone(),
         query: operation.query.clone(),
-        variables: operation.variables.clone(),
+        variables: serialize_json_value(&operation.variables),
         headers: serialize_headers(&operation.headers),
-        extensions: operation.extensions.clone(),
+        extensions: serialize_json_value(&operation.extensions),
     };
 
     Ok((seed_operation, tab))
@@ -313,9 +297,9 @@ fn build_collection(
             name: operation.name.clone(),
             query: operation.query.clone(),
             created_at: SEEDED_COLLECTION_CREATED_AT,
-            variables: operation.variables.clone(),
+            variables: serialize_json_value(&operation.variables),
             headers: serialize_headers(&operation.headers),
-            extensions: operation.extensions.clone(),
+            extensions: serialize_json_value(&operation.extensions),
         });
     }
 
@@ -802,9 +786,9 @@ mod tests {
 
     #[test]
     fn rejects_non_object_variables_in_a_collection_operation() {
-        // Covers the NotAJsonObject path and a non-`headers` field for collection operations.
+        // Variables must be a JSON object, not an array.
         let mut op = operation("GetHello");
-        op.variables = Some(r#"["a"]"#.to_string());
+        op.variables = Some(serde_json::json!(["a"]));
 
         let error = build_laboratory_seed(&config_with_collections(vec![collection(
             "Onboarding",
@@ -931,25 +915,54 @@ mod tests {
     }
 
     #[test]
-    fn rejects_json_that_is_not_an_object() {
+    fn rejects_variables_that_are_not_an_object() {
         let mut operation = operation("GetHello");
-        operation.variables = Some(r#"["a"]"#.to_string());
+        operation.variables = Some(serde_json::json!(["a"]));
 
         let error = build_laboratory_seed(&config_with_operations(vec![operation]))
             .expect_err("a JSON array should be rejected");
 
         let message = error.to_string();
+        assert!(
+            message.contains("'variables'"),
+            "unexpected error: {message}"
+        );
         assert!(message.contains("an array"), "unexpected error: {message}");
     }
 
     #[test]
-    fn accepts_empty_json_objects_for_variables_and_extensions() {
+    fn nested_variables_serialize_to_a_json_string() {
         let mut operation = operation("GetHello");
-        operation.variables = Some("{}".to_string());
-        operation.extensions = Some("{}".to_string());
+        operation.variables = Some(serde_json::json!({
+            "filter": { "status": "active", "tags": ["a", "b"] },
+            "limit": 10,
+        }));
 
-        build_laboratory_seed(&config_with_operations(vec![operation]))
-            .expect("valid JSON objects should be accepted");
+        let seed =
+            build_laboratory_seed(&config_with_operations(vec![operation])).expect("should build");
+
+        // The library stores variables as a JSON string; types and nesting are preserved.
+        let variables = seed.operations[0]
+            .variables
+            .as_deref()
+            .expect("variables should be present");
+        let parsed: serde_json::Value =
+            serde_json::from_str(variables).expect("should be valid JSON");
+        assert_eq!(parsed["limit"], 10);
+        assert_eq!(parsed["filter"]["tags"][1], "b");
+    }
+
+    #[test]
+    fn an_empty_variables_object_is_treated_as_unset() {
+        let mut operation = operation("GetHello");
+        operation.variables = Some(serde_json::json!({}));
+        operation.extensions = Some(serde_json::json!({}));
+
+        let seed =
+            build_laboratory_seed(&config_with_operations(vec![operation])).expect("should build");
+
+        assert!(seed.operations[0].variables.is_none());
+        assert!(seed.operations[0].extensions.is_none());
     }
 
     #[test]

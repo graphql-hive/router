@@ -101,7 +101,8 @@ pub struct LaboratoryConfig {
     ///         query GetHello {
     ///           hello
     ///         }
-    ///       variables: '{}'
+    ///       variables:
+    ///         limit: 10
     ///       headers:
     ///         X-Env: staging
     /// ```
@@ -160,11 +161,13 @@ pub struct LaboratoryOperationConfig {
     pub name: String,
     /// The GraphQL document of the operation.
     pub query: String,
-    /// The operation's variables, as a JSON object encoded in a string.
+    /// The operation's variables, as a JSON object (map of variable name to value). Values may be
+    /// nested objects, arrays, numbers, booleans or strings.
     ///
-    /// Supports `{{name}}` references to the Laboratory's environment variables.
+    /// Values support `{{name}}` references to the Laboratory's environment variables; a templated
+    /// value resolves to a string.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub variables: Option<String>,
+    pub variables: Option<serde_json::Value>,
     /// Headers to send with this operation, as a map of header name to value.
     ///
     /// These apply only to this operation, and are merged on top of any headers set by the
@@ -173,11 +176,12 @@ pub struct LaboratoryOperationConfig {
     /// Values support `{{name}}` references to the Laboratory's environment variables.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headers: Option<BTreeMap<String, String>>,
-    /// The operation's GraphQL extensions, as a JSON object encoded in a string.
+    /// The operation's GraphQL extensions, as a JSON object.
     ///
-    /// Supports `{{name}}` references to the Laboratory's environment variables.
+    /// Values support `{{name}}` references to the Laboratory's environment variables; a templated
+    /// value resolves to a string.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub extensions: Option<String>,
+    pub extensions: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -288,6 +292,33 @@ operations:
         );
         assert!(operation.variables.is_none());
         assert!(operation.extensions.is_none());
+    }
+
+    #[test]
+    fn parses_nested_variables_as_a_native_object() {
+        let config = parse(
+            r#"
+operations:
+  - name: Search
+    query: "query Search { search }"
+    variables:
+      filter:
+        status: active
+        tags: [premium, trial]
+      limit: 10
+"#,
+        )
+        .expect("should parse");
+
+        let variables = config.operations[0]
+            .variables
+            .as_ref()
+            .expect("variables should be present");
+
+        // Types and nesting survive the YAML -> JSON value round-trip.
+        assert_eq!(variables["limit"], 10);
+        assert_eq!(variables["filter"]["status"], "active");
+        assert_eq!(variables["filter"]["tags"][0], "premium");
     }
 
     #[test]
