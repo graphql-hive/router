@@ -83,6 +83,9 @@ where
         }
 
         if !is_websocket_upgrade(req.headers()) {
+            // we only limit websocket connections as long-lived clients here,
+            // HTTP streaming responses are limited in the pipeline. see LongLivedClientLimitService
+            // comment above for details
             return ctx.call(&self.service, req).await;
         }
 
@@ -118,8 +121,8 @@ where
 /// The long-lived client limit has been reached, no slot could be reserved.
 pub struct LongLivedClientLimitReached;
 
-impl Into<web::HttpResponse> for LongLivedClientLimitReached {
-    fn into(self) -> web::HttpResponse {
+impl From<LongLivedClientLimitReached> for web::HttpResponse {
+    fn from(val: LongLivedClientLimitReached) -> Self {
         web::HttpResponse::build(StatusCode::SERVICE_UNAVAILABLE)
             .header(header::RETRY_AFTER, "5")
             .body("Too many long-lived clients")
