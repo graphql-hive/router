@@ -1798,6 +1798,27 @@ mod subscriptions_e2e_tests {
         assert!(sub2.status().is_success(), "sub2 should be accepted");
         let _ = sub2.next().await;
 
+        // clients like urql advertise streaming support on every operation
+        let query_response = router
+            .send_graphql_request(
+                "{ me { id } }",
+                None,
+                some_header_map! {
+                    http::header::ACCEPT =>
+                        "application/graphql-response+json, application/json, text/event-stream, multipart/mixed"
+                },
+            )
+            .await;
+        assert!(
+            query_response.status().is_success(),
+            "regular queries should not be rejected by the long-lived client limit"
+        );
+        let body = query_response.string_body().await;
+        assert!(
+            body.contains(r#""me""#),
+            "regular query should return data, got: {body}"
+        );
+
         // the third subscriber exceeds the limit and must be rejected
         let sub3 = router
             .send_graphql_request(query, None, headers.clone())

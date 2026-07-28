@@ -18,6 +18,19 @@ use ntex::{
 
 use crate::RouterSharedState;
 
+/// Counting happens in two places because the two kinds of long-lived clients
+/// become known at different points of the request lifecycle:
+///
+/// - WebSocket connections are identified from the upgrade headers alone, so the
+///   middleware below reserves a slot before the connection is established.
+/// - HTTP streaming responses (subscriptions over SSE/multipart) are only known
+///   once the GraphQL operation has been parsed, so the pipeline reserves a slot
+///   via [`try_reserve_long_lived_client`] right before executing a subscription.
+///
+/// The `Accept` header is deliberately NOT used for classification: clients like
+/// urql or Apollo Client advertise `text/event-stream`/`multipart/mixed` on every
+/// operation, so regular queries would otherwise count toward (and get rejected
+/// by) the limit.
 #[derive(Clone)]
 pub struct LongLivedClientLimitService {
     // false means the middleware is entirely bypassed on every request
@@ -27,9 +40,10 @@ pub struct LongLivedClientLimitService {
 impl LongLivedClientLimitService {
     pub fn new(router_config: &hive_router_config::HiveRouterConfig) -> Self {
         let limit = router_config.traffic_shaping.router.max_long_lived_clients;
-        let has_long_lived = router_config.subscriptions.enabled || router_config.websocket.enabled;
         Self {
-            enabled: limit > 0 && has_long_lived,
+            // the middleware only counts WebSocket connections; HTTP streaming
+            // responses are counted in the pipeline where the operation is known
+            enabled: limit > 0 && router_config.websocket.enabled,
         }
     }
 }
@@ -68,7 +82,10 @@ where
             return ctx.call(&self.service, req).await;
         }
 
-        if !is_long_lived_request(req.headers()) {
+        if !is_websocket_upgrade(req.headers()) {
+            // we only limit websocket connections as long-lived clients here,
+            // HTTP streaming responses are limited in the pipeline. see LongLivedClientLimitService
+            // comment above for details
             return ctx.call(&self.service, req).await;
         }
 
@@ -77,32 +94,18 @@ where
             None => return ctx.call(&self.service, req).await,
         };
 
-        let limit = shared_state
-            .router_config
-            .traffic_shaping
-            .router
-            .max_long_lived_clients;
-        let counter = shared_state.long_lived_client_count.clone();
-
-        // try to reserve a slot, bail if at the limit
-        let prev = counter.fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-            if current < limit {
-                Some(current + 1)
-            } else {
-                None
+        let guard = match try_reserve_long_lived_client(shared_state) {
+            Ok(Some(guard)) => guard,
+            // limit disabled, nothing to track
+            Ok(None) => return ctx.call(&self.service, req).await,
+            Err(LongLivedClientLimitReached) => {
+                return Ok(req.into_response(LongLivedClientLimitReached));
             }
-        });
-        if prev.is_err() {
-            let error_response = web::HttpResponse::build(StatusCode::SERVICE_UNAVAILABLE)
-                .header(header::RETRY_AFTER, "5")
-                .body("Too many long-lived clients");
-            return Ok(req.into_response(error_response));
-        }
+        };
 
-        let guard = LongLivedClientGuard(counter);
         let response = ctx.call(&self.service, req).await?;
 
-        // wrap the body so the guard lives until the stream is fully consumed
+        // wrap the body so the guard lives until the connection is fully closed
         let response = response.map_body(|_head, body| {
             let wrapped = GuardedBody {
                 inner: body.into_body().into(),
@@ -115,8 +118,52 @@ where
     }
 }
 
+/// The long-lived client limit has been reached, no slot could be reserved.
+pub struct LongLivedClientLimitReached;
+
+impl From<LongLivedClientLimitReached> for web::HttpResponse {
+    fn from(_: LongLivedClientLimitReached) -> Self {
+        web::HttpResponse::build(StatusCode::SERVICE_UNAVAILABLE)
+            .header(header::RETRY_AFTER, "5")
+            .body("Too many long-lived clients")
+    }
+}
+
+/// Tries to reserve a long-lived client slot against
+/// `traffic_shaping.router.max_long_lived_clients`.
+///
+/// Returns `Ok(None)` when the limit is disabled (set to `0`), `Ok(Some(guard))`
+/// when a slot was reserved (the slot is released when the guard is dropped),
+/// and `Err` when the limit has been reached.
+pub fn try_reserve_long_lived_client(
+    shared_state: &RouterSharedState,
+) -> Result<Option<LongLivedClientGuard>, LongLivedClientLimitReached> {
+    let limit = shared_state
+        .router_config
+        .traffic_shaping
+        .router
+        .max_long_lived_clients;
+    if limit == 0 {
+        return Ok(None);
+    }
+
+    let counter = shared_state.long_lived_client_count.clone();
+
+    // try to reserve a slot, bail if at the limit
+    counter
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            if current < limit {
+                Some(current + 1)
+            } else {
+                None
+            }
+        })
+        .map(|_| Some(LongLivedClientGuard(counter)))
+        .map_err(|_| LongLivedClientLimitReached)
+}
+
 // decrements the counter when dropped
-struct LongLivedClientGuard(Arc<AtomicUsize>);
+pub struct LongLivedClientGuard(Arc<AtomicUsize>);
 
 impl Drop for LongLivedClientGuard {
     fn drop(&mut self) {
@@ -145,14 +192,11 @@ impl MessageBody for GuardedBody {
     }
 }
 
-// cheapest check first:
-// 1. upgrade: websocket - two header lookups, no parsing
-// 2. accept: streaming - one header lookup + fast substring pre-filter, full parse only if needed
+// websocket: Connection: Upgrade + Upgrade: websocket
+// both headers must be present and contain the expected values (case-insensitive)
 #[inline]
-fn is_long_lived_request(headers: &ntex::http::HeaderMap) -> bool {
-    // websocket: Connection: Upgrade + Upgrade: websocket
-    // both headers must be present and contain the expected values (case-insensitive)
-    if headers
+fn is_websocket_upgrade(headers: &ntex::http::HeaderMap) -> bool {
+    headers
         .get(header::UPGRADE)
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.eq_ignore_ascii_case("websocket"))
@@ -160,32 +204,4 @@ fn is_long_lived_request(headers: &ntex::http::HeaderMap) -> bool {
             .get(header::CONNECTION)
             .and_then(|v| v.to_str().ok())
             .is_some_and(|v| v.to_ascii_lowercase().contains("upgrade"))
-    {
-        return true;
-    }
-
-    // fast substring scan before full Accept parse to avoid cost on regular requests
-    let accept = match headers.get(header::ACCEPT).and_then(|v| v.to_str().ok()) {
-        Some(v) if !v.is_empty() => v,
-        _ => return false,
-    };
-
-    if !looks_like_streaming_accept(accept) {
-        return false;
-    }
-
-    use crate::pipeline::header::StreamContentType;
-    use headers_accept::Accept;
-    use std::str::FromStr;
-
-    Accept::from_str(accept)
-        .ok()
-        .and_then(|a| a.negotiate(StreamContentType::media_types().iter()))
-        .is_some()
-}
-
-#[inline]
-fn looks_like_streaming_accept(accept: &str) -> bool {
-    // covers: multipart/mixed, text/event-stream
-    accept.contains("multipart") || accept.contains("event-stream")
 }

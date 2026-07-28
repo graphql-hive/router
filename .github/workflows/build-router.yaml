@@ -285,14 +285,6 @@ jobs:
 
             **Image Tags**: `${{ steps.meta.outputs.tags }}`
 
-            <details>
-              <summary>Docker metadata</summary>
-
-              ```json
-              ${{ steps.docker.outputs.metadata }}
-              ```
-            </details>
-
   test-docker-image:
     name: test / docker
     runs-on: ubuntu-latest
