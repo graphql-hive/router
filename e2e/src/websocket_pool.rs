@@ -577,6 +577,140 @@ mod websocket_pool_e2e_tests {
         );
     }
 
+    // actually testing pool_idle_timeout
+    #[ntex::test]
+    async fn websocket_mode_reconnects_after_pool_idle_timeout() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    websocket:
+                        subgraphs:
+                            reviews:
+                                path: /reviews/ws
+                traffic_shaping:
+                    all:
+                        pool_idle_timeout: 50ms
+                        websocket:
+                            execute_mode: websocket
+                    router:
+                        dedupe:
+                            headers: none
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let first = router
+            .send_graphql_request(REVIEWS_QUERY, None, None)
+            .await
+            .json_body()
+            .await;
+        let second = router
+            .send_graphql_request(REVIEWS_QUERY, None, None)
+            .await
+            .json_body()
+            .await;
+
+        assert!(first.get("data").is_some() && first.get("errors").is_none());
+        assert!(second.get("data").is_some() && second.get("errors").is_none());
+        assert_eq!(
+            subgraphs
+                .get_requests_log("reviews/ws")
+                .unwrap_or_default()
+                .len(),
+            1,
+            "queries before the idle timeout should reuse one websocket"
+        );
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        let third = router
+            .send_graphql_request(REVIEWS_QUERY, None, None)
+            .await
+            .json_body()
+            .await;
+
+        assert!(third.get("data").is_some() && third.get("errors").is_none());
+        assert_eq!(
+            subgraphs
+                .get_requests_log("reviews/ws")
+                .unwrap_or_default()
+                .len(),
+            2,
+            "the first websocket should close after the idle timeout"
+        );
+        assert!(subgraphs.get_requests_log("reviews").is_none());
+    }
+
+    #[ntex::test]
+    async fn subgraph_pool_idle_timeout_overrides_the_global_timeout() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    websocket:
+                        subgraphs:
+                            reviews:
+                                path: /reviews/ws
+                traffic_shaping:
+                    all:
+                        pool_idle_timeout: 50ms
+                        websocket:
+                            execute_mode: reuse_existing
+                    subgraphs:
+                        reviews:
+                            pool_idle_timeout: 5s
+                    router:
+                        dedupe:
+                            headers: none
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let subscription = router
+            .send_graphql_request(
+                "subscription { reviewAdded(step: 11, intervalInMs: 0) { id } }",
+                None,
+                sse_headers(),
+            )
+            .await;
+        assert!(subscription.string_body().await.contains("event: complete"));
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        let response = router
+            .send_graphql_request(REVIEWS_QUERY, None, None)
+            .await
+            .json_body()
+            .await;
+
+        assert!(response.get("data").is_some() && response.get("errors").is_none());
+        assert_eq!(
+            subgraphs
+                .get_requests_log("reviews/ws")
+                .unwrap_or_default()
+                .len(),
+            1,
+            "the reviews override should keep the pooled websocket alive"
+        );
+        assert!(subgraphs.get_requests_log("reviews").is_none());
+    }
+
     #[ntex::test]
     async fn idle_connection_expires_and_query_falls_back_to_http() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
