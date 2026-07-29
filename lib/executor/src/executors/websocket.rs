@@ -15,9 +15,6 @@ use hive_router_internal::telemetry::TelemetryContext;
 
 use crate::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
 use crate::executors::error::SubgraphExecutorError;
-use crate::executors::graphql_transport_ws::{
-    build_connection_init_payload, build_subscribe_payload,
-};
 use crate::executors::subscription_buffer::drain_into;
 use crate::executors::websocket_client::{self, WsClient};
 use crate::executors::websocket_pool::{WebSocketConnectionId, WebSocketInit, WebSocketPool};
@@ -81,8 +78,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
             "establishing WebSocket connection to subgraph"
         );
 
-        let init_payload = build_connection_init_payload(execution_request.headers.clone());
-        let subscribe_payload = build_subscribe_payload(execution_request);
+        let headers = execution_request.headers.clone();
+        let init_payload = (!headers.is_empty()).then(|| headers.into());
+        let subscribe_payload = execution_request.into();
 
         let (tx, rx) = oneshot::channel();
 
@@ -193,8 +191,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
             return executor.subscribe(execution_request, _timeout).await;
         }
 
-        let init_payload = build_connection_init_payload(execution_request.headers.clone());
-        let subscribe_payload = build_subscribe_payload(execution_request);
+        let headers = execution_request.headers.clone();
+        let init_payload = (!headers.is_empty()).then(|| headers.into());
+        let subscribe_payload = execution_request.into();
 
         debug!(
             target: targets::WEBSOCKET_CLIENT,

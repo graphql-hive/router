@@ -83,54 +83,48 @@ pub struct SubscribePayload {
     pub extensions: Option<HashMap<String, Value>>,
 }
 
-// TODO: can we instead impl the Into/From trait?
-pub fn build_subscribe_payload(
-    execution_request: SubgraphExecutionRequest<'_>,
-) -> SubscribePayload {
-    let mut variables: HashMap<String, Value> = execution_request
-        .variables
-        .unwrap_or_default()
-        .iter()
-        .map(|(key, value)| (key.to_string(), (*value).clone()))
-        .collect();
-    for (key, value) in execution_request.raw_variable_values.unwrap_or_default() {
-        variables.insert(
-            key.to_string(),
-            sonic_rs::from_slice(&value).expect("raw variable values must contain valid JSON"),
-        );
-    }
-    let variables = (!variables.is_empty()).then_some(variables);
-    let query = match &execution_request.operation_name {
-        Some(operation_name) => {
-            let pos = execution_request.document_name_write_pos;
-            let input = execution_request.query;
-            let mut result = String::with_capacity(input.len() + operation_name.len() + 6);
-            if pos == 0 && input.starts_with('{') {
-                result.push_str("query ");
-                result.push_str(operation_name);
-                result.push(' ');
-                result.push_str(input);
-            } else {
-                result.push_str(&input[..pos]);
-                result.push(' ');
-                result.push_str(operation_name);
-                result.push_str(&input[pos..]);
-            }
-            result
+impl From<SubgraphExecutionRequest<'_>> for SubscribePayload {
+    fn from(execution_request: SubgraphExecutionRequest<'_>) -> Self {
+        let mut variables: HashMap<String, Value> = execution_request
+            .variables
+            .unwrap_or_default()
+            .iter()
+            .map(|(key, value)| (key.to_string(), (*value).clone()))
+            .collect();
+        for (key, value) in execution_request.raw_variable_values.unwrap_or_default() {
+            variables.insert(
+                key.to_string(),
+                sonic_rs::from_slice(&value).expect("raw variable values must contain valid JSON"),
+            );
         }
-        None => execution_request.query.to_string(),
-    };
-    SubscribePayload {
-        query,
-        operation_name: execution_request.operation_name,
-        variables,
-        extensions: execution_request.extensions,
+        let variables = (!variables.is_empty()).then_some(variables);
+        let query = match &execution_request.operation_name {
+            Some(operation_name) => {
+                let pos = execution_request.document_name_write_pos;
+                let input = execution_request.query;
+                let mut result = String::with_capacity(input.len() + operation_name.len() + 6);
+                if pos == 0 && input.starts_with('{') {
+                    result.push_str("query ");
+                    result.push_str(operation_name);
+                    result.push(' ');
+                    result.push_str(input);
+                } else {
+                    result.push_str(&input[..pos]);
+                    result.push(' ');
+                    result.push_str(operation_name);
+                    result.push_str(&input[pos..]);
+                }
+                result
+            }
+            None => execution_request.query.to_string(),
+        };
+        SubscribePayload {
+            query,
+            operation_name: execution_request.operation_name,
+            variables,
+            extensions: execution_request.extensions,
+        }
     }
-}
-
-// TODO: can we instead impl the Into/From trait?
-pub fn build_connection_init_payload(headers: http::HeaderMap) -> Option<ConnectionInitPayload> {
-    (!headers.is_empty()).then(|| headers.into())
 }
 
 #[derive(
@@ -478,34 +472,34 @@ mod tests {
     }
 
     #[test]
-    fn build_subscribe_payload_inlines_operation_name_in_query() {
+    fn subscribe_payload_from_request_inlines_operation_name_in_query() {
         let request = make_request(
             "query { me { id } }",
             5,
             Some("GetMe_accounts_0".to_string()),
         );
 
-        let payload = build_subscribe_payload(request);
+        let payload = SubscribePayload::from(request);
 
         assert_eq!(payload.query, "query GetMe_accounts_0 { me { id } }");
         assert_eq!(payload.operation_name.as_deref(), Some("GetMe_accounts_0"));
     }
 
     #[test]
-    fn build_subscribe_payload_without_operation_name_keeps_original_query() {
+    fn subscribe_payload_from_request_without_operation_name_keeps_original_query() {
         let request = make_request("query { me { id } }", 5, None);
 
-        let payload = build_subscribe_payload(request);
+        let payload = SubscribePayload::from(request);
 
         assert_eq!(payload.query, "query { me { id } }");
         assert_eq!(payload.operation_name, None);
     }
 
     #[test]
-    fn build_subscribe_payload_inlines_name_for_shorthand_query() {
+    fn subscribe_payload_from_request_inlines_name_for_shorthand_query() {
         let request = make_request("{ me { id } }", 0, Some("GetMe_accounts_0".to_string()));
 
-        let payload = build_subscribe_payload(request);
+        let payload = SubscribePayload::from(request);
 
         assert_eq!(payload.query, "query GetMe_accounts_0 { me { id } }");
     }

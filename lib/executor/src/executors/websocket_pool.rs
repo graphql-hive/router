@@ -15,9 +15,7 @@ use crate::{
     executors::{
         common::{ConnectionFingerprint, SubgraphExecutionRequest, SubgraphExecutor},
         error::SubgraphExecutorError,
-        graphql_transport_ws::{
-            build_connection_init_payload, build_subscribe_payload, SubscribePayload,
-        },
+        graphql_transport_ws::SubscribePayload,
         subscription_buffer::{drain_into, try_send_or_drop},
         websocket_client::{self, WsClient, WsClientError},
     },
@@ -177,8 +175,9 @@ async fn initialize_connection(
         .await
         .map_err(|error| PoolInitError::Connect(error.to_string()))?;
     let client = WsClient::new(wsconn);
+    let headers = init.headers;
     let mut client = client
-        .init(build_connection_init_payload(init.headers))
+        .init((!headers.is_empty()).then(|| headers.into()))
         .await
         .map_err(|error| PoolInitError::Handshake(error.to_string()))?;
     let dispatcher_done = client.take_dispatcher_done();
@@ -244,7 +243,7 @@ impl PooledWebSocketExecutor {
         response_capacity: usize,
     ) -> Result<mpsc::Receiver<SubscriptionItem>, SubgraphExecutorError> {
         let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
-        let payload = build_subscribe_payload(execution_request);
+        let payload = execution_request.into();
         let (responses, receiver) = mpsc::channel(response_capacity);
         if self
             .commands
