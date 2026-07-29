@@ -90,7 +90,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                             },
                         )
                         .await?;
-                    // TODO: not necessarey a hit, couldve been freshyl initialised
+                    // TODO: should this be recorded here? execute hit is more like
+                    // there's an active connection and execute was routed through it
+                    // because execute_mode allowed it. see lib/executor/src/executors/map.rs
                     self.telemetry_context
                         .metrics
                         .subscriptions
@@ -207,7 +209,8 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                         },
                     )
                     .await?;
-                // TODO: not necessarey a hit, couldve been freshyl initialised
+                // TODO: not necessarey a hit, couldve been freshyl initialised. do rethink
+                // this analytics/metrics story instead...
                 self.telemetry_context
                     .metrics
                     .subscriptions
