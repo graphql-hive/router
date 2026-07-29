@@ -460,9 +460,19 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     )
     .unwrap_or(u16::MAX);
 
+    let max_request_header_size = shared_state_clone
+        .router_config
+        .limits
+        .max_request_header_size
+        .to_bytes() as usize;
+
     let http_cfg = HttpServiceConfig::new()
         // ntex HTTP timeout is set as a safe-guard on top of Hive Router's timeout
-        .set_client_timeout(Seconds(ntex_timeout));
+        .set_client_timeout(Seconds(ntex_timeout))
+        // ntex's parse buffer must fit the whole request head, otherwise limits
+        // above its 64KiB default would be unreachable; the exact per-request
+        // limit is enforced in the pipeline (`graphql_request_handler`)
+        .set_max_buf_size(max_request_header_size.max(64 * 1024));
     let cfg = SharedCfg::new("HIVE_ROUTER").add(http_cfg);
 
     server = server.config(cfg);

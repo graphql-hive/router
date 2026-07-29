@@ -1,6 +1,6 @@
 use futures::StreamExt;
 use hive_router_internal::{
-    http::read_body_stream,
+    http::{drain_body_stream, read_body_stream},
     telemetry::{
         logging::{scope::RequestLogScope, summary, targets},
         traces::spans::{graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan},
@@ -113,7 +113,7 @@ pub mod websocket_server;
 #[inline]
 pub async fn graphql_request_handler(
     req: &mut HttpRequest,
-    body_stream: web::types::Payload,
+    mut body_stream: web::types::Payload,
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
     http_server_request_span: &HttpServerRequestSpan,
@@ -150,6 +150,25 @@ pub async fn graphql_request_handler(
     let span_clone = operation_span.clone();
 
     async {
+        let max_request_header_size = shared_state
+            .router_config
+            .limits
+            .max_request_header_size
+            .to_bytes() as usize;
+        let request_headers_size: usize = req
+            .headers()
+            .iter()
+            // `+ 4` accounts for the on-wire overhead of each header line (": " and CRLF),
+            // so the limit approximates the raw size of the header block
+            .map(|(name, value)| name.as_str().len() + value.len() + 4)
+            .sum();
+        if request_headers_size > max_request_header_size {
+            // drain a small amount of the body so the connection can be closed
+            // cleanly instead of being reset (see `read_body_stream`)
+            drain_body_stream(&mut body_stream).await;
+            return Err(PipelineError::RequestHeadersTooLarge);
+        }
+
         perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
 
         let body_bytes = read_body_stream(
