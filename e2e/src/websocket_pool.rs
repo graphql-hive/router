@@ -7,26 +7,6 @@ mod websocket_pool_e2e_tests {
 
     use crate::testkit::{some_header_map, ClientResponseExt, TestRouter, TestSubgraphs};
 
-    const POOL_CONFIG: &str = r#"
-        supergraph:
-            source: file
-            path: supergraph.graphql
-        subscriptions:
-            enabled: true
-            websocket:
-                subgraphs:
-                    reviews:
-                        path: /reviews/ws
-        traffic_shaping:
-            all:
-                pool_idle_timeout: 5s
-                websocket:
-                    execute_mode: reuse_existing
-            router:
-                dedupe:
-                    headers: none
-    "#;
-
     const LOOPING_SUBSCRIPTION: &str = r#"
         subscription {
             reviewAddedLooping(intervalInMs: 20) {
@@ -56,7 +36,7 @@ mod websocket_pool_e2e_tests {
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
-            .inline_config(POOL_CONFIG)
+            .file_config("configs/websocket_pool.yaml")
             .build()
             .start()
             .await;
@@ -95,7 +75,7 @@ mod websocket_pool_e2e_tests {
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
-            .inline_config(POOL_CONFIG)
+            .file_config("configs/websocket_pool.yaml")
             .build()
             .start()
             .await;
@@ -135,7 +115,7 @@ mod websocket_pool_e2e_tests {
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
-            .inline_config(POOL_CONFIG)
+            .file_config("configs/websocket_pool.yaml")
             .build()
             .start()
             .await;
@@ -169,7 +149,7 @@ mod websocket_pool_e2e_tests {
             .await;
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
-            .inline_config(POOL_CONFIG)
+            .file_config("configs/websocket_pool.yaml")
             .build()
             .start()
             .await;
@@ -259,11 +239,252 @@ mod websocket_pool_e2e_tests {
     }
 
     #[ntex::test]
+    async fn http_mode_does_not_reuse_an_initialized_connection() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    websocket:
+                        subgraphs:
+                            reviews:
+                                path: /reviews/ws
+                traffic_shaping:
+                    all:
+                        websocket:
+                            execute_mode: http
+                    router:
+                        dedupe:
+                            headers: none
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let mut subscription = router
+            .send_graphql_request(LOOPING_SUBSCRIPTION, None, sse_headers())
+            .await;
+        subscription.next().await.unwrap().unwrap();
+
+        let response = router
+            .send_graphql_request(REVIEWS_QUERY, None, None)
+            .await
+            .json_body()
+            .await;
+
+        assert!(response.get("data").is_some() && response.get("errors").is_none());
+        assert_eq!(
+            subgraphs
+                .get_requests_log("reviews")
+                .unwrap_or_default()
+                .len(),
+            1,
+            "http mode must ignore an eligible pooled websocket"
+        );
+        assert_eq!(
+            subgraphs
+                .get_requests_log("reviews/ws")
+                .unwrap_or_default()
+                .len(),
+            1
+        );
+    }
+
+    #[ntex::test]
+    async fn websocket_mode_initializes_and_reuses_a_connection_for_queries() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    websocket:
+                        subgraphs:
+                            reviews:
+                                path: /reviews/ws
+                traffic_shaping:
+                    all:
+                        pool_idle_timeout: 5s
+                        websocket:
+                            execute_mode: websocket
+                    subgraphs:
+                        products:
+                            websocket:
+                                execute_mode: http
+                    router:
+                        dedupe:
+                            headers: none
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let first = router
+            .send_graphql_request(REVIEWS_QUERY, None, None)
+            .await
+            .json_body()
+            .await;
+        let second = router
+            .send_graphql_request(REVIEWS_QUERY, None, None)
+            .await
+            .json_body()
+            .await;
+
+        assert!(first.get("data").is_some() && first.get("errors").is_none());
+        assert!(second.get("data").is_some() && second.get("errors").is_none());
+        assert_eq!(
+            subgraphs
+                .get_requests_log("products")
+                .unwrap_or_default()
+                .len(),
+            2,
+            "the products subgraph override should keep its fetches on HTTP"
+        );
+        assert_eq!(
+            subgraphs
+                .get_requests_log("reviews/ws")
+                .unwrap_or_default()
+                .len(),
+            1,
+            "websocket mode should initialize once and reuse the pooled connection"
+        );
+        assert!(
+            subgraphs.get_requests_log("reviews").is_none(),
+            "websocket mode should not execute the review fetch over HTTP"
+        );
+    }
+
+    #[ntex::test]
+    async fn websocket_mode_without_reuse_opens_one_connection_per_query() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    websocket:
+                        subgraphs:
+                            reviews:
+                                path: /reviews/ws
+                traffic_shaping:
+                    all:
+                        websocket:
+                            reuse_connections: false
+                            execute_mode: websocket
+                    subgraphs:
+                        products:
+                            websocket:
+                                execute_mode: http
+                    router:
+                        dedupe:
+                            headers: none
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let first = router
+            .send_graphql_request(REVIEWS_QUERY, None, None)
+            .await
+            .json_body()
+            .await;
+        let second = router
+            .send_graphql_request(REVIEWS_QUERY, None, None)
+            .await
+            .json_body()
+            .await;
+
+        assert!(first.get("data").is_some() && first.get("errors").is_none());
+        assert!(second.get("data").is_some() && second.get("errors").is_none());
+        assert_eq!(
+            subgraphs
+                .get_requests_log("reviews/ws")
+                .unwrap_or_default()
+                .len(),
+            2,
+            "disabled reuse should open a dedicated websocket for each query"
+        );
+        assert!(subgraphs.get_requests_log("reviews").is_none());
+    }
+
+    #[ntex::test]
+    async fn disabled_connection_reuse_gives_each_subscription_its_own_connection() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    websocket:
+                        subgraphs:
+                            reviews:
+                                path: /reviews/ws
+                traffic_shaping:
+                    all:
+                        pool_idle_timeout: 5s
+                        websocket:
+                            reuse_connections: false
+                            execute_mode: http
+                    router:
+                        dedupe:
+                            headers: none
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let first = router.send_graphql_request(
+            "subscription { reviewAdded(step: 2, intervalInMs: 0) { id } }",
+            None,
+            sse_headers(),
+        );
+        let second = router.send_graphql_request(
+            "subscription { reviewAdded(step: 3, intervalInMs: 0) { id } }",
+            None,
+            sse_headers(),
+        );
+        let (first, second) = tokio::join!(first, second);
+        let (first, second) = tokio::join!(first.string_body(), second.string_body());
+
+        assert!(first.contains("event: complete"));
+        assert!(second.contains("event: complete"));
+        assert_eq!(
+            subgraphs
+                .get_requests_log("reviews/ws")
+                .unwrap_or_default()
+                .len(),
+            2,
+            "disabling reuse should preserve one WebSocket per subscription"
+        );
+    }
+
+    #[ntex::test]
     async fn dropping_one_operation_leaves_the_connection_reusable() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
-            .inline_config(POOL_CONFIG)
+            .file_config("configs/websocket_pool.yaml")
             .build()
             .start()
             .await;
@@ -305,7 +526,27 @@ mod websocket_pool_e2e_tests {
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
-            .inline_config(POOL_CONFIG.replace("pool_idle_timeout: 5s", "pool_idle_timeout: 50ms"))
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    websocket:
+                        subgraphs:
+                            reviews:
+                                path: /reviews/ws
+                traffic_shaping:
+                    all:
+                        pool_idle_timeout: 50ms
+                        websocket:
+                            execute_mode: reuse_existing
+                    router:
+                        dedupe:
+                            headers: none
+                "#,
+            )
             .build()
             .start()
             .await;
@@ -341,7 +582,27 @@ mod websocket_pool_e2e_tests {
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
-            .inline_config(POOL_CONFIG.replace("pool_idle_timeout: 5s", "pool_idle_timeout: 50ms"))
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    websocket:
+                        subgraphs:
+                            reviews:
+                                path: /reviews/ws
+                traffic_shaping:
+                    all:
+                        pool_idle_timeout: 50ms
+                        websocket:
+                            execute_mode: reuse_existing
+                    router:
+                        dedupe:
+                            headers: none
+                "#,
+            )
             .build()
             .start()
             .await;
@@ -385,10 +646,28 @@ mod websocket_pool_e2e_tests {
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
-            .inline_config(POOL_CONFIG.replace(
-                "headers: none",
-                "headers:\n                        include: [x-tenant]",
-            ))
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    websocket:
+                        subgraphs:
+                            reviews:
+                                path: /reviews/ws
+                traffic_shaping:
+                    all:
+                        pool_idle_timeout: 5s
+                        websocket:
+                            execute_mode: reuse_existing
+                    router:
+                        dedupe:
+                            headers:
+                                include: [x-tenant]
+                "#,
+            )
             .build()
             .start()
             .await;
@@ -419,6 +698,87 @@ mod websocket_pool_e2e_tests {
     }
 
     #[ntex::test]
+    async fn query_reuses_only_a_matching_selected_header_fingerprint() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                    websocket:
+                        subgraphs:
+                            reviews:
+                                path: /reviews/ws
+                traffic_shaping:
+                    all:
+                        websocket:
+                            execute_mode: reuse_existing
+                    router:
+                        dedupe:
+                            headers:
+                                include: [x-tenant]
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+        let headers = |tenant: &'static str, ignored: &'static str, accept| {
+            let mut headers = some_header_map! {
+                http::header::HeaderName::from_static("x-tenant") => tenant,
+                http::header::HeaderName::from_static("x-ignored") => ignored
+            }
+            .unwrap();
+            if accept {
+                headers.insert(http::header::ACCEPT, "text/event-stream".parse().unwrap());
+            }
+            Some(headers)
+        };
+
+        let mut subscription = router
+            .send_graphql_request(
+                LOOPING_SUBSCRIPTION,
+                None,
+                headers("one", "subscription", true),
+            )
+            .await;
+        subscription.next().await.unwrap().unwrap();
+
+        let mismatch = router
+            .send_graphql_request(REVIEWS_QUERY, None, headers("two", "subscription", false))
+            .await
+            .json_body()
+            .await;
+        let matching = router
+            .send_graphql_request(REVIEWS_QUERY, None, headers("one", "query", false))
+            .await
+            .json_body()
+            .await;
+
+        assert!(mismatch.get("data").is_some() && mismatch.get("errors").is_none());
+        assert!(matching.get("data").is_some() && matching.get("errors").is_none());
+        assert_eq!(
+            subgraphs
+                .get_requests_log("reviews")
+                .unwrap_or_default()
+                .len(),
+            1,
+            "a different selected header must miss the pool"
+        );
+        assert_eq!(
+            subgraphs
+                .get_requests_log("reviews/ws")
+                .unwrap_or_default()
+                .len(),
+            1,
+            "unselected headers must not change the connection fingerprint"
+        );
+    }
+
+    #[ntex::test]
     async fn deduplicated_query_leader_uses_the_initialized_connection() {
         let subgraphs = TestSubgraphs::builder()
             .with_delay(Duration::from_millis(50))
@@ -427,7 +787,7 @@ mod websocket_pool_e2e_tests {
             .await;
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
-            .inline_config(POOL_CONFIG)
+            .file_config("configs/websocket_pool.yaml")
             .build()
             .start()
             .await;
