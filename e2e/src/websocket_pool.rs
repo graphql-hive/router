@@ -366,6 +366,144 @@ mod websocket_pool_e2e_tests {
     }
 
     #[ntex::test]
+    async fn websocket_mode_executes_every_subgraph_fetch_over_websocket() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    websocket:
+                        subgraphs:
+                            reviews:
+                                path: /reviews/ws
+                            accounts:
+                                path: /accounts/ws
+                            inventory:
+                                path: /inventory/ws
+                            products:
+                                path: /products/ws
+                traffic_shaping:
+                    all:
+                        websocket:
+                            execute_mode: websocket
+                    router:
+                        dedupe:
+                            headers: none
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        // run 3 queries making sure we're using the pool
+        for _ in 0..3 {
+            let response = router
+                .send_graphql_request(
+                    r#"
+                    fragment User on User {
+                        id
+                        username
+                        name
+                    }
+
+                    fragment Review on Review {
+                        id
+                        body
+                    }
+
+                    fragment Product on Product {
+                        inStock
+                        name
+                        price
+                        shippingEstimate
+                        upc
+                        weight
+                    }
+
+                    query TestQuery {
+                        users {
+                            ...User
+                            reviews {
+                                ...Review
+                                product {
+                                    ...Product
+                                    reviews {
+                                        ...Review
+                                        author {
+                                            ...User
+                                            reviews {
+                                                ...Review
+                                                product {
+                                                    ...Product
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        topProducts(first: 1) {
+                            ...Product
+                            reviews {
+                                ...Review
+                                author {
+                                    ...User
+                                    reviews {
+                                        ...Review
+                                        product {
+                                            ...Product
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    "#,
+                    None,
+                    None,
+                )
+                .await
+                .json_body()
+                .await;
+
+            // response is too big for snapshot assertion, so just do a bunch of sanity checks
+            assert!(response.get("errors").is_none(), "{response}");
+            assert_eq!(
+                response["data"]["users"][0]["name"].as_str(),
+                Some("Uri Goldshtein")
+            );
+            assert_eq!(
+                response["data"]["topProducts"][0]["name"].as_str(),
+                Some("Table")
+            );
+            assert_eq!(
+                response["data"]["topProducts"][0]["inStock"].as_bool(),
+                Some(true)
+            );
+            assert_eq!(
+                response["data"]["topProducts"][0]["reviews"][0]["id"].as_str(),
+                Some("1")
+            );
+        }
+
+        for subgraph in ["accounts", "inventory", "products", "reviews"] {
+            assert_eq!(
+                subgraphs
+                    .get_requests_log(&format!("{subgraph}/ws"))
+                    .unwrap_or_default()
+                    .len(),
+                1,
+                "{subgraph} should use one websocket"
+            );
+            assert!(subgraphs.get_requests_log(subgraph).is_none());
+        }
+    }
+
+    #[ntex::test]
     async fn websocket_mode_without_reuse_opens_one_connection_per_query() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let router = TestRouter::builder()

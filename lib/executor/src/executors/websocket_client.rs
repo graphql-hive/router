@@ -124,6 +124,7 @@ pub async fn connect(
         };
 
         let ws_client = NtexWsClient::builder(uri)
+            .max_frame_size(16 * 1024 * 1024) // default is 64kB which is too small
             .protocols([WS_SUBPROTOCOL])
             .timeout(ntex::time::Seconds(60))
             .rustls(tls_config)
@@ -135,6 +136,7 @@ pub async fn connect(
         Ok(ws_client.connect().await?.seal())
     } else if scheme == "ws" {
         let ws_client = NtexWsClient::builder(uri)
+            .max_frame_size(16 * 1024 * 1024) // default is 64kB which is too small
             .protocols([WS_SUBPROTOCOL])
             .timeout(ntex::time::Seconds(60))
             .build(SharedCfg::default())
