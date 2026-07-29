@@ -14,12 +14,14 @@ mod websocket_pool_e2e_tests {
         subscriptions:
             enabled: true
             websocket:
-                all:
-                    idle_timeout: 5s
                 subgraphs:
                     reviews:
                         path: /reviews/ws
         traffic_shaping:
+            all:
+                pool_idle_timeout: 5s
+                websocket:
+                    execute_mode: reuse_existing
             router:
                 dedupe:
                     headers: none
@@ -205,7 +207,7 @@ mod websocket_pool_e2e_tests {
     }
 
     #[ntex::test]
-    async fn queries_and_mutations_never_create_websocket_connections() {
+    async fn http_mode_never_creates_websocket_connections_for_queries_or_mutations() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
@@ -303,7 +305,7 @@ mod websocket_pool_e2e_tests {
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
-            .inline_config(POOL_CONFIG.replace("idle_timeout: 5s", "idle_timeout: 50ms"))
+            .inline_config(POOL_CONFIG.replace("pool_idle_timeout: 5s", "pool_idle_timeout: 50ms"))
             .build()
             .start()
             .await;
@@ -339,7 +341,7 @@ mod websocket_pool_e2e_tests {
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
-            .inline_config(POOL_CONFIG.replace("idle_timeout: 5s", "idle_timeout: 50ms"))
+            .inline_config(POOL_CONFIG.replace("pool_idle_timeout: 5s", "pool_idle_timeout: 50ms"))
             .build()
             .start()
             .await;

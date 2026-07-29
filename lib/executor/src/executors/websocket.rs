@@ -28,6 +28,7 @@ pub struct WsSubgraphExecutor {
     telemetry_context: Arc<TelemetryContext>,
     pool: Arc<WebSocketPool>,
     idle_timeout: Duration,
+    reuse_connections: bool,
 }
 
 impl WsSubgraphExecutor {
@@ -39,6 +40,7 @@ impl WsSubgraphExecutor {
         telemetry_context: Arc<TelemetryContext>,
         pool: Arc<WebSocketPool>,
         idle_timeout: Duration,
+        reuse_connections: bool,
     ) -> Self {
         Self {
             subgraph_name,
@@ -48,6 +50,7 @@ impl WsSubgraphExecutor {
             telemetry_context,
             pool,
             idle_timeout,
+            reuse_connections,
         }
     }
 }
@@ -68,6 +71,34 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         timeout: Option<Duration>,
         _plugin_req_state: Option<&'a crate::plugin_context::PluginRequestState<'a>>,
     ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
+        if self.reuse_connections {
+            if let Some(fingerprint) = execution_request.connection_fingerprint {
+                let executor = self
+                    .pool
+                    .get_or_initialize(
+                        WebSocketConnectionId {
+                            endpoint: self.endpoint.clone(),
+                            fingerprint,
+                        },
+                        WebSocketInit {
+                            headers: execution_request.headers.clone(),
+                            tls_config: self.tls_config.clone(),
+                            subgraph_name: self.subgraph_name.clone(),
+                            buffer_capacity: self.buffer_capacity,
+                            idle_timeout: self.idle_timeout,
+                            telemetry_context: self.telemetry_context.clone(),
+                        },
+                    )
+                    .await?;
+                // TODO: not necessarey a hit, couldve been freshyl initialised
+                self.telemetry_context
+                    .metrics
+                    .subscriptions
+                    .record_websocket_pool_execute_hit();
+                return executor.execute(execution_request, timeout, None).await;
+            }
+        }
+
         let endpoint = self.endpoint.clone();
         let subgraph_name = self.subgraph_name.clone();
         let tls_config = self.tls_config.clone();
@@ -149,7 +180,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
     async fn subscribe<'a>(
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
-        _timeout: Option<Duration>,
+        timeout: Option<Duration>,
     ) -> Result<
         BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
         SubgraphExecutorError,
@@ -166,29 +197,32 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
         let connection_fingerprint = execution_request.connection_fingerprint;
 
-        if let Some(fingerprint) = connection_fingerprint {
-            let executor = self
-                .pool
-                .get_or_initialize(
-                    WebSocketConnectionId {
-                        endpoint: self.endpoint.clone(),
-                        fingerprint,
-                    },
-                    WebSocketInit {
-                        headers: execution_request.headers.clone(),
-                        tls_config: self.tls_config.clone(),
-                        subgraph_name: self.subgraph_name.clone(),
-                        buffer_capacity: self.buffer_capacity,
-                        idle_timeout: self.idle_timeout,
-                        telemetry_context: self.telemetry_context.clone(),
-                    },
-                )
-                .await?;
-            self.telemetry_context
-                .metrics
-                .subscriptions
-                .record_websocket_pool_subscription_hit();
-            return executor.subscribe(execution_request, _timeout).await;
+        if self.reuse_connections {
+            if let Some(fingerprint) = connection_fingerprint {
+                let executor = self
+                    .pool
+                    .get_or_initialize(
+                        WebSocketConnectionId {
+                            endpoint: self.endpoint.clone(),
+                            fingerprint,
+                        },
+                        WebSocketInit {
+                            headers: execution_request.headers.clone(),
+                            tls_config: self.tls_config.clone(),
+                            subgraph_name: self.subgraph_name.clone(),
+                            buffer_capacity: self.buffer_capacity,
+                            idle_timeout: self.idle_timeout,
+                            telemetry_context: self.telemetry_context.clone(),
+                        },
+                    )
+                    .await?;
+                // TODO: not necessarey a hit, couldve been freshyl initialised
+                self.telemetry_context
+                    .metrics
+                    .subscriptions
+                    .record_websocket_pool_subscription_hit();
+                return executor.subscribe(execution_request, timeout).await;
+            }
         }
 
         let headers = execution_request.headers.clone();

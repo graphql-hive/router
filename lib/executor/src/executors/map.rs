@@ -12,7 +12,7 @@ use hive_router_config::{
     override_subgraph_urls::UrlOrExpression,
     primitives::value_or_expression::ValueOrExpression,
     subscriptions::SubscriptionProtocol,
-    traffic_shaping::{DurationOrExpression, StatusCodeMatcher},
+    traffic_shaping::{DurationOrExpression, StatusCodeMatcher, WebSocketExecuteMode},
     HiveRouterConfig,
 };
 use hive_router_internal::{
@@ -369,42 +369,71 @@ impl SubgraphExecutorMap {
         // selected. ptr_eq checks that exact executor identity without requiring trait-object
         // equality
         if execution_result.is_none() && Arc::ptr_eq(&executor, &http_executor) {
-            // requests without a connection fingerprint cannot safely match a pooled connection
-            if let Some(fingerprint) = execution_request.connection_fingerprint {
-                // only subgraphs configured for graphql-transport-ws can have matching entries
-                if self
+            // WebSocket endpoint configuration declares capability, while traffic shaping decides
+            // whether ordinary query and mutation fetches are allowed to use that capability
+            if self
+                .config
+                .subscriptions
+                .get_protocol_for_subgraph(subgraph_name)
+                == SubscriptionProtocol::WebSocket
+            {
+                let reuse_connections = self
                     .config
-                    .subscriptions
-                    .get_protocol_for_subgraph(subgraph_name)
-                    == SubscriptionProtocol::WebSocket
+                    .traffic_shaping
+                    .websocket_reuse_connections(subgraph_name);
+                match self
+                    .config
+                    .traffic_shaping
+                    .websocket_execute_mode(subgraph_name)
                 {
-                    // TODO: somehow get rid of this parse thing, it should not run on every request
-                    // basically the WebSocketConnectionId fingerprint should be enough, right?
-                    let endpoint_uri = endpoint_str.parse::<Uri>().map_err(|e| {
-                        SubgraphExecutorError::EndpointParseFailure(endpoint_str.to_string(), e)
-                    })?;
-                    // the resolved endpoint is part of the key so the same inbound identity
-                    // cannot share a connection across different subgraph destinations
-                    let id = WebSocketConnectionId {
-                        endpoint: self
-                            .convert_to_websocket_endpoint(subgraph_name, &endpoint_uri)?,
-                        fingerprint,
-                    };
-                    // this lookup returns initialized entries only. a missing or connecting
-                    // entry is an immediate http fallback; execute never creates or waits for a
-                    // websocket connection
-                    if let Some(pooled) = self.websocket_pool.get_initialized(&id) {
-                        self.telemetry_context
-                            .metrics
-                            .subscriptions
-                            .record_websocket_pool_execute_hit();
+                    WebSocketExecuteMode::Http => {
+                        // keep defaults, nothing to do here
+                    }
+                    WebSocketExecuteMode::ReuseExisting if reuse_connections => {
+                        // reusing an existing connection requires the same connection fingerprint
+                        // used when the subscription initialized the pool entry. missing identity,
+                        // missing entries, and entries still connecting are immediate HTTp misses
+                        if let Some(fingerprint) = execution_request.connection_fingerprint {
+                            // TODO: do something to not parse the endpoint over and over again
+                            // also make sure to update the traffic_shaping config comments/documentation
+                            let endpoint_uri = endpoint_str.parse::<Uri>().map_err(|e| {
+                                SubgraphExecutorError::EndpointParseFailure(
+                                    endpoint_str.to_string(),
+                                    e,
+                                )
+                            })?;
+                            let id = WebSocketConnectionId {
+                                endpoint: self
+                                    .convert_to_websocket_endpoint(subgraph_name, &endpoint_uri)?,
+                                fingerprint,
+                            };
+                            if let Some(pooled) = self.websocket_pool.get_initialized(&id) {
+                                self.telemetry_context
+                                    .metrics
+                                    .subscriptions
+                                    .record_websocket_pool_execute_hit();
+                                executor = Arc::new(
+                                    Box::new(pooled) as Box<dyn SubgraphExecutor + Send + Sync>
+                                );
+                            } else {
+                                self.telemetry_context
+                                    .metrics
+                                    .subscriptions
+                                    .record_websocket_pool_execute_miss();
+                            }
+                        }
+                    }
+                    WebSocketExecuteMode::Websocket => {
+                        // the configured WebSocket executor initializes a pooled connection when
+                        // reuse is enabled, or creates a dedicated connection for this operation
+                        // when reuse is disabled
+                        let endpoint_str = self.resolve_endpoint(subgraph_name, client_request)?;
                         executor =
-                            Arc::new(Box::new(pooled) as Box<dyn SubgraphExecutor + Send + Sync>);
-                    } else {
-                        self.telemetry_context
-                            .metrics
-                            .subscriptions
-                            .record_websocket_pool_execute_miss();
+                            self.get_or_create_subscription_executor(subgraph_name, &endpoint_str)?;
+                    }
+                    WebSocketExecuteMode::ReuseExisting => {
+                        // reuse is disabled (reuse_connections=false), so there cannot be
+                        // an eligible pooled connection. keep defaults, nothing further to do
                     }
                 }
             }
@@ -538,7 +567,8 @@ impl SubgraphExecutorMap {
         BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
         SubgraphExecutorError,
     > {
-        let executor = self.get_or_create_subscription_executor(subgraph_name, client_request)?;
+        let endpoint_str = self.resolve_endpoint(subgraph_name, client_request)?;
+        let executor = self.get_or_create_subscription_executor(subgraph_name, &endpoint_str)?;
         let timeout = self.resolve_subgraph_timeout(subgraph_name, client_request)?;
         debug!(target: targets::EXECUTOR, operation = execution_request.query, dedupe = execution_request.dedupe, subgraph = subgraph_name, executor = executor.executor_name(), "subscribing subgraph request");
         summary::record(|s| s.record_subgraph(subgraph_name));
@@ -665,22 +695,24 @@ impl SubgraphExecutorMap {
         self.register_executor(subgraph_name, endpoint_str, false)
     }
 
+    /// Returns the subscription transport executor for an already resolved endpoint.
+    ///
+    /// Query and mutation WebSocket routing uses this variant so request-dependent endpoint
+    /// expressions are evaluated exactly once before transport selection.
     fn get_or_create_subscription_executor(
         &self,
         subgraph_name: &str,
-        client_request: &ClientRequestDetails<'_>,
+        endpoint_str: &str,
     ) -> Result<SubgraphExecutorBoxedArc, SubgraphExecutorError> {
-        let endpoint_str = self.resolve_endpoint(subgraph_name, client_request)?;
-
         if let Some(executor) = self
             .subscription_executors_by_subgraph
             .get(subgraph_name)
-            .and_then(|endpoints| endpoints.get(&endpoint_str).map(|e| e.clone()))
+            .and_then(|endpoints| endpoints.get(endpoint_str).map(|e| e.clone()))
         {
             return Ok(executor);
         }
 
-        self.register_executor(subgraph_name, &endpoint_str, true)
+        self.register_executor(subgraph_name, endpoint_str, true)
     }
 
     /// Registers a new HTTP subgraph executor for the given subgraph name and endpoint URL.
@@ -850,9 +882,11 @@ impl SubgraphExecutorMap {
                     // every websocket subscription executor contributes to the same pool so
                     // normal execution can reuse connections initialized by subscriptions
                     self.websocket_pool.clone(),
+                    // WebSocket pooling uses the same inherited lifetime as the HTTP pool.
+                    self.config.traffic_shaping.pool_idle_timeout(subgraph_name),
                     self.config
-                        .subscriptions
-                        .get_websocket_idle_timeout(subgraph_name),
+                        .traffic_shaping
+                        .websocket_reuse_connections(subgraph_name),
                 )
                 .to_boxed_arc();
 
@@ -952,10 +986,8 @@ impl SubgraphExecutorMap {
             return Ok(config);
         };
 
-        let pool_idle_timeout = subgraph_config
-            .pool_idle_timeout
-            .unwrap_or(self.config.traffic_shaping.all.pool_idle_timeout);
-        // Override client only if pool idle timeout is customized, TLS config is provided, or allow_only_http2 differs
+        let pool_idle_timeout = self.config.traffic_shaping.pool_idle_timeout(subgraph_name);
+        // A separate client is needed when connection lifetime or protocol settings differ.
         let subgraph_allow_only_http2 = subgraph_config
             .allow_only_http2
             .unwrap_or(self.config.traffic_shaping.all.allow_only_http2);

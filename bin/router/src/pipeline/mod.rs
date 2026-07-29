@@ -409,9 +409,13 @@ pub async fn graphql_request_handler(
             .router
             .dedupe
             .enabled;
+        let websocket_reuse_enabled = shared_state
+            .router_config
+            .traffic_shaping
+            .any_websocket_connection_reuse_enabled();
 
         // establish a connection fingerprint only if dedupe or multiplexing is enabled
-        let connection_fingerprint = (request_dedupe_enabled || shared_state.websocket_reuse_enabled)
+        let connection_fingerprint = (request_dedupe_enabled || websocket_reuse_enabled)
             .then(|| connection_fingerprint(
                 req.method(),
                 req.path(),

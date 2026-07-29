@@ -308,13 +308,9 @@ impl SubgraphExecutor for PooledWebSocketExecutor {
     async fn subscribe<'a>(
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
-        timeout: Option<Duration>,
+        _timeout: Option<Duration>,
     ) -> Result<BoxStream<'static, SubscriptionItem>, SubgraphExecutorError> {
-        let submit = self.submit(execution_request, self.buffer_capacity);
-        let mut responses = match timeout {
-            Some(timeout) => tokio::time::timeout(timeout, submit).await??,
-            None => submit.await?,
-        };
+        let mut responses = self.submit(execution_request, self.buffer_capacity).await?;
         let operation_guard = self
             .telemetry_context
             .metrics
