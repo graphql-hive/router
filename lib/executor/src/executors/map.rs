@@ -171,8 +171,8 @@ pub struct SubgraphExecutorMap {
     /// See [`ConnectionFingerprint`] for more information about connection fingerprinting.
     ///
     /// Subscription executors populate it, while query and mutation execution only performs
-    /// initialized-only lookups. Pool keys include both the resolved endpoint and the inbound
-    /// connection fingerprint, preventing reuse across destinations or connection identities.
+    /// initialized-only lookups. Pool keys include the logical subgraph and inbound connection
+    /// fingerprint.
     websocket_pool: Arc<WebSocketPool>,
 }
 impl SubgraphExecutorMap {
@@ -394,19 +394,7 @@ impl SubgraphExecutorMap {
                         // used when the subscription initialized the pool entry. missing identity,
                         // missing entries, and entries still connecting are immediate HTTp misses
                         if let Some(fingerprint) = execution_request.connection_fingerprint {
-                            // TODO: do something to not parse the endpoint over and over again
-                            // also make sure to update the traffic_shaping config comments/documentation
-                            let endpoint_uri = endpoint_str.parse::<Uri>().map_err(|e| {
-                                SubgraphExecutorError::EndpointParseFailure(
-                                    endpoint_str.to_string(),
-                                    e,
-                                )
-                            })?;
-                            let id = WebSocketConnectionId {
-                                endpoint: self
-                                    .convert_to_websocket_endpoint(subgraph_name, &endpoint_uri)?,
-                                fingerprint,
-                            };
+                            let id = WebSocketConnectionId::new(subgraph_name, fingerprint);
                             if let Some(pooled) = self.websocket_pool.get_initialized(&id) {
                                 self.telemetry_context
                                     .metrics

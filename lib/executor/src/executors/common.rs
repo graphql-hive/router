@@ -53,7 +53,7 @@ pub type SubgraphRequestExtensions = HashMap<String, Value>;
 /// deliberately excludes operation data, variables, and extensions so different operations from
 /// the same authenticated connection context can share an initialized subgraph connection.
 ///
-/// This type is can be used as a connection pool key.
+/// This type can be used as a connection pool key.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ConnectionFingerprint(u64);
 

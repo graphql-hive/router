@@ -356,6 +356,12 @@ impl WsClient<Initialized> {
             },
         );
 
+        let mut guard = SubscriptionGuard {
+            state: self.state.state.clone(),
+            sink: self.state.sink.clone(),
+            id: Some(subscribe_id.clone()),
+            send_complete: false,
+        };
         self.state
             .sink
             .send(ClientMessage::subscribe(
@@ -363,27 +369,14 @@ impl WsClient<Initialized> {
                 subscribe_payload,
             ))
             .await
-            .map_err(|e| {
-                self.state
-                    .state
-                    .borrow_mut()
-                    .subscriptions
-                    .remove(&subscribe_id);
-                WsClientError::SendFailed(e)
-            })?;
+            .map_err(WsClientError::SendFailed)?;
+        guard.send_complete = true;
 
         trace!(target: targets::WEBSOCKET_CLIENT, subscription_id = %subscribe_id, "Subscribe message sent");
 
-        let state = self.state.state.clone();
-        let sink = self.state.sink.clone();
-
         Ok(Box::pin(async_stream::stream! {
             let mut rx = rx;
-            let _guard = SubscriptionGuard {
-                state,
-                sink,
-                id: subscribe_id,
-            };
+            let _guard = guard;
 
             while let Some(response) = rx.next().await {
                 // the response specific to THIS subscription (matching by id)
@@ -408,31 +401,30 @@ impl Drop for Initialized {
     }
 }
 
+/// Cleans up protocol state when a subscribe write is canceled before it completes.
+///
 /// Ensures a subscription is cleaned up when dropped.
 struct SubscriptionGuard {
     state: WsStateRef,
     sink: WsSink,
-    id: String,
+    id: Option<String>,
+    send_complete: bool,
 }
 
 impl Drop for SubscriptionGuard {
     fn drop(&mut self) {
+        let Some(id) = self.id.take() else {
+            return;
+        };
         // only send complete message if the subscription is still active - client cancelled.
         // if the server sent the complete/error message, the subscription would've been removed
         // by the dispatcher so no complete message would be sent from the client back to the server
-        if self
-            .state
-            .borrow_mut()
-            .subscriptions
-            .remove(&self.id)
-            .is_some()
-        {
-            let id = self.id.clone();
+        if self.state.borrow_mut().subscriptions.remove(&id).is_some() && self.send_complete {
             let sink = self.sink.clone();
 
             // sending is async, so spawn a task to do it
             rt::spawn(async move {
-                let _ = sink.send(ClientMessage::complete(id.clone())).await;
+                let _ = sink.send(ClientMessage::complete(id)).await;
             });
         }
     }

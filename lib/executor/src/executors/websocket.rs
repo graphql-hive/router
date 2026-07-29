@@ -32,6 +32,7 @@ pub struct WsSubgraphExecutor {
 }
 
 impl WsSubgraphExecutor {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         subgraph_name: String,
         endpoint: http::Uri,
@@ -73,29 +74,33 @@ impl SubgraphExecutor for WsSubgraphExecutor {
     ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
         if self.reuse_connections {
             if let Some(fingerprint) = execution_request.connection_fingerprint {
-                let executor = self
-                    .pool
-                    .get_or_initialize(
-                        WebSocketConnectionId {
-                            endpoint: self.endpoint.clone(),
-                            fingerprint,
-                        },
-                        WebSocketInit {
-                            headers: execution_request.headers.clone(),
-                            tls_config: self.tls_config.clone(),
-                            subgraph_name: self.subgraph_name.clone(),
-                            buffer_capacity: self.buffer_capacity,
-                            idle_timeout: self.idle_timeout,
-                            telemetry_context: self.telemetry_context.clone(),
-                        },
-                    )
-                    .await?;
-                // TODO: not necessarey a hit, couldve been freshyl initialised
-                self.telemetry_context
-                    .metrics
-                    .subscriptions
-                    .record_websocket_pool_execute_hit();
-                return executor.execute(execution_request, timeout, None).await;
+                let id = WebSocketConnectionId::new(self.subgraph_name.clone(), fingerprint);
+                let operation = async {
+                    let executor = self
+                        .pool
+                        .get_or_initialize(
+                            id,
+                            WebSocketInit {
+                                endpoint: self.endpoint.clone(),
+                                headers: execution_request.headers.clone(),
+                                tls_config: self.tls_config.clone(),
+                                buffer_capacity: self.buffer_capacity,
+                                idle_timeout: self.idle_timeout,
+                                telemetry_context: self.telemetry_context.clone(),
+                            },
+                        )
+                        .await?;
+                    // TODO: not necessarey a hit, couldve been freshyl initialised
+                    self.telemetry_context
+                        .metrics
+                        .subscriptions
+                        .record_websocket_pool_execute_hit();
+                    executor.execute(execution_request, None, None).await
+                };
+                return match timeout {
+                    Some(timeout) => tokio::time::timeout(timeout, operation).await?,
+                    None => operation.await,
+                };
             }
         }
 
@@ -180,36 +185,22 @@ impl SubgraphExecutor for WsSubgraphExecutor {
     async fn subscribe<'a>(
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
-        timeout: Option<Duration>,
+        _timeout: Option<Duration>,
     ) -> Result<
         BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
         SubgraphExecutorError,
     > {
-        // buffer decouples the emitting subgraph from slow downstream consumers, dropping
-        // messages under backpressure instead of throttling the subgraph
-        let (tx, mut rx) = mpsc::channel::<Result<SubgraphResponse<'static>, SubgraphExecutorError>>(
-            self.buffer_capacity,
-        );
-
-        let endpoint = self.endpoint.clone();
-        let subgraph_name = self.subgraph_name.clone();
-        let tls_config = self.tls_config.clone();
-        let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
-        let connection_fingerprint = execution_request.connection_fingerprint;
-
         if self.reuse_connections {
-            if let Some(fingerprint) = connection_fingerprint {
+            if let Some(fingerprint) = execution_request.connection_fingerprint {
+                let id = WebSocketConnectionId::new(self.subgraph_name.clone(), fingerprint);
                 let executor = self
                     .pool
                     .get_or_initialize(
-                        WebSocketConnectionId {
-                            endpoint: self.endpoint.clone(),
-                            fingerprint,
-                        },
+                        id,
                         WebSocketInit {
+                            endpoint: self.endpoint.clone(),
                             headers: execution_request.headers.clone(),
                             tls_config: self.tls_config.clone(),
-                            subgraph_name: self.subgraph_name.clone(),
                             buffer_capacity: self.buffer_capacity,
                             idle_timeout: self.idle_timeout,
                             telemetry_context: self.telemetry_context.clone(),
@@ -221,10 +212,20 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                     .metrics
                     .subscriptions
                     .record_websocket_pool_subscription_hit();
-                return executor.subscribe(execution_request, timeout).await;
+                return executor.subscribe(execution_request, None).await;
             }
         }
 
+        // buffer decouples the emitting subgraph from slow downstream consumers, dropping
+        // messages under backpressure instead of throttling the subgraph
+        let (tx, mut rx) = mpsc::channel::<Result<SubgraphResponse<'static>, SubgraphExecutorError>>(
+            self.buffer_capacity,
+        );
+
+        let endpoint = self.endpoint.clone();
+        let subgraph_name = self.subgraph_name.clone();
+        let tls_config = self.tls_config.clone();
+        let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
         let headers = execution_request.headers.clone();
         let init_payload = (!headers.is_empty()).then(|| headers.into());
         let subscribe_payload = execution_request.into();
