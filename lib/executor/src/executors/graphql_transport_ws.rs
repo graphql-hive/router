@@ -87,21 +87,19 @@ pub struct SubscribePayload {
 pub fn build_subscribe_payload(
     execution_request: SubgraphExecutionRequest<'_>,
 ) -> SubscribePayload {
-    let variables: Option<HashMap<String, Value>> = match &execution_request.variables {
-        Some(variables) => {
-            if variables.is_empty() {
-                None
-            } else {
-                Some(
-                    variables
-                        .iter()
-                        .map(|(k, v)| (k.to_string(), (*v).clone()))
-                        .collect(),
-                )
-            }
-        }
-        None => None,
-    };
+    let mut variables: HashMap<String, Value> = execution_request
+        .variables
+        .unwrap_or_default()
+        .iter()
+        .map(|(key, value)| (key.to_string(), (*value).clone()))
+        .collect();
+    for (key, value) in execution_request.raw_variable_values.unwrap_or_default() {
+        variables.insert(
+            key.to_string(),
+            sonic_rs::from_slice(&value).expect("raw variable values must contain valid JSON"),
+        );
+    }
+    let variables = (!variables.is_empty()).then_some(variables);
     let query = match &execution_request.operation_name {
         Some(operation_name) => {
             let pos = execution_request.document_name_write_pos;
