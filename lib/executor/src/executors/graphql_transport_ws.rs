@@ -514,7 +514,7 @@ mod tests {
     #[test]
     fn subscribe_payload_rejects_invalid_raw_variable_json() {
         let mut request = make_request("query($id: ID!) { user(id: $id) { id } }", 5, None);
-        request.raw_variable_values = Some(HashMap::from([("id", b"{".to_vec())]));
+        request.raw_variable_values = Some(vec![("id", b"{".to_vec())]);
 
         assert!(matches!(
             SubscribePayload::try_from(request),
