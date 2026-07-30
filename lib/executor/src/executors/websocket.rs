@@ -74,7 +74,11 @@ impl SubgraphExecutor for WsSubgraphExecutor {
     ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
         if self.reuse_connections {
             if let Some(fingerprint) = execution_request.connection_fingerprint {
-                let id = WebSocketConnectionId::new(self.subgraph_name.clone(), fingerprint);
+                let id = WebSocketConnectionId::new(
+                    self.subgraph_name.clone(),
+                    self.endpoint.clone(),
+                    fingerprint,
+                );
                 let operation = async {
                     let executor = self
                         .pool
@@ -186,7 +190,11 @@ impl SubgraphExecutor for WsSubgraphExecutor {
     > {
         if self.reuse_connections {
             if let Some(fingerprint) = execution_request.connection_fingerprint {
-                let id = WebSocketConnectionId::new(self.subgraph_name.clone(), fingerprint);
+                let id = WebSocketConnectionId::new(
+                    self.subgraph_name.clone(),
+                    self.endpoint.clone(),
+                    fingerprint,
+                );
                 let executor = self
                     .pool
                     .get_or_initialize(

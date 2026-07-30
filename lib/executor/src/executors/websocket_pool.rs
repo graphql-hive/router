@@ -43,13 +43,19 @@ type PoolEntries = DashMap<WebSocketConnectionId, PoolEntry>;
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct WebSocketConnectionId {
     subgraph_name: Arc<str>,
+    endpoint: Uri,
     fingerprint: ConnectionFingerprint,
 }
 
 impl WebSocketConnectionId {
-    pub fn new(subgraph_name: impl Into<Arc<str>>, fingerprint: ConnectionFingerprint) -> Self {
+    pub fn new(
+        subgraph_name: impl Into<Arc<str>>,
+        endpoint: Uri,
+        fingerprint: ConnectionFingerprint,
+    ) -> Self {
         Self {
             subgraph_name: subgraph_name.into(),
+            endpoint,
             fingerprint,
         }
     }

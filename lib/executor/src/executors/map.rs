@@ -171,8 +171,8 @@ pub struct SubgraphExecutorMap {
     /// See [`ConnectionFingerprint`] for more information about connection fingerprinting.
     ///
     /// Subscription executors populate it, while query and mutation execution only performs
-    /// initialized-only lookups. Pool keys include the logical subgraph and inbound connection
-    /// fingerprint.
+    /// initialized-only lookups. Pool keys include the logical subgraph, resolved WebSocket
+    /// endpoint, and inbound connection fingerprint.
     websocket_pool: Arc<WebSocketPool>,
 }
 impl SubgraphExecutorMap {
@@ -397,8 +397,18 @@ impl SubgraphExecutorMap {
                             execution_request
                                 .connection_fingerprint
                                 .and_then(|fingerprint| {
-                                    let id = WebSocketConnectionId::new(subgraph_name, fingerprint);
-                                    self.websocket_pool.get_initialized(&id)
+                                    self.subscription_executors_by_subgraph
+                                        .get(subgraph_name)
+                                        .and_then(|endpoints| {
+                                            endpoints.get(&endpoint_str).and_then(|executor| {
+                                                let id = WebSocketConnectionId::new(
+                                                    subgraph_name,
+                                                    executor.endpoint().clone(),
+                                                    fingerprint,
+                                                );
+                                                self.websocket_pool.get_initialized(&id)
+                                            })
+                                        })
                                 });
                         self.telemetry_context
                             .metrics
