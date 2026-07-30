@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use dashmap::{mapref::entry::Entry, DashMap};
 use futures::{stream::BoxStream, StreamExt};
 use hive_router_internal::telemetry::{
+    logging::targets,
     metrics::{
         subscription_metrics::SubscriptionTransport,
         websocket_pool_metrics::{WebSocketPoolConnectionCloseReason, WebSocketPoolOperationType},
@@ -20,6 +21,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     time::Instant,
 };
+use tracing::{debug, info, trace, warn};
 
 use crate::{
     executors::{
@@ -112,12 +114,19 @@ impl WebSocketPool {
         &self,
         id: &WebSocketConnectionId,
     ) -> Option<Arc<PooledWebSocketExecutor>> {
-        self.entries.get(id).and_then(|entry| match entry.value() {
+        let executor = self.entries.get(id).and_then(|entry| match entry.value() {
             PoolEntry::Initialized(executor) if !executor.commands.is_closed() => {
                 Some(executor.clone())
             }
             PoolEntry::Connecting(_) | PoolEntry::Initialized(_) => None,
-        })
+        });
+        trace!(
+            target: targets::WEBSOCKET_POOL,
+            subgraph = %id.subgraph_name,
+            found = executor.is_some(),
+            "looked up WebSocket pool connection"
+        );
+        executor
     }
 
     pub async fn get_or_initialize(
@@ -129,6 +138,12 @@ impl WebSocketPool {
         let (wait_rx, generation) = match self.entries.entry(id.clone()) {
             Entry::Occupied(mut entry) => match entry.get_mut() {
                 PoolEntry::Initialized(executor) if !executor.commands.is_closed() => {
+                    trace!(
+                        target: targets::WEBSOCKET_POOL,
+                        subgraph = %id.subgraph_name,
+                        endpoint = %endpoint,
+                        "reusing WebSocket pool connection"
+                    );
                     return Ok(executor.clone());
                 }
                 PoolEntry::Connecting(connecting) => {
@@ -161,8 +176,15 @@ impl WebSocketPool {
         };
 
         if let Some(generation) = generation {
+            debug!(
+                target: targets::WEBSOCKET_POOL,
+                subgraph = %id.subgraph_name,
+                endpoint = %endpoint,
+                "initializing WebSocket pool connection"
+            );
             let cleanup = InitializationCleanup::new(self.entries.clone(), id.clone(), generation);
             let telemetry_context = init.telemetry_context.clone();
+            let log_endpoint = endpoint.clone();
             rt::spawn(async move {
                 let mut cleanup = cleanup;
                 match initialize_connection(&cleanup.entries, &cleanup.id, init).await {
@@ -173,8 +195,21 @@ impl WebSocketPool {
                             .record_connection_initialization(&cleanup.id.subgraph_name, true);
                         let executor = connection.executor.clone();
                         let Some(waiters) = cleanup.publish(executor.clone()) else {
+                            debug!(
+                                target: targets::WEBSOCKET_POOL,
+                                subgraph = %cleanup.id.subgraph_name,
+                                endpoint = %log_endpoint,
+                                "discarding stale WebSocket pool connection initialization"
+                            );
                             return;
                         };
+                        info!(
+                            target: targets::WEBSOCKET_POOL,
+                            subgraph = %cleanup.id.subgraph_name,
+                            endpoint = %log_endpoint,
+                            waiting_requests = waiters.len(),
+                            "WebSocket pool connection initialized"
+                        );
 
                         // publication happens first, so even an immediately exiting owner can only
                         // evict the initialized generation it actually owns.
@@ -186,12 +221,25 @@ impl WebSocketPool {
                             .metrics
                             .websocket_pool
                             .record_connection_initialization(&cleanup.id.subgraph_name, false);
+                        warn!(
+                            target: targets::WEBSOCKET_POOL,
+                            subgraph = %cleanup.id.subgraph_name,
+                            endpoint = %log_endpoint,
+                            error = %error,
+                            "failed to initialize WebSocket pool connection"
+                        );
                         let waiters = cleanup.remove();
                         notify_waiters(waiters, Err(error));
                     }
                 }
             });
         } else {
+            debug!(
+                target: targets::WEBSOCKET_POOL,
+                subgraph = %id.subgraph_name,
+                endpoint = %endpoint,
+                "waiting for WebSocket pool connection initialization"
+            );
             init.telemetry_context
                 .metrics
                 .websocket_pool
@@ -200,7 +248,15 @@ impl WebSocketPool {
 
         wait_rx
             .await
-            .map_err(|_| SubgraphExecutorError::WebSocketArbiterChannelClosed)?
+            .map_err(|_| {
+                warn!(
+                    target: targets::WEBSOCKET_POOL,
+                    subgraph = %id.subgraph_name,
+                    endpoint = %endpoint,
+                    "WebSocket pool connection initialization stopped before completion"
+                );
+                SubgraphExecutorError::WebSocketArbiterChannelClosed
+            })?
             .map_err(|error| error.into_executor_error(&endpoint))
     }
 }
@@ -350,13 +406,23 @@ pub struct PooledWebSocketExecutor {
 impl PooledWebSocketExecutor {
     fn evict_if_current(&self) {
         if let Some(entries) = self.entries.upgrade() {
-            entries.remove_if(&self.id, |_, entry| {
-                matches!(
-                    entry,
-                    PoolEntry::Initialized(current)
-                        if current.commands.same_channel(&self.commands)
-                )
-            });
+            if entries
+                .remove_if(&self.id, |_, entry| {
+                    matches!(
+                        entry,
+                        PoolEntry::Initialized(current)
+                            if current.commands.same_channel(&self.commands)
+                    )
+                })
+                .is_some()
+            {
+                debug!(
+                    target: targets::WEBSOCKET_POOL,
+                    subgraph = %self.id.subgraph_name,
+                    endpoint = %self.endpoint,
+                    "evicted WebSocket pool connection"
+                );
+            }
         }
     }
 
@@ -368,6 +434,12 @@ impl PooledWebSocketExecutor {
         // reserve first so canceled callers do not build payloads or occupy response buffers while
         // waiting behind a full shared command queue.
         let permit = self.commands.reserve().await.map_err(|_| {
+            debug!(
+                target: targets::WEBSOCKET_POOL,
+                subgraph = %self.id.subgraph_name,
+                endpoint = %self.endpoint,
+                "WebSocket pool connection closed before operation could be queued"
+            );
             self.evict_if_current();
             SubgraphExecutorError::WebSocketArbiterChannelClosed
         })?;
@@ -385,8 +457,23 @@ impl PooledWebSocketExecutor {
 
         match ready_rx.await {
             Ok(Ok(())) => Ok(receiver),
-            Ok(Err(error)) => Err(error.into()),
+            Ok(Err(error)) => {
+                warn!(
+                    target: targets::WEBSOCKET_POOL,
+                    subgraph = %self.id.subgraph_name,
+                    endpoint = %self.endpoint,
+                    error = %error,
+                    "failed to start operation on WebSocket pool connection"
+                );
+                Err(error.into())
+            }
             Err(_) => {
+                debug!(
+                    target: targets::WEBSOCKET_POOL,
+                    subgraph = %self.id.subgraph_name,
+                    endpoint = %self.endpoint,
+                    "WebSocket pool connection closed while starting operation"
+                );
                 self.evict_if_current();
                 Err(SubgraphExecutorError::WebSocketArbiterChannelClosed)
             }
@@ -649,9 +736,34 @@ impl ConnectionOwner {
         }
 
         let reason = match shutdown {
-            ConnectionShutdown::Idle => WebSocketPoolConnectionCloseReason::Idle,
-            ConnectionShutdown::Dispatcher(_) => WebSocketPoolConnectionCloseReason::Dispatcher,
-            ConnectionShutdown::CommandsClosed => WebSocketPoolConnectionCloseReason::PoolDropped,
+            ConnectionShutdown::Idle => {
+                info!(
+                    target: targets::WEBSOCKET_POOL,
+                    subgraph = %self.subgraph_name,
+                    endpoint = %self.endpoint,
+                    "closing idle WebSocket pool connection"
+                );
+                WebSocketPoolConnectionCloseReason::Idle
+            }
+            ConnectionShutdown::Dispatcher(error) => {
+                warn!(
+                    target: targets::WEBSOCKET_POOL,
+                    subgraph = %self.subgraph_name,
+                    endpoint = %self.endpoint,
+                    error = %error,
+                    "WebSocket pool connection dispatcher stopped"
+                );
+                WebSocketPoolConnectionCloseReason::Dispatcher
+            }
+            ConnectionShutdown::CommandsClosed => {
+                info!(
+                    target: targets::WEBSOCKET_POOL,
+                    subgraph = %self.subgraph_name,
+                    endpoint = %self.endpoint,
+                    "WebSocket pool dropped, closing connection"
+                );
+                WebSocketPoolConnectionCloseReason::PoolDropped
+            }
         };
         self.telemetry_context
             .metrics
