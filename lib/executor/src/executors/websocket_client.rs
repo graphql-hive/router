@@ -15,10 +15,7 @@ use ntex::{
 use tracing::{debug, error, trace};
 
 use crate::{
-    executors::{
-        error::SubgraphExecutorError,
-        graphql_transport_ws::{SubscribePayload, WS_SUBPROTOCOL},
-    },
+    executors::graphql_transport_ws::{SubscribePayload, WS_SUBPROTOCOL},
     response::subgraph_response::SubgraphResponse,
 };
 use crate::{
@@ -58,7 +55,7 @@ pub enum WsInitError {
     #[error("Wrong message received before connection acknowledgement")]
     WrongMessageBeforeAck,
     #[error("Failed to send connection initialization message: {0}")]
-    SendFailed(ws::error::ProtocolError),
+    SendFailed(#[from] ws::error::ProtocolError),
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -70,7 +67,7 @@ pub enum WsClientError {
     #[error("Failed to deserialize payload")]
     FailedToDeserializePayload,
     #[error("Failed to send WebSocket message: {0}")]
-    SendFailed(ws::error::ProtocolError),
+    SendFailed(#[from] ws::error::ProtocolError),
     #[error("WebSocket subscription ID exhausted")]
     SubscriptionIdExhausted,
 }
@@ -84,12 +81,6 @@ impl WsClientError {
             WsClientError::SendFailed(_) => "WS_SEND_FAILED",
             WsClientError::SubscriptionIdExhausted => "WS_SUBSCRIPTION_ID_EXHAUSTED",
         }
-    }
-}
-
-impl From<WsClientError> for SubgraphExecutorError {
-    fn from(err: WsClientError) -> Self {
-        Self::WebSocketClientFailure(err.to_string())
     }
 }
 
@@ -226,9 +217,7 @@ impl WsClient<Connected> {
         ));
 
         // send init and wait for ack or connection close
-        sink.send(ClientMessage::init(payload))
-            .await
-            .map_err(WsInitError::SendFailed)?;
+        sink.send(ClientMessage::init(payload)).await?;
         loop {
             match receiver.next().await {
                 Some(Ok(frame)) => {
@@ -368,8 +357,7 @@ impl WsClient<Initialized> {
                 subscribe_id.clone(),
                 subscribe_payload,
             ))
-            .await
-            .map_err(WsClientError::SendFailed)?;
+            .await?;
         guard.send_complete = true;
 
         trace!(target: targets::WEBSOCKET_CLIENT, subscription_id = %subscribe_id, "Subscribe message sent");

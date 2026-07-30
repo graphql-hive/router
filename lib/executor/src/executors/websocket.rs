@@ -159,11 +159,10 @@ impl SubgraphExecutor for WsSubgraphExecutor {
 
                 let mut stream = client
                     .subscribe(subscribe_payload, custom_scalar_paths)
-                    .await
-                    .map_err(SubgraphExecutorError::from)?;
+                    .await?;
 
                 match stream.next().await {
-                    Some(response) => response.map_err(SubgraphExecutorError::from),
+                    Some(response) => Ok(response?),
                     None => Err(SubgraphExecutorError::WebSocketStreamClosedEmpty(
                         endpoint.to_string(),
                     )),

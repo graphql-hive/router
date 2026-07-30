@@ -5,7 +5,9 @@ use http::{uri::InvalidUri, HeaderMap, StatusCode};
 use rustls::server::VerifierBuilderError;
 use strum::IntoStaticStr;
 
-use crate::response::subgraph_response::SubgraphResponse;
+use crate::{
+    executors::websocket_client::WsClientError, response::subgraph_response::SubgraphResponse,
+};
 
 #[derive(thiserror::Error, Debug, IntoStaticStr)]
 pub enum SubgraphExecutorError {
@@ -91,7 +93,7 @@ pub enum SubgraphExecutorError {
     WebSocketArbiterChannelClosed,
     #[error("WebSocket client operation failed: {0}")]
     #[strum(serialize = "SUBGRAPH_WEBSOCKET_CLIENT_FAILURE")]
-    WebSocketClientFailure(String),
+    WebSocketClientFailure(#[from] WsClientError),
     #[error("Failed to parse multipart boundary from Content-Type header: {0}")]
     #[strum(serialize = "SUBGRAPH_SUBSCRIPTION_MULTIPART_BOUNDARY_PARSE_FAILURE")]
     MultipartBoundaryParseFailure(String),
