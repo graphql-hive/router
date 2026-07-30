@@ -645,13 +645,14 @@ impl ConnectionOwner {
                         break ConnectionShutdown::CommandsClosed;
                     };
 
+                    if responses.is_closed() {
+                        continue;
+                    }
+
                     if active_operations == 0 {
                         idle_timer
                             .as_mut()
                             .reset(Instant::now() + self.idle_timeout);
-                    }
-                    if responses.is_closed() {
-                        continue;
                     }
 
                     // writes stay serialized because WsClient mutates one subscription registry
