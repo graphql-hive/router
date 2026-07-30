@@ -445,7 +445,7 @@ impl PooledWebSocketExecutor {
         })?;
 
         let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
-        let payload = execution_request.into();
+        let payload = SubscribePayload::try_from(execution_request)?;
         let (responses, receiver) = mpsc::channel(response_capacity);
         let (ready, ready_rx) = oneshot::channel();
         permit.send(ConnectionCommand {

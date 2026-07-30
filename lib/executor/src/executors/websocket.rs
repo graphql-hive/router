@@ -111,7 +111,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
 
         let headers = execution_request.headers.clone();
         let init_payload = (!headers.is_empty()).then(|| headers.into());
-        let subscribe_payload = execution_request.into();
+        let subscribe_payload = execution_request.try_into()?;
 
         let (tx, rx) = oneshot::channel();
 
@@ -217,7 +217,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
         let headers = execution_request.headers.clone();
         let init_payload = (!headers.is_empty()).then(|| headers.into());
-        let subscribe_payload = execution_request.into();
+        let subscribe_payload = execution_request.try_into()?;
 
         debug!(
             target: targets::WEBSOCKET_CLIENT,

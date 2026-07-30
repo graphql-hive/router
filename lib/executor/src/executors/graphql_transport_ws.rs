@@ -8,7 +8,10 @@ use std::collections::HashMap;
 use strum::AsRefStr;
 use tracing::error;
 
-use crate::{executors::common::SubgraphExecutionRequest, response::graphql_error::GraphQLError};
+use crate::{
+    executors::{common::SubgraphExecutionRequest, error::SubgraphExecutorError},
+    response::graphql_error::GraphQLError,
+};
 
 pub const WS_SUBPROTOCOL: &str = "graphql-transport-ws";
 
@@ -83,8 +86,10 @@ pub struct SubscribePayload {
     pub extensions: Option<HashMap<String, Value>>,
 }
 
-impl From<SubgraphExecutionRequest<'_>> for SubscribePayload {
-    fn from(execution_request: SubgraphExecutionRequest<'_>) -> Self {
+impl TryFrom<SubgraphExecutionRequest<'_>> for SubscribePayload {
+    type Error = SubgraphExecutorError;
+
+    fn try_from(execution_request: SubgraphExecutionRequest<'_>) -> Result<Self, Self::Error> {
         let mut variables: HashMap<String, Value> = execution_request
             .variables
             .unwrap_or_default()
@@ -94,7 +99,9 @@ impl From<SubgraphExecutionRequest<'_>> for SubscribePayload {
         for (key, value) in execution_request.raw_variable_values.unwrap_or_default() {
             variables.insert(
                 key.to_string(),
-                sonic_rs::from_slice(&value).expect("raw variable values must contain valid JSON"),
+                sonic_rs::from_slice(&value).map_err(|error| {
+                    SubgraphExecutorError::VariablesSerializationFailure(key.to_string(), error)
+                })?,
             );
         }
         let variables = (!variables.is_empty()).then_some(variables);
@@ -118,12 +125,12 @@ impl From<SubgraphExecutionRequest<'_>> for SubscribePayload {
             }
             None => execution_request.query.to_string(),
         };
-        SubscribePayload {
+        Ok(SubscribePayload {
             query,
             operation_name: execution_request.operation_name,
             variables,
             extensions: execution_request.extensions,
-        }
+        })
     }
 }
 
@@ -479,7 +486,7 @@ mod tests {
             Some("GetMe_accounts_0".to_string()),
         );
 
-        let payload = SubscribePayload::from(request);
+        let payload = SubscribePayload::try_from(request).unwrap();
 
         assert_eq!(payload.query, "query GetMe_accounts_0 { me { id } }");
         assert_eq!(payload.operation_name.as_deref(), Some("GetMe_accounts_0"));
@@ -489,7 +496,7 @@ mod tests {
     fn subscribe_payload_from_request_without_operation_name_keeps_original_query() {
         let request = make_request("query { me { id } }", 5, None);
 
-        let payload = SubscribePayload::from(request);
+        let payload = SubscribePayload::try_from(request).unwrap();
 
         assert_eq!(payload.query, "query { me { id } }");
         assert_eq!(payload.operation_name, None);
@@ -499,8 +506,19 @@ mod tests {
     fn subscribe_payload_from_request_inlines_name_for_shorthand_query() {
         let request = make_request("{ me { id } }", 0, Some("GetMe_accounts_0".to_string()));
 
-        let payload = SubscribePayload::from(request);
+        let payload = SubscribePayload::try_from(request).unwrap();
 
         assert_eq!(payload.query, "query GetMe_accounts_0 { me { id } }");
+    }
+
+    #[test]
+    fn subscribe_payload_rejects_invalid_raw_variable_json() {
+        let mut request = make_request("query($id: ID!) { user(id: $id) { id } }", 5, None);
+        request.raw_variable_values = Some(HashMap::from([("id", b"{".to_vec())]));
+
+        assert!(matches!(
+            SubscribePayload::try_from(request),
+            Err(SubgraphExecutorError::VariablesSerializationFailure(name, _)) if name == "id"
+        ));
     }
 }
