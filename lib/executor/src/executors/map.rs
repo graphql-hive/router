@@ -392,7 +392,7 @@ impl SubgraphExecutorMap {
                     WebSocketExecuteMode::ReuseExisting if reuse_connections => {
                         // reusing an existing connection requires the same connection fingerprint
                         // used when the subscription initialized the pool entry. missing identity,
-                        // missing entries, and entries still connecting are immediate HTTp misses
+                        // missing entries, and entries still connecting are immediate HTTP misses
                         let pooled =
                             execution_request
                                 .connection_fingerprint
