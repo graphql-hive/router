@@ -2481,12 +2481,13 @@ this operation.
 Values support `{{name}}` references to the Laboratory's environment variables.
 
 
-**Additional Properties**
+**Properties (Pattern)**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**Additional Properties**|`string`|||
+|**^\[A\-Za\-z0\-9\!\#$%&'\*\+\\\-\.^\_\`\|~\]\+$**|`string`|||
 
+**Additional Properties:** not allowed   
    
 <a name="laboratorycollectionsoperationsvariables"></a>
 ##### laboratory\.collections\[\]\.operations\[\]\.variables: object,null
@@ -2520,12 +2521,13 @@ laboratory:
 ```
 
 
-**Additional Properties**
+**Properties (Pattern)**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**Additional Properties**|`string`|||
+|**^\[A\-Za\-z0\-9\!\#$%&'\*\+\\\-\.^\_\`\|~\]\+$**|`string`|||
 
+**Additional Properties:** not allowed   
    
 <a name="laboratoryoperations"></a>
 ### laboratory\.operations\[\]: array
@@ -2596,12 +2598,13 @@ this operation.
 Values support `{{name}}` references to the Laboratory's environment variables.
 
 
-**Additional Properties**
+**Properties (Pattern)**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**Additional Properties**|`string`|||
+|**^\[A\-Za\-z0\-9\!\#$%&'\*\+\\\-\.^\_\`\|~\]\+$**|`string`|||
 
+**Additional Properties:** not allowed   
    
 <a name="laboratoryoperationsvariables"></a>
 #### laboratory\.operations\[\]\.variables: object,null
