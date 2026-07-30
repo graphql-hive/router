@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::primitives::http_header::HttpHeaderName;
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct LaboratoryConfig {
@@ -27,7 +29,7 @@ pub struct LaboratoryConfig {
     ///     X-Env: staging
     /// ```
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub global_headers: BTreeMap<String, String>,
+    pub global_headers: BTreeMap<HttpHeaderName, String>,
     /// Operations to pre-populate the Laboratory with.
     ///
     /// Each operation opens in its own tab the first time a browser sees it. Operations the user
@@ -104,7 +106,7 @@ pub struct LaboratoryOperationConfig {
     ///
     /// Values support `{{name}}` references to the Laboratory's environment variables.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub headers: Option<BTreeMap<String, String>>,
+    pub headers: Option<BTreeMap<HttpHeaderName, String>>,
     /// The operation's GraphQL extensions, as a JSON object.
     ///
     /// Values support `{{name}}` references to the Laboratory's environment variables; a templated

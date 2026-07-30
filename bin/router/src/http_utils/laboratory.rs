@@ -4,8 +4,9 @@
 //! Everything injected here is served to every browser that opens the Laboratory and is visible
 //! via "view source". It is a convenience for Laboratory users, not a place for secrets.
 
-use hive_router_config::laboratory::{
-    LaboratoryCollectionConfig, LaboratoryConfig, LaboratoryOperationConfig,
+use hive_router_config::{
+    laboratory::{LaboratoryCollectionConfig, LaboratoryConfig, LaboratoryOperationConfig},
+    primitives::http_header::HttpHeaderName,
 };
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
@@ -156,6 +157,14 @@ fn serialize_map<V: Serialize>(map: &Option<BTreeMap<String, V>>) -> Option<Stri
         .map(|map| sonic_rs::to_string(map).expect("a map is always serializable"))
 }
 
+fn serialize_headers_map<V: Serialize>(
+    map: &Option<BTreeMap<HttpHeaderName, V>>,
+) -> Option<String> {
+    map.as_ref()
+        .filter(|map| !map.is_empty())
+        .map(|map| sonic_rs::to_string(map).expect("a map is always serializable"))
+}
+
 fn build_operation(
     index: usize,
     operation: &LaboratoryOperationConfig,
@@ -178,7 +187,7 @@ fn build_operation(
         name: operation.name.clone(),
         query: operation.query.clone(),
         variables: serialize_map(&operation.variables),
-        headers: serialize_map(&operation.headers),
+        headers: serialize_headers_map(&operation.headers),
         extensions: serialize_map(&operation.extensions),
     };
 
@@ -238,7 +247,7 @@ fn build_collection(
             query: operation.query.clone(),
             created_at: SEEDED_COLLECTION_CREATED_AT,
             variables: serialize_map(&operation.variables),
-            headers: serialize_map(&operation.headers),
+            headers: serialize_headers_map(&operation.headers),
             extensions: serialize_map(&operation.extensions),
         });
     }
@@ -385,11 +394,12 @@ mod tests {
         }
     }
 
+    #[cfg(test)]
     fn config_with_global_headers(headers: &[(&str, &str)]) -> LaboratoryConfig {
         LaboratoryConfig {
             global_headers: headers
                 .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .map(|(k, v)| (HttpHeaderName::from(*k), v.to_string()))
                 .collect(),
             ..Default::default()
         }
@@ -935,8 +945,8 @@ mod tests {
     fn a_headers_map_serializes_to_a_json_string() {
         let mut operation = operation("GetHello");
         operation.headers = Some(BTreeMap::from([
-            ("X-Team".to_string(), "payments".to_string()),
-            ("X-Env".to_string(), "staging".to_string()),
+            (HttpHeaderName::from("X-Team"), "payments".to_string()),
+            (HttpHeaderName::from("X-Env"), "staging".to_string()),
         ]));
 
         let seed =
