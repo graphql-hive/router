@@ -13,6 +13,7 @@ Configure defaults for all subgraphs under `traffic_shaping.all.websocket`:
 
 ```yaml
 subscriptions:
+  enabled: true
   websocket:
     subgraphs:
       reviews:

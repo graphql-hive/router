@@ -12,6 +12,7 @@ Queries and mutations can also reuse a connection opened by a subscription:
 
 ```yaml
 subscriptions:
+  enabled: true
   websocket:
     subgraphs:
       reviews:
