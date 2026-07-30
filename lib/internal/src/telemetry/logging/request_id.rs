@@ -9,9 +9,23 @@ use uuid::Uuid;
 
 use crate::telemetry::otel;
 
+type CorrelationIdentifierKey = &'static str;
+type CorrelationIdentifierValue = String;
+
+pub enum RequestIdentifierExtractionPoint<'a> {
+    Http(&'a HttpRequest),
+    WebSocket(&'a ntex::http::HeaderMap),
+}
+
+pub type PluginCorrelationExtractorFn =
+    fn(
+        &RequestIdentifierExtractionPoint,
+    ) -> Option<Vec<(CorrelationIdentifierKey, CorrelationIdentifierValue)>>;
+
 #[derive(Clone)]
 pub struct RequestIdentifierExtractor {
     cfg: CorrelationConfig,
+    plugin_provided_extractors: Vec<PluginCorrelationExtractorFn>,
 }
 
 impl Default for RequestIdentifierExtractor {
@@ -23,6 +37,8 @@ impl Default for RequestIdentifierExtractor {
 pub struct RequestIdentifiers {
     req_id: String,
     trace_id: Option<String>,
+    plugin_provided_correlation_ids:
+        Option<Vec<(CorrelationIdentifierKey, CorrelationIdentifierValue)>>,
 }
 
 impl RequestIdentifiers {
@@ -33,25 +49,57 @@ impl RequestIdentifiers {
     pub fn trace_id(&self) -> Option<&str> {
         self.trace_id.as_deref()
     }
+
+    pub fn plugin_provided_correlation_ids(
+        &self,
+    ) -> Option<&Vec<(CorrelationIdentifierKey, CorrelationIdentifierValue)>> {
+        self.plugin_provided_correlation_ids.as_ref()
+    }
 }
 
 impl RequestIdentifierExtractor {
     pub fn new(cfg: CorrelationConfig) -> Self {
-        Self { cfg }
+        Self {
+            cfg,
+            plugin_provided_extractors: vec![],
+        }
     }
 
     pub fn extract(
         &self,
-        headers: &impl HeaderLookup,
+        source: RequestIdentifierExtractionPoint,
         otel_ctx: &otel::opentelemetry::Context,
     ) -> RequestIdentifiers {
-        let req_id = self.extract_req_id(headers);
+        let req_id = match source {
+            RequestIdentifierExtractionPoint::Http(req) => self.extract_req_id(req),
+            RequestIdentifierExtractionPoint::WebSocket(h) => self.extract_req_id(h),
+        };
         let trace_id = self.extract_trace_id(otel_ctx);
+        let plugin_provided_correlation_ids = self.extract_plugin_provided_correlation_ids(source);
 
         RequestIdentifiers {
             req_id,
             trace_id: trace_id.map(|id| id.to_string()),
+            plugin_provided_correlation_ids,
         }
+    }
+
+    fn extract_plugin_provided_correlation_ids(
+        &self,
+        source: RequestIdentifierExtractionPoint,
+    ) -> Option<Vec<(CorrelationIdentifierKey, CorrelationIdentifierValue)>> {
+        if self.plugin_provided_extractors.is_empty() {
+            return None;
+        }
+        let mut correlation_ids = Vec::new();
+
+        for extractor in &self.plugin_provided_extractors {
+            if let Some(mut extracted) = extractor(&source) {
+                correlation_ids.append(&mut extracted);
+            }
+        }
+
+        Some(correlation_ids)
     }
 
     fn extract_trace_id(
@@ -117,6 +165,12 @@ impl HeaderLookup for ntex::http::HeaderMap {
 }
 
 impl HeaderLookup for HttpRequest {
+    fn lookup_str(&self, name: &HeaderName) -> Option<&str> {
+        self.headers().lookup_str(name)
+    }
+}
+
+impl HeaderLookup for &HttpRequest {
     fn lookup_str(&self, name: &HeaderName) -> Option<&str> {
         self.headers().lookup_str(name)
     }

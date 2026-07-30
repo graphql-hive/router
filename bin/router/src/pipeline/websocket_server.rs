@@ -49,7 +49,9 @@ use crate::pipeline::{
 use crate::schema_state::SchemaState;
 use crate::shared_state::{RouterSharedState, SharedRouterResponse};
 use crate::telemetry::HeaderExtractor;
-use hive_router_internal::telemetry::logging::request_id::WithRequestIdentifiers;
+use hive_router_internal::telemetry::logging::request_id::{
+    RequestIdentifierExtractionPoint, WithRequestIdentifiers,
+};
 use hive_router_internal::telemetry::logging::scope::RequestLogScope;
 use hive_router_internal::telemetry::logging::summary::{self, WithRequestSummary};
 use hive_router_internal::telemetry::logging::targets;
@@ -333,7 +335,7 @@ async fn handle_text_frame(
                   Arc::new(shared_state
                         .telemetry_context
                         .logging_correlation_extractor
-                        .extract(&headers, &parent_ctx));
+                        .extract(RequestIdentifierExtractionPoint::WebSocket(&headers), &parent_ctx));
                 let headers = Arc::new(headers);
 
                 // store the merged headers back to init_payload if configured to do so

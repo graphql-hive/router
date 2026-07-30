@@ -65,7 +65,6 @@ use graphql_tools::validation::rules::default_rules_validation_plan;
 pub use hive_router_config::humantime_serde;
 use hive_router_config::{load_config, subscriptions::CallbackConfig, HiveRouterConfig};
 pub use hive_router_internal::background_tasks;
-use hive_router_internal::background_tasks::{BackgroundTask, CancellationToken};
 use hive_router_internal::telemetry::{
     logging::{
         request_id::WithRequestIdentifiers,
@@ -77,6 +76,10 @@ use hive_router_internal::telemetry::{
     TelemetryContext,
 };
 pub use hive_router_internal::BoxError;
+use hive_router_internal::{
+    background_tasks::{BackgroundTask, CancellationToken},
+    telemetry::logging::request_id::RequestIdentifierExtractionPoint,
+};
 use hive_router_internal::{
     http::read_request_body_size, telemetry::metrics::catalog::values::GraphQLResponseStatus,
 };
@@ -155,7 +158,10 @@ async fn graphql_endpoint_handler(
         app_state
             .telemetry_context
             .logging_correlation_extractor
-            .extract(&request, &parent_ctx),
+            .extract(
+                RequestIdentifierExtractionPoint::Http(&request),
+                &parent_ctx,
+            ),
     );
 
     let http_request_capture = app_state
