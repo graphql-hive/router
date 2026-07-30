@@ -414,7 +414,6 @@ impl SubgraphExecutorMap {
                         // the configured WebSocket executor initializes a pooled connection when
                         // reuse is enabled, or creates a dedicated connection for this operation
                         // when reuse is disabled
-                        let endpoint_str = self.resolve_endpoint(subgraph_name, client_request)?;
                         executor =
                             self.get_or_create_subscription_executor(subgraph_name, &endpoint_str)?;
                     }
