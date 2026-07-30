@@ -393,22 +393,21 @@ impl SubgraphExecutorMap {
                         // reusing an existing connection requires the same connection fingerprint
                         // used when the subscription initialized the pool entry. missing identity,
                         // missing entries, and entries still connecting are immediate HTTp misses
-                        if let Some(fingerprint) = execution_request.connection_fingerprint {
-                            let id = WebSocketConnectionId::new(subgraph_name, fingerprint);
-                            if let Some(pooled) = self.websocket_pool.get_initialized(&id) {
-                                self.telemetry_context
-                                    .metrics
-                                    .subscriptions
-                                    .record_websocket_pool_execute_hit();
-                                executor = Arc::new(
-                                    Box::new(pooled) as Box<dyn SubgraphExecutor + Send + Sync>
-                                );
-                            } else {
-                                self.telemetry_context
-                                    .metrics
-                                    .subscriptions
-                                    .record_websocket_pool_execute_miss();
-                            }
+                        let pooled =
+                            execution_request
+                                .connection_fingerprint
+                                .and_then(|fingerprint| {
+                                    let id = WebSocketConnectionId::new(subgraph_name, fingerprint);
+                                    self.websocket_pool.get_initialized(&id)
+                                });
+                        self.telemetry_context
+                            .metrics
+                            .websocket_pool
+                            .record_connection_lookup(subgraph_name, pooled.is_some());
+                        if let Some(pooled) = pooled {
+                            executor = Arc::new(
+                                Box::new(pooled) as Box<dyn SubgraphExecutor + Send + Sync>
+                            );
                         }
                     }
                     WebSocketExecuteMode::Websocket => {

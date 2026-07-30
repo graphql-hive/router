@@ -6,8 +6,12 @@ use std::{
 use async_trait::async_trait;
 use dashmap::{mapref::entry::Entry, DashMap};
 use futures::{stream::BoxStream, StreamExt};
-use hive_router_internal::{
-    telemetry::metrics::subscription_metrics::SubscriptionTransport, telemetry::TelemetryContext,
+use hive_router_internal::telemetry::{
+    metrics::{
+        subscription_metrics::SubscriptionTransport,
+        websocket_pool_metrics::{WebSocketPoolConnectionCloseReason, WebSocketPoolOperationType},
+    },
+    TelemetryContext,
 };
 use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
 use http::{HeaderMap, Uri};
@@ -157,17 +161,16 @@ impl WebSocketPool {
         };
 
         if let Some(generation) = generation {
-            init.telemetry_context
-                .metrics
-                .subscriptions
-                .record_websocket_pool_initialization_started();
-
             let cleanup = InitializationCleanup::new(self.entries.clone(), id.clone(), generation);
             let telemetry_context = init.telemetry_context.clone();
             rt::spawn(async move {
                 let mut cleanup = cleanup;
                 match initialize_connection(&cleanup.entries, &cleanup.id, init).await {
                     Ok(connection) => {
+                        telemetry_context
+                            .metrics
+                            .websocket_pool
+                            .record_connection_initialization(&cleanup.id.subgraph_name, true);
                         let executor = connection.executor.clone();
                         let Some(waiters) = cleanup.publish(executor.clone()) else {
                             return;
@@ -181,8 +184,8 @@ impl WebSocketPool {
                     Err(error) => {
                         telemetry_context
                             .metrics
-                            .subscriptions
-                            .record_websocket_pool_initialization_failed();
+                            .websocket_pool
+                            .record_connection_initialization(&cleanup.id.subgraph_name, false);
                         let waiters = cleanup.remove();
                         notify_waiters(waiters, Err(error));
                     }
@@ -191,8 +194,8 @@ impl WebSocketPool {
         } else {
             init.telemetry_context
                 .metrics
-                .subscriptions
-                .record_websocket_pool_initialization_joined();
+                .websocket_pool
+                .record_connection_initialization_waiter(&id.subgraph_name);
         }
 
         wait_rx
@@ -410,8 +413,8 @@ impl SubgraphExecutor for PooledWebSocketExecutor {
         let _operation_guard = self
             .telemetry_context
             .metrics
-            .subscriptions
-            .active_subgraph_operation(&self.id.subgraph_name);
+            .websocket_pool
+            .active_operation(&self.id.subgraph_name, WebSocketPoolOperationType::Execute);
         let operation = async {
             let mut responses = self.submit(execution_request, 1).await?;
             responses.recv().await.ok_or_else(|| {
@@ -429,15 +432,24 @@ impl SubgraphExecutor for PooledWebSocketExecutor {
         execution_request: SubgraphExecutionRequest<'a>,
         _timeout: Option<Duration>,
     ) -> Result<BoxStream<'static, SubscriptionItem>, SubgraphExecutorError> {
+        let pool_operation_guard = self
+            .telemetry_context
+            .metrics
+            .websocket_pool
+            .active_operation(
+                &self.id.subgraph_name,
+                WebSocketPoolOperationType::Subscribe,
+            );
         // timeout covers queueing and the subscribe write, not the lifetime of the returned stream.
         let mut responses = self.submit(execution_request, self.buffer_capacity).await?;
-        let operation_guard = self
+        let subscription_operation_guard = self
             .telemetry_context
             .metrics
             .subscriptions
             .active_subgraph_operation(&self.id.subgraph_name);
         Ok(Box::pin(async_stream::stream! {
-            let _operation_guard = operation_guard;
+            let _pool_operation_guard = pool_operation_guard;
+            let _subscription_operation_guard = subscription_operation_guard;
             while let Some(item) = responses.recv().await {
                 yield item;
             }
@@ -527,8 +539,8 @@ impl ConnectionOwner {
         let subgraph_name = self.subgraph_name.clone();
         let _connection_guard = telemetry_context
             .metrics
-            .subscriptions
-            .active_subgraph_connection(&subgraph_name, SubscriptionTransport::WebSocket);
+            .websocket_pool
+            .active_connection(&subgraph_name);
         let (completed_tx, mut completed_rx) = mpsc::unbounded_channel();
         let mut active_operations = 0usize;
         let idle_timer = tokio::time::sleep(self.idle_timeout);
@@ -636,12 +648,15 @@ impl ConnectionOwner {
             let _ = command.ready.send(Err(shutdown.command_error()));
         }
 
-        if matches!(shutdown, ConnectionShutdown::Idle) {
-            self.telemetry_context
-                .metrics
-                .subscriptions
-                .record_websocket_pool_idle_expiration();
-        }
+        let reason = match shutdown {
+            ConnectionShutdown::Idle => WebSocketPoolConnectionCloseReason::Idle,
+            ConnectionShutdown::Dispatcher(_) => WebSocketPoolConnectionCloseReason::Dispatcher,
+            ConnectionShutdown::CommandsClosed => WebSocketPoolConnectionCloseReason::PoolDropped,
+        };
+        self.telemetry_context
+            .metrics
+            .websocket_pool
+            .record_connection_closed(&self.subgraph_name, reason);
     }
 }
 

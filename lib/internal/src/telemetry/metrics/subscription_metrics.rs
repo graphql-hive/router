@@ -38,13 +38,6 @@ pub struct SubscriptionMetrics {
     clients_ended_total: Option<Counter<u64>>,
     clients_lagged_messages_total: Option<Counter<u64>>,
     clients_sent_messages_total: Option<Counter<u64>>,
-    websocket_pool_initialization_started_total: Option<Counter<u64>>,
-    websocket_pool_initialization_joined_total: Option<Counter<u64>>,
-    websocket_pool_initialization_failed_total: Option<Counter<u64>>,
-    websocket_pool_subscription_hits_total: Option<Counter<u64>>,
-    websocket_pool_execute_hits_total: Option<Counter<u64>>,
-    websocket_pool_execute_misses_total: Option<Counter<u64>>,
-    websocket_pool_idle_expirations_total: Option<Counter<u64>>,
 }
 
 impl SubscriptionMetrics {
@@ -119,37 +112,6 @@ impl SubscriptionMetrics {
                 .with_unit(units::MESSAGES)
                 .build()
         });
-        let counter = |name, description| {
-            meter.map(|m| m.u64_counter(name).with_description(description).build())
-        };
-        let websocket_pool_initialization_started_total = counter(
-            names::WEBSOCKET_POOL_INITIALIZATION_STARTED_TOTAL,
-            "Pooled WebSocket connection initializations started.",
-        );
-        let websocket_pool_initialization_joined_total = counter(
-            names::WEBSOCKET_POOL_INITIALIZATION_JOINED_TOTAL,
-            "Pooled WebSocket connection initializations joined.",
-        );
-        let websocket_pool_initialization_failed_total = counter(
-            names::WEBSOCKET_POOL_INITIALIZATION_FAILED_TOTAL,
-            "Pooled WebSocket connection initializations failed.",
-        );
-        let websocket_pool_subscription_hits_total = counter(
-            names::WEBSOCKET_POOL_SUBSCRIPTION_HITS_TOTAL,
-            "Subscriptions routed through pooled WebSocket connections.",
-        );
-        let websocket_pool_execute_hits_total = counter(
-            names::WEBSOCKET_POOL_EXECUTE_HITS_TOTAL,
-            "Executions routed through pooled WebSocket connections.",
-        );
-        let websocket_pool_execute_misses_total = counter(
-            names::WEBSOCKET_POOL_EXECUTE_MISSES_TOTAL,
-            "Executions without a matching pooled WebSocket connection.",
-        );
-        let websocket_pool_idle_expirations_total = counter(
-            names::WEBSOCKET_POOL_IDLE_EXPIRATIONS_TOTAL,
-            "Pooled WebSocket connections closed after becoming idle.",
-        );
         Self {
             subgraphs_active,
             subgraphs_connections,
@@ -162,13 +124,6 @@ impl SubscriptionMetrics {
             clients_ended_total,
             clients_lagged_messages_total,
             clients_sent_messages_total,
-            websocket_pool_initialization_started_total,
-            websocket_pool_initialization_joined_total,
-            websocket_pool_initialization_failed_total,
-            websocket_pool_subscription_hits_total,
-            websocket_pool_execute_hits_total,
-            websocket_pool_execute_misses_total,
-            websocket_pool_idle_expirations_total,
         }
     }
 
@@ -256,34 +211,6 @@ impl SubscriptionMetrics {
         }
     }
 
-    pub fn record_websocket_pool_initialization_started(&self) {
-        record_counter(&self.websocket_pool_initialization_started_total);
-    }
-
-    pub fn record_websocket_pool_initialization_joined(&self) {
-        record_counter(&self.websocket_pool_initialization_joined_total);
-    }
-
-    pub fn record_websocket_pool_initialization_failed(&self) {
-        record_counter(&self.websocket_pool_initialization_failed_total);
-    }
-
-    pub fn record_websocket_pool_subscription_hit(&self) {
-        record_counter(&self.websocket_pool_subscription_hits_total);
-    }
-
-    pub fn record_websocket_pool_execute_hit(&self) {
-        record_counter(&self.websocket_pool_execute_hits_total);
-    }
-
-    pub fn record_websocket_pool_execute_miss(&self) {
-        record_counter(&self.websocket_pool_execute_misses_total);
-    }
-
-    pub fn record_websocket_pool_idle_expiration(&self) {
-        record_counter(&self.websocket_pool_idle_expirations_total);
-    }
-
     /// Records a single subgraph message dropped because of a slow consumer.
     pub fn record_message_dropped(&self, transport: SubscriptionTransport) {
         let attrs = [KeyValue::new(
@@ -324,12 +251,6 @@ impl SubscriptionMetrics {
         if let Some(c) = &self.clients_sent_messages_total {
             c.add(1, &attrs);
         }
-    }
-}
-
-fn record_counter(counter: &Option<Counter<u64>>) {
-    if let Some(counter) = counter {
-        counter.add(1, &[]);
     }
 }
 
