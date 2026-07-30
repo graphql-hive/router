@@ -340,8 +340,7 @@ pub struct RouterSharedState {
     /// The storage manager for the router.
     pub storage_manager: Arc<StorageManager>,
     /// The Laboratory page, with any configured seed values already injected. Rendered once
-    /// because the config cannot change while the router runs, and held as [`Bytes`] so serving
-    /// the multi-megabyte page is a refcount bump rather than a copy.
+    /// because the config cannot change while the router runs.
     pub laboratory_html: Bytes,
     /// The error masking configuration for the router.
     pub error_masking: Arc<Option<ErrorMaskingRuntime>>,
@@ -440,7 +439,8 @@ fn render_laboratory_page(
         || !config.global_headers.is_empty()
     {
         tracing::warn!(
-            "'laboratory.operations', 'laboratory.collections' and 'laboratory.global_headers' are ignored because this router was built with the 'graphiql' feature."
+          target: targets::CORE,
+          "'laboratory.operations', 'laboratory.collections' and 'laboratory.global_headers' are ignored because this router was built with the 'graphiql' feature."
         );
     }
 
