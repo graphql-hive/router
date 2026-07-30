@@ -27,7 +27,7 @@ impl Ord for HttpHeaderName {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.get_header_ref()
             .as_str()
-            .cmp(&other.get_header_ref().as_str())
+            .cmp(other.get_header_ref().as_str())
     }
 }
 
