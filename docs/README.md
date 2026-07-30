@@ -27,7 +27,7 @@
 |[**subscriptions**](#subscriptions)|`object`|Configuration for subscriptions.<br/>Default: `{"broadcast_capacity":0,"enabled":false,"subgraph_buffer_capacity":0}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
 |[**telemetry**](#telemetry)|`object`|Default: `{"client_identification":{"ip_header":null,"name_header":"graphql-client-name","version_header":"graphql-client-version"},"hive":null,"metrics":{"exporters":[],"instrumentation":{"common":{"histogram":{"aggregation":"explicit","bytes":{"buckets":[128,512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288,1048576,2097152,3145728,4194304,5242880],"record_min_max":false},"seconds":{"buckets":[0.005,0.01,0.025,0.05,0.075,0.1,0.25,0.5,0.75,1,2.5,5,7.5,10],"record_min_max":false}}},"instruments":{}}},"resource":{"attributes":{}},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
-|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"allow_only_http2":false,"circuit_breaker":null,"dedupe_enabled":true,"forward_operation_name":false,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100,"router":{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}}`<br/>||
+|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"allow_only_http2":false,"circuit_breaker":null,"dedupe_enabled":true,"forward_operation_name":false,"pool_idle_timeout":"50s","request_timeout":"30s","websocket":{}},"max_connections_per_host":100,"router":{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}}`<br/>||
 |[**websocket**](#websocket)|`object`|Configuration of router's WebSocket server.<br/>Default: `{"enabled":false,"headers":{"persist":false,"source":"connection"},"path":null}`<br/>||
 
 **Additional Properties:** not allowed   
@@ -230,6 +230,7 @@ traffic_shaping:
     forward_operation_name: false
     pool_idle_timeout: 50s
     request_timeout: 30s
+    websocket: {}
   max_connections_per_host: 100
   router:
     dedupe:
@@ -4063,7 +4064,7 @@ Configuration for the traffic-shaping of the executor. Use these configurations 
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**all**](#traffic_shapingall)|`object`|The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.<br/>Default: `{"allow_only_http2":false,"circuit_breaker":null,"dedupe_enabled":true,"forward_operation_name":false,"pool_idle_timeout":"50s","request_timeout":"30s"}`<br/>||
+|[**all**](#traffic_shapingall)|`object`|The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.<br/>Default: `{"allow_only_http2":false,"circuit_breaker":null,"dedupe_enabled":true,"forward_operation_name":false,"pool_idle_timeout":"50s","request_timeout":"30s","websocket":{}}`<br/>||
 |**max\_connections\_per\_host**|`integer`|Limits the concurrent amount of requests/connections per host/subgraph.<br/>Default: `100`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 |[**router**](#traffic_shapingrouter)|`object`|Configuration for the router itself, e.g., for handling incoming requests, or other router-level traffic shaping configurations.<br/>Default: `{"dedupe":{"enabled":false,"headers":"all"},"max_long_lived_clients":128,"request_timeout":"1m"}`<br/>||
 |[**subgraphs**](#traffic_shapingsubgraphs)|`object`|Optional per-subgraph configurations that will override the default configuration for specific subgraphs.<br/>||
@@ -4079,6 +4080,7 @@ all:
   forward_operation_name: false
   pool_idle_timeout: 50s
   request_timeout: 30s
+  websocket: {}
 max_connections_per_host: 100
 router:
   dedupe:
@@ -4104,9 +4106,10 @@ The default configuration that will be applied to all subgraphs, unless overridd
 |[**circuit\_breaker**](#traffic_shapingallcircuit_breaker)|`object`, `null`|Circuit Breaker configuration for all subgraphs.<br/>||
 |**dedupe\_enabled**|`boolean`|Enables/disables request deduplication to subgraphs.<br/><br/>When requests exactly matches the hashing mechanism (e.g., subgraph name, URL, headers, query, variables), and are executed at the same time, they will<br/>be deduplicated by sharing the response of other in-flight requests.<br/>Default: `true`<br/>||
 |**forward\_operation\_name**|`boolean`|When enabled, forwards client operation name to subgraphs.<br/>The operation name will fetch node id and operation name from the client request.<br/>Format: <Client Operation Name>__<Fetch Node ID><br/>Default: `false`<br/>||
-|**pool\_idle\_timeout**|`string`|Timeout for idle sockets being kept-alive.<br/>Default: `"50s"`<br/>||
+|**pool\_idle\_timeout**|`string`|Controls how long idle pooled connections remain available for reuse by default.<br/><br/>This timeout applies to both HTTP connection pools and pooled WebSocket connections for<br/>every subgraph that does not provide an override. Active WebSocket operations are never<br/>expired by this setting. Their idle timer starts only after the last operation on the<br/>pooled connection finishes.<br/><br/>Defaults to 50 seconds.<br/>Default: `"50s"`<br/>||
 |**request\_timeout**||Optional timeout configuration for requests to subgraphs.<br/><br/>Example with a fixed duration:<br/>```yaml<br/>  timeout:<br/>    duration: 5s<br/>```<br/><br/>Or with a VRL expression that can return a duration based on the operation kind:<br/>```yaml<br/>  timeout:<br/>    expression: \|<br/>     if (.request.operation.type == "mutation") {<br/>       "10s"<br/>     } else {<br/>       "15s"<br/>     }<br/>```<br/>Default: `"30s"`<br/>||
 |[**tls**](#traffic_shapingalltls)|`object`, `null`|||
+|[**websocket**](#traffic_shapingallwebsocket)|`object`|Default WebSocket connection reuse and execution behavior for subgraphs.<br/>Default: `{}`<br/>||
 
 **Additional Properties:** not allowed   
 **Example**
@@ -4118,6 +4121,7 @@ dedupe_enabled: true
 forward_operation_name: false
 pool_idle_timeout: 50s
 request_timeout: 30s
+websocket: {}
 
 ```
 
@@ -4210,6 +4214,23 @@ Either an exact HTTP status code (integer 100-599 or its string form, e.g. 503) 
 |----|----|-----------|--------|
 |**cert\_file**|||yes|
 |**key\_file**|`string`|Format: `"path"`<br/>|yes|
+
+**Additional Properties:** not allowed   
+   
+<a name="traffic_shapingallwebsocket"></a>
+#### traffic\_shaping\.all\.websocket: object
+
+Default WebSocket connection reuse and execution behavior for subgraphs.
+
+Per-subgraph values under `traffic_shaping.subgraphs.<name>.websocket` take precedence.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**execute\_mode**||Controls whether queries and mutations use WebSocket-enabled subgraphs.<br/><br/>The default is `http`, preserving HTTP execution unless WebSocket execution is explicitly<br/>enabled. Subscriptions continue to use the protocol selected under `subscriptions`.<br/>At the per-subgraph level omission inherits the `all` value.<br/>||
+|**reuse\_connections**|`boolean`, `null`|Enables multiplexing operations over matching initialized WebSocket connections.<br/><br/>When enabled, subscriptions retain initialized connections in a pool and can share one<br/>physical connection. Queries and mutations use that pool according to `execute_mode`.<br/>When disabled, each WebSocket operation owns a dedicated connection.<br/><br/>A pooled connection is discovered using two values:<br/><br/>1. The resolved WebSocket endpoint. Endpoint overrides and expressions are evaluated first,<br/>   then the configured WebSocket path is applied. Connections to different resolved<br/>   endpoints are never considered a match.<br/>2. The inbound connection fingerprint. This fingerprint contains the inbound HTTP method,<br/>   request path, selected inbound headers, and schema checksum. It deliberately excludes the<br/>   GraphQL operation, variables, and extensions, allowing different operations from the<br/>   same connection identity to share one physical WebSocket.<br/><br/>Header selection uses `traffic_shaping.router.dedupe.headers`, even when router request<br/>deduplication itself is disabled. The default is `all`. If a custom header selection is<br/>configured, it must include every inbound header that can change the authentication,<br/>authorization, cookie, or tenant identity sent in `connection_init`. Excluding such a<br/>header can make requests with different identities appear to match and reuse the same<br/>authenticated connection.<br/><br/>A subscription can create the matching pool entry. With `execute_mode: reuse_existing`, a<br/>query or mutation uses the connection only after it is fully initialized. A missing entry<br/>or one still waiting for `connection_ack` falls back to HTTP. With<br/>`execute_mode: websocket`, queries and mutations may create a missing entry or join an<br/>initialization already in progress.<br/><br/>For example, the following configuration lets subscriptions create shared connections and<br/>lets queries and mutations reuse them when available:<br/><br/>```yaml<br/>traffic_shaping:<br/>  all:<br/>    websocket:<br/>      reuse_connections: true<br/>      execute_mode: reuse_existing<br/>  router:<br/>    dedupe:<br/>      headers:<br/>        include: [authorization, cookie, x-tenant]<br/>```<br/><br/>The following keeps reuse enabled globally but gives one subgraph a dedicated connection<br/>for every WebSocket operation:<br/><br/>```yaml<br/>traffic_shaping:<br/>  all:<br/>    websocket:<br/>      reuse_connections: true<br/>  subgraphs:<br/>    payments:<br/>      websocket:<br/>        reuse_connections: false<br/>```<br/><br/>Idle pooled connections use the effective `pool_idle_timeout` from traffic shaping. At the<br/>`all` level `reuse_connections` defaults to `true`. At the per-subgraph level omission<br/>inherits the `all` value.<br/>||
 
 **Additional Properties:** not allowed   
    
@@ -4310,9 +4331,10 @@ Optional per-subgraph configurations that will override the default configuratio
 |[**circuit\_breaker**](#traffic_shapingsubgraphsadditionalpropertiescircuit_breaker)|`object`, `null`|Circuit Breaker configuration for the subgraph.<br/>||
 |**dedupe\_enabled**|`boolean`, `null`|Enables/disables request deduplication to subgraphs.<br/><br/>When requests exactly matches the hashing mechanism (e.g., subgraph name, URL, headers, query, variables), and are executed at the same time, they will<br/>be deduplicated by sharing the response of other in-flight requests.<br/>||
 |**forward\_operation\_name**|`boolean`, `null`|When enabled, forwards client operation name to the selected subgraph.<br/>The operation name will include fetch node id and operation name from the client request.<br/>Format: <Client Operation Name>__<Fetch Node ID><br/><br/>This setting takes precedence over the value set in `all` section.<br/>||
-|**pool\_idle\_timeout**|`string`, `null`|Timeout for idle sockets being kept-alive.<br/>||
+|**pool\_idle\_timeout**|`string`, `null`|Overrides how long idle pooled connections for this subgraph remain available for reuse.<br/><br/>This timeout applies to both the HTTP connection pool and pooled WebSocket connections for<br/>this subgraph. Active WebSocket operations are never expired by this setting. Their idle<br/>timer starts only after the last operation on the pooled connection finishes.<br/><br/>When omitted, `traffic_shaping.all.pool_idle_timeout` is used.<br/>||
 |**request\_timeout**||Optional timeout configuration for requests to subgraphs.<br/><br/>Example with a fixed duration:<br/>```yaml<br/>  timeout:<br/>    duration: 5s<br/>```<br/><br/>Or with a VRL expression that can return a duration based on the operation kind:<br/>```yaml<br/>  timeout:<br/>    expression: \|<br/>     if (.request.operation.type == "mutation") {<br/>       "10s"<br/>     } else {<br/>       "15s"<br/>     }<br/>```<br/>||
 |[**tls**](#traffic_shapingsubgraphsadditionalpropertiestls)|`object`, `null`|||
+|[**websocket**](#traffic_shapingsubgraphsadditionalpropertieswebsocket)|`object`, `null`|Overrides WebSocket connection reuse and execution behavior for this subgraph.<br/>||
 
 **Additional Properties:** not allowed   
 **Example**
@@ -4410,6 +4432,23 @@ Either an exact HTTP status code (integer 100-599 or its string form, e.g. 503) 
 |----|----|-----------|--------|
 |**cert\_file**|||yes|
 |**key\_file**|`string`|Format: `"path"`<br/>|yes|
+
+**Additional Properties:** not allowed   
+   
+<a name="traffic_shapingsubgraphsadditionalpropertieswebsocket"></a>
+##### traffic\_shaping\.subgraphs\.additionalProperties\.websocket: object,null
+
+Overrides WebSocket connection reuse and execution behavior for this subgraph.
+
+Omitted fields inherit their values from `traffic_shaping.all.websocket`.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**execute\_mode**||Controls whether queries and mutations use WebSocket-enabled subgraphs.<br/><br/>The default is `http`, preserving HTTP execution unless WebSocket execution is explicitly<br/>enabled. Subscriptions continue to use the protocol selected under `subscriptions`.<br/>At the per-subgraph level omission inherits the `all` value.<br/>||
+|**reuse\_connections**|`boolean`, `null`|Enables multiplexing operations over matching initialized WebSocket connections.<br/><br/>When enabled, subscriptions retain initialized connections in a pool and can share one<br/>physical connection. Queries and mutations use that pool according to `execute_mode`.<br/>When disabled, each WebSocket operation owns a dedicated connection.<br/><br/>A pooled connection is discovered using two values:<br/><br/>1. The resolved WebSocket endpoint. Endpoint overrides and expressions are evaluated first,<br/>   then the configured WebSocket path is applied. Connections to different resolved<br/>   endpoints are never considered a match.<br/>2. The inbound connection fingerprint. This fingerprint contains the inbound HTTP method,<br/>   request path, selected inbound headers, and schema checksum. It deliberately excludes the<br/>   GraphQL operation, variables, and extensions, allowing different operations from the<br/>   same connection identity to share one physical WebSocket.<br/><br/>Header selection uses `traffic_shaping.router.dedupe.headers`, even when router request<br/>deduplication itself is disabled. The default is `all`. If a custom header selection is<br/>configured, it must include every inbound header that can change the authentication,<br/>authorization, cookie, or tenant identity sent in `connection_init`. Excluding such a<br/>header can make requests with different identities appear to match and reuse the same<br/>authenticated connection.<br/><br/>A subscription can create the matching pool entry. With `execute_mode: reuse_existing`, a<br/>query or mutation uses the connection only after it is fully initialized. A missing entry<br/>or one still waiting for `connection_ack` falls back to HTTP. With<br/>`execute_mode: websocket`, queries and mutations may create a missing entry or join an<br/>initialization already in progress.<br/><br/>For example, the following configuration lets subscriptions create shared connections and<br/>lets queries and mutations reuse them when available:<br/><br/>```yaml<br/>traffic_shaping:<br/>  all:<br/>    websocket:<br/>      reuse_connections: true<br/>      execute_mode: reuse_existing<br/>  router:<br/>    dedupe:<br/>      headers:<br/>        include: [authorization, cookie, x-tenant]<br/>```<br/><br/>The following keeps reuse enabled globally but gives one subgraph a dedicated connection<br/>for every WebSocket operation:<br/><br/>```yaml<br/>traffic_shaping:<br/>  all:<br/>    websocket:<br/>      reuse_connections: true<br/>  subgraphs:<br/>    payments:<br/>      websocket:<br/>        reuse_connections: false<br/>```<br/><br/>Idle pooled connections use the effective `pool_idle_timeout` from traffic shaping. At the<br/>`all` level `reuse_connections` defaults to `true`. At the per-subgraph level omission<br/>inherits the `all` value.<br/>||
 
 **Additional Properties:** not allowed   
    
