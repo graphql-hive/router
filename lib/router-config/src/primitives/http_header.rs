@@ -23,6 +23,20 @@ impl HttpHeaderName {
     }
 }
 
+impl Ord for HttpHeaderName {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.get_header_ref()
+            .as_str()
+            .cmp(other.get_header_ref().as_str())
+    }
+}
+
+impl PartialOrd for HttpHeaderName {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl From<&str> for HttpHeaderName {
     fn from(header_name: &str) -> Self {
         HttpHeaderName(HeaderName::from_str(header_name).unwrap())

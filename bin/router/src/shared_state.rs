@@ -32,6 +32,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::HashSet, sync::Arc};
 use tracing::debug;
 
+#[cfg(not(feature = "graphiql"))]
+use crate::http_utils::laboratory::{render_laboratory_html, LaboratoryConfigError};
 use crate::jwt::context::JwtTokenPayload;
 use crate::jwt::JwtAuthRuntime;
 use crate::pipeline::active_subscriptions::{ActiveSubscriptions, SubscriptionEvent};
@@ -337,6 +339,9 @@ pub struct RouterSharedState {
     pub active_subscriptions: ActiveSubscriptions,
     /// The storage manager for the router.
     pub storage_manager: Arc<StorageManager>,
+    /// The Laboratory page, with any configured seed values already injected. Rendered once
+    /// because the config cannot change while the router runs.
+    pub laboratory_html: Bytes,
     /// The error masking configuration for the router.
     pub error_masking: Arc<Option<ErrorMaskingRuntime>>,
 }
@@ -370,6 +375,8 @@ impl RouterSharedState {
         let error_masking = Arc::new(ErrorMaskingRuntime::compile_from_config(
             &router_config.error_masking,
         ));
+
+        let laboratory_html = render_laboratory_page(&router_config.laboratory)?;
 
         Ok(Self {
             validation_plan: Arc::new(validation_plan),
@@ -406,9 +413,38 @@ impl RouterSharedState {
             long_lived_client_count: Arc::new(AtomicUsize::new(0)),
             active_subscriptions,
             storage_manager,
+            laboratory_html,
             error_masking,
         })
     }
+}
+
+#[cfg(not(feature = "graphiql"))]
+fn render_laboratory_page(
+    config: &hive_router_config::laboratory::LaboratoryConfig,
+) -> Result<Bytes, SharedStateError> {
+    let html = render_laboratory_html(crate::LABORATORY_HTML, config).map_err(Box::new)?;
+
+    Ok(Bytes::from(html))
+}
+
+/// The `graphiql` feature swaps the Laboratory for a static GraphiQL page, which has nowhere to
+/// put the seed values.
+#[cfg(feature = "graphiql")]
+fn render_laboratory_page(
+    config: &hive_router_config::laboratory::LaboratoryConfig,
+) -> Result<Bytes, SharedStateError> {
+    if !config.operations.is_empty()
+        || !config.collections.is_empty()
+        || !config.global_headers.is_empty()
+    {
+        tracing::warn!(
+          target: targets::CORE,
+          "'laboratory.operations', 'laboratory.collections' and 'laboratory.global_headers' are ignored because this router was built with the 'graphiql' feature."
+        );
+    }
+
+    Ok(Bytes::from_static(crate::LABORATORY_HTML.as_bytes()))
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -427,6 +463,9 @@ pub enum SharedStateError {
     IntrospectionPolicyCompile(#[from] Box<ExpressionCompileError>),
     #[error("invalid coprocessor config: {0}")]
     CoprocessorRuntime(#[from] Box<CoprocessorError>),
+    #[cfg(not(feature = "graphiql"))]
+    #[error("invalid laboratory config: {0}")]
+    LaboratoryConfig(#[from] Box<LaboratoryConfigError>),
 }
 
 #[cfg(test)]

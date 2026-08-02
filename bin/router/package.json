@@ -2,8 +2,8 @@
   "name": "hive-router-js-deps",
   "type": "module",
   "private": true,
-  "packageManager": "npm@11.11.1",
+  "packageManager": "npm@11.16.0",
   "devDependencies": {
-    "@graphql-hive/laboratory": "0.2.0"
+    "@graphql-hive/laboratory": "0.2.3"
   }
 }

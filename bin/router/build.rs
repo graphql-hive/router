@@ -121,9 +121,167 @@ fn build_inline_laboratory_html(dist_dir: &Path, product_logo: &Path) -> String 
         }},
       }};
 
+      // Global headers: attach configured headers to every request the Laboratory makes to this
+      // router, without showing them in the UI. Installed before the bundle so the bundle, which
+      // captures `globalThis.fetch` at init, uses this wrapper. The router replaces the placeholder
+      // with a header map (or {{}} when none are configured).
+      (function () {{
+        var globalHeaders = {{}};
+        try {{
+          globalHeaders = JSON.parse("__LABORATORY_GLOBAL_HEADERS__");
+        }} catch (error) {{
+          console.warn("Failed to read the Laboratory global headers", error);
+        }}
+        if (Object.keys(globalHeaders).length === 0) {{
+          return;
+        }}
+
+        function isSameOrigin(url) {{
+          try {{
+            return new URL(url, window.location.href).origin === window.location.origin;
+          }} catch (error) {{
+            // Fail closed: if the URL can't be parsed, don't add the headers.
+            return false;
+          }}
+        }}
+
+        try {{
+          // Built once; an invalid header name throws here (at install) rather than on every
+          // request, and the catch keeps a bad value from breaking the rest of the page.
+          var base = new Headers(globalHeaders);
+          var nativeFetch = window.fetch.bind(window);
+          window.fetch = function (input, init) {{
+            init = init || {{}};
+            var url = typeof input === "string" ? input : input && input.url;
+            // Only the router's own endpoint (same-origin) gets the global headers, so they never
+            // leak to a third-party endpoint a user repoints the Laboratory at.
+            if (isSameOrigin(url)) {{
+              var merged = new Headers(base);
+              // A per-operation header of the same name wins.
+              new Headers(init.headers || {{}}).forEach(function (value, key) {{
+                merged.set(key, value);
+              }});
+              init = Object.assign({{}}, init, {{ headers: merged }});
+            }}
+            return nativeFetch(input, init);
+          }};
+        }} catch (error) {{
+          console.warn("Failed to install Laboratory global headers", error);
+        }}
+      }})();
+
 {js_contents}
 
-      HiveLaboratory.renderLaboratory(window.document.querySelector("#root"));
+      // The router always replaces this placeholder, with {{}} when nothing is configured.
+      var hiveRouterSeed = {{}};
+      try {{
+        hiveRouterSeed = JSON.parse("__LABORATORY_PROPS__");
+      }} catch (error) {{
+        console.warn("Failed to read the Laboratory configuration", error);
+      }}
+
+      // Merges the seed with what the Laboratory has already persisted, so seeding does not
+      // discard the user's own tabs and operations.
+      function hiveRouterLaboratoryProps(seed) {{
+        var STORAGE_NAMESPACE = "hive-laboratory";
+        var SEEDED_TABS_KEY = "hive-router:seeded-tab-ids";
+        var props = {{}};
+
+        function readStored(key) {{
+          try {{
+            var raw = window.localStorage.getItem(STORAGE_NAMESPACE + ":" + key);
+            return raw ? JSON.parse(raw) : null;
+          }} catch (error) {{
+            return null;
+          }}
+        }}
+
+        // Seeded collections are refreshed from config wholesale; user-created ones are kept.
+        var seededCollections = seed.collections || [];
+        if (seededCollections.length > 0) {{
+          var storedCollections = readStored("collections") || [];
+          var seededCollectionIds = seededCollections.map(function (collection) {{
+            return collection.id;
+          }});
+          props.defaultCollections = seededCollections.concat(
+            storedCollections.filter(function (collection) {{
+              return seededCollectionIds.indexOf(collection.id) === -1;
+            }})
+          );
+        }}
+
+        var seededOperations = seed.operations || [];
+        if (seededOperations.length > 0) {{
+          var storedOperations = readStored("operations") || [];
+          var storedTabs = readStored("tabs") || [];
+
+          var seededOperationIds = seededOperations.map(function (operation) {{
+            return operation.id;
+          }});
+
+          // Seeded operations are refreshed from config; user-created ones are kept.
+          props.defaultOperations = seededOperations.concat(
+            storedOperations.filter(function (operation) {{
+              return seededOperationIds.indexOf(operation.id) === -1;
+            }})
+          );
+
+          // A seeded tab opens only the first time this browser sees it, so closing it makes it
+          // stay closed while newly configured operations still show up.
+          var alreadySeededTabIds = [];
+          try {{
+            alreadySeededTabIds =
+              JSON.parse(window.localStorage.getItem(SEEDED_TABS_KEY)) || [];
+          }} catch (error) {{
+            alreadySeededTabIds = [];
+          }}
+
+          var openTabIds = storedTabs.map(function (tab) {{
+            return tab.id;
+          }});
+          var newTabs = (seed.tabs || []).filter(function (tab) {{
+            return (
+              openTabIds.indexOf(tab.id) === -1 &&
+              alreadySeededTabIds.indexOf(tab.id) === -1
+            );
+          }});
+
+          props.defaultTabs = storedTabs.concat(newTabs);
+
+          try {{
+            var seenTabIds = alreadySeededTabIds.slice();
+            (seed.tabs || []).forEach(function (tab) {{
+              if (seenTabIds.indexOf(tab.id) === -1) {{
+                seenTabIds.push(tab.id);
+              }}
+            }});
+            window.localStorage.setItem(SEEDED_TABS_KEY, JSON.stringify(seenTabIds));
+          }} catch (error) {{
+            // Best-effort: unavailable storage only means a closed seeded tab may re-open later.
+          }}
+
+          // Keep the user where they left off, unless a brand new operation was just seeded.
+          var storedActiveTabId = readStored("activeTabId");
+          var storedTabIsStillOpen = props.defaultTabs.some(function (tab) {{
+            return tab.id === storedActiveTabId;
+          }});
+
+          if (newTabs.length > 0) {{
+            props.defaultActiveTabId = newTabs[0].id;
+          }} else if (storedTabIsStillOpen) {{
+            props.defaultActiveTabId = storedActiveTabId;
+          }} else if (seed.activeTabId) {{
+            props.defaultActiveTabId = seed.activeTabId;
+          }}
+        }}
+
+        return props;
+      }}
+
+      HiveLaboratory.renderLaboratory(
+        window.document.querySelector("#root"),
+        hiveRouterLaboratoryProps(hiveRouterSeed)
+      );
     </script>
   </body>
 </html>

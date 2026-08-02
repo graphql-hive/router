@@ -2369,7 +2369,10 @@ Configuration for the Hive Laboratory interface.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|[**collections**](#laboratorycollections)|`object[]`|Collections to pre-populate the Laboratory with.<br/>||
 |**enabled**|`boolean`|Enables/disables the Hive Laboratory interface. By default, the Hive Laboratory interface is enabled.<br/><br/>You can override this setting by setting the `LABORATORY_ENABLED` environment variable to `true` or `false`.<br/>Default: `true`<br/>||
+|[**global\_headers**](#laboratoryglobal_headers)|`object`|Headers sent on every request the Laboratory makes to the router, as a map of header name to<br/>||
+|[**operations**](#laboratoryoperations)|`object[]`|Operations to pre-populate the Laboratory with.<br/>||
 
 **Additional Properties:** not allowed   
 **Example**
@@ -2379,6 +2382,241 @@ enabled: true
 
 ```
 
+   
+<a name="laboratorycollections"></a>
+### laboratory\.collections\[\]: array
+
+Collections to pre-populate the Laboratory with.
+
+A collection is a named, reusable group of operations shown in the Laboratory's sidebar. Use
+this to hand users a labelled set of standard queries they can browse and run. Each
+collection must contain at least one operation.
+
+Seeded collections are refreshed from this configuration on every page load: a user can edit
+one during a session, but it resets on reload. To change a seeded collection permanently,
+change it here in the router configuration. Collections a user creates themselves are never
+touched.
+
+> Seeded collections are embedded in the HTML page served to every browser that opens the
+> Laboratory and are visible via "view source". Do not put secrets in `headers`.
+
+```yaml
+laboratory:
+  collections:
+    - name: Onboarding
+      operations:
+        - name: GetHello
+          query: |
+            query GetHello {
+              hello
+            }
+          headers:
+            X-Env: staging
+```
+
+
+**Items**
+
+**Item Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**name**|`string`|The name of the collection. Used as the sidebar label, and must be unique across all seeded<br/>collections.<br/>|yes|
+|[**operations**](#laboratorycollectionsoperations)|`object[]`|The operations in this collection. Operation names must be unique within the collection.<br/>|no|
+
+**Item Additional Properties:** not allowed   
+**Example**
+
+```yaml
+- operations:
+    - {}
+
+```
+
+   
+<a name="laboratorycollectionsoperations"></a>
+#### laboratory\.collections\[\]\.operations\[\]: array
+
+The operations in this collection. Operation names must be unique within the collection.
+
+
+**Items**
+
+**Item Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**extensions**](#laboratorycollectionsoperationsextensions)|`object`, `null`|The operation's GraphQL extensions, as a JSON object.<br/>|no|
+|[**headers**](#laboratorycollectionsoperationsheaders)|`object`, `null`|Headers to send with this operation, as a map of header name to value. These apply only to<br/>|no|
+|**name**|`string`|The name of the operation. Used as the tab title, and must be unique across all seeded<br/>operations.<br/>|yes|
+|**query**|`string`|The GraphQL document of the operation.<br/>|yes|
+|[**variables**](#laboratorycollectionsoperationsvariables)|`object`, `null`|The operation's variables, as a JSON object (map of variable name to value). Values may be<br/>|no|
+
+**Item Additional Properties:** not allowed   
+**Example**
+
+```yaml
+- {}
+
+```
+
+   
+<a name="laboratorycollectionsoperationsextensions"></a>
+##### laboratory\.collections\[\]\.operations\[\]\.extensions: object,null
+
+The operation's GraphQL extensions, as a JSON object.
+
+Values support `{{name}}` references to the Laboratory's environment variables; a templated
+value resolves to a string.
+
+
+**Additional Properties:** allowed   
+   
+<a name="laboratorycollectionsoperationsheaders"></a>
+##### laboratory\.collections\[\]\.operations\[\]\.headers: object,null
+
+Headers to send with this operation, as a map of header name to value. These apply only to
+this operation.
+
+Values support `{{name}}` references to the Laboratory's environment variables.
+
+
+**Properties (Pattern)**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**^\[A\-Za\-z0\-9\!\#$%&'\*\+\\\-\.^\_\`\|~\]\+$**|`string`|||
+
+**Additional Properties:** not allowed   
+   
+<a name="laboratorycollectionsoperationsvariables"></a>
+##### laboratory\.collections\[\]\.operations\[\]\.variables: object,null
+
+The operation's variables, as a JSON object (map of variable name to value). Values may be
+nested objects, arrays, numbers, booleans or strings.
+
+Values support `{{name}}` references to the Laboratory's environment variables; a templated
+value resolves to a string.
+
+
+**Additional Properties:** allowed   
+   
+<a name="laboratoryglobal_headers"></a>
+### laboratory\.global\_headers: object
+
+Headers sent on every request the Laboratory makes to the router, as a map of header name to
+value.
+
+Unlike an operation's `headers`, these are not shown or editable in the Laboratory UI: they
+are attached to the underlying request transport. A header set on an individual operation
+overrides a global header of the same name.
+
+> These are embedded in the HTML page served to every browser that opens the Laboratory and
+> are visible via "view source". Do not put secrets here.
+
+```yaml
+laboratory:
+  global_headers:
+    X-Env: staging
+```
+
+
+**Properties (Pattern)**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**^\[A\-Za\-z0\-9\!\#$%&'\*\+\\\-\.^\_\`\|~\]\+$**|`string`|||
+
+**Additional Properties:** not allowed   
+   
+<a name="laboratoryoperations"></a>
+### laboratory\.operations\[\]: array
+
+Operations to pre-populate the Laboratory with.
+
+Each operation opens in its own tab the first time a browser sees it. Operations the user
+creates themselves are preserved, and if the user closes a seeded tab it stays closed. The
+content of a seeded operation is refreshed from this configuration on every page load, so
+edits a user makes to a seeded operation are not kept.
+
+> Seeded operations are embedded in the HTML page served to every browser that opens the
+> Laboratory and are visible via "view source". Do not put secrets in `headers`.
+
+```yaml
+laboratory:
+  operations:
+    - name: GetHello
+      query: |
+        query GetHello {
+          hello
+        }
+      variables:
+        limit: 10
+      headers:
+        X-Env: staging
+```
+
+
+**Items**
+
+**Item Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**extensions**](#laboratoryoperationsextensions)|`object`, `null`|The operation's GraphQL extensions, as a JSON object.<br/>|no|
+|[**headers**](#laboratoryoperationsheaders)|`object`, `null`|Headers to send with this operation, as a map of header name to value. These apply only to<br/>|no|
+|**name**|`string`|The name of the operation. Used as the tab title, and must be unique across all seeded<br/>operations.<br/>|yes|
+|**query**|`string`|The GraphQL document of the operation.<br/>|yes|
+|[**variables**](#laboratoryoperationsvariables)|`object`, `null`|The operation's variables, as a JSON object (map of variable name to value). Values may be<br/>|no|
+
+**Item Additional Properties:** not allowed   
+**Example**
+
+```yaml
+- {}
+
+```
+
+   
+<a name="laboratoryoperationsextensions"></a>
+#### laboratory\.operations\[\]\.extensions: object,null
+
+The operation's GraphQL extensions, as a JSON object.
+
+Values support `{{name}}` references to the Laboratory's environment variables; a templated
+value resolves to a string.
+
+
+**Additional Properties:** allowed   
+   
+<a name="laboratoryoperationsheaders"></a>
+#### laboratory\.operations\[\]\.headers: object,null
+
+Headers to send with this operation, as a map of header name to value. These apply only to
+this operation.
+
+Values support `{{name}}` references to the Laboratory's environment variables.
+
+
+**Properties (Pattern)**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**^\[A\-Za\-z0\-9\!\#$%&'\*\+\\\-\.^\_\`\|~\]\+$**|`string`|||
+
+**Additional Properties:** not allowed   
+   
+<a name="laboratoryoperationsvariables"></a>
+#### laboratory\.operations\[\]\.variables: object,null
+
+The operation's variables, as a JSON object (map of variable name to value). Values may be
+nested objects, arrays, numbers, booleans or strings.
+
+Values support `{{name}}` references to the Laboratory's environment variables; a templated
+value resolves to a string.
+
+
+**Additional Properties:** allowed   
    
 <a name="limits"></a>
 ## limits: object
