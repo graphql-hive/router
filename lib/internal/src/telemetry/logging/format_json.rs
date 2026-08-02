@@ -150,9 +150,9 @@ where
 
                 if let Some(correlation_ids) = ids.plugin_provided_correlation_ids() {
                     for (key, value) in correlation_ids {
-                        buf.push_str(",\"");
-                        buf.push_str(key);
-                        buf.push_str("\":");
+                        buf.push(',');
+                        write_json_str(&mut *buf, key)?;
+                        buf.push(':');
                         write_json_str(&mut *buf, value)?;
                     }
                 }
