@@ -99,6 +99,14 @@ where
         self.bg_tasks_manager.register_task(task)
     }
 
+    /// Registers a correlation extractor function for the logger.
+    ///
+    /// This function will be called during request processing to extract correlation identifiers from the request.
+    /// All log lines that will be produced during request processing will include the extracted correlation identifiers, in addition to the built-in request ID and trace ID.
+    ///
+    /// The method returns a `Vec` of `(CorrelationIdentifierKey, CorrelationIdentifierValue)` pairs extracted from the request.
+    /// The `CorrelationIdentifierKey` is a static string (`&'static str`) that identifies the type of correlation identifier (e.g. `"request_id"`).
+    /// The `CorrelationIdentifierValue` is the actual value (`String`) of the correlation identifier extracted from the request.
     pub fn register_logger_correlation_extractor(
         &mut self,
         correlator: PluginCorrelationExtractorFn,

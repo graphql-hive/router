@@ -61,6 +61,7 @@ where
     }
 }
 
+#[derive(Debug)]
 pub struct StdOutCaptureBridge {
     pub lines: Vec<String>,
     pub lines_json: Vec<Map<String, Value>>,

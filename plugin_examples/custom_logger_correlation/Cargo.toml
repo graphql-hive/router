@@ -18,6 +18,7 @@ path = "src/main.rs"
 [dependencies]
 hive-router = { version = "*", path = "../../bin/router" }
 serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 e2e = { version = "*", path = "../../e2e" }

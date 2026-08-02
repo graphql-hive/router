@@ -7,3 +7,6 @@ plugins:
     enabled: true
 http:
   graphql_endpoint: "/{project_id}/graphql"
+log:
+  format: json
+  level: debug

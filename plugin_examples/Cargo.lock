@@ -1524,6 +1524,7 @@ dependencies = [
  "e2e",
  "hive-router",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

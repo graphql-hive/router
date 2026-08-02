@@ -1,9 +1,14 @@
+use hive_router::plugins::hooks::on_http_request::{
+    OnHttpRequestHookPayload, OnHttpRequestHookResult,
+};
+use hive_router::plugins::plugin_trait::StartHookPayload;
 use hive_router::plugins::{
     hooks::on_plugin_init::{
         OnPluginInitPayload, OnPluginInitResult, RequestIdentifierExtractionPoint,
     },
     plugin_trait::RouterPlugin,
 };
+use hive_router::tracing;
 
 pub struct CustomLoggerCorrelationPlugin;
 
@@ -28,5 +33,14 @@ impl RouterPlugin for CustomLoggerCorrelationPlugin {
             _ => None,
         });
         payload.initialize_plugin(Self)
+    }
+
+    fn on_http_request<'req>(
+        &'req self,
+        payload: OnHttpRequestHookPayload<'req>,
+    ) -> OnHttpRequestHookResult<'req> {
+        tracing::debug!(target = "my_custom_plugin", "on_http_request called");
+
+        payload.proceed()
     }
 }
