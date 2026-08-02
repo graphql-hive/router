@@ -2,6 +2,7 @@
 hive-router-config: minor
 hive-router-internal: patch
 hive-router: minor
+hive-router-plan-executor: patch
 ---
 
 # Add `limits.max_request_header_size`
