@@ -176,11 +176,11 @@ global_headers:
         .expect("should parse");
 
         assert_eq!(
-            config.global_headers.get("X-Env"),
+            config.global_headers.get(&HttpHeaderName::from("X-Env")),
             Some(&"staging".to_string())
         );
         assert_eq!(
-            config.global_headers.get("X-Team"),
+            config.global_headers.get(&HttpHeaderName::from("X-Team")),
             Some(&"payments".to_string())
         );
     }
@@ -203,7 +203,10 @@ operations:
         assert_eq!(operation.name, "GetHello");
         assert_eq!(operation.query, "query GetHello { hello }");
         assert_eq!(
-            operation.headers.as_ref().and_then(|h| h.get("X-Env")),
+            operation
+                .headers
+                .as_ref()
+                .and_then(|h| h.get(&HttpHeaderName::from("X-Env"))),
             Some(&"staging".to_string())
         );
         assert!(operation.variables.is_none());
@@ -290,7 +293,7 @@ collections:
             onboarding.operations[0]
                 .headers
                 .as_ref()
-                .and_then(|h| h.get("X-Env")),
+                .and_then(|h| h.get(&HttpHeaderName::from("X-Env"))),
             Some(&"staging".to_string())
         );
 
