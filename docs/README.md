@@ -15,7 +15,7 @@
 |**introspection**||Configuration to enable or disable introspection queries.<br/>||
 |[**jwt**](#jwt)|`object`|Configuration for JWT authentication plugin.<br/>|yes|
 |[**laboratory**](#laboratory)|`object`|Configuration for the Hive Laboratory interface.<br/>Default: `{"enabled":true}`<br/>||
-|[**limits**](#limits)|`object`|Configuration for checking the limits such as query depth, complexity, etc.<br/>Default: `{"max_request_body_size":"2 MB"}`<br/>||
+|[**limits**](#limits)|`object`|Configuration for checking the limits such as query depth, complexity, etc.<br/>Default: `{"max_request_body_size":"2 MB","max_request_header_size":"64 KiB"}`<br/>||
 |[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"correlation":{"id_header":"x-request-id","trace_propagation":true},"filter":null,"format":"json","level":"info","log_internals":false}`<br/>||
 |[**override\_labels**](#override_labels)|`object`|Configuration for overriding labels.<br/>||
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
@@ -110,6 +110,7 @@ laboratory:
   enabled: true
 limits:
   max_request_body_size: 2 MB
+  max_request_header_size: 64 KiB
 log:
   correlation:
     id_header: x-request-id
@@ -2632,12 +2633,14 @@ Configuration for checking the limits such as query depth, complexity, etc.
 |[**max\_depth**](#limitsmax_depth)|`object`, `null`|Configuration of limiting the depth of the incoming GraphQL operations.<br/>|yes|
 |[**max\_directives**](#limitsmax_directives)|`object`, `null`|Configuration of limiting the number of directives in the incoming GraphQL operations.<br/>|yes|
 |**max\_request\_body\_size**|`string`|Default: `"2 MB"`<br/>||
+|**max\_request\_header\_size**|`string`|The maximum total size of the incoming HTTP request headers.<br/>Requests exceeding this limit are rejected with `431 Request Header Fields Too Large`<br/>before being processed, so oversized headers (e.g. large cookies) never reach the subgraphs.<br/><br/>Defaults to `64KiB`.<br/>Default: `"64 KiB"`<br/>||
 |[**max\_tokens**](#limitsmax_tokens)|`object`, `null`|Configuration of limiting the number of tokens in the incoming GraphQL operations.<br/>|yes|
 
 **Example**
 
 ```yaml
 max_request_body_size: 2 MB
+max_request_header_size: 64 KiB
 
 ```
 

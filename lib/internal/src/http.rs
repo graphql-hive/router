@@ -147,7 +147,7 @@ pub fn read_request_body_size(req: &HttpRequest) -> Option<u64> {
 /// reusable for typical over-limit requests without reading the whole thing
 const MAX_DRAIN_BYTES: usize = 64 * 1024;
 
-async fn drain_body_stream(body_stream: &mut web::types::Payload) {
+pub async fn drain_body_stream(body_stream: &mut web::types::Payload) {
     let mut drained: usize = 0;
 
     while drained < MAX_DRAIN_BYTES {

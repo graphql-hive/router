@@ -35,6 +35,15 @@ pub struct LimitsConfig {
     #[serde(default = "default_max_request_body_size")]
     #[schemars(with = "String")]
     pub max_request_body_size: Size,
+
+    /// The maximum total size of the incoming HTTP request headers.
+    /// Requests exceeding this limit are rejected with `431 Request Header Fields Too Large`
+    /// before being processed, so oversized headers (e.g. large cookies) never reach the subgraphs.
+    ///
+    /// Defaults to `64KiB`.
+    #[serde(default = "default_max_request_header_size")]
+    #[schemars(with = "String")]
+    pub max_request_header_size: Size,
 }
 
 impl Default for LimitsConfig {
@@ -45,6 +54,7 @@ impl Default for LimitsConfig {
             max_tokens: None,
             max_aliases: None,
             max_request_body_size: default_max_request_body_size(),
+            max_request_header_size: default_max_request_header_size(),
         }
     }
 }
@@ -92,5 +102,12 @@ pub struct MaxAliasesRuleConfig {
 fn default_max_request_body_size() -> Size {
     "2MB".parse().expect(
         "Default value for 'limits.max_request_body_size' should be a valid human-readable size",
+    )
+}
+
+fn default_max_request_header_size() -> Size {
+    // Matches ntex's default HTTP message buffer size (64 * 1024 bytes).
+    "64KiB".parse().expect(
+        "Default value for 'limits.max_request_header_size' should be a valid human-readable size",
     )
 }

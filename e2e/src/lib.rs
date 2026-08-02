@@ -31,6 +31,8 @@ mod extensions_propagation;
 #[cfg(test)]
 mod file_supergraph;
 #[cfg(test)]
+mod header_limit;
+#[cfg(test)]
 mod header_propagation;
 #[cfg(test)]
 mod hive_cdn_supergraph;

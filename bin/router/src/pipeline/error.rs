@@ -62,6 +62,9 @@ pub enum PipelineError {
     #[error("Content-Type header is not supported")]
     #[strum(serialize = "UNSUPPORTED_CONTENT_TYPE")]
     UnsupportedContentType,
+    #[error("Request headers exceed the maximum allowed size")]
+    #[strum(serialize = "REQUEST_HEADER_FIELDS_TOO_LARGE")]
+    RequestHeadersTooLarge,
 
     // GET Specific pipeline errors
     #[error("Missing query parameter: {0}")]
@@ -296,6 +299,7 @@ impl PipelineError {
             (Self::AuthorizationFailed(_), _) => StatusCode::FORBIDDEN,
             (Self::MissingContentTypeHeader, _) => StatusCode::NOT_ACCEPTABLE,
             (Self::UnsupportedContentType, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            (Self::RequestHeadersTooLarge, _) => StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE,
             (Self::CsrfPreventionFailed, _) => StatusCode::FORBIDDEN,
             (Self::JwtError(err), _) => err.status_code(),
             (Self::IntrospectionPermissionEvaluationError(_), _) => {
