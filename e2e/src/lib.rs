@@ -1,3 +1,7 @@
+// mirrors the recursion_limit bump in bin/router/src/lib.rs: the test harness builds
+// the same nested ntex middleware stack, which needs the same higher layout-recursion budget.
+#![recursion_limit = "256"]
+
 #[cfg(test)]
 mod authorization_directives_filter;
 #[cfg(test)]
