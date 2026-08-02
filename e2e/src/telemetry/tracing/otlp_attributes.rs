@@ -450,6 +450,124 @@ async fn test_custom_client_identification() {
     );
 }
 
+#[ntex::test]
+async fn request_id_span_attribute_from_logging_header_correlation() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_traces_endpoint();
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+          supergraph:
+            source: file
+            path: {supergraph_path}
+
+          telemetry:
+            tracing:
+              exporters:
+                - kind: otlp
+                  endpoint: {otlp_endpoint}
+                  protocol: http
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 2s
+      "#,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    let res = router
+        .send_graphql_request(
+            "{ users { id } }",
+            None,
+            some_header_map!(
+                http::header::HeaderName::from_static("x-request-id") => "e2e-test-request-id"
+            ),
+        )
+        .await;
+
+    assert!(res.status().is_success());
+
+    let http_server_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("http.server")
+        .await;
+
+    assert_eq!(
+        http_server_span.attributes.get("router.request_id"),
+        Some(&"e2e-test-request-id".to_string()),
+        "Expected the 'router.request_id' span attribute to match the incoming 'x-request-id' header"
+    );
+}
+
+/// Verify a request-id is generated and attached to the root HTTP server span
+/// even when the client does not send a correlation header
+#[ntex::test]
+async fn request_id_span_attribute_auto_generated_from_logging_header_correlation() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_traces_endpoint();
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+          supergraph:
+            source: file
+            path: {supergraph_path}
+
+          telemetry:
+            tracing:
+              exporters:
+                - kind: otlp
+                  endpoint: {otlp_endpoint}
+                  protocol: http
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 2s
+      "#,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    let res = router
+        .send_graphql_request("{ users { id } }", None, None)
+        .await;
+
+    assert!(res.status().is_success());
+
+    let http_server_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("http.server")
+        .await;
+
+    let request_id = http_server_span
+        .attributes
+        .get("router.request_id")
+        .expect("Expected a 'router.request_id' span attribute to be set");
+
+    assert!(
+        !request_id.is_empty(),
+        "Expected a non-empty auto-generated request id"
+    );
+}
+
 /// Verify default resource attributes
 #[ntex::test]
 async fn test_default_resource_attributes() {

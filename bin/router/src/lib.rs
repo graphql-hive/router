@@ -181,6 +181,7 @@ async fn graphql_endpoint_handler(
             schema_state,
             app_state.clone(),
             parent_ctx,
+            &request_identifiers,
         )
         .await;
 
@@ -244,6 +245,7 @@ async fn graphql_endpoint_dispatch(
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
     parent_ctx: opentelemetry::Context,
+    request_identifiers: &RequestIdentifiers,
 ) -> (ResponseMode, web::HttpResponse) {
     let root_http_request_span = HttpServerRequestSpan::from_request(
         request,
@@ -254,6 +256,7 @@ async fn graphql_endpoint_dispatch(
             .ip_header,
     );
     let _ = root_http_request_span.set_parent(parent_ctx);
+    root_http_request_span.record_request_id(request_identifiers.req_id());
 
     let response_header_sink = ResponseHeaderSink::default();
 

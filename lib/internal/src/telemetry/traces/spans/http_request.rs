@@ -117,6 +117,7 @@ impl HttpServerRequestSpan {
             target: TARGET_NAME,
             "http.server",
             "hive.kind" = kind,
+            "router.request_id" = Empty,
             "otel.status_code" = Empty,
             "otel.kind" = "Server",
             "error.type" = Empty,
@@ -147,6 +148,10 @@ impl HttpServerRequestSpan {
     pub fn record_body_size(&self, body_size: usize) {
         self.span
             .record(attributes::HTTP_REQUEST_BODY_SIZE, body_size);
+    }
+
+    pub fn record_request_id(&self, req_id: &str) {
+        self.span.record(attributes::ROUTER_REQUEST_ID, req_id);
     }
 
     pub fn record_response(&self, response: &ntex::web::HttpResponse) {
