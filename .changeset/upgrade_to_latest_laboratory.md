@@ -4,7 +4,7 @@ hive-router: patch
 
 # Upgrade to latest laboratory
 
-[@graphql-hive/laboratory@0.2.1](https://github.com/graphql-hive/console/releases/tag/%40graphql-hive%2Flaboratory%400.2.1)
+Upgrades the embedded [@graphql-hive/laboratory](https://github.com/graphql-hive/console/releases/tag/%40graphql-hive%2Flaboratory%400.2.3) from 0.2.0 to 0.2.3.
 
 **Added**
 
@@ -41,3 +41,4 @@ hive-router: patch
 -   Removed invalid nested buttons in builder and collection rows, which also makes the collection
     edit and delete actions keyboard reachable.
 -   The query plan visualization no longer updates state during render.
+-   The builder no longer resets its view when toggling settings, by hardening the merge code.
