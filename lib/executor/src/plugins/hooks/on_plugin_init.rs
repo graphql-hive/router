@@ -6,7 +6,8 @@ use hive_router_internal::{
 };
 
 pub use hive_router_internal::telemetry::logging::request_id::{
-    PluginCorrelationExtractorFn, RequestIdentifierExtractionPoint,
+    CorrelationIdentifierKey, CorrelationIdentifierValue, PluginCorrelationExtractorFn,
+    RequestIdentifierExtractionPoint,
 };
 
 use crate::plugin_trait::RouterPlugin;

@@ -52,8 +52,8 @@ impl RequestIdentifiers {
 
     pub fn plugin_provided_correlation_ids(
         &self,
-    ) -> Option<&Vec<(CorrelationIdentifierKey, CorrelationIdentifierValue)>> {
-        self.plugin_provided_correlation_ids.as_ref()
+    ) -> Option<&[(CorrelationIdentifierKey, CorrelationIdentifierValue)]> {
+        self.plugin_provided_correlation_ids.as_deref()
     }
 }
 
