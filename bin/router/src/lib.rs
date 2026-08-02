@@ -49,7 +49,7 @@ use crate::{
         },
         websocket_server::ws_index,
     },
-    plugins::plugins_service::PluginService,
+    plugins::{plugins_service::PluginService, registry::ConfiguredPluginsVec},
     storage::StorageManager,
     telemetry::{HeaderExtractor, PrometheusAttached},
 };
@@ -67,7 +67,7 @@ use hive_router_config::{load_config, subscriptions::CallbackConfig, HiveRouterC
 pub use hive_router_internal::background_tasks;
 use hive_router_internal::telemetry::{
     logging::{
-        request_id::WithRequestIdentifiers,
+        request_id::{PluginCorrelationExtractorFn, WithRequestIdentifiers},
         summary::{self, WithRequestSummary},
         targets,
     },
@@ -350,7 +350,15 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
 
     let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
     let router_config = load_config(config_path)?;
-    let telemetry = telemetry::Telemetry::init_global(&router_config)?;
+    let mut bg_tasks_manager = background_tasks::BackgroundTasksManager::new();
+    let mut logger_correlation_extractors: Vec<PluginCorrelationExtractorFn> = Vec::new();
+    let plugins_arc = plugin_registry.initialize_plugins(
+        &router_config,
+        &mut bg_tasks_manager,
+        &mut logger_correlation_extractors,
+    )?;
+    let telemetry =
+        telemetry::Telemetry::init_global(&router_config, logger_correlation_extractors)?;
     let prometheus = telemetry
         .prometheus
         .as_ref()
@@ -361,12 +369,11 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     let websocket_path = router_config.websocket_path().map(|p| p.to_string());
     let callback_conf = router_config.callback_conf().cloned();
     let workers = router_config.workers();
-    let mut bg_tasks_manager = background_tasks::BackgroundTasksManager::new();
     let (shared_state, schema_state) = configure_app_from_config(
         router_config,
         telemetry.context.clone(),
         &mut bg_tasks_manager,
-        plugin_registry,
+        plugins_arc,
     )
     .await?;
 
@@ -514,7 +521,7 @@ pub async fn configure_app_from_config(
     router_config: HiveRouterConfig,
     telemetry_context: TelemetryContext,
     bg_tasks_manager: &mut background_tasks::BackgroundTasksManager,
-    plugin_registry: PluginRegistry,
+    plugins_arc: Option<ConfiguredPluginsVec>,
 ) -> Result<(Arc<RouterSharedState>, Arc<SchemaState>), RouterInitError> {
     let jwt_runtime = match router_config.jwt.is_jwt_auth_enabled() {
         true => Some(JwtAuthRuntime::init(bg_tasks_manager, &router_config.jwt).await?),
@@ -527,7 +534,6 @@ pub async fn configure_app_from_config(
         }
         _ => None,
     };
-    let plugins_arc = plugin_registry.initialize_plugins(&router_config, bg_tasks_manager)?;
 
     let active_subscriptions =
         ActiveSubscriptions::new(router_config.subscriptions.broadcast_capacity);

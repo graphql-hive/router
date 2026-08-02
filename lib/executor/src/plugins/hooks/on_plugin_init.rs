@@ -5,11 +5,16 @@ use hive_router_internal::{
     BoxError,
 };
 
+pub use hive_router_internal::telemetry::logging::request_id::{
+    PluginCorrelationExtractorFn, RequestIdentifierExtractionPoint,
+};
+
 use crate::plugin_trait::RouterPlugin;
 
 pub struct OnPluginInitPayload<'a, TRouterPlugin: RouterPlugin> {
     config: &'a serde_json::Value,
     bg_tasks_manager: &'a mut BackgroundTasksManager,
+    request_id_correlators: &'a mut Vec<PluginCorrelationExtractorFn>,
     phantom: std::marker::PhantomData<TRouterPlugin>,
 }
 
@@ -22,10 +27,12 @@ where
     pub fn new(
         config: &'a serde_json::Value,
         bg_tasks_manager: &'a mut BackgroundTasksManager,
+        request_id_correlators: &'a mut Vec<PluginCorrelationExtractorFn>,
     ) -> Self {
         Self {
             config,
             bg_tasks_manager,
+            request_id_correlators,
             phantom: std::marker::PhantomData,
         }
     }
@@ -90,6 +97,14 @@ where
     {
         self.bg_tasks_manager.register_task(task)
     }
+
+    pub fn register_logger_correlation_extractor(
+        &mut self,
+        correlator: PluginCorrelationExtractorFn,
+    ) {
+        self.request_id_correlators.push(correlator);
+    }
+
     /// Returning this will disable the plugin and it won't be initialized.
     /// This can be used if the plugin determines during initialization that it shouldn't run
     /// (e.g. due to missing configuration or environment variables).

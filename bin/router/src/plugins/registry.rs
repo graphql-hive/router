@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use hive_router_config::HiveRouterConfig;
 use hive_router_internal::{
-    background_tasks::BackgroundTasksManager, telemetry::logging::targets, BoxError,
+    background_tasks::BackgroundTasksManager,
+    telemetry::logging::{request_id::PluginCorrelationExtractorFn, targets},
+    BoxError,
 };
 use hive_router_plan_executor::{
     hooks::on_plugin_init::OnPluginInitPayload,
@@ -14,6 +16,7 @@ type PluginFactory = Box<
     dyn Fn(
         &serde_json::Value,
         &mut BackgroundTasksManager,
+        &mut Vec<PluginCorrelationExtractorFn>,
     ) -> Result<Option<RouterPluginBoxed>, PluginRegistryError>,
 >;
 
@@ -26,6 +29,8 @@ impl Default for PluginRegistry {
         Self::new()
     }
 }
+
+pub type ConfiguredPluginsVec = Arc<Vec<RouterPluginBoxed>>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PluginRegistryError {
@@ -43,14 +48,16 @@ impl PluginRegistry {
             registered_plugins: Vec::new(),
         }
     }
+
     pub fn register<P: RouterPlugin>(mut self) -> Self {
         let plugin_name = P::plugin_name();
         self.registered_plugins.push((
             plugin_name,
             Box::new(
                 |plugin_config: &serde_json::Value,
-                 bg_tasks_manager: &mut BackgroundTasksManager| {
-                    let payload = OnPluginInitPayload::new(plugin_config, bg_tasks_manager);
+                 bg_tasks_manager: &mut BackgroundTasksManager,
+                 logger_correlation_extractors: &mut Vec<PluginCorrelationExtractorFn>| {
+                    let payload = OnPluginInitPayload::new(plugin_config, bg_tasks_manager, logger_correlation_extractors);
                     let plugin = P::on_plugin_init(payload)
                         .map_err(|err| PluginRegistryError::Initialization(plugin_name, err))?;
                     Ok(Option::map(plugin, |p| Box::new(p) as RouterPluginBoxed))
@@ -59,11 +66,13 @@ impl PluginRegistry {
         ));
         self
     }
+
     pub fn initialize_plugins(
         &self,
         router_config: &HiveRouterConfig,
         bg_tasks_manager: &mut BackgroundTasksManager,
-    ) -> Result<Option<Arc<Vec<RouterPluginBoxed>>>, PluginRegistryError> {
+        logger_correlation_extractors: &mut Vec<PluginCorrelationExtractorFn>,
+    ) -> Result<Option<ConfiguredPluginsVec>, PluginRegistryError> {
         let mut plugins_unordered = Vec::with_capacity(router_config.plugins.len());
 
         for (plugin_name, plugin_config_value) in router_config.plugins.iter() {
@@ -75,7 +84,11 @@ impl PluginRegistry {
                 .iter()
                 .find_map(|(name, factory)| (*name == plugin_name).then_some(factory))
             {
-                let plugin_init_result = factory(&plugin_config_value.config, bg_tasks_manager);
+                let plugin_init_result = factory(
+                    &plugin_config_value.config,
+                    bg_tasks_manager,
+                    logger_correlation_extractors,
+                );
                 match plugin_init_result {
                     Err(plugin_init_error) => {
                         if plugin_config_value.warn_on_error {
@@ -129,7 +142,10 @@ mod tests {
     use std::collections::HashMap;
 
     use hive_router_config::{HiveRouterConfig, PluginConfig};
-    use hive_router_internal::background_tasks::BackgroundTasksManager;
+    use hive_router_internal::{
+        background_tasks::BackgroundTasksManager,
+        telemetry::logging::request_id::PluginCorrelationExtractorFn,
+    };
     use hive_router_plan_executor::{
         hooks::{
             on_graphql_params::{
@@ -251,8 +267,13 @@ mod tests {
             ]
             .into_iter(),
         );
+        let mut logger_correlation_extractors: Vec<PluginCorrelationExtractorFn> = Vec::new();
         let plugins = registry
-            .initialize_plugins(&router_config, bg_tasks_manager)
+            .initialize_plugins(
+                &router_config,
+                bg_tasks_manager,
+                &mut logger_correlation_extractors,
+            )
             .expect("Plugins should be initialized successfully")
             .expect("Plugins should exist");
         let uri: http::Uri = "http://example.com/graphql".parse().unwrap();

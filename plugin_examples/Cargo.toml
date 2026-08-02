@@ -20,7 +20,8 @@ members = [
   "incoming_request_deduplication",
   "error_mapping",
   "replace_schema",
-  "field_nulling"
+  "field_nulling",
+  "custom_logger_correlation"
 ]
 
 [workspace.dependencies]

@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use crate::telemetry::otel;
 
-type CorrelationIdentifierKey = &'static str;
-type CorrelationIdentifierValue = String;
+pub type CorrelationIdentifierKey = &'static str;
+pub type CorrelationIdentifierValue = String;
 
 pub enum RequestIdentifierExtractionPoint<'a> {
     Http(&'a HttpRequest),
@@ -30,7 +30,7 @@ pub struct RequestIdentifierExtractor {
 
 impl Default for RequestIdentifierExtractor {
     fn default() -> Self {
-        Self::new(CorrelationConfig::default())
+        Self::new(CorrelationConfig::default(), vec![])
     }
 }
 
@@ -58,10 +58,13 @@ impl RequestIdentifiers {
 }
 
 impl RequestIdentifierExtractor {
-    pub fn new(cfg: CorrelationConfig) -> Self {
+    pub fn new(
+        cfg: CorrelationConfig,
+        correlation_extractors: Vec<PluginCorrelationExtractorFn>,
+    ) -> Self {
         Self {
             cfg,
-            plugin_provided_extractors: vec![],
+            plugin_provided_extractors: correlation_extractors,
         }
     }
 

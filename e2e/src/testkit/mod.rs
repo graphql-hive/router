@@ -784,24 +784,35 @@ impl TestRouter<Built> {
     pub async fn start_without_healthcheck(mut self) -> TestRouter<Started> {
         init_rustls_crypto_provider();
         let config = self.config.take().unwrap();
-        let (telemetry, subscriber) = Telemetry::init_testing_subscriber(&config)
-            .expect("failed to initialize telemetry subscriber");
+        let mut logger_correlation_extractors = vec![];
+        let mut bg_tasks_manager = BackgroundTasksManager::new();
+        let plugin_registry = self
+            .plugins
+            .iter()
+            .fold(PluginRegistry::new(), |registry, register_plugin| {
+                register_plugin(registry)
+            });
+        let plugins_arc = plugin_registry
+            .initialize_plugins(
+                &config,
+                &mut bg_tasks_manager,
+                &mut logger_correlation_extractors,
+            )
+            .expect("failed to initialize plugins");
+        let (telemetry, subscriber) =
+            Telemetry::init_testing_subscriber(&config, logger_correlation_extractors)
+                .expect("failed to initialize telemetry subscriber");
         let subscription_guard = tracing::subscriber::set_default(subscriber);
         let prometheus = telemetry
             .prometheus
             .as_ref()
             .and_then(|prom| prom.to_attached());
 
-        let mut bg_tasks_manager = BackgroundTasksManager::new();
         let (shared_state, schema_state) = configure_app_from_config(
             config,
             telemetry.context.clone(),
             &mut bg_tasks_manager,
-            self.plugins
-                .iter()
-                .fold(PluginRegistry::new(), |registry, register_plugin| {
-                    register_plugin(registry)
-                }),
+            plugins_arc,
         )
         .await
         .expect("failed to configure hive router from config");

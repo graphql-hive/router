@@ -142,10 +142,21 @@ where
             let _ = REQUEST_IDENTIFIERS.try_with(|ids| -> std::fmt::Result {
                 buf.push_str(",\"request_id\":");
                 write_json_str(&mut *buf, ids.req_id())?;
+
                 if let Some(trace_id) = ids.trace_id() {
                     buf.push_str(",\"trace_id\":");
                     write_json_str(&mut *buf, trace_id)?;
                 }
+
+                if let Some(correlation_ids) = ids.plugin_provided_correlation_ids() {
+                    for (key, value) in correlation_ids {
+                        buf.push_str(",\"");
+                        buf.push_str(key);
+                        buf.push_str("\":");
+                        write_json_str(&mut *buf, value)?;
+                    }
+                }
+
                 Ok(())
             });
 

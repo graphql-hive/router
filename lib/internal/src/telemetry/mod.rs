@@ -17,7 +17,9 @@ use tracing_subscriber::filter::filter_fn;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::Layer;
 
-use crate::telemetry::logging::request_id::RequestIdentifierExtractor;
+use crate::telemetry::logging::request_id::{
+    PluginCorrelationExtractorFn, RequestIdentifierExtractor,
+};
 use crate::telemetry::logging::targets;
 use crate::telemetry::metrics::Metrics;
 use crate::telemetry::propagation::HeaderMapInjector;
@@ -55,14 +57,21 @@ impl TelemetryContext {
     pub fn from_propagation_config(
         telemetry_config: &TracingPropagationConfig,
         log_config: &LoggingConfig,
+        correlation_extractors: Vec<PluginCorrelationExtractorFn>,
     ) -> Self {
-        Self::from_propagation_config_with_meter(telemetry_config, log_config, None)
+        Self::from_propagation_config_with_meter(
+            telemetry_config,
+            log_config,
+            None,
+            correlation_extractors,
+        )
     }
 
     pub fn from_propagation_config_with_meter(
         telemetry_config: &TracingPropagationConfig,
         log_config: &LoggingConfig,
         meter: Option<Meter>,
+        correlation_extractors: Vec<PluginCorrelationExtractorFn>,
     ) -> Self {
         #[allow(deprecated)]
         use otel::opentelemetry_jaeger_propagator::Propagator as JaegerPropagator;
@@ -95,7 +104,7 @@ impl TelemetryContext {
         let metrics = Arc::new(Metrics::new(meter.as_ref()));
 
         let logging_correlation_extractor =
-            RequestIdentifierExtractor::new(log_config.correlation.clone());
+            RequestIdentifierExtractor::new(log_config.correlation.clone(), correlation_extractors);
 
         if propagators.is_empty() {
             return Self {

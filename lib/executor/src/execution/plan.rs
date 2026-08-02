@@ -1920,6 +1920,7 @@ mod tests {
             Arc::new(TelemetryContext::from_propagation_config(
                 &Default::default(),
                 &Default::default(),
+                vec![],
             )),
             Arc::new(DashMap::new()),
         )
@@ -2042,6 +2043,7 @@ mod tests {
                 Arc::new(TelemetryContext::from_propagation_config(
                     &Default::default(),
                     &Default::default(),
+                    vec![],
                 )),
                 Arc::new(DashMap::new()),
             )

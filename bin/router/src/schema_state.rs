@@ -778,6 +778,7 @@ mod plugin_runtime_cache_tests {
             telemetry_context: Arc::new(TelemetryContext::from_propagation_config(
                 &Default::default(),
                 &Default::default(),
+                vec![],
             )),
             callback_subscriptions: Arc::new(DashMap::new()),
         }
@@ -1022,6 +1023,7 @@ mod plugin_runtime_cache_tests {
                         &Arc::new(TelemetryContext::from_propagation_config(
                             &Default::default(),
                             &Default::default(),
+                            vec![],
                         )),
                         &Arc::new(DashMap::new()),
                     )

@@ -1,0 +1,9 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../../e2e/supergraph.graphql
+plugins:
+  custom_logger_correlation:
+    enabled: true
+http:
+  graphql_endpoint: "/{project_id}/graphql"

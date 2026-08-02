@@ -10,6 +10,7 @@ use hive_router_internal::{
         logging::{
             format_json::RouterJsonFormat,
             format_text::RouterTextFormat,
+            request_id::PluginCorrelationExtractorFn,
             targets,
             utils::{create_ignore_otel_filter, create_targets_filter, DynLayer},
         },
@@ -107,7 +108,10 @@ impl PrometheusRuntime {
 
 impl Telemetry {
     /// Sets up the global tracing subscriber including logging and OpenTelemetry.
-    pub fn init_global(config: &HiveRouterConfig) -> Result<Self, TelemetryInitError> {
+    pub fn init_global(
+        config: &HiveRouterConfig,
+        correlation_extractors: Vec<PluginCorrelationExtractorFn>,
+    ) -> Result<Self, TelemetryInitError> {
         let id_generator = RandomIdGenerator::default();
         let resource = build_resource(&config.telemetry)?;
         let scope = build_scope();
@@ -148,6 +152,7 @@ impl Telemetry {
             metrics_provider
                 .as_ref()
                 .map(|provider| provider.meter_with_scope(scope)),
+            correlation_extractors,
         );
 
         let prometheus = create_prometheus_runtime(config, prometheus_config.as_ref())?;
@@ -168,6 +173,7 @@ impl Telemetry {
     #[cfg(feature = "testing")]
     pub fn init_testing_subscriber(
         config: &HiveRouterConfig,
+        logger_correlation_extractors: Vec<PluginCorrelationExtractorFn>,
     ) -> Result<(Self, impl tracing::Subscriber), TelemetryInitError> {
         let resource = build_resource(&config.telemetry)?;
         let scope = build_scope();
@@ -210,6 +216,7 @@ impl Telemetry {
             &config.telemetry.tracing.propagation,
             &config.log,
             meter,
+            logger_correlation_extractors,
         );
 
         let (logging_layer, logging_writer_guard) = init_logging::<Registry>(&config.log)?;

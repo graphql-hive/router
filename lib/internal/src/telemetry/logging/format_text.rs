@@ -37,9 +37,17 @@ where
 
             let _ = REQUEST_IDENTIFIERS.try_with(|ids| -> std::fmt::Result {
                 write!(writer, " request_id={:?}", ids.req_id())?;
+
                 if let Some(trace_id) = ids.trace_id() {
                     write!(writer, " trace_id={:?}", trace_id)?;
                 }
+
+                if let Some(correlation_ids) = ids.plugin_provided_correlation_ids() {
+                    for (key, value) in correlation_ids {
+                        write!(writer, " {}={:?}", key, value)?;
+                    }
+                }
+
                 Ok(())
             });
 
