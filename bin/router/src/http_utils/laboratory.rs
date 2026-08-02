@@ -473,7 +473,7 @@ mod tests {
         // Round-trips through injection, escaping and parse as the page would see it.
         let parsed: serde_json::Value =
             serde_json::from_str(&extract_injected_json(&html)).expect("should be valid JSON");
-        assert_eq!(parsed["X-Env"], "staging");
+        assert_eq!(parsed["x-env"], "staging");
     }
 
     #[test]
@@ -955,7 +955,7 @@ mod tests {
         // BTreeMap sorts keys, so the injected JSON string is deterministic.
         assert_eq!(
             seed.operations[0].headers.as_deref(),
-            Some(r#"{"X-Env":"staging","X-Team":"payments"}"#)
+            Some(r#"{"x-env":"staging","x-team":"payments"}"#)
         );
     }
 
