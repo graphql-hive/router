@@ -256,7 +256,7 @@ jobs:
           mv ./artifacts/${{ env.BINARY_NAME }}_linux_amd64/${{ env.BINARY_NAME }} ./target/linux/amd64/${{ env.BINARY_NAME }}
           ls -ltra ./target/linux/arm64/
           ls -ltra ./target/linux/amd64/
-      - uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
