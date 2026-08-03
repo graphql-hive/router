@@ -1,3 +1,6 @@
+// Needed because of ntex's way of defining middlewares
+#![recursion_limit = "256"]
+
 use hive_router::{
     configure_global_allocator, error::RouterInitError, init_rustls_crypto_provider, ntex,
     router_entrypoint, PluginRegistry, RouterGlobalAllocator,

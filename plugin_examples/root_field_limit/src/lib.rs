@@ -1,3 +1,6 @@
+// Needed because of ntex's way of defining middlewares
+#![recursion_limit = "256"]
+
 use hive_router::http::StatusCode;
 use hive_router::query_planner::ast::selection_item::SelectionItem;
 use hive_router::{

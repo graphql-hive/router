@@ -45,6 +45,9 @@
     }
 */
 
+// Needed because of ntex's way of defining middlewares
+#![recursion_limit = "256"]
+
 use std::sync::Arc;
 
 use hive_router::graphql_tools::ast::{OperationVisitor, OperationVisitorContext};

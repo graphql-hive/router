@@ -1,3 +1,6 @@
+// Needed because of ntex's way of defining middlewares
+#![recursion_limit = "256"]
+
 use hive_router::plugins::{
     hooks::{
         on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
