@@ -1,5 +1,4 @@
-// Needed because of ntex's way of defining middlewares. When we have more than ~5, we need this
-// set.
+// Needed because of ntex's way of defining middlewares
 #![recursion_limit = "256"]
 
 mod cache_state;
