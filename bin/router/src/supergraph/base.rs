@@ -1,32 +1,20 @@
 use async_trait::async_trait;
 
-use crate::storage::error::StorageError;
+use crate::supergraph::{
+    apollo_graphos::ApolloGraphOSSupergraphError, file::FileSupergraphError,
+    hive::HiveConsoleSupergraphError, storage::StorageSupergraphError,
+};
 
 #[derive(Debug, thiserror::Error)]
-#[allow(clippy::enum_variant_names)]
 pub enum LoadSupergraphError {
-    #[error("Failed to read supergraph file: {0}")]
-    ReadFileError(#[from] std::io::Error),
-    #[error("Failed to read supergraph from network: {0}")]
-    NetworkError(#[from] reqwest_middleware::Error),
-    #[error("Failed to read supergraph from network: {0}")]
-    NetworkResponseError(#[from] reqwest::Error),
-    #[error("Failed to lock supergraph: {0}")]
-    LockError(String),
-    #[error("Failed to initialize the loader: {0}")]
-    InitializationError(String),
-    #[error("Invalid configuration: {0}")]
-    InvalidConfiguration(String),
-    #[error("Supergraph file path is missing. Please provide it via 'SUPERGRAPH_FILE_PATH' environment variable or under 'supergraph.path' in the configuration.")]
-    MissingSupergraphFilePath,
-    #[error("Hive CDN endpoint is missing. Please provide it via 'HIVE_CDN_ENDPOINT' environment variable or under 'supergraph.endpoint' in the configuration.")]
-    MissingHiveCDNEndpoint,
-    #[error("Hive CDN key is missing. Please provide it via 'HIVE_CDN_KEY' environment variable or under 'supergraph.key' in the configuration.")]
-    MissingHiveCDNKey,
-    #[error("Storage ID {0} is not defined in the Router configuration")]
-    StorageIdNotFound(String),
-    #[error("Storage error: {0}")]
-    StorageError(#[from] StorageError),
+    #[error(transparent)]
+    File(#[from] FileSupergraphError),
+    #[error(transparent)]
+    HiveConsole(#[from] HiveConsoleSupergraphError),
+    #[error(transparent)]
+    ApolloGraphOS(#[from] ApolloGraphOSSupergraphError),
+    #[error(transparent)]
+    Storage(#[from] StorageSupergraphError),
     #[error("'supergraph.source: plugin' has no loader - a plugin must select a supergraph for every request")]
     NoLoaderForPluginSource,
 }
@@ -40,7 +28,7 @@ pub enum ReloadSupergraphResult {
 #[async_trait]
 pub trait SupergraphLoader {
     async fn load(&self) -> Result<ReloadSupergraphResult, LoadSupergraphError>;
-    fn reload_interval(&self) -> Option<&std::time::Duration> {
+    fn reload_interval(&self) -> Option<std::time::Duration> {
         None
     }
 }

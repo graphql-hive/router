@@ -3259,6 +3259,35 @@ retry_policy:
 
    
 **Option 3 (alternative):** 
+Loads a supergraph from Apollo GraphOS Uplink.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**accept\_invalid\_certs**|`boolean`|Whether to accept invalid TLS certificates when connecting to Apollo Uplink.<br/>Default: `false`<br/>|no|
+|**endpoint**||The Apollo Uplink endpoint(s) to poll, tried in order on each poll.<br/><br/>Can also be set using the `APOLLO_UPLINK_ENDPOINTS` environment variable<br/>(comma-separated).<br/>Default: `"https://uplink.api.apollographql.com/"`, `"https://aws.uplink.api.apollographql.com/"`<br/>|no|
+|**graph\_ref**|`string`, `null`|The graph ref of the managed federation graph (`<GRAPH_ID>@<VARIANT>`).<br/><br/>Can also be set using the `APOLLO_GRAPH_REF` environment variable.<br/>|no|
+|**key**|`string`, `null`|The Apollo API key, with at least the `service:read` permission.<br/><br/>Can also be set using the `APOLLO_KEY` environment variable.<br/>|no|
+|**source**|`string`|Constant Value: `"apollo_graphos"`<br/>|yes|
+|**timeout**|`string`|The timeout for a single HTTP call to Apollo Uplink.<br/>Default: `"30s"`<br/>|no|
+
+**Additional Properties:** not allowed   
+**Example**
+
+```yaml
+accept_invalid_certs: false
+endpoint:
+  - https://uplink.api.apollographql.com/
+  - https://aws.uplink.api.apollographql.com/
+timeout: 30s
+
+```
+
+
+   
+**Option 4 (alternative):** 
 **Properties**
 
 |Name|Type|Description|Required|
@@ -3278,7 +3307,7 @@ poll_interval: null
 
 
    
-**Option 4 (alternative):** 
+**Option 5 (alternative):** 
 No configured supergraph source. A plugin must select a supergraph for every GraphQL
 request and WebSocket upgrade that needs one, via `set_supergraph` in
 `on_http_request`.

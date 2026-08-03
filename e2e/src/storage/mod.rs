@@ -8,7 +8,7 @@ mod storage_e2e_tests {
     /// This is needed in order to ensure config is checked statically and validated at startup
     #[ntex::test]
     #[should_panic(
-        expected = "failed to configure hive router from config: SupergraphManagerError(LoadSupergraphError(StorageIdNotFound(\"missing\")))"
+        expected = "failed to configure hive router from config: SupergraphManagerError(LoadSupergraphError(Storage(StorageIdNotFound(\"missing\"))))"
     )]
     async fn should_throw_when_storage_is_missing_in_supergraph() {
         TestRouter::builder()

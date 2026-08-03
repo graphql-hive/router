@@ -6,14 +6,16 @@ use hive_router_internal::telemetry::logging::targets;
 use crate::{
     storage::{utils::resolve_value_or_expression, StorageManager},
     supergraph::{
+        apollo_graphos::{ApolloGraphOSSupergraphError, SupergraphApolloGraphOSLoader},
         base::{LoadSupergraphError, SupergraphLoader},
-        file::SupergraphFileLoader,
-        hive::SupergraphHiveConsoleLoader,
-        storage::SupergraphStorageLoader,
+        file::{FileSupergraphError, SupergraphFileLoader},
+        hive::{HiveConsoleSupergraphError, SupergraphHiveConsoleLoader},
+        storage::{StorageSupergraphError, SupergraphStorageLoader},
     },
 };
 use tracing::debug;
 
+pub mod apollo_graphos;
 pub mod base;
 pub mod file;
 pub mod hive;
@@ -36,7 +38,7 @@ pub fn resolve_from_config(
         } => {
             let path = path
                 .as_ref()
-                .ok_or(LoadSupergraphError::MissingSupergraphFilePath)?;
+                .ok_or(FileSupergraphError::MissingSupergraphFilePath)?;
             Ok(SupergraphFileLoader::new(path, *poll_interval)?)
         }
         SupergraphSource::HiveConsole {
@@ -50,8 +52,10 @@ pub fn resolve_from_config(
         } => {
             let endpoint = endpoint
                 .as_ref()
-                .ok_or(LoadSupergraphError::MissingHiveCDNEndpoint)?;
-            let key = key.as_ref().ok_or(LoadSupergraphError::MissingHiveCDNKey)?;
+                .ok_or(HiveConsoleSupergraphError::MissingHiveCDNEndpoint)?;
+            let key = key
+                .as_ref()
+                .ok_or(HiveConsoleSupergraphError::MissingHiveCDNKey)?;
 
             Ok(SupergraphHiveConsoleLoader::try_new(
                 endpoint.clone().into(),
@@ -63,36 +67,45 @@ pub fn resolve_from_config(
                 retry_policy.max_retries,
             )?)
         }
+        SupergraphSource::ApolloGraphOS {
+            graph_ref,
+            key,
+            endpoint,
+            timeout,
+            accept_invalid_certs,
+        } => {
+            let graph_ref = graph_ref
+                .as_ref()
+                .ok_or(ApolloGraphOSSupergraphError::MissingApolloGraphRef)?;
+            let key = key
+                .as_ref()
+                .ok_or(ApolloGraphOSSupergraphError::MissingApolloKey)?;
+
+            Ok(SupergraphApolloGraphOSLoader::try_new(
+                endpoint.clone().into(),
+                graph_ref,
+                key,
+                *timeout,
+                *accept_invalid_certs,
+            )?)
+        }
         SupergraphSource::Storage {
             storage_id,
             location,
             poll_interval,
-        } => {
-            match storage_manager.get_storage_runtime(storage_id) {
-                None => Err(LoadSupergraphError::StorageIdNotFound(
-                    storage_id.to_string(),
-                )),
-                Some(runtime) => {
-                    let location = resolve_value_or_expression(location, "supergraph.storage.key")?;
+        } => match storage_manager.get_storage_runtime(storage_id) {
+            None => Err(StorageSupergraphError::StorageIdNotFound(storage_id.to_string()).into()),
+            Some(runtime) => {
+                let location = resolve_value_or_expression(location, "supergraph.storage.key")
+                    .map_err(StorageSupergraphError::from)?;
 
-                    Ok(SupergraphStorageLoader::try_new(
-                        runtime.clone(),
-                        location,
-                        *poll_interval,
-                    )?)
-                }
+                Ok(SupergraphStorageLoader::try_new(
+                    runtime.clone(),
+                    location,
+                    *poll_interval,
+                )?)
             }
-
-            // Ok(SupergraphHiveConsoleLoader::try_new(
-            //     endpoint.clone().into(),
-            //     key,
-            //     *poll_interval,
-            //     *connect_timeout,
-            //     *request_timeout,
-            //     *accept_invalid_certs,
-            //     retry_policy.max_retries,
-            // )?)
-        }
+        },
         // there is no loader for a source that's entirely plugin-provided, this should never
         // be called in when the `supergraph.source = plugin`
         SupergraphSource::Plugin => Err(LoadSupergraphError::NoLoaderForPluginSource),
