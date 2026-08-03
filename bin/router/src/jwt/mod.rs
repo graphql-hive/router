@@ -306,6 +306,7 @@ impl JwtAuthRuntime {
                 token_payload,
                 token_raw: token,
                 token_prefix: maybe_prefix,
+                scopes_claim: self.config.scopes_claim.clone(),
             })),
             Err(err) => {
                 warn!(target: targets::JWT, error = ?err, "jwt token error");

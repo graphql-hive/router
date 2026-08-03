@@ -2172,6 +2172,7 @@ Configuration for JWT authentication plugin.
 |[**jwks\_providers**](#jwtjwks_providers)|`array`|A list of JWKS providers to use for verifying the JWT signature.<br/>|yes|
 |[**lookup\_locations**](#jwtlookup_locations)|`array`|A list of locations to look up for the JWT token in the incoming HTTP request.<br/>Default: `{"name":"authorization","prefix":"Bearer","source":"header"}`<br/>|no|
 |**require\_authentication**|`boolean`, `null`|If set to `true`, the entire request will be rejected if the JWT token is not present in the request.<br/>|no|
+|**scopes\_claim**|`string`, `null`|The name of the JWT claim to read authorization scopes from, used to evaluate the `@requiresScopes` directive.<br/>If not specified, the `scope` claim is used (falling back to `scopes` if `scope` is not present), each holding<br/>either a space-delimited string or an array of strings.<br/><br/>This is useful for identity providers that grant authorization data under a different claim name, such as<br/>Microsoft Entra ID, which issues app roles under a `roles` claim.<br/>|no|
 
 **Additional Properties:** not allowed   
 **Example**
