@@ -42,7 +42,7 @@ where
         req: web::WebRequest<DefaultError>,
         ctx: ServiceCtx<'_, Self>,
     ) -> Result<Self::Response, Self::Error> {
-        let Some(shared_state) = req.app_state::<Arc<RouterSharedState>>().cloned() else {
+        let Some(shared_state) = req.app_state::<Arc<RouterSharedState>>() else {
             return ctx.call(&self.service, req).await;
         };
 
