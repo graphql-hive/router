@@ -6,11 +6,18 @@ use crate::{
         Started, TestRouter, TestRouterBuilder, TestSubgraphs,
     },
 };
+use hive_router::{
+    async_trait,
+    plugins::hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
+    plugins::hooks::on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
+    plugins::plugin_trait::{RouterPlugin, StartHookPayload},
+};
 use hive_router_internal::telemetry::logging::targets;
 use http::{HeaderMap, HeaderName, HeaderValue};
 use insta::assert_json_snapshot;
 use serde_json::{Map, Value};
 use sonic_rs::json;
+use tracing::debug;
 
 const TEST_QUERY: &str = "{ users { id } }";
 const TRACEPARENT_VALUE: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
@@ -660,4 +667,56 @@ log:
         .await;
     let http_start = log_line(&stdout_log, LOG_HTTP_REQUEST_START);
     assert!(find_attr(http_start, "trace_id").is_none());
+}
+
+#[derive(Default)]
+struct TestDebugLogPlugin;
+
+#[async_trait]
+impl RouterPlugin for TestDebugLogPlugin {
+    type Config = ();
+
+    fn plugin_name() -> &'static str {
+        "test_debug_log"
+    }
+
+    fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
+        payload.initialize_plugin_with_defaults()
+    }
+
+    fn on_http_request<'req>(
+        &self,
+        payload: OnHttpRequestHookPayload<'req>,
+    ) -> OnHttpRequestHookResult<'req> {
+        debug!("i'm just a test");
+        payload.proceed()
+    }
+}
+
+#[ntex::test]
+async fn plugin_log_lines_are_correlated_with_request_id() {
+    let (_subgraphs, router) = setup_router(
+        router_with_telemetry(
+            "\
+log:
+  level: debug
+  format: json
+plugins:
+  test_debug_log:
+    enabled: true
+",
+        )
+        .register_plugin::<TestDebugLogPlugin>(),
+    )
+    .await;
+
+    let stdout_log = router
+        .send_graphql_request(TEST_QUERY, None, None)
+        .capture_stdout_json()
+        .await;
+
+    let http_start = log_line(&stdout_log, LOG_HTTP_REQUEST_START);
+    let plugin_log = log_line(&stdout_log, "i'm just a test");
+
+    assert_eq!(req_id_of(http_start), req_id_of(plugin_log));
 }
