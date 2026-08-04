@@ -86,7 +86,7 @@ async fn test_otlp_http_export_with_graphql_request() {
 
     insta::assert_snapshot!(
       http_server_span,
-      @r"
+      @"
     Span: http.server
       Kind: Server
       Status: message='' code='1'
@@ -102,6 +102,7 @@ async fn test_otlp_http_export_with_graphql_request() {
         network.peer.address: [address]
         network.peer.port: [port]
         network.protocol.version: 1.1
+        router.request_id: [request_id]
         server.address: localhost
         server.port: [port]
         target: hive-router
@@ -347,7 +348,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
 
     insta::assert_snapshot!(
       http_server_span,
-      @r"
+      @"
     Span: http.server
       Kind: Server
       Status: message='' code='1'
@@ -363,6 +364,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
         network.peer.address: [address]
         network.peer.port: [port]
         network.protocol.version: 1.1
+        router.request_id: [request_id]
         server.address: localhost
         server.port: [port]
         target: hive-router

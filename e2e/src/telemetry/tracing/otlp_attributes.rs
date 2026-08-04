@@ -62,7 +62,7 @@ async fn test_deprecated_span_attributes() {
 
     insta::assert_snapshot!(
       http_server_span,
-      @r"
+      @"
     Span: http.server
       Kind: Server
       Status: message='' code='1'
@@ -82,6 +82,7 @@ async fn test_deprecated_span_attributes() {
         http.url: /graphql
         network.peer.address: [address]
         network.peer.port: [port]
+        router.request_id: [request_id]
         server.port: [port]
         target: hive-router
     "
@@ -196,7 +197,7 @@ async fn test_spec_and_deprecated_span_attributes() {
 
     insta::assert_snapshot!(
       http_server_span,
-      @r"
+      @"
     Span: http.server
       Kind: Server
       Status: message='' code='1'
@@ -221,6 +222,7 @@ async fn test_spec_and_deprecated_span_attributes() {
         network.peer.address: [address]
         network.peer.port: [port]
         network.protocol.version: 1.1
+        router.request_id: [request_id]
         server.address: localhost
         server.port: [port]
         target: hive-router
