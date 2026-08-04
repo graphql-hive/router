@@ -1,6 +1,8 @@
 ---
 hive-router-config: minor
 hive-router: minor
+hive-router-internal: patch
+hive-router-plan-executor: patch
 ---
 
 # Add `jwt.scopes_claim`

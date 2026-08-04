@@ -1,6 +1,7 @@
 ---
 hive-router-internal: minor
 hive-router: minor
+hive-router-plan-executor: patch
 ---
 
 # Attach the correlation request-id to the root HTTP server span
