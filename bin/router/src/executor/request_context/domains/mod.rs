@@ -1,4 +1,5 @@
 use super::domains::authentication::AuthenticationContext;
+use super::domains::authorization::AuthorizationContext;
 use super::domains::operation::OperationContext;
 use super::domains::persisted_documents::PersistedDocumentsContext;
 use super::domains::progressive_override::ProgressiveOverrideContext;
@@ -13,6 +14,7 @@ use sonic_rs::Value;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 mod authentication;
+pub(crate) mod authorization;
 mod operation;
 pub(crate) mod persisted_documents;
 mod progressive_override;
@@ -179,6 +181,7 @@ reserved_domains! {
     operation: OperationContext,
     progressive_override: ProgressiveOverrideContext,
     authentication: AuthenticationContext,
+    authorization: AuthorizationContext,
     telemetry: TelemetryContext,
     persisted_documents: PersistedDocumentsContext,
 }

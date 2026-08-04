@@ -34,6 +34,12 @@ impl RequiresScopesScopeScalar {
     pub const NAME: &str = "requiresScopes__Scope";
 }
 
+pub struct PolicyPolicyScalar {}
+
+impl PolicyPolicyScalar {
+    pub const NAME: &str = "policy__Policy";
+}
+
 pub struct JoinDirectiveArgumentsScalar {}
 
 impl JoinDirectiveArgumentsScalar {
