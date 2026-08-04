@@ -14,7 +14,7 @@ use crate::{
         directives::{
             AuthenticatedDirective, FederationDirective, InaccessibleDirective,
             JoinEnumValueDirective, JoinFieldDirective, JoinGraphDirective,
-            JoinImplementsDirective, JoinTypeDirective, JoinUnionMemberDirective,
+            JoinImplementsDirective, JoinTypeDirective, JoinUnionMemberDirective, PolicyDirective,
             RequiresScopesDirective,
         },
     },
@@ -63,10 +63,11 @@ type InterfaceToObjectTypesMap = HashMap<String, BTreeSet<String>>;
 type DefinitionMap = HashMap<String, SupergraphDefinition>;
 
 /// Information about linked specifications used in the supergraph
-/// (e.g., authenticated, requiresScopes)
+/// (e.g., authenticated, requiresScopes, policy)
 struct LinkedSpecifications {
     pub authenticated: bool,
     pub requires_scopes: bool,
+    pub policy: bool,
 }
 
 impl LinkedSpecifications {
@@ -78,15 +79,17 @@ impl LinkedSpecifications {
             return Self {
                 authenticated: false,
                 requires_scopes: false,
+                policy: false,
             };
         };
 
         let mut authenticated = false;
         let mut requires_scopes = false;
+        let mut policy = false;
 
         for directive in &schema_def.directives {
-            // Found both? Stop searching.
-            if authenticated && requires_scopes {
+            // Found all of them? Stop searching.
+            if authenticated && requires_scopes && policy {
                 break;
             }
 
@@ -113,12 +116,15 @@ impl LinkedSpecifications {
                 && url.starts_with("https://specs.apollo.dev/requiresScopes/")
             {
                 requires_scopes = true;
+            } else if !policy && url.starts_with("https://specs.apollo.dev/policy/") {
+                policy = true;
             }
         }
 
         Self {
             authenticated,
             requires_scopes,
+            policy,
         }
     }
 
@@ -141,6 +147,18 @@ impl LinkedSpecifications {
     ) -> Vec<RequiresScopesDirective> {
         if self.requires_scopes {
             SupergraphState::extract_directives::<RequiresScopesDirective>(directives)
+        } else {
+            Default::default()
+        }
+    }
+
+    /// Conditionally extract @policy directives based on whether the spec is enabled
+    fn extract_policy_directives(
+        &self,
+        directives: &[Directive<'static, String>],
+    ) -> Vec<PolicyDirective> {
+        if self.policy {
+            SupergraphState::extract_directives::<PolicyDirective>(directives)
         } else {
             Default::default()
         }
@@ -493,6 +511,7 @@ impl SupergraphState {
             authenticated: linked_specs.extract_authenticated_directives(&scalar_type.directives),
             requires_scopes: linked_specs
                 .extract_requires_scopes_directives(&scalar_type.directives),
+            policy: linked_specs.extract_policy_directives(&scalar_type.directives),
             cost: linked_specs.extract_cost_directive(&scalar_type.directives),
         }
     }
@@ -519,6 +538,7 @@ impl SupergraphState {
             join_type: Self::extract_directives::<JoinTypeDirective>(&enum_type.directives),
             authenticated: linked_specs.extract_authenticated_directives(&enum_type.directives),
             requires_scopes: linked_specs.extract_requires_scopes_directives(&enum_type.directives),
+            policy: linked_specs.extract_policy_directives(&enum_type.directives),
             values: enum_type
                 .values
                 .iter()
@@ -553,6 +573,7 @@ impl SupergraphState {
                             .extract_authenticated_directives(&field.directives),
                         requires_scopes: linked_specs
                             .extract_requires_scopes_directives(&field.directives),
+                        policy: linked_specs.extract_policy_directives(&field.directives),
                         inaccessible: !Self::extract_directives::<InaccessibleDirective>(
                             &field.directives,
                         )
@@ -597,6 +618,7 @@ impl SupergraphState {
                         ),
                         authenticated: Default::default(),
                         requires_scopes: Default::default(),
+                        policy: Default::default(),
                         inaccessible: !Self::extract_directives::<InaccessibleDirective>(
                             &field.directives,
                         )
@@ -632,6 +654,7 @@ impl SupergraphState {
                 .extract_authenticated_directives(&interface_type.directives),
             requires_scopes: linked_specs
                 .extract_requires_scopes_directives(&interface_type.directives),
+            policy: linked_specs.extract_policy_directives(&interface_type.directives),
             used_in_subgraphs,
         }
     }
@@ -674,6 +697,7 @@ impl SupergraphState {
             authenticated: linked_specs.extract_authenticated_directives(&object_type.directives),
             requires_scopes: linked_specs
                 .extract_requires_scopes_directives(&object_type.directives),
+            policy: linked_specs.extract_policy_directives(&object_type.directives),
             cost: linked_specs.extract_cost_directive(&object_type.directives),
         }
     }
@@ -818,6 +842,7 @@ pub struct SupergraphObjectType {
     pub root_type: Option<OperationKind>,
     pub used_in_subgraphs: HashSet<String>,
     pub requires_scopes: Vec<RequiresScopesDirective>,
+    pub policy: Vec<PolicyDirective>,
     pub authenticated: Vec<AuthenticatedDirective>,
     pub cost: Option<CostDirective>,
 }
@@ -881,6 +906,7 @@ pub struct SupergraphInterfaceType {
     pub join_implements: Vec<JoinImplementsDirective>,
     pub used_in_subgraphs: HashSet<String>,
     pub requires_scopes: Vec<RequiresScopesDirective>,
+    pub policy: Vec<PolicyDirective>,
     pub authenticated: Vec<AuthenticatedDirective>,
 }
 
@@ -902,6 +928,7 @@ pub struct SupergraphScalarType {
     pub name: String,
     pub join_type: Vec<JoinTypeDirective>,
     pub requires_scopes: Vec<RequiresScopesDirective>,
+    pub policy: Vec<PolicyDirective>,
     pub authenticated: Vec<AuthenticatedDirective>,
     pub cost: Option<CostDirective>,
 }
@@ -912,6 +939,7 @@ pub struct SupergraphEnumType {
     pub values: Vec<SupergraphEnumValueType>,
     pub join_type: Vec<JoinTypeDirective>,
     pub requires_scopes: Vec<RequiresScopesDirective>,
+    pub policy: Vec<PolicyDirective>,
     pub authenticated: Vec<AuthenticatedDirective>,
     pub cost: Option<CostDirective>,
 }
@@ -1060,6 +1088,7 @@ pub struct SupergraphField {
     pub inaccessible: bool,
     pub join_field: Vec<JoinFieldDirective>,
     pub requires_scopes: Vec<RequiresScopesDirective>,
+    pub policy: Vec<PolicyDirective>,
     pub authenticated: Vec<AuthenticatedDirective>,
     pub cost: Option<CostDirective>,
     pub list_size: Option<ListSizeDirective>,

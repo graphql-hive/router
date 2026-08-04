@@ -1,4 +1,5 @@
 pub use crate::federation_spec::authorization::AuthenticatedDirective;
+pub use crate::federation_spec::authorization::PolicyDirective;
 pub use crate::federation_spec::authorization::RequiresScopesDirective;
 pub use crate::federation_spec::directive_trait::FederationDirective;
 pub use crate::federation_spec::inacessible::InaccessibleDirective;
