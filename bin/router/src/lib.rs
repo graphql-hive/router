@@ -374,7 +374,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
             let cb_path = path.to_string();
             let cb_addr = listen.to_string();
             let cb_subs = callback_subscriptions_for_handler.clone();
-            let cb_telemetry_context = std::sync::Arc::new(telemetry.context.clone());
+            let cb_telemetry_context = shared_state.telemetry_context.clone();
             let mut cb_server_builder = web::HttpServer::new(async move || {
                 let cb_subs = cb_subs.clone();
                 let cb_path = cb_path.clone();

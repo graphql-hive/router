@@ -20,4 +20,6 @@ Neither listener registered a matching pair:
 
 `State<T>` is generic, so both mismatches compile; they only fail when the extractor runs. That makes the callback protocol broken in **both** configurations, with no config-level workaround.
 
-This registers an `Arc` on the dedicated server and adds the missing map on the main one.
+The dedicated server now takes its telemetry context from `shared_state.telemetry_context`, the same `Arc` the main server already registers, and the main server gains the missing map.
+
+The e2e suite does not catch this: `TestRouter` builds its own `ntex` `App` rather than reusing the one `run_router` assembles, and its copy happens to register both states correctly — it reads the telemetry context from `shared_state` (already an `Arc`) and registers `callback_subscriptions` on the main app. `listen_on_different_port` therefore passes against a build whose callback endpoint 500s on every request.
