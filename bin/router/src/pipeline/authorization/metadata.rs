@@ -1,13 +1,14 @@
 use ahash::{HashMap, HashSet};
 use hive_router_internal::authorization::metadata::{
-    AuthorizationMetadata, AuthorizationRule, FieldRulesMap, RequiredScopes, ScopeAndGroup,
-    ScopeId, ScopeInterner, TypeFieldRulesMap, TypeRulesMap,
+    AuthorizationMetadata, AuthorizationRule, FieldRulesMap, PolicyAndGroup, PolicyId,
+    PolicyInterner, RequiredPolicies, RequiredScopes, ScopeAndGroup, ScopeId, ScopeInterner,
+    TypeFieldRulesMap, TypeRulesMap,
 };
 use hive_router_plan_executor::execution::client_request_details::JwtRequestDetails;
 use hive_router_plan_executor::introspection::schema::SchemaMetadata;
 use hive_router_query_planner::ast::value::Value;
 use hive_router_query_planner::federation_spec::authorization::{
-    AuthenticatedDirective, RequiresScopesDirective,
+    AuthenticatedDirective, PolicyDirective, RequiresScopesDirective,
 };
 use hive_router_query_planner::state::supergraph_state::{SupergraphDefinition, SupergraphState};
 
@@ -16,6 +17,8 @@ use hive_router_query_planner::state::supergraph_state::{SupergraphDefinition, S
 pub struct UserAuthContext {
     pub is_authenticated: bool,
     pub scope_ids: HashSet<ScopeId>,
+    /// Policies granted for this request, as decided by a coprocessor or a plugin.
+    pub granted_policy_ids: HashSet<PolicyId>,
 }
 
 impl UserAuthContext {
@@ -31,6 +34,7 @@ impl UserAuthContext {
                 .iter()
                 .filter_map(|s| auth_metadata.scopes.get(s))
                 .collect(),
+            granted_policy_ids: HashSet::default(),
         }
     }
 
@@ -45,6 +49,21 @@ impl UserAuthContext {
             JwtRequestDetails::Unauthenticated => Self::new(false, &[], auth_metadata),
         }
     }
+
+    /// Records the policies that were granted for this request.
+    /// Policies unknown to the schema are silently ignored.
+    pub fn with_granted_policies<'a>(
+        mut self,
+        granted_policies: impl IntoIterator<Item = &'a str>,
+        auth_metadata: &AuthorizationMetadata,
+    ) -> Self {
+        self.granted_policy_ids = granted_policies
+            .into_iter()
+            .filter_map(|policy| auth_metadata.policies.get(policy))
+            .collect();
+
+        self
+    }
 }
 
 /// Errors that can occur during authorization metadata construction.
@@ -56,6 +75,12 @@ pub enum AuthorizationMetadataError {
     InvalidRequiresScopesArgs(String),
     #[error("Duplicate @requiresScopes directives found")]
     DuplicateRequiresScopesDirective,
+    #[error("Invalid policy value: {0}")]
+    InvalidPolicyValue(String),
+    #[error("Invalid @policy(policies:) argument: {0}")]
+    InvalidPolicyArgs(String),
+    #[error("Duplicate @policy directives found")]
+    DuplicatePolicyDirective,
 }
 
 pub trait AuthorizationMetadataExt
@@ -70,6 +95,9 @@ where
     ) -> Result<Self, AuthorizationMetadataError>;
 
     fn is_empty(&self) -> bool;
+
+    /// Whether the schema declares any `@policy` requirement.
+    fn has_policies(&self) -> bool;
 
     /// Computes whether each type has auth rules in its subtree.
     fn compute_type_auth_metadata(
@@ -102,19 +130,26 @@ where
     /// Example: [["a"], ["b"]] AND [["c"], ["d"]] = [["a", "c"], ["a", "d"], ["b", "c"], ["b", "d"]]
     fn cross_product_required_scopes(member_scopes: &[&RequiredScopes]) -> RequiredScopes;
 
+    /// Combines multiple RequiredPolicies using AND logic via cross product.
+    /// Follows the same rules as [`Self::cross_product_required_scopes`].
+    fn cross_product_required_policies(member_policies: &[&RequiredPolicies]) -> RequiredPolicies;
+
     /// Processes a type definition, extracting authorization rules for the type and its fields.
     fn process_type_definition(
         type_def: &SupergraphDefinition,
         type_rules: &mut TypeRulesMap,
         field_rules: &mut TypeFieldRulesMap,
         scopes_interner: &mut ScopeInterner,
+        policies_interner: &mut PolicyInterner,
     ) -> Result<(), AuthorizationMetadataError>;
 
     /// Extracts authorization rule from directives.
     fn extract_rule_from_directives(
         authenticated_directives: &[AuthenticatedDirective],
         requires_scopes_directives: &[RequiresScopesDirective],
-        interner: &mut ScopeInterner,
+        policy_directives: &[PolicyDirective],
+        scopes_interner: &mut ScopeInterner,
+        policies_interner: &mut PolicyInterner,
     ) -> Result<Option<AuthorizationRule>, AuthorizationMetadataError>;
 
     /// Parses and normalizes the `scopes` argument from a `@requiresScopes` directive.
@@ -127,6 +162,17 @@ where
         value: &Value,
         interner: &mut ScopeInterner,
     ) -> Result<ScopeAndGroup, AuthorizationMetadataError>;
+
+    /// Parses and normalizes the `policies` argument from a `@policy` directive.
+    fn normalize_policies_arg(
+        value: &Value,
+        interner: &mut PolicyInterner,
+    ) -> Result<RequiredPolicies, AuthorizationMetadataError>;
+
+    fn normalize_policy_and_group(
+        value: &Value,
+        interner: &mut PolicyInterner,
+    ) -> Result<PolicyAndGroup, AuthorizationMetadataError>;
 }
 
 impl AuthorizationMetadataExt for AuthorizationMetadata {
@@ -139,6 +185,7 @@ impl AuthorizationMetadataExt for AuthorizationMetadata {
         let mut type_rules = HashMap::default();
         let mut field_rules = HashMap::default();
         let mut scopes = ScopeInterner::new();
+        let mut policies = PolicyInterner::new();
 
         for type_def in supergraph.definitions.values() {
             Self::process_type_definition(
@@ -146,6 +193,7 @@ impl AuthorizationMetadataExt for AuthorizationMetadata {
                 &mut type_rules,
                 &mut field_rules,
                 &mut scopes,
+                &mut policies,
             )?;
         }
 
@@ -164,12 +212,17 @@ impl AuthorizationMetadataExt for AuthorizationMetadata {
             type_rules,
             field_rules,
             scopes,
+            policies,
             type_has_any_auth,
         })
     }
 
     fn is_empty(&self) -> bool {
         self.type_rules.is_empty() && self.field_rules.is_empty()
+    }
+
+    fn has_policies(&self) -> bool {
+        !self.policies.is_empty()
     }
 
     /// Computes whether each type has auth rules in its subtree.
@@ -275,35 +328,36 @@ impl AuthorizationMetadataExt for AuthorizationMetadata {
         type_rules: &TypeRulesMap,
     ) -> Option<AuthorizationRule> {
         let mut member_scopes: Vec<&RequiredScopes> = Vec::new();
+        let mut member_policies: Vec<&RequiredPolicies> = Vec::new();
         let mut needs_authenticated = false;
 
         // Collect rules from all members
         for member_name in member_names {
-            if let Some(rule) = type_rules.get(member_name) {
-                match rule {
-                    AuthorizationRule::Authenticated => {
-                        needs_authenticated = true;
-                    }
-                    AuthorizationRule::RequiresScopes(scopes) => {
-                        needs_authenticated = true; // scopes implies authenticated
-                        member_scopes.push(scopes);
-                    }
-                }
+            let Some(rule) = type_rules.get(member_name) else {
+                continue;
+            };
+
+            // scopes imply authenticated, policies do not
+            needs_authenticated |= rule.authenticated || rule.scopes.is_some();
+
+            if let Some(scopes) = &rule.scopes {
+                member_scopes.push(scopes);
+            }
+
+            if let Some(policies) = &rule.policies {
+                member_policies.push(policies);
             }
         }
 
-        if !needs_authenticated {
-            return None;
-        }
+        let rule = AuthorizationRule {
+            authenticated: needs_authenticated,
+            scopes: (!member_scopes.is_empty())
+                .then(|| Self::cross_product_required_scopes(&member_scopes)),
+            policies: (!member_policies.is_empty())
+                .then(|| Self::cross_product_required_policies(&member_policies)),
+        };
 
-        // Some members have @authenticated but no scopes
-        if member_scopes.is_empty() {
-            return Some(AuthorizationRule::Authenticated);
-        }
-
-        Some(AuthorizationRule::RequiresScopes(
-            Self::cross_product_required_scopes(&member_scopes),
-        ))
+        (!rule.is_empty()).then_some(rule)
     }
 
     /// Combines multiple RequiredScopes using AND logic via cross product.
@@ -331,44 +385,82 @@ impl AuthorizationMetadataExt for AuthorizationMetadata {
         RequiredScopes(result)
     }
 
+    fn cross_product_required_policies(member_policies: &[&RequiredPolicies]) -> RequiredPolicies {
+        let mut result: Vec<PolicyAndGroup> = vec![PolicyAndGroup(vec![])];
+
+        for member_policy in member_policies {
+            let mut new_result = Vec::new();
+
+            for existing_and_group in &result {
+                for member_and_group in &member_policy.0 {
+                    let mut combined = existing_and_group.0.clone();
+                    combined.extend(member_and_group.0.iter().copied());
+                    combined.sort();
+                    combined.dedup();
+                    new_result.push(PolicyAndGroup(combined));
+                }
+            }
+
+            result = new_result;
+        }
+
+        RequiredPolicies(result)
+    }
+
     /// Processes a type definition, extracting authorization rules for the type and its fields.
     fn process_type_definition(
         type_def: &SupergraphDefinition,
         type_rules: &mut TypeRulesMap,
         field_rules: &mut TypeFieldRulesMap,
         scopes_interner: &mut ScopeInterner,
+        policies_interner: &mut PolicyInterner,
     ) -> Result<(), AuthorizationMetadataError> {
-        let (type_name, authenticated_directives, requires_scopes_directives, maybe_fields) =
-            match type_def {
-                SupergraphDefinition::Scalar(s) => {
-                    (&s.name, &s.authenticated, &s.requires_scopes, None)
-                }
-                SupergraphDefinition::Object(o) => (
-                    &o.name,
-                    &o.authenticated,
-                    &o.requires_scopes,
-                    Some(&o.fields),
-                ),
-                SupergraphDefinition::Interface(i) => (
-                    &i.name,
-                    &i.authenticated,
-                    &i.requires_scopes,
-                    Some(&i.fields),
-                ),
-                SupergraphDefinition::Enum(e) => {
-                    (&e.name, &e.authenticated, &e.requires_scopes, None)
-                }
-                // Unions and InputObjects do not have output authorization rules applicable here.
-                SupergraphDefinition::Union(_) | SupergraphDefinition::InputObject(_) => {
-                    return Ok(())
-                }
-            };
+        let (
+            type_name,
+            authenticated_directives,
+            requires_scopes_directives,
+            policy_directives,
+            maybe_fields,
+        ) = match type_def {
+            SupergraphDefinition::Scalar(s) => (
+                &s.name,
+                &s.authenticated,
+                &s.requires_scopes,
+                &s.policy,
+                None,
+            ),
+            SupergraphDefinition::Object(o) => (
+                &o.name,
+                &o.authenticated,
+                &o.requires_scopes,
+                &o.policy,
+                Some(&o.fields),
+            ),
+            SupergraphDefinition::Interface(i) => (
+                &i.name,
+                &i.authenticated,
+                &i.requires_scopes,
+                &i.policy,
+                Some(&i.fields),
+            ),
+            SupergraphDefinition::Enum(e) => (
+                &e.name,
+                &e.authenticated,
+                &e.requires_scopes,
+                &e.policy,
+                None,
+            ),
+            // Unions and InputObjects do not have output authorization rules applicable here.
+            SupergraphDefinition::Union(_) | SupergraphDefinition::InputObject(_) => return Ok(()),
+        };
 
         // Extract type-level rules
         if let Some(rule) = Self::extract_rule_from_directives(
             authenticated_directives,
             requires_scopes_directives,
+            policy_directives,
             scopes_interner,
+            policies_interner,
         )? {
             type_rules.insert(type_name.clone(), rule);
         }
@@ -380,7 +472,9 @@ impl AuthorizationMetadataExt for AuthorizationMetadata {
                 let maybe_field_rules = Self::extract_rule_from_directives(
                     &field_def.authenticated,
                     &field_def.requires_scopes,
+                    &field_def.policy,
                     scopes_interner,
+                    policies_interner,
                 )?;
                 if let Some(rule) = maybe_field_rules {
                     type_field_rules.insert(field_name.clone(), rule);
@@ -398,22 +492,36 @@ impl AuthorizationMetadataExt for AuthorizationMetadata {
     fn extract_rule_from_directives(
         authenticated_directives: &[AuthenticatedDirective],
         requires_scopes_directives: &[RequiresScopesDirective],
-        interner: &mut ScopeInterner,
+        policy_directives: &[PolicyDirective],
+        scopes_interner: &mut ScopeInterner,
+        policies_interner: &mut PolicyInterner,
     ) -> Result<Option<AuthorizationRule>, AuthorizationMetadataError> {
         if requires_scopes_directives.len() > 1 {
             return Err(AuthorizationMetadataError::DuplicateRequiresScopesDirective);
         }
 
-        if let Some(directive) = requires_scopes_directives.first() {
-            let scopes = Self::normalize_scopes_arg(&directive.scopes, interner)?;
-            return Ok(Some(AuthorizationRule::RequiresScopes(scopes)));
+        if policy_directives.len() > 1 {
+            return Err(AuthorizationMetadataError::DuplicatePolicyDirective);
         }
 
-        if !authenticated_directives.is_empty() {
-            return Ok(Some(AuthorizationRule::Authenticated));
-        }
+        let scopes = requires_scopes_directives
+            .first()
+            .map(|directive| Self::normalize_scopes_arg(&directive.scopes, scopes_interner))
+            .transpose()?;
 
-        Ok(None)
+        let policies = policy_directives
+            .first()
+            .map(|directive| Self::normalize_policies_arg(&directive.policies, policies_interner))
+            .transpose()?;
+
+        let rule = AuthorizationRule {
+            // `@requiresScopes` implies `@authenticated`, `@policy` does not.
+            authenticated: !authenticated_directives.is_empty() || scopes.is_some(),
+            scopes,
+            policies,
+        };
+
+        Ok((!rule.is_empty()).then_some(rule))
     }
 
     /// Parses and normalizes the `scopes` argument from a `@requiresScopes` directive.
@@ -471,5 +579,63 @@ impl AuthorizationMetadataExt for AuthorizationMetadata {
 
         and_group.sort();
         Ok(ScopeAndGroup(and_group))
+    }
+
+    /// Parses and normalizes the `policies` argument from a `@policy` directive.
+    fn normalize_policies_arg(
+        value: &Value,
+        interner: &mut PolicyInterner,
+    ) -> Result<RequiredPolicies, AuthorizationMetadataError> {
+        let Value::List(or_groups_val) = value else {
+            return Err(AuthorizationMetadataError::InvalidPolicyArgs(format!(
+                "expected a list, got '{}'",
+                value
+            )));
+        };
+
+        let mut or_groups: Vec<_> = or_groups_val
+            .iter()
+            .map(|v| Self::normalize_policy_and_group(v, interner))
+            .collect::<Result<_, _>>()?;
+
+        if or_groups.is_empty() {
+            return Err(AuthorizationMetadataError::InvalidPolicyArgs(
+                "expected at least one AND group, got none".to_string(),
+            ));
+        }
+
+        or_groups.sort();
+        Ok(RequiredPolicies(or_groups))
+    }
+
+    fn normalize_policy_and_group(
+        value: &Value,
+        interner: &mut PolicyInterner,
+    ) -> Result<PolicyAndGroup, AuthorizationMetadataError> {
+        let Value::List(and_group_val) = value else {
+            return Err(AuthorizationMetadataError::InvalidPolicyArgs(
+                "expected a list for AND group".to_string(),
+            ));
+        };
+
+        let mut and_group: Vec<PolicyId> = and_group_val
+            .iter()
+            .map(|v| match v {
+                Value::String(s) => Ok(interner.get_or_intern(s)),
+                _ => Err(AuthorizationMetadataError::InvalidPolicyValue(format!(
+                    "expected policy to be a string, got: '{}'",
+                    v
+                ))),
+            })
+            .collect::<Result<_, _>>()?;
+
+        if and_group.is_empty() {
+            return Err(AuthorizationMetadataError::InvalidPolicyArgs(
+                "empty AND group, expected at least one policy".to_string(),
+            ));
+        }
+
+        and_group.sort();
+        Ok(PolicyAndGroup(and_group))
     }
 }

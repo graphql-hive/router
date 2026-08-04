@@ -54,7 +54,7 @@ use xxhash_rust::xxh3::Xxh3;
 use crate::{
     pipeline::{
         active_subscriptions::SubscriptionEvent,
-        authorization::enforce_operation_authorization,
+        authorization::{collect_required_policies, enforce_operation_authorization},
         client_identification::identify_client,
         coerce_variables::coerce_request_variables,
         csrf_prevention::perform_csrf_prevention,
@@ -764,14 +764,20 @@ pub async fn execute_pipeline<'exec>(
     let cancellation_token =
         CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
 
-    let (mut normalize_payload, authorization_errors) = enforce_operation_authorization(
+    // `@policy` requirements are resolved outside of the router, so they are published
+    // to the request context before the analysis stage runs, and read back after it.
+    let required_policies = collect_required_policies(
         shared_state.router_config,
         &normalize_payload,
         &supergraph.runtime.authorization,
         &supergraph.snapshot.metadata,
         &variable_payload,
-        &client_request_details.jwt,
     )?;
+    if !required_policies.is_empty() {
+        request_context.update(|ctx| {
+            ctx.authorization.required_policies = Some(required_policies);
+        })?;
+    }
 
     let mut progressive_override_ctx = RequestOverrideContext::new(
         &supergraph.runtime.override_labels_evaluator,
@@ -821,6 +827,25 @@ pub async fn execute_pipeline<'exec>(
             }
         }
     }
+
+    // Enforcement runs after the analysis stage so that `@policy` decisions taken by a
+    // coprocessor are already available in the request context.
+    let granted_policies = request_context
+        .read_lock()?
+        .authorization
+        .granted_policies
+        .clone()
+        .unwrap_or_default();
+
+    let (mut normalize_payload, authorization_errors) = enforce_operation_authorization(
+        &shared_state.router_config,
+        &normalize_payload,
+        &supergraph.runtime.authorization,
+        &supergraph.snapshot.metadata,
+        &variable_payload,
+        &client_request_details.jwt,
+        &granted_policies,
+    )?;
 
     let client_request_details = Arc::new(client_request_details.freeze());
 
