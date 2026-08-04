@@ -1518,6 +1518,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "custom-logger-correlation-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "hive-router",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "darling"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

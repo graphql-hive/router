@@ -11,6 +11,7 @@ use hive_router::{
     plugins::hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
     plugins::hooks::on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
     plugins::plugin_trait::{RouterPlugin, StartHookPayload},
+    set_summary_attribute,
 };
 use hive_router_internal::telemetry::logging::targets;
 use http::{HeaderMap, HeaderName, HeaderValue};
@@ -689,6 +690,15 @@ impl RouterPlugin for TestDebugLogPlugin {
         payload: OnHttpRequestHookPayload<'req>,
     ) -> OnHttpRequestHookResult<'req> {
         debug!("i'm just a test");
+        set_summary_attribute("test_debug_log.simple", "hello-from-plugin");
+        set_summary_attribute(
+            "test_debug_log.nested",
+            json!({
+                "flag": true,
+                "count": 3,
+                "tags": ["a", "b"],
+            }),
+        );
         payload.proceed()
     }
 }
@@ -719,4 +729,70 @@ plugins:
     let plugin_log = log_line(&stdout_log, "i'm just a test");
 
     assert_eq!(req_id_of(http_start), req_id_of(plugin_log));
+}
+
+#[ntex::test]
+async fn plugin_can_record_a_simple_custom_summary_field() {
+    let (_subgraphs, router) = setup_router(
+        router_with_telemetry(
+            "\
+log:
+  level: info
+  format: json
+plugins:
+  test_debug_log:
+    enabled: true
+",
+        )
+        .register_plugin::<TestDebugLogPlugin>(),
+    )
+    .await;
+
+    let stdout_log = router
+        .send_graphql_request(TEST_QUERY, None, None)
+        .capture_stdout_json()
+        .await;
+
+    let req_summary = log_line_by_target(&stdout_log, targets::SUMMARY);
+    assert_eq!(
+        find_attr(req_summary, "test_debug_log.simple"),
+        Some("hello-from-plugin".to_string())
+    );
+}
+
+#[ntex::test]
+async fn plugin_can_record_a_nested_custom_summary_field() {
+    let (_subgraphs, router) = setup_router(
+        router_with_telemetry(
+            "\
+log:
+  level: info
+  format: json
+plugins:
+  test_debug_log:
+    enabled: true
+",
+        )
+        .register_plugin::<TestDebugLogPlugin>(),
+    )
+    .await;
+
+    let stdout_log = router
+        .send_graphql_request(TEST_QUERY, None, None)
+        .capture_stdout_json()
+        .await;
+
+    let req_summary = log_line_by_target(&stdout_log, targets::SUMMARY);
+    let nested = req_summary
+        .get("test_debug_log.nested")
+        .expect("missing nested custom summary field");
+
+    assert_eq!(
+        nested,
+        &serde_json::json!({
+            "flag": true,
+            "count": 3,
+            "tags": ["a", "b"],
+        })
+    );
 }

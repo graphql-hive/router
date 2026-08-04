@@ -7,6 +7,8 @@ use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields};
 use tracing_subscriber::registry::LookupSpan;
 
 use crate::telemetry::logging::request_id::REQUEST_IDENTIFIERS;
+use crate::telemetry::logging::summary::REQUEST_SUMMARY;
+use crate::telemetry::logging::targets;
 
 pub struct RouterTextFormat<T>(pub Format<Compact, T>);
 
@@ -40,8 +42,24 @@ where
                 if let Some(trace_id) = ids.trace_id() {
                     write!(writer, " trace_id={:?}", trace_id)?;
                 }
+                if let Ok(correlations) = ids.correlations.lock() {
+                    for (key, value) in correlations.iter() {
+                        write!(writer, " {key}={value:?}")?;
+                    }
+                }
                 Ok(())
             });
+
+            if event.metadata().target() == targets::SUMMARY {
+                let _ = REQUEST_SUMMARY.try_with(|summary| -> std::fmt::Result {
+                    if let Ok(custom) = summary.custom.lock() {
+                        for (key, value) in custom.iter() {
+                            write!(writer, " {key}={value}")?;
+                        }
+                    }
+                    Ok(())
+                });
+            }
 
             writer.write_char('\n')
         })

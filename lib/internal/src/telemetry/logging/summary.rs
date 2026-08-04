@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
 use std::future::Future;
 use std::rc::Rc;
@@ -36,6 +36,7 @@ pub struct RequestSummary {
     pub payload_bytes: AtomicI64,
     pub duration_ms: AtomicU64,
     pub supergraph_identifier: AtomicU64,
+    pub custom: Mutex<BTreeMap<String, sonic_rs::Value>>,
 }
 
 impl RequestSummary {
@@ -83,6 +84,14 @@ impl RequestSummary {
 
     pub fn set_supergraph_identifier(&self, identifier: u64) {
         self.supergraph_identifier.store(identifier, Relaxed);
+    }
+
+    /// Records a plugin-contributed attribute, so it's included when the summary is emitted.
+    /// Setting the same key again overwrites the previous value.
+    pub fn set_custom(&self, key: impl Into<String>, value: impl Into<sonic_rs::Value>) {
+        if let Ok(mut custom) = self.custom.lock() {
+            custom.insert(key.into(), value.into());
+        }
     }
 
     pub fn record_subgraph(&self, name: &str) {
