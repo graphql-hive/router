@@ -1,3 +1,6 @@
+// Needed because of ntex's way of defining middlewares
+#![recursion_limit = "256"]
+
 use std::collections::HashMap;
 
 use hive_router::http::HeaderMap;

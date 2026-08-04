@@ -1,5 +1,9 @@
 // From https://github.com/apollographql/router/blob/dev/examples/status-code-propagation/rust/src/propagate_status_code.rs
 
+// Needed because of ntex's way of defining middlewares
+#![recursion_limit = "256"]
+
+
 use hive_router::http::StatusCode;
 use serde::Deserialize;
 

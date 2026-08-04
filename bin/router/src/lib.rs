@@ -1,3 +1,6 @@
+// Needed because of ntex's way of defining middlewares
+#![recursion_limit = "256"]
+
 mod cache_state;
 mod consts;
 pub mod error;
@@ -41,6 +44,7 @@ use crate::{
             read_graphql_operation_metric_identity, read_graphql_response_metric_status,
             write_graphql_response_metric_status,
         },
+        request_identifiers::RequestIdentifiersService,
         timeout::handle_timeout,
         usage_reporting::init_hive_usage_agent,
         validation::{
@@ -68,7 +72,6 @@ pub use hive_router_internal::background_tasks;
 use hive_router_internal::background_tasks::{BackgroundTask, CancellationToken};
 use hive_router_internal::telemetry::{
     logging::{
-        request_id::WithRequestIdentifiers,
         summary::{self, WithRequestSummary},
         targets,
     },
@@ -151,12 +154,6 @@ async fn graphql_endpoint_handler(
     let parent_ctx = app_state
         .telemetry_context
         .extract_context(&HeaderExtractor(request.headers()));
-    let request_identifiers = Arc::new(
-        app_state
-            .telemetry_context
-            .logging_correlation_extractor
-            .extract(&request, &parent_ctx),
-    );
 
     let http_request_capture = app_state
         .telemetry_context
@@ -210,7 +207,6 @@ async fn graphql_endpoint_handler(
 
         (response_mode, inner_res, summary_guard)
     }
-    .with_request_id(request_identifiers)
     .with_request_summary()
     .await;
 
@@ -428,6 +424,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
                 paths_for_plugin,
                 prometheus.as_ref().map(|p| p.endpoint.clone()),
             ))
+            .middleware(RequestIdentifiersService)
             .state(shared_state.clone())
             .state(schema_state.clone())
             .state(shared_state.telemetry_context.clone())
