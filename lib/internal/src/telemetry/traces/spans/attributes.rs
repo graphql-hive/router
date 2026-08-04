@@ -44,6 +44,7 @@ pub const HIVE_CLIENT_NAME: &str = "hive.client.name";
 pub const HIVE_CLIENT_VERSION: &str = "hive.client.version";
 pub const HIVE_GRAPHQL_OPERATION_HASH: &str = "hive.graphql.operation.hash";
 pub const HIVE_GRAPHQL_SUBGRAPH_NAME: &str = "hive.graphql.subgraph.name";
+
 /// Hive-specific attributes for errors
 pub const HIVE_ERROR_AFFECTED_PATH: &str = "hive.error.affected_path";
 pub const HIVE_ERROR_SUBGRAPH_NAME: &str = "hive.error.subgraph_name";
@@ -70,3 +71,6 @@ pub const DEPRECATED_HTTP_RESPONSE_CONTENT_LENGTH: &str = "http.response_content
 pub const DEPRECATED_NET_PEER_NAME: &str = "net.peer.name";
 pub const DEPRECATED_NET_PEER_PORT: &str = "net.peer.port";
 pub const DEPRECATED_GRAPHQL_DOCUMENT: &str = "graphql.document";
+
+// Custom Router attributes
+pub const ROUTER_REQUEST_ID: &str = "router.request_id";

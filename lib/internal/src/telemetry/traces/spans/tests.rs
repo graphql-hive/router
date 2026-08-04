@@ -240,6 +240,7 @@ fn test_http_server_request_span() {
                 attributes::CLIENT_PORT,
                 attributes::NETWORK_PEER_ADDRESS,
                 attributes::NETWORK_PEER_PORT,
+                attributes::ROUTER_REQUEST_ID,
             ],
         );
 

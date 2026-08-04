@@ -186,7 +186,7 @@ impl<F: Future> WithRequestSummary for F {}
 pub struct SummaryOnDrop {
     started_at: std::time::Instant,
     summary: Option<Arc<RequestSummary>>,
-    request_ids: Option<Arc<RequestIdentifiers>>,
+    pub request_ids: Option<Arc<RequestIdentifiers>>,
 }
 
 impl SummaryOnDrop {

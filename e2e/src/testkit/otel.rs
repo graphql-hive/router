@@ -784,10 +784,12 @@ impl OtlpCollector {
 
         // keys
         settings.add_filter(r"(hive\.inflight\.key:\s+)\d+", "$1[random]");
+        settings.add_filter(r"(hive\.inflight\.key:\s+)\d+", "$1[random]");
 
         // addresses and ports
         settings.add_filter(r"(server\.address:\s+)[\d.]+", "$1[address]");
         settings.add_filter(r"(server\.port:\s+)\d+", "$1[port]");
+        settings.add_filter(r"(router\.request_id:\s+)[0-9a-f-]+", "$1[request_id]");
         settings.add_filter(r"(client\.address:\s+)[\d.]+", "$1[address]");
         settings.add_filter(r"(client\.port:\s+)\d+", "$1[port]");
         settings.add_filter(r"(network\.peer\.address:\s+)[\d.]+", "$1[address]");

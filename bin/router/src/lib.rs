@@ -69,7 +69,6 @@ use graphql_tools::validation::rules::default_rules_validation_plan;
 pub use hive_router_config::humantime_serde;
 use hive_router_config::{load_config, subscriptions::CallbackConfig, HiveRouterConfig};
 pub use hive_router_internal::background_tasks;
-use hive_router_internal::background_tasks::{BackgroundTask, CancellationToken};
 use hive_router_internal::telemetry::{
     logging::{
         summary::{self, WithRequestSummary},
@@ -80,6 +79,10 @@ use hive_router_internal::telemetry::{
     TelemetryContext,
 };
 pub use hive_router_internal::BoxError;
+use hive_router_internal::{
+    background_tasks::{BackgroundTask, CancellationToken},
+    telemetry::logging::request_id::REQUEST_IDENTIFIERS,
+};
 use hive_router_internal::{
     http::read_request_body_size, telemetry::metrics::catalog::values::GraphQLResponseStatus,
 };
@@ -254,6 +257,11 @@ async fn graphql_endpoint_dispatch(
             .ip_header,
     );
     let _ = root_http_request_span.set_parent(parent_ctx);
+
+    #[allow(unused_must_use)]
+    REQUEST_IDENTIFIERS.try_with(|request_identifiers| {
+        root_http_request_span.record_request_id(request_identifiers.req_id());
+    });
 
     let response_header_sink = ResponseHeaderSink::default();
 
