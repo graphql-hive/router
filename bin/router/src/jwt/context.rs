@@ -11,6 +11,8 @@ pub struct JwtRequestContext {
     pub token_prefix: Option<String>,
     pub token_raw: String,
     pub token_payload: Arc<JwtTokenPayload>,
+    /// The name of the claim to read authorization scopes from. Defaults to "scope"/"scopes" when `None`.
+    pub scopes_claim: Option<String>,
 }
 
 impl JwtRequestContext {
@@ -18,11 +20,15 @@ impl JwtRequestContext {
         Ok(sonic_rs::to_value(&self.token_payload.claims)?)
     }
 
-    /// Extracts an optional "scope"/"scopes" field form the token's payload.
+    /// Extracts an optional scopes field from the token's payload, read from the claim named by
+    /// `scopes_claim`, or from "scope" (falling back to "scopes") when `scopes_claim` is `None`.
     /// Supports both space-delimited and array formats.
     pub fn extract_scopes(&self) -> Option<Vec<String>> {
         let map = &self.token_payload.claims.additional_claims;
-        let maybe_scopes = map.get("scope").or_else(|| map.get("scopes"));
+        let maybe_scopes = match &self.scopes_claim {
+            Some(claim_name) => map.get(claim_name.as_str()),
+            None => map.get("scope").or_else(|| map.get("scopes")),
+        };
 
         if let Some(serde_json::Value::String(scopes_str)) = maybe_scopes {
             return Some(scopes_str.split(' ').map(String::from).collect());
@@ -77,4 +83,66 @@ pub struct JwtClaims {
     // because the jsonwebtoken crate is using `serde_json` internally, and the `sonic_rs::Value` is not recognized as valid type
     #[serde(flatten)]
     pub additional_claims: HashMap<String, serde_json::Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    use jsonwebtoken::Header;
+    use serde_json::json;
+
+    use super::*;
+
+    fn context_with_claims(
+        additional_claims: HashMap<String, serde_json::Value>,
+        scopes_claim: Option<String>,
+    ) -> JwtRequestContext {
+        JwtRequestContext {
+            token_prefix: None,
+            token_raw: "token".to_string(),
+            scopes_claim,
+            token_payload: Arc::new(TokenData {
+                header: Header::default(),
+                claims: JwtClaims {
+                    iss: None,
+                    sub: None,
+                    aud: None,
+                    exp: None,
+                    nbf: None,
+                    iat: None,
+                    jti: None,
+                    additional_claims,
+                },
+            }),
+        }
+    }
+
+    #[test]
+    fn extracts_default_scope_claim_when_scopes_claim_not_configured() {
+        let claims = HashMap::from([("scope".to_string(), json!("read:foo write:bar"))]);
+        let ctx = context_with_claims(claims, None);
+
+        assert_eq!(
+            ctx.extract_scopes(),
+            Some(vec!["read:foo".to_string(), "write:bar".to_string()])
+        );
+    }
+
+    #[test]
+    fn extracts_configured_claim_name() {
+        let claims = HashMap::from([("roles".to_string(), json!(["Admin", "Reader"]))]);
+        let ctx = context_with_claims(claims, Some("roles".to_string()));
+
+        assert_eq!(
+            ctx.extract_scopes(),
+            Some(vec!["Admin".to_string(), "Reader".to_string()])
+        );
+    }
+
+    #[test]
+    fn ignores_default_scope_claim_when_a_different_claim_is_configured() {
+        let claims = HashMap::from([("scope".to_string(), json!("read:foo"))]);
+        let ctx = context_with_claims(claims, Some("roles".to_string()));
+
+        assert_eq!(ctx.extract_scopes(), None);
+    }
 }

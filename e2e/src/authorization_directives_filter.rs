@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod authorization_directives_in_filter_mode_e2e_tests {
     use jsonwebtoken::{encode, EncodingKey};
-    use sonic_rs::{json, Value};
+    use sonic_rs::{json, JsonValueMutTrait, Value};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::testkit::{some_header_map, ClientResponseExt, TestRouter, TestSubgraphs};
@@ -22,20 +22,26 @@ mod authorization_directives_in_filter_mode_e2e_tests {
     }
 
     fn authorization_header_with_scopes(scopes: &str) -> http::HeaderMap {
+        authorization_header_with_claim("scope", scopes)
+    }
+
+    fn authorization_header_with_claim(claim_name: &str, value: &str) -> http::HeaderMap {
+        let mut payload = json!({
+            "sub": "user2",
+            "iat": 1516239022,
+            "exp": SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 3600,
+        });
+        payload
+            .as_object_mut()
+            .expect("payload should be an object")
+            .insert(claim_name, json!(value));
+
         some_header_map! {
-            http::header::AUTHORIZATION => format!(
-                "Bearer {}",
-                generate_jwt(&json!({
-                    "sub": "user2",
-                    "iat": 1516239022,
-                    "exp": SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs()
-                        + 3600,
-                    "scope": scopes,
-                }))
-            )
+            http::header::AUTHORIZATION => format!("Bearer {}", generate_jwt(&payload))
         }
         .unwrap()
     }
@@ -209,6 +215,86 @@ mod authorization_directives_in_filter_mode_e2e_tests {
               "birthday": 1234567890
             }
           }
+        }
+        "#);
+    }
+
+    /// Verifies that when `jwt.scopes_claim` is configured to a custom claim name (e.g. `roles`,
+    /// as used for Microsoft Entra ID app roles), `@requiresScopes` is evaluated against that
+    /// claim instead of the default `scope`/`scopes` claim.
+    #[ntex::test]
+    async fn authenticated_access_to_scoped_field_with_custom_scopes_claim() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/jwt_auth_custom_scopes_claim.router.yaml")
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                "{ me { birthday } }",
+                None,
+                Some(authorization_header_with_claim("roles", "read:birthday")),
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let subgraph_requests = subgraphs.get_requests_log("accounts").unwrap_or_default();
+        assert_eq!(
+            subgraph_requests.len(),
+            1,
+            "expected 1 request to accounts subgraph"
+        );
+
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "me": {
+              "birthday": 1234567890
+            }
+          }
+        }
+        "#);
+    }
+
+    /// Verifies that when `jwt.scopes_claim` is configured to a custom claim name, the default
+    /// `scope` claim is no longer consulted, so a token granting the required scope only via
+    /// `scope` (and not the configured claim) is treated as unauthorized.
+    #[ntex::test]
+    async fn default_scope_claim_is_ignored_when_custom_scopes_claim_is_configured() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/jwt_auth_custom_scopes_claim.router.yaml")
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                "{ me { birthday } }",
+                None,
+                Some(authorization_header_with_claim("scope", "read:birthday")),
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "me": null
+          },
+          "errors": [
+            {
+              "message": "Unauthorized field or type",
+              "extensions": {
+                "code": "UNAUTHORIZED_FIELD_OR_TYPE",
+                "affectedPath": "me.birthday"
+              }
+            }
+          ]
         }
         "#);
     }

@@ -43,6 +43,14 @@ pub struct JwtAuthConfig {
     #[serde(default = "default_forward_claims_to_upstream_extensions")]
     /// Forward the JWT claims to the upstream service using GraphQL's `.extensions`.
     pub forward_claims_to_upstream_extensions: JwtClaimsForwardingConfig,
+    /// The name of the JWT claim to read authorization scopes from, used to evaluate the `@requiresScopes` directive.
+    /// If not specified, the `scope` claim is used (falling back to `scopes` if `scope` is not present), each holding
+    /// either a space-delimited string or an array of strings.
+    ///
+    /// This is useful for identity providers that grant authorization data under a different claim name, such as
+    /// Microsoft Entra ID, which issues app roles under a `roles` claim.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scopes_claim: Option<String>,
 }
 
 impl JwtAuthConfig {
@@ -74,6 +82,7 @@ impl Default for JwtAuthConfig {
             audiences: None,
             issuers: None,
             allowed_algorithms: None,
+            scopes_claim: None,
         }
     }
 }
@@ -165,4 +174,31 @@ pub enum JwtAuthPluginLookupLocation {
     #[serde(rename = "cookies")]
     #[schemars(title = "cookies")]
     Cookie { name: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::JwtAuthConfig;
+
+    #[test]
+    fn scopes_claim_defaults_to_none() {
+        let config = JwtAuthConfig::default();
+        assert_eq!(config.scopes_claim, None);
+    }
+
+    #[test]
+    fn scopes_claim_is_none_when_not_specified_in_config() {
+        let config = serde_json::from_str::<JwtAuthConfig>(r#"{"jwks_providers":[]}"#)
+            .expect("config should parse");
+        assert_eq!(config.scopes_claim, None);
+    }
+
+    #[test]
+    fn scopes_claim_parses_configured_claim_name() {
+        let config = serde_json::from_str::<JwtAuthConfig>(
+            r#"{"jwks_providers":[],"scopes_claim":"roles"}"#,
+        )
+        .expect("config should parse");
+        assert_eq!(config.scopes_claim, Some("roles".to_string()));
+    }
 }
