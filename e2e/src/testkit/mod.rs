@@ -41,6 +41,7 @@ use hive_router::{
     add_callback_handler, background_tasks::BackgroundTasksManager, configure_app_from_config,
     configure_ntex_app, init_rustls_crypto_provider, invoke_shutdown_hooks,
     pipeline::long_lived_client_limit::LongLivedClientLimitService,
+    pipeline::request_identifiers::RequestIdentifiersService,
     plugins::plugins_service::PluginService, telemetry::Telemetry, PluginRegistry, RouterPaths,
     RouterSharedState, SchemaState,
 };
@@ -922,6 +923,7 @@ impl TestRouter<Built> {
                         paths.clone(),
                         prometheus.as_ref().map(|p| p.endpoint.clone()),
                     ))
+                    .middleware(RequestIdentifiersService)
                     .state(shared_state.clone())
                     .state(schema_state)
                     .state(callback_subs)

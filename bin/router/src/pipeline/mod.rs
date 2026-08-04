@@ -103,6 +103,7 @@ pub mod persisted_documents;
 pub mod progressive_override;
 pub mod query_plan;
 pub mod request_extensions;
+pub mod request_identifiers;
 pub mod sse;
 pub mod timeout;
 pub(crate) mod trie;
