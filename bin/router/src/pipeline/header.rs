@@ -268,16 +268,26 @@ impl RequestAccepts for HttpRequest {
         // strip multipart/mixed boundaries before negotiation since the server chooses the response boundary
         // as per the spec. furthermore, the incremental delivery and apollo multipart specs already have
         // their boundaries defined in the spec and we use those boundaries when generating the response
-        let accept = accept
-            .media_types()
-            .map(|media_type| {
-                let mut media_type = media_type.to_ref();
-                if media_type.ty.as_str() == "multipart" && media_type.subty.as_str() == "mixed" {
-                    media_type.remove_params(Name::new_unchecked("boundary"));
-                }
-                media_type
-            })
-            .collect::<Accept>();
+        let boundary = Name::new_unchecked("boundary");
+        let accept = if accept.media_types().any(|media_type| {
+            media_type.ty().as_str() == "multipart"
+                && media_type.subty().as_str() == "mixed"
+                && media_type.get_param(boundary).is_some()
+        }) {
+            accept
+                .media_types()
+                .map(|media_type| {
+                    let mut media_type = media_type.to_ref();
+                    if media_type.ty.as_str() == "multipart" && media_type.subty.as_str() == "mixed"
+                    {
+                        media_type.remove_params(boundary);
+                    }
+                    media_type
+                })
+                .collect::<Accept>()
+        } else {
+            accept
+        };
 
         if laboratory_enabled && self.method() == Method::GET {
             // if the client GETs we negotiate with the all supported media type, including HTML
