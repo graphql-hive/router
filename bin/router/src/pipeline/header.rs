@@ -351,7 +351,18 @@ mod tests {
             ),
             (
                 Method::GET,
+                // unqouredquoted boundary param
                 "multipart/mixed;boundary=graphql;subscriptionSpec=1.0,application/json",
+                true,
+                ResponseMode::Dual(
+                    SingleContentType::JSON,
+                    StreamContentType::ApolloMultipartHTTP,
+                ),
+            ),
+            (
+                Method::GET,
+                // quoted boundary param
+                "multipart/mixed;boundary=\"graphql\";subscriptionSpec=1.0,application/json",
                 true,
                 ResponseMode::Dual(
                     SingleContentType::JSON,
