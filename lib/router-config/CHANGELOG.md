@@ -66,6 +66,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(hive-router)* fix docker image issues  ([#394](https://github.com/graphql-hive/router/pull/394))
+## 0.1.10 (2026-08-05)
+
+### Features
+
+#### Add `jwt.scopes_claim`
+
+Adds a new `jwt.scopes_claim` configuration option that lets you specify which JWT claim the `@requiresScopes` directive should read authorization data from, instead of the hardcoded `scope`/`scopes` claim.
+
+This is useful for identity providers that grant authorization data under a different claim name — for example, Microsoft Entra ID, which issues app roles under a `roles` claim rather than `scope`. Setting `jwt.scopes_claim: roles` allows `@requiresScopes` to authorize requests using Entra app roles without requiring any changes to how the claim is issued.
+
+#### Add `limits.max_request_header_size`
+
+Adds a new `limits.max_request_header_size` configuration option (default: `64KiB`) that rejects requests whose HTTP headers exceed the configured size with `431 Request Header Fields Too Large`, before the request is processed.
+
+Since the router propagates client headers (cookies, JWTs) to subgraphs, requests with oversized headers would previously be forwarded and rejected by the subgraph server's own header limit (e.g. Tomcat's 8KB default), surfacing as a confusing subgraph error. With this limit, such requests are rejected at the router with a clear error.
+
+### Fixes
+
+#### Seed the embedded Hive Laboratory from the router config
+
+Adds optional keys under `laboratory`: `operations`, named operations that each open in a pre-filled tab, and `collections`, named groups of operations shown in the Laboratory's sidebar. Each operation may carry `variables`, `headers` and `extensions` as native YAML maps.
+
+Seeded values are embedded in the served page and visible via "view source", so they must not contain secrets. Seeded operations and collections are refreshed from config on every reload; work a user creates themselves is preserved.
+
 ## 0.1.9 (2026-07-28)
 
 ### Fixes
