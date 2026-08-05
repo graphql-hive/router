@@ -3,7 +3,7 @@ use hive_router_internal::telemetry::logging::targets;
 use http::{header::ACCEPT, Method};
 use mediatype::{
     names::{HTML, TEXT},
-    MediaType, Name, ReadParams,
+    MediaType, Name, ReadParams, WriteParams,
 };
 use ntex::web::HttpRequest;
 use std::str::FromStr;
@@ -265,6 +265,30 @@ impl RequestAccepts for HttpRequest {
             PipelineError::InvalidHeaderValue(ACCEPT)
         })?;
 
+        // strip multipart/mixed boundaries before negotiation since the server chooses the response boundary
+        // as per the spec. furthermore, the incremental delivery and apollo multipart specs already have
+        // their boundaries defined in the spec and we use those boundaries when generating the response
+        let boundary = Name::new_unchecked("boundary");
+        let accept = if accept.media_types().any(|media_type| {
+            media_type.ty().as_str() == "multipart"
+                && media_type.subty().as_str() == "mixed"
+                && media_type.get_param(boundary).is_some()
+        }) {
+            accept
+                .media_types()
+                .map(|media_type| {
+                    let mut media_type = media_type.to_ref();
+                    if media_type.ty.as_str() == "multipart" && media_type.subty.as_str() == "mixed"
+                    {
+                        media_type.remove_params(boundary);
+                    }
+                    media_type
+                })
+                .collect::<Accept>()
+        } else {
+            accept
+        };
+
         if laboratory_enabled && self.method() == Method::GET {
             // if the client GETs we negotiate with the all supported media type, including HTML
             // to see if the client wants Laboratory. we negotiate with everything because browsers
@@ -329,6 +353,26 @@ mod tests {
             (
                 Method::GET,
                 r#"application/json, text/event-stream, multipart/mixed;subscriptionSpec="1.0""#,
+                true,
+                ResponseMode::Dual(
+                    SingleContentType::JSON,
+                    StreamContentType::ApolloMultipartHTTP,
+                ),
+            ),
+            (
+                Method::GET,
+                // unquoted boundary param
+                "multipart/mixed;boundary=graphql;subscriptionSpec=1.0,application/json",
+                true,
+                ResponseMode::Dual(
+                    SingleContentType::JSON,
+                    StreamContentType::ApolloMultipartHTTP,
+                ),
+            ),
+            (
+                Method::GET,
+                // quoted boundary param
+                "multipart/mixed;boundary=\"graphql\";subscriptionSpec=1.0,application/json",
                 true,
                 ResponseMode::Dual(
                     SingleContentType::JSON,
