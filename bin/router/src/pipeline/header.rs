@@ -351,7 +351,7 @@ mod tests {
             ),
             (
                 Method::GET,
-                // unqouredquoted boundary param
+                // unquoted boundary param
                 "multipart/mixed;boundary=graphql;subscriptionSpec=1.0,application/json",
                 true,
                 ResponseMode::Dual(
