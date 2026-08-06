@@ -47,8 +47,7 @@ use crate::{
         request_identifiers::RequestIdentifiersService,
         request_summary::RequestSummaryService,
         timeout::handle_timeout,
-        usage_reporting::init_hive_usage_agent,
-        validation::{
+            validation::{
             max_aliases_rule::MaxAliasesRule, max_depth_rule::MaxDepthRule,
             max_directives_rule::MaxDirectivesRule,
         },
@@ -544,12 +543,6 @@ pub async fn configure_app_from_config(
         false => None,
     };
 
-    let hive_usage_agent = match router_config.telemetry.hive.as_ref() {
-        Some(hive_config) if hive_config.usage_reporting.enabled => {
-            Some(init_hive_usage_agent(bg_tasks_manager, hive_config)?)
-        }
-        _ => None,
-    };
     let plugins_arc = plugin_registry.initialize_plugins(&router_config, bg_tasks_manager)?;
 
     let active_subscriptions =
@@ -558,6 +551,7 @@ pub async fn configure_app_from_config(
     let router_config_arc = Arc::new(router_config);
     let telemetry_context_arc = Arc::new(telemetry_context);
 
+    let dynamic_task_registrar = bg_tasks_manager.dynamic_registrar();
     let schema_state = SchemaState::new_from_config(
         bg_tasks_manager,
         telemetry_context_arc.clone(),
@@ -565,6 +559,7 @@ pub async fn configure_app_from_config(
         plugins_arc.clone(),
         active_subscriptions.clone(),
         storage_manager.clone(),
+        dynamic_task_registrar,
     )
     .await?;
     let schema_state_arc = Arc::new(schema_state);
@@ -610,7 +605,6 @@ pub async fn configure_app_from_config(
         router_config_arc,
         persisted_documents_runtime,
         jwt_runtime,
-        hive_usage_agent,
         validation_plan,
         telemetry_context_arc.clone(),
         plugins_arc,

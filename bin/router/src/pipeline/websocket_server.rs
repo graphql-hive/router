@@ -609,7 +609,7 @@ async fn handle_text_frame(
                       }
                   };
 
-                  if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
+                  if let Some(hive_usage_agent) = &supergraph.runtime.hive_usage_agent {
                       let mut headers_vec = Vec::with_capacity(headers.len());
                       for (name, value) in headers.iter() {
                           if let Ok(val_str) = value.to_str() {

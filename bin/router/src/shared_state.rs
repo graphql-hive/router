@@ -1,6 +1,5 @@
 use futures::Stream;
 use graphql_tools::validation::validate::ValidationPlan;
-use hive_console_sdk::agent::usage_agent::{AgentError, UsageAgent};
 use hive_router_config::traffic_shaping::{
     TrafficShapingRouterDedupeHeadersConfig, TrafficShapingRouterDedupeHeadersKeyword,
 };
@@ -319,7 +318,6 @@ pub struct RouterSharedState {
     /// but no longer than `exp` date.
     pub jwt_claims_cache: JwtClaimsCache,
     pub jwt_auth_runtime: Option<JwtAuthRuntime>,
-    pub hive_usage_agent: Option<UsageAgent>,
     pub introspection_policy: BooleanOrProgram,
     pub telemetry_context: Arc<TelemetryContext>,
     pub coprocessor: Option<CoprocessorRuntime>,
@@ -343,7 +341,6 @@ impl RouterSharedState {
         router_config: Arc<HiveRouterConfig>,
         persisted_documents_runtime: PersistedDocumentsRuntime,
         jwt_auth_runtime: Option<JwtAuthRuntime>,
-        hive_usage_agent: Option<UsageAgent>,
         validation_plan: ValidationPlan,
         telemetry_context: Arc<TelemetryContext>,
         plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
@@ -379,7 +376,6 @@ impl RouterSharedState {
                 .build(),
             router_config: router_config.clone(),
             jwt_auth_runtime,
-            hive_usage_agent,
             introspection_policy: compile_introspection_policy(&router_config.introspection)
                 .map_err(Box::new)?,
             telemetry_context,
@@ -432,8 +428,6 @@ fn render_laboratory_page(
 pub enum SharedStateError {
     #[error("invalid regex in CORS config: {0}")]
     CORSConfig(#[from] Box<CORSConfigError>),
-    #[error("error creating hive usage agent: {0}")]
-    UsageAgent(#[from] Box<AgentError>),
     #[error("invalid persisted documents config: {0}")]
     PersistedDocuments(#[from] Box<PersistedDocumentResolverError>),
     #[error("invalid introspection config: {0}")]

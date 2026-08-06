@@ -8,7 +8,11 @@ use futures::StreamExt;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
 use hive_router_internal::authorization::metadata::AuthorizationMetadata;
-use hive_router_internal::background_tasks::{BackgroundTask, BackgroundTasksManager};
+use hive_console_sdk::agent::usage_agent::UsageAgent;
+use hive_router_config::telemetry::hive::HiveTelemetryConfig;
+use hive_router_internal::background_tasks::{
+    BackgroundTask, BackgroundTasksManager, DynamicBackgroundTaskRegistrar,
+};
 use hive_router_internal::telemetry::logging::targets;
 use hive_router_internal::telemetry::utils::resolve_value_or_expression;
 use hive_router_internal::telemetry::{metrics::Metrics, TelemetryContext};
@@ -52,6 +56,7 @@ use crate::{
     pipeline::demand_control::runtime::DemandControlRuntime,
     pipeline::normalize::GraphQLNormalizationPayload,
     pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator},
+    pipeline::usage_reporting::{init_hive_usage_agent, UsageReportingError},
     supergraph::{
         base::{LoadSupergraphError, ReloadSupergraphResult, SupergraphLoader},
         resolve_from_config,
@@ -70,6 +75,8 @@ pub enum RouterSupergraphRuntimeError {
     OverrideLabelsCompileError(#[from] OverrideLabelsCompileError),
     #[error("Invalid router callback configuration: {0}")]
     CallbackConfiguration(String),
+    #[error(transparent)]
+    UsageReportingError(#[from] UsageReportingError),
 }
 
 /// Router state derived from a supergraph and router configuration: subgraph executors,
@@ -92,11 +99,13 @@ pub struct RouterSupergraphRuntime {
     pub headers_plan: Arc<HeaderRulesPlan>,
     pub override_labels_evaluator: OverrideLabelsEvaluator,
     pub error_masking: Arc<Option<ErrorMaskingRuntime>>,
+    pub hive_usage_agent: Option<UsageAgent>,
     pub authorization: AuthorizationMetadata,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
     pub plan_cache: Cache<u64, Arc<QueryPlan>>,
     pub demand_control_runtime: Option<DemandControlRuntime>,
+    lifetime: CancellationToken,
 }
 
 impl RouterSupergraphRuntime {
@@ -123,6 +132,20 @@ impl RouterSupergraphRuntime {
             snapshot.options.demand_control.as_ref(),
             context.telemetry.metrics.clone(),
         );
+        let lifetime = CancellationToken::new();
+        let hive_usage_agent = context
+            .hive
+            .as_ref()
+            .filter(|hive| hive.usage_reporting.enabled)
+            .map(|hive| {
+                init_hive_usage_agent(
+                    &context.task_registrar,
+                    lifetime.clone(),
+                    hive,
+                    snapshot.options.hive_target.as_deref(),
+                )
+            })
+            .transpose()?;
         Ok(Self {
             subgraph_executor_map,
             operation_name_forward_config,
@@ -133,12 +156,20 @@ impl RouterSupergraphRuntime {
             error_masking: Arc::new(ErrorMaskingRuntime::compile_from_config(
                 &snapshot.options.error_masking,
             )),
+            hive_usage_agent,
             authorization,
             validate_cache: Cache::new(1000),
             normalize_cache: Cache::new(1000),
             plan_cache: Cache::new(1000),
             demand_control_runtime,
+            lifetime,
         })
+    }
+}
+
+impl Drop for RouterSupergraphRuntime {
+    fn drop(&mut self) {
+        self.lifetime.cancel();
     }
 }
 
@@ -146,6 +177,8 @@ pub struct RouterSupergraphRuntimeContext {
     telemetry: Arc<TelemetryContext>,
     callback_subscriptions: CallbackSubscriptionsMap,
     callback: Option<HttpCallbackRuntimeConfig>,
+    task_registrar: DynamicBackgroundTaskRegistrar,
+    hive: Option<HiveTelemetryConfig>,
 }
 
 /// One selected supergraph for a request: the schema snapshot plus the router runtime built for
@@ -422,6 +455,7 @@ impl SchemaState {
         plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
         active_subscriptions: ActiveSubscriptions,
         storage_manager: Arc<StorageManager>,
+        task_registrar: DynamicBackgroundTaskRegistrar,
     ) -> Result<Self, SupergraphManagerError> {
         let configured: Arc<ArcSwap<Option<ConfiguredSupergraph>>> =
             Arc::new(ArcSwap::from(Arc::new(None)));
@@ -435,6 +469,8 @@ impl SchemaState {
             telemetry: telemetry_context.clone(),
             callback_subscriptions: callback_subscriptions.clone(),
             callback: callback_runtime_config(&router_config)?,
+            task_registrar,
+            hive: router_config.telemetry.hive.clone(),
         });
 
         // `supergraph.source: plugin` has no configured source at all... no loader, no polling
@@ -869,6 +905,8 @@ mod plugin_runtime_cache_tests {
             telemetry: telemetry_context.clone(),
             callback_subscriptions: callback_subscriptions.clone(),
             callback: None,
+            task_registrar: BackgroundTasksManager::new().dynamic_registrar(),
+            hive: None,
         });
         SchemaState {
             configured: Arc::new(ArcSwap::from(Arc::new(None))),
@@ -1108,6 +1146,8 @@ mod plugin_runtime_cache_tests {
                             )),
                             callback_subscriptions: Arc::new(DashMap::new()),
                             callback: None,
+                            task_registrar: BackgroundTasksManager::new().dynamic_registrar(),
+                            hive: None,
                         },
                     )
                     .unwrap(),

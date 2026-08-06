@@ -497,7 +497,7 @@ pub async fn graphql_request_handler(
             exec(None).await?
         };
 
-        if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
+        if let Some(hive_usage_agent) = &supergraph.runtime.hive_usage_agent {
             usage_reporting::collect_usage_report(
                 supergraph.snapshot.supergraph_schema.clone(),
                 started_at.elapsed(),

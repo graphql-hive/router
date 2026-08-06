@@ -17,7 +17,7 @@ use hive_router_config::{
 };
 use hive_router_internal::telemetry::utils::resolve_value_or_expression;
 use hive_router_internal::{
-    background_tasks::{BackgroundTask, BackgroundTasksManager},
+    background_tasks::{BackgroundTask, DynamicBackgroundTaskRegistrar},
     telemetry::logging::targets,
 };
 use hive_router_query_planner::state::supergraph_state::OperationKind;
@@ -37,8 +37,10 @@ pub enum UsageReportingError {
 }
 
 pub fn init_hive_usage_agent(
-    bg_tasks_manager: &mut BackgroundTasksManager,
+    task_registrar: &DynamicBackgroundTaskRegistrar,
+    lifetime: CancellationToken,
     hive_config: &HiveTelemetryConfig,
+    target: Option<&str>,
 ) -> Result<UsageAgent, UsageReportingError> {
     let usage_config = &hive_config.usage_reporting;
     let user_agent = format!("hive-router/{}", ROUTER_VERSION);
@@ -48,15 +50,7 @@ pub fn init_hive_usage_agent(
         None => return Err(UsageReportingError::MissingAccessToken),
     };
 
-    let target = match &hive_config.target {
-        Some(t) => Some(
-            resolve_value_or_expression(t, "Hive Telemetry target")
-                .map_err(|e| UsageReportingError::ConfigurationError(e.to_string()))?,
-        ),
-        None => None,
-    };
-
-    if let Some(target) = &target {
+    if let Some(target) = target {
         if !is_uuid_target_ref(target) && !is_slug_target_ref(target) {
             return Err(UsageReportingError::ConfigurationError(format!(
                 "Invalid Hive Telemetry target format: '{}'. It must be either in slug format '$organizationSlug/$projectSlug/$targetSlug' or UUID format 'a0f4c605-6541-4350-8cfe-b31f21a4bf80'",
@@ -77,7 +71,7 @@ pub fn init_hive_usage_agent(
         .flush_interval(usage_config.flush_interval);
 
     if let Some(target_id) = target {
-        agent_builder = agent_builder.target_id(target_id);
+        agent_builder = agent_builder.target_id(target_id.to_string());
     }
 
     if let Some(UsageReportingExclude::Expression { expression }) = &usage_config.exclude {
@@ -100,7 +94,7 @@ pub fn init_hive_usage_agent(
 
     let agent = agent_builder.build()?;
 
-    bg_tasks_manager.register_task(UsageAgentTask(agent.clone()));
+    task_registrar.register_task(UsageAgentTask(agent.clone()), lifetime);
     Ok(agent)
 }
 
