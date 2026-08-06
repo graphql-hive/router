@@ -120,6 +120,21 @@ pub struct RouterSupergraphRuntime {
     lifetime: CancellationToken,
 }
 
+/// Warns about configuration for subgraphs absent from the selected snapshot instead of failing
+/// runtime construction.
+///
+/// The configuration and supergraph can be deployed on different schedules. An entry may be added
+/// before its subgraph appears, kept while that subgraph is temporarily removed, or shared by
+/// plugin-owned supergraph variants with different subgraph sets. The router historically accepted
+/// these dormant entries, so making them errors here would turn an otherwise valid schema reload or
+/// variant selection into an outage and would be a backwards-incompatible validation change.
+///
+/// Runtime construction is still the right place to report them because this is where the concrete
+/// selected snapshot is known. A warning catches misspellings and stale entries while preserving
+/// rolling deployment and plugin-variant use cases. The absent entry has no matching executor in
+/// this snapshot and therefore cannot affect one of its subgraphs. If strict validation is ever
+/// needed, it should be introduced as an explicit opt-in policy rather than changing this tolerant
+/// behavior for every existing configuration.
 fn warn_unknown_subgraphs<'a>(
     setting: &str,
     known: &HashSet<&str>,
