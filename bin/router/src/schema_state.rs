@@ -336,8 +336,8 @@ impl From<&ConfiguredSupergraph> for SelectedSupergraph {
 
 const RUNTIME_CACHE_MAX_SIZE: usize = 10;
 
-type RuntimeCell = tokio::sync::OnceCell<Arc<RouterSupergraphRuntime>>;
-type RouterSupergraphRuntimeCache = Mutex<VecDeque<(u64, Arc<RuntimeCell>)>>;
+type RouterSupergraphRuntimeCell = tokio::sync::OnceCell<Arc<RouterSupergraphRuntime>>;
+type RouterSupergraphRuntimeCache = Mutex<VecDeque<(u64, Arc<RouterSupergraphRuntimeCell>)>>;
 
 pub struct SchemaState {
     /// The supergraph configured through the router config that can be loaded (and polled)
@@ -614,7 +614,7 @@ impl SchemaState {
                 let evicted = (entries.len() >= RUNTIME_CACHE_MAX_SIZE)
                     .then(|| entries.pop_front().map(|(id, _)| id))
                     .flatten();
-                let cell = Arc::new(RuntimeCell::new());
+                let cell = Arc::new(RouterSupergraphRuntimeCell::new());
                 entries.push_back((cache_id, cell.clone()));
                 (cell, evicted, true)
             }
@@ -1328,7 +1328,7 @@ mod plugin_runtime_cache_tests {
             .await
             .unwrap(),
         );
-        let cell = Arc::new(RuntimeCell::new());
+        let cell = Arc::new(RouterSupergraphRuntimeCell::new());
         assert!(cell.set(runtime).is_ok());
         let runtime_cache: Arc<RouterSupergraphRuntimeCache> =
             Arc::new(Mutex::new(VecDeque::from([(cache_id, cell)])));
