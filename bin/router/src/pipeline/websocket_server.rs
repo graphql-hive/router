@@ -633,6 +633,9 @@ async fn handle_text_frame(
                           hive_usage_agent,
                           shared_response.error_count(),
                           Some(request_details),
+                          // The graphql-transport-ws Subscribe payload carries no document id
+                          // and this path never invokes the document id resolver.
+                          None,
                       )
                       .await;
                   }
