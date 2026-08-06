@@ -40,7 +40,7 @@ use crate::jwt::errors::JwtError;
 use crate::pipeline::active_subscriptions::SubscriptionEvent;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::execute_planned_request;
-use crate::pipeline::execution_request::OperationPreparation;
+use crate::pipeline::execution_request::prepare_websocket_operation;
 use crate::pipeline::header::{ResponseMode, SingleContentType, StreamContentType};
 use crate::pipeline::{
     hash_graphql_extensions, hash_graphql_variables, inbound_request_fingerprint,
@@ -383,7 +383,7 @@ async fn handle_text_frame(
                   }
 
                   let payload = GraphQLParams {
-                      query: payload.query,
+                      query: (!payload.query.is_empty()).then_some(payload.query),
                       operation_name: payload.operation_name,
                       variables: payload.variables.unwrap_or_default(),
                       extensions: payload.extensions,
@@ -433,7 +433,7 @@ async fn handle_text_frame(
                       )
                       .and_then(|v| v.to_str().ok());
 
-                  let payload = match OperationPreparation::prepare_websocket(
+                  let payload = match prepare_websocket_operation(
                       req,
                       shared_state,
                       &supergraph.runtime.persisted_documents,

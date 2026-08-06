@@ -230,8 +230,7 @@ pub async fn graphql_request_handler(
         let operation_preparation_result = OperationPreparation::prepare(
             req,
             shared_state,
-            &supergraph.runtime.persisted_documents,
-            &supergraph.snapshot.options.persisted_documents,
+            &supergraph,
             &plugin_req_state,
             body_bytes,
             client_name,
