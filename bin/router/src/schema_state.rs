@@ -41,12 +41,12 @@ use http::Uri;
 use moka::future::Cache;
 use ntex::web::HttpRequest;
 use std::collections::hash_map;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 use hive_router_plan_executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
@@ -120,11 +120,84 @@ pub struct RouterSupergraphRuntime {
     lifetime: CancellationToken,
 }
 
+fn warn_unknown_subgraphs<'a>(
+    setting: &str,
+    known: &HashSet<&str>,
+    names: impl IntoIterator<Item = &'a String>,
+) {
+    for name in names {
+        if !known.contains(name.as_str()) {
+            warn!(
+                target: targets::SUPERGRAPH,
+                setting,
+                subgraph = name,
+                "configuration refers to a subgraph absent from the selected supergraph"
+            );
+        }
+    }
+}
+
 impl RouterSupergraphRuntime {
     pub async fn build(
         snapshot: &SupergraphSnapshot,
         context: &RouterSupergraphRuntimeContext,
     ) -> Result<Self, RouterSupergraphRuntimeError> {
+        let known_subgraphs: HashSet<_> = snapshot
+            .planner
+            .supergraph
+            .subgraph_endpoint_map
+            .keys()
+            .map(String::as_str)
+            .collect();
+        warn_unknown_subgraphs(
+            "traffic_shaping.subgraphs",
+            &known_subgraphs,
+            snapshot.options.traffic_shaping.subgraphs.keys(),
+        );
+        warn_unknown_subgraphs(
+            "override_subgraph_urls.subgraphs",
+            &known_subgraphs,
+            snapshot.options.override_subgraph_urls.subgraphs.keys(),
+        );
+        if let Some(headers) = snapshot.options.headers.subgraphs.as_ref() {
+            warn_unknown_subgraphs("headers.subgraphs", &known_subgraphs, headers.keys());
+        }
+        if let Some(demand_control) = snapshot.options.demand_control.as_ref() {
+            if let Some(subgraphs) = demand_control.default_list_size.subgraphs.as_ref() {
+                warn_unknown_subgraphs(
+                    "demand_control.default_list_size.subgraphs",
+                    &known_subgraphs,
+                    subgraphs.keys(),
+                );
+            }
+            if let Some(subgraphs) = demand_control.subgraphs_budget.subgraphs.as_ref() {
+                warn_unknown_subgraphs(
+                    "demand_control.subgraphs_budget.subgraphs",
+                    &known_subgraphs,
+                    subgraphs.keys(),
+                );
+            }
+        }
+        warn_unknown_subgraphs(
+            "subscriptions.callback.subgraphs",
+            &known_subgraphs,
+            snapshot.options.subscriptions.callback_subgraphs.iter(),
+        );
+        if let Some(websocket) = snapshot.options.subscriptions.websocket.as_ref() {
+            warn_unknown_subgraphs(
+                "subscriptions.websocket.subgraphs",
+                &known_subgraphs,
+                websocket.subgraphs.keys(),
+            );
+        }
+        if let Some(error_masking) = snapshot.options.error_masking.subgraphs.as_ref() {
+            warn_unknown_subgraphs(
+                "error_masking.subgraphs",
+                &known_subgraphs,
+                error_masking.keys(),
+            );
+        }
+
         let subgraph_executor_map = Arc::new(SubgraphExecutorMap::from_http_endpoint_map(
             &snapshot.planner.supergraph.subgraph_endpoint_map,
             snapshot.options.traffic_shaping.clone(),
