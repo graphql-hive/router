@@ -1,6 +1,5 @@
 use futures::Stream;
 use graphql_tools::validation::validate::ValidationPlan;
-use hive_console_sdk::agent::usage_agent::{AgentError, UsageAgent};
 use hive_router_config::traffic_shaping::{
     TrafficShapingRouterDedupeHeadersConfig, TrafficShapingRouterDedupeHeadersKeyword,
 };
@@ -13,16 +12,12 @@ use hive_router_internal::telemetry::metrics::subscription_metrics::Subscription
 use hive_router_internal::telemetry::metrics::Metrics;
 use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::coprocessor::{CoprocessorError, CoprocessorRuntime};
-use hive_router_plan_executor::execution::error_masking::ErrorMaskingRuntime;
 use hive_router_plan_executor::execution::plan::FailedExecutionResult;
 use hive_router_plan_executor::executors::common::InboundRequestFingerprint;
 use hive_router_plan_executor::extensions::{
     compile::compile_extensions_plan, plan::ExtensionsPlan,
 };
 use hive_router_plan_executor::headers::sanitizer::is_never_join_header;
-use hive_router_plan_executor::headers::{
-    compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
-};
 use hive_router_plan_executor::plugin_trait::RouterPluginBoxed;
 use http::StatusCode;
 use moka::future::Cache;
@@ -48,9 +43,6 @@ use crate::pipeline::multipart_subscribe::{
     self, APOLLO_MULTIPART_HTTP_CONTENT_TYPE, INCREMENTAL_DELIVERY_CONTENT_TYPE,
 };
 use crate::pipeline::parser::ParseCacheEntry;
-use crate::pipeline::persisted_documents::resolve::PersistedDocumentResolverError;
-use crate::pipeline::persisted_documents::PersistedDocumentsRuntime;
-use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
 use crate::pipeline::sse;
 use crate::storage::StorageManager;
 
@@ -327,11 +319,8 @@ impl Expiry<String, Arc<JwtTokenPayload>> for JwtClaimsExpiry {
 pub struct RouterSharedState {
     pub validation_plan: Arc<ValidationPlan>,
     pub parse_cache: Cache<u64, ParseCacheEntry>,
-    pub persisted_documents_runtime: PersistedDocumentsRuntime,
     pub router_config: &'static HiveRouterConfig,
-    pub headers_plan: Arc<HeaderRulesPlan>,
     pub extensions_plan: Arc<ExtensionsPlan>,
-    pub override_labels_evaluator: OverrideLabelsEvaluator,
     pub cors_runtime: Option<Cors>,
     /// Cache for validated JWT claims to avoid re-parsing on every request.
     /// The cache key is the raw JWT token string.
@@ -339,7 +328,6 @@ pub struct RouterSharedState {
     /// but no longer than `exp` date.
     pub jwt_claims_cache: JwtClaimsCache,
     pub jwt_auth_runtime: Option<JwtAuthRuntime>,
-    pub hive_usage_agent: Option<UsageAgent>,
     pub introspection_policy: BooleanOrProgram,
     pub telemetry_context: Arc<TelemetryContext>,
     pub coprocessor: Option<CoprocessorRuntime>,
@@ -355,17 +343,13 @@ pub struct RouterSharedState {
     /// The Laboratory page, with any configured seed values already injected. Rendered once
     /// because the config cannot change while the router runs.
     pub laboratory_html: Bytes,
-    /// The error masking configuration for the router.
-    pub error_masking: Arc<Option<ErrorMaskingRuntime>>,
 }
 
 impl RouterSharedState {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         router_config: &'static HiveRouterConfig,
-        persisted_documents_runtime: PersistedDocumentsRuntime,
         jwt_auth_runtime: Option<JwtAuthRuntime>,
-        hive_usage_agent: Option<UsageAgent>,
         validation_plan: ValidationPlan,
         telemetry_context: Arc<TelemetryContext>,
         plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
@@ -385,18 +369,12 @@ impl RouterSharedState {
                 .map_err(Box::new)
             })
             .transpose()?;
-        let error_masking = Arc::new(ErrorMaskingRuntime::compile_from_config(
-            &router_config.error_masking,
-        ));
-
         let laboratory_html = render_laboratory_page(&router_config.laboratory)?;
 
         Ok(Self {
             validation_plan: Arc::new(validation_plan),
-            headers_plan: Arc::new(compile_headers_plan(&router_config.headers).map_err(Box::new)?),
             extensions_plan: Arc::new(compile_extensions_plan(&router_config.response_extensions)),
             parse_cache,
-            persisted_documents_runtime,
             cors_runtime: Cors::from_config(&router_config.cors).map_err(Box::new)?,
             jwt_claims_cache: Cache::builder()
                 // High capacity due to potentially high token diversity.
@@ -405,12 +383,7 @@ impl RouterSharedState {
                 .expire_after(JwtClaimsExpiry)
                 .build(),
             router_config,
-            override_labels_evaluator: OverrideLabelsEvaluator::from_config(
-                &router_config.override_labels,
-            )
-            .map_err(Box::new)?,
             jwt_auth_runtime,
-            hive_usage_agent,
             introspection_policy: compile_introspection_policy(&router_config.introspection)
                 .map_err(Box::new)?,
             telemetry_context,
@@ -427,7 +400,6 @@ impl RouterSharedState {
             active_subscriptions,
             storage_manager,
             laboratory_html,
-            error_masking,
         })
     }
 }
@@ -462,16 +434,8 @@ fn render_laboratory_page(
 
 #[derive(thiserror::Error, Debug)]
 pub enum SharedStateError {
-    #[error("invalid headers config: {0}")]
-    HeaderRuleCompile(#[from] Box<HeaderRuleCompileError>),
     #[error("invalid regex in CORS config: {0}")]
     CORSConfig(#[from] Box<CORSConfigError>),
-    #[error("invalid override labels config: {0}")]
-    OverrideLabelsCompile(#[from] Box<OverrideLabelsCompileError>),
-    #[error("error creating hive usage agent: {0}")]
-    UsageAgent(#[from] Box<AgentError>),
-    #[error("invalid persisted documents config: {0}")]
-    PersistedDocuments(#[from] Box<PersistedDocumentResolverError>),
     #[error("invalid introspection config: {0}")]
     IntrospectionPolicyCompile(#[from] Box<ExpressionCompileError>),
     #[error("invalid coprocessor config: {0}")]

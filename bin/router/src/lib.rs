@@ -39,7 +39,7 @@ use crate::{
         header::ResponseMode,
         http_callback::handler,
         long_lived_client_limit::LongLivedClientLimitService,
-        persisted_documents::PersistedDocumentsRuntime,
+        persisted_documents::PersistedDocumentsBackgroundTasks,
         request_extensions::{
             read_graphql_operation_metric_identity, read_graphql_response_metric_status,
             write_graphql_response_metric_status,
@@ -47,7 +47,7 @@ use crate::{
         request_identifiers::RequestIdentifiersService,
         request_summary::RequestSummaryService,
         timeout::handle_timeout,
-        usage_reporting::init_hive_usage_agent,
+        usage_reporting::HiveUsageReportingBackgroundTasks,
         validation::{
             max_aliases_rule::MaxAliasesRule, max_depth_rule::MaxDepthRule,
             max_directives_rule::MaxDirectivesRule,
@@ -535,7 +535,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     .map_err(RouterInitError::HttpServerStartError);
 
     info!(target: targets::CORE, "router stopped, clearing background tasks");
-    bg_tasks_manager.shutdown();
+    bg_tasks_manager.graceful_shutdown().await;
     telemetry.graceful_shutdown().await;
 
     invoke_shutdown_hooks(&shared_state_clone).await;
@@ -564,18 +564,19 @@ pub async fn configure_app_from_config(
         false => None,
     };
 
-    let hive_usage_agent = match router_config.telemetry.hive.as_ref() {
-        Some(hive_config) if hive_config.usage_reporting.enabled => {
-            Some(init_hive_usage_agent(bg_tasks_manager, hive_config)?)
-        }
-        _ => None,
-    };
     let plugins_arc = plugin_registry.initialize_plugins(router_config, bg_tasks_manager)?;
 
     let active_subscriptions =
         ActiveSubscriptions::new(router_config.subscriptions.broadcast_capacity);
     let storage_manager = Arc::new(StorageManager::new(&router_config.storages)?);
     let telemetry_context_arc = Arc::new(telemetry_context);
+
+    let (persisted_documents_background_tasks, persisted_documents_background_task) =
+        PersistedDocumentsBackgroundTasks::new();
+    bg_tasks_manager.register_graceful_task(persisted_documents_background_task);
+    let (hive_usage_reporting_background_tasks, hive_usage_reporting_background_task) =
+        HiveUsageReportingBackgroundTasks::new();
+    bg_tasks_manager.register_graceful_task(hive_usage_reporting_background_task);
 
     let schema_state = SchemaState::new_from_config(
         bg_tasks_manager,
@@ -584,6 +585,8 @@ pub async fn configure_app_from_config(
         plugins_arc.clone(),
         active_subscriptions.clone(),
         storage_manager.clone(),
+        persisted_documents_background_tasks,
+        hive_usage_reporting_background_tasks,
     )
     .await?;
     let schema_state_arc = Arc::new(schema_state);
@@ -604,31 +607,10 @@ pub async fn configure_app_from_config(
             config: max_aliases_config.clone(),
         }));
     }
-    let persisted_documents_runtime = PersistedDocumentsRuntime::init(
-        &router_config.persisted_documents,
-        &router_config.http.graphql_endpoint,
-        bg_tasks_manager,
-        &storage_manager,
-    )
-    .await
-    .map_err(|err| crate::shared_state::SharedStateError::PersistedDocuments(Box::new(err)))?;
-
-    if !persisted_documents_runtime.supports_graphql_endpoint(&router_config.http.graphql_endpoint)
-    {
-        // url_path_param extractor depends on path segments relative to graphql endpoint.
-        // Root endpoint would make all routes ambiguous for persisted-document extraction.
-        // Even /health could be treated as a graphql request with document id == "health".
-        return Err(RouterInitError::PersistedDocumentsEndpointIncompatible(
-            "http.graphql_endpoint='/' is not allowed when persisted_documents.selectors contains type=url_path_param. Use a non-root endpoint like '/graphql'.".to_string(),
-        ));
-    }
-
     let metrics_enabled = router_config.telemetry.metrics.is_enabled();
     let shared_state = Arc::new(RouterSharedState::new(
         router_config,
-        persisted_documents_runtime,
         jwt_runtime,
-        hive_usage_agent,
         validation_plan,
         telemetry_context_arc.clone(),
         plugins_arc,

@@ -28,6 +28,7 @@ use crate::pipeline::persisted_documents::extract::{
 use crate::pipeline::persisted_documents::resolve::PersistedDocumentResolveInput;
 use crate::pipeline::persisted_documents::types::{ClientIdentity, PersistedDocumentId};
 use crate::pipeline::persisted_documents::PersistedDocumentsRuntime;
+use crate::schema_state::SelectedSupergraph;
 use crate::shared_state::RouterSharedState;
 
 #[derive(serde::Deserialize, Debug)]
@@ -301,10 +302,10 @@ pub enum OperationPreparationResult {
     Operation(PreparedOperation),
 }
 
-pub struct OperationPreparation<'a> {
+pub struct OperationPreparation<'a, 'p> {
     req: &'a HttpRequest,
     persisted_documents_runtime: &'a PersistedDocumentsRuntime,
-    plugin_req_state: &'a Option<PluginRequestState<'a>>,
+    plugin_req_state: &'p Option<PluginRequestState<'a>>,
     body: Bytes,
     persisted_documents_enabled: bool,
     log_missing_id_requests: bool,
@@ -312,24 +313,26 @@ pub struct OperationPreparation<'a> {
     metrics: Arc<Metrics>,
 }
 
-impl<'a> OperationPreparation<'a> {
+impl<'a, 'p> OperationPreparation<'a, 'p> {
     #[inline]
-    pub async fn prepare(
+    pub async fn prepare_http(
         req: &'a HttpRequest,
         shared_state: &'a Arc<RouterSharedState>,
-        plugin_req_state: &'a Option<PluginRequestState<'a>>,
+        supergraph: &'a SelectedSupergraph,
+        plugin_req_state: &'p Option<PluginRequestState<'a>>,
         body: Bytes,
         client_name: Option<&'a str>,
         client_version: Option<&'a str>,
     ) -> Result<OperationPreparationResult, PipelineError> {
         Self {
             req,
-            persisted_documents_runtime: &shared_state.persisted_documents_runtime,
+            persisted_documents_runtime: &supergraph.runtime.persisted_documents,
             plugin_req_state,
             body,
-            persisted_documents_enabled: shared_state.router_config.persisted_documents.enabled,
-            log_missing_id_requests: shared_state
-                .router_config
+            persisted_documents_enabled: supergraph.snapshot.options.persisted_documents.enabled,
+            log_missing_id_requests: supergraph
+                .snapshot
+                .options
                 .persisted_documents
                 .log_missing_id,
             client_identity: ClientIdentity {
@@ -338,12 +341,46 @@ impl<'a> OperationPreparation<'a> {
             },
             metrics: shared_state.telemetry_context.metrics.clone(),
         }
-        .extract_and_resolve()
+        .extract_and_resolve(None)
         .await
     }
 
-    async fn extract_and_resolve(mut self) -> Result<OperationPreparationResult, PipelineError> {
-        let mut graphql_params_from_plugins = None;
+    pub async fn prepare_websocket(
+        req: &'a HttpRequest,
+        shared_state: &'a Arc<RouterSharedState>,
+        supergraph: &'a SelectedSupergraph,
+        plugin_req_state: &'p Option<PluginRequestState<'a>>,
+        graphql_params: GraphQLParams,
+        client_name: Option<&'a str>,
+        client_version: Option<&'a str>,
+    ) -> Result<OperationPreparationResult, PipelineError> {
+        Self {
+            req,
+            persisted_documents_runtime: &supergraph.runtime.persisted_documents,
+            plugin_req_state,
+            body: Bytes::new(),
+            persisted_documents_enabled: supergraph.snapshot.options.persisted_documents.enabled,
+            log_missing_id_requests: supergraph
+                .snapshot
+                .options
+                .persisted_documents
+                .log_missing_id,
+            client_identity: ClientIdentity {
+                name: client_name,
+                version: client_version,
+            },
+            metrics: shared_state.telemetry_context.metrics.clone(),
+        }
+        .extract_and_resolve(Some(graphql_params))
+        .await
+    }
+}
+
+impl<'a, 'p> OperationPreparation<'a, 'p> {
+    async fn extract_and_resolve(
+        mut self,
+        mut graphql_params: Option<GraphQLParams>,
+    ) -> Result<OperationPreparationResult, PipelineError> {
         let mut graphql_params_end_callbacks = Vec::new();
 
         if let Some(plugin_req_state) = self.plugin_req_state.as_ref() {
@@ -355,7 +392,7 @@ impl<'a> OperationPreparation<'a> {
                         .request_context
                         .for_plugin::<hooks::OnGraphqlParams>(),
                     body: self.body.clone(),
-                    graphql_params: None,
+                    graphql_params: graphql_params.take(),
                 };
 
             for plugin in plugin_req_state.plugins.as_ref() {
@@ -372,11 +409,11 @@ impl<'a> OperationPreparation<'a> {
                 }
             }
 
-            graphql_params_from_plugins = deserialization_payload.graphql_params;
+            graphql_params = deserialization_payload.graphql_params;
             self.body = deserialization_payload.body;
         }
 
-        let mut operation = self.decode_or_use_plugin_override(graphql_params_from_plugins)?;
+        let mut operation = self.decode_or_use_graphql_params(graphql_params)?;
 
         if self.persisted_documents_enabled && operation.resolved_document_id.is_none() {
             self.metrics.persisted_documents.record_missing_id();
@@ -434,7 +471,7 @@ impl<'a> OperationPreparation<'a> {
     }
 
     #[inline]
-    fn decode_or_use_plugin_override(
+    fn decode_or_use_graphql_params(
         &self,
         graphql_params_override: Option<GraphQLParams>,
     ) -> Result<PreparedOperation, PipelineError> {

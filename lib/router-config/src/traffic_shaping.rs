@@ -38,7 +38,15 @@ impl Default for TrafficShapingConfig {
     }
 }
 
-impl TrafficShapingConfig {
+/// Traffic shaping that belongs to one supergraph's subgraph executors.
+#[derive(Clone)]
+pub struct SupergraphTrafficShapingConfig {
+    pub all: TrafficShapingExecutorGlobalConfig,
+    pub subgraphs: HashMap<String, TrafficShapingExecutorSubgraphConfig>,
+    pub max_connections_per_host: usize,
+}
+
+impl SupergraphTrafficShapingConfig {
     /// Returns whether WebSocket connections should be reused for a subgraph.
     ///
     /// A per-subgraph value takes precedence over the value configured in `all`.
@@ -86,6 +94,26 @@ impl TrafficShapingConfig {
                     .and_then(|websocket| websocket.reuse_connections)
                     .unwrap_or(false)
             })
+    }
+}
+
+impl Default for SupergraphTrafficShapingConfig {
+    fn default() -> Self {
+        Self {
+            all: TrafficShapingExecutorGlobalConfig::default(),
+            subgraphs: HashMap::new(),
+            max_connections_per_host: default_max_connections_per_host(),
+        }
+    }
+}
+
+impl From<&TrafficShapingConfig> for SupergraphTrafficShapingConfig {
+    fn from(config: &TrafficShapingConfig) -> Self {
+        Self {
+            all: config.all.clone(),
+            subgraphs: config.subgraphs.clone(),
+            max_connections_per_host: config.max_connections_per_host,
+        }
     }
 }
 

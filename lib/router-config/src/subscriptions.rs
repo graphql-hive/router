@@ -7,7 +7,7 @@ use std::time::Duration;
 use crate::primitives::absolute_path::AbsolutePath;
 use crate::primitives::value_or_expression::ValueOrExpression;
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Default, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct SubscriptionsConfig {
     /// Enables/disables subscriptions. By default, the subscriptions are disabled.
@@ -152,14 +152,43 @@ pub struct WebSocketSubgraphConfig {
     pub path: Option<AbsolutePath>,
 }
 
-impl SubscriptionsConfig {
+/// Subscription settings used by subgraph executors for one supergraph.
+#[derive(Clone)]
+pub struct SupergraphSubscriptionsConfig {
+    pub callback_subgraphs: HashSet<String>,
+    pub websocket: Option<WebSocketConfig>,
+    pub subgraph_buffer_capacity: usize,
+}
+
+impl Default for SupergraphSubscriptionsConfig {
+    fn default() -> Self {
+        Self {
+            callback_subgraphs: HashSet::new(),
+            websocket: None,
+            subgraph_buffer_capacity: default_subgraph_buffer_capacity(),
+        }
+    }
+}
+
+impl From<&SubscriptionsConfig> for SupergraphSubscriptionsConfig {
+    fn from(config: &SubscriptionsConfig) -> Self {
+        Self {
+            callback_subgraphs: config
+                .callback
+                .as_ref()
+                .map(|callback| callback.subgraphs.clone())
+                .unwrap_or_default(),
+            websocket: config.websocket.clone(),
+            subgraph_buffer_capacity: config.subgraph_buffer_capacity,
+        }
+    }
+}
+
+impl SupergraphSubscriptionsConfig {
     /// Returns the subscription protocol for the given subgraph.
-    /// Returns HTTP (streaming) as the default if no specific mode is configured.
     pub fn get_protocol_for_subgraph(&self, subgraph_name: &str) -> SubscriptionProtocol {
-        if let Some(ref callback) = self.callback {
-            if callback.subgraphs.contains(subgraph_name) {
-                return SubscriptionProtocol::HTTPCallback;
-            }
+        if self.callback_subgraphs.contains(subgraph_name) {
+            return SubscriptionProtocol::HTTPCallback;
         }
         if let Some(ref websocket) = self.websocket {
             if websocket.all.is_some() || websocket.subgraphs.contains_key(subgraph_name) {
@@ -170,7 +199,6 @@ impl SubscriptionsConfig {
     }
 
     /// Returns the WebSocket path for the given subgraph, if configured.
-    /// Checks the subgraph-specific configuration first, then falls back to the `all` default.
     pub fn get_websocket_path(&self, subgraph_name: &str) -> Option<&str> {
         self.websocket.as_ref().and_then(|ws| {
             ws.subgraphs

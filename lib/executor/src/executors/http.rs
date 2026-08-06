@@ -15,7 +15,6 @@ use crate::plugin_trait::{EndControlFlow, StartControlFlow};
 use crate::plugins::hooks;
 use crate::response::subgraph_response::SubgraphResponse;
 use futures::stream::BoxStream;
-use hive_router_config::HiveRouterConfig;
 use hive_router_internal::inflight::InFlightRole;
 use hive_router_internal::telemetry::logging::targets;
 use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
@@ -58,7 +57,7 @@ pub struct HTTPSubgraphExecutor {
     pub dedupe_enabled: bool,
     pub in_flight_requests: InflightRequestsMap,
     pub telemetry_context: Arc<TelemetryContext>,
-    pub config: &'static HiveRouterConfig,
+    pub subgraph_buffer_capacity: usize,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
@@ -167,7 +166,7 @@ impl HTTPSubgraphExecutor {
         dedupe_enabled: bool,
         in_flight_requests: InflightRequestsMap,
         telemetry_context: Arc<TelemetryContext>,
-        config: &'static HiveRouterConfig,
+        subgraph_buffer_capacity: usize,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -188,7 +187,7 @@ impl HTTPSubgraphExecutor {
             dedupe_enabled,
             in_flight_requests,
             telemetry_context,
-            config,
+            subgraph_buffer_capacity,
         }
     }
 }
@@ -538,7 +537,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         SubgraphExecutorError,
     > {
         let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
-        let buffer_capacity = self.config.subscriptions.subgraph_buffer_capacity;
+        let buffer_capacity = self.subgraph_buffer_capacity;
         let body = build_request_body(&execution_request)?;
 
         let mut req = hyper::Request::builder()
