@@ -213,27 +213,6 @@ impl SupergraphSubscriptionsConfig {
     }
 }
 
-impl SubscriptionsConfig {
-    /// Returns the subscription protocol for the given subgraph.
-    pub fn get_protocol_for_subgraph(&self, subgraph_name: &str) -> SubscriptionProtocol {
-        SupergraphSubscriptionsConfig::from(self).get_protocol_for_subgraph(subgraph_name)
-    }
-
-    /// Returns the WebSocket path for the given subgraph, if configured.
-    pub fn get_websocket_path(&self, subgraph_name: &str) -> Option<&str> {
-        self.websocket.as_ref().and_then(|ws| {
-            ws.subgraphs
-                .get(subgraph_name)
-                .and_then(|s| s.path.as_ref().map(|p| p.as_str()))
-                .or_else(|| {
-                    ws.all
-                        .as_ref()
-                        .and_then(|a| a.path.as_ref().map(|p| p.as_str()))
-                })
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
