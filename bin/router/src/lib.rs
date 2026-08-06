@@ -39,6 +39,7 @@ use crate::{
         header::ResponseMode,
         http_callback::handler,
         long_lived_client_limit::LongLivedClientLimitService,
+        persisted_documents::PersistedDocumentsBackgroundTasks,
         request_extensions::{
             read_graphql_operation_metric_identity, read_graphql_response_metric_status,
             write_graphql_response_metric_status,
@@ -46,6 +47,7 @@ use crate::{
         request_identifiers::RequestIdentifiersService,
         request_summary::RequestSummaryService,
         timeout::handle_timeout,
+        usage_reporting::HiveUsageReportingBackgroundTasks,
         validation::{
             max_aliases_rule::MaxAliasesRule, max_depth_rule::MaxDepthRule,
             max_directives_rule::MaxDirectivesRule,
@@ -513,7 +515,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     .map_err(RouterInitError::HttpServerStartError);
 
     info!(target: targets::CORE, "router stopped, clearing background tasks");
-    bg_tasks_manager.shutdown();
+    bg_tasks_manager.graceful_shutdown().await;
     telemetry.graceful_shutdown().await;
 
     invoke_shutdown_hooks(&shared_state_clone).await;
@@ -550,7 +552,13 @@ pub async fn configure_app_from_config(
     let router_config_arc = Arc::new(router_config);
     let telemetry_context_arc = Arc::new(telemetry_context);
 
-    let dynamic_task_registrar = bg_tasks_manager.dynamic_registrar();
+    let (persisted_documents_background_tasks, persisted_documents_background_task) =
+        PersistedDocumentsBackgroundTasks::new();
+    bg_tasks_manager.register_graceful_task(persisted_documents_background_task);
+    let (hive_usage_reporting_background_tasks, hive_usage_reporting_background_task) =
+        HiveUsageReportingBackgroundTasks::new();
+    bg_tasks_manager.register_graceful_task(hive_usage_reporting_background_task);
+
     let schema_state = SchemaState::new_from_config(
         bg_tasks_manager,
         telemetry_context_arc.clone(),
@@ -558,7 +566,8 @@ pub async fn configure_app_from_config(
         plugins_arc.clone(),
         active_subscriptions.clone(),
         storage_manager.clone(),
-        dynamic_task_registrar,
+        persisted_documents_background_tasks,
+        hive_usage_reporting_background_tasks,
     )
     .await?;
     let schema_state_arc = Arc::new(schema_state);

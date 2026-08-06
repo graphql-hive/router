@@ -3,8 +3,8 @@ use hive_router_plan_executor::executors::error::TlsCertificatesError;
 
 use crate::{
     jwt::jwks_manager::JwksSourceError, plugins::registry::PluginRegistryError,
-    schema_state::SupergraphManagerError,
-    shared_state::SharedStateError, storage::error::StorageError, telemetry::TelemetryInitError,
+    schema_state::SupergraphManagerError, shared_state::SharedStateError,
+    storage::error::StorageError, telemetry::TelemetryInitError,
 };
 
 #[derive(Debug, thiserror::Error)]

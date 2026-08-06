@@ -103,6 +103,7 @@ object_store = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 insta = { workspace = true }
+mockito = { workspace = true }
 
 [[bench]]
 name = "persisted_documents_matcher_benches"

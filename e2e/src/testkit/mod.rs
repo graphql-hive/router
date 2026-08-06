@@ -703,7 +703,16 @@ struct TestRouterHandle {
 impl Drop for TestRouterHandle {
     fn drop(&mut self) {
         // shut down backgroun tasks
-        self.bg_tasks_manager.shutdown();
+        let mut bg_tasks_manager = std::mem::take(&mut self.bg_tasks_manager);
+        std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build background task shutdown runtime")
+                .block_on(bg_tasks_manager.graceful_shutdown())
+        })
+        .join()
+        .expect("background task shutdown panicked");
 
         // shutdown hooks and wait for complete (shutdown is async so yeah)
         let shared_state = self.shared_state.clone();

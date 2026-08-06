@@ -12,9 +12,7 @@ use hive_router_config::telemetry::hive::{
 };
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
 use hive_router_internal::authorization::metadata::AuthorizationMetadata;
-use hive_router_internal::background_tasks::{
-    BackgroundTask, BackgroundTasksManager, DynamicBackgroundTaskRegistrar,
-};
+use hive_router_internal::background_tasks::{BackgroundTask, BackgroundTasksManager};
 use hive_router_internal::telemetry::logging::targets;
 use hive_router_internal::telemetry::utils::resolve_value_or_expression;
 use hive_router_internal::telemetry::{metrics::Metrics, TelemetryContext};
@@ -58,10 +56,13 @@ use crate::{
     pipeline::demand_control::runtime::DemandControlRuntime,
     pipeline::normalize::GraphQLNormalizationPayload,
     pipeline::persisted_documents::{
-        resolve::PersistedDocumentResolverError, PersistedDocumentsRuntime,
+        resolve::PersistedDocumentResolverError, PersistedDocumentsBackgroundTaskController,
+        PersistedDocumentsRuntime,
     },
     pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator},
-    pipeline::usage_reporting::{init_hive_usage_agent, UsageReportingError},
+    pipeline::usage_reporting::{
+        init_hive_usage_agent, HiveUsageReportingBackgroundTaskController, UsageReportingError,
+    },
     supergraph::{
         base::{LoadSupergraphError, ReloadSupergraphResult, SupergraphLoader},
         resolve_from_config,
@@ -115,7 +116,18 @@ pub struct RouterSupergraphRuntime {
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
     pub plan_cache: Cache<u64, Arc<QueryPlan>>,
     pub demand_control_runtime: Option<DemandControlRuntime>,
-    lifetime: CancellationToken,
+    /// Controls background work belonging to this selected supergraph runtime.
+    ///
+    /// Persisted-document reloaders and the Hive usage-reporting agent receive clones of this
+    /// token. It must remain active while any configured owner, runtime-cache entry, request,
+    /// WebSocket, or subscription retains this runtime, even if the supergraph snapshot has been
+    /// retired or its cache entry has been evicted. Cancelling earlier could stop manifest updates
+    /// or discard usage reports for in-flight operations still using this exact schema generation.
+    ///
+    /// The token is therefore cancelled only when runtime construction fails or the final runtime
+    /// reference is dropped. The specialized background-task groups observe cancellation, remove
+    /// this runtime's workers promptly, and explicitly flush Hive reports before its worker exits.
+    supergraph_lifetime: CancellationToken,
 }
 
 /// Warns about configuration for subgraphs absent from the selected snapshot instead of failing
@@ -243,13 +255,13 @@ impl RouterSupergraphRuntime {
                 "Hive tracing is enabled but no target was provided".to_string(),
             ));
         }
-        let lifetime = CancellationToken::new();
+        let supergraph_lifetime = CancellationToken::new();
         let maybe_runtime: Result<Self, RouterSupergraphRuntimeError> = async {
             let persisted_documents = PersistedDocumentsRuntime::init(
                 &snapshot.options.persisted_documents,
                 &context.graphql_endpoint,
-                &context.task_registrar,
-                lifetime.clone(),
+                &context.persisted_documents_background_tasks,
+                supergraph_lifetime.clone(),
                 &context.storage_manager,
             )
             .await?;
@@ -264,8 +276,8 @@ impl RouterSupergraphRuntime {
                 .filter(|hive| hive.usage_reporting.enabled)
                 .map(|hive| {
                     init_hive_usage_agent(
-                        &context.task_registrar,
-                        lifetime.clone(),
+                        &context.hive_usage_reporting_background_tasks,
+                        supergraph_lifetime.clone(),
                         hive,
                         snapshot.options.hive_target.as_deref(),
                     )
@@ -288,13 +300,13 @@ impl RouterSupergraphRuntime {
                 normalize_cache: Cache::new(1000),
                 plan_cache: Cache::new(1000),
                 demand_control_runtime,
-                lifetime: lifetime.clone(),
+                supergraph_lifetime: supergraph_lifetime.clone(),
             })
         }
         .await;
         if maybe_runtime.is_err() {
-            // cancel everything because we failed to build the runtime
-            lifetime.cancel();
+            // cancel workers that may have been registered before runtime construction failed
+            supergraph_lifetime.cancel();
         }
         maybe_runtime
     }
@@ -302,8 +314,8 @@ impl RouterSupergraphRuntime {
 
 impl Drop for RouterSupergraphRuntime {
     fn drop(&mut self) {
-        // stopping the interval task drops its usage-agent clone, whose async drop flushes buffered reports
-        self.lifetime.cancel();
+        // this is the final runtime reference, so no operation can add more reports or use its resolver
+        self.supergraph_lifetime.cancel();
     }
 }
 
@@ -311,7 +323,8 @@ pub struct RouterSupergraphRuntimeContext {
     telemetry: Arc<TelemetryContext>,
     callback_subscriptions: CallbackSubscriptionsMap,
     callback: Option<HttpCallbackRuntimeConfig>,
-    task_registrar: DynamicBackgroundTaskRegistrar,
+    persisted_documents_background_tasks: PersistedDocumentsBackgroundTaskController,
+    hive_usage_reporting_background_tasks: HiveUsageReportingBackgroundTaskController,
     hive: Option<HiveTelemetryConfig>,
     storage_manager: Arc<StorageManager>,
     graphql_endpoint: String,
@@ -681,7 +694,8 @@ impl SchemaState {
         plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
         active_subscriptions: ActiveSubscriptions,
         storage_manager: Arc<StorageManager>,
-        task_registrar: DynamicBackgroundTaskRegistrar,
+        persisted_documents_background_tasks: PersistedDocumentsBackgroundTaskController,
+        hive_usage_reporting_background_tasks: HiveUsageReportingBackgroundTaskController,
     ) -> Result<Self, SupergraphManagerError> {
         let configured: Arc<ArcSwap<Option<ConfiguredSupergraph>>> =
             Arc::new(ArcSwap::from(Arc::new(None)));
@@ -695,7 +709,8 @@ impl SchemaState {
             telemetry: telemetry_context.clone(),
             callback_subscriptions: callback_subscriptions.clone(),
             callback: callback_runtime_config(&router_config)?,
-            task_registrar,
+            persisted_documents_background_tasks,
+            hive_usage_reporting_background_tasks,
             hive: router_config.telemetry.hive.clone(),
             storage_manager: storage_manager.clone(),
             graphql_endpoint: router_config.http.graphql_endpoint.clone(),
@@ -1061,11 +1076,16 @@ mod plugin_runtime_cache_tests {
             &Default::default(),
         ));
         let callback_subscriptions = Arc::new(DashMap::new());
+        let (persisted_documents_background_tasks, _) =
+            crate::pipeline::persisted_documents::PersistedDocumentsBackgroundTasks::new();
+        let (hive_usage_reporting_background_tasks, _) =
+            crate::pipeline::usage_reporting::HiveUsageReportingBackgroundTasks::new();
         let runtime_context = Arc::new(RouterSupergraphRuntimeContext {
             telemetry: telemetry_context.clone(),
             callback_subscriptions: callback_subscriptions.clone(),
             callback: None,
-            task_registrar: BackgroundTasksManager::new().dynamic_registrar(),
+            persisted_documents_background_tasks,
+            hive_usage_reporting_background_tasks,
             hive: None,
             storage_manager: Arc::new(StorageManager::new(&Default::default()).unwrap()),
             graphql_endpoint: "/graphql".to_string(),
@@ -1124,6 +1144,28 @@ mod plugin_runtime_cache_tests {
             .operation_name_forward_config
             .should_forward("products"));
         assert!(!Arc::ptr_eq(&first_runtime, &second_runtime));
+    }
+
+    #[ntex::test]
+    async fn supergraph_lifetime_is_cancelled_only_after_the_final_runtime_reference_drops() {
+        let state = test_schema_state();
+        let owner = test_owner();
+        let runtime = Arc::new(
+            RouterSupergraphRuntime::build(&owner.snapshot(), &state.runtime_context)
+                .await
+                .unwrap(),
+        );
+        let lifetime = runtime.supergraph_lifetime.clone();
+        let retained_runtime = runtime.clone();
+
+        drop(runtime);
+        tokio::task::yield_now().await;
+        assert!(!lifetime.is_cancelled());
+
+        drop(retained_runtime);
+        tokio::time::timeout(Duration::from_secs(1), lifetime.cancelled())
+            .await
+            .expect("final runtime drop should cancel its background workers promptly");
     }
 
     #[ntex::test]
@@ -1332,7 +1374,12 @@ mod plugin_runtime_cache_tests {
                     )),
                     callback_subscriptions: Arc::new(DashMap::new()),
                     callback: None,
-                    task_registrar: BackgroundTasksManager::new().dynamic_registrar(),
+                    persisted_documents_background_tasks:
+                        crate::pipeline::persisted_documents::PersistedDocumentsBackgroundTasks::new()
+                            .0,
+                    hive_usage_reporting_background_tasks:
+                        crate::pipeline::usage_reporting::HiveUsageReportingBackgroundTasks::new()
+                            .0,
                     hive: None,
                     storage_manager: Arc::new(StorageManager::new(&Default::default()).unwrap()),
                     graphql_endpoint: "/graphql".to_string(),
