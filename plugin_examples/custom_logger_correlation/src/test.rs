@@ -50,9 +50,27 @@ mod custom_logger_correlation_tests {
             Some("test")
         );
 
-        // The request summary line's message was customized by the plugin too.
+        // The request summary line's message was customized by the plugin, using data
+        // (status code, duration, operation name) only known once the request is done.
         let summary_line = stdout_log
-            .by_message("request for project 'test'")
+            .lines_json
+            .iter()
+            .find(|line| {
+                line.get("target").and_then(serde_json::Value::as_str) == Some("router::request")
+            })
             .expect("missing request summary line");
+        let message = summary_line
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .expect("missing summary message");
+        assert!(
+            message.starts_with("[status=200] ["),
+            "unexpected summary message: {message}"
+        );
+        // the query is anonymous, so the operation name falls back to "-"
+        assert!(
+            message.ends_with("] POST /test/graphql -"),
+            "unexpected summary message: {message}"
+        );
     }
 }
