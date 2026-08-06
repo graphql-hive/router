@@ -1,4 +1,8 @@
-use std::{future::Future, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    future::Future,
+    sync::{Arc, Mutex},
+};
 
 use hive_router_config::log::CorrelationConfig;
 use http::{HeaderMap, HeaderName};
@@ -23,6 +27,7 @@ impl Default for RequestIdentifierExtractor {
 pub struct RequestIdentifiers {
     req_id: String,
     trace_id: Option<String>,
+    pub correlations: Mutex<BTreeMap<String, String>>,
 }
 
 impl RequestIdentifiers {
@@ -32,6 +37,15 @@ impl RequestIdentifiers {
 
     pub fn trace_id(&self) -> Option<&str> {
         self.trace_id.as_deref()
+    }
+
+    /// Records a plugin-contributed correlation, so it's added to every log
+    /// line of the request (not just the summary). Setting the same key again overwrites
+    /// the previous value.
+    pub fn set_correlation(&self, key: impl Into<String>, value: impl std::fmt::Display) {
+        if let Ok(mut correlations) = self.correlations.lock() {
+            correlations.insert(key.into(), value.to_string());
+        }
     }
 }
 
@@ -51,6 +65,7 @@ impl RequestIdentifierExtractor {
         RequestIdentifiers {
             req_id,
             trace_id: trace_id.map(|id| id.to_string()),
+            correlations: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -124,6 +139,10 @@ impl HeaderLookup for HttpRequest {
 
 tokio::task_local! {
     pub static REQUEST_IDENTIFIERS: Arc<RequestIdentifiers>;
+}
+
+pub fn set_correlation(key: impl Into<String>, value: impl std::fmt::Display) {
+    let _ = REQUEST_IDENTIFIERS.try_with(|ids| ids.set_correlation(key, value));
 }
 
 pub trait WithRequestIdentifiers: Future + Sized {

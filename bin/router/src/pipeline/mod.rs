@@ -104,6 +104,7 @@ pub mod progressive_override;
 pub mod query_plan;
 pub mod request_extensions;
 pub mod request_identifiers;
+pub mod request_summary;
 pub mod sse;
 pub mod timeout;
 pub(crate) mod trie;

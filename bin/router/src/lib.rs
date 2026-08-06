@@ -45,6 +45,7 @@ use crate::{
             write_graphql_response_metric_status,
         },
         request_identifiers::RequestIdentifiersService,
+        request_summary::RequestSummaryService,
         timeout::handle_timeout,
         usage_reporting::init_hive_usage_agent,
         validation::{
@@ -70,10 +71,7 @@ pub use hive_router_config::humantime_serde;
 use hive_router_config::{load_config, subscriptions::CallbackConfig, HiveRouterConfig};
 pub use hive_router_internal::background_tasks;
 use hive_router_internal::telemetry::{
-    logging::{
-        summary::{self, WithRequestSummary},
-        targets,
-    },
+    logging::{summary, targets},
     otel::{opentelemetry, tracing_opentelemetry::OpenTelemetrySpanExt},
     traces::spans::http_request::HttpServerRequestSpan,
     TelemetryContext,
@@ -81,7 +79,7 @@ use hive_router_internal::telemetry::{
 pub use hive_router_internal::BoxError;
 use hive_router_internal::{
     background_tasks::{BackgroundTask, CancellationToken},
-    telemetry::logging::request_id::REQUEST_IDENTIFIERS,
+    telemetry::logging::request_id::{self, REQUEST_IDENTIFIERS},
 };
 use hive_router_internal::{
     http::read_request_body_size, telemetry::metrics::catalog::values::GraphQLResponseStatus,
@@ -135,6 +133,21 @@ impl BackgroundTask for CallbackServer {
             server.stop(true).await;
         }
     }
+}
+
+/// Lets plugins enrich the current request's summary log line with a custom attribute.
+/// Setting the same key again overwrites the previous value.
+///
+/// A no-op outside a request (e.g. during `on_plugin_init`) or when the summary log target is filtered off.
+pub fn set_summary_attribute(key: impl Into<String>, value: impl Into<sonic_rs::Value>) {
+    summary::record(|s| s.set_custom(key, value));
+}
+
+/// Lets plugins attach a custom correlation to every log line of the current request (not
+/// just the summary), e.g. a tenant or project id extracted from the URL. Setting the same
+/// key again overwrites the previous value. A no-op outside a request.
+pub fn set_log_correlation(key: impl Into<String>, value: impl std::fmt::Display) {
+    request_id::set_correlation(key, value);
 }
 
 #[inline]
@@ -210,7 +223,6 @@ async fn graphql_endpoint_handler(
 
         (response_mode, inner_res, summary_guard)
     }
-    .with_request_summary()
     .await;
 
     // for streamed responses the summary must be emitted when the stream ends, not now
@@ -433,6 +445,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
                 prometheus.as_ref().map(|p| p.endpoint.clone()),
             ))
             .middleware(RequestIdentifiersService)
+            .middleware(RequestSummaryService)
             .state(shared_state.clone())
             .state(schema_state.clone())
             .state(shared_state.telemetry_context.clone())

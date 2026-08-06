@@ -10,6 +10,8 @@ use tracing_subscriber::{
 };
 
 use crate::telemetry::logging::request_id::REQUEST_IDENTIFIERS;
+use crate::telemetry::logging::summary::REQUEST_SUMMARY;
+use crate::telemetry::logging::targets;
 
 #[inline]
 fn write_json_body<W: std::fmt::Write>(w: &mut W, s: &str) -> std::fmt::Result {
@@ -146,10 +148,32 @@ where
                     buf.push_str(",\"trace_id\":");
                     write_json_str(&mut *buf, trace_id)?;
                 }
+                if let Ok(correlations) = ids.correlations.lock() {
+                    for (key, value) in correlations.iter() {
+                        buf.push(',');
+                        write_json_str(&mut *buf, key)?;
+                        buf.push(':');
+                        write_json_str(&mut *buf, value)?;
+                    }
+                }
                 Ok(())
             });
 
             event.record(&mut JsonVisitor { buf: &mut buf });
+
+            if meta.target() == targets::SUMMARY {
+                let _ = REQUEST_SUMMARY.try_with(|summary| -> std::fmt::Result {
+                    if let Ok(custom) = summary.custom.lock() {
+                        for (key, value) in custom.iter() {
+                            buf.push(',');
+                            write_json_str(&mut *buf, key)?;
+                            buf.push(':');
+                            let _ = write!(buf, "{value}");
+                        }
+                    }
+                    Ok(())
+                });
+            }
 
             buf.push_str("}\n");
             writer.write_str(&buf)

@@ -1,0 +1,44 @@
+use hive_router::plugins::hooks::on_http_request::{
+    OnHttpRequestHookPayload, OnHttpRequestHookResult,
+};
+use hive_router::plugins::hooks::on_plugin_init::{OnPluginInitPayload, OnPluginInitResult};
+use hive_router::plugins::plugin_trait::{RouterPlugin, StartHookPayload};
+use hive_router::{set_log_correlation, tracing};
+
+pub struct CustomLoggerCorrelationPlugin;
+
+const PROJECT_ID_KEY: &str = "project_id";
+
+impl RouterPlugin for CustomLoggerCorrelationPlugin {
+    type Config = ();
+
+    fn plugin_name() -> &'static str {
+        "custom_logger_correlation"
+    }
+
+    fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
+        payload.initialize_plugin(Self)
+    }
+
+    fn on_http_request<'req>(
+        &'req self,
+        payload: OnHttpRequestHookPayload<'req>,
+    ) -> OnHttpRequestHookResult<'req> {
+        let project_id = payload
+            .router_http_request
+            .path()
+            .split('/')
+            .nth(1)
+            .filter(|segment| !segment.is_empty())
+            .unwrap_or("unknown_project")
+            .to_string();
+
+        // Attach it as soon as we know it, so every log line for the rest of this
+        // request - including this plugin's own - carries the same correlation.
+        set_log_correlation(PROJECT_ID_KEY, project_id);
+
+        tracing::debug!(target: "custom_logger_correlation", "on_http_request called");
+
+        payload.proceed()
+    }
+}
