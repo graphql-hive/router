@@ -828,10 +828,18 @@ impl BackgroundTask for SupergraphBackgroundLoaderTask {
     async fn run(&self, token: CancellationToken) {
         let supergraph_metrics = &self.0.metrics.supergraph;
         loop {
-            if token.is_cancelled() {
-                trace!(target: targets::SUPERGRAPH, "background task cancelled");
-
+            // initial load already happened during startup, so wait before polling again
+            let Some(interval) = self.0.loader.reload_interval() else {
+                debug!(target: targets::SUPERGRAPH, "poll interval not configured for supergraph changes, skipping");
                 break;
+            };
+            debug!(target: targets::SUPERGRAPH, interval_ms = interval.as_millis(), "waiting before checking again for supergraph changes");
+            tokio::select! {
+                _ = token.cancelled() => {
+                    trace!(target: targets::SUPERGRAPH, "background task cancelled");
+                    break;
+                }
+                _ = ntex::time::sleep(interval) => {}
             }
 
             let poll_capture = supergraph_metrics.capture_poll();
@@ -856,16 +864,6 @@ impl BackgroundTask for SupergraphBackgroundLoaderTask {
                     error!(target: targets::SUPERGRAPH, error = ?err, "failed to load supergraph");
                     poll_capture.finish_error();
                 }
-            }
-
-            if let Some(interval) = self.0.loader.reload_interval() {
-                debug!(target: targets::SUPERGRAPH, interval_ms = interval.as_millis(), "waiting before checking again for supergraph changes");
-
-                ntex::time::sleep(interval).await;
-            } else {
-                debug!(target: targets::SUPERGRAPH, "poll interval not configured for supergraph changes, skipping");
-
-                break;
             }
         }
     }
