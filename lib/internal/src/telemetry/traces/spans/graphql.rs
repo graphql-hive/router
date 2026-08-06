@@ -363,7 +363,7 @@ impl GraphQLOperationSpan {
 
     pub fn record_hive_target(&self, target: Option<&str>) {
         if let Some(target) = target {
-            self.span.record("hive.target", target);
+            self.span.record(attributes::HIVE_TARGET, target);
         }
     }
 
