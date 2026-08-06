@@ -103,51 +103,6 @@ pub struct CallbackConfig {
     pub subgraphs: HashSet<String>,
 }
 
-/// Router-owned subscription listener and fan-out configuration.
-#[derive(Clone)]
-pub struct RouterSubscriptionsConfig {
-    pub enabled: bool,
-    pub broadcast_capacity: usize,
-    pub callback: Option<RouterCallbackConfig>,
-}
-
-impl Default for RouterSubscriptionsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            broadcast_capacity: default_broadcast_capacity(),
-            callback: None,
-        }
-    }
-}
-
-/// Router-owned callback listener configuration without subgraph membership.
-#[derive(Clone)]
-pub struct RouterCallbackConfig {
-    pub public_url: ValueOrExpression<String>,
-    pub path: AbsolutePath,
-    pub heartbeat_interval: Duration,
-    pub listen: Option<SocketAddr>,
-}
-
-impl From<&SubscriptionsConfig> for RouterSubscriptionsConfig {
-    fn from(config: &SubscriptionsConfig) -> Self {
-        Self {
-            enabled: config.enabled,
-            broadcast_capacity: config.broadcast_capacity,
-            callback: config
-                .callback
-                .as_ref()
-                .map(|callback| RouterCallbackConfig {
-                    public_url: callback.public_url.clone(),
-                    path: callback.path.clone(),
-                    heartbeat_interval: callback.heartbeat_interval,
-                    listen: callback.listen,
-                }),
-        }
-    }
-}
-
 fn default_broadcast_capacity() -> usize {
     32
 }
