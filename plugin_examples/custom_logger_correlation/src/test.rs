@@ -49,5 +49,10 @@ mod custom_logger_correlation_tests {
                 .and_then(serde_json::Value::as_str),
             Some("test")
         );
+
+        // The request summary line's message was customized by the plugin too.
+        let summary_line = stdout_log
+            .by_message("request for project 'test'")
+            .expect("missing request summary line");
     }
 }

@@ -150,6 +150,14 @@ pub fn set_log_correlation(key: impl Into<String>, value: impl std::fmt::Display
     request_id::set_correlation(key, value);
 }
 
+/// Lets plugins override the request summary log line's message. The first call wins;
+/// later calls for the same request are no-ops. Falls back to the default (no message) if
+/// never called. A no-op outside a request (e.g. during `on_plugin_init`) or when the summary
+/// log target is filtered off.
+pub fn set_summary_message(message: impl Into<std::borrow::Cow<'static, str>>) {
+    summary::record(|s| s.set_message(message));
+}
+
 #[inline]
 fn obtain_header_value<'a>(
     header_map: &'a ntex::http::HeaderMap,

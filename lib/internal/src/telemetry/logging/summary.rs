@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
 use std::future::Future;
@@ -37,6 +38,7 @@ pub struct RequestSummary {
     pub duration_ms: AtomicU64,
     pub supergraph_identifier: AtomicU64,
     pub custom: Mutex<BTreeMap<String, sonic_rs::Value>>,
+    pub message: OnceLock<Cow<'static, str>>,
 }
 
 impl RequestSummary {
@@ -94,6 +96,11 @@ impl RequestSummary {
         }
     }
 
+    /// Overrides the summary log line's message. First call wins; later calls are no-ops.
+    pub fn set_message(&self, message: impl Into<Cow<'static, str>>) {
+        let _ = self.message.set(message.into());
+    }
+
     pub fn record_subgraph(&self, name: &str) {
         self.subgraph_requests.fetch_add(1, Relaxed);
         if let Ok(mut subgraphs) = self.involved_subgraphs.lock() {
@@ -132,6 +139,8 @@ impl RequestSummary {
             payload_bytes = self.payload_bytes.load(Relaxed),
             supergraph_identifier = self.supergraph_identifier.load(Relaxed),
             duration_ms = self.duration_ms.load(Relaxed),
+            "{}",
+            self.message.get().map(Cow::as_ref).unwrap_or("request summary")
         );
     }
 }

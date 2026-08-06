@@ -11,7 +11,7 @@ use hive_router::{
     plugins::hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
     plugins::hooks::on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
     plugins::plugin_trait::{RouterPlugin, StartHookPayload},
-    set_summary_attribute,
+    set_summary_attribute, set_summary_message,
 };
 use hive_router_internal::telemetry::logging::targets;
 use http::{HeaderMap, HeaderName, HeaderValue};
@@ -690,6 +690,7 @@ impl RouterPlugin for TestDebugLogPlugin {
         payload: OnHttpRequestHookPayload<'req>,
     ) -> OnHttpRequestHookResult<'req> {
         debug!("i'm just a test");
+        set_summary_message("custom summary message from plugin");
         set_summary_attribute("test_debug_log.simple", "hello-from-plugin");
         set_summary_attribute(
             "test_debug_log.nested",
@@ -794,5 +795,34 @@ plugins:
             "count": 3,
             "tags": ["a", "b"],
         })
+    );
+}
+
+#[ntex::test]
+async fn plugin_can_customize_summary_message() {
+    let (_subgraphs, router) = setup_router(
+        router_with_telemetry(
+            "\
+log:
+  level: info
+  format: json
+plugins:
+  test_debug_log:
+    enabled: true
+",
+        )
+        .register_plugin::<TestDebugLogPlugin>(),
+    )
+    .await;
+
+    let stdout_log = router
+        .send_graphql_request(TEST_QUERY, None, None)
+        .capture_stdout_json()
+        .await;
+
+    let req_summary = log_line_by_target(&stdout_log, targets::SUMMARY);
+    assert_eq!(
+        find_attr(req_summary, "message"),
+        Some("custom summary message from plugin".to_string())
     );
 }
