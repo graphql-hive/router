@@ -9,11 +9,9 @@ use futures::{stream::BoxStream, FutureExt};
 use hive_console_sdk::circuit_breaker::{CircuitBreakerBuilder, CircuitBreakerError};
 use hive_router_config::{
     demand_control::DemandControlMode,
-    override_subgraph_urls::UrlOrExpression,
-    primitives::value_or_expression::ValueOrExpression,
-    subscriptions::SubscriptionProtocol,
-    traffic_shaping::{DurationOrExpression, StatusCodeMatcher},
-    HiveRouterConfig,
+    override_subgraph_urls::{OverrideSubgraphUrlsConfig, UrlOrExpression},
+    subscriptions::{SubscriptionProtocol, SupergraphSubscriptionsConfig},
+    traffic_shaping::{DurationOrExpression, StatusCodeMatcher, SupergraphTrafficShapingConfig},
 };
 use hive_router_internal::{
     expressions::vrl::compiler::Program as VrlProgram, inflight::InFlightMap,
@@ -144,6 +142,19 @@ struct ResolvedSubgraphConfig<'a> {
 
 pub type InflightRequestsMap = InFlightMap<u64, (SubgraphHttpResponse, u64)>;
 
+#[derive(Clone)]
+pub struct HttpCallbackRuntimeConfig {
+    pub public_url: Uri,
+    pub heartbeat_interval: Duration,
+}
+
+struct SubgraphExecutorConfig {
+    traffic_shaping: SupergraphTrafficShapingConfig,
+    override_subgraph_urls: OverrideSubgraphUrlsConfig,
+    subscriptions: SupergraphSubscriptionsConfig,
+    callback: Option<HttpCallbackRuntimeConfig>,
+}
+
 pub struct SubgraphExecutorMap {
     http_executors_by_subgraph: ExecutorsBySubgraphMap,
     subscription_executors_by_subgraph: ExecutorsBySubgraphMap,
@@ -157,7 +168,7 @@ pub struct SubgraphExecutorMap {
     timeouts_by_subgraph: TimeoutsBySubgraph,
     circuit_breakers_by_subgraph: CircuitBreakersBySubgraph,
     global_timeout: DurationOrProgram,
-    config: Arc<HiveRouterConfig>,
+    config: Arc<SubgraphExecutorConfig>,
     client: Arc<HttpClient>,
     semaphores_by_origin: DashMap<String, Arc<Semaphore>>,
     max_connections_per_host: usize,
@@ -167,8 +178,8 @@ pub struct SubgraphExecutorMap {
     callback_subscriptions: CallbackSubscriptionsMap,
 }
 impl SubgraphExecutorMap {
-    pub fn new(
-        config: Arc<HiveRouterConfig>,
+    fn new(
+        config: Arc<SubgraphExecutorConfig>,
         global_timeout: DurationOrProgram,
         telemetry_context: Arc<TelemetryContext>,
     ) -> Result<Self, SubgraphExecutorError> {
@@ -207,10 +218,19 @@ impl SubgraphExecutorMap {
 
     pub fn from_http_endpoint_map(
         subgraph_endpoint_map: &HashMap<SubgraphName, String>,
-        config: Arc<HiveRouterConfig>,
+        traffic_shaping: SupergraphTrafficShapingConfig,
+        override_subgraph_urls: OverrideSubgraphUrlsConfig,
+        subscriptions: SupergraphSubscriptionsConfig,
+        callback: Option<HttpCallbackRuntimeConfig>,
         telemetry_context: Arc<TelemetryContext>,
         active_callback_subscriptions: CallbackSubscriptionsMap,
     ) -> Result<Self, SubgraphExecutorError> {
+        let config = Arc::new(SubgraphExecutorConfig {
+            traffic_shaping,
+            override_subgraph_urls,
+            subscriptions,
+            callback,
+        });
         let global_timeout =
             compile_duration_or_expression(&config.traffic_shaping.all.request_timeout, None)
                 .map_err(|err| {
@@ -695,7 +715,7 @@ impl SubgraphExecutorMap {
                     subgraph_config.dedupe_enabled,
                     self.in_flight_requests.clone(),
                     self.telemetry_context.clone(),
-                    self.config.clone(),
+                    self.config.subscriptions.subgraph_buffer_capacity,
                 )
                 .to_boxed_arc();
 
@@ -782,7 +802,6 @@ impl SubgraphExecutorMap {
             SubscriptionProtocol::HTTPCallback => {
                 let callback_config = self
                     .config
-                    .subscriptions
                     .callback
                     .as_ref()
                     .ok_or_else(|| SubgraphExecutorError::HttpCallbackNotConfigured)?;
@@ -791,13 +810,11 @@ impl SubgraphExecutorMap {
 
                 let subgraph_config = self.resolve_subgraph_config(subgraph_name)?;
 
-                let public_url = self.resolve_public_url(&callback_config.public_url)?;
-
                 let callback_executor = HttpCallbackSubgraphExecutor::new(
                     subgraph_name.to_string(),
                     endpoint_uri,
                     subgraph_config.client,
-                    public_url.to_string(),
+                    callback_config.public_url.to_string(),
                     heartbeat_interval_ms,
                     self.callback_subscriptions.clone(),
                     self.telemetry_context.clone(),
@@ -812,43 +829,6 @@ impl SubgraphExecutorMap {
                 Ok(callback_executor)
             }
         }
-    }
-
-    #[inline]
-    fn resolve_public_url(
-        &self,
-        public_url: &ValueOrExpression<String>,
-    ) -> Result<Uri, SubgraphExecutorError> {
-        let raw = match public_url {
-            ValueOrExpression::Value(url) => url.clone(),
-            ValueOrExpression::Expression { expression } => expression
-                .compile_expression(None)
-                .map_err(|err| {
-                    SubgraphExecutorError::EndpointExpressionBuild(
-                        "callback.public_url".to_string(),
-                        err.diagnostics,
-                    )
-                })?
-                .execute(VrlValue::Null)
-                .map_err(|err| {
-                    SubgraphExecutorError::EndpointExpressionResolutionFailure(err.to_string())
-                })?
-                .as_str()
-                .ok_or(SubgraphExecutorError::EndpointExpressionWrongType)
-                .map(|s| s.to_string())?,
-        };
-
-        let uri = raw.parse::<Uri>().map_err(|err| {
-            SubgraphExecutorError::CallbackPublicUrlParseFailure(raw.clone(), err)
-        })?;
-
-        // Uri accepts relative paths like "foo" without a scheme or authority, so we must reejct
-        // those here because the subgraph needs a full URL to send callbacks to
-        if uri.scheme().is_none() || uri.authority().is_none() {
-            return Err(SubgraphExecutorError::CallbackPublicUrlNotAbsolute(raw));
-        }
-
-        Ok(uri)
     }
 
     /// Resolves traffic shaping configuration for a specific subgraph, applying subgraph-specific

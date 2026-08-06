@@ -758,7 +758,7 @@ pub async fn execute_pipeline<'exec>(
     )?;
 
     let mut progressive_override_ctx = RequestOverrideContext::new(
-        &shared_state.override_labels_evaluator,
+        &supergraph.runtime.override_labels_evaluator,
         &client_request_details,
         request_context,
     )?;

@@ -18,7 +18,8 @@ use hive_router_plan_executor::executors::http_callback::{
 };
 use hive_router_plan_executor::response::graphql_error::GraphQLErrorExtensions;
 use hive_router_plan_executor::{
-    executors::error::SubgraphExecutorError,
+    execution::error_masking::ErrorMaskingRuntime,
+    executors::{error::SubgraphExecutorError, map::HttpCallbackRuntimeConfig},
     hooks::on_supergraph_load::{
         OnSupergraphLoadEndHookPayload, OnSupergraphLoadStartHookPayload, Supergraph,
         SupergraphBuildError, SupergraphOptions, SupergraphSnapshot,
@@ -30,6 +31,7 @@ use hive_router_plan_executor::{
 use hive_router_query_planner::{
     planner::plan_nodes::QueryPlan, utils::parsing::safe_parse_schema,
 };
+use http::Uri;
 use moka::future::Cache;
 use ntex::web::HttpRequest;
 use std::collections::hash_map;
@@ -40,11 +42,16 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace};
 
+use hive_router_plan_executor::headers::{
+    compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
+};
+
 use crate::{
     pipeline::authorization::AuthorizationMetadataError,
     pipeline::authorization::AuthorizationMetadataExt,
     pipeline::demand_control::runtime::DemandControlRuntime,
     pipeline::normalize::GraphQLNormalizationPayload,
+    pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator},
     supergraph::{
         base::{LoadSupergraphError, ReloadSupergraphResult, SupergraphLoader},
         resolve_from_config,
@@ -57,6 +64,12 @@ pub enum RouterSupergraphRuntimeError {
     ExecutorInitError(#[from] SubgraphExecutorError),
     #[error(transparent)]
     AuthorizationMetadataError(#[from] AuthorizationMetadataError),
+    #[error(transparent)]
+    HeaderRuleCompileError(#[from] HeaderRuleCompileError),
+    #[error(transparent)]
+    OverrideLabelsCompileError(#[from] OverrideLabelsCompileError),
+    #[error("Invalid router callback configuration: {0}")]
+    CallbackConfiguration(String),
 }
 
 /// Router state derived from a supergraph and router configuration: subgraph executors,
@@ -76,6 +89,9 @@ pub enum RouterSupergraphRuntimeError {
 pub struct RouterSupergraphRuntime {
     pub subgraph_executor_map: Arc<SubgraphExecutorMap>,
     pub operation_name_forward_config: Arc<OperationNameForwardConfig>,
+    pub headers_plan: Arc<HeaderRulesPlan>,
+    pub override_labels_evaluator: OverrideLabelsEvaluator,
+    pub error_masking: Arc<Option<ErrorMaskingRuntime>>,
     pub authorization: AuthorizationMetadata,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
@@ -86,29 +102,37 @@ pub struct RouterSupergraphRuntime {
 impl RouterSupergraphRuntime {
     pub fn build(
         snapshot: &SupergraphSnapshot,
-        router_config: &Arc<HiveRouterConfig>,
-        telemetry_context: &Arc<TelemetryContext>,
-        callback_subscriptions: &CallbackSubscriptionsMap,
+        context: &RouterSupergraphRuntimeContext,
     ) -> Result<Self, RouterSupergraphRuntimeError> {
         let subgraph_executor_map = Arc::new(SubgraphExecutorMap::from_http_endpoint_map(
             &snapshot.planner.supergraph.subgraph_endpoint_map,
-            router_config.clone(),
-            telemetry_context.clone(),
-            callback_subscriptions.clone(),
+            snapshot.options.traffic_shaping.clone(),
+            snapshot.options.override_subgraph_urls.clone(),
+            snapshot.options.subscriptions.clone(),
+            context.callback.clone(),
+            context.telemetry.clone(),
+            context.callback_subscriptions.clone(),
         )?);
         let operation_name_forward_config = Arc::new(OperationNameForwardConfig::new(
-            &router_config.traffic_shaping,
+            &snapshot.options.traffic_shaping,
             snapshot.planner.supergraph.known_subgraphs.values(),
         ));
         let authorization =
             AuthorizationMetadata::build(&snapshot.planner.supergraph, &snapshot.metadata)?;
         let demand_control_runtime = DemandControlRuntime::from_config(
-            router_config.demand_control.as_ref(),
-            telemetry_context.metrics.clone(),
+            snapshot.options.demand_control.as_ref(),
+            context.telemetry.metrics.clone(),
         );
         Ok(Self {
             subgraph_executor_map,
             operation_name_forward_config,
+            headers_plan: Arc::new(compile_headers_plan(&snapshot.options.headers)?),
+            override_labels_evaluator: OverrideLabelsEvaluator::from_config(
+                &snapshot.options.override_labels,
+            )?,
+            error_masking: Arc::new(ErrorMaskingRuntime::compile_from_config(
+                &snapshot.options.error_masking,
+            )),
             authorization,
             validate_cache: Cache::new(1000),
             normalize_cache: Cache::new(1000),
@@ -116,6 +140,12 @@ impl RouterSupergraphRuntime {
             demand_control_runtime,
         })
     }
+}
+
+pub struct RouterSupergraphRuntimeContext {
+    telemetry: Arc<TelemetryContext>,
+    callback_subscriptions: CallbackSubscriptionsMap,
+    callback: Option<HttpCallbackRuntimeConfig>,
 }
 
 /// One selected supergraph for a request: the schema snapshot plus the router runtime built for
@@ -170,6 +200,7 @@ pub struct SchemaState {
     runtime_cache_cleanup: Option<mpsc::UnboundedSender<RuntimeCacheCleanupMessage>>,
     pub telemetry_context: Arc<TelemetryContext>,
     pub callback_subscriptions: CallbackSubscriptionsMap,
+    runtime_context: Arc<RouterSupergraphRuntimeContext>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -192,7 +223,9 @@ pub enum SupergraphManagerError {
     Configuration(String),
 }
 
-fn supergraph_options(config: &HiveRouterConfig) -> Result<SupergraphOptions, SupergraphManagerError> {
+fn supergraph_options(
+    config: &HiveRouterConfig,
+) -> Result<SupergraphOptions, SupergraphManagerError> {
     let hive_target = config
         .telemetry
         .hive
@@ -220,6 +253,31 @@ fn supergraph_options(config: &HiveRouterConfig) -> Result<SupergraphOptions, Su
         persisted_documents: config.persisted_documents.clone(),
         hive_target,
     })
+}
+
+// TODO: clean up errors, maybe use lib/executor/src/executors/error.rs#Callback* errors
+fn callback_runtime_config(
+    config: &HiveRouterConfig,
+) -> Result<Option<HttpCallbackRuntimeConfig>, SupergraphManagerError> {
+    let Some(callback) = config.subscriptions.callback.as_ref() else {
+        return Ok(None);
+    };
+    let raw = resolve_value_or_expression(&callback.public_url, "subscription callback public URL")
+        .map_err(|error| SupergraphManagerError::Configuration(error.to_string()))?;
+    let public_url = raw.parse::<Uri>().map_err(|error| {
+        SupergraphManagerError::Configuration(format!(
+            "invalid callback public URL '{raw}': {error}"
+        ))
+    })?;
+    if public_url.scheme().is_none() || public_url.authority().is_none() {
+        return Err(SupergraphManagerError::Configuration(format!(
+            "callback public URL must be absolute: '{raw}'"
+        )));
+    }
+    Ok(Some(HttpCallbackRuntimeConfig {
+        public_url,
+        heartbeat_interval: callback.heartbeat_interval,
+    }))
 }
 
 impl SchemaState {
@@ -312,9 +370,7 @@ impl SchemaState {
 
         let runtime = Arc::new(RouterSupergraphRuntime::build(
             snapshot,
-            &self.router_config,
-            &self.telemetry_context,
-            &self.callback_subscriptions,
+            &self.runtime_context,
         )?);
 
         // bounded FIFO eviction protects against too many simultaneously live variants,
@@ -375,6 +431,11 @@ impl SchemaState {
         // the heartbeat enforcer below watches it too. building a runtime with a *different* map
         // would silently break callback routing and heartbeat enforcement for it
         let callback_subscriptions: CallbackSubscriptionsMap = Arc::new(DashMap::new());
+        let runtime_context = Arc::new(RouterSupergraphRuntimeContext {
+            telemetry: telemetry_context.clone(),
+            callback_subscriptions: callback_subscriptions.clone(),
+            callback: callback_runtime_config(&router_config)?,
+        });
 
         // `supergraph.source: plugin` has no configured source at all... no loader, no polling
         // task, no configured-default value. a plugin must select a supergraph for every request
@@ -393,7 +454,7 @@ impl SchemaState {
             let configured_spawn_clone = configured.clone();
             let router_config_for_task = router_config.clone();
             let task_telemetry = telemetry_context.clone();
-            let callback_subscriptions_for_reload = callback_subscriptions.clone();
+            let runtime_context_for_reload = runtime_context.clone();
 
             bg_tasks_manager.register_handle(async move {
                 let supergraph_metrics = &task_telemetry.metrics.supergraph;
@@ -443,12 +504,13 @@ impl SchemaState {
                     }
 
                     let options = supergraph_options(&router_config_for_task);
-                    let built = options.and_then(|options| {
-                        new_supergraph.unwrap_or_else(|| {
-                            Supergraph::from_document(new_ast, options)
-                                .map_err(SupergraphManagerError::from)
+                    let built = options
+                        .and_then(|options| {
+                            new_supergraph.unwrap_or_else(|| {
+                                Supergraph::from_document(new_ast, options)
+                                    .map_err(SupergraphManagerError::from)
+                            })
                         })
-                    })
                         .and_then(|mut new_supergraph| {
                             if !on_end_callbacks.is_empty() {
                                 let mut end_payload =
@@ -480,9 +542,7 @@ impl SchemaState {
                             let snapshot = new_supergraph.snapshot();
                             let runtime = RouterSupergraphRuntime::build(
                                 &snapshot,
-                                &router_config_for_task,
-                                &task_telemetry,
-                                &callback_subscriptions_for_reload,
+                                &runtime_context_for_reload,
                             )?;
                             Ok(ConfiguredSupergraph {
                                 _owner: Arc::new(new_supergraph),
@@ -544,6 +604,7 @@ impl SchemaState {
             router_config,
             telemetry_context: telemetry_context.clone(),
             callback_subscriptions,
+            runtime_context,
         })
     }
 }
@@ -799,16 +860,24 @@ mod plugin_runtime_cache_tests {
         include_str!("../../../plugin_examples/replace_schema/supergraph.graphql");
 
     fn test_schema_state() -> SchemaState {
+        let telemetry_context = Arc::new(TelemetryContext::from_propagation_config(
+            &Default::default(),
+            &Default::default(),
+        ));
+        let callback_subscriptions = Arc::new(DashMap::new());
+        let runtime_context = Arc::new(RouterSupergraphRuntimeContext {
+            telemetry: telemetry_context.clone(),
+            callback_subscriptions: callback_subscriptions.clone(),
+            callback: None,
+        });
         SchemaState {
             configured: Arc::new(ArcSwap::from(Arc::new(None))),
             runtime_cache: Arc::new(Mutex::new(VecDeque::with_capacity(RUNTIME_CACHE_MAX_SIZE))),
             runtime_cache_cleanup: None,
             router_config: Arc::new(HiveRouterConfig::default()),
-            telemetry_context: Arc::new(TelemetryContext::from_propagation_config(
-                &Default::default(),
-                &Default::default(),
-            )),
-            callback_subscriptions: Arc::new(DashMap::new()),
+            telemetry_context,
+            callback_subscriptions,
+            runtime_context,
         }
     }
 
@@ -816,7 +885,7 @@ mod plugin_runtime_cache_tests {
         crate::init_rustls_crypto_provider();
         Arc::new(
             Supergraph::from_sdl(TEST_SUPERGRAPH_SDL, SupergraphOptions::default())
-            .expect("valid test supergraph SDL"),
+                .expect("valid test supergraph SDL"),
         )
     }
 
@@ -895,13 +964,7 @@ mod plugin_runtime_cache_tests {
         let first_snapshot = first_owner.snapshot();
         let first_id = first_snapshot.cache_id;
         let first_runtime = Arc::new(
-            RouterSupergraphRuntime::build(
-                &first_snapshot,
-                &state.router_config,
-                &state.telemetry_context,
-                &state.callback_subscriptions,
-            )
-            .unwrap(),
+            RouterSupergraphRuntime::build(&first_snapshot, &state.runtime_context).unwrap(),
         );
         state.configured.store(Arc::new(Some(ConfiguredSupergraph {
             _owner: first_owner,
@@ -923,13 +986,7 @@ mod plugin_runtime_cache_tests {
         let second_owner = test_owner();
         let second_snapshot = second_owner.snapshot();
         let second_runtime = Arc::new(
-            RouterSupergraphRuntime::build(
-                &second_snapshot,
-                &state.router_config,
-                &state.telemetry_context,
-                &state.callback_subscriptions,
-            )
-            .unwrap(),
+            RouterSupergraphRuntime::build(&second_snapshot, &state.runtime_context).unwrap(),
         );
         state.configured.store(Arc::new(Some(ConfiguredSupergraph {
             _owner: second_owner,
@@ -1044,12 +1101,14 @@ mod plugin_runtime_cache_tests {
                 Arc::new(
                     RouterSupergraphRuntime::build(
                         &owner.snapshot(),
-                        &Arc::new(HiveRouterConfig::default()),
-                        &Arc::new(TelemetryContext::from_propagation_config(
-                            &Default::default(),
-                            &Default::default(),
-                        )),
-                        &Arc::new(DashMap::new()),
+                        &RouterSupergraphRuntimeContext {
+                            telemetry: Arc::new(TelemetryContext::from_propagation_config(
+                                &Default::default(),
+                                &Default::default(),
+                            )),
+                            callback_subscriptions: Arc::new(DashMap::new()),
+                            callback: None,
+                        },
                     )
                     .unwrap(),
                 ),

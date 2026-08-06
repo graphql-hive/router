@@ -4,13 +4,9 @@ use std::sync::Arc;
 
 use graphql_tools::static_graphql::schema::Document;
 use hive_router_config::{
-    demand_control::DemandControlConfig,
-    error_masking::ErrorMaskingConfig,
-    headers::HeadersConfig,
-    override_labels::OverrideLabelsConfig,
-    override_subgraph_urls::OverrideSubgraphUrlsConfig,
-    persisted_documents::PersistedDocumentsConfig,
-    subscriptions::SupergraphSubscriptionsConfig,
+    demand_control::DemandControlConfig, error_masking::ErrorMaskingConfig, headers::HeadersConfig,
+    override_labels::OverrideLabelsConfig, override_subgraph_urls::OverrideSubgraphUrlsConfig,
+    persisted_documents::PersistedDocumentsConfig, subscriptions::SupergraphSubscriptionsConfig,
     traffic_shaping::SupergraphTrafficShapingConfig,
 };
 use hive_router_query_planner::planner::{Planner, PlannerError, QueryPlannerOptions};

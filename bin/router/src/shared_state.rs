@@ -13,13 +13,9 @@ use hive_router_internal::telemetry::metrics::subscription_metrics::Subscription
 use hive_router_internal::telemetry::metrics::Metrics;
 use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::coprocessor::{CoprocessorError, CoprocessorRuntime};
-use hive_router_plan_executor::execution::error_masking::ErrorMaskingRuntime;
 use hive_router_plan_executor::execution::plan::FailedExecutionResult;
 use hive_router_plan_executor::extensions::{
     compile::compile_extensions_plan, plan::ExtensionsPlan,
-};
-use hive_router_plan_executor::headers::{
-    compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
 };
 use hive_router_plan_executor::plugin_trait::RouterPluginBoxed;
 use http::StatusCode;
@@ -48,7 +44,6 @@ use crate::pipeline::multipart_subscribe::{
 use crate::pipeline::parser::ParseCacheEntry;
 use crate::pipeline::persisted_documents::resolve::PersistedDocumentResolverError;
 use crate::pipeline::persisted_documents::PersistedDocumentsRuntime;
-use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
 use crate::pipeline::sse;
 use crate::storage::StorageManager;
 
@@ -316,9 +311,7 @@ pub struct RouterSharedState {
     pub parse_cache: Cache<u64, ParseCacheEntry>,
     pub persisted_documents_runtime: PersistedDocumentsRuntime,
     pub router_config: Arc<HiveRouterConfig>,
-    pub headers_plan: Arc<HeaderRulesPlan>,
     pub extensions_plan: Arc<ExtensionsPlan>,
-    pub override_labels_evaluator: OverrideLabelsEvaluator,
     pub cors_runtime: Option<Cors>,
     /// Cache for validated JWT claims to avoid re-parsing on every request.
     /// The cache key is the raw JWT token string.
@@ -342,8 +335,6 @@ pub struct RouterSharedState {
     /// The Laboratory page, with any configured seed values already injected. Rendered once
     /// because the config cannot change while the router runs.
     pub laboratory_html: Bytes,
-    /// The error masking configuration for the router.
-    pub error_masking: Arc<Option<ErrorMaskingRuntime>>,
 }
 
 impl RouterSharedState {
@@ -372,15 +363,10 @@ impl RouterSharedState {
                 .map_err(Box::new)
             })
             .transpose()?;
-        let error_masking = Arc::new(ErrorMaskingRuntime::compile_from_config(
-            &router_config.error_masking,
-        ));
-
         let laboratory_html = render_laboratory_page(&router_config.laboratory)?;
 
         Ok(Self {
             validation_plan: Arc::new(validation_plan),
-            headers_plan: Arc::new(compile_headers_plan(&router_config.headers).map_err(Box::new)?),
             extensions_plan: Arc::new(compile_extensions_plan(&router_config.response_extensions)),
             parse_cache,
             persisted_documents_runtime,
@@ -392,10 +378,6 @@ impl RouterSharedState {
                 .expire_after(JwtClaimsExpiry)
                 .build(),
             router_config: router_config.clone(),
-            override_labels_evaluator: OverrideLabelsEvaluator::from_config(
-                &router_config.override_labels,
-            )
-            .map_err(Box::new)?,
             jwt_auth_runtime,
             hive_usage_agent,
             introspection_policy: compile_introspection_policy(&router_config.introspection)
@@ -414,7 +396,6 @@ impl RouterSharedState {
             active_subscriptions,
             storage_manager,
             laboratory_html,
-            error_masking,
         })
     }
 }
@@ -449,12 +430,8 @@ fn render_laboratory_page(
 
 #[derive(thiserror::Error, Debug)]
 pub enum SharedStateError {
-    #[error("invalid headers config: {0}")]
-    HeaderRuleCompile(#[from] Box<HeaderRuleCompileError>),
     #[error("invalid regex in CORS config: {0}")]
     CORSConfig(#[from] Box<CORSConfigError>),
-    #[error("invalid override labels config: {0}")]
-    OverrideLabelsCompile(#[from] Box<OverrideLabelsCompileError>),
     #[error("error creating hive usage agent: {0}")]
     UsageAgent(#[from] Box<AgentError>),
     #[error("invalid persisted documents config: {0}")]
