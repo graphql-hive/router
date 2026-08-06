@@ -304,6 +304,7 @@ impl RouterSupergraphRuntime {
 
 impl Drop for RouterSupergraphRuntime {
     fn drop(&mut self) {
+        // stopping the interval task drops its usage-agent clone, whose async drop flushes buffered reports
         self.lifetime.cancel();
     }
 }
