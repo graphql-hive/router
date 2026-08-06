@@ -427,6 +427,78 @@ fn callback_runtime_config(
     }))
 }
 
+impl ConfiguredSupergraph {
+    async fn build(
+        new_sdl: String,
+        current: &ArcSwap<Option<ConfiguredSupergraph>>,
+        router_config: &HiveRouterConfig,
+        plugins: Option<&Arc<Vec<RouterPluginBoxed>>>,
+        runtime_context: &RouterSupergraphRuntimeContext,
+    ) -> Result<Self, SupergraphManagerError> {
+        let mut new_ast = safe_parse_schema(&new_sdl).map_err(SupergraphBuildError::from)?;
+        let mut on_end_callbacks = vec![];
+        let mut new_supergraph = None;
+
+        if let Some(plugins) = plugins {
+            let current_supergraph_data = current
+                .load()
+                .as_ref()
+                .as_ref()
+                .map(SelectedSupergraph::from)
+                .map(|selected| selected.snapshot);
+            let mut start_payload = OnSupergraphLoadStartHookPayload {
+                current_supergraph_data,
+                new_ast,
+            };
+            for plugin in plugins.as_ref() {
+                let result = plugin.on_supergraph_reload(start_payload);
+                start_payload = result.payload;
+                match result.control_flow {
+                    StartControlFlow::Proceed => {}
+                    StartControlFlow::EndWithResponse(plugin_res) => {
+                        new_supergraph = Some(
+                            plugin_res
+                                .map_err(|err| SupergraphManagerError::PluginError(err.message)),
+                        );
+                        break;
+                    }
+                    StartControlFlow::OnEnd(callback) => on_end_callbacks.push(callback),
+                }
+            }
+            new_ast = start_payload.new_ast;
+        }
+
+        let options = supergraph_options(router_config)?;
+        let mut new_supergraph = new_supergraph.unwrap_or_else(|| {
+            Supergraph::from_document(new_ast, options).map_err(SupergraphManagerError::from)
+        })?;
+
+        if !on_end_callbacks.is_empty() {
+            let mut end_payload = OnSupergraphLoadEndHookPayload { new_supergraph };
+            for callback in on_end_callbacks {
+                let result = callback(end_payload);
+                end_payload = result.payload;
+                match result.control_flow {
+                    EndControlFlow::Proceed => {}
+                    EndControlFlow::EndWithResponse(plugin_res) => match plugin_res {
+                        Ok(data) => end_payload.new_supergraph = data,
+                        Err(err) => return Err(SupergraphManagerError::PluginError(err.message)),
+                    },
+                }
+            }
+            new_supergraph = end_payload.new_supergraph;
+        }
+
+        let snapshot = new_supergraph.snapshot();
+        let runtime = RouterSupergraphRuntime::build(&snapshot, runtime_context).await?;
+        Ok(Self {
+            _owner: Arc::new(new_supergraph),
+            snapshot,
+            runtime: Arc::new(runtime),
+        })
+    }
+}
+
 impl SchemaState {
     /// Resolves the supergraph for a request, preferring a plugin-selected supergraph if present,
     /// falling back to the router's configured default if not. Returns `None` if neither is present.
@@ -600,14 +672,30 @@ impl SchemaState {
         // that needs one and the plugin author is responsible for maintaining the supergraphs
         if !matches!(router_config.supergraph, SupergraphSource::Plugin) {
             let (tx, mut rx) = mpsc::channel::<String>(1);
-            let background_loader = SupergraphBackgroundLoader::new(
+            let background_loader = Arc::new(SupergraphBackgroundLoader::new(
                 &router_config.supergraph,
                 tx,
                 telemetry_context.metrics.clone(),
                 storage_manager.clone(),
-            )?;
-            bg_tasks_manager
-                .register_task(SupergraphBackgroundLoaderTask(Arc::new(background_loader)));
+            )?);
+
+            let initial_sdl = match background_loader.loader.load().await? {
+                ReloadSupergraphResult::Changed { new_sdl } => new_sdl,
+                ReloadSupergraphResult::Unchanged => {
+                    return Err(SupergraphManagerError::FailedToLoadInitialSupergraph)
+                }
+            };
+            let initial = ConfiguredSupergraph::build(
+                initial_sdl,
+                &configured,
+                &router_config,
+                plugins.as_ref(),
+                &runtime_context,
+            )
+            .await?;
+            configured.store(Arc::new(Some(initial)));
+
+            bg_tasks_manager.register_task(SupergraphBackgroundLoaderTask(background_loader));
 
             let configured_spawn_clone = configured.clone();
             let router_config_for_task = router_config.clone();
@@ -620,98 +708,15 @@ impl SchemaState {
                     let process_capture = supergraph_metrics.capture_process();
                     debug!("Received new supergraph SDL, building new supergraph state...");
 
-                    let mut new_ast = match safe_parse_schema(&new_sdl) {
-                        Ok(ast) => ast,
-                        Err(e) => {
-                            process_capture.finish_error();
-                            error!(error = %e, "Failed to parse supergraph during update");
-                            continue;
-                        }
-                    };
-
-                    let mut on_end_callbacks = vec![];
-                    let mut new_supergraph = None;
-                    if let Some(plugins) = plugins.as_ref() {
-                        let current_supergraph_data = configured_spawn_clone
-                            .load()
-                            .as_ref()
-                            .as_ref()
-                            .map(SelectedSupergraph::from)
-                            .map(|selected| selected.snapshot);
-                        let mut start_payload = OnSupergraphLoadStartHookPayload {
-                            current_supergraph_data,
-                            new_ast,
-                        };
-                        for plugin in plugins.as_ref() {
-                            let result = plugin.on_supergraph_reload(start_payload);
-                            start_payload = result.payload;
-                            match result.control_flow {
-                                StartControlFlow::Proceed => {}
-                                StartControlFlow::EndWithResponse(plugin_res) => {
-                                    new_supergraph = Some(plugin_res.map_err(|err| {
-                                        SupergraphManagerError::PluginError(err.message)
-                                    }));
-                                    break;
-                                }
-                                StartControlFlow::OnEnd(callback) => {
-                                    on_end_callbacks.push(callback);
-                                }
-                            }
-                        }
-                        new_ast = start_payload.new_ast;
-                    }
-
-                    let options = supergraph_options(&router_config_for_task);
-                    let built = options
-                        .and_then(|options| {
-                            new_supergraph.unwrap_or_else(|| {
-                                Supergraph::from_document(new_ast, options)
-                                    .map_err(SupergraphManagerError::from)
-                            })
-                        })
-                        .and_then(|mut new_supergraph| {
-                            if !on_end_callbacks.is_empty() {
-                                let mut end_payload =
-                                    OnSupergraphLoadEndHookPayload { new_supergraph };
-                                for callback in on_end_callbacks {
-                                    let result = callback(end_payload);
-                                    end_payload = result.payload;
-                                    match result.control_flow {
-                                        EndControlFlow::Proceed => {}
-                                        EndControlFlow::EndWithResponse(plugin_res) => {
-                                            match plugin_res {
-                                                Ok(data) => end_payload.new_supergraph = data,
-                                                Err(err) => {
-                                                    return Err(
-                                                        SupergraphManagerError::PluginError(
-                                                            err.message,
-                                                        ),
-                                                    );
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                new_supergraph = end_payload.new_supergraph;
-                            }
-                            Ok(new_supergraph)
-                        });
-                    let built = match built {
-                        Ok(new_supergraph) => {
-                            let snapshot = new_supergraph.snapshot();
-                            RouterSupergraphRuntime::build(&snapshot, &runtime_context_for_reload)
-                                .await
-                                .map(|runtime| ConfiguredSupergraph {
-                                    _owner: Arc::new(new_supergraph),
-                                    snapshot,
-                                    runtime: Arc::new(runtime),
-                                })
-                                .map_err(SupergraphManagerError::from)
-                        }
-                        Err(error) => Err(error),
-                    };
-
-                    match built {
+                    match ConfiguredSupergraph::build(
+                        new_sdl,
+                        &configured_spawn_clone,
+                        &router_config_for_task,
+                        plugins.as_ref(),
+                        &runtime_context_for_reload,
+                    )
+                    .await
+                    {
                         Ok(new_configured) => {
                             // swapping in the new value here is enough: the previous
                             // `ConfiguredSupergraph`'s owner `Arc<Supergraph>` is only kept alive
