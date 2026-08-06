@@ -586,7 +586,7 @@ impl BackgroundTask for SupergraphBackgroundLoaderTask {
             if let Some(interval) = self.0.loader.reload_interval() {
                 debug!(target: targets::SUPERGRAPH, interval_ms = interval.as_millis(), "waiting before checking again for supergraph changes");
 
-                ntex::time::sleep(*interval).await;
+                ntex::time::sleep(interval).await;
             } else {
                 debug!(target: targets::SUPERGRAPH, "poll interval not configured for supergraph changes, skipping");
 

@@ -75,6 +75,35 @@ pub enum SupergraphSource {
         #[serde(default = "default_hive_retry_policy")]
         retry_policy: RetryPolicyConfig,
     },
+    /// Loads a supergraph from Apollo GraphOS Uplink.
+    #[serde(rename = "apollo_graphos")]
+    ApolloGraphOS {
+        /// The graph ref of the managed federation graph (`<GRAPH_ID>@<VARIANT>`).
+        ///
+        /// Can also be set using the `APOLLO_GRAPH_REF` environment variable.
+        graph_ref: Option<String>,
+        /// The Apollo API key, with at least the `service:read` permission.
+        ///
+        /// Can also be set using the `APOLLO_KEY` environment variable.
+        key: Option<String>,
+        /// The Apollo Uplink endpoint(s) to poll, tried in order on each poll.
+        ///
+        /// Can also be set using the `APOLLO_UPLINK_ENDPOINTS` environment variable
+        /// (comma-separated).
+        #[serde(default = "default_apollo_uplink_endpoints")]
+        endpoint: SingleOrMultiple<String>,
+        /// The timeout for a single HTTP call to Apollo Uplink.
+        #[serde(
+            default = "default_apollo_uplink_timeout",
+            deserialize_with = "humantime_serde::deserialize",
+            serialize_with = "humantime_serde::serialize"
+        )]
+        #[schemars(with = "String")]
+        timeout: Duration,
+        /// Whether to accept invalid TLS certificates when connecting to Apollo Uplink.
+        #[serde(default = "default_accept_invalid_certs")]
+        accept_invalid_certs: bool,
+    },
     #[serde(rename = "storage")]
     Storage {
         /// The storage id as it was defined in the config file, under `storages:` field.
@@ -118,11 +147,25 @@ fn default_hive_retry_policy() -> RetryPolicyConfig {
     RetryPolicyConfig { max_retries: 10 }
 }
 
+/// Apollo's managed federation Uplink endpoints: GCP first, AWS as fallback.
+/// Matches the default order used by Apollo Router itself.
+fn default_apollo_uplink_endpoints() -> SingleOrMultiple<String> {
+    SingleOrMultiple::Multiple(vec![
+        "https://uplink.api.apollographql.com/".to_string(),
+        "https://aws.uplink.api.apollographql.com/".to_string(),
+    ])
+}
+
+fn default_apollo_uplink_timeout() -> Duration {
+    Duration::from_secs(30)
+}
+
 impl SupergraphSource {
     pub fn source_name(&self) -> &str {
         match self {
             SupergraphSource::File { .. } => "file",
             SupergraphSource::HiveConsole { .. } => "hive",
+            SupergraphSource::ApolloGraphOS { .. } => "apollo_graphos",
             SupergraphSource::Storage { storage_id, .. } => storage_id.as_str(),
             SupergraphSource::Plugin => "plugin",
         }

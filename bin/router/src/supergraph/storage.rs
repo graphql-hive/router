@@ -7,9 +7,17 @@ use tokio::sync::RwLock;
 use tracing::error;
 
 use crate::{
-    storage::{StorageGetResult, StorageRuntime},
+    storage::{error::StorageError, StorageGetResult, StorageRuntime},
     supergraph::base::{LoadSupergraphError, ReloadSupergraphResult, SupergraphLoader},
 };
+
+#[derive(Debug, thiserror::Error)]
+pub enum StorageSupergraphError {
+    #[error("Storage error: {0}")]
+    StorageError(#[from] StorageError),
+    #[error("Storage ID {0} is not defined in the Router configuration")]
+    StorageIdNotFound(String),
+}
 
 pub struct SupergraphStorageLoader {
     fetcher: SupergraphStorageFetcher,
@@ -23,7 +31,7 @@ struct SupergraphStorageFetcher {
 }
 
 impl SupergraphStorageFetcher {
-    async fn fetch_supergraph(&self) -> Result<Option<String>, LoadSupergraphError> {
+    async fn fetch_supergraph(&self) -> Result<Option<String>, StorageSupergraphError> {
         let etag = {
             let read_guard = self.last_etag.read().await;
 
@@ -51,7 +59,7 @@ impl SupergraphStorageLoader {
         fetcher: Arc<Box<dyn StorageRuntime>>,
         location: String,
         poll_interval: Option<Duration>,
-    ) -> Result<Box<Self>, LoadSupergraphError> {
+    ) -> Result<Box<Self>, StorageSupergraphError> {
         Ok(Box::new(Self {
             fetcher: SupergraphStorageFetcher {
                 storage: fetcher,
@@ -77,7 +85,7 @@ impl SupergraphLoader for SupergraphStorageLoader {
                     "Error fetching supergraph from storage",
                 );
 
-                Err(err)
+                Err(err.into())
             }
             // If the supergraph has not changed, return Unchanged
             Ok(None) => Ok(ReloadSupergraphResult::Unchanged),
@@ -86,7 +94,7 @@ impl SupergraphLoader for SupergraphStorageLoader {
         }
     }
 
-    fn reload_interval(&self) -> Option<&std::time::Duration> {
-        self.poll_interval.as_ref()
+    fn reload_interval(&self) -> Option<std::time::Duration> {
+        self.poll_interval
     }
 }

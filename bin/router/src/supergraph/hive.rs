@@ -11,40 +11,59 @@ use crate::{
     supergraph::base::{LoadSupergraphError, ReloadSupergraphResult, SupergraphLoader},
 };
 
+#[derive(Debug, thiserror::Error)]
+#[allow(clippy::enum_variant_names)]
+pub enum HiveConsoleSupergraphError {
+    #[error("Failed to read supergraph from network: {0}")]
+    NetworkError(#[from] reqwest_middleware::Error),
+    #[error("Failed to read supergraph from network: {0}")]
+    NetworkResponseError(#[from] reqwest::Error),
+    #[error("Failed to lock supergraph: {0}")]
+    LockError(String),
+    #[error("Failed to initialize the loader: {0}")]
+    InitializationError(String),
+    #[error("Invalid configuration: {0}")]
+    InvalidConfiguration(String),
+    #[error("Hive CDN endpoint is missing. Please provide it via 'HIVE_CDN_ENDPOINT' environment variable or under 'supergraph.endpoint' in the configuration.")]
+    MissingHiveCDNEndpoint,
+    #[error("Hive CDN key is missing. Please provide it via 'HIVE_CDN_KEY' environment variable or under 'supergraph.key' in the configuration.")]
+    MissingHiveCDNKey,
+}
+
 pub struct SupergraphHiveConsoleLoader {
     fetcher: SupergraphFetcher<SupergraphFetcherAsyncState>,
     poll_interval: Duration,
 }
 
-impl From<SupergraphFetcherError> for LoadSupergraphError {
+impl From<SupergraphFetcherError> for HiveConsoleSupergraphError {
     fn from(err: SupergraphFetcherError) -> Self {
         match err {
-            SupergraphFetcherError::Network(e) => LoadSupergraphError::NetworkError(e),
+            SupergraphFetcherError::Network(e) => HiveConsoleSupergraphError::NetworkError(e),
             SupergraphFetcherError::ResponseParse(e) => {
-                LoadSupergraphError::NetworkResponseError(e)
+                HiveConsoleSupergraphError::NetworkResponseError(e)
             }
             SupergraphFetcherError::ETagRead(e) => {
-                LoadSupergraphError::LockError(format!("Failed to read etag: {:?}", e))
+                HiveConsoleSupergraphError::LockError(format!("Failed to read etag: {:?}", e))
             }
             SupergraphFetcherError::ETagWrite(e) => {
-                LoadSupergraphError::LockError(format!("Failed to write etag: {:?}", e))
+                HiveConsoleSupergraphError::LockError(format!("Failed to write etag: {:?}", e))
             }
             SupergraphFetcherError::HTTPClientCreation(e) => {
-                LoadSupergraphError::InitializationError(e.to_string())
+                HiveConsoleSupergraphError::InitializationError(e.to_string())
             }
             SupergraphFetcherError::InvalidKey(e) => {
-                LoadSupergraphError::InvalidConfiguration(format!("Invalid CDN key: {}", e))
+                HiveConsoleSupergraphError::InvalidConfiguration(format!("Invalid CDN key: {}", e))
             }
             SupergraphFetcherError::MissingConfigurationOption(msg) => {
-                LoadSupergraphError::InvalidConfiguration(msg)
+                HiveConsoleSupergraphError::InvalidConfiguration(msg)
             }
             SupergraphFetcherError::RejectedByCircuitBreaker => {
-                LoadSupergraphError::NetworkError(reqwest_middleware::Error::Middleware(
+                HiveConsoleSupergraphError::NetworkError(reqwest_middleware::Error::Middleware(
                     anyhow::anyhow!("Request rejected by circuit breaker"),
                 ))
             }
             SupergraphFetcherError::CircuitBreakerCreation(e) => {
-                LoadSupergraphError::InitializationError(format!(
+                HiveConsoleSupergraphError::InitializationError(format!(
                     "Circuit breaker creation failed: {}",
                     e
                 ))
@@ -65,7 +84,7 @@ impl SupergraphLoader for SupergraphHiveConsoleLoader {
                   error = ?err,
                   "Error fetching supergraph from Hive Console",
                 );
-                Err(LoadSupergraphError::from(err))
+                Err(HiveConsoleSupergraphError::from(err).into())
             }
             // If the supergraph has not changed, return Unchanged
             Ok(None) => Ok(ReloadSupergraphResult::Unchanged),
@@ -74,8 +93,8 @@ impl SupergraphLoader for SupergraphHiveConsoleLoader {
         }
     }
 
-    fn reload_interval(&self) -> Option<&std::time::Duration> {
-        Some(&self.poll_interval)
+    fn reload_interval(&self) -> Option<std::time::Duration> {
+        Some(self.poll_interval)
     }
 }
 
@@ -88,7 +107,7 @@ impl SupergraphHiveConsoleLoader {
         request_timeout: Duration,
         accept_invalid_certs: bool,
         retry_count: u32,
-    ) -> Result<Box<Self>, LoadSupergraphError> {
+    ) -> Result<Box<Self>, HiveConsoleSupergraphError> {
         debug!(
           target: targets::SUPERGRAPH,
           endpoints = ?endpoints,

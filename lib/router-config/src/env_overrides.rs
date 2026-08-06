@@ -45,6 +45,12 @@ pub struct EnvVarOverrides {
     pub hive_console_cdn_key: Option<String>,
     #[envconfig(from = "HIVE_CDN_POLL_INTERVAL")]
     pub hive_console_cdn_poll_interval: Option<String>,
+    #[envconfig(from = "APOLLO_KEY")]
+    pub apollo_key: Option<String>,
+    #[envconfig(from = "APOLLO_GRAPH_REF")]
+    pub apollo_graph_ref: Option<String>,
+    #[envconfig(from = "APOLLO_UPLINK_ENDPOINTS")]
+    pub apollo_uplink_endpoints: Option<String>,
     #[envconfig(from = "HIVE_ACCESS_TOKEN")]
     pub hive_access_token: Option<String>,
     #[envconfig(from = "HIVE_TARGET")]
@@ -71,7 +77,7 @@ pub struct EnvVarOverrides {
 pub enum EnvVarOverridesError {
     #[error("Failed to override configuration: {0}")]
     FailedToOverrideConfig(#[from] ConfigError),
-    #[error("Cannot override supergraph source due to conflict: SUPERGRAPH_FILE_PATH and HIVE_CDN_ENDPOINT cannot be used together")]
+    #[error("Cannot override supergraph source due to conflict: SUPERGRAPH_FILE_PATH, HIVE_CDN_ENDPOINT and APOLLO_KEY cannot be used together")]
     ConflictingSupergraphSource,
     #[error("Missing required environment variable: {0}")]
     MissingRequiredEnvVar(&'static str),
@@ -118,7 +124,15 @@ impl EnvVarOverrides {
             config = config.set_override("http.workers", http_workers as u64)?;
         }
 
-        if self.supergraph_file_path.is_some() && self.hive_console_cdn_endpoint.is_some() {
+        let configured_supergraph_sources = [
+            self.supergraph_file_path.is_some(),
+            self.hive_console_cdn_endpoint.is_some(),
+            self.apollo_key.is_some(),
+        ]
+        .into_iter()
+        .filter(|configured| *configured)
+        .count();
+        if configured_supergraph_sources > 1 {
             return Err(EnvVarOverridesError::ConflictingSupergraphSource);
         }
 
@@ -154,6 +168,30 @@ impl EnvVarOverrides {
                 debug!(target: CONFIG_LOGGING_TARGET, value = hive_console_cdn_poll_interval, "overriding 'hive_console_cdn_poll_interval'");
                 config = config
                     .set_override("supergraph.poll_interval", hive_console_cdn_poll_interval)?;
+            }
+        }
+
+        if let Some(apollo_key) = self.apollo_key.take() {
+            debug!(target: CONFIG_LOGGING_TARGET, "overriding 'apollo_key'");
+            config = config.set_override("supergraph.source", "apollo_graphos")?;
+            config = config.set_override("supergraph.key", apollo_key)?;
+
+            if let Some(apollo_graph_ref) = self.apollo_graph_ref.take() {
+                debug!(target: CONFIG_LOGGING_TARGET, value = apollo_graph_ref, "overriding 'apollo_graph_ref'");
+                config = config.set_override("supergraph.graph_ref", apollo_graph_ref)?;
+            } else {
+                return Err(EnvVarOverridesError::MissingRequiredEnvVar(
+                    "APOLLO_GRAPH_REF",
+                ));
+            }
+
+            if let Some(apollo_uplink_endpoints) = self.apollo_uplink_endpoints.take() {
+                debug!(target: CONFIG_LOGGING_TARGET, value = apollo_uplink_endpoints, "overriding 'apollo_uplink_endpoints'");
+                let endpoints: Vec<String> = apollo_uplink_endpoints
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect();
+                config = config.set_override("supergraph.endpoint", endpoints)?;
             }
         }
 

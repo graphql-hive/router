@@ -8,6 +8,14 @@ use tracing::{debug, trace};
 
 use crate::supergraph::base::{LoadSupergraphError, ReloadSupergraphResult, SupergraphLoader};
 
+#[derive(Debug, thiserror::Error)]
+pub enum FileSupergraphError {
+    #[error("Failed to read supergraph file: {0}")]
+    ReadFileError(#[from] std::io::Error),
+    #[error("Supergraph file path is missing. Please provide it via 'SUPERGRAPH_FILE_PATH' environment variable or under 'supergraph.path' in the configuration.")]
+    MissingSupergraphFilePath,
+}
+
 pub struct SupergraphFileLoader {
     file_path: FilePath,
     poll_interval: Option<Duration>,
@@ -15,7 +23,7 @@ pub struct SupergraphFileLoader {
 }
 
 impl SupergraphFileLoader {
-    async fn load_with_polling(&self) -> Result<ReloadSupergraphResult, LoadSupergraphError> {
+    async fn load_with_polling(&self) -> Result<ReloadSupergraphResult, FileSupergraphError> {
         let file_metadata = fs::metadata(&self.file_path.absolute).await?;
         let current_time = file_metadata.modified()?;
         let mut modified_time = self.modified_time.write().await;
@@ -30,7 +38,7 @@ impl SupergraphFileLoader {
         }
     }
 
-    async fn load_without_polling(&self) -> Result<ReloadSupergraphResult, LoadSupergraphError> {
+    async fn load_without_polling(&self) -> Result<ReloadSupergraphResult, FileSupergraphError> {
         let content = fs::read_to_string(&self.file_path.absolute).await?;
 
         Ok(ReloadSupergraphResult::Changed { new_sdl: content })
@@ -66,11 +74,11 @@ impl SupergraphLoader for SupergraphFileLoader {
           "Supergraph loaded from file",
         );
 
-        result
+        Ok(result?)
     }
 
-    fn reload_interval(&self) -> Option<&std::time::Duration> {
-        self.poll_interval.as_ref()
+    fn reload_interval(&self) -> Option<std::time::Duration> {
+        self.poll_interval
     }
 }
 
@@ -78,7 +86,7 @@ impl SupergraphFileLoader {
     pub fn new(
         file_path: &FilePath,
         poll_interval: Option<Duration>,
-    ) -> Result<Box<Self>, LoadSupergraphError> {
+    ) -> Result<Box<Self>, FileSupergraphError> {
         debug!(
           target: targets::SUPERGRAPH,
           path = ?file_path.absolute,
