@@ -143,6 +143,10 @@ pub fn set_summary_attribute(key: impl Into<String>, value: impl Into<sonic_rs::
     summary::record(|s| s.set_custom(key, value));
 }
 
+pub fn get_current_summary() -> Option<Arc<summary::RequestSummary>> {
+    summary::current_summary()
+}
+
 /// Lets plugins attach a custom correlation to every log line of the current request (not
 /// just the summary), e.g. a tenant or project id extracted from the URL. Setting the same
 /// key again overwrites the previous value. A no-op outside a request.
@@ -151,9 +155,7 @@ pub fn set_log_correlation(key: impl Into<String>, value: impl std::fmt::Display
 }
 
 /// Lets plugins override the request summary log line's message. The first call wins;
-/// later calls for the same request are no-ops. Falls back to the default (no message) if
-/// never called. A no-op outside a request (e.g. during `on_plugin_init`) or when the summary
-/// log target is filtered off.
+/// later calls for the same request are no-ops.
 pub fn set_summary_message(message: impl Into<std::borrow::Cow<'static, str>>) {
     summary::record(|s| s.set_message(message));
 }
@@ -186,7 +188,7 @@ async fn graphql_endpoint_handler(
         .capture_request(&request);
 
     let started_at = std::time::Instant::now();
-    let (response_mode, mut response, summary_guard) = async {
+    let (mut response, summary_guard) = async {
         let summary_guard = summary::SummaryOnDrop::new(started_at);
         debug!(
             target: targets::HTTP_SERVER,
@@ -199,7 +201,7 @@ async fn graphql_endpoint_handler(
             "http request started",
         );
 
-        let (response_mode, inner_res) = graphql_endpoint_dispatch(
+        let inner_res = graphql_endpoint_dispatch(
             &mut request,
             body_stream,
             schema_state,
@@ -229,16 +231,11 @@ async fn graphql_endpoint_handler(
                 .store(payload_bytes, std::sync::atomic::Ordering::Relaxed);
         });
 
-        (response_mode, inner_res, summary_guard)
+        (inner_res, summary_guard)
     }
     .await;
 
-    // for streamed responses the summary must be emitted when the stream ends, not now
-    // we do that by attaching the summary guard to the response body, so it will be emitted
-    // when the stream terminates (or the client disconnects)
-    if response_mode.can_stream() {
-        response = summary_guard.attach_to_response(response);
-    }
+    response = summary_guard.attach_to_response(response);
 
     let graphql_operation = read_graphql_operation_metric_identity(&request);
     let graphql_operation_name = graphql_operation
@@ -267,7 +264,7 @@ async fn graphql_endpoint_dispatch(
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
     parent_ctx: opentelemetry::Context,
-) -> (ResponseMode, web::HttpResponse) {
+) -> web::HttpResponse {
     let root_http_request_span = HttpServerRequestSpan::from_request(
         request,
         &app_state
@@ -351,7 +348,7 @@ async fn graphql_endpoint_dispatch(
 
         root_http_request_span.record_response(&response);
 
-        (response_mode, response)
+        response
     }
     .instrument(root_http_request_span.clone())
     .await

@@ -123,6 +123,7 @@ impl RequestSummary {
 
         info!(
             target: targets::SUMMARY,
+            message = self.message.get().map(Cow::as_ref),
             client_name = self.client_name.get().map(String::as_str),
             client_version = self.client_version.get().map(String::as_str),
             operation_name = self.operation_name.get().map(String::as_str),
@@ -139,8 +140,6 @@ impl RequestSummary {
             payload_bytes = self.payload_bytes.load(Relaxed),
             supergraph_identifier = self.supergraph_identifier.load(Relaxed),
             duration_ms = self.duration_ms.load(Relaxed),
-            "{}",
-            self.message.get().map(Cow::as_ref).unwrap_or("request summary")
         );
     }
 }
@@ -167,6 +166,10 @@ pub fn record(f: impl FnOnce(&RequestSummary)) {
         return;
     }
     let _ = REQUEST_SUMMARY.try_with(|summary| f(summary));
+}
+
+pub fn current_summary() -> Option<Arc<RequestSummary>> {
+    REQUEST_SUMMARY.try_with(|summary| summary.clone()).ok()
 }
 
 pub fn emit() {
@@ -251,10 +254,15 @@ impl Drop for SummaryOnDrop {
         };
         summary.set_duration(self.started_at.elapsed());
 
-        match self.request_ids.take() {
-            Some(ids) => REQUEST_IDENTIFIERS.sync_scope(ids, || summary.emit()),
-            None => summary.emit(),
-        }
+        // Re-enter both task-locals before emitting: by now (especially for responses whose
+        // body outlives the original request future) they may no longer be ambiently scoped,
+        // but the formatters look up `custom`/`correlations` independently via their own
+        // `try_with` at format time, so both must be active for that lookup to succeed.
+        let request_ids = self.request_ids.take();
+        REQUEST_SUMMARY.sync_scope(summary, || match request_ids {
+            Some(ids) => REQUEST_IDENTIFIERS.sync_scope(ids, emit),
+            None => emit(),
+        });
     }
 }
 

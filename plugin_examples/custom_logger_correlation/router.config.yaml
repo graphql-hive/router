@@ -8,5 +8,5 @@ plugins:
 http:
   graphql_endpoint: "/{project_id}/graphql"
 log:
-  format: text
-  level: info
+  format: json
+  level: debug
