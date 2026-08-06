@@ -217,7 +217,6 @@ impl RouterSupergraphRuntime {
             snapshot.options.demand_control.as_ref(),
             context.telemetry.metrics.clone(),
         );
-        let lifetime = CancellationToken::new();
         if let Some(target) = snapshot.options.hive_target.as_deref() {
             if !is_uuid_target_ref(target) && !is_slug_target_ref(target) {
                 return Err(RouterSupergraphRuntimeError::HiveTarget(target.to_string()));
@@ -231,51 +230,60 @@ impl RouterSupergraphRuntime {
                 "Hive tracing is enabled but no target was provided".to_string(),
             ));
         }
-        let persisted_documents = PersistedDocumentsRuntime::init(
-            &snapshot.options.persisted_documents,
-            &context.graphql_endpoint,
-            &context.task_registrar,
-            lifetime.clone(),
-            &context.storage_manager,
-        )
-        .await?;
-        if !persisted_documents.supports_graphql_endpoint(&context.graphql_endpoint) {
-            return Err(RouterSupergraphRuntimeError::PersistedDocumentsEndpoint(
-                context.graphql_endpoint.clone(),
-            ));
-        }
-        let hive_usage_agent = context
-            .hive
-            .as_ref()
-            .filter(|hive| hive.usage_reporting.enabled)
-            .map(|hive| {
-                init_hive_usage_agent(
-                    &context.task_registrar,
-                    lifetime.clone(),
-                    hive,
-                    snapshot.options.hive_target.as_deref(),
-                )
+        let lifetime = CancellationToken::new();
+        let maybe_runtime: Result<Self, RouterSupergraphRuntimeError> = async {
+            let persisted_documents = PersistedDocumentsRuntime::init(
+                &snapshot.options.persisted_documents,
+                &context.graphql_endpoint,
+                &context.task_registrar,
+                lifetime.clone(),
+                &context.storage_manager,
+            )
+            .await?;
+            if !persisted_documents.supports_graphql_endpoint(&context.graphql_endpoint) {
+                return Err(RouterSupergraphRuntimeError::PersistedDocumentsEndpoint(
+                    context.graphql_endpoint.clone(),
+                ));
+            }
+            let hive_usage_agent = context
+                .hive
+                .as_ref()
+                .filter(|hive| hive.usage_reporting.enabled)
+                .map(|hive| {
+                    init_hive_usage_agent(
+                        &context.task_registrar,
+                        lifetime.clone(),
+                        hive,
+                        snapshot.options.hive_target.as_deref(),
+                    )
+                })
+                .transpose()?;
+            Ok(Self {
+                subgraph_executor_map,
+                operation_name_forward_config,
+                headers_plan: Arc::new(compile_headers_plan(&snapshot.options.headers)?),
+                override_labels_evaluator: OverrideLabelsEvaluator::from_config(
+                    &snapshot.options.override_labels,
+                )?,
+                error_masking: Arc::new(ErrorMaskingRuntime::compile_from_config(
+                    &snapshot.options.error_masking,
+                )),
+                hive_usage_agent,
+                persisted_documents,
+                authorization,
+                validate_cache: Cache::new(1000),
+                normalize_cache: Cache::new(1000),
+                plan_cache: Cache::new(1000),
+                demand_control_runtime,
+                lifetime: lifetime.clone(),
             })
-            .transpose()?;
-        Ok(Self {
-            subgraph_executor_map,
-            operation_name_forward_config,
-            headers_plan: Arc::new(compile_headers_plan(&snapshot.options.headers)?),
-            override_labels_evaluator: OverrideLabelsEvaluator::from_config(
-                &snapshot.options.override_labels,
-            )?,
-            error_masking: Arc::new(ErrorMaskingRuntime::compile_from_config(
-                &snapshot.options.error_masking,
-            )),
-            hive_usage_agent,
-            persisted_documents,
-            authorization,
-            validate_cache: Cache::new(1000),
-            normalize_cache: Cache::new(1000),
-            plan_cache: Cache::new(1000),
-            demand_control_runtime,
-            lifetime,
-        })
+        }
+        .await;
+        if maybe_runtime.is_err() {
+            // cancel everything because we failed to build the runtime
+            lifetime.cancel();
+        }
+        maybe_runtime
     }
 }
 
@@ -574,13 +582,26 @@ impl SchemaState {
         }
     }
 
-    /// Resolves the runtime for a plugin-selected snapshot from the bounded FIFO cache, building
-    /// and caching a new one on a miss. Cache hits do not refresh FIFO order.
+    /// Resolves the runtime for a snapshot. The configured runtime is returned directly; plugin
+    /// runtimes use the bounded FIFO cache, where cache hits do not refresh FIFO order.
     async fn resolve_runtime(
         &self,
         snapshot: &SupergraphSnapshot,
     ) -> Result<Arc<RouterSupergraphRuntime>, RouterSupergraphRuntimeError> {
         let cache_id = snapshot.cache_id;
+
+        // skip all of the synchronisation mechanisms if the user is requesting the configured supergraph
+        let configured_runtime = self
+            .configured
+            .load()
+            .as_ref()
+            .as_ref()
+            .filter(|configured| configured.snapshot.cache_id == cache_id)
+            .map(|configured| configured.runtime.clone());
+        if let Some(runtime) = configured_runtime {
+            return Ok(runtime);
+        }
+
         let (cell, evicted, inserted) = {
             // its ok for the lock to expire in this scope - we only need to check for an existing
             // entry and insert a new one if missing. the runtime itself is built asynchronously
@@ -1156,9 +1177,13 @@ mod plugin_runtime_cache_tests {
         );
         state.configured.store(Arc::new(Some(ConfiguredSupergraph {
             _owner: first_owner,
-            snapshot: first_snapshot,
-            runtime: first_runtime,
+            snapshot: first_snapshot.clone(),
+            runtime: first_runtime.clone(),
         })));
+
+        let resolved_runtime = state.resolve_runtime(&first_snapshot).await.unwrap();
+        assert!(Arc::ptr_eq(&resolved_runtime, &first_runtime));
+        assert!(state.runtime_cache.lock().unwrap().is_empty());
 
         let req = ntex::web::test::TestRequest::default().to_http_request();
         assert_eq!(
