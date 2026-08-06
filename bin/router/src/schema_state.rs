@@ -78,8 +78,6 @@ pub enum RouterSupergraphRuntimeError {
     HeaderRuleCompileError(#[from] HeaderRuleCompileError),
     #[error(transparent)]
     OverrideLabelsCompileError(#[from] OverrideLabelsCompileError),
-    #[error("Invalid router callback configuration: {0}")]
-    CallbackConfiguration(String),
     #[error(transparent)]
     UsageReportingError(#[from] UsageReportingError),
     #[error(transparent)]
@@ -426,7 +424,6 @@ fn supergraph_options(
     })
 }
 
-// TODO: clean up errors, maybe use lib/executor/src/executors/error.rs#Callback* errors
 fn callback_runtime_config(
     config: &HiveRouterConfig,
 ) -> Result<Option<HttpCallbackRuntimeConfig>, SupergraphManagerError> {

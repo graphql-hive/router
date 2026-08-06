@@ -12,7 +12,7 @@ use hive_console_sdk::agent::usage_agent::{
 };
 use hive_router_config::{
     headers::OneOrMany,
-    telemetry::hive::{is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig},
+    telemetry::hive::HiveTelemetryConfig,
     usage_reporting::{UsageReportingExclude, UsageReportingSamplingKeyKind},
 };
 use hive_router_internal::telemetry::utils::resolve_value_or_expression;
@@ -49,15 +49,6 @@ pub fn init_hive_usage_agent(
             .map_err(|e| UsageReportingError::ConfigurationError(e.to_string()))?,
         None => return Err(UsageReportingError::MissingAccessToken),
     };
-
-    if let Some(target) = target {
-        if !is_uuid_target_ref(target) && !is_slug_target_ref(target) {
-            return Err(UsageReportingError::ConfigurationError(format!(
-                "Invalid Hive Telemetry target format: '{}'. It must be either in slug format '$organizationSlug/$projectSlug/$targetSlug' or UUID format 'a0f4c605-6541-4350-8cfe-b31f21a4bf80'",
-                target
-            )));
-        }
-    }
 
     let mut agent_builder = UsageAgent::builder()
         .user_agent(user_agent)

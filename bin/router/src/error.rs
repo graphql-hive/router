@@ -2,8 +2,8 @@ use hive_router_config::RouterConfigError;
 use hive_router_plan_executor::executors::error::TlsCertificatesError;
 
 use crate::{
-    jwt::jwks_manager::JwksSourceError, pipeline::usage_reporting::UsageReportingError,
-    plugins::registry::PluginRegistryError, schema_state::SupergraphManagerError,
+    jwt::jwks_manager::JwksSourceError, plugins::registry::PluginRegistryError,
+    schema_state::SupergraphManagerError,
     shared_state::SharedStateError, storage::error::StorageError, telemetry::TelemetryInitError,
 };
 
@@ -21,16 +21,12 @@ pub enum RouterInitError {
     HttpServerStartError(std::io::Error),
     #[error(transparent)]
     JwksSourceError(#[from] JwksSourceError),
-    #[error("Usage Reporting - {0}")]
-    UsageReportingError(#[from] UsageReportingError),
     #[error(transparent)]
     SharedStateError(#[from] SharedStateError),
     #[error(transparent)]
     TelemetryInitError(#[from] TelemetryInitError),
     #[error(transparent)]
     PluginRegistryError(#[from] PluginRegistryError),
-    #[error("Persisted documents endpoint incompatible: {0}")]
-    PersistedDocumentsEndpointIncompatible(String),
     #[error("Endpoints of '{endpoint_name_one}' and '{endpoint_name_two}' cannot both use the same endpoint: {endpoint}")]
     EndpointConflict {
         endpoint_name_one: String,
