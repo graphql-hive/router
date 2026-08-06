@@ -892,3 +892,93 @@ async fn usage_reporting_exclude_runs_before_at_least_once() {
     let total_ops = mock.total_operations_count().await;
     assert_eq!(total_ops, 2);
 }
+
+/// Test that an operation resolved from a persisted document reports the resolved
+/// document id as `persistedDocumentHash`, while a plain query reports none.
+/// https://github.com/graphql-hive/router/issues/1343
+#[ntex::test]
+async fn usage_reporting_includes_persisted_document_hash() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
+
+    let mock = MockUsageEndpoint::start();
+    let usage_endpoint = &mock.address;
+
+    let doc_id = "app~1.0.0~sha256:usage123";
+    let manifest = tempfile::NamedTempFile::new().expect("failed to create manifest file");
+    std::fs::write(
+        manifest.path(),
+        sonic_rs::to_string(&sonic_rs::json!({ doc_id: "{ users { id } }" }))
+            .expect("failed to serialize manifest"),
+    )
+    .expect("failed to write manifest");
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+            supergraph:
+              source: file
+              path: {supergraph_path}
+
+            persisted_documents:
+              enabled: true
+              storage:
+                type: file
+                path: "{manifest_path}"
+
+            telemetry:
+              hive:
+                token: test-token
+                usage_reporting:
+                  enabled: true
+                  endpoint: {usage_endpoint}
+                  buffer_size: 1
+                  flush_interval: 100ms
+            "#,
+            manifest_path = manifest.path().display(),
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    // Resolved from the persisted document manifest.
+    let res = router
+        .send_post_request("/graphql", sonic_rs::json!({ "documentId": doc_id }), None)
+        .await;
+    assert!(res.status().is_success());
+
+    mock.wait_for_reports(1).await;
+    let reports = mock.reports().await;
+    let operations = reports[0]["operations"]
+        .as_array()
+        .expect("report should contain operations");
+    assert_eq!(operations.len(), 1);
+    assert_eq!(
+        operations[0]["persistedDocumentHash"].as_str(),
+        Some(doc_id),
+        "operation should carry the resolved persisted document id: {}",
+        reports[0]
+    );
+
+    // A plain query (allowed since require_id is off) must not carry a hash.
+    let res = router
+        .send_graphql_request("{ users { id } }", None, None)
+        .await;
+    assert!(res.status().is_success());
+
+    mock.wait_for_reports(2).await;
+    let reports = mock.reports().await;
+    let operations = reports[1]["operations"]
+        .as_array()
+        .expect("report should contain operations");
+    assert_eq!(operations.len(), 1);
+    assert!(
+        operations[0]["persistedDocumentHash"].is_null(),
+        "plain query must not report a persisted document hash: {}",
+        reports[1]
+    );
+}

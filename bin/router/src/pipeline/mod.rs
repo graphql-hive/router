@@ -509,6 +509,7 @@ pub async fn graphql_request_handler(
                 hive_usage_agent,
                 shared_response.error_count(),
                 Some(usage_reporting::request_details_from_ntex_request(req)),
+                prepared_operation.resolved_document_id.as_deref(),
             )
             .await;
         }

@@ -118,6 +118,7 @@ pub async fn collect_usage_report<'a>(
     hive_usage_agent: &UsageAgent,
     error_count: usize,
     request_details: Option<RequestDetails>,
+    persisted_document_hash: Option<&str>,
 ) {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -138,7 +139,7 @@ pub async fn collect_usage_report<'a>(
             OperationKind::Subscription => OperationType::Subscription,
         }),
         operation_name: operation_name.map(|s| s.to_owned()),
-        persisted_document_hash: None,
+        persisted_document_hash: persisted_document_hash.map(|hash| hash.to_owned()),
     };
 
     if let Err(err) = hive_usage_agent
