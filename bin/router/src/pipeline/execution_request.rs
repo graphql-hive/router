@@ -28,6 +28,7 @@ use crate::pipeline::persisted_documents::extract::{
 use crate::pipeline::persisted_documents::resolve::PersistedDocumentResolveInput;
 use crate::pipeline::persisted_documents::types::{ClientIdentity, PersistedDocumentId};
 use crate::pipeline::persisted_documents::PersistedDocumentsRuntime;
+use crate::schema_state::SelectedSupergraph;
 use crate::shared_state::RouterSharedState;
 
 #[derive(serde::Deserialize, Debug)]
@@ -301,10 +302,10 @@ pub enum OperationPreparationResult {
     Operation(PreparedOperation),
 }
 
-pub struct OperationPreparation<'a> {
+pub struct OperationPreparation<'a, 'p> {
     req: &'a HttpRequest,
     persisted_documents_runtime: &'a PersistedDocumentsRuntime,
-    plugin_req_state: &'a Option<PluginRequestState<'a>>,
+    plugin_req_state: &'p Option<PluginRequestState<'a>>,
     body: Bytes,
     persisted_documents_enabled: bool,
     log_missing_id_requests: bool,
@@ -312,13 +313,12 @@ pub struct OperationPreparation<'a> {
     metrics: Arc<Metrics>,
 }
 
-impl<'a> OperationPreparation<'a> {
+impl<'a, 'p> OperationPreparation<'a, 'p> {
     #[inline]
     pub async fn prepare(
         req: &'a HttpRequest,
         shared_state: &'a Arc<RouterSharedState>,
-        persisted_documents_runtime: &'a PersistedDocumentsRuntime,
-        persisted_documents_config: &'a hive_router_config::persisted_documents::PersistedDocumentsConfig,
+        supergraph: &'a SelectedSupergraph,
         plugin_req_state: &'a Option<PluginRequestState<'a>>,
         body: Bytes,
         client_name: Option<&'a str>,
@@ -326,11 +326,15 @@ impl<'a> OperationPreparation<'a> {
     ) -> Result<OperationPreparationResult, PipelineError> {
         Self {
             req,
-            persisted_documents_runtime,
+            persisted_documents_runtime: &supergraph.runtime.persisted_documents,
             plugin_req_state,
             body,
-            persisted_documents_enabled: persisted_documents_config.enabled,
-            log_missing_id_requests: persisted_documents_config.log_missing_id,
+            persisted_documents_enabled: supergraph.snapshot.options.persisted_documents.enabled,
+            log_missing_id_requests: supergraph
+                .snapshot
+                .options
+                .persisted_documents
+                .log_missing_id,
             client_identity: ClientIdentity {
                 name: client_name,
                 version: client_version,
@@ -340,46 +344,48 @@ impl<'a> OperationPreparation<'a> {
         .extract_and_resolve()
         .await
     }
+}
 
-    pub async fn prepare_websocket(
-        req: &'a HttpRequest,
-        shared_state: &'a Arc<RouterSharedState>,
-        persisted_documents_runtime: &'a PersistedDocumentsRuntime,
-        persisted_documents_config: &'a hive_router_config::persisted_documents::PersistedDocumentsConfig,
-        graphql_params: GraphQLParams,
-        client_name: Option<&'a str>,
-        client_version: Option<&'a str>,
-    ) -> Result<PreparedOperation, PipelineError> {
-        let plugin_req_state = None;
-        let preparation = Self {
-            req,
-            persisted_documents_runtime,
-            plugin_req_state: &plugin_req_state,
-            body: Bytes::new(),
-            persisted_documents_enabled: persisted_documents_config.enabled,
-            log_missing_id_requests: persisted_documents_config.log_missing_id,
-            client_identity: ClientIdentity {
-                name: client_name,
-                version: client_version,
-            },
-            metrics: shared_state.telemetry_context.metrics.clone(),
-        };
-        let mut operation = PreparedOperation::from_graphql_params(
-            graphql_params,
-            &persisted_documents_runtime.document_id_resolver,
-            req.into(),
-            None,
-            None,
-        );
-        preparation.enforce_require_id_policy(&mut operation)?;
-        if persisted_documents_config.enabled && operation.graphql_params.query.is_none() {
-            preparation
-                .resolve_query_from_document_id(&mut operation)
-                .await?;
-        }
-        Ok(operation)
+pub async fn prepare_websocket_operation<'a>(
+    req: &'a HttpRequest,
+    shared_state: &'a Arc<RouterSharedState>,
+    persisted_documents_runtime: &'a PersistedDocumentsRuntime,
+    persisted_documents_config: &'a hive_router_config::persisted_documents::PersistedDocumentsConfig,
+    graphql_params: GraphQLParams,
+    client_name: Option<&'a str>,
+    client_version: Option<&'a str>,
+) -> Result<PreparedOperation, PipelineError> {
+    let plugin_req_state = None;
+    let preparation = OperationPreparation {
+        req,
+        persisted_documents_runtime,
+        plugin_req_state: &plugin_req_state,
+        body: Bytes::new(),
+        persisted_documents_enabled: persisted_documents_config.enabled,
+        log_missing_id_requests: persisted_documents_config.log_missing_id,
+        client_identity: ClientIdentity {
+            name: client_name,
+            version: client_version,
+        },
+        metrics: shared_state.telemetry_context.metrics.clone(),
+    };
+    let mut operation = PreparedOperation::from_graphql_params(
+        graphql_params,
+        &persisted_documents_runtime.document_id_resolver,
+        req.into(),
+        None,
+        None,
+    );
+    preparation.enforce_require_id_policy(&mut operation)?;
+    if persisted_documents_config.enabled && operation.graphql_params.query.is_none() {
+        preparation
+            .resolve_query_from_document_id(&mut operation)
+            .await?;
     }
+    Ok(operation)
+}
 
+impl<'a, 'p> OperationPreparation<'a, 'p> {
     async fn extract_and_resolve(mut self) -> Result<OperationPreparationResult, PipelineError> {
         let mut graphql_params_from_plugins = None;
         let mut graphql_params_end_callbacks = Vec::new();

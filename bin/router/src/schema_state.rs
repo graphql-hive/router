@@ -332,7 +332,6 @@ type RuntimeCell = tokio::sync::OnceCell<Arc<RouterSupergraphRuntime>>;
 type RouterSupergraphRuntimeCache = Mutex<VecDeque<(u64, Arc<RuntimeCell>)>>;
 
 pub struct SchemaState {
-    router_config: Arc<HiveRouterConfig>,
     /// The supergraph configured through the router config that can be loaded (and polled)
     ///   - `Some` when the router's configured supergraph is available and has been loaded
     ///   - sometimes `None` when the supergraph is being fetched and built
@@ -762,7 +761,6 @@ impl SchemaState {
             configured,
             runtime_cache,
             runtime_cache_cleanup: Some(cleanup_tx),
-            router_config,
             telemetry_context: telemetry_context.clone(),
             callback_subscriptions,
             runtime_context,
@@ -1039,7 +1037,6 @@ mod plugin_runtime_cache_tests {
             configured: Arc::new(ArcSwap::from(Arc::new(None))),
             runtime_cache: Arc::new(Mutex::new(VecDeque::with_capacity(RUNTIME_CACHE_MAX_SIZE))),
             runtime_cache_cleanup: None,
-            router_config: Arc::new(HiveRouterConfig::default()),
             telemetry_context,
             callback_subscriptions,
             runtime_context,
