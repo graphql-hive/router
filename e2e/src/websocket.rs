@@ -5,10 +5,89 @@ mod websocket_e2e_tests {
     use std::collections::HashMap;
 
     use crate::testkit::{TestRouter, TestSubgraphs};
+    use hive_router::{
+        async_trait,
+        http::StatusCode,
+        plugins::{
+            hooks::{
+                on_graphql_params::{
+                    OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult,
+                },
+                on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
+            },
+            plugin_trait::{EndHookPayload, RouterPlugin, StartHookPayload},
+        },
+        GraphQLError,
+    };
     use hive_router_plan_executor::executors::{
         graphql_transport_ws::{ConnectionInitPayload, SubscribePayload},
         websocket_client::WsClient,
     };
+
+    #[derive(Default)]
+    struct TestWebSocketGraphqlParamsPlugin;
+
+    #[async_trait]
+    impl RouterPlugin for TestWebSocketGraphqlParamsPlugin {
+        type Config = ();
+
+        fn plugin_name() -> &'static str {
+            "test_websocket_graphql_params"
+        }
+
+        fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
+            payload.initialize_plugin_with_defaults()
+        }
+
+        async fn on_graphql_params<'exec>(
+            &'exec self,
+            mut payload: OnGraphQLParamsStartHookPayload<'exec>,
+        ) -> OnGraphQLParamsStartHookResult<'exec> {
+            assert_eq!(payload.router_http_request.method, http::Method::POST);
+            assert_eq!(payload.router_http_request.path, "/graphql");
+            let graphql_params = payload
+                .graphql_params
+                .as_mut()
+                .expect("Expected decoded WebSocket GraphQL parameters");
+            graphql_params.query = Some(
+                "query SelectedByHook { topProducts { name } } query Other { __typename }"
+                    .to_string(),
+            );
+            payload.on_end(|mut payload| {
+                payload.graphql_params.operation_name = Some("SelectedByHook".to_string());
+                payload.proceed()
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct TestWebSocketGraphqlParamsEarlyResponsePlugin;
+
+    #[async_trait]
+    impl RouterPlugin for TestWebSocketGraphqlParamsEarlyResponsePlugin {
+        type Config = ();
+
+        fn plugin_name() -> &'static str {
+            "test_websocket_graphql_params_early_response"
+        }
+
+        fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
+            payload.initialize_plugin_with_defaults()
+        }
+
+        async fn on_graphql_params<'exec>(
+            &'exec self,
+            payload: OnGraphQLParamsStartHookPayload<'exec>,
+        ) -> OnGraphQLParamsStartHookResult<'exec> {
+            payload.end_with_graphql_error(
+                GraphQLError::from_message_and_code(
+                    "Rejected by GraphQL parameters hook",
+                    "GRAPHQL_PARAMS_REJECTED",
+                ),
+                StatusCode::BAD_REQUEST,
+            )
+        }
+    }
 
     #[ntex::test]
     async fn query_over_websocket() {
@@ -61,8 +140,8 @@ mod websocket_e2e_tests {
     #[ntex::test]
     async fn persisted_document_over_websocket() {
         let document_id = "sha256:abc123";
-        let manifest = tempfile::NamedTempFile::new()
-            .expect("Failed to create persisted document manifest");
+        let manifest =
+            tempfile::NamedTempFile::new().expect("Failed to create persisted document manifest");
         std::fs::write(
             manifest.path(),
             sonic_rs::to_string(&json!({
@@ -116,6 +195,93 @@ mod websocket_e2e_tests {
         let response = stream.next().await.expect("Expected a response");
         assert!(response.errors.is_none(), "Expected no errors");
         assert!(!response.data.is_null(), "Expected data");
+        assert!(stream.next().await.is_none(), "Expected stream to complete");
+    }
+
+    #[ntex::test]
+    async fn graphql_params_hooks_prepare_websocket_operation() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                websocket:
+                    enabled: true
+                plugins:
+                    test_websocket_graphql_params:
+                        enabled: true
+                "#,
+            )
+            .register_plugin::<TestWebSocketGraphqlParamsPlugin>()
+            .build()
+            .start()
+            .await;
+
+        let wsconn = router.ws().await;
+        let mut client = WsClient::init(wsconn, None)
+            .await
+            .expect("Failed to init WsClient");
+        let mut stream = client
+            .subscribe(
+                SubscribePayload {
+                    query: "not valid GraphQL".to_string(),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await;
+
+        let response = stream.next().await.expect("Expected a response");
+        assert!(response.errors.is_none(), "Expected no errors");
+        assert!(!response.data.is_null(), "Expected data");
+        assert!(stream.next().await.is_none(), "Expected stream to complete");
+    }
+
+    #[ntex::test]
+    async fn graphql_params_hook_early_response_completes_websocket_operation() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                websocket:
+                    enabled: true
+                plugins:
+                    test_websocket_graphql_params_early_response:
+                        enabled: true
+                "#,
+            )
+            .register_plugin::<TestWebSocketGraphqlParamsEarlyResponsePlugin>()
+            .build()
+            .start()
+            .await;
+
+        let wsconn = router.ws().await;
+        let mut client = WsClient::init(wsconn, None)
+            .await
+            .expect("Failed to init WsClient");
+        let mut stream = client
+            .subscribe(
+                SubscribePayload {
+                    query: "{ __typename }".to_string(),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await;
+
+        let response = stream.next().await.expect("Expected an early response");
+        let errors = response.errors.expect("Expected GraphQL errors");
+        assert_eq!(
+            errors[0].extensions.code.as_deref(),
+            Some("GRAPHQL_PARAMS_REJECTED")
+        );
         assert!(stream.next().await.is_none(), "Expected stream to complete");
     }
 
