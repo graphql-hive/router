@@ -1055,6 +1055,44 @@ mod plugin_runtime_cache_tests {
     }
 
     #[ntex::test]
+    async fn graph_bound_options_stay_isolated_between_live_owners() {
+        let state = test_schema_state();
+        let mut first_options = SupergraphOptions::default();
+        first_options.hive_target = Some("example/router/first".to_string());
+        first_options.error_masking.redacted_error_message = "first".to_string();
+        let mut second_options = SupergraphOptions::default();
+        second_options.hive_target = Some("example/router/second".to_string());
+        second_options.error_masking.redacted_error_message = "second".to_string();
+        second_options.traffic_shaping.all.forward_operation_name = true;
+
+        let first = Arc::new(Supergraph::from_sdl(TEST_SUPERGRAPH_SDL, first_options).unwrap());
+        let second = Arc::new(Supergraph::from_sdl(TEST_SUPERGRAPH_SDL, second_options).unwrap());
+        let first_runtime = state.resolve_runtime(&first.snapshot()).await.unwrap();
+        let second_runtime = state.resolve_runtime(&second.snapshot()).await.unwrap();
+
+        assert_eq!(
+            first.options.hive_target.as_deref(),
+            Some("example/router/first")
+        );
+        assert_eq!(
+            second.options.hive_target.as_deref(),
+            Some("example/router/second")
+        );
+        assert_eq!(first.options.error_masking.redacted_error_message, "first");
+        assert_eq!(
+            second.options.error_masking.redacted_error_message,
+            "second"
+        );
+        assert!(!first_runtime
+            .operation_name_forward_config
+            .should_forward("products"));
+        assert!(second_runtime
+            .operation_name_forward_config
+            .should_forward("products"));
+        assert!(!Arc::ptr_eq(&first_runtime, &second_runtime));
+    }
+
+    #[ntex::test]
     async fn reusing_same_supergraph_reuses_one_runtime() {
         let state = test_schema_state();
         let owner = test_owner();

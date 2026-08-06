@@ -53,8 +53,9 @@ pub struct SupergraphOptions {
     pub hive_target: Option<String>,
 }
 
-/// The schema-derived data shared by a [`Supergraph`] owner and every [`SupergraphSnapshot`]
-/// cloned from it. Never constructed directly; always reached through the owner or a snapshot.
+/// The schema and immutable graph-bound options shared by a [`Supergraph`] owner and every
+/// [`SupergraphSnapshot`] cloned from it. Never constructed directly; always reached through the
+/// owner or a snapshot.
 pub struct SupergraphData {
     /// Process-unique id allocated once per constructed supergraph. Never reused, so a later
     /// instance cannot reuse an earlier runtime or join its in-flight request deduplication,
@@ -111,8 +112,9 @@ impl SupergraphSnapshot {
 
 /// The owner handle for one constructed supergraph. Plugins and the router's configured source
 /// retain `Arc<Supergraph>` while a supergraph remains selectable for new requests. It contains
-/// only schema-derived data. Router runtime concerns such as subgraph executors and telemetry live
-/// in the router and are built separately from a [`SupergraphSnapshot`].
+/// schema-derived data and immutable graph-bound configuration. Live router infrastructure such as
+/// clients, caches, storage runtimes, and telemetry agents is built separately from a
+/// [`SupergraphSnapshot`].
 ///
 /// When the last `Arc<Supergraph>` reference drops, [`Drop`] publishes retirement: every
 /// [`SupergraphSnapshot`] taken from it observes this (immediately, or later via

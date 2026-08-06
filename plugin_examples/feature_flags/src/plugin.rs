@@ -17,7 +17,7 @@ use hive_router::{
         hooks::{
             on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
             on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
-            on_supergraph_load::Supergraph,
+            on_supergraph_load::{Supergraph, SupergraphOptions},
         },
         plugin_trait::{RouterPlugin, StartHookPayload},
     },
@@ -91,7 +91,27 @@ impl RouterPlugin for FeatureFlagsPlugin {
             // (expensive) not constructed, build and cache it
             None => {
                 let document = schema_for_features(&self.supergraph, &feature_flags);
-                match Supergraph::from_document(document, Default::default()) {
+
+                let mut options = SupergraphOptions::default();
+                options.traffic_shaping.all.forward_operation_name = !feature_flags.is_empty();
+                options.error_masking.redacted_error_message = format!(
+                    "{} variant error",
+                    if feature_flags.is_empty() {
+                        "base"
+                    } else {
+                        "flagged"
+                    }
+                );
+                options.hive_target = Some(
+                    if feature_flags.is_empty() {
+                        "example/router/base"
+                    } else {
+                        "example/router/flagged"
+                    }
+                    .to_string(),
+                );
+
+                match Supergraph::from_document(document, options) {
                     Ok(supergraph_data) => {
                         // build successful
                         let supergraph_data = Arc::new(supergraph_data);
