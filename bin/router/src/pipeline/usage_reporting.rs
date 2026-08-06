@@ -262,7 +262,8 @@ mod tests {
     use super::*;
     use graphql_tools::parser::schema::parse_schema;
 
-    #[ntex::test]
+    // usage agent async drop uses block_in_place, which requires tokio's multi-threaded runtime
+    #[tokio::test(flavor = "multi_thread")]
     async fn lifetime_cancellation_flushes_before_the_worker_stops() {
         crate::init_rustls_crypto_provider();
         let mut server = mockito::Server::new_async().await;
@@ -306,7 +307,10 @@ mod tests {
         let router_shutdown = CancellationToken::new();
         let supergraph_lifetime = CancellationToken::new();
         controller.add_worker(agent, supergraph_lifetime.clone());
-        let handle = ntex::rt::spawn(background_tasks.run(router_shutdown.clone()));
+        let task_shutdown = router_shutdown.clone();
+        let handle = tokio::spawn(async move {
+            background_tasks.run(task_shutdown).await;
+        });
 
         supergraph_lifetime.cancel();
         tokio::time::timeout(Duration::from_secs(2), async {
