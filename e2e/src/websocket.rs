@@ -59,6 +59,67 @@ mod websocket_e2e_tests {
     }
 
     #[ntex::test]
+    async fn persisted_document_over_websocket() {
+        let document_id = "sha256:abc123";
+        let manifest = tempfile::NamedTempFile::new()
+            .expect("Failed to create persisted document manifest");
+        std::fs::write(
+            manifest.path(),
+            sonic_rs::to_string(&json!({
+                document_id: "{ topProducts { name } }",
+            }))
+            .expect("Failed to serialize persisted document manifest"),
+        )
+        .expect("Failed to write persisted document manifest");
+
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(format!(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                websocket:
+                    enabled: true
+                persisted_documents:
+                    enabled: true
+                    require_id: true
+                    storage:
+                        type: file
+                        path: "{}"
+                "#,
+                manifest.path().display(),
+            ))
+            .build()
+            .start()
+            .await;
+
+        let wsconn = router.ws().await;
+        let mut client = WsClient::init(wsconn, None)
+            .await
+            .expect("Failed to init WsClient");
+        let mut stream = client
+            .subscribe(
+                SubscribePayload {
+                    query: String::new(),
+                    extensions: Some(HashMap::from([(
+                        "persistedQuery".to_string(),
+                        json!({ "sha256Hash": document_id }),
+                    )])),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await;
+
+        let response = stream.next().await.expect("Expected a response");
+        assert!(response.errors.is_none(), "Expected no errors");
+        assert!(!response.data.is_null(), "Expected data");
+        assert!(stream.next().await.is_none(), "Expected stream to complete");
+    }
+
+    #[ntex::test]
     async fn subscription_over_websocket() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let router = TestRouter::builder()
