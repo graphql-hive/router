@@ -143,19 +143,22 @@ pub fn set_summary_attribute(key: impl Into<String>, value: impl Into<sonic_rs::
     summary::record(|s| s.set_custom(key, value));
 }
 
+/// Returns the current request log summary for the current request, if one exists.
 pub fn get_current_summary() -> Option<Arc<summary::RequestSummary>> {
     summary::current_summary()
 }
 
 /// Lets plugins attach a custom correlation to every log line of the current request (not
-/// just the summary), e.g. a tenant or project id extracted from the URL. Setting the same
-/// key again overwrites the previous value. A no-op outside a request.
+/// just the summary), e.g. a tenant or project id extracted from the URL.
+/// Setting the same key again overwrites the previous value. A no-op outside a request.
 pub fn set_log_correlation(key: impl Into<String>, value: impl std::fmt::Display) {
     request_id::set_correlation(key, value);
 }
 
-/// Lets plugins override the request summary log line's message. The first call wins;
-/// later calls for the same request are no-ops.
+/// Lets plugins override the request summary log line's message.
+/// This can be called only once per request, and only during the request's lifetime.
+/// Calling it more than once, for the same request is a no-op.
+/// Calling it outside of a request is a no-op.
 pub fn set_summary_message(message: impl Into<std::borrow::Cow<'static, str>>) {
     summary::record(|s| s.set_message(message));
 }
