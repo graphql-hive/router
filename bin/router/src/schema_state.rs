@@ -10,6 +10,7 @@ use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
 use hive_router_internal::authorization::metadata::AuthorizationMetadata;
 use hive_router_internal::background_tasks::{BackgroundTask, BackgroundTasksManager};
 use hive_router_internal::telemetry::logging::targets;
+use hive_router_internal::telemetry::utils::resolve_value_or_expression;
 use hive_router_internal::telemetry::{metrics::Metrics, TelemetryContext};
 use hive_router_plan_executor::execution::operation_name::OperationNameForwardConfig;
 use hive_router_plan_executor::executors::http_callback::{
@@ -20,7 +21,7 @@ use hive_router_plan_executor::{
     executors::error::SubgraphExecutorError,
     hooks::on_supergraph_load::{
         OnSupergraphLoadEndHookPayload, OnSupergraphLoadStartHookPayload, Supergraph,
-        SupergraphBuildError, SupergraphSnapshot,
+        SupergraphBuildError, SupergraphOptions, SupergraphSnapshot,
     },
     plugin_trait::{EndControlFlow, RouterPluginBoxed, StartControlFlow},
     response::graphql_error::GraphQLError,
@@ -186,6 +187,39 @@ pub enum SupergraphManagerError {
 
     #[error("Error from plugin: {0}")]
     PluginError(String),
+
+    #[error("Invalid supergraph configuration: {0}")]
+    Configuration(String),
+}
+
+fn supergraph_options(config: &HiveRouterConfig) -> Result<SupergraphOptions, SupergraphManagerError> {
+    let hive_target = config
+        .telemetry
+        .hive
+        .as_ref()
+        .and_then(|hive| hive.target.as_ref())
+        .map(|target| {
+            resolve_value_or_expression(target, "Hive Telemetry target")
+                .map_err(|error| SupergraphManagerError::Configuration(error.to_string()))
+        })
+        .transpose()?;
+
+    Ok(SupergraphOptions {
+        query_planner: hive_router_query_planner::planner::QueryPlannerOptions {
+            experimental_abstract_type_folding: config
+                .query_planner
+                .experimental_abstract_type_folding,
+        },
+        traffic_shaping: (&config.traffic_shaping).into(),
+        override_subgraph_urls: config.override_subgraph_urls.clone(),
+        headers: config.headers.clone(),
+        override_labels: config.override_labels.clone(),
+        demand_control: config.demand_control.clone(),
+        subscriptions: (&config.subscriptions).into(),
+        error_masking: config.error_masking.clone(),
+        persisted_documents: config.persisted_documents.clone(),
+        hive_target,
+    })
 }
 
 impl SchemaState {
@@ -408,18 +442,13 @@ impl SchemaState {
                         new_ast = start_payload.new_ast;
                     }
 
-                    let query_planner_options =
-                        hive_router_query_planner::planner::QueryPlannerOptions {
-                            experimental_abstract_type_folding: router_config_for_task
-                                .query_planner
-                                .experimental_abstract_type_folding,
-                        };
-
-                    let built = new_supergraph
-                        .unwrap_or_else(|| {
-                            Supergraph::from_document(new_ast, query_planner_options)
+                    let options = supergraph_options(&router_config_for_task);
+                    let built = options.and_then(|options| {
+                        new_supergraph.unwrap_or_else(|| {
+                            Supergraph::from_document(new_ast, options)
                                 .map_err(SupergraphManagerError::from)
                         })
+                    })
                         .and_then(|mut new_supergraph| {
                             if !on_end_callbacks.is_empty() {
                                 let mut end_payload =
@@ -786,10 +815,7 @@ mod plugin_runtime_cache_tests {
     fn test_owner() -> Arc<Supergraph> {
         crate::init_rustls_crypto_provider();
         Arc::new(
-            Supergraph::from_sdl(
-                TEST_SUPERGRAPH_SDL,
-                hive_router_query_planner::planner::QueryPlannerOptions::default(),
-            )
+            Supergraph::from_sdl(TEST_SUPERGRAPH_SDL, SupergraphOptions::default())
             .expect("valid test supergraph SDL"),
         )
     }
