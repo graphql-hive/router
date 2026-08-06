@@ -5,10 +5,11 @@ use hive_router_config::persisted_documents::{
     PersistedDocumentsConfig, PersistedDocumentsStorageConfig,
 };
 use hive_router_config::primitives::value_or_expression::ValueOrExpression;
-use hive_router_internal::background_tasks::BackgroundTasksManager;
+use hive_router_internal::background_tasks::DynamicBackgroundTaskRegistrar;
 use hive_router_internal::expressions::{ToVrlValue, ValueOrProgram};
 use hive_router_plan_executor::execution::client_request_details::ntex_header_map_to_vrl_value;
 use ntex::web::HttpRequest;
+use tokio_util::sync::CancellationToken;
 
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::persisted_documents::extract::DocumentIdResolver;
@@ -35,7 +36,8 @@ impl PersistedDocumentsRuntime {
     pub async fn init(
         config: &PersistedDocumentsConfig,
         graphql_endpoint: &str,
-        background_tasks_mgr: &mut BackgroundTasksManager,
+        task_registrar: &DynamicBackgroundTaskRegistrar,
+        lifetime: CancellationToken,
         storage_manager: &Arc<StorageManager>,
     ) -> Result<Self, PersistedDocumentResolverError> {
         let document_id_resolver = Arc::new(
@@ -69,8 +71,10 @@ impl PersistedDocumentsRuntime {
                     let resolver =
                         Arc::new(FileManifestResolver::from_storage_config(config).await?);
                     if resolver.has_watcher() {
-                        background_tasks_mgr
-                            .register_task(FileManifestReloadTask(resolver.clone()));
+                        task_registrar.register_task(
+                            FileManifestReloadTask(resolver.clone()),
+                            lifetime.clone(),
+                        );
                     }
                     Some(resolver as Arc<dyn PersistedDocumentResolver>)
                 }
@@ -86,10 +90,13 @@ impl PersistedDocumentsRuntime {
                             );
 
                             if let Some(poll_interval) = &config.poll_interval {
-                                background_tasks_mgr.register_task(StorageManifestReloadTask::new(
-                                    resolver.clone(),
-                                    *poll_interval,
-                                ));
+                                task_registrar.register_task(
+                                    StorageManifestReloadTask::new(
+                                        resolver.clone(),
+                                        *poll_interval,
+                                    ),
+                                    lifetime.clone(),
+                                );
                             }
 
                             Some(resolver as Arc<dyn PersistedDocumentResolver>)

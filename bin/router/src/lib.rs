@@ -39,7 +39,6 @@ use crate::{
         header::ResponseMode,
         http_callback::handler,
         long_lived_client_limit::LongLivedClientLimitService,
-        persisted_documents::PersistedDocumentsRuntime,
         request_extensions::{
             read_graphql_operation_metric_identity, read_graphql_response_metric_status,
             write_graphql_response_metric_status,
@@ -47,7 +46,7 @@ use crate::{
         request_identifiers::RequestIdentifiersService,
         request_summary::RequestSummaryService,
         timeout::handle_timeout,
-            validation::{
+        validation::{
             max_aliases_rule::MaxAliasesRule, max_depth_rule::MaxDepthRule,
             max_directives_rule::MaxDirectivesRule,
         },
@@ -580,30 +579,9 @@ pub async fn configure_app_from_config(
             config: max_aliases_config.clone(),
         }));
     }
-    let persisted_documents_runtime = PersistedDocumentsRuntime::init(
-        &router_config_arc.persisted_documents,
-        &router_config_arc.http.graphql_endpoint,
-        bg_tasks_manager,
-        &storage_manager,
-    )
-    .await
-    .map_err(|err| crate::shared_state::SharedStateError::PersistedDocuments(Box::new(err)))?;
-
-    if !persisted_documents_runtime
-        .supports_graphql_endpoint(&router_config_arc.http.graphql_endpoint)
-    {
-        // url_path_param extractor depends on path segments relative to graphql endpoint.
-        // Root endpoint would make all routes ambiguous for persisted-document extraction.
-        // Even /health could be treated as a graphql request with document id == "health".
-        return Err(RouterInitError::PersistedDocumentsEndpointIncompatible(
-            "http.graphql_endpoint='/' is not allowed when persisted_documents.selectors contains type=url_path_param. Use a non-root endpoint like '/graphql'.".to_string(),
-        ));
-    }
-
     let metrics_enabled = router_config_arc.telemetry.metrics.is_enabled();
     let shared_state = Arc::new(RouterSharedState::new(
         router_config_arc,
-        persisted_documents_runtime,
         jwt_runtime,
         validation_plan,
         telemetry_context_arc.clone(),

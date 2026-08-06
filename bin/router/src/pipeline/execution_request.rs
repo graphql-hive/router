@@ -317,6 +317,8 @@ impl<'a> OperationPreparation<'a> {
     pub async fn prepare(
         req: &'a HttpRequest,
         shared_state: &'a Arc<RouterSharedState>,
+        persisted_documents_runtime: &'a PersistedDocumentsRuntime,
+        persisted_documents_config: &'a hive_router_config::persisted_documents::PersistedDocumentsConfig,
         plugin_req_state: &'a Option<PluginRequestState<'a>>,
         body: Bytes,
         client_name: Option<&'a str>,
@@ -324,14 +326,11 @@ impl<'a> OperationPreparation<'a> {
     ) -> Result<OperationPreparationResult, PipelineError> {
         Self {
             req,
-            persisted_documents_runtime: &shared_state.persisted_documents_runtime,
+            persisted_documents_runtime,
             plugin_req_state,
             body,
-            persisted_documents_enabled: shared_state.router_config.persisted_documents.enabled,
-            log_missing_id_requests: shared_state
-                .router_config
-                .persisted_documents
-                .log_missing_id,
+            persisted_documents_enabled: persisted_documents_config.enabled,
+            log_missing_id_requests: persisted_documents_config.log_missing_id,
             client_identity: ClientIdentity {
                 name: client_name,
                 version: client_version,

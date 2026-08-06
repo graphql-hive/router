@@ -219,9 +219,18 @@ pub async fn graphql_request_handler(
             });
         }
 
+        let Some(supergraph) = schema_state.select_supergraph(req).await? else {
+            return Err(PipelineError::NoSupergraphAvailable {
+                response_headers: vec![(RETRY_AFTER, HeaderValue::from_static("10"))],
+            });
+        };
+        summary::record(|s| s.set_supergraph_identifier(supergraph.snapshot.cache_id));
+
         let operation_preparation_result = OperationPreparation::prepare(
             req,
             shared_state,
+            &supergraph.runtime.persisted_documents,
+            &supergraph.snapshot.options.persisted_documents,
             &plugin_req_state,
             body_bytes,
             client_name,
@@ -277,15 +286,6 @@ pub async fn graphql_request_handler(
             client_version,
             &parser_payload.hive_operation_hash,
         );
-
-        let Some(supergraph) = schema_state.select_supergraph(req)? else {
-            return Err(PipelineError::NoSupergraphAvailable {
-                response_headers: vec![(RETRY_AFTER, HeaderValue::from_static("10"))],
-            });
-        };
-
-        summary::record(|s| s.set_supergraph_identifier(supergraph.snapshot.cache_id));
-
 
         if let Some(response) = validate_operation_with_cache(
             &supergraph,

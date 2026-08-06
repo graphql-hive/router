@@ -6,10 +6,10 @@ use dashmap::DashMap;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use graphql_tools::validation::utils::ValidationError;
-use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
-use hive_router_internal::authorization::metadata::AuthorizationMetadata;
 use hive_console_sdk::agent::usage_agent::UsageAgent;
 use hive_router_config::telemetry::hive::HiveTelemetryConfig;
+use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
+use hive_router_internal::authorization::metadata::AuthorizationMetadata;
 use hive_router_internal::background_tasks::{
     BackgroundTask, BackgroundTasksManager, DynamicBackgroundTaskRegistrar,
 };
@@ -55,6 +55,9 @@ use crate::{
     pipeline::authorization::AuthorizationMetadataExt,
     pipeline::demand_control::runtime::DemandControlRuntime,
     pipeline::normalize::GraphQLNormalizationPayload,
+    pipeline::persisted_documents::{
+        resolve::PersistedDocumentResolverError, PersistedDocumentsRuntime,
+    },
     pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator},
     pipeline::usage_reporting::{init_hive_usage_agent, UsageReportingError},
     supergraph::{
@@ -77,6 +80,10 @@ pub enum RouterSupergraphRuntimeError {
     CallbackConfiguration(String),
     #[error(transparent)]
     UsageReportingError(#[from] UsageReportingError),
+    #[error(transparent)]
+    PersistedDocumentsError(#[from] PersistedDocumentResolverError),
+    #[error("Persisted-document selectors are incompatible with GraphQL endpoint '{0}'")]
+    PersistedDocumentsEndpoint(String),
 }
 
 /// Router state derived from a supergraph and router configuration: subgraph executors,
@@ -100,6 +107,7 @@ pub struct RouterSupergraphRuntime {
     pub override_labels_evaluator: OverrideLabelsEvaluator,
     pub error_masking: Arc<Option<ErrorMaskingRuntime>>,
     pub hive_usage_agent: Option<UsageAgent>,
+    pub persisted_documents: PersistedDocumentsRuntime,
     pub authorization: AuthorizationMetadata,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
@@ -109,7 +117,7 @@ pub struct RouterSupergraphRuntime {
 }
 
 impl RouterSupergraphRuntime {
-    pub fn build(
+    pub async fn build(
         snapshot: &SupergraphSnapshot,
         context: &RouterSupergraphRuntimeContext,
     ) -> Result<Self, RouterSupergraphRuntimeError> {
@@ -133,6 +141,19 @@ impl RouterSupergraphRuntime {
             context.telemetry.metrics.clone(),
         );
         let lifetime = CancellationToken::new();
+        let persisted_documents = PersistedDocumentsRuntime::init(
+            &snapshot.options.persisted_documents,
+            &context.graphql_endpoint,
+            &context.task_registrar,
+            lifetime.clone(),
+            &context.storage_manager,
+        )
+        .await?;
+        if !persisted_documents.supports_graphql_endpoint(&context.graphql_endpoint) {
+            return Err(RouterSupergraphRuntimeError::PersistedDocumentsEndpoint(
+                context.graphql_endpoint.clone(),
+            ));
+        }
         let hive_usage_agent = context
             .hive
             .as_ref()
@@ -157,6 +178,7 @@ impl RouterSupergraphRuntime {
                 &snapshot.options.error_masking,
             )),
             hive_usage_agent,
+            persisted_documents,
             authorization,
             validate_cache: Cache::new(1000),
             normalize_cache: Cache::new(1000),
@@ -179,6 +201,8 @@ pub struct RouterSupergraphRuntimeContext {
     callback: Option<HttpCallbackRuntimeConfig>,
     task_registrar: DynamicBackgroundTaskRegistrar,
     hive: Option<HiveTelemetryConfig>,
+    storage_manager: Arc<StorageManager>,
+    graphql_endpoint: String,
 }
 
 /// One selected supergraph for a request: the schema snapshot plus the router runtime built for
@@ -214,7 +238,8 @@ impl From<&ConfiguredSupergraph> for SelectedSupergraph {
 
 const RUNTIME_CACHE_MAX_SIZE: usize = 10;
 
-type RouterSupergraphRuntimeCache = Mutex<VecDeque<(u64, Arc<RouterSupergraphRuntime>)>>;
+type RuntimeCell = tokio::sync::OnceCell<Arc<RouterSupergraphRuntime>>;
+type RouterSupergraphRuntimeCache = Mutex<VecDeque<(u64, Arc<RuntimeCell>)>>;
 
 pub struct SchemaState {
     router_config: Arc<HiveRouterConfig>,
@@ -316,7 +341,7 @@ fn callback_runtime_config(
 impl SchemaState {
     /// Resolves the supergraph for a request, preferring a plugin-selected supergraph if present,
     /// falling back to the router's configured default if not. Returns `None` if neither is present.
-    pub fn select_supergraph(
+    pub async fn select_supergraph(
         &self,
         req: &HttpRequest,
     ) -> Result<Option<SelectedSupergraph>, RouterSupergraphRuntimeError> {
@@ -334,7 +359,7 @@ impl SchemaState {
             // a plugin selected a supergraph for this request, maybe we cached its runtime (fast)
             // and if we didnt cache the runtime, we will build a new one (slow)
 
-            let runtime = self.resolve_runtime(&plugin_supergraph)?;
+            let runtime = self.resolve_runtime(&plugin_supergraph).await?;
 
             let selected = SelectedSupergraph {
                 snapshot: plugin_supergraph,
@@ -382,70 +407,76 @@ impl SchemaState {
             f(&configured.runtime);
         }
         for (_, runtime) in self.runtime_cache.lock().unwrap().iter() {
-            f(runtime);
+            if let Some(runtime) = runtime.get() {
+                f(runtime);
+            }
         }
     }
 
     /// Resolves the runtime for a plugin-selected snapshot from the bounded FIFO cache, building
     /// and caching a new one on a miss. Cache hits do not refresh FIFO order.
-    fn resolve_runtime(
+    async fn resolve_runtime(
         &self,
         snapshot: &SupergraphSnapshot,
     ) -> Result<Arc<RouterSupergraphRuntime>, RouterSupergraphRuntimeError> {
         let cache_id = snapshot.cache_id;
-
-        let mut entries = self.runtime_cache.lock().unwrap();
-        if let Some((_, runtime)) = entries.iter().find(|(id, _)| *id == cache_id) {
-            return Ok(runtime.clone());
-        }
-
-        // no cached runtime for the plugin-selected supergraph, build one and cache it
-
-        let runtime = Arc::new(RouterSupergraphRuntime::build(
-            snapshot,
-            &self.runtime_context,
-        )?);
-
-        // bounded FIFO eviction protects against too many simultaneously live variants,
-        // the cleanup task below only gets entries out *sooner*, when their owner retires
-        let evicted = if entries.len() >= RUNTIME_CACHE_MAX_SIZE {
-            entries.pop_front().map(|(evicted_id, _)| evicted_id)
-        } else {
-            None
+        let (cell, evicted, inserted) = {
+            // its ok for the lock to expire in this scope - we only need to check for an existing
+            // entry and insert a new one if missing. the runtime itself is built asynchronously
+            // and cached in the `OnceCell` so that multiple requests racing to build the same runtime
+            // only build it once without sync blocking the router by using a mutex
+            let mut entries = self.runtime_cache.lock().unwrap();
+            if let Some((_, runtime)) = entries.iter().find(|(id, _)| *id == cache_id) {
+                (runtime.clone(), None, false)
+            } else {
+                let evicted = (entries.len() >= RUNTIME_CACHE_MAX_SIZE)
+                    .then(|| entries.pop_front().map(|(id, _)| id))
+                    .flatten();
+                let cell = Arc::new(RuntimeCell::new());
+                entries.push_back((cache_id, cell.clone()));
+                (cell, evicted, true)
+            }
         };
-        entries.push_back((cache_id, runtime.clone()));
 
-        // release mutex, no longer needed at this point
-        drop(entries);
-
-        if let Some(sender) = &self.runtime_cache_cleanup {
-            // evicted entry's waiter (if any) is now watching a retirement token nobody cares
-            // about anymore - cancel it so it doesn't sit dormant in the cleanup task forever.
-            if let Some(evicted_id) = evicted {
+        if inserted {
+            if let Some(sender) = &self.runtime_cache_cleanup {
+                if let Some(evicted_id) = evicted {
+                    sender
+                        .send(RuntimeCacheCleanupMessage::Evicted(evicted_id))
+                        .ok();
+                }
                 sender
-                    .send(RuntimeCacheCleanupMessage::Evicted(evicted_id))
+                    .send(RuntimeCacheCleanupMessage::Registered(
+                        cache_id,
+                        snapshot.retirement_token(),
+                    ))
                     .ok();
             }
-
-            // register this entry's retirement token with the cleanup task so the cache entry is
-            // removed promptly once its owner retires, instead of waiting for FIFO eviction. a send
-            // failure just means the cleanup task isn't running (e.g. router shutting down or a test
-            // building `SchemaState` directly) - the cache entry is still bounded by FIFO eviction.
-            sender
-                .send(RuntimeCacheCleanupMessage::Registered(
-                    cache_id,
-                    snapshot.retirement_token(),
-                ))
-                .ok();
         }
 
-        Ok(runtime)
+        match cell
+            .get_or_try_init(|| async {
+                RouterSupergraphRuntime::build(snapshot, &self.runtime_context)
+                    .await
+                    .map(Arc::new)
+            })
+            .await
+        {
+            Ok(runtime) => Ok(runtime.clone()),
+            Err(error) => {
+                self.runtime_cache
+                    .lock()
+                    .unwrap()
+                    .retain(|(id, entry)| *id != cache_id || !Arc::ptr_eq(entry, &cell));
+                Err(error)
+            }
+        }
     }
 
     /// Returns true if the router is ready to serve requests, i.e. if a supergraph is available for
     /// the request (either plugin-selected or configured default).
-    pub fn is_ready(&self, req: &HttpRequest) -> bool {
-        matches!(self.select_supergraph(req), Ok(Some(selected)) if !selected.snapshot.is_retired())
+    pub async fn is_ready(&self, req: &HttpRequest) -> bool {
+        matches!(self.select_supergraph(req).await, Ok(Some(selected)) if !selected.snapshot.is_retired())
     }
 
     pub async fn new_from_config(
@@ -471,6 +502,8 @@ impl SchemaState {
             callback: callback_runtime_config(&router_config)?,
             task_registrar,
             hive: router_config.telemetry.hive.clone(),
+            storage_manager: storage_manager.clone(),
+            graphql_endpoint: router_config.http.graphql_endpoint.clone(),
         });
 
         // `supergraph.source: plugin` has no configured source at all... no loader, no polling
@@ -573,19 +606,21 @@ impl SchemaState {
                                 new_supergraph = end_payload.new_supergraph;
                             }
                             Ok(new_supergraph)
-                        })
-                        .and_then(|new_supergraph| {
-                            let snapshot = new_supergraph.snapshot();
-                            let runtime = RouterSupergraphRuntime::build(
-                                &snapshot,
-                                &runtime_context_for_reload,
-                            )?;
-                            Ok(ConfiguredSupergraph {
-                                _owner: Arc::new(new_supergraph),
-                                snapshot,
-                                runtime: Arc::new(runtime),
-                            })
                         });
+                    let built = match built {
+                        Ok(new_supergraph) => {
+                            let snapshot = new_supergraph.snapshot();
+                            RouterSupergraphRuntime::build(&snapshot, &runtime_context_for_reload)
+                                .await
+                                .map(|runtime| ConfiguredSupergraph {
+                                    _owner: Arc::new(new_supergraph),
+                                    snapshot,
+                                    runtime: Arc::new(runtime),
+                                })
+                                .map_err(SupergraphManagerError::from)
+                        }
+                        Err(error) => Err(error),
+                    };
 
                     match built {
                         Ok(new_configured) => {
@@ -907,6 +942,8 @@ mod plugin_runtime_cache_tests {
             callback: None,
             task_registrar: BackgroundTasksManager::new().dynamic_registrar(),
             hive: None,
+            storage_manager: Arc::new(StorageManager::new(&Default::default()).unwrap()),
+            graphql_endpoint: "/graphql".to_string(),
         });
         SchemaState {
             configured: Arc::new(ArcSwap::from(Arc::new(None))),
@@ -927,49 +964,30 @@ mod plugin_runtime_cache_tests {
         )
     }
 
-    #[test]
-    fn reusing_same_supergraph_reuses_one_runtime() {
+    #[ntex::test]
+    async fn reusing_same_supergraph_reuses_one_runtime() {
         let state = test_schema_state();
         let owner = test_owner();
         let snapshot = owner.snapshot();
 
-        let first = state.resolve_runtime(&snapshot).unwrap();
-        let second = state.resolve_runtime(&snapshot).unwrap();
+        let first = state.resolve_runtime(&snapshot).await.unwrap();
+        let second = state.resolve_runtime(&snapshot).await.unwrap();
 
         assert!(Arc::ptr_eq(&first, &second));
         assert_eq!(state.runtime_cache.lock().unwrap().len(), 1);
     }
 
-    #[test]
-    fn concurrent_resolves_build_one_runtime() {
+    #[ntex::test]
+    async fn concurrent_resolves_build_one_runtime() {
         let state = Arc::new(test_schema_state());
         let owner = test_owner();
         let snapshot = owner.snapshot();
-        // make all worker threads hit the empty runtime cache at roughly the same time
-        let barrier = Arc::new(std::sync::Barrier::new(9));
-
-        let handles: Vec<_> = (0..8)
-            .map(|_| {
-                let state = state.clone();
-                let snapshot = snapshot.clone();
-                let barrier = barrier.clone();
-
-                std::thread::spawn(move || {
-                    barrier.wait();
-                    // every thread enters resolve_runtime, where the mutex must serialize the
-                    // cache miss, runtime build, and insertion
-                    state.resolve_runtime(&snapshot).unwrap()
-                })
-            })
-            .collect();
-
-        // release all eight workers together after they are ready
-        barrier.wait();
-
-        let runtimes: Vec<_> = handles
-            .into_iter()
-            .map(|handle| handle.join().unwrap())
-            .collect();
+        let runtimes = futures::future::join_all((0..8).map(|_| {
+            let state = state.clone();
+            let snapshot = snapshot.clone();
+            async move { state.resolve_runtime(&snapshot).await.unwrap() }
+        }))
+        .await;
 
         // the first thread builds while holding the mutex, then every other thread observes
         // its cache entry instead of building and inserting another runtime
@@ -979,8 +997,8 @@ mod plugin_runtime_cache_tests {
         assert_eq!(state.runtime_cache.lock().unwrap().len(), 1);
     }
 
-    #[test]
-    fn distinct_supergraph_instances_get_distinct_runtimes() {
+    #[ntex::test]
+    async fn distinct_supergraph_instances_get_distinct_runtimes() {
         let state = test_schema_state();
 
         let a = test_owner();
@@ -988,21 +1006,23 @@ mod plugin_runtime_cache_tests {
         // distinct cache ids even though the content is identical.
         assert_ne!(a.cache_id, b.cache_id);
 
-        let runtime_a = state.resolve_runtime(&a.snapshot()).unwrap();
-        let runtime_b = state.resolve_runtime(&b.snapshot()).unwrap();
+        let runtime_a = state.resolve_runtime(&a.snapshot()).await.unwrap();
+        let runtime_b = state.resolve_runtime(&b.snapshot()).await.unwrap();
 
         assert!(!Arc::ptr_eq(&runtime_a, &runtime_b));
         assert_eq!(state.runtime_cache.lock().unwrap().len(), 2);
     }
 
-    #[test]
-    fn configured_selection_stays_pinned_to_the_request_after_rotation() {
+    #[ntex::test]
+    async fn configured_selection_stays_pinned_to_the_request_after_rotation() {
         let state = test_schema_state();
         let first_owner = test_owner();
         let first_snapshot = first_owner.snapshot();
         let first_id = first_snapshot.cache_id;
         let first_runtime = Arc::new(
-            RouterSupergraphRuntime::build(&first_snapshot, &state.runtime_context).unwrap(),
+            RouterSupergraphRuntime::build(&first_snapshot, &state.runtime_context)
+                .await
+                .unwrap(),
         );
         state.configured.store(Arc::new(Some(ConfiguredSupergraph {
             _owner: first_owner,
@@ -1014,6 +1034,7 @@ mod plugin_runtime_cache_tests {
         assert_eq!(
             state
                 .select_supergraph(&req)
+                .await
                 .unwrap()
                 .unwrap()
                 .snapshot
@@ -1024,7 +1045,9 @@ mod plugin_runtime_cache_tests {
         let second_owner = test_owner();
         let second_snapshot = second_owner.snapshot();
         let second_runtime = Arc::new(
-            RouterSupergraphRuntime::build(&second_snapshot, &state.runtime_context).unwrap(),
+            RouterSupergraphRuntime::build(&second_snapshot, &state.runtime_context)
+                .await
+                .unwrap(),
         );
         state.configured.store(Arc::new(Some(ConfiguredSupergraph {
             _owner: second_owner,
@@ -1032,25 +1055,25 @@ mod plugin_runtime_cache_tests {
             runtime: second_runtime,
         })));
 
-        let selected = state.select_supergraph(&req).unwrap().unwrap();
+        let selected = state.select_supergraph(&req).await.unwrap().unwrap();
         assert_eq!(selected.snapshot.cache_id, first_id);
         assert!(selected.snapshot.is_retired());
     }
 
-    #[test]
-    fn eleventh_unique_supergraph_evicts_the_first() {
+    #[ntex::test]
+    async fn eleventh_unique_supergraph_evicts_the_first() {
         let state = test_schema_state();
         let owners: Vec<Arc<Supergraph>> = (0..11).map(|_| test_owner()).collect();
 
         for owner in &owners[..10] {
-            state.resolve_runtime(&owner.snapshot()).unwrap();
+            state.resolve_runtime(&owner.snapshot()).await.unwrap();
         }
         assert_eq!(
             state.runtime_cache.lock().unwrap().len(),
             RUNTIME_CACHE_MAX_SIZE
         );
 
-        state.resolve_runtime(&owners[10].snapshot()).unwrap();
+        state.resolve_runtime(&owners[10].snapshot()).await.unwrap();
 
         let entries = state.runtime_cache.lock().unwrap();
         assert_eq!(entries.len(), RUNTIME_CACHE_MAX_SIZE);
@@ -1058,27 +1081,27 @@ mod plugin_runtime_cache_tests {
         assert!(entries.iter().any(|(id, _)| *id == owners[10].cache_id));
     }
 
-    #[test]
-    fn cache_hits_do_not_refresh_fifo_order() {
+    #[ntex::test]
+    async fn cache_hits_do_not_refresh_fifo_order() {
         let state = test_schema_state();
         let first = test_owner();
         let second = test_owner();
 
-        state.resolve_runtime(&first.snapshot()).unwrap();
-        state.resolve_runtime(&second.snapshot()).unwrap();
-        state.resolve_runtime(&first.snapshot()).unwrap();
+        state.resolve_runtime(&first.snapshot()).await.unwrap();
+        state.resolve_runtime(&second.snapshot()).await.unwrap();
+        state.resolve_runtime(&first.snapshot()).await.unwrap();
 
         let entries = state.runtime_cache.lock().unwrap();
         assert_eq!(entries.front().unwrap().0, first.cache_id);
     }
 
-    #[test]
-    fn dropping_owner_marks_snapshot_retired_without_a_cleanup_task() {
+    #[ntex::test]
+    async fn dropping_owner_marks_snapshot_retired_without_a_cleanup_task() {
         let state = test_schema_state();
         let owner = test_owner();
         let snapshot = owner.snapshot();
 
-        state.resolve_runtime(&snapshot).unwrap();
+        state.resolve_runtime(&snapshot).await.unwrap();
 
         drop(owner);
 
@@ -1107,7 +1130,7 @@ mod plugin_runtime_cache_tests {
 
         let owner = test_owner();
         let snapshot = owner.snapshot();
-        state.resolve_runtime(&snapshot).unwrap();
+        state.resolve_runtime(&snapshot).await.unwrap();
         assert_eq!(runtime_cache.lock().unwrap().len(), 1);
 
         drop(owner);
@@ -1133,26 +1156,29 @@ mod plugin_runtime_cache_tests {
     async fn evicted_message_lets_the_same_id_be_registered_again() {
         let owner = test_owner();
         let cache_id = owner.cache_id;
+        let runtime = Arc::new(
+            RouterSupergraphRuntime::build(
+                &owner.snapshot(),
+                &RouterSupergraphRuntimeContext {
+                    telemetry: Arc::new(TelemetryContext::from_propagation_config(
+                        &Default::default(),
+                        &Default::default(),
+                    )),
+                    callback_subscriptions: Arc::new(DashMap::new()),
+                    callback: None,
+                    task_registrar: BackgroundTasksManager::new().dynamic_registrar(),
+                    hive: None,
+                    storage_manager: Arc::new(StorageManager::new(&Default::default()).unwrap()),
+                    graphql_endpoint: "/graphql".to_string(),
+                },
+            )
+            .await
+            .unwrap(),
+        );
+        let cell = Arc::new(RuntimeCell::new());
+        assert!(cell.set(runtime).is_ok());
         let runtime_cache: Arc<RouterSupergraphRuntimeCache> =
-            Arc::new(Mutex::new(VecDeque::from([(
-                cache_id,
-                Arc::new(
-                    RouterSupergraphRuntime::build(
-                        &owner.snapshot(),
-                        &RouterSupergraphRuntimeContext {
-                            telemetry: Arc::new(TelemetryContext::from_propagation_config(
-                                &Default::default(),
-                                &Default::default(),
-                            )),
-                            callback_subscriptions: Arc::new(DashMap::new()),
-                            callback: None,
-                            task_registrar: BackgroundTasksManager::new().dynamic_registrar(),
-                            hive: None,
-                        },
-                    )
-                    .unwrap(),
-                ),
-            )])));
+            Arc::new(Mutex::new(VecDeque::from([(cache_id, cell)])));
 
         let (cleanup_tx, cleanup_rx) = mpsc::unbounded_channel();
         let task = RuntimeCacheCleanupTask {

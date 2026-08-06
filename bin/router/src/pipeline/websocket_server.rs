@@ -243,7 +243,7 @@ async fn handle_text_frame(
     // browsers cannot interpret a rejected HTTP Upgrade request and will show a cryptic
     // error to clients. instead, we accept the connection but close it immediately if no
     // supergraph is available, which results in a more understandable error
-    let supergraph = match schema_state.select_supergraph(req) {
+    let supergraph = match schema_state.select_supergraph(req).await {
         Ok(supergraph) => supergraph,
         Err(err) => {
             error!(target: targets::WEBSOCKET_SERVER, err = ?err, "Supergraph runtime error");
