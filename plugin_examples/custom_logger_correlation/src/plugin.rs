@@ -2,8 +2,9 @@ use hive_router::plugins::hooks::on_http_request::{
     OnHttpRequestHookPayload, OnHttpRequestHookResult,
 };
 use hive_router::plugins::hooks::on_plugin_init::{OnPluginInitPayload, OnPluginInitResult};
+use hive_router::plugins::plugin_trait::EndHookPayload;
 use hive_router::plugins::plugin_trait::{RouterPlugin, StartHookPayload};
-use hive_router::{set_log_correlation, tracing};
+use hive_router::{set_log_correlation, set_summary_message, tracing};
 
 pub struct CustomLoggerCorrelationPlugin;
 
@@ -35,10 +36,14 @@ impl RouterPlugin for CustomLoggerCorrelationPlugin {
 
         // Attach it as soon as we know it, so every log line for the rest of this
         // request - including this plugin's own - carries the same correlation.
-        set_log_correlation(PROJECT_ID_KEY, project_id);
+        set_log_correlation(PROJECT_ID_KEY, project_id.clone());
 
-        tracing::debug!(target: "custom_logger_correlation", "on_http_request called");
+        tracing::debug!(target: "custom_logger_correlation", "on_http_request called, i'm also correlated!");
 
-        payload.proceed()
+        payload.on_end(|end_payload| {
+            set_summary_message(format!("request"));
+
+            end_payload.proceed()
+        })
     }
 }
