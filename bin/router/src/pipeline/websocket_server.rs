@@ -302,6 +302,9 @@ async fn handle_text_frame(
 
             let started_at = Instant::now();
             let operation_span = GraphQLOperationSpan::new();
+            operation_span.record_hive_target(
+                supergraph.and_then(|selected| selected.snapshot.options.hive_target.as_deref()),
+            );
             let span_clone = operation_span.clone();
 
             let result = async {

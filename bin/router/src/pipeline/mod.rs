@@ -225,6 +225,7 @@ pub async fn graphql_request_handler(
             });
         };
         summary::record(|s| s.set_supergraph_identifier(supergraph.snapshot.cache_id));
+        operation_span.record_hive_target(supergraph.snapshot.options.hive_target.as_deref());
 
         let operation_preparation_result = OperationPreparation::prepare(
             req,

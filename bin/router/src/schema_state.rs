@@ -7,7 +7,9 @@ use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use graphql_tools::validation::utils::ValidationError;
 use hive_console_sdk::agent::usage_agent::UsageAgent;
-use hive_router_config::telemetry::hive::HiveTelemetryConfig;
+use hive_router_config::telemetry::hive::{
+    is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig,
+};
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
 use hive_router_internal::authorization::metadata::AuthorizationMetadata;
 use hive_router_internal::background_tasks::{
@@ -84,6 +86,8 @@ pub enum RouterSupergraphRuntimeError {
     PersistedDocumentsError(#[from] PersistedDocumentResolverError),
     #[error("Persisted-document selectors are incompatible with GraphQL endpoint '{0}'")]
     PersistedDocumentsEndpoint(String),
+    #[error("Invalid Hive Tracing target format: '{0}'. It must be either in slug format '$organizationSlug/$projectSlug/$targetSlug' or UUID format 'a0f4c605-6541-4350-8cfe-b31f21a4bf80'")]
+    HiveTarget(String),
 }
 
 /// Router state derived from a supergraph and router configuration: subgraph executors,
@@ -141,6 +145,19 @@ impl RouterSupergraphRuntime {
             context.telemetry.metrics.clone(),
         );
         let lifetime = CancellationToken::new();
+        if let Some(target) = snapshot.options.hive_target.as_deref() {
+            if !is_uuid_target_ref(target) && !is_slug_target_ref(target) {
+                return Err(RouterSupergraphRuntimeError::HiveTarget(target.to_string()));
+            }
+        } else if context
+            .hive
+            .as_ref()
+            .is_some_and(|hive| hive.tracing.enabled)
+        {
+            return Err(RouterSupergraphRuntimeError::HiveTarget(
+                "Hive tracing is enabled but no target was provided".to_string(),
+            ));
+        }
         let persisted_documents = PersistedDocumentsRuntime::init(
             &snapshot.options.persisted_documents,
             &context.graphql_endpoint,

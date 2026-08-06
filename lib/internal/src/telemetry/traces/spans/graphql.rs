@@ -355,9 +355,16 @@ impl GraphQLOperationSpan {
             "hive.graphql.operation.hash" = Empty,
             "hive.client.name" = Empty,
             "hive.client.version" = Empty,
+            "hive.target" = Empty,
             "cost.formula_cache_hit" = Empty,
         );
         GraphQLOperationSpan { span }
+    }
+
+    pub fn record_hive_target(&self, target: Option<&str>) {
+        if let Some(target) = target {
+            self.span.record("hive.target", target);
+        }
     }
 
     pub fn record_error_count(&self, count: usize) {
