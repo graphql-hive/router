@@ -241,10 +241,9 @@ impl TargetedHiveExporter {
                     .iter()
                     .find(|attribute| attribute.key.as_str() == "hive.target")
                     .and_then(|attribute| match &attribute.value {
-                        opentelemetry::Value::String(target) => Some((
-                            span.span_context.trace_id(),
-                            target.as_str().to_string(),
-                        )),
+                        opentelemetry::Value::String(target) => {
+                            Some((span.span_context.trace_id(), target.as_str().to_string()))
+                        }
                         _ => None,
                     })
             })
@@ -269,7 +268,10 @@ impl trace::SpanExporter for TargetedHiveExporter {
                 .with_endpoint(self.endpoint.clone())
                 .with_timeout(self.timeout)
                 .with_headers(HashMap::from([
-                    ("authorization".to_string(), format!("Bearer {}", self.token)),
+                    (
+                        "authorization".to_string(),
+                        format!("Bearer {}", self.token),
+                    ),
                     ("x-hive-target-ref".to_string(), target),
                 ]))
                 .with_protocol(Protocol::HttpBinary)
