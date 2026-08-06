@@ -39,6 +39,7 @@ use hive_router_query_planner::state::supergraph_state::OperationKind;
 use crate::jwt::errors::JwtError;
 use crate::pipeline::active_subscriptions::SubscriptionEvent;
 use crate::pipeline::error::PipelineError;
+use crate::pipeline::execution_request::OperationPreparation;
 use crate::pipeline::execute_planned_request;
 use crate::pipeline::header::{ResponseMode, SingleContentType, StreamContentType};
 use crate::pipeline::{
@@ -382,7 +383,7 @@ async fn handle_text_frame(
                   }
 
                   let payload = GraphQLParams {
-                      query: Some(payload.query),
+                      query: payload.query,
                       operation_name: payload.operation_name,
                       variables: payload.variables.unwrap_or_default(),
                       extensions: payload.extensions,
@@ -431,6 +432,28 @@ async fn handle_text_frame(
                               .version_header.get_header_ref(),
                       )
                       .and_then(|v| v.to_str().ok());
+
+                  let payload = match OperationPreparation::prepare_websocket(
+                      req,
+                      shared_state,
+                      &supergraph.runtime.persisted_documents,
+                      &supergraph.snapshot.options.persisted_documents,
+                      payload,
+                      client_name,
+                      client_version,
+                  )
+                  .await
+                  {
+                      Ok(operation) => {
+                          summary::record(|summary| {
+                              summary.set_persisted_document_id(
+                                  operation.resolved_document_id.as_deref(),
+                              )
+                          });
+                          operation.graphql_params
+                      }
+                      Err(err) => return Some(err.into_server_message(&id, shared_state)),
+                  };
 
                   let parser_result =
                       match parse_operation_with_cache(shared_state, &payload, &plugin_req_state).await {

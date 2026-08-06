@@ -77,7 +77,8 @@ impl From<CloseCode> for ws::Message {
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct SubscribePayload {
-    pub query: String,
+    #[serde(default)]
+    pub query: Option<String>,
     pub operation_name: Option<String>,
     pub variables: Option<HashMap<String, Value>>,
     pub extensions: Option<HashMap<String, Value>>,
@@ -122,7 +123,7 @@ pub fn build_subscribe_payload(
         None => execution_request.query.to_string(),
     };
     let subscribe_payload = SubscribePayload {
-        query,
+        query: Some(query),
         operation_name: execution_request.operation_name.map(|s| s.to_string()),
         variables,
         extensions: execution_request.extensions,
@@ -488,7 +489,10 @@ mod tests {
 
         let (payload, _) = build_subscribe_payload(request);
 
-        assert_eq!(payload.query, "query GetMe_accounts_0 { me { id } }");
+        assert_eq!(
+            payload.query.as_deref(),
+            Some("query GetMe_accounts_0 { me { id } }")
+        );
         assert_eq!(payload.operation_name.as_deref(), Some("GetMe_accounts_0"));
     }
 
@@ -498,7 +502,7 @@ mod tests {
 
         let (payload, _) = build_subscribe_payload(request);
 
-        assert_eq!(payload.query, "query { me { id } }");
+        assert_eq!(payload.query.as_deref(), Some("query { me { id } }"));
         assert_eq!(payload.operation_name, None);
     }
 
@@ -508,6 +512,9 @@ mod tests {
 
         let (payload, _) = build_subscribe_payload(request);
 
-        assert_eq!(payload.query, "query GetMe_accounts_0 { me { id } }");
+        assert_eq!(
+            payload.query.as_deref(),
+            Some("query GetMe_accounts_0 { me { id } }")
+        );
     }
 }

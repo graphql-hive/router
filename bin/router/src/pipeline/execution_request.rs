@@ -341,6 +341,45 @@ impl<'a> OperationPreparation<'a> {
         .await
     }
 
+    pub async fn prepare_websocket(
+        req: &'a HttpRequest,
+        shared_state: &'a Arc<RouterSharedState>,
+        persisted_documents_runtime: &'a PersistedDocumentsRuntime,
+        persisted_documents_config: &'a hive_router_config::persisted_documents::PersistedDocumentsConfig,
+        graphql_params: GraphQLParams,
+        client_name: Option<&'a str>,
+        client_version: Option<&'a str>,
+    ) -> Result<PreparedOperation, PipelineError> {
+        let plugin_req_state = None;
+        let preparation = Self {
+            req,
+            persisted_documents_runtime,
+            plugin_req_state: &plugin_req_state,
+            body: Bytes::new(),
+            persisted_documents_enabled: persisted_documents_config.enabled,
+            log_missing_id_requests: persisted_documents_config.log_missing_id,
+            client_identity: ClientIdentity {
+                name: client_name,
+                version: client_version,
+            },
+            metrics: shared_state.telemetry_context.metrics.clone(),
+        };
+        let mut operation = PreparedOperation::from_graphql_params(
+            graphql_params,
+            &persisted_documents_runtime.document_id_resolver,
+            req.into(),
+            None,
+            None,
+        );
+        preparation.enforce_require_id_policy(&mut operation)?;
+        if persisted_documents_config.enabled && operation.graphql_params.query.is_none() {
+            preparation
+                .resolve_query_from_document_id(&mut operation)
+                .await?;
+        }
+        Ok(operation)
+    }
+
     async fn extract_and_resolve(mut self) -> Result<OperationPreparationResult, PipelineError> {
         let mut graphql_params_from_plugins = None;
         let mut graphql_params_end_callbacks = Vec::new();
