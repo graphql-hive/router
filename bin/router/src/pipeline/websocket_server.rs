@@ -1,3 +1,4 @@
+use futures::StreamExt;
 use hive_console_sdk::agent::usage_agent::RequestDetails;
 use hive_router_plan_executor::headers::response::ResponseHeaderSink;
 use http::Method;
@@ -40,7 +41,7 @@ use crate::jwt::errors::JwtError;
 use crate::pipeline::active_subscriptions::SubscriptionEvent;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::execute_planned_request;
-use crate::pipeline::execution_request::prepare_websocket_operation;
+use crate::pipeline::execution_request::{OperationPreparation, OperationPreparationResult};
 use crate::pipeline::header::{ResponseMode, SingleContentType, StreamContentType};
 use crate::pipeline::{
     hash_graphql_extensions, hash_graphql_variables, inbound_request_fingerprint,
@@ -433,24 +434,39 @@ async fn handle_text_frame(
                       )
                       .and_then(|v| v.to_str().ok());
 
-                  let payload = match prepare_websocket_operation(
+                  let payload = match OperationPreparation::prepare_websocket(
                       req,
                       shared_state,
-                      &supergraph.runtime.persisted_documents,
-                      &supergraph.snapshot.options.persisted_documents,
+                      supergraph,
+                      &plugin_req_state,
                       payload,
                       client_name,
                       client_version,
                   )
                   .await
                   {
-                      Ok(operation) => {
+                      Ok(OperationPreparationResult::Operation(operation)) => {
                           summary::record(|summary| {
                               summary.set_persisted_document_id(
                                   operation.resolved_document_id.as_deref(),
                               )
                           });
                           operation.graphql_params
+                      }
+                      Ok(OperationPreparationResult::EarlyResponse(mut response)) => {
+                          let mut response_body = response.take_body();
+                          let mut body = Vec::new();
+                          while let Some(chunk) = response_body.next().await {
+                              match chunk {
+                                  Ok(chunk) => body.extend_from_slice(&chunk),
+                                  Err(err) => {
+                                      error!(target: targets::WEBSOCKET_SERVER, error = ?err, "Failed to read GraphQL params hook response body");
+                                      return Some(CloseCode::InternalServerError(None).into());
+                                  }
+                              }
+                          }
+                          let _ = sink.send(ServerMessage::next(&id, &body)).await;
+                          return Some(ServerMessage::complete(&id));
                       }
                       Err(err) => return Some(err.into_server_message(&id, shared_state)),
                   };
