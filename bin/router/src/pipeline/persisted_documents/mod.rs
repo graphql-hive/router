@@ -23,7 +23,7 @@ use crate::pipeline::persisted_documents::resolve::{
     FileManifestReloadTask, FileManifestResolver, HiveCDNResolver, PersistedDocumentResolver,
     PersistedDocumentResolverError,
 };
-use crate::storage::StorageManager;
+use crate::storage::{StorageManager, StorageRuntime};
 
 pub mod extract;
 pub mod resolve;
@@ -173,6 +173,30 @@ pub struct PersistedDocumentsRuntime {
 }
 
 impl PersistedDocumentsRuntime {
+    /// Resolves the shared storage referenced by persisted-document configuration.
+    ///
+    /// Configured supergraphs call this before asynchronous schema loading so an invalid static
+    /// reference still fails router startup. Runtime initialization consumes the returned storage
+    /// directly, avoiding a separate validation lookup. Plugin-selected supergraphs are validated
+    /// through runtime initialization because they own their persisted-document configuration.
+    pub(crate) fn resolve_storage_runtime(
+        config: &PersistedDocumentsConfig,
+        storage_manager: &StorageManager,
+    ) -> Result<Option<Arc<Box<dyn StorageRuntime>>>, PersistedDocumentResolverError> {
+        if !config.enabled {
+            return Ok(None);
+        }
+        let Some(PersistedDocumentsStorageConfig::Storage { config }) = &config.storage else {
+            return Ok(None);
+        };
+        storage_manager
+            .get_storage_runtime(&config.storage_id)
+            .map(Some)
+            .ok_or_else(|| {
+                PersistedDocumentResolverError::StorageNotFound(config.storage_id.to_string())
+            })
+    }
+
     pub async fn init(
         config: &PersistedDocumentsConfig,
         graphql_endpoint: &str,
@@ -180,6 +204,8 @@ impl PersistedDocumentsRuntime {
         supergraph_lifetime: CancellationToken,
         storage_manager: &Arc<StorageManager>,
     ) -> Result<Self, PersistedDocumentResolverError> {
+        let storage_runtime = Self::resolve_storage_runtime(config, storage_manager)?;
+
         let document_id_resolver = Arc::new(
             DocumentIdResolver::from_config(config, graphql_endpoint).map_err(|error| {
                 PersistedDocumentResolverError::Configuration(format!(
@@ -223,30 +249,19 @@ impl PersistedDocumentsRuntime {
                     Some(resolver as Arc<dyn PersistedDocumentResolver>)
                 }
                 PersistedDocumentsStorageConfig::Storage { config } => {
-                    match storage_manager.get_storage_runtime(&config.storage_id) {
-                        Some(storage) => {
-                            let resolver = Arc::new(
-                                StorageResolver::from_storage_config(config, storage).await?,
-                            );
+                    let storage = storage_runtime
+                        .expect("storage runtime is present for storage-backed configuration");
+                    let resolver =
+                        Arc::new(StorageResolver::from_storage_config(config, storage).await?);
 
-                            if let Some(poll_interval) = &config.poll_interval {
-                                background_tasks.add_storage_worker(
-                                    StorageManifestReloadTask::new(
-                                        resolver.clone(),
-                                        *poll_interval,
-                                    ),
-                                    supergraph_lifetime.clone(),
-                                );
-                            }
-
-                            Some(resolver as Arc<dyn PersistedDocumentResolver>)
-                        }
-                        None => {
-                            return Err(PersistedDocumentResolverError::StorageNotFound(
-                                config.storage_id.to_string(),
-                            ));
-                        }
+                    if let Some(poll_interval) = &config.poll_interval {
+                        background_tasks.add_storage_worker(
+                            StorageManifestReloadTask::new(resolver.clone(), *poll_interval),
+                            supergraph_lifetime.clone(),
+                        );
                     }
+
+                    Some(resolver as Arc<dyn PersistedDocumentResolver>)
                 }
             }
         } else {

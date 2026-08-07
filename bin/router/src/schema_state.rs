@@ -723,6 +723,13 @@ impl SchemaState {
         // task, no configured-default value. a plugin must select a supergraph for every request
         // that needs one and the plugin author is responsible for maintaining the supergraphs
         if !matches!(router_config.supergraph, SupergraphSource::Plugin) {
+            // validate configured storage before async schema loading so static config errors still fail startup
+            let _ = PersistedDocumentsRuntime::resolve_storage_runtime(
+                &router_config.persisted_documents,
+                &storage_manager,
+            )
+            .map_err(RouterSupergraphRuntimeError::PersistedDocumentsError)?;
+
             let (tx, mut rx) = mpsc::channel::<String>(1);
             let background_loader = Arc::new(SupergraphBackgroundLoader::new(
                 &router_config.supergraph,
