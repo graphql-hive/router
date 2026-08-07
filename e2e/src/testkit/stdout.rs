@@ -1,4 +1,4 @@
-use std::{future::Future, io::Read};
+use std::{future::Future, io::Read, time::Duration};
 
 use gag::BufferRedirect;
 use serde_json::{Map, Value};
@@ -15,12 +15,16 @@ impl Default for StdoutLogCapture {
 
 impl StdoutLogCapture {
     pub fn new() -> Self {
+        // let the non-blocking tracing writer finish logs emitted before this capture
+        std::thread::sleep(Duration::from_millis(50));
         Self {
             buf: BufferRedirect::stdout().unwrap(),
         }
     }
 
     pub fn lines(mut self) -> Vec<String> {
+        // keep stdout redirected until the tracing writer drains this capture's logs
+        std::thread::sleep(Duration::from_millis(50));
         let mut output = String::new();
         self.buf.read_to_string(&mut output).unwrap();
 

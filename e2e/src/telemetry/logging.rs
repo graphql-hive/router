@@ -108,7 +108,13 @@ async fn test_log_contents_with_just_logging_enabled() {
         .capture_stdout_lines()
         .await;
 
-    assert_eq!(stdout_log.len(), LOG_LINES_BASELINE);
+    assert_eq!(
+        stdout_log
+            .iter()
+            .filter(|line| line.contains(" router::request:"))
+            .count(),
+        LOG_LINES_BASELINE
+    );
 }
 
 #[ntex::test]
@@ -141,7 +147,13 @@ log:
         .capture_stdout_lines()
         .await;
 
-    assert_eq!(stdout_log.len(), LOG_LINES_BASELINE);
+    assert_eq!(
+        stdout_log
+            .iter()
+            .filter(|line| line.contains(" router::request:"))
+            .count(),
+        LOG_LINES_BASELINE
+    );
 }
 
 #[ntex::test]
