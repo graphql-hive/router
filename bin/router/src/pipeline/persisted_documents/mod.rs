@@ -41,18 +41,26 @@ fn persisted_documents_worker(
     Box::pin(async move {
         match registration {
             PersistedDocumentsWorkerRegistration::File(task, supergraph_lifetime) => {
+                let token = CancellationToken::new();
+                let run = task.run(token.clone());
+                tokio::pin!(run);
                 tokio::select! {
-                    _ = router_shutdown.cancelled() => {},
-                    _ = supergraph_lifetime.cancelled() => {},
-                    _ = task.run(CancellationToken::new()) => {},
+                    _ = router_shutdown.cancelled() => token.cancel(),
+                    _ = supergraph_lifetime.cancelled() => token.cancel(),
+                    _ = &mut run => return,
                 }
+                run.await;
             }
             PersistedDocumentsWorkerRegistration::Storage(task, supergraph_lifetime) => {
+                let token = CancellationToken::new();
+                let run = task.run(token.clone());
+                tokio::pin!(run);
                 tokio::select! {
-                    _ = router_shutdown.cancelled() => {},
-                    _ = supergraph_lifetime.cancelled() => {},
-                    _ = task.run(CancellationToken::new()) => {},
+                    _ = router_shutdown.cancelled() => token.cancel(),
+                    _ = supergraph_lifetime.cancelled() => token.cancel(),
+                    _ = &mut run => return,
                 }
+                run.await;
             }
         }
     })
