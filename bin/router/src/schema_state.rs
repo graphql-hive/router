@@ -85,8 +85,10 @@ pub enum RouterSupergraphRuntimeError {
     PersistedDocumentsError(#[from] PersistedDocumentResolverError),
     #[error("Persisted-document selectors are incompatible with GraphQL endpoint '{0}'")]
     PersistedDocumentsEndpoint(String),
+    #[error("Hive tracing is enabled but no target was provided")]
+    HiveTargetMissing,
     #[error("Invalid Hive Tracing target format: '{0}'. It must be either in slug format '$organizationSlug/$projectSlug/$targetSlug' or UUID format 'a0f4c605-6541-4350-8cfe-b31f21a4bf80'")]
-    HiveTarget(String),
+    InvalidHiveTargetFormat(String),
 }
 
 /// Router state derived from a supergraph and router configuration: subgraph executors,
@@ -244,16 +246,16 @@ impl RouterSupergraphRuntime {
         );
         if let Some(target) = snapshot.options.hive_target.as_deref() {
             if !is_uuid_target_ref(target) && !is_slug_target_ref(target) {
-                return Err(RouterSupergraphRuntimeError::HiveTarget(target.to_string()));
+                return Err(RouterSupergraphRuntimeError::InvalidHiveTargetFormat(
+                    target.to_string(),
+                ));
             }
         } else if context
             .hive
             .as_ref()
             .is_some_and(|hive| hive.tracing.enabled)
         {
-            return Err(RouterSupergraphRuntimeError::HiveTarget(
-                "Hive tracing is enabled but no target was provided".to_string(),
-            ));
+            return Err(RouterSupergraphRuntimeError::HiveTargetMissing);
         }
         let supergraph_lifetime = CancellationToken::new();
         let maybe_runtime: Result<Self, RouterSupergraphRuntimeError> = async {
