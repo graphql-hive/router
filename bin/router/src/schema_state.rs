@@ -1113,6 +1113,7 @@ mod plugin_runtime_cache_tests {
 
     #[ntex::test]
     async fn graph_bound_options_stay_isolated_between_live_owners() {
+        crate::init_rustls_crypto_provider();
         let state = test_schema_state();
         let mut first_options = SupergraphOptions::default();
         first_options.hive_target = Some("example/router/first".to_string());
