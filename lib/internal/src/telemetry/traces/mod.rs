@@ -21,8 +21,10 @@ use hive_router_config::telemetry::{
 use opentelemetry_otlp::{
     Protocol, SpanExporter, WithExportConfig, WithHttpConfig, WithTonicConfig,
 };
+#[cfg(not(feature = "noop_otlp_exporter"))]
+use opentelemetry_sdk::error::OTelSdkError;
 use opentelemetry_sdk::{
-    error::{OTelSdkError, OTelSdkResult},
+    error::OTelSdkResult,
     runtime,
     trace::{
         self, span_processor_with_async_runtime, BatchConfigBuilder, IdGenerator, Sampler,
@@ -279,7 +281,7 @@ impl trace::SpanExporter for TargetedHiveExporter {
                 .map_err(|error| OTelSdkError::InternalFailure(error.to_string()))?;
             #[cfg(feature = "noop_otlp_exporter")]
             let exporter = {
-                let _ = target;
+                let _ = (&self.endpoint, &self.token, self.timeout, target);
                 NoopExporter::new()
             };
 
