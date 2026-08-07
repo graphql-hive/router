@@ -1751,7 +1751,6 @@ mod tests {
     use super::select_fetch_variables;
     use dashmap::DashMap;
     use graphql_tools::parser::query::{self, Definition};
-    use hive_router_config::HiveRouterConfig;
     use hive_router_internal::telemetry::TelemetryContext;
     use hive_router_query_planner::{
         ast::{document::Document, operation::SubgraphFetchOperation},
@@ -1916,7 +1915,10 @@ mod tests {
 
         let executors = SubgraphExecutorMap::from_http_endpoint_map(
             &subgraph_endpoint_map,
-            HiveRouterConfig::default().into(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            None,
             Arc::new(TelemetryContext::from_propagation_config(
                 &Default::default(),
                 &Default::default(),
@@ -2038,7 +2040,10 @@ mod tests {
             schema_metadata: &SchemaMetadata::default(),
             executors: &SubgraphExecutorMap::from_http_endpoint_map(
                 &subgraph_endpoint_map,
-                HiveRouterConfig::default().into(),
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                None,
                 Arc::new(TelemetryContext::from_propagation_config(
                     &Default::default(),
                     &Default::default(),

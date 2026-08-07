@@ -12,7 +12,7 @@ pub async fn readiness_check_handler(
     req: HttpRequest,
     schema_state: web::types::State<Arc<SchemaState>>,
 ) -> impl Responder {
-    if schema_state.is_ready(&req) {
+    if schema_state.is_ready(&req).await {
         web::HttpResponse::Ok()
     } else {
         web::HttpResponse::ServiceUnavailable()

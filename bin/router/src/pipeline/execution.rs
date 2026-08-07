@@ -127,7 +127,7 @@ pub async fn execute_plan<'exec>(
                 .operation_for_plan
                 .clone(),
             projection_plan: planned_request.normalized_payload.projection_plan.clone(),
-            headers_plan: app_state.headers_plan.clone(),
+            headers_plan: supergraph.runtime.headers_plan.clone(),
             extensions_plan: app_state.extensions_plan.clone(),
             variable_values: planned_request.variable_payload.clone(),
             extensions,
@@ -149,7 +149,7 @@ pub async fn execute_plan<'exec>(
                 operation_name,
             ),
             response_header_sink,
-            error_masking_runtime: app_state.error_masking.clone(),
+            error_masking_runtime: supergraph.runtime.error_masking.clone(),
         })
         .await?;
 

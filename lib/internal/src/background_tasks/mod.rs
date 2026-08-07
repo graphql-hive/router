@@ -15,6 +15,7 @@ pub trait BackgroundTask: Send + Sync {
 pub struct BackgroundTasksManager {
     cancellation_token: CancellationToken,
     handles: Vec<JoinHandle<()>>,
+    graceful_handles: Vec<JoinHandle<()>>,
 }
 
 impl Default for BackgroundTasksManager {
@@ -28,6 +29,7 @@ impl BackgroundTasksManager {
         Self {
             cancellation_token: CancellationToken::new(),
             handles: Vec::new(),
+            graceful_handles: Vec::new(),
         }
     }
 
@@ -48,6 +50,23 @@ impl BackgroundTasksManager {
         self.handles.push(handle);
     }
 
+    /// Registers a task whose cancellation cleanup must finish before router shutdown completes.
+    pub fn register_graceful_task<T>(&mut self, task: T)
+    where
+        T: BackgroundTask + 'static,
+    {
+        info!(
+            target: targets::CORE,
+            task_id = task.id(),
+            "registering background task"
+        );
+
+        let child_token = self.cancellation_token.clone();
+        self.graceful_handles.push(spawn(async move {
+            task.run(child_token).await;
+        }));
+    }
+
     pub fn register_handle<F>(&mut self, f: F)
     where
         F: Future<Output = ()> + Send + 'static,
@@ -61,8 +80,28 @@ impl BackgroundTasksManager {
             "shutdown triggered, stopping all background tasks..."
         );
         self.cancellation_token.cancel();
+        for handle in self
+            .handles
+            .drain(..)
+            .chain(self.graceful_handles.drain(..))
+        {
+            handle.cancel();
+        }
+        info!(target: targets::CORE, "all background tasks have been shut down.");
+    }
+
+    /// Stops ordinary tasks immediately and waits for graceful task cleanup to finish.
+    pub async fn graceful_shutdown(&mut self) {
+        debug!(
+            target: targets::CORE,
+            "shutdown triggered, stopping all background tasks..."
+        );
+        self.cancellation_token.cancel();
         for handle in self.handles.drain(..) {
             handle.cancel();
+        }
+        for handle in self.graceful_handles.drain(..) {
+            let _ = handle.await;
         }
         info!(
             target: targets::CORE,

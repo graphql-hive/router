@@ -77,6 +77,7 @@ impl From<CloseCode> for ws::Message {
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct SubscribePayload {
+    #[serde(default)]
     pub query: String,
     pub operation_name: Option<String>,
     pub variables: Option<HashMap<String, Value>>,

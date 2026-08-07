@@ -219,9 +219,18 @@ pub async fn graphql_request_handler(
             });
         }
 
-        let operation_preparation_result = OperationPreparation::prepare(
+        let Some(supergraph) = schema_state.select_supergraph(req).await? else {
+            return Err(PipelineError::NoSupergraphAvailable {
+                response_headers: vec![(RETRY_AFTER, HeaderValue::from_static("10"))],
+            });
+        };
+        summary::record(|s| s.set_supergraph_identifier(supergraph.snapshot.cache_id));
+        operation_span.record_hive_target(supergraph.snapshot.options.hive_target.as_deref());
+
+        let operation_preparation_result = OperationPreparation::prepare_http(
             req,
             shared_state,
+            &supergraph,
             &plugin_req_state,
             body_bytes,
             client_name,
@@ -277,15 +286,6 @@ pub async fn graphql_request_handler(
             client_version,
             &parser_payload.hive_operation_hash,
         );
-
-        let Some(supergraph) = schema_state.select_supergraph(req)? else {
-            return Err(PipelineError::NoSupergraphAvailable {
-                response_headers: vec![(RETRY_AFTER, HeaderValue::from_static("10"))],
-            });
-        };
-
-        summary::record(|s| s.set_supergraph_identifier(supergraph.snapshot.cache_id));
-
 
         if let Some(response) = validate_operation_with_cache(
             &supergraph,
@@ -497,7 +497,7 @@ pub async fn graphql_request_handler(
             exec(None).await?
         };
 
-        if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
+        if let Some(hive_usage_agent) = &supergraph.runtime.hive_usage_agent {
             usage_reporting::collect_usage_report(
                 supergraph.snapshot.supergraph_schema.clone(),
                 started_at.elapsed(),
@@ -758,7 +758,7 @@ pub async fn execute_pipeline<'exec>(
     )?;
 
     let mut progressive_override_ctx = RequestOverrideContext::new(
-        &shared_state.override_labels_evaluator,
+        &supergraph.runtime.override_labels_evaluator,
         &client_request_details,
         request_context,
     )?;

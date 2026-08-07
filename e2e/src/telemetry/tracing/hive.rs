@@ -128,6 +128,7 @@ async fn test_hive_http_export() {
         hive.graphql: true
         hive.graphql.operation.hash: e92177e49c0010d4e52929531ebe30c9
         hive.kind: graphql.operation
+        hive.target: my-org/my-project/my-target
         http.host: localhost
         http.method: POST
         http.route: /graphql
