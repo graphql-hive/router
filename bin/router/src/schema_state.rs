@@ -687,6 +687,7 @@ impl SchemaState {
         matches!(self.select_supergraph(req).await, Ok(Some(selected)) if !selected.snapshot.is_retired())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn new_from_config(
         bg_tasks_manager: &mut BackgroundTasksManager,
         telemetry_context: Arc<TelemetryContext>,
