@@ -83,19 +83,29 @@ pub async fn drain_into<S>(
 ) where
     S: Stream<Item = SubscriptionItem> + Unpin,
 {
-    while let Some(item) = source.next().await {
-        if matches!(
-            try_send_or_drop(
-                &tx,
-                item,
-                telemetry_context,
-                transport,
-                subgraph_name,
-                endpoint
-            ),
-            SendOutcome::Closed
-        ) {
-            break;
+    loop {
+        // waiting only for source.next() keeps a silent upstream operation alive after the
+        // receiver is dropped, so watch tx.closed() to cancel it immediately
+        tokio::select! {
+            item = source.next() => {
+                let Some(item) = item else {
+                    break;
+                };
+                if matches!(
+                    try_send_or_drop(
+                        &tx,
+                        item,
+                        telemetry_context,
+                        transport,
+                        subgraph_name,
+                        endpoint
+                    ),
+                    SendOutcome::Closed
+                ) {
+                    break;
+                }
+            }
+            _ = tx.closed() => break,
         }
     }
 }

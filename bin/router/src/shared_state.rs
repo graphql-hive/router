@@ -15,6 +15,7 @@ use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::coprocessor::{CoprocessorError, CoprocessorRuntime};
 use hive_router_plan_executor::execution::error_masking::ErrorMaskingRuntime;
 use hive_router_plan_executor::execution::plan::FailedExecutionResult;
+use hive_router_plan_executor::executors::common::InboundRequestFingerprint;
 use hive_router_plan_executor::extensions::{
     compile::compile_extensions_plan, plan::ExtensionsPlan,
 };
@@ -53,7 +54,7 @@ use crate::pipeline::sse;
 use crate::storage::StorageManager;
 
 pub type JwtClaimsCache = Cache<String, Arc<JwtTokenPayload>>;
-pub type RouterInflightRequestsMap = InFlightMap<u64, SharedRouterResponse>;
+pub type RouterInflightRequestsMap = InFlightMap<InboundRequestFingerprint, SharedRouterResponse>;
 
 #[derive(Clone)]
 pub enum RouterRequestDedupeHeaderPolicy {
@@ -98,7 +99,8 @@ impl From<&TrafficShapingRouterDedupeHeadersConfig> for RouterRequestDedupeHeade
     }
 }
 
-pub type SharedRouterResponseGuard = InFlightCleanupGuard<u64, SharedRouterResponse>;
+pub type SharedRouterResponseGuard =
+    InFlightCleanupGuard<InboundRequestFingerprint, SharedRouterResponse>;
 
 #[derive(Clone)]
 pub enum SharedRouterResponse {

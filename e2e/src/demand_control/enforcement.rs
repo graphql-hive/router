@@ -180,7 +180,8 @@ mod enforcement_tests {
             .await;
 
         let wsconn = router.ws().await;
-        let mut client = WsClient::init(wsconn, None)
+        let mut client = WsClient::new(wsconn)
+            .init(None)
             .await
             .expect("Failed to init WsClient");
 
@@ -197,7 +198,11 @@ mod enforcement_tests {
             ..Default::default()
         };
 
-        let mut stream = client.subscribe(subscribe_payload, None).await;
+        let mut stream = client
+            .subscribe(subscribe_payload, None)
+            .await
+            .expect("Failed to subscribe")
+            .map(|response| response.expect("WebSocket response failed"));
         let first = stream.next().await.expect("Expected a rejection response");
         let errors = first
             .errors

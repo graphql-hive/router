@@ -212,14 +212,19 @@ mod subscription_metrics_e2e_tests {
         "#;
 
         let wsconn = router.ws().await;
-        let mut ws_client = WsClient::init(wsconn, None)
+        let mut ws_client = WsClient::new(wsconn)
+            .init(None)
             .await
             .expect("Failed to init WsClient");
         let ws_payload = SubscribePayload {
             query: query.into(),
             ..Default::default()
         };
-        let mut ws_stream = ws_client.subscribe(ws_payload, None).await;
+        let mut ws_stream = ws_client
+            .subscribe(ws_payload, None)
+            .await
+            .expect("Failed to subscribe")
+            .map(|response| response.expect("WebSocket response failed"));
 
         // drain the finite stream so subscribe/unsubscribe both happen while the router runs
         let mut received = 0;

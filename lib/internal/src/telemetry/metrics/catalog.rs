@@ -141,6 +141,9 @@ pub mod labels {
     pub const COPROCESSOR_STAGE: &str = "coprocessor.stage";
     pub const CIRCUIT_BREAKER_FROM_STATE: &str = "circuit_breaker.from_state";
     pub const CIRCUIT_BREAKER_TO_STATE: &str = "circuit_breaker.to_state";
+    pub const WEBSOCKET_POOL_OPERATION_TYPE: &str = "websocket_pool.operation.type";
+    pub const WEBSOCKET_POOL_CONNECTION_CLOSE_REASON: &str =
+        "websocket_pool.connection.close_reason";
 }
 
 pub mod units {
@@ -213,9 +216,54 @@ pub mod names {
         "hive.router.subscriptions.clients.lagged_messages_total";
     pub const SUBSCRIPTIONS_CLIENTS_SENT_MESSAGES_TOTAL: &str =
         "hive.router.subscriptions.clients.sent_messages_total";
+    pub const WEBSOCKET_POOL_CONNECTIONS_ACTIVE: &str =
+        "hive.router.websocket_pool.connections.active";
+    pub const WEBSOCKET_POOL_CONNECTION_INITIALIZATIONS_TOTAL: &str =
+        "hive.router.websocket_pool.connections.initializations_total";
+    pub const WEBSOCKET_POOL_CONNECTION_INITIALIZATION_WAITERS_TOTAL: &str =
+        "hive.router.websocket_pool.connections.initialization_waiters_total";
+    pub const WEBSOCKET_POOL_CONNECTION_LOOKUPS_TOTAL: &str =
+        "hive.router.websocket_pool.connections.lookups_total";
+    pub const WEBSOCKET_POOL_CONNECTIONS_CLOSED_TOTAL: &str =
+        "hive.router.websocket_pool.connections.closed_total";
+    pub const WEBSOCKET_POOL_OPERATIONS_ACTIVE: &str =
+        "hive.router.websocket_pool.operations.active";
+    pub const WEBSOCKET_POOL_OPERATIONS_STARTED_TOTAL: &str =
+        "hive.router.websocket_pool.operations.started_total";
 }
 
 pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
+    (
+        names::WEBSOCKET_POOL_CONNECTIONS_ACTIVE,
+        &[labels::SUBGRAPH_NAME],
+    ),
+    (
+        names::WEBSOCKET_POOL_CONNECTION_INITIALIZATIONS_TOTAL,
+        &[labels::SUBGRAPH_NAME, labels::RESULT],
+    ),
+    (
+        names::WEBSOCKET_POOL_CONNECTION_INITIALIZATION_WAITERS_TOTAL,
+        &[labels::SUBGRAPH_NAME],
+    ),
+    (
+        names::WEBSOCKET_POOL_CONNECTION_LOOKUPS_TOTAL,
+        &[labels::SUBGRAPH_NAME, labels::RESULT],
+    ),
+    (
+        names::WEBSOCKET_POOL_CONNECTIONS_CLOSED_TOTAL,
+        &[
+            labels::SUBGRAPH_NAME,
+            labels::WEBSOCKET_POOL_CONNECTION_CLOSE_REASON,
+        ],
+    ),
+    (
+        names::WEBSOCKET_POOL_OPERATIONS_ACTIVE,
+        &[labels::SUBGRAPH_NAME, labels::WEBSOCKET_POOL_OPERATION_TYPE],
+    ),
+    (
+        names::WEBSOCKET_POOL_OPERATIONS_STARTED_TOTAL,
+        &[labels::SUBGRAPH_NAME, labels::WEBSOCKET_POOL_OPERATION_TYPE],
+    ),
     (
         names::SUBSCRIPTIONS_SUBGRAPHS_ACTIVE,
         &[labels::SUBGRAPH_NAME],

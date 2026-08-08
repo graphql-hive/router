@@ -8,7 +8,10 @@ use std::collections::HashMap;
 use strum::AsRefStr;
 use tracing::error;
 
-use crate::{executors::common::SubgraphExecutionRequest, response::graphql_error::GraphQLError};
+use crate::{
+    executors::{common::SubgraphExecutionRequest, error::SubgraphExecutorError},
+    response::graphql_error::GraphQLError,
+};
 
 pub const WS_SUBPROTOCOL: &str = "graphql-transport-ws";
 
@@ -83,56 +86,52 @@ pub struct SubscribePayload {
     pub extensions: Option<HashMap<String, Value>>,
 }
 
-pub fn build_subscribe_payload(
-    execution_request: SubgraphExecutionRequest<'_>,
-) -> (SubscribePayload, Option<ConnectionInitPayload>) {
-    let variables: Option<HashMap<String, Value>> = match &execution_request.variables {
-        Some(variables) => {
-            if variables.is_empty() {
-                None
-            } else {
-                Some(
-                    variables
-                        .iter()
-                        .map(|(k, v)| (k.to_string(), (*v).clone()))
-                        .collect(),
-                )
-            }
+impl TryFrom<SubgraphExecutionRequest<'_>> for SubscribePayload {
+    type Error = SubgraphExecutorError;
+
+    fn try_from(execution_request: SubgraphExecutionRequest<'_>) -> Result<Self, Self::Error> {
+        let mut variables: HashMap<String, Value> = execution_request
+            .variables
+            .unwrap_or_default()
+            .iter()
+            .map(|(key, value)| (key.to_string(), (*value).clone()))
+            .collect();
+        for (key, value) in execution_request.raw_variable_values.unwrap_or_default() {
+            variables.insert(
+                key.to_string(),
+                sonic_rs::from_slice(&value).map_err(|error| {
+                    SubgraphExecutorError::VariablesSerializationFailure(key.to_string(), error)
+                })?,
+            );
         }
-        None => None,
-    };
-    let query = match &execution_request.operation_name {
-        Some(operation_name) => {
-            let pos = execution_request.document_name_write_pos;
-            let input = execution_request.query;
-            let mut result = String::with_capacity(input.len() + operation_name.len() + 6);
-            if pos == 0 && input.starts_with('{') {
-                result.push_str("query ");
-                result.push_str(operation_name);
-                result.push(' ');
-                result.push_str(input);
-            } else {
-                result.push_str(&input[..pos]);
-                result.push(' ');
-                result.push_str(operation_name);
-                result.push_str(&input[pos..]);
+        let variables = (!variables.is_empty()).then_some(variables);
+        let query = match &execution_request.operation_name {
+            Some(operation_name) => {
+                let pos = execution_request.document_name_write_pos;
+                let input = execution_request.query;
+                let mut result = String::with_capacity(input.len() + operation_name.len() + 6);
+                if pos == 0 && input.starts_with('{') {
+                    result.push_str("query ");
+                    result.push_str(operation_name);
+                    result.push(' ');
+                    result.push_str(input);
+                } else {
+                    result.push_str(&input[..pos]);
+                    result.push(' ');
+                    result.push_str(operation_name);
+                    result.push_str(&input[pos..]);
+                }
+                result
             }
-            result
-        }
-        None => execution_request.query.to_string(),
-    };
-    let subscribe_payload = SubscribePayload {
-        query,
-        operation_name: execution_request.operation_name.map(|s| s.to_string()),
-        variables,
-        extensions: execution_request.extensions,
-    };
-    let init_payload = if execution_request.headers.is_empty() {
-        None
-    } else {
-        Some(execution_request.headers.into())
-    };
-    (subscribe_payload, init_payload)
+            None => execution_request.query.to_string(),
+        };
+        Ok(SubscribePayload {
+            query,
+            operation_name: execution_request.operation_name,
+            variables,
+            extensions: execution_request.extensions,
+        })
+    }
 }
 
 #[derive(
@@ -475,39 +474,51 @@ mod tests {
             raw_variable_values: None,
             extensions: None,
             custom_scalar_paths: None,
+            connection_fingerprint: None,
         }
     }
 
     #[test]
-    fn build_subscribe_payload_inlines_operation_name_in_query() {
+    fn subscribe_payload_from_request_inlines_operation_name_in_query() {
         let request = make_request(
             "query { me { id } }",
             5,
             Some("GetMe_accounts_0".to_string()),
         );
 
-        let (payload, _) = build_subscribe_payload(request);
+        let payload = SubscribePayload::try_from(request).unwrap();
 
         assert_eq!(payload.query, "query GetMe_accounts_0 { me { id } }");
         assert_eq!(payload.operation_name.as_deref(), Some("GetMe_accounts_0"));
     }
 
     #[test]
-    fn build_subscribe_payload_without_operation_name_keeps_original_query() {
+    fn subscribe_payload_from_request_without_operation_name_keeps_original_query() {
         let request = make_request("query { me { id } }", 5, None);
 
-        let (payload, _) = build_subscribe_payload(request);
+        let payload = SubscribePayload::try_from(request).unwrap();
 
         assert_eq!(payload.query, "query { me { id } }");
         assert_eq!(payload.operation_name, None);
     }
 
     #[test]
-    fn build_subscribe_payload_inlines_name_for_shorthand_query() {
+    fn subscribe_payload_from_request_inlines_name_for_shorthand_query() {
         let request = make_request("{ me { id } }", 0, Some("GetMe_accounts_0".to_string()));
 
-        let (payload, _) = build_subscribe_payload(request);
+        let payload = SubscribePayload::try_from(request).unwrap();
 
         assert_eq!(payload.query, "query GetMe_accounts_0 { me { id } }");
+    }
+
+    #[test]
+    fn subscribe_payload_rejects_invalid_raw_variable_json() {
+        let mut request = make_request("query($id: ID!) { user(id: $id) { id } }", 5, None);
+        request.raw_variable_values = Some(vec![("id", b"{".to_vec())]);
+
+        assert!(matches!(
+            SubscribePayload::try_from(request),
+            Err(SubgraphExecutorError::VariablesSerializationFailure(name, _)) if name == "id"
+        ));
     }
 }

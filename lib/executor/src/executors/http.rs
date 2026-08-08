@@ -826,6 +826,7 @@ mod tests {
             raw_variable_values: None,
             extensions: None,
             custom_scalar_paths: None,
+            connection_fingerprint: None,
         };
 
         let body = build_request_body(&execution_request).expect("request body should serialize");

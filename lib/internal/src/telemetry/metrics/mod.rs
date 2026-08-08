@@ -11,6 +11,7 @@ pub mod persisted_documents_metrics;
 pub mod setup;
 pub mod subscription_metrics;
 pub mod supergraph_metrics;
+pub mod websocket_pool_metrics;
 pub use opentelemetry::metrics::ObservableGauge;
 pub use setup::{build_meter_provider_from_config, MetricsSetup, PrometheusRuntimeConfig};
 
@@ -26,6 +27,7 @@ use crate::telemetry::metrics::http_server_metrics::HttpServerMetrics;
 use crate::telemetry::metrics::persisted_documents_metrics::PersistedDocumentsMetrics;
 use crate::telemetry::metrics::subscription_metrics::SubscriptionMetrics;
 use crate::telemetry::metrics::supergraph_metrics::SupergraphMetrics;
+use crate::telemetry::metrics::websocket_pool_metrics::WebSocketPoolMetrics;
 
 pub struct Metrics {
     pub http_server: HttpServerMetrics,
@@ -38,6 +40,7 @@ pub struct Metrics {
     pub persisted_documents: PersistedDocumentsMetrics,
     pub coprocessor: CoprocessorMetrics,
     pub subscriptions: SubscriptionMetrics,
+    pub websocket_pool: WebSocketPoolMetrics,
 }
 
 impl Metrics {
@@ -53,6 +56,7 @@ impl Metrics {
             persisted_documents: PersistedDocumentsMetrics::new(meter),
             coprocessor: CoprocessorMetrics::new(meter),
             subscriptions: SubscriptionMetrics::new(meter),
+            websocket_pool: WebSocketPoolMetrics::new(meter),
         }
     }
 }
