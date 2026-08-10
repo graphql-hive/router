@@ -116,6 +116,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.88 (2026-08-10)
+
+### Features
+
+#### Add `apollo_graphos` supergraph source
+
+Adds a new `apollo_graphos` supergraph source that fetches the supergraph schema from Apollo GraphOS's managed federation Uplink, for routers migrating from Apollo Router/Gateway without needing a separate schema-delivery pipeline.
+
+Configure it with `graph_ref` and `key` (or the `APOLLO_GRAPH_REF`/`APOLLO_KEY` environment variables), and optionally `endpoint` (defaults to Apollo's GCP and AWS Uplink endpoints, tried in order), `timeout` and `accept_invalid_certs`.
+
+Closes https://github.com/graphql-hive/router/issues/505
+
+#### Expose log correlation to the plugin system
+
+Plugins can now attach a custom correlation (e.g. a tenant or project ID) to every log line of the current request via `hive_router::set_log_correlation(key, value)`, callable from any hook, alongside the built-in `request_id` and `trace_id`.
+
+Fixes https://github.com/graphql-hive/router/issues/1350
+
+#### Expose the request summary to the plugin system
+
+Plugins can now enrich the request summary log line with custom attributes via `hive_router::set_summary_attribute(key, value)`, callable from any hook (e.g. `on_http_request`, `on_graphql_analysis`).
+
+Fixes https://github.com/graphql-hive/router/issues/1368
+
+#### Expose the summary message to the plugin system
+
+Plugins can now override the request summary log line's message via `hive_router::set_summary_message(message)`, callable from any hook.
+
+Fixes https://github.com/graphql-hive/router/issues/1378
+
+### Fixes
+
+#### Report `persistedDocumentHash` in usage reports
+
+Usage reports now include the resolved persisted document id, so Hive Console can match
+requests to app deployments and populate their "Last used" data. Previously the router
+resolved the document id but always omitted it from the usage report.
+
+Closes https://github.com/graphql-hive/router/issues/1343
+
 ## 0.0.87 (2026-08-05)
 
 ### Features
