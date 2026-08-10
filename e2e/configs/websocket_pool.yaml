@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../supergraph.graphql
+subscriptions:
+  enabled: true
+  websocket:
+    subgraphs:
+      reviews:
+        path: /reviews/ws
+traffic_shaping:
+  all:
+    pool_idle_timeout: 5s
+    websocket:
+      execute_mode: reuse_existing
+  router:
+    dedupe:
+      headers: none

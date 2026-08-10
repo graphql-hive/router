@@ -30,7 +30,8 @@ mod websocket_e2e_tests {
 
         let wsconn = router.ws().await;
 
-        let mut client = WsClient::init(wsconn, None)
+        let mut client = WsClient::new(wsconn)
+            .init(None)
             .await
             .expect("Failed to init WsClient");
 
@@ -47,7 +48,11 @@ mod websocket_e2e_tests {
             ..Default::default()
         };
 
-        let mut stream = client.subscribe(execution_request, None).await;
+        let mut stream = client
+            .subscribe(execution_request, None)
+            .await
+            .expect("Failed to subscribe")
+            .map(|response| response.expect("WebSocket response failed"));
 
         let response = stream.next().await.expect("Expected a response");
 
@@ -80,7 +85,8 @@ mod websocket_e2e_tests {
 
         let wsconn = router.ws().await;
 
-        let mut client = WsClient::init(wsconn, None)
+        let mut client = WsClient::new(wsconn)
+            .init(None)
             .await
             .expect("Failed to init WsClient");
 
@@ -97,7 +103,11 @@ mod websocket_e2e_tests {
             ..Default::default()
         };
 
-        let mut stream = client.subscribe(subscribe_payload, None).await;
+        let mut stream = client
+            .subscribe(subscribe_payload, None)
+            .await
+            .expect("Failed to subscribe")
+            .map(|response| response.expect("WebSocket response failed"));
 
         let mut received_count = 0;
         while let Some(response) = stream.next().await {
@@ -134,7 +144,8 @@ mod websocket_e2e_tests {
 
         let wsconn = router.ws().await;
 
-        let mut client = WsClient::init(wsconn, None)
+        let mut client = WsClient::new(wsconn)
+            .init(None)
             .await
             .expect("Failed to init WsClient");
 
@@ -150,7 +161,11 @@ mod websocket_e2e_tests {
             ..Default::default()
         };
 
-        let mut stream1 = client.subscribe(subscribe_payload1, None).await;
+        let mut stream1 = client
+            .subscribe(subscribe_payload1, None)
+            .await
+            .expect("Failed to subscribe")
+            .map(|response| response.expect("WebSocket response failed"));
 
         let subscribe_payload = SubscribePayload {
             query: r#"
@@ -164,7 +179,11 @@ mod websocket_e2e_tests {
             ..Default::default()
         };
 
-        let mut stream2 = client.subscribe(subscribe_payload, None).await;
+        let mut stream2 = client
+            .subscribe(subscribe_payload, None)
+            .await
+            .expect("Failed to subscribe")
+            .map(|response| response.expect("WebSocket response failed"));
 
         let mut count1 = 0;
         let mut count2 = 0;
@@ -242,15 +261,13 @@ mod websocket_e2e_tests {
 
         let wsconn = router.ws().await;
 
-        let mut client = WsClient::init(
-            wsconn,
-            Some(ConnectionInitPayload::new(HashMap::from([(
+        let mut client = WsClient::new(wsconn)
+            .init(Some(ConnectionInitPayload::new(HashMap::from([(
                 "x-context".to_string(),
                 json!("my-init_payload-value"),
-            )]))),
-        )
-        .await
-        .expect("Failed to init WsClient");
+            )]))))
+            .await
+            .expect("Failed to init WsClient");
 
         let subscribe_payload = SubscribePayload {
             query: r#"
@@ -265,7 +282,11 @@ mod websocket_e2e_tests {
             ..Default::default()
         };
 
-        let mut stream = client.subscribe(subscribe_payload, None).await;
+        let mut stream = client
+            .subscribe(subscribe_payload, None)
+            .await
+            .expect("Failed to subscribe")
+            .map(|response| response.expect("WebSocket response failed"));
 
         stream.next().await.expect("Expected a response");
 
@@ -311,7 +332,8 @@ mod websocket_e2e_tests {
 
         let wsconn = router.ws().await;
 
-        let mut client = WsClient::init(wsconn, None)
+        let mut client = WsClient::new(wsconn)
+            .init(None)
             .await
             .expect("Failed to init WsClient");
 
@@ -332,7 +354,11 @@ mod websocket_e2e_tests {
             ..Default::default()
         };
 
-        let mut stream = client.subscribe(subscribe_payload, None).await;
+        let mut stream = client
+            .subscribe(subscribe_payload, None)
+            .await
+            .expect("Failed to subscribe")
+            .map(|response| response.expect("WebSocket response failed"));
 
         stream.next().await.expect("Expected a response");
 
@@ -380,15 +406,13 @@ mod websocket_e2e_tests {
 
         let wsconn = router.ws().await;
 
-        let mut client = WsClient::init(
-            wsconn,
-            Some(ConnectionInitPayload::new(HashMap::from([(
+        let mut client = WsClient::new(wsconn)
+            .init(Some(ConnectionInitPayload::new(HashMap::from([(
                 "x-context".to_string(),
                 json!("my-init_payload-value"),
-            )]))),
-        )
-        .await
-        .expect("Failed to init WsClient");
+            )]))))
+            .await
+            .expect("Failed to init WsClient");
 
         let subscribe_payload = SubscribePayload {
             query: r#"
@@ -408,7 +432,11 @@ mod websocket_e2e_tests {
         };
 
         // merging headers
-        let mut stream = client.subscribe(subscribe_payload, None).await;
+        let mut stream = client
+            .subscribe(subscribe_payload, None)
+            .await
+            .expect("Failed to subscribe")
+            .map(|response| response.expect("WebSocket response failed"));
         stream.next().await.expect("Expected a response");
 
         let subscribe_payload = SubscribePayload {
@@ -425,7 +453,11 @@ mod websocket_e2e_tests {
         };
 
         // missing headers in extensions, should've been merged
-        let mut stream = client.subscribe(subscribe_payload, None).await;
+        let mut stream = client
+            .subscribe(subscribe_payload, None)
+            .await
+            .expect("Failed to subscribe")
+            .map(|response| response.expect("WebSocket response failed"));
         stream.next().await.expect("Expected a response");
 
         let products_requests = subgraphs

@@ -88,6 +88,8 @@ mod tls;
 mod traffic_shaping;
 #[cfg(test)]
 mod websocket;
+#[cfg(test)]
+mod websocket_pool;
 
 pub use insta;
 pub use mockito;

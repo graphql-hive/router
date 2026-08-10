@@ -100,21 +100,27 @@ pub enum HTTPStreamingSubscriptionProtocol {
 pub fn subgraphs_app(
     subscriptions_protocol: HTTPStreamingSubscriptionProtocol,
 ) -> (Router<()>, Arc<AtomicUsize>) {
+    let accounts_schema = accounts::get_subgraph();
+    let inventory_schema = inventory::get_subgraph();
+    let products_schema = products::get_subgraph();
     let (reviews_schema, active_subscriptions) = reviews::get_subgraph();
     let router = Router::new()
-        .route(
-            "/accounts",
-            post_service(GraphQL::new(accounts::get_subgraph())),
+        .route_service(
+            "/accounts/ws",
+            GraphQLSubscription::new(accounts_schema.clone()),
         )
+        .route("/accounts", post_service(GraphQL::new(accounts_schema)))
         .route("/books", post_service(GraphQL::new(books::get_subgraph())))
-        .route(
-            "/inventory",
-            post_service(GraphQL::new(inventory::get_subgraph())),
+        .route_service(
+            "/inventory/ws",
+            GraphQLSubscription::new(inventory_schema.clone()),
         )
-        .route(
-            "/products",
-            post_service(GraphQL::new(products::get_subgraph())),
+        .route("/inventory", post_service(GraphQL::new(inventory_schema)))
+        .route_service(
+            "/products/ws",
+            GraphQLSubscription::new(products_schema.clone()),
         )
+        .route("/products", post_service(GraphQL::new(products_schema)))
         .route_service(
             "/reviews/ws",
             GraphQLSubscription::new(reviews_schema.clone()),

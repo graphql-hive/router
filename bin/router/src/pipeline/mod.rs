@@ -14,6 +14,7 @@ use hive_router_plan_executor::{
         },
         plan::{CoerceVariablesPayload, PlanExecutionOutput, QueryPlanExecutionResult},
     },
+    executors::common::{ConnectionFingerprint, InboundRequestFingerprint},
     headers::response::{ResponseHeaderAggregator, ResponseHeaderSink},
     hooks::{
         on_graphql_analysis::{OnGraphqlAnalysisHookPayload, OnGraphqlAnalysisHookResult},
@@ -428,6 +429,20 @@ pub async fn graphql_request_handler(
             .router
             .dedupe
             .enabled;
+        let websocket_reuse_enabled = shared_state
+            .router_config
+            .traffic_shaping
+            .any_websocket_connection_reuse_enabled();
+
+        // establish a connection fingerprint only if dedupe or multiplexing is enabled
+        let connection_fingerprint = (request_dedupe_enabled || websocket_reuse_enabled)
+            .then(|| connection_fingerprint(
+                req.method(),
+                req.path(),
+                &request_headers,
+                &shared_state.in_flight_requests_header_policy,
+                supergraph.snapshot.cache_id,
+            ));
 
         let fingerprint = if request_dedupe_enabled
             && matches!(
@@ -442,11 +457,9 @@ pub async fn graphql_request_handler(
                 .map_or(0, hash_graphql_extensions);
 
             Some(inbound_request_fingerprint(
-                req.method(),
-                req.path(),
-                &request_headers,
-                &shared_state.in_flight_requests_header_policy,
-                supergraph.snapshot.cache_id,
+                // let chains are only allowed in Rust 2024 or later... so we assert
+                // connection_fingerprint because it will be present when request_dedupe_enabled
+                connection_fingerprint.expect("dedupe computes a connection fingerprint"),
                 normalize_payload.normalized_operation_hash,
                 variables_hash,
                 extensions_hash,
@@ -475,6 +488,7 @@ pub async fn graphql_request_handler(
                 response_mode,
                 guard,
                 response_header_sink.clone(),
+                connection_fingerprint,
             )
         };
 
@@ -559,6 +573,7 @@ pub async fn execute_planned_request<'exec>(
     response_mode: &'exec ResponseMode,
     guard: Option<SharedRouterResponseGuard>,
     response_header_sink: ResponseHeaderSink,
+    connection_fingerprint: Option<ConnectionFingerprint>,
 ) -> Result<SharedRouterResponse, PipelineError> {
     let jwt_request_details = match &shared_state.jwt_auth_runtime {
         Some(jwt_auth_runtime) => match jwt_auth_runtime
@@ -612,6 +627,7 @@ pub async fn execute_planned_request<'exec>(
         plugin_req_state,
         request_context,
         response_header_sink.clone(),
+        connection_fingerprint,
     )
     .await?
     {
@@ -739,6 +755,7 @@ pub async fn execute_pipeline<'exec>(
     plugin_req_state: Option<PluginRequestState<'exec>>,
     request_context: &SharedRequestContext,
     response_header_sink: ResponseHeaderSink,
+    connection_fingerprint: Option<ConnectionFingerprint>,
 ) -> Result<QueryPlanExecutionResult, PipelineError> {
     if normalize_payload.operation_for_introspection.is_some() {
         handle_introspection_policy(&shared_state.introspection_policy, &client_request_details)?;
@@ -889,6 +906,7 @@ pub async fn execute_pipeline<'exec>(
             .collect(),
         demand_control_execution_context,
         plugin_req_state,
+        connection_fingerprint,
     };
 
     execute_plan(
@@ -901,39 +919,41 @@ pub async fn execute_pipeline<'exec>(
     .await
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn inbound_request_fingerprint(
+pub fn connection_fingerprint(
     method: &Method,
     path: &str,
     request_headers: &HeaderMap,
-    dedupe_header_policy: &RouterRequestDedupeHeaderPolicy,
-    supergraph_cache_id: u64,
-    normalized_operation_hash: u64,
-    variables_hash: u64,
-    extensions_hash: u64,
-) -> u64 {
+    header_policy: &RouterRequestDedupeHeaderPolicy,
+    schema_checksum: u64,
+) -> ConnectionFingerprint {
     let mut hasher = Xxh3::new();
 
     let mut headers: Vec<(&str, &str)> = request_headers
         .iter()
-        .filter(|(name, _)| dedupe_header_policy.should_include(name.as_str()))
-        .filter_map(|(name, value)| value.to_str().ok().map(|v_str| (name.as_str(), v_str)))
+        .filter(|(name, _)| header_policy.should_include(name.as_str()))
+        .filter_map(|(name, value)| value.to_str().ok().map(|value| (name.as_str(), value)))
         .collect();
-    headers.sort_unstable_by(|(left_name, left_value), (right_name, right_value)| {
-        left_name
-            .cmp(right_name)
-            .then_with(|| left_value.cmp(right_value))
-    });
+    headers.sort_unstable();
 
     method.hash(&mut hasher);
     path.hash(&mut hasher);
     headers.hash(&mut hasher);
-    supergraph_cache_id.hash(&mut hasher);
+    schema_checksum.hash(&mut hasher);
+    ConnectionFingerprint::from_hash(hasher.finish())
+}
+
+pub fn inbound_request_fingerprint(
+    connection: ConnectionFingerprint,
+    normalized_operation_hash: u64,
+    variables_hash: u64,
+    extensions_hash: u64,
+) -> InboundRequestFingerprint {
+    let mut hasher = Xxh3::new();
+    connection.hash(&mut hasher);
     normalized_operation_hash.hash(&mut hasher);
     variables_hash.hash(&mut hasher);
     extensions_hash.hash(&mut hasher);
-
-    hasher.finish()
+    InboundRequestFingerprint::from_hash(hasher.finish())
 }
 
 pub fn hash_graphql_variables(variables: &HashMap<String, Value>) -> u64 {
@@ -1002,5 +1022,41 @@ fn hash_graphql_value(value: &Value, hasher: &mut Xxh3) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod fingerprint_tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn connection_fingerprint_is_order_independent_and_separate_from_operation() {
+        let policy = RouterRequestDedupeHeaderPolicy::Include(HashSet::from([
+            "authorization".to_string(),
+            "x-tenant".to_string(),
+        ]));
+        let mut first = HeaderMap::new();
+        first.insert("authorization".parse().unwrap(), "token".parse().unwrap());
+        first.insert("x-tenant".parse().unwrap(), "one".parse().unwrap());
+        first.insert("ignored".parse().unwrap(), "a".parse().unwrap());
+        let mut second = HeaderMap::new();
+        second.insert("ignored".parse().unwrap(), "b".parse().unwrap());
+        second.insert("x-tenant".parse().unwrap(), "one".parse().unwrap());
+        second.insert("authorization".parse().unwrap(), "token".parse().unwrap());
+
+        let connection = connection_fingerprint(&Method::POST, "/graphql", &first, &policy, 7);
+        assert_eq!(
+            connection,
+            connection_fingerprint(&Method::POST, "/graphql", &second, &policy, 7)
+        );
+        assert_ne!(
+            inbound_request_fingerprint(connection, 1, 2, 3),
+            inbound_request_fingerprint(connection, 2, 2, 3)
+        );
+        assert_eq!(
+            connection,
+            connection_fingerprint(&Method::POST, "/graphql", &first, &policy, 7)
+        );
     }
 }

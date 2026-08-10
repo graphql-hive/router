@@ -42,9 +42,9 @@ use crate::pipeline::error::PipelineError;
 use crate::pipeline::execute_planned_request;
 use crate::pipeline::header::{ResponseMode, SingleContentType, StreamContentType};
 use crate::pipeline::{
-    hash_graphql_extensions, hash_graphql_variables, inbound_request_fingerprint,
-    normalize::normalize_request_with_cache, parser::parse_operation_with_cache, usage_reporting,
-    validation::validate_operation_with_cache,
+    connection_fingerprint, hash_graphql_extensions, hash_graphql_variables,
+    inbound_request_fingerprint, normalize::normalize_request_with_cache,
+    parser::parse_operation_with_cache, usage_reporting, validation::validate_operation_with_cache,
 };
 use crate::schema_state::SchemaState;
 use crate::shared_state::{RouterSharedState, SharedRouterResponse};
@@ -502,6 +502,19 @@ async fn handle_text_frame(
 
                   let request_dedupe_enabled =
                       shared_state.router_config.traffic_shaping.router.dedupe.enabled;
+                  let websocket_reuse_enabled = shared_state
+                      .router_config
+                      .traffic_shaping
+                      .any_websocket_connection_reuse_enabled();
+
+                  let connection_fingerprint = (request_dedupe_enabled || websocket_reuse_enabled)
+                    .then(|| connection_fingerprint(
+                      &Method::POST,
+                      ws_uri.path(),
+                      headers.as_ref(),
+                      &shared_state.in_flight_requests_header_policy,
+                      supergraph.snapshot.cache_id,
+                    ));
 
                   let fingerprint = if request_dedupe_enabled
                       && matches!(
@@ -515,11 +528,9 @@ async fn handle_text_frame(
                           .as_ref()
                           .map_or(0, hash_graphql_extensions);
                       Some(inbound_request_fingerprint(
-                          &Method::POST,
-                          ws_uri.path(),
-                          headers.as_ref(),
-                          &shared_state.in_flight_requests_header_policy,
-                          supergraph.snapshot.cache_id,
+                          // let chains are only allowed in Rust 2024 or later... so we assert
+                          // connection_fingerprint because it will be present when request_dedupe_enabled
+                          connection_fingerprint.expect("dedupe computes a connection fingerprint"),
                           normalize_payload.normalized_operation_hash,
                           variables_hash,
                           extensions_hash,
@@ -568,7 +579,8 @@ async fn handle_text_frame(
                       request_context,
                       &response_mode,
                       guard,
-                      response_header_sink.clone()
+                      response_header_sink.clone(),
+                      connection_fingerprint,
                   );
 
                   let shared_response = if let Some(fp) = fingerprint {

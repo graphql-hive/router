@@ -1599,14 +1599,19 @@ mod subscriptions_e2e_tests {
         };
 
         let wsconn = router.ws().await;
-        let mut ws_client = WsClient::init(wsconn, None)
+        let mut ws_client = WsClient::new(wsconn)
+            .init(None)
             .await
             .expect("Failed to init WsClient");
         let ws_payload = SubscribePayload {
             query: query.into(),
             ..Default::default()
         };
-        let mut ws_stream = ws_client.subscribe(ws_payload, None).await;
+        let mut ws_stream = ws_client
+            .subscribe(ws_payload, None)
+            .await
+            .expect("Failed to subscribe")
+            .map(|response| response.expect("WebSocket response failed"));
 
         let (sub_sse, sub_multipart) = tokio::join!(
             router.send_graphql_request(query, None, sse_headers),
@@ -1689,14 +1694,19 @@ mod subscriptions_e2e_tests {
         "#;
 
         let wsconn = router.ws().await;
-        let mut ws_client = WsClient::init(wsconn, None)
+        let mut ws_client = WsClient::new(wsconn)
+            .init(None)
             .await
             .expect("Failed to init WsClient");
         let ws_payload = SubscribePayload {
             query: query.into(),
             ..Default::default()
         };
-        let mut ws_stream = ws_client.subscribe(ws_payload, None).await;
+        let mut ws_stream = ws_client
+            .subscribe(ws_payload, None)
+            .await
+            .expect("Failed to subscribe")
+            .map(|response| response.expect("WebSocket response failed"));
 
         // consume 3 events from sub1 to let the source stream advance
         let response = ws_stream.next().await.unwrap();

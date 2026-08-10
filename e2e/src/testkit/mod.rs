@@ -235,6 +235,7 @@ pub struct TestSubgraphsBuilder {
     on_request: Option<Arc<OnRequest>>,
     rustls_config: Option<RustlsConfig>,
     delay: Option<Duration>,
+    path_delay: Option<(String, Duration)>,
     http2_only: bool,
 }
 
@@ -244,6 +245,7 @@ impl TestSubgraphsBuilder {
             on_request: None,
             rustls_config: None,
             delay: None,
+            path_delay: None,
             subscriptions_protocol: HTTPStreamingSubscriptionProtocol::default(),
             http2_only: false,
         }
@@ -281,6 +283,16 @@ impl TestSubgraphsBuilder {
         self
     }
 
+    /// Adds a cooperative asynchronous delay to requests matching the given path.
+    ///
+    /// Use this instead of sleeping inside `with_on_request`, whose synchronous callback would
+    /// block the shared Tokio runtime and could stall unrelated requests or parallel tests. This
+    /// delay yields to the runtime and leaves requests for every other path unaffected.
+    pub fn with_path_delay(mut self, path: impl Into<String>, delay: Duration) -> Self {
+        self.path_delay = Some((path.into(), delay));
+        self
+    }
+
     /// Enables HTTP/2 only mode (h2c) for the test subgraph server.
     /// When enabled, the server will only accept HTTP/2 connections over plain TCP.
     #[allow(unused)]
@@ -294,6 +306,7 @@ impl TestSubgraphsBuilder {
             on_request: self.on_request,
             rustls_config: self.rustls_config,
             delay: self.delay,
+            path_delay: self.path_delay,
             subscriptions_protocol: self.subscriptions_protocol,
             http2_only: self.http2_only,
             handle: None,
@@ -320,6 +333,7 @@ pub struct TestSubgraphs<State> {
     on_request: Option<Arc<OnRequest>>,
     rustls_config: Option<RustlsConfig>,
     delay: Option<Duration>,
+    path_delay: Option<(String, Duration)>,
     http2_only: bool,
     handle: Option<TestSubgraphsHandle>,
     _state: PhantomData<State>,
@@ -451,6 +465,19 @@ impl TestSubgraphs<Built> {
                 },
             ));
         }
+        if let Some((path, delay)) = self.path_delay.clone() {
+            app = app.layer(axum::middleware::from_fn(
+                move |req: axum::extract::Request, next: axum::middleware::Next| {
+                    let path = path.clone();
+                    async move {
+                        if req.uri().path() == path {
+                            tokio::time::sleep(delay).await;
+                        }
+                        next.run(req).await
+                    }
+                },
+            ));
+        }
         // record_requests must be outermost so it logs the request before any blocking on_request handler runs
         app = app.layer(axum::middleware::from_fn_with_state(
             middleware_state.clone(),
@@ -493,6 +520,7 @@ impl TestSubgraphs<Built> {
             on_request: self.on_request,
             rustls_config: rustls_config_clone,
             delay: self.delay,
+            path_delay: self.path_delay,
             subscriptions_protocol: self.subscriptions_protocol,
             http2_only: self.http2_only,
             handle: Some(TestSubgraphsHandle {

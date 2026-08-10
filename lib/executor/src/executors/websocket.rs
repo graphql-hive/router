@@ -15,9 +15,9 @@ use hive_router_internal::telemetry::TelemetryContext;
 
 use crate::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
 use crate::executors::error::SubgraphExecutorError;
-use crate::executors::graphql_transport_ws::build_subscribe_payload;
 use crate::executors::subscription_buffer::drain_into;
-use crate::executors::websocket_client::{connect, WsClient};
+use crate::executors::websocket_client::{self, WsClient};
+use crate::executors::websocket_pool::{WebSocketConnectionId, WebSocketInit, WebSocketPool};
 use crate::response::subgraph_response::SubgraphResponse;
 
 pub struct WsSubgraphExecutor {
@@ -26,15 +26,22 @@ pub struct WsSubgraphExecutor {
     tls_config: Option<Arc<rustls::ClientConfig>>,
     buffer_capacity: usize,
     telemetry_context: Arc<TelemetryContext>,
+    pool: Arc<WebSocketPool>,
+    idle_timeout: Duration,
+    reuse_connections: bool,
 }
 
 impl WsSubgraphExecutor {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         subgraph_name: String,
         endpoint: http::Uri,
         tls_config: Option<Arc<rustls::ClientConfig>>,
         buffer_capacity: usize,
         telemetry_context: Arc<TelemetryContext>,
+        pool: Arc<WebSocketPool>,
+        idle_timeout: Duration,
+        reuse_connections: bool,
     ) -> Self {
         Self {
             subgraph_name,
@@ -42,6 +49,9 @@ impl WsSubgraphExecutor {
             tls_config,
             buffer_capacity,
             telemetry_context,
+            pool,
+            idle_timeout,
+            reuse_connections,
         }
     }
 }
@@ -59,9 +69,40 @@ impl SubgraphExecutor for WsSubgraphExecutor {
     async fn execute<'a>(
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
-        _timeout: Option<Duration>,
+        timeout: Option<Duration>,
         _plugin_req_state: Option<&'a crate::plugin_context::PluginRequestState<'a>>,
     ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
+        if self.reuse_connections {
+            if let Some(fingerprint) = execution_request.connection_fingerprint {
+                let id = WebSocketConnectionId::new(
+                    self.subgraph_name.clone(),
+                    self.endpoint.clone(),
+                    fingerprint,
+                );
+                let operation = async {
+                    let executor = self
+                        .pool
+                        .get_or_initialize(
+                            id,
+                            WebSocketInit {
+                                endpoint: self.endpoint.clone(),
+                                headers: execution_request.headers.clone(),
+                                tls_config: self.tls_config.clone(),
+                                buffer_capacity: self.buffer_capacity,
+                                idle_timeout: self.idle_timeout,
+                                telemetry_context: self.telemetry_context.clone(),
+                            },
+                        )
+                        .await?;
+                    executor.execute(execution_request, None, None).await
+                };
+                return match timeout {
+                    Some(timeout) => tokio::time::timeout(timeout, operation).await?,
+                    None => operation.await,
+                };
+            }
+        }
+
         let endpoint = self.endpoint.clone();
         let subgraph_name = self.subgraph_name.clone();
         let tls_config = self.tls_config.clone();
@@ -72,7 +113,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
             "establishing WebSocket connection to subgraph"
         );
 
-        let (subscribe_payload, init_payload) = build_subscribe_payload(execution_request);
+        let headers = execution_request.headers.clone();
+        let init_payload = (!headers.is_empty()).then(|| headers.into());
+        let subscribe_payload = execution_request.try_into()?;
 
         let (tx, rx) = oneshot::channel();
 
@@ -85,17 +128,17 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         // or earlier if connect/init fails.
         rt::spawn(async move {
             let result = async {
-                let connection = match connect(&endpoint, tls_config).await {
-                    Ok(conn) => conn,
-                    Err(e) => {
-                        return Err(SubgraphExecutorError::WebSocketConnectFailure(
+                let wsconn = websocket_client::connect(&endpoint, tls_config)
+                    .await
+                    .map_err(|e| {
+                        SubgraphExecutorError::WebSocketConnectFailure(
                             endpoint.to_string(),
                             e.to_string(),
-                        ));
-                    }
-                };
+                        )
+                    })?;
+                let client = WsClient::new(wsconn);
 
-                let mut client = match WsClient::init(connection, init_payload).await {
+                let mut client = match client.init(init_payload).await {
                     Ok(client) => client,
                     Err(e) => {
                         return Err(SubgraphExecutorError::WebSocketHandshakeFailure(
@@ -113,10 +156,10 @@ impl SubgraphExecutor for WsSubgraphExecutor {
 
                 let mut stream = client
                     .subscribe(subscribe_payload, custom_scalar_paths)
-                    .await;
+                    .await?;
 
                 match stream.next().await {
-                    Some(response) => Ok(response),
+                    Some(response) => Ok(response?),
                     None => Err(SubgraphExecutorError::WebSocketStreamClosedEmpty(
                         endpoint.to_string(),
                     )),
@@ -127,8 +170,14 @@ impl SubgraphExecutor for WsSubgraphExecutor {
             let _ = tx.send(result);
         });
 
-        rx.await
-            .map_err(|_| SubgraphExecutorError::WebSocketArbiterChannelClosed)?
+        let response = async {
+            rx.await
+                .map_err(|_| SubgraphExecutorError::WebSocketArbiterChannelClosed)?
+        };
+        match timeout {
+            Some(timeout) => tokio::time::timeout(timeout, response).await?,
+            None => response.await,
+        }
     }
 
     async fn subscribe<'a>(
@@ -139,6 +188,31 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
         SubgraphExecutorError,
     > {
+        if self.reuse_connections {
+            if let Some(fingerprint) = execution_request.connection_fingerprint {
+                let id = WebSocketConnectionId::new(
+                    self.subgraph_name.clone(),
+                    self.endpoint.clone(),
+                    fingerprint,
+                );
+                let executor = self
+                    .pool
+                    .get_or_initialize(
+                        id,
+                        WebSocketInit {
+                            endpoint: self.endpoint.clone(),
+                            headers: execution_request.headers.clone(),
+                            tls_config: self.tls_config.clone(),
+                            buffer_capacity: self.buffer_capacity,
+                            idle_timeout: self.idle_timeout,
+                            telemetry_context: self.telemetry_context.clone(),
+                        },
+                    )
+                    .await?;
+                return executor.subscribe(execution_request, None).await;
+            }
+        }
+
         // buffer decouples the emitting subgraph from slow downstream consumers, dropping
         // messages under backpressure instead of throttling the subgraph
         let (tx, mut rx) = mpsc::channel::<Result<SubgraphResponse<'static>, SubgraphExecutorError>>(
@@ -149,8 +223,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         let subgraph_name = self.subgraph_name.clone();
         let tls_config = self.tls_config.clone();
         let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
-
-        let (subscribe_payload, init_payload) = build_subscribe_payload(execution_request);
+        let headers = execution_request.headers.clone();
+        let init_payload = (!headers.is_empty()).then(|| headers.into());
+        let subscribe_payload = execution_request.try_into()?;
 
         debug!(
             target: targets::WEBSOCKET_CLIENT,
@@ -168,8 +243,8 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         // If the channel fills due to back-pressure, the latest event is dropped (with a
         // warning log) and the subscription continues.
         drop(rt::spawn(async move {
-            let connection = match connect(&endpoint, tls_config).await {
-                Ok(conn) => conn,
+            let wsconn = match websocket_client::connect(&endpoint, tls_config).await {
+                Ok(client) => client,
                 Err(e) => {
                     let _ = tx.try_send(Err(SubgraphExecutorError::WebSocketConnectFailure(
                         endpoint.to_string(),
@@ -178,8 +253,9 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                     return;
                 }
             };
+            let client = WsClient::new(wsconn);
 
-            let mut client = match WsClient::init(connection, init_payload).await {
+            let mut client = match client.init(init_payload).await {
                 Ok(client) => client,
                 Err(e) => {
                     let _ = tx.try_send(Err(SubgraphExecutorError::WebSocketHandshakeFailure(
@@ -204,10 +280,16 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                     SubscriptionTransport::WebSocket,
                 );
 
-            let stream = client
+            let stream = match client
                 .subscribe(subscribe_payload, custom_scalar_paths)
                 .await
-                .map(Ok);
+            {
+                Ok(stream) => stream.map(|item| item.map_err(SubgraphExecutorError::from)),
+                Err(error) => {
+                    let _ = tx.try_send(Err(error.into()));
+                    return;
+                }
+            };
 
             drain_into(
                 stream,

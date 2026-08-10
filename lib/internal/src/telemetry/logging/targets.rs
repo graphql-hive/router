@@ -18,6 +18,7 @@ pub const EXECUTOR: &str = "router::executor";
 pub const HIVE_USAGE_REPORTING: &str = "router::usage_reporting";
 pub const WEBSOCKET_SERVER: &str = "router::websocket_server";
 pub const WEBSOCKET_CLIENT: &str = "router::websocket_client";
+pub const WEBSOCKET_POOL: &str = "router::websocket_pool";
 pub const HTTP_CALLBACK: &str = "router::http_callback";
 pub const PLUGIN_SYSTEM: &str = "router::plugin_system";
 pub const SUPERGRAPH: &str = "router::supergraph";

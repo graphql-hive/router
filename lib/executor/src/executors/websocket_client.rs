@@ -54,9 +54,11 @@ pub enum WsInitError {
     InvalidMessage,
     #[error("Wrong message received before connection acknowledgement")]
     WrongMessageBeforeAck,
+    #[error("Failed to send connection initialization message: {0}")]
+    SendFailed(#[from] ws::error::ProtocolError),
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Clone, Debug, thiserror::Error)]
 pub enum WsClientError {
     #[error("Connection closed")]
     ConnectionClosed,
@@ -64,6 +66,10 @@ pub enum WsClientError {
     MessageDispatcherClosed,
     #[error("Failed to deserialize payload")]
     FailedToDeserializePayload,
+    #[error("Failed to send WebSocket message: {0}")]
+    SendFailed(#[from] ws::error::ProtocolError),
+    #[error("WebSocket subscription ID exhausted")]
+    SubscriptionIdExhausted,
 }
 
 impl WsClientError {
@@ -72,6 +78,8 @@ impl WsClientError {
             WsClientError::ConnectionClosed => "WS_CONNECTION_CLOSED",
             WsClientError::MessageDispatcherClosed => "WS_MESSAGE_DISPATCHER_CLOSED",
             WsClientError::FailedToDeserializePayload => "WS_FAILED_TO_DESERIALIZE_PAYLOAD",
+            WsClientError::SendFailed(_) => "WS_SEND_FAILED",
+            WsClientError::SubscriptionIdExhausted => "WS_SUBSCRIPTION_ID_EXHAUSTED",
         }
     }
 }
@@ -107,6 +115,7 @@ pub async fn connect(
         };
 
         let ws_client = NtexWsClient::builder(uri)
+            .max_frame_size(16 * 1024 * 1024) // default is 64kB which is too small
             .protocols([WS_SUBPROTOCOL])
             .timeout(ntex::time::Seconds(60))
             .rustls(tls_config)
@@ -118,6 +127,7 @@ pub async fn connect(
         Ok(ws_client.connect().await?.seal())
     } else if scheme == "ws" {
         let ws_client = NtexWsClient::builder(uri)
+            .max_frame_size(16 * 1024 * 1024) // default is 64kB which is too small
             .protocols([WS_SUBPROTOCOL])
             .timeout(ntex::time::Seconds(60))
             .build(SharedCfg::default())
@@ -130,9 +140,12 @@ pub async fn connect(
     }
 }
 
+type WsResponse = Result<SubgraphResponse<'static>, WsClientError>;
+pub(crate) type WsResponseStream = LocalBoxStream<'static, WsResponse>;
+
 #[derive(Clone)]
 struct ClientSubscription {
-    sender: mpsc::Sender<SubgraphResponse<'static>>,
+    sender: mpsc::Sender<WsResponse>,
     custom_scalar_paths: Option<CustomScalarPaths>,
 }
 
@@ -147,14 +160,29 @@ type WsStateRef = Rc<RefCell<WsState<ClientSubscription>>>;
 /// Supports multiplexing multiple subscriptions over a single WebSocket connection,
 /// it does so by spawning a background task to handle incoming messages and dispatch them
 /// to the appropriate subscription streams as well as handling connection-level messages.
-pub struct WsClient {
+pub struct Connected {
+    connection: WsConnection<Sealed>,
+}
+
+pub struct Initialized {
     sink: ws::WsSink,
     state: WsStateRef,
     next_subscription_id: u64,
     _heartbeat_stop_tx: Option<oneshot::Sender<()>>,
+    dispatcher_done_rx: Option<oneshot::Receiver<WsClientError>>,
 }
 
-impl WsClient {
+pub struct WsClient<State> {
+    state: State,
+}
+
+impl WsClient<Connected> {
+    pub fn new(connection: WsConnection<Sealed>) -> Self {
+        Self {
+            state: Connected { connection },
+        }
+    }
+
     /// Initialize a new GraphQL over WebSocket client.
     ///
     /// This sends the connection init message and waits for the server to acknowledge.
@@ -164,13 +192,13 @@ impl WsClient {
     ///
     /// Returns an error if the connection is closed before acknowledgement.
     pub async fn init(
-        connection: WsConnection<Sealed>,
+        self,
         payload: Option<ConnectionInitPayload>,
-    ) -> Result<Self, WsInitError> {
+    ) -> Result<WsClient<Initialized>, WsInitError> {
         debug!(target: targets::WEBSOCKET_CLIENT, "Initialising WebSocket client connection");
 
-        let sink = connection.sink();
-        let mut receiver = connection.receiver();
+        let sink = self.state.connection.sink();
+        let mut receiver = self.state.connection.receiver();
 
         let (acknowledged_tx, acknowledged_rx) = oneshot::channel();
 
@@ -189,7 +217,7 @@ impl WsClient {
         ));
 
         // send init and wait for ack or connection close
-        let _ = sink.send(ClientMessage::init(payload)).await;
+        sink.send(ClientMessage::init(payload)).await?;
         loop {
             match receiver.next().await {
                 Some(Ok(frame)) => {
@@ -251,25 +279,47 @@ impl WsClient {
 
         let dispatcher_state = state.clone();
         let dispatcher_sink = sink.clone();
+        let (dispatcher_done_tx, dispatcher_done_rx) = oneshot::channel();
         rt::spawn(async move {
             let _guard = DispatcherGuard {
                 state: dispatcher_state.clone(),
             };
-            dispatch_loop(receiver, dispatcher_sink, dispatcher_state).await;
+            let error = dispatch_loop(receiver, dispatcher_sink, dispatcher_state.clone()).await;
+            for (_, subscription) in dispatcher_state.borrow_mut().subscriptions.drain() {
+                let _ = subscription.sender.send(Err(error.clone()));
+                subscription.sender.close();
+            }
+            let _ = dispatcher_done_tx.send(error);
         });
 
-        Ok(Self {
-            sink,
-            state,
-            next_subscription_id: 1,
-            _heartbeat_stop_tx: Some(heartbeat_stop_tx),
+        Ok(WsClient {
+            state: Initialized {
+                sink,
+                state,
+                next_subscription_id: 1,
+                _heartbeat_stop_tx: Some(heartbeat_stop_tx),
+                dispatcher_done_rx: Some(dispatcher_done_rx),
+            },
         })
     }
+}
 
-    fn next_subscription_id(&mut self) -> String {
-        let id = self.next_subscription_id;
-        self.next_subscription_id += 1;
-        id.to_string()
+impl WsClient<Initialized> {
+    fn next_subscription_id(&mut self) -> Result<String, WsClientError> {
+        let id = self.state.next_subscription_id;
+        self.state.next_subscription_id = self
+            .state
+            .next_subscription_id
+            .checked_add(1)
+            .ok_or(WsClientError::SubscriptionIdExhausted)?;
+        Ok(id.to_string())
+    }
+
+    pub fn take_dispatcher_done(&mut self) -> oneshot::Receiver<WsClientError> {
+        self.state
+            .dispatcher_done_rx
+            .take()
+            .expect("dispatcher completion receiver can only be taken once")
     }
 
     /// Execute a GraphQL operation (query, mutation, or subscription) over WebSocket.
@@ -282,12 +332,12 @@ impl WsClient {
         &mut self,
         subscribe_payload: SubscribePayload,
         custom_scalar_paths: Option<CustomScalarPaths>,
-    ) -> LocalBoxStream<'static, SubgraphResponse<'static>> {
-        let subscribe_id = self.next_subscription_id();
+    ) -> Result<WsResponseStream, WsClientError> {
+        let subscribe_id = self.next_subscription_id()?;
 
         let (tx, rx) = mpsc::channel();
 
-        self.state.borrow_mut().subscriptions.insert(
+        self.state.state.borrow_mut().subscriptions.insert(
             subscribe_id.clone(),
             ClientSubscription {
                 sender: tx,
@@ -295,36 +345,36 @@ impl WsClient {
             },
         );
 
-        let _ = self
+        let mut guard = SubscriptionGuard {
+            state: self.state.state.clone(),
+            sink: self.state.sink.clone(),
+            id: Some(subscribe_id.clone()),
+            send_complete: false,
+        };
+        self.state
             .sink
             .send(ClientMessage::subscribe(
                 subscribe_id.clone(),
                 subscribe_payload,
             ))
-            .await;
+            .await?;
+        guard.send_complete = true;
 
         trace!(target: targets::WEBSOCKET_CLIENT, subscription_id = %subscribe_id, "Subscribe message sent");
 
-        let state = self.state.clone();
-        let sink = self.sink.clone();
-
-        Box::pin(async_stream::stream! {
+        Ok(Box::pin(async_stream::stream! {
             let mut rx = rx;
-            let _guard = SubscriptionGuard {
-                state,
-                sink,
-                id: subscribe_id,
-            };
+            let _guard = guard;
 
             while let Some(response) = rx.next().await {
                 // the response specific to THIS subscription (matching by id)
                 yield response;
             }
-        })
+        }))
     }
 }
 
-impl Drop for WsClient {
+impl Drop for Initialized {
     fn drop(&mut self) {
         // heartbeat_stop_tx will be dropped automatically, stopping the heartbeat task
 
@@ -339,31 +389,30 @@ impl Drop for WsClient {
     }
 }
 
+/// Cleans up protocol state when a subscribe write is canceled before it completes.
+///
 /// Ensures a subscription is cleaned up when dropped.
 struct SubscriptionGuard {
     state: WsStateRef,
     sink: WsSink,
-    id: String,
+    id: Option<String>,
+    send_complete: bool,
 }
 
 impl Drop for SubscriptionGuard {
     fn drop(&mut self) {
+        let Some(id) = self.id.take() else {
+            return;
+        };
         // only send complete message if the subscription is still active - client cancelled.
         // if the server sent the complete/error message, the subscription would've been removed
         // by the dispatcher so no complete message would be sent from the client back to the server
-        if self
-            .state
-            .borrow_mut()
-            .subscriptions
-            .remove(&self.id)
-            .is_some()
-        {
-            let id = self.id.clone();
+        if self.state.borrow_mut().subscriptions.remove(&id).is_some() && self.send_complete {
             let sink = self.sink.clone();
 
             // sending is async, so spawn a task to do it
             rt::spawn(async move {
-                let _ = sink.send(ClientMessage::complete(id.clone())).await;
+                let _ = sink.send(ClientMessage::complete(id)).await;
             });
         }
     }
@@ -374,7 +423,7 @@ async fn dispatch_loop(
     mut receiver: mpsc::Receiver<Result<ws::Frame, WsError<()>>>,
     sink: WsSink,
     state: WsStateRef,
-) {
+) -> WsClientError {
     loop {
         match receiver.next().await {
             Some(Ok(frame)) => {
@@ -382,35 +431,29 @@ async fn dispatch_loop(
                     Ok(text) => {
                         if let Some(msg) = handle_text_frame(text, &state) {
                             if send_and_is_closed(sink.clone(), msg).await {
-                                return;
+                                return WsClientError::ConnectionClosed;
                             }
                         }
                     }
                     Err(FrameNotParsedToText::Message(msg)) => {
                         if send_and_is_closed(sink.clone(), msg).await {
-                            return;
+                            return WsClientError::ConnectionClosed;
                         }
                     }
                     Err(FrameNotParsedToText::Closed) => {
                         // notify all subscriptions that the connection was closed
-                        for (_, subscription) in state.borrow_mut().subscriptions.drain() {
-                            let _ = subscription
-                                .sender
-                                .send(WsClientError::ConnectionClosed.into());
-                            subscription.sender.close();
-                        }
-                        return;
+                        return WsClientError::ConnectionClosed;
                     }
                     Err(FrameNotParsedToText::None) => {}
                 }
             }
             Some(Err(e)) => {
                 error!(target: targets::WEBSOCKET_CLIENT, error = ?e, "Dispatch loop WebSocket receiver error");
-
-                return;
+                // TODO: should we return a message dispatcher error instead of closed?
+                return WsClientError::MessageDispatcherClosed;
             }
             None => {
-                return;
+                return WsClientError::MessageDispatcherClosed;
             }
         }
     }
@@ -426,7 +469,7 @@ impl Drop for DispatcherGuard {
         for (_, subscription) in self.state.borrow_mut().subscriptions.drain() {
             let _ = subscription
                 .sender
-                .send(WsClientError::ConnectionClosed.into());
+                .send(Err(WsClientError::ConnectionClosed));
             subscription.sender.close();
         }
     }
@@ -461,11 +504,11 @@ fn handle_text_frame(text: String, state: &WsStateRef) -> Option<ws::Message> {
                     payload_bytes,
                     subscription.custom_scalar_paths.as_ref(),
                 ) {
-                    Ok(response) => response,
+                    Ok(response) => Ok(response),
                     Err(e) => {
                         tracing::error!(target: targets::WEBSOCKET_CLIENT, error = ?e, "Failed to deserialize payload");
 
-                        WsClientError::FailedToDeserializePayload.into()
+                        Err(WsClientError::FailedToDeserializePayload)
                     }
                 };
                 // TODO: should we be strict and close the connection if id did not match any subscription?
@@ -475,10 +518,10 @@ fn handle_text_frame(text: String, state: &WsStateRef) -> Option<ws::Message> {
         }
         ServerMessage::Error { id, payload } => {
             if let Some(subscription) = state.borrow_mut().subscriptions.remove(&id) {
-                let _ = subscription.sender.send(SubgraphResponse {
+                let _ = subscription.sender.send(Ok(SubgraphResponse {
                     errors: Some(payload),
                     ..Default::default()
-                });
+                }));
                 subscription.sender.close();
             }
             None
@@ -534,7 +577,7 @@ mod tests {
 
         assert!(handle_text_frame(text, &state).is_none());
 
-        let response = rx.next().await.expect("response");
+        let response = rx.next().await.expect("response").expect("valid response");
         let data = response.data.as_object().unwrap();
         assert!(data[0].1.as_raw_json().is_some());
     }

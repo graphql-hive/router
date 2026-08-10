@@ -38,12 +38,67 @@ impl Default for TrafficShapingConfig {
     }
 }
 
+impl TrafficShapingConfig {
+    /// Returns whether WebSocket connections should be reused for a subgraph.
+    ///
+    /// A per-subgraph value takes precedence over the value configured in `all`.
+    pub fn websocket_reuse_connections(&self, subgraph_name: &str) -> bool {
+        self.subgraphs
+            .get(subgraph_name)
+            .and_then(|config| config.websocket.as_ref())
+            .and_then(|config| config.reuse_connections)
+            .or(self.all.websocket.reuse_connections)
+            .unwrap_or(true)
+    }
+
+    /// Returns how queries and mutations should be transported to a WebSocket-enabled subgraph.
+    ///
+    /// A per-subgraph value takes precedence over the value configured in `all`.
+    pub fn websocket_execute_mode(&self, subgraph_name: &str) -> WebSocketExecuteMode {
+        self.subgraphs
+            .get(subgraph_name)
+            .and_then(|config| config.websocket.as_ref())
+            .and_then(|config| config.execute_mode)
+            .or(self.all.websocket.execute_mode)
+            .unwrap_or_default()
+    }
+
+    /// Returns the idle timeout used by HTTP and pooled WebSocket connections for a subgraph.
+    ///
+    /// A per-subgraph value takes precedence over `traffic_shaping.all.pool_idle_timeout`.
+    pub fn pool_idle_timeout(&self, subgraph_name: &str) -> Duration {
+        self.subgraphs
+            .get(subgraph_name)
+            .and_then(|config| config.pool_idle_timeout)
+            .unwrap_or(self.all.pool_idle_timeout)
+    }
+
+    /// Returns whether any configured traffic-shaping rule can reuse WebSocket connections.
+    ///
+    /// This is used to avoid connection fingerprinting when pooling is disabled globally and for
+    /// every explicit subgraph override.
+    pub fn any_websocket_connection_reuse_enabled(&self) -> bool {
+        self.all.websocket.reuse_connections.unwrap_or(true)
+            || self.subgraphs.values().any(|config| {
+                config
+                    .websocket
+                    .as_ref()
+                    .and_then(|websocket| websocket.reuse_connections)
+                    .unwrap_or(false)
+            })
+    }
+}
+
 fn default_max_connections_per_host() -> usize {
     100
 }
 
 fn default_pool_idle_timeout() -> Duration {
     Duration::from_secs(50)
+}
+
+fn default_subgraph_pool_idle_timeout() -> Option<Duration> {
+    None
 }
 
 fn default_dedupe_enabled() -> bool {
@@ -57,7 +112,13 @@ fn default_router_dedupe_enabled() -> bool {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TrafficShapingExecutorSubgraphConfig {
-    /// Timeout for idle sockets being kept-alive.
+    /// Overrides how long idle pooled connections for this subgraph remain available for reuse.
+    ///
+    /// This timeout applies to both the HTTP connection pool and pooled WebSocket connections for
+    /// this subgraph. Active WebSocket operations are never expired by this setting. Their idle
+    /// timer starts only after the last operation on the pooled connection finishes.
+    ///
+    /// When omitted, `traffic_shaping.all.pool_idle_timeout` is used.
     #[serde(
         deserialize_with = "humantime_serde::deserialize",
         serialize_with = "humantime_serde::serialize",
@@ -116,12 +177,132 @@ pub struct TrafficShapingExecutorSubgraphConfig {
     /// This setting takes precedence over the value set in `all` section.
     #[serde(default)]
     pub forward_operation_name: Option<bool>,
+
+    /// Overrides WebSocket connection reuse and execution behavior for this subgraph.
+    ///
+    /// Omitted fields inherit their values from `traffic_shaping.all.websocket`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub websocket: Option<TrafficShapingWebSocketConfig>,
+}
+
+/// Controls which transport queries and mutations use for WebSocket-enabled subgraphs.
+///
+/// This setting does not select the subscription protocol. WebSocket support and endpoint paths
+/// are declared under `subscriptions.websocket`. It only controls whether ordinary query and
+/// mutation fetches may use those declared WebSocket endpoints.
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WebSocketExecuteMode {
+    /// Always executes queries and mutations over HTTP.
+    ///
+    /// WebSocket subscriptions are unaffected and may still reuse connections when
+    /// `reuse_connections` is enabled.
+    #[default]
+    Http,
+    /// Uses an already initialized matching WebSocket connection when one exists.
+    ///
+    /// A missing or still-connecting pool entry immediately falls back to HTTP. Queries and
+    /// mutations never create or wait for a WebSocket in this mode.
+    ReuseExisting,
+    /// Executes queries and mutations over WebSocket.
+    ///
+    /// With `reuse_connections` enabled, a missing connection is initialized lazily and
+    /// concurrent operations wait for the same initialization. With reuse disabled, every
+    /// operation creates its own WebSocket connection.
+    Websocket,
+}
+
+/// WebSocket traffic-shaping behavior used by both `all` and per-subgraph configuration.
+///
+/// Fields are optional so a subgraph can override one behavior while inheriting the other from
+/// `traffic_shaping.all.websocket`. Fields omitted from `all` use their documented defaults.
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TrafficShapingWebSocketConfig {
+    /// Enables multiplexing operations over matching initialized WebSocket connections.
+    ///
+    /// When enabled, subscriptions retain initialized connections in a pool and can share one
+    /// physical connection. Queries and mutations use that pool according to `execute_mode`.
+    /// When disabled, each WebSocket operation owns a dedicated connection.
+    ///
+    /// A pooled connection is discovered using two values:
+    ///
+    /// 1. The resolved WebSocket endpoint. Endpoint overrides and expressions are evaluated first,
+    ///    then the configured WebSocket path is applied. Connections to different resolved
+    ///    endpoints are never considered a match.
+    /// 2. The inbound connection fingerprint. This fingerprint contains the inbound HTTP method,
+    ///    request path, selected inbound headers, and schema checksum. It deliberately excludes the
+    ///    GraphQL operation, variables, and extensions, allowing different operations from the
+    ///    same connection identity to share one physical WebSocket.
+    ///
+    /// Header selection uses `traffic_shaping.router.dedupe.headers`, even when router request
+    /// deduplication itself is disabled. The default is `all`. If a custom header selection is
+    /// configured, it must include every inbound header that can change the authentication,
+    /// authorization, cookie, or tenant identity sent in `connection_init`. Excluding such a
+    /// header can make requests with different identities appear to match and reuse the same
+    /// authenticated connection.
+    ///
+    /// A subscription can create the matching pool entry. With `execute_mode: reuse_existing`, a
+    /// query or mutation uses the connection only after it is fully initialized. A missing entry
+    /// or one still waiting for `connection_ack` falls back to HTTP. With
+    /// `execute_mode: websocket`, queries and mutations may create a missing entry or join an
+    /// initialization already in progress.
+    ///
+    /// For example, the following configuration lets subscriptions create shared connections and
+    /// lets queries and mutations reuse them when available:
+    ///
+    /// ```yaml
+    /// traffic_shaping:
+    ///   all:
+    ///     websocket:
+    ///       reuse_connections: true
+    ///       execute_mode: reuse_existing
+    ///   router:
+    ///     dedupe:
+    ///       headers:
+    ///         include: [authorization, cookie, x-tenant]
+    /// ```
+    ///
+    /// The following keeps reuse enabled globally but gives one subgraph a dedicated connection
+    /// for every WebSocket operation:
+    ///
+    /// ```yaml
+    /// traffic_shaping:
+    ///   all:
+    ///     websocket:
+    ///       reuse_connections: true
+    ///   subgraphs:
+    ///     payments:
+    ///       websocket:
+    ///         reuse_connections: false
+    /// ```
+    ///
+    /// Idle pooled connections use the effective `pool_idle_timeout` from traffic shaping. At the
+    /// `all` level `reuse_connections` defaults to `true`. At the per-subgraph level omission
+    /// inherits the `all` value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reuse_connections: Option<bool>,
+
+    /// Controls whether queries and mutations use WebSocket-enabled subgraphs.
+    ///
+    /// The default is `http`, preserving HTTP execution unless WebSocket execution is explicitly
+    /// enabled. Subscriptions continue to use the protocol selected under `subscriptions`.
+    /// At the per-subgraph level omission inherits the `all` value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execute_mode: Option<WebSocketExecuteMode>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TrafficShapingExecutorGlobalConfig {
-    /// Timeout for idle sockets being kept-alive.
+    /// Controls how long idle pooled connections remain available for reuse by default.
+    ///
+    /// This timeout applies to both HTTP connection pools and pooled WebSocket connections for
+    /// every subgraph that does not provide an override. Active WebSocket operations are never
+    /// expired by this setting. Their idle timer starts only after the last operation on the
+    /// pooled connection finishes.
+    ///
+    /// Defaults to 50 seconds.
     #[serde(
         default = "default_pool_idle_timeout",
         deserialize_with = "humantime_serde::deserialize",
@@ -181,10 +362,12 @@ pub struct TrafficShapingExecutorGlobalConfig {
     /// Format: <Client Operation Name>__<Fetch Node ID>
     #[serde(default)]
     pub forward_operation_name: bool,
-}
 
-fn default_subgraph_pool_idle_timeout() -> Option<Duration> {
-    None
+    /// Default WebSocket connection reuse and execution behavior for subgraphs.
+    ///
+    /// Per-subgraph values under `traffic_shaping.subgraphs.<name>.websocket` take precedence.
+    #[serde(default)]
+    pub websocket: TrafficShapingWebSocketConfig,
 }
 
 fn default_request_timeout() -> DurationOrExpression {
@@ -215,6 +398,7 @@ impl Default for TrafficShapingExecutorGlobalConfig {
             tls: None,
             allow_only_http2: false,
             forward_operation_name: false,
+            websocket: Default::default(),
         }
     }
 }
