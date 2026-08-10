@@ -143,11 +143,24 @@ pub fn set_summary_attribute(key: impl Into<String>, value: impl Into<sonic_rs::
     summary::record(|s| s.set_custom(key, value));
 }
 
+/// Returns the current request log summary for the current request, if one exists.
+pub fn get_current_summary() -> Option<Arc<summary::RequestSummary>> {
+    summary::current_summary()
+}
+
 /// Lets plugins attach a custom correlation to every log line of the current request (not
-/// just the summary), e.g. a tenant or project id extracted from the URL. Setting the same
-/// key again overwrites the previous value. A no-op outside a request.
+/// just the summary), e.g. a tenant or project id extracted from the URL.
+/// Setting the same key again overwrites the previous value. A no-op outside a request.
 pub fn set_log_correlation(key: impl Into<String>, value: impl std::fmt::Display) {
     request_id::set_correlation(key, value);
+}
+
+/// Lets plugins override the request summary log line's message.
+/// This can be called only once per request, and only during the request's lifetime.
+/// Calling it more than once, for the same request is a no-op.
+/// Calling it outside of a request is a no-op.
+pub fn set_summary_message(message: impl Into<std::borrow::Cow<'static, str>>) {
+    summary::record(|s| s.set_message(message));
 }
 
 #[inline]
@@ -225,11 +238,14 @@ async fn graphql_endpoint_handler(
     }
     .await;
 
-    // for streamed responses the summary must be emitted when the stream ends, not now
-    // we do that by attaching the summary guard to the response body, so it will be emitted
-    // when the stream terminates (or the client disconnects)
     if response_mode.can_stream() {
+        // Streamed responses must defer printing until the stream ends (or disconnects), not
+        // now - attaching the guard to the response body achieves that.
         response = summary_guard.attach_to_response(response);
+    } else {
+        // Store the guard in the response's own extensions instead of allowing it to drop now.
+        // This allows us to emit the summary log line only after the response really completes sending
+        response.extensions_mut().insert(summary_guard);
     }
 
     let graphql_operation = read_graphql_operation_metric_identity(&request);
