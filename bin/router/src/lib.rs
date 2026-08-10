@@ -191,7 +191,7 @@ async fn graphql_endpoint_handler(
         .capture_request(&request);
 
     let started_at = std::time::Instant::now();
-    let (mut response, summary_guard) = async {
+    let (response_mode, mut response, summary_guard) = async {
         let summary_guard = summary::SummaryOnDrop::new(started_at);
         debug!(
             target: targets::HTTP_SERVER,
@@ -204,7 +204,7 @@ async fn graphql_endpoint_handler(
             "http request started",
         );
 
-        let inner_res = graphql_endpoint_dispatch(
+        let (response_mode, inner_res) = graphql_endpoint_dispatch(
             &mut request,
             body_stream,
             schema_state,
@@ -234,11 +234,19 @@ async fn graphql_endpoint_handler(
                 .store(payload_bytes, std::sync::atomic::Ordering::Relaxed);
         });
 
-        (inner_res, summary_guard)
+        (response_mode, inner_res, summary_guard)
     }
     .await;
 
-    response = summary_guard.attach_to_response(response);
+    if response_mode.can_stream() {
+        // Streamed responses must defer printing until the stream ends (or disconnects), not
+        // now - attaching the guard to the response body achieves that.
+        response = summary_guard.attach_to_response(response);
+    } else {
+        // Store the guard in the response's own extensions instead of allowing it to drop now.
+        // This allows us to emit the summary log line only after the response really completes sending
+        response.extensions_mut().insert(summary_guard);
+    }
 
     let graphql_operation = read_graphql_operation_metric_identity(&request);
     let graphql_operation_name = graphql_operation
@@ -267,7 +275,7 @@ async fn graphql_endpoint_dispatch(
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
     parent_ctx: opentelemetry::Context,
-) -> web::HttpResponse {
+) -> (ResponseMode, web::HttpResponse) {
     let root_http_request_span = HttpServerRequestSpan::from_request(
         request,
         &app_state
@@ -351,7 +359,7 @@ async fn graphql_endpoint_dispatch(
 
         root_http_request_span.record_response(&response);
 
-        response
+        (response_mode, response)
     }
     .instrument(root_http_request_span.clone())
     .await
