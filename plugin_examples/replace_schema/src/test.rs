@@ -136,7 +136,7 @@ mod tests {
             async_trait,
             plugins::{
                 hooks::{
-                    on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
+                    on_http_request::{OnHttpRequestHookFuture, OnHttpRequestHookPayload},
                     on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
                     on_supergraph_load::Supergraph,
                 },
@@ -170,18 +170,20 @@ mod tests {
             fn on_http_request<'req>(
                 &'req self,
                 payload: OnHttpRequestHookPayload<'req>,
-            ) -> OnHttpRequestHookResult<'req> {
-                let variant = payload
-                    .router_http_request
-                    .headers()
-                    .get("x-schema-variant")
-                    .and_then(|value| value.to_str().ok());
+            ) -> OnHttpRequestHookFuture<'req> {
+                Box::pin(async move {
+                    let variant = payload
+                        .router_http_request
+                        .headers()
+                        .get("x-schema-variant")
+                        .and_then(|value| value.to_str().ok());
 
-                if variant == Some("basic") {
-                    payload.set_supergraph(self.broken_variant.clone());
-                }
+                    if variant == Some("basic") {
+                        payload.set_supergraph(self.broken_variant.clone());
+                    }
 
-                payload.proceed()
+                    payload.proceed()
+                })
             }
         }
     }

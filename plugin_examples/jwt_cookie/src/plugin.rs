@@ -7,7 +7,7 @@ use hive_router::{
     plugins::{
         hooks::{
             on_graphql_params::{OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult},
-            on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
+            on_http_request::{OnHttpRequestHookFuture, OnHttpRequestHookPayload},
             on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
             on_subgraph_execute::{
                 OnSubgraphExecuteStartHookPayload, OnSubgraphExecuteStartHookResult,
@@ -224,37 +224,39 @@ impl RouterPlugin for JwtCookiePlugin {
     fn on_http_request<'exec>(
         &'exec self,
         payload: OnHttpRequestHookPayload<'exec>,
-    ) -> OnHttpRequestHookResult<'exec> {
-        payload.on_end(|payload| {
-            if let Some(ctx) = payload.context.get_ref::<JwtCookieContext>() {
-                // If the token was refreshed or newly obtained, set the new JWT token and refresh token in the response cookies
-                if let JwtCookieContext::Refreshed {
-                    ref jwt_token,
-                    ref refresh_token,
-                    ref expired_at,
-                } = *ctx
-                {
-                    // Cookie expiry is different than JWT expiry
-                    // Set the new JWT token and refresh token in the response cookies
-                    let set_jwt_cookie = create_set_cookie(JWT_TOKEN_NAME, jwt_token);
-                    let set_refresh_cookie =
-                        create_set_cookie(JWT_REFRESH_TOKEN_NAME, refresh_token);
-                    let expired_at = create_set_cookie(
-                        JWT_EXPIRED_AT_NAME,
-                        &expired_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-                    );
-                    return payload
-                        .map_response(|mut response| {
-                            let headers = response.headers_mut();
-                            headers.append(SET_COOKIE, set_jwt_cookie);
-                            headers.append(SET_COOKIE, set_refresh_cookie);
-                            headers.append(SET_COOKIE, expired_at);
-                            response
-                        })
-                        .proceed();
+    ) -> OnHttpRequestHookFuture<'exec> {
+        Box::pin(async move {
+            payload.on_end(|payload| {
+                if let Some(ctx) = payload.context.get_ref::<JwtCookieContext>() {
+                    // If the token was refreshed or newly obtained, set the new JWT token and refresh token in the response cookies
+                    if let JwtCookieContext::Refreshed {
+                        ref jwt_token,
+                        ref refresh_token,
+                        ref expired_at,
+                    } = *ctx
+                    {
+                        // Cookie expiry is different than JWT expiry
+                        // Set the new JWT token and refresh token in the response cookies
+                        let set_jwt_cookie = create_set_cookie(JWT_TOKEN_NAME, jwt_token);
+                        let set_refresh_cookie =
+                            create_set_cookie(JWT_REFRESH_TOKEN_NAME, refresh_token);
+                        let expired_at = create_set_cookie(
+                            JWT_EXPIRED_AT_NAME,
+                            &expired_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                        );
+                        return payload
+                            .map_response(|mut response| {
+                                let headers = response.headers_mut();
+                                headers.append(SET_COOKIE, set_jwt_cookie);
+                                headers.append(SET_COOKIE, set_refresh_cookie);
+                                headers.append(SET_COOKIE, expired_at);
+                                response
+                            })
+                            .proceed();
+                    }
                 }
-            }
-            payload.proceed()
+                payload.proceed()
+            })
         })
     }
 }

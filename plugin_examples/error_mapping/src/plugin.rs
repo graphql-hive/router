@@ -10,7 +10,7 @@ use hive_router::{
     plugins::{
         hooks::{
             on_graphql_error::{OnGraphQLErrorHookPayload, OnGraphQLErrorHookResult},
-            on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
+            on_http_request::{OnHttpRequestHookFuture, OnHttpRequestHookPayload},
             on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
         },
         plugin_trait::{EndHookPayload, RouterPlugin, StartHookPayload},
@@ -82,22 +82,24 @@ impl RouterPlugin for ErrorMappingPlugin {
     fn on_http_request<'req>(
         &'req self,
         payload: OnHttpRequestHookPayload<'req>,
-    ) -> OnHttpRequestHookResult<'req> {
-        payload.on_end(move |payload| {
-            let mapped_errors_count = payload
-                .context
-                .get_ref::<ErrorMappingCtx>()
-                .map(|ctx| ctx.count);
-            payload
-                .map_response(move |mut response| {
-                    if let Some(count) = mapped_errors_count {
+    ) -> OnHttpRequestHookFuture<'req> {
+        Box::pin(async move {
+            payload.on_end(move |payload| {
+                let mapped_errors_count = payload
+                    .context
+                    .get_ref::<ErrorMappingCtx>()
+                    .map(|ctx| ctx.count);
+                payload
+                    .map_response(move |mut response| {
+                        if let Some(count) = mapped_errors_count {
+                            response
+                                .headers_mut()
+                                .insert(MAPPED_ERRORS_COUNT_HEADER, HeaderValue::from(count));
+                        }
                         response
-                            .headers_mut()
-                            .insert(MAPPED_ERRORS_COUNT_HEADER, HeaderValue::from(count));
-                    }
-                    response
-                })
-                .proceed()
+                    })
+                    .proceed()
+            })
         })
     }
 }
