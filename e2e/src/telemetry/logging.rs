@@ -8,7 +8,7 @@ use crate::{
 };
 use hive_router::{
     async_trait,
-    plugins::hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
+    plugins::hooks::on_http_request::{OnHttpRequestHookFuture, OnHttpRequestHookPayload},
     plugins::hooks::on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
     plugins::plugin_trait::{RouterPlugin, StartHookPayload},
     set_summary_attribute, set_summary_message,
@@ -700,19 +700,21 @@ impl RouterPlugin for TestDebugLogPlugin {
     fn on_http_request<'req>(
         &self,
         payload: OnHttpRequestHookPayload<'req>,
-    ) -> OnHttpRequestHookResult<'req> {
-        debug!("i'm just a test");
-        set_summary_message("custom summary message from plugin");
-        set_summary_attribute("test_debug_log.simple", "hello-from-plugin");
-        set_summary_attribute(
-            "test_debug_log.nested",
-            json!({
-                "flag": true,
-                "count": 3,
-                "tags": ["a", "b"],
-            }),
-        );
-        payload.proceed()
+    ) -> OnHttpRequestHookFuture<'req> {
+        Box::pin(async move {
+            debug!("i'm just a test");
+            set_summary_message("custom summary message from plugin");
+            set_summary_attribute("test_debug_log.simple", "hello-from-plugin");
+            set_summary_attribute(
+                "test_debug_log.nested",
+                json!({
+                    "flag": true,
+                    "count": 3,
+                    "tags": ["a", "b"],
+                }),
+            );
+            payload.proceed()
+        })
     }
 }
 
