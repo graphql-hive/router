@@ -234,17 +234,17 @@ mod tests {
                 },
             )
             .await;
-        e2e::insta::assert_snapshot!(res.json_body_string_pretty().await, @r###"
+        e2e::insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "errors": [
             {
-              "message": "Supergraph runtime error",
+              "message": "Internal server error",
               "extensions": {
                 "code": "SUPERGRAPH_RUNTIME_ERROR"
               }
             }
           ]
         }
-        "###);
+        "#);
     }
 }

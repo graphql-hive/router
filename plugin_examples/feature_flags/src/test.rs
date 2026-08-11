@@ -205,18 +205,18 @@ mod tests {
             )
             .await;
 
-        e2e::insta::assert_snapshot!(res.json_body_string_pretty().await, @r###"
+        e2e::insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "errors": [
             {
-              "message": "Supergraph runtime error",
+              "message": "Internal server error",
               "extensions": {
                 "code": "SUPERGRAPH_RUNTIME_ERROR"
               }
             }
           ]
         }
-        "###);
+        "#);
     }
 
     #[ntex::test]
@@ -250,17 +250,17 @@ mod tests {
             )
             .await;
 
-        e2e::insta::assert_snapshot!(res.json_body_string_pretty().await, @r###"
+        e2e::insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
         {
           "errors": [
             {
-              "message": "No supergraph available yet, unable to process request",
+              "message": "Internal server error",
               "extensions": {
                 "code": "NO_SUPERGRAPH_AVAILABLE"
               }
             }
           ]
         }
-        "###);
+        "#);
     }
 }

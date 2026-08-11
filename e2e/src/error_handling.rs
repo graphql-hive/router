@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod error_handling_e2e_tests {
-    use crate::testkit::{ClientResponseExt, ResponseLike, TestRouter, TestSubgraphs};
+    use crate::testkit::{
+        coprocessor::TestCoprocessor, ClientResponseExt, ResponseLike, TestRouter, TestSubgraphs,
+    };
 
     #[ntex::test]
     async fn should_continue_execution_when_a_subgraph_is_down() {
@@ -665,5 +667,109 @@ mod error_handling_e2e_tests {
         }
         "#
         );
+    }
+
+    #[ntex::test]
+    async fn should_return_full_message_for_a_client_caused_error() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: supergraph.graphql
+                "#
+                .to_string(),
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ i bad query", None, None)
+            .await;
+
+        assert_eq!(
+            res.status().as_u16(),
+            400,
+            "client-caused errors keep their real HTTP status"
+        );
+
+        insta::assert_snapshot!(
+            res.json_body_string_pretty().await,
+            @r#"
+        {
+          "errors": [
+            {
+              "message": "Failed to parse GraphQL operation: Parse error at 1:14\nUnexpected end of input\nExpected }\n",
+              "extensions": {
+                "code": "GRAPHQL_PARSE_FAILED"
+              }
+            }
+          ]
+        }
+        "#
+        );
+    }
+
+    #[ntex::test]
+    async fn should_return_generic_message_for_an_internal_error() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let mut coprocessor = TestCoprocessor::new().await;
+        let host = coprocessor.host_with_port();
+
+        let request_stage_mock = coprocessor
+            .mock_stage("graphql.request")
+            .with_status(500)
+            .with_body("some sensitive internal coprocessor failure detail")
+            .expect(1)
+            .create();
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: supergraph.graphql
+                  coprocessor:
+                    url: http://{host}/coprocessor
+                    protocol: http1
+                    stages:
+                      graphql:
+                        request:
+                          include:
+                            body: [query]
+                "#,
+            ))
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ topProducts { name } }", None, None)
+            .await;
+
+        assert_eq!(res.status().as_u16(), 500, "internal errors return 500");
+
+        insta::assert_snapshot!(
+            res.json_body_string_pretty().await,
+            @r#"
+        {
+          "errors": [
+            {
+              "message": "Internal server error",
+              "extensions": {
+                "code": "COPROCESSOR_UNEXPECTED_STATUS"
+              }
+            }
+          ]
+        }
+        "#
+        );
+
+        request_stage_mock.assert_async().await;
     }
 }

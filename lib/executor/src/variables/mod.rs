@@ -5,50 +5,87 @@ use sonic_rs::{JsonNumberTrait, Value, ValueRef};
 
 use crate::introspection::schema::SchemaMetadata;
 
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum VariableCoercionError {
+    #[error("Variable \"${name}\" of required type \"{type_name}\" was not provided.")]
+    MissingNonNullableVariable { name: String, type_name: String },
+
+    #[error("Expected value of non-null type \"{type_name}\" not to be null.")]
+    UnexpectedNull { type_name: String },
+
+    #[error("Value \"{value}\" does not exist in \"{type_name}\" enum.")]
+    InvalidEnumValue { value: String, type_name: String },
+
+    #[error("Enum \"{type_name}\" cannot represent non-string value: {value}.")]
+    ExpectedEnumString { type_name: String, value: String },
+
+    #[error("Expected value of type \"{type_name}\" to include required field \"{field_name}\".")]
+    MissingField {
+        field_name: String,
+        type_name: String,
+    },
+
+    #[error("Expected value of type \"{type_name}\" to be an object, found: {value}.")]
+    ExpectedObject { type_name: String, value: String },
+
+    #[error("String cannot represent a non string value: {value}.")]
+    ExpectedString { value: String },
+
+    #[error("ID cannot represent value: {value}.")]
+    ExpectedId { value: String },
+
+    #[error("Int cannot represent non-integer value: {value}.")]
+    ExpectedInteger { value: String },
+
+    #[error("Float cannot represent non numeric value: {value}.")]
+    ExpectedFloat { value: String },
+
+    #[error("Boolean cannot represent a non boolean value: {value}.")]
+    ExpectedBoolean { value: String },
+}
+
 #[inline]
 pub fn collect_variables(
     operation: &hive_router_query_planner::ast::operation::OperationDefinition,
     variables_map: &mut HashMap<String, Value>,
     schema_metadata: &SchemaMetadata,
-) -> Result<Option<HashMap<String, Value>>, String> {
+) -> Result<Option<HashMap<String, Value>>, VariableCoercionError> {
     if operation.variable_definitions.is_none() {
         return Ok(None);
     }
     let variable_definitions = operation.variable_definitions.as_ref().unwrap();
 
-    let collected_variables: Result<Vec<Option<(String, Value)>>, String> = variable_definitions
-        .iter()
-        .map(|variable_definition| {
-            let variable_name = variable_definition.name.as_str();
-            if let Some(variable_value) = variables_map.remove(variable_name) {
-                validate_runtime_value(
-                    variable_value.as_ref(),
-                    &variable_definition.variable_type,
-                    schema_metadata,
-                )?;
-                return Ok(Some((variable_name.to_string(), variable_value)));
-            }
-            if let Some(default_value) = &variable_definition.default_value {
-                // Assuming value_from_ast now returns Result<Value, String> or similar
-                // and needs to be adapted if it returns Option or panics.
-                // For now, let's assume it can return an Err that needs to be propagated.
-                let default_value_coerced: Value = default_value.into();
-                validate_runtime_value(
-                    default_value_coerced.as_ref(),
-                    &variable_definition.variable_type,
-                    schema_metadata,
-                )?;
-                return Ok(Some((variable_name.to_string(), default_value_coerced)));
-            }
-            if variable_definition.variable_type.is_non_null() {
-                return Err(format!(
-                    "Variable '{}' is non-nullable but no value was provided",
-                    variable_name
-                ));
-            }
-            Ok(None)
-        })
-        .collect();
+    let collected_variables: Result<Vec<Option<(String, Value)>>, VariableCoercionError> =
+        variable_definitions
+            .iter()
+            .map(|variable_definition| {
+                let variable_name = variable_definition.name.as_str();
+                if let Some(variable_value) = variables_map.remove(variable_name) {
+                    validate_runtime_value(
+                        variable_value.as_ref(),
+                        &variable_definition.variable_type,
+                        schema_metadata,
+                    )?;
+                    return Ok(Some((variable_name.to_string(), variable_value)));
+                }
+                if let Some(default_value) = &variable_definition.default_value {
+                    let default_value_coerced: Value = default_value.into();
+                    validate_runtime_value(
+                        default_value_coerced.as_ref(),
+                        &variable_definition.variable_type,
+                        schema_metadata,
+                    )?;
+                    return Ok(Some((variable_name.to_string(), default_value_coerced)));
+                }
+                if variable_definition.variable_type.is_non_null() {
+                    return Err(VariableCoercionError::MissingNonNullableVariable {
+                        name: variable_name.to_string(),
+                        type_name: variable_definition.variable_type.to_string(),
+                    });
+                }
+                Ok(None)
+            })
+            .collect();
 
     let variable_values: HashMap<String, Value> =
         collected_variables?.into_iter().flatten().collect();
@@ -65,10 +102,12 @@ fn validate_runtime_value(
     value: ValueRef,
     type_node: &TypeNode,
     schema_metadata: &SchemaMetadata,
-) -> Result<(), String> {
+) -> Result<(), VariableCoercionError> {
     if let ValueRef::Null = value {
         return if type_node.is_non_null() {
-            Err("Value cannot be null for non-nullable type".to_string())
+            Err(VariableCoercionError::UnexpectedNull {
+                type_name: type_node.to_string(),
+            })
         } else {
             Ok(())
         };
@@ -78,16 +117,16 @@ fn validate_runtime_value(
             if let Some(enum_values) = schema_metadata.enum_values.get(name) {
                 if let ValueRef::String(ref s) = value {
                     if !enum_values.contains(&s.to_string()) {
-                        return Err(format!(
-                            "Value '{}' is not a valid enum value for type '{}'",
-                            s, name
-                        ));
+                        return Err(VariableCoercionError::InvalidEnumValue {
+                            value: s.to_string(),
+                            type_name: name.clone(),
+                        });
                     }
                 } else {
-                    return Err(format!(
-                        "Expected a string for enum type '{}', got {:?}",
-                        name, value
-                    ));
+                    return Err(VariableCoercionError::ExpectedEnumString {
+                        type_name: name.clone(),
+                        value: format!("{:?}", value),
+                    });
                 }
             } else if let Some(fields) = schema_metadata.type_fields.get(name) {
                 if let ValueRef::Object(obj) = value {
@@ -99,17 +138,17 @@ fn validate_runtime_value(
                                 schema_metadata,
                             )?;
                         } else {
-                            return Err(format!(
-                                "Missing field '{}' for type '{}'",
-                                field_name, name
-                            ));
+                            return Err(VariableCoercionError::MissingField {
+                                field_name: field_name.clone(),
+                                type_name: name.clone(),
+                            });
                         }
                     }
                 } else {
-                    return Err(format!(
-                        "Expected an object for type '{}', got {:?}",
-                        name, value
-                    ));
+                    return Err(VariableCoercionError::ExpectedObject {
+                        type_name: name.clone(),
+                        value: format!("{:?}", value),
+                    });
                 }
             } else {
                 return match name.as_str() {
@@ -117,61 +156,50 @@ fn validate_runtime_value(
                         if let ValueRef::String(_) = value {
                             Ok(())
                         } else {
-                            Err(format!(
-                                "Expected a string for type '{}', got {:?}",
-                                name, value
-                            ))
-                        }
-                    }
-                    "Int" => {
-                        if let ValueRef::Number(ref num) = value {
-                            if num.is_i64() {
-                                Ok(())
-                            } else {
-                                Err(format!(
-                                    "Expected an integer for type '{}', got {:?}",
-                                    name, value
-                                ))
-                            }
-                        } else {
-                            Err(format!(
-                                "Expected a number for type '{}', got {:?}",
-                                name, value
-                            ))
-                        }
-                    }
-                    "Float" => {
-                        if let ValueRef::Number(ref num) = value {
-                            if num.is_f64() || num.is_i64() {
-                                Ok(())
-                            } else {
-                                Err(format!(
-                                    "Expected a float for type '{}', got {:?}",
-                                    name, value
-                                ))
-                            }
-                        } else {
-                            Err(format!(
-                                "Expected a number for type '{}', got {:?}",
-                                name, value
-                            ))
-                        }
-                    }
-                    "Boolean" => {
-                        if let ValueRef::Bool(_) = value {
-                            Ok(())
-                        } else {
-                            Err(format!(
-                                "Expected a boolean for type '{}', got {:?}",
-                                name, value
-                            ))
+                            Err(VariableCoercionError::ExpectedString {
+                                value: format!("{:?}", value),
+                            })
                         }
                     }
                     "ID" => {
                         if let ValueRef::String(_) = value {
                             Ok(())
                         } else {
-                            Err(format!("Expected a string for type 'ID', got {:?}", value))
+                            Err(VariableCoercionError::ExpectedId {
+                                value: format!("{:?}", value),
+                            })
+                        }
+                    }
+                    "Int" => {
+                        let is_valid = matches!(value, ValueRef::Number(ref num) if num.is_i64());
+                        if is_valid {
+                            Ok(())
+                        } else {
+                            Err(VariableCoercionError::ExpectedInteger {
+                                value: format!("{:?}", value),
+                            })
+                        }
+                    }
+                    "Float" => {
+                        let is_valid = matches!(
+                            value,
+                            ValueRef::Number(ref num) if num.is_f64() || num.is_i64()
+                        );
+                        if is_valid {
+                            Ok(())
+                        } else {
+                            Err(VariableCoercionError::ExpectedFloat {
+                                value: format!("{:?}", value),
+                            })
+                        }
+                    }
+                    "Boolean" => {
+                        if let ValueRef::Bool(_) = value {
+                            Ok(())
+                        } else {
+                            Err(VariableCoercionError::ExpectedBoolean {
+                                value: format!("{:?}", value),
+                            })
                         }
                     }
                     _ => Ok(()),

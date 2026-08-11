@@ -11,7 +11,7 @@ use std::sync::LazyLock;
 use strum::{AsRefStr, EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
 use tracing::warn;
 
-use crate::pipeline::error::PipelineError;
+use crate::pipeline::error::{ClientPipelineError, PipelineError};
 
 /// Non-GraphQL content type, used to detect if the client can accept Laboratory responses.
 pub const TEXT_HTML_MIME: &str = "text/html";
@@ -262,7 +262,7 @@ impl RequestAccepts for HttpRequest {
         let accept = Accept::from_str(accept_header).map_err(|err| {
             warn!(target: targets::HTTP_SERVER, error = ?err, "failed to parse Accept header");
 
-            PipelineError::InvalidHeaderValue(ACCEPT)
+            ClientPipelineError::InvalidHeaderValue(ACCEPT)
         })?;
 
         // strip multipart/mixed boundaries before negotiation since the server chooses the response boundary
@@ -317,7 +317,7 @@ impl RequestAccepts for HttpRequest {
             // at this point we treat no content type as "user explicitly does not support any known types"
             // this is because only empty accept header or */* is treated as "accept everything" and we check
             // that above
-            (None, None) => Err(PipelineError::UnsupportedContentType),
+            (None, None) => Err(ClientPipelineError::UnsupportedContentType.into()),
         }
     }
 }
@@ -481,7 +481,12 @@ mod tests {
             .to_http_request();
         let result = request.negotiate(false);
         assert!(
-            matches!(result, Err(PipelineError::UnsupportedContentType)),
+            matches!(
+                result,
+                Err(PipelineError::Client(
+                    ClientPipelineError::UnsupportedContentType
+                ))
+            ),
             "expected UnsupportedContentType, got {:?}",
             result
         );
