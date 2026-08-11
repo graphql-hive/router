@@ -5,7 +5,7 @@ use hive_router::{
     ntex::http::ResponseBuilder,
     plugins::{
         hooks::{
-            on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
+            on_http_request::{OnHttpRequestHookFuture, OnHttpRequestHookPayload},
             on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
         },
         plugin_trait::{RouterPlugin, StartHookPayload},
@@ -149,17 +149,19 @@ impl RouterPlugin for ApolloSandboxPlugin {
     fn on_http_request<'req>(
         &'req self,
         payload: OnHttpRequestHookPayload<'req>,
-    ) -> OnHttpRequestHookResult<'req> {
-        if payload.router_http_request.path() == "/apollo-sandbox" {
-            return payload.end_with_response(
-                ResponseBuilder::new(StatusCode::OK)
-                    .header(
-                        CONTENT_TYPE,
-                        HeaderValue::from_static("text/html; charset=utf-8"),
-                    )
-                    .body(self.html.clone()),
-            );
-        }
-        payload.proceed()
+    ) -> OnHttpRequestHookFuture<'req> {
+        Box::pin(async move {
+            if payload.router_http_request.path() == "/apollo-sandbox" {
+                return payload.end_with_response(
+                    ResponseBuilder::new(StatusCode::OK)
+                        .header(
+                            CONTENT_TYPE,
+                            HeaderValue::from_static("text/html; charset=utf-8"),
+                        )
+                        .body(self.html.clone()),
+                );
+            }
+            payload.proceed()
+        })
     }
 }
