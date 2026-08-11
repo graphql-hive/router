@@ -3,7 +3,7 @@ use hive_router::{
     plugins::hooks::on_graphql_params::{
         OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult,
     },
-    plugins::hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
+    plugins::hooks::on_http_request::{OnHttpRequestHookFuture, OnHttpRequestHookPayload},
     plugins::hooks::on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
     plugins::plugin_trait::{RouterPlugin, StartHookPayload},
 };
@@ -32,16 +32,18 @@ impl RouterPlugin for TestSkipEnforcementPlugin {
     }
 
     fn on_http_request<'req>(
-        &self,
+        &'req self,
         payload: OnHttpRequestHookPayload<'req>,
-    ) -> OnHttpRequestHookResult<'req> {
-        payload
-            .request_context
-            .write()
-            .unwrap()
-            .persisted_documents()
-            .set_skip_enforcement(self.skip_enforcement);
-        payload.proceed()
+    ) -> OnHttpRequestHookFuture<'req> {
+        Box::pin(async move {
+            payload
+                .request_context
+                .write()
+                .unwrap()
+                .persisted_documents()
+                .set_skip_enforcement(self.skip_enforcement);
+            payload.proceed()
+        })
     }
 }
 
