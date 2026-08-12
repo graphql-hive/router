@@ -325,6 +325,7 @@ mod header_propagation_e2e_tests {
             .with_header("content-type", "application/json")
             .with_header("set-cookie", "access_token=abc; HttpOnly; Secure; Path=/")
             .with_header("set-cookie", "refresh_token=xyz; HttpOnly; Secure; Path=/")
+            .with_body(r#"{"data":{"users":[]}}"#)
             .expect(1)
             .create();
 

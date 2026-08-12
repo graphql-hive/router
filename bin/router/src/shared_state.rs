@@ -19,6 +19,7 @@ use hive_router_plan_executor::executors::common::InboundRequestFingerprint;
 use hive_router_plan_executor::extensions::{
     compile::compile_extensions_plan, plan::ExtensionsPlan,
 };
+use hive_router_plan_executor::headers::sanitizer::is_never_join_header;
 use hive_router_plan_executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
 };
@@ -147,9 +148,15 @@ impl From<SharedRouterSingleResponse> for web::HttpResponse {
     fn from(shared_response: SharedRouterSingleResponse) -> Self {
         let mut response = web::HttpResponse::Ok();
         response.status(shared_response.status);
+
         for (header_name, header_value) in shared_response.headers.iter() {
-            response.set_header(header_name, header_value);
+            if is_never_join_header(header_name) {
+                response.header(header_name, header_value);
+            } else {
+                response.set_header(header_name, header_value);
+            }
         }
+
         response.body(shared_response.body)
     }
 }
@@ -264,7 +271,11 @@ impl SharedRouterStreamResponse {
         let mut response = web::HttpResponse::Ok();
 
         for (header_name, header_value) in self.headers.iter() {
-            response.set_header(header_name, header_value);
+            if is_never_join_header(header_name) {
+                response.header(header_name, header_value);
+            } else {
+                response.set_header(header_name, header_value);
+            }
         }
 
         // we set content type after so that we can override the shared header
