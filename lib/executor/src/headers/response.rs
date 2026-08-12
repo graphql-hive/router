@@ -95,7 +95,18 @@ impl ApplyResponseHeader for ResponsePropagateNamed {
                 continue;
             }
 
-            if let Some(header_value) = ctx.subgraph_headers.get(header_name) {
+            if is_never_join_header(header_name) {
+                // Never-join-headers (like `set-cookie`) can appear multiple
+                // times in a single subgraph response, so we need to propagate them all
+                for header_value in ctx.subgraph_headers.get_all(header_name) {
+                    matched = true;
+                    accumulator.write(
+                        self.rename.as_ref().unwrap_or(header_name),
+                        header_value,
+                        self.strategy,
+                    );
+                }
+            } else if let Some(header_value) = ctx.subgraph_headers.get(header_name) {
                 matched = true;
                 accumulator.write(
                     self.rename.as_ref().unwrap_or(header_name),
