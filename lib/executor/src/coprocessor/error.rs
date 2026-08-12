@@ -135,6 +135,7 @@ impl CoprocessorError {
         // This way we won't leak anything to the client.
         ntex::http::StatusCode::INTERNAL_SERVER_ERROR
     }
+
     pub fn error_code(&self) -> &'static str {
         self.into()
     }

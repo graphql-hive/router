@@ -9,7 +9,7 @@ use hive_router_plan_executor::execution::client_request_details::ClientRequestD
 use tracing::warn;
 use vrl::core::Value as VrlValue;
 
-use crate::pipeline::error::PipelineError;
+use crate::pipeline::error::{ClientPipelineError, InternalPipelineError, PipelineError};
 
 pub fn compile_introspection_policy(
     introspection_policy_cfg: &Option<IntrospectionPermissionConfig>,
@@ -37,7 +37,9 @@ pub fn handle_introspection_policy(
 
             VrlValue::Object(context_map)
         })
-        .map_err(|e| PipelineError::IntrospectionPermissionEvaluationError(e.to_string()))?;
+        .map_err(|e| {
+            InternalPipelineError::IntrospectionPermissionEvaluationError(e.to_string())
+        })?;
 
     if !is_enabled {
         warn!(
@@ -45,7 +47,7 @@ pub fn handle_introspection_policy(
             "graphql request rejected because introspection is disabled"
         );
 
-        Err(PipelineError::IntrospectionDisabled)
+        Err(ClientPipelineError::IntrospectionDisabled.into())
     } else {
         Ok(())
     }

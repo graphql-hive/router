@@ -3,7 +3,7 @@ use hive_router_internal::telemetry::logging::targets;
 use ntex::web::HttpRequest;
 use tracing::warn;
 
-use crate::pipeline::error::PipelineError;
+use crate::pipeline::error::{ClientPipelineError, PipelineError};
 
 // NON_PREFLIGHTED_CONTENT_TYPES are content types that do not require a preflight
 // OPTIONS request. These are content types that are considered "simple" by the CORS
@@ -43,7 +43,7 @@ pub fn perform_csrf_prevention(
     } else {
         warn!(target: targets::HTTP_SERVER, "csrf failed: missing required header");
 
-        Err(PipelineError::CsrfPreventionFailed)
+        Err(ClientPipelineError::CsrfPreventionFailed.into())
     }
 }
 
