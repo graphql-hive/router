@@ -289,6 +289,69 @@ mod header_propagation_e2e_tests {
         );
     }
 
+    // Regression test for https://github.com/graphql-hive/router/issues/1388
+    #[ntex::test]
+    async fn should_propagate_all_set_cookie_values_from_a_single_subgraph() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let mut accounts_server = mockito::Server::new_async().await;
+        let host = accounts_server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: supergraph.graphql
+                  headers:
+                    all:
+                      response:
+                        - propagate:
+                            named: set-cookie
+                            algorithm: append
+                  override_subgraph_urls:
+                      subgraphs:
+                          accounts:
+                              url: "http://{host}/accounts"
+                  "#
+            ))
+            .with_subgraphs(&subgraphs)
+            .build()
+            .start()
+            .await;
+
+        let accounts_response_mock = accounts_server
+            .mock("POST", "/accounts")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_header("set-cookie", "access_token=abc; HttpOnly; Secure; Path=/")
+            .with_header("set-cookie", "refresh_token=xyz; HttpOnly; Secure; Path=/")
+            .expect(1)
+            .create();
+
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        accounts_response_mock.assert();
+
+        let cookies: Vec<&str> = res
+            .headers()
+            .get_all("set-cookie")
+            .into_iter()
+            .filter_map(|v| v.to_str().ok())
+            .collect();
+
+        assert_eq!(
+            cookies.len(),
+            2,
+            "expected both Set-Cookie values to be propagated, got {cookies:?}"
+        );
+        assert!(cookies.contains(&"access_token=abc; HttpOnly; Secure; Path=/"));
+        assert!(cookies.contains(&"refresh_token=xyz; HttpOnly; Secure; Path=/"));
+    }
+
     #[ntex::test]
     async fn should_not_override_router_selected_content_type() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
