@@ -116,6 +116,165 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.89 (2026-08-12)
+
+### Features
+
+#### Multiplex and reuse WebSocket subgraph connections
+
+The router can now multiplex GraphQL operations over shared `graphql-transport-ws` subgraph connections.
+
+Subscriptions with the same subgraph and inbound connection identity reuse one initialized connection instead of opening one WebSocket per operation. Different operations retain independent streams while sharing the physical connection.
+
+Queries and mutations can also reuse a connection opened by a subscription:
+
+```yaml
+subscriptions:
+  enabled: true
+  websocket:
+    subgraphs:
+      reviews:
+        path: /reviews/ws
+
+traffic_shaping:
+  all:
+    websocket:
+      reuse_connections: true
+      execute_mode: reuse_existing
+```
+
+With this configuration:
+
+1. A subscription initializes the pooled `reviews` connection.
+2. Matching subscriptions multiplex over it.
+3. Matching queries and mutations use it while it remains initialized.
+4. A query or mutation uses HTTP when the connection is missing, expired, or still initializing.
+
+Use WebSocket for every operation by selecting `websocket` mode:
+
+```yaml
+traffic_shaping:
+  all:
+    websocket:
+      reuse_connections: true
+      execute_mode: websocket
+```
+
+The first operation initializes the connection, concurrent operations join that initialization, and later matching operations reuse the initialized connection.
+
+Once an operation selects WebSocket, transport failures and timeouts are returned to the client without retrying over HTTP. This prevents a mutation that may have reached the subgraph from being executed twice.
+
+Idle pooled connections close after the effective `pool_idle_timeout`. Active operations keep the connection open, and dropping one operation cancels only that operation without closing the shared connection.
+
+The router also exposes WebSocket pool telemetry for active connections and operations, initialization success and failure, initialization waiters, reuse lookup hits and misses, and connection closure reasons. These metrics help measure reuse hit rate, multiplexing, connection churn, handshake failures, and per-subgraph pool usage.
+
+### Fixes
+
+#### Add WebSocket connection reuse and execution mode configuration
+
+WebSocket-enabled subgraphs can now configure connection reuse and choose how queries and mutations are transported.
+
+Configure defaults for all subgraphs under `traffic_shaping.all.websocket`:
+
+```yaml
+subscriptions:
+  enabled: true
+  websocket:
+    subgraphs:
+      reviews:
+        path: /reviews/ws
+
+traffic_shaping:
+  all:
+    pool_idle_timeout: 50s # default
+    websocket:
+      reuse_connections: true
+      execute_mode: reuse_existing
+```
+
+`reuse_connections` defaults to `true`:
+
+- `true` multiplexes matching operations over initialized pooled WebSocket connections
+- `false` opens a dedicated connection for each WebSocket operation
+
+`execute_mode` defaults to `http` and supports:
+
+- `http`: queries and mutations always use HTTP
+- `reuse_existing`: queries and mutations use an initialized matching WebSocket when available, otherwise they immediately use HTTP
+- `websocket`: queries and mutations use WebSocket, creating or joining a pooled connection when reuse is enabled
+
+Settings can be overridden per subgraph. Omitted WebSocket fields inherit the global value:
+
+```yaml
+traffic_shaping:
+  all:
+    pool_idle_timeout: 50s # default
+    websocket:
+      reuse_connections: true
+      execute_mode: reuse_existing
+
+  subgraphs:
+    payments:
+      pool_idle_timeout: 5s
+      websocket:
+        reuse_connections: false
+        execute_mode: websocket
+```
+
+In this example, other WebSocket-enabled subgraphs opportunistically reuse initialized connections. `payments` sends each operation over a dedicated WebSocket.
+
+Pooled WebSockets use the effective `pool_idle_timeout`. A per-subgraph value overrides `traffic_shaping.all.pool_idle_timeout` for both HTTP and WebSocket pools. Active WebSocket operations do not expire.
+
+Connection matching uses the inbound headers selected by `traffic_shaping.router.dedupe.headers`, even when router request deduplication is disabled. Include every header that can affect connection-scoped authentication, authorization, cookies, or tenant identity:
+
+```yaml
+traffic_shaping:
+  router:
+    dedupe:
+      headers:
+        include: [authorization, cookie, x-tenant]
+```
+
+#### Improve variable coercion error messages
+
+Variable coercion errors (invalid scalar/enum/object values, missing required fields, non-null violations) reports clear and informative error messages.
+
+This only changes error text - error codes and HTTP status codes are unchanged.
+
+#### Fix doubled `_total` suffix on Prometheus counters
+
+The built-in Prometheus metrics exporter (`/metrics`) generated counter names with a
+doubled suffix, e.g. `hive_router_graphql_errors_total_total` instead of
+`hive_router_graphql_errors_total`.
+
+Counter names on `/metrics` now end in a single `_total`, matching standard
+Prometheus conventions.
+
+OTLP metrics exporter is not affected.
+
+#### Mask internal error details from client responses
+
+Improve router's error handling by masking internal error details from client responses.
+
+Client-caused errors still return their real message, since it only ever reflects the client's own request. Internal errors now always return a generic `"Internal server error"` message and never the underlying error message, which previously leaked details such as subgraph URLs, storage/network errors, and other backend internals. The real error is still logged for debugging purposes.
+
+Error codes are unchanged. HTTP status codes are unchanged, except for GraphQL operation normalization and minification failures, which are now correctly treated as router-side bugs and always return `500` (previously `400`, or `200` based on `Accept` header) instead of being treated as a client mistake.
+
+#### Propagate all multi-instance headers from a single subgraph response
+
+When a subgraph responded with multiple instances of a never-join header (`Set-Cookie` or `WWW-Authenticate`), the router only forwarded one of them to the client and silently dropped the rest.
+
+The fix is to propagate all values of a never-join header as separate header fields end-to-end, rather than just the first value.
+
+Fixes https://github.com/graphql-hive/router/issues/1388
+
+#### Upgrade Laboratory to latest (`v0.2.4`)
+
+Upgrade Laboratory to latest version (`@graphql-hive/laboratory@0.2.4`). This release includes the following changes:
+
+- Schema documentation: browse root types, types and fields, search across the whole type map (including input objects and enum values), and read descriptions, deprecations and argument defaults.
+- Builder rows gain an "Open in Docs" context menu entry, and the GraphQL editor hover gains an "Open in Docs" link.
+
 ## 0.0.88 (2026-08-10)
 
 ### Features
