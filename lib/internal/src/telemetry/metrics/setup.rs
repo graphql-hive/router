@@ -443,6 +443,7 @@ fn setup_prometheus_reader(
     let reader = opentelemetry_prometheus::exporter()
         .with_registry(registry.clone())
         .with_resource_selector(ResourceSelector::All)
+        .without_counter_suffixes()
         .build()
         .map_err(|err| TelemetryError::MetricsExporterSetup(err.to_string()))?;
 
