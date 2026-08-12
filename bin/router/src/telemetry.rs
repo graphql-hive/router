@@ -218,11 +218,14 @@ impl Telemetry {
             .with(logging_layer)
             .with(otel_layer);
 
+        let prometheus_config = metrics_result.as_ref().and_then(|setup| setup.prometheus.as_ref());
+        let prometheus = create_prometheus_runtime(config, prometheus_config)?;
+
         Ok((
             Self {
                 traces_provider: tracer_provider,
                 metrics_provider: metrics_result.map(|setup| setup.provider),
-                prometheus: None,
+                prometheus,
                 context,
                 logging_writer_guard,
             },

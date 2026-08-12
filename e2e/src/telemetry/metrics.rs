@@ -1148,3 +1148,106 @@ async fn test_otlp_http_client_transport_failure_sets_graphql_status_and_error_t
         labels::HTTP_RESPONSE_STATUS_CODE
     );
 }
+
+/// Ensures counters scraped via the Prometheus exporter have exactly one `_total`
+/// suffix
+#[ntex::test]
+async fn issue_1389_test_prometheus_counter_names_have_single_total_suffix() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          telemetry:
+            metrics:
+              exporters:
+                - kind: prometheus
+      "#,
+            supergraph_path.to_str().unwrap(),
+        ))
+        .build()
+        .start()
+        .await;
+
+    router
+        .send_graphql_request("{ users { id }", None, None)
+        .await;
+
+    let resp = router
+        .serv()
+        .get("/metrics")
+        .send()
+        .await
+        .expect("failed to scrape /metrics");
+    let body = resp.string_body().await;
+
+    assert!(
+        body.contains("hive_router_graphql_errors_total{"),
+        "Expected a single `_total` suffix on the exported counter, got:\n{body}"
+    );
+    assert!(
+        !body.contains("_total_total"),
+        "Prometheus counter names must not double the `_total` suffix, got:\n{body}"
+    );
+}
+
+/// Ensures the OTLP metrics exporter ships counter instrument names as-is, without any suffix modifications
+#[ntex::test]
+async fn issue_1389_test_otlp_counter_names_have_single_total_suffix() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_metrics_endpoint();
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          telemetry:
+            metrics:
+              exporters:
+                - kind: otlp
+                  endpoint: {}
+                  protocol: http
+                  interval: 30ms
+                  max_export_timeout: 2s
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        ))
+        .build()
+        .start()
+        .await;
+
+    router
+        .send_graphql_request("{ users { id }", None, None)
+        .await;
+
+    wait_for_metrics_export().await;
+
+    let metrics = otlp_collector.metrics_view().await;
+    let attrs = [(labels::CODE, "GRAPHQL_PARSE_FAILED")];
+
+    assert!(
+        metrics.has_counter(names::GRAPHQL_ERRORS_TOTAL, &attrs),
+        "Expected the OTLP instrument name to keep its single `_total` suffix ({})",
+        names::GRAPHQL_ERRORS_TOTAL
+    );
+
+    let doubled_name = format!("{}_total", names::GRAPHQL_ERRORS_TOTAL);
+    assert!(
+        !metrics.has_counter(&doubled_name, &attrs),
+        "OTLP counter names must not double the `_total` suffix, but found {doubled_name}"
+    );
+}
