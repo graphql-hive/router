@@ -218,7 +218,9 @@ impl Telemetry {
             .with(logging_layer)
             .with(otel_layer);
 
-        let prometheus_config = metrics_result.as_ref().and_then(|setup| setup.prometheus.as_ref());
+        let prometheus_config = metrics_result
+            .as_ref()
+            .and_then(|setup| setup.prometheus.as_ref());
         let prometheus = create_prometheus_runtime(config, prometheus_config)?;
 
         Ok((
