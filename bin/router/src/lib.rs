@@ -188,7 +188,7 @@ async fn graphql_endpoint_handler(
         .telemetry_context
         .metrics
         .http_server
-        .capture_request(&request);
+        .capture_request(&request, app_state.router_config.graphql_path());
 
     let started_at = std::time::Instant::now();
     let (response_mode, mut response, summary_guard) = async {
@@ -283,6 +283,7 @@ async fn graphql_endpoint_dispatch(
             .telemetry
             .client_identification
             .ip_header,
+        app_state.router_config.graphql_path(),
     );
     let _ = root_http_request_span.set_parent(parent_ctx);
 

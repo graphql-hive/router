@@ -74,9 +74,14 @@ impl Borrow<Span> for HttpServerRequestSpan {
 }
 
 impl HttpServerRequestSpan {
+    /// `route` is the *route template* the request matched (e.g. `/{tenant}/graphql`),
+    /// not the concrete request path. `http.route` MUST be low-cardinality per semconv,
+    /// as backends commonly derive span names and span metrics from it:
+    /// https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-server
     pub fn from_request<Req: HttpServerSpanRequest>(
         request: &Req,
         client_ip_header_config: &Option<ClientIpHeaderConfig>,
+        route: &str,
     ) -> Self {
         if !is_level_enabled(Level::INFO) {
             return Self {
@@ -134,7 +139,7 @@ impl HttpServerRequestSpan {
             "user_agent.original" = header_user_agent.as_ref().and_then(|v| v.to_str().ok()),
             "http.response.status_code" = Empty,
             "http.response.body.size" = Empty,
-            "http.route" = url.path(),
+            "http.route" = route,
             // Client
             "client.address" = client_address,
             "client.port" = client_port,

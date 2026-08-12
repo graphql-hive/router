@@ -91,9 +91,13 @@ impl HttpServerMetrics {
         }
     }
 
+    /// `route` is the *route template* the request matched (e.g. `/{tenant}/graphql`),
+    /// not the concrete request path: `http.route` is a metric attribute, so a
+    /// per-request value would grow the time series cardinality without bound.
     pub fn capture_request<'a>(
         &'a self,
         request: &HttpRequest,
+        route: &str,
     ) -> Capture<HttpServerRequestState<'a>> {
         if !self.instruments.is_enabled() {
             return Capture::disabled();
@@ -107,7 +111,7 @@ impl HttpServerMetrics {
             _active_request_guard: self.active_request_started(method, scheme),
             method,
             scheme,
-            route: request.path().to_string(),
+            route: route.to_string(),
             protocol_version: request.version().as_static_str(),
             started_at: Instant::now(),
         })
