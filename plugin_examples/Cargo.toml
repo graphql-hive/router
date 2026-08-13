@@ -4,6 +4,7 @@ members = [
   "apollo_sandbox",
   "apq",
   "async_auth",
+  "async_http_fetch",
   "context_data",
   "forbid_anonymous_operations",
   "multipart",

@@ -110,7 +110,7 @@ where
             let mut on_end_callbacks = Vec::with_capacity(plugins.len());
 
             for plugin in plugins.as_ref() {
-                let result = plugin.on_http_request(start_payload);
+                let result = plugin.on_http_request(start_payload).await;
                 start_payload = result.payload;
                 match result.control_flow {
                     StartControlFlow::Proceed => {

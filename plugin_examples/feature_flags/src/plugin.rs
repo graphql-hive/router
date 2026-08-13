@@ -15,7 +15,7 @@ use hive_router::{
     },
     plugins::{
         hooks::{
-            on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
+            on_http_request::{OnHttpRequestHookFuture, OnHttpRequestHookPayload},
             on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
             on_supergraph_load::Supergraph,
         },
@@ -61,53 +61,55 @@ impl RouterPlugin for FeatureFlagsPlugin {
     fn on_http_request<'req>(
         &'req self,
         payload: OnHttpRequestHookPayload<'req>,
-    ) -> OnHttpRequestHookResult<'req> {
-        let feature_flags_header = payload
-            .router_http_request
-            .headers()
-            .get("x-feature-flags")
-            .and_then(|header_value| header_value.to_str().ok())
-            .unwrap_or_default();
+    ) -> OnHttpRequestHookFuture<'req> {
+        Box::pin(async move {
+            let feature_flags_header = payload
+                .router_http_request
+                .headers()
+                .get("x-feature-flags")
+                .and_then(|header_value| header_value.to_str().ok())
+                .unwrap_or_default();
 
-        if feature_flags_header == "skip" {
-            // skip setting the supergraph to test NO_SUPERGRAPH_AVAILABLE
-            return payload.proceed();
-        }
+            if feature_flags_header == "skip" {
+                // skip setting the supergraph to test NO_SUPERGRAPH_AVAILABLE
+                return payload.proceed();
+            }
 
-        let mut feature_flags: Vec<String> = feature_flags_header
-            .split(',')
-            .map(|tag| tag.trim().to_string())
-            .collect();
+            let mut feature_flags: Vec<String> = feature_flags_header
+                .split(',')
+                .map(|tag| tag.trim().to_string())
+                .collect();
 
-        // sort the feature flags so header order does not change the cache key
-        feature_flags.sort();
-        let cache_key = feature_flags.join(",");
+            // sort the feature flags so header order does not change the cache key
+            feature_flags.sort();
+            let cache_key = feature_flags.join(",");
 
-        let mut variants = self.variants.lock().unwrap();
-        let existing = variants.get(&cache_key).cloned();
-        match existing {
-            // (cheap) already constructed, serve from cache
-            Some(selected) => payload.set_supergraph(selected),
-            // (expensive) not constructed, build and cache it
-            None => {
-                let document = schema_for_features(&self.supergraph, &feature_flags);
-                match Supergraph::from_document(document, Default::default()) {
-                    Ok(supergraph_data) => {
-                        // build successful
-                        let supergraph_data = Arc::new(supergraph_data);
-                        variants.insert(cache_key, supergraph_data.clone());
-                        payload.set_supergraph(supergraph_data);
-                    }
-                    Err(_) => {
-                        // building the supergraph failed, you can optionally log, but
-                        // intentionally not set the supergraph and let the router fail the
-                        // request with an error coded NO_SUPERGRAPH_AVAILABLE
+            let mut variants = self.variants.lock().unwrap();
+            let existing = variants.get(&cache_key).cloned();
+            match existing {
+                // (cheap) already constructed, serve from cache
+                Some(selected) => payload.set_supergraph(selected),
+                // (expensive) not constructed, build and cache it
+                None => {
+                    let document = schema_for_features(&self.supergraph, &feature_flags);
+                    match Supergraph::from_document(document, Default::default()) {
+                        Ok(supergraph_data) => {
+                            // build successful
+                            let supergraph_data = Arc::new(supergraph_data);
+                            variants.insert(cache_key, supergraph_data.clone());
+                            payload.set_supergraph(supergraph_data);
+                        }
+                        Err(_) => {
+                            // building the supergraph failed, you can optionally log, but
+                            // intentionally not set the supergraph and let the router fail the
+                            // request with an error coded NO_SUPERGRAPH_AVAILABLE
+                        }
                     }
                 }
             }
-        }
 
-        payload.proceed()
+            payload.proceed()
+        })
     }
 }
 

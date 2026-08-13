@@ -446,6 +446,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-http-fetch-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "hive-router",
+ "reqwest 0.12.28",
+ "serde",
+]
+
+[[package]]
 name = "async-lock"
 version = "3.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

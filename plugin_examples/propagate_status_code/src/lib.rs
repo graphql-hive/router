@@ -9,7 +9,7 @@ use serde::Deserialize;
 
 use hive_router::plugins::{
     hooks::{
-        on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
+        on_http_request::{OnHttpRequestHookFuture, OnHttpRequestHookPayload},
         on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
         on_subgraph_http_request::{
             OnSubgraphHttpRequestHookPayload, OnSubgraphHttpRequestHookResult,
@@ -73,20 +73,22 @@ impl RouterPlugin for PropagateStatusCodePlugin {
     fn on_http_request<'exec>(
         &'exec self,
         payload: OnHttpRequestHookPayload<'exec>,
-    ) -> OnHttpRequestHookResult<'exec> {
-        payload.on_end(|payload| {
-            // Checking if there is a context entry
-            let ctx = payload.context.get_ref::<PropagateStatusCodeCtx>();
-            if let Some(ctx) = ctx {
-                // Update the HTTP response status code
-                return payload
-                    .map_response(|mut response| {
-                        *response.response_mut().status_mut() = ctx.status_code;
-                        response
-                    })
-                    .proceed();
-            }
-            payload.proceed()
+    ) -> OnHttpRequestHookFuture<'exec> {
+        Box::pin(async move {
+            payload.on_end(|payload| {
+                // Checking if there is a context entry
+                let ctx = payload.context.get_ref::<PropagateStatusCodeCtx>();
+                if let Some(ctx) = ctx {
+                    // Update the HTTP response status code
+                    return payload
+                        .map_response(|mut response| {
+                            *response.response_mut().status_mut() = ctx.status_code;
+                            response
+                        })
+                        .proceed();
+                }
+                payload.proceed()
+            })
         })
     }
 }

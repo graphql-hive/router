@@ -8,7 +8,7 @@ use crate::{
         on_graphql_validation::{
             OnGraphQLValidationStartHookPayload, OnGraphQLValidationStartHookResult,
         },
-        on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
+        on_http_request::{OnHttpRequestHookFuture, OnHttpRequestHookPayload},
         on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
         on_query_plan::{OnQueryPlanStartHookPayload, OnQueryPlanStartHookResult},
         on_subgraph_execute::{
@@ -84,15 +84,17 @@ where
     /// fn on_http_request<'req>(
     ///     &'req self,
     ///     payload: OnHttpRequestHookPayload<'req>,
-    /// ) -> OnHttpRequestHookResult<'req> {
-    ///     if payload.router_http_request.headers().get("authorization").is_none() {
-    ///         return payload.end_with_graphql_error(
-    ///             GraphQLError::from_message_and_code("Unauthorized", "UNAUTHORIZED"),
-    ///             StatusCode::UNAUTHORIZED,
-    ///         );
-    ///     }
+    /// ) -> OnHttpRequestHookFuture<'req> {
+    ///     Box::pin(async move {
+    ///         if payload.router_http_request.headers().get("authorization").is_none() {
+    ///             return payload.end_with_graphql_error(
+    ///                 GraphQLError::from_message_and_code("Unauthorized", "UNAUTHORIZED"),
+    ///                 StatusCode::UNAUTHORIZED,
+    ///             );
+    ///         }
     ///
-    ///     payload.proceed()
+    ///         payload.proceed()
+    ///     })
     /// }
     /// ```
     fn end_with_graphql_error<'exec>(
@@ -134,15 +136,17 @@ where
     /// fn on_http_request<'req>(
     ///     &'req self,
     ///     payload: OnHttpRequestHookPayload<'req>,
-    /// ) -> OnHttpRequestHookResult<'req> {
-    ///     payload.on_end(|payload| {
-    ///         payload.map_response(|mut response| {
-    ///             response.response_mut().headers_mut().insert(
-    ///                 "x-served-by",
-    ///                 "hive-router".parse().unwrap(),
-    ///             );
-    ///             response
-    ///         }).proceed()
+    /// ) -> OnHttpRequestHookFuture<'req> {
+    ///     Box::pin(async move {
+    ///         payload.on_end(|payload| {
+    ///             payload.map_response(|mut response| {
+    ///                 response.response_mut().headers_mut().insert(
+    ///                     "x-served-by",
+    ///                     "hive-router".parse().unwrap(),
+    ///                 );
+    ///                 response
+    ///             }).proceed()
+    ///         })
     ///     })
     /// }
     /// ```
@@ -386,8 +390,8 @@ pub trait RouterPlugin: Send + Sync + 'static {
     fn on_http_request<'req>(
         &'req self,
         start_payload: OnHttpRequestHookPayload<'req>,
-    ) -> OnHttpRequestHookResult<'req> {
-        start_payload.proceed()
+    ) -> OnHttpRequestHookFuture<'req> {
+        Box::pin(async move { start_payload.proceed() })
     }
     #[inline]
     async fn on_graphql_params<'exec>(
@@ -468,7 +472,7 @@ pub trait DynRouterPlugin: Send + Sync + 'static {
     fn on_http_request<'req>(
         &'req self,
         start_payload: OnHttpRequestHookPayload<'req>,
-    ) -> OnHttpRequestHookResult<'req>;
+    ) -> OnHttpRequestHookFuture<'req>;
     async fn on_graphql_params<'exec>(
         &'exec self,
         start_payload: OnGraphQLParamsStartHookPayload<'exec>,
@@ -521,7 +525,7 @@ where
     fn on_http_request<'req>(
         &'req self,
         start_payload: OnHttpRequestHookPayload<'req>,
-    ) -> OnHttpRequestHookResult<'req> {
+    ) -> OnHttpRequestHookFuture<'req> {
         RouterPlugin::on_http_request(self, start_payload)
     }
     #[inline]

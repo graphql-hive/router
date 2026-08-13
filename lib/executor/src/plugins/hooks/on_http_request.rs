@@ -1,3 +1,4 @@
+use futures::future::LocalBoxFuture;
 use ntex::{
     http::Response,
     web::{self, DefaultError, WebRequest},
@@ -20,13 +21,15 @@ pub struct OnHttpRequestHookPayload<'req> {
     /// Example:
     /// ```
     /// use hive_router::{
-    ///    plugins::hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
+    ///    plugins::hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookFuture},
     /// };
     ///
-    /// fn on_http_request<'req>(mut payload: OnHttpRequestHookPayload<'req>) -> OnHttpRequestHookResult<'req> {
-    ///     let my_header = payload.router_http_request.headers().get("my-header");
-    ///     // do something with the header...
-    ///     payload.proceed()
+    /// fn on_http_request<'req>(mut payload: OnHttpRequestHookPayload<'req>) -> OnHttpRequestHookFuture<'req> {
+    ///     Box::pin(async move {
+    ///         let my_header = payload.router_http_request.headers().get("my-header");
+    ///         // do something with the header...
+    ///         payload.proceed()
+    ///     })
     /// }
     /// ```
     pub router_http_request: WebRequest<DefaultError>,
@@ -39,7 +42,7 @@ pub struct OnHttpRequestHookPayload<'req> {
     /// ```
     /// use hive_router::{
     ///     plugins::hooks::{
-    ///         on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
+    ///         on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookFuture},
     ///         on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult}
     ///     },
     ///     plugin_context::PluginContext,
@@ -52,14 +55,16 @@ pub struct OnHttpRequestHookPayload<'req> {
     ///
     /// #[async_trait]
     /// impl RouterPlugin for MyPlugin {
-    ///     fn on_http_request<'req>(mut payload: OnHttpRequestHookPayload<'req>) -> OnHttpRequestHookResult<'req> {
-    ///         let context_data = ContextData {
-    ///            greetings: "Hello from context!".to_string()
-    ///         };
+    ///     fn on_http_request<'req>(mut payload: OnHttpRequestHookPayload<'req>) -> OnHttpRequestHookFuture<'req> {
+    ///         Box::pin(async move {
+    ///             let context_data = ContextData {
+    ///                greetings: "Hello from context!".to_string()
+    ///             };
     ///
-    ///        payload.context.insert(context_data);
+    ///            payload.context.insert(context_data);
     ///
-    ///        payload.proceed()
+    ///            payload.proceed()
+    ///         })
     ///     }
     ///
     ///     async fn on_execute<'exec>(&'exec self, payload: OnExecuteStartHookPayload<'exec>) -> OnExecuteStartHookResult<'exec> {
@@ -111,6 +116,9 @@ pub type OnHttpRequestHookResult<'req> = StartHookResult<
     Response,
 >;
 
+/// A local (non-`Send`) boxed future - always polled on its own worker thread
+pub type OnHttpRequestHookFuture<'req> = LocalBoxFuture<'req, OnHttpRequestHookResult<'req>>;
+
 pub struct OnHttpResponseHookPayload<'req> {
     pub response: web::WebResponse,
     pub context: &'req PluginContext,
@@ -126,15 +134,17 @@ impl<'req> OnHttpResponseHookPayload<'req> {
     /// fn on_http_request<'req>(
     ///     &'req self,
     ///     payload: OnHttpRequestHookPayload<'req>,
-    /// ) -> OnHttpRequestHookResult<'req> {
-    ///     payload.on_end(|payload| {
-    ///         payload.map_response(|mut response| {
-    ///             response.response_mut().headers_mut().insert(
-    ///                 "x-served-by",
-    ///                 "hive-router".parse().unwrap(),
-    ///             );
-    ///             response
-    ///         }).proceed()
+    /// ) -> OnHttpRequestHookFuture<'req> {
+    ///     Box::pin(async move {
+    ///         payload.on_end(|payload| {
+    ///             payload.map_response(|mut response| {
+    ///                 response.response_mut().headers_mut().insert(
+    ///                     "x-served-by",
+    ///                     "hive-router".parse().unwrap(),
+    ///                 );
+    ///                 response
+    ///             }).proceed()
+    ///         })
     ///     })
     /// }
     /// ```

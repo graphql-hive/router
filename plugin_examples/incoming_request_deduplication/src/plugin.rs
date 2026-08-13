@@ -20,7 +20,7 @@ use hive_router::{
         hooks::{
             on_graphql_params::{OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult},
             on_http_request::{
-                OnHttpRequestHookPayload, OnHttpRequestHookResult, OnHttpResponseHookPayload,
+                OnHttpRequestHookFuture, OnHttpRequestHookPayload, OnHttpResponseHookPayload,
             },
             on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
         },
@@ -144,29 +144,31 @@ impl RouterPlugin for IncomingRequestDeduplicationPlugin {
     fn on_http_request<'req>(
         &'req self,
         payload: OnHttpRequestHookPayload<'req>,
-    ) -> OnHttpRequestHookResult<'req> {
-        payload.on_end(|payload: OnHttpResponseHookPayload| {
-            if let Some(context) = payload.context.get_ref::<PluginContext>() {
-                return payload
-                    .map_response(|web_response| {
-                        // Take body, headers and status
-                        let response = web_response.response();
-                        if let ResponseBody::Body(Body::Bytes(bytes)) = response.body() {
-                            let shared_response = SharedResponse {
-                                body: bytes.clone(),
-                                headers: response.headers().clone().into(),
-                                status: response.status(),
-                            };
-                            // Send to all waiting receivers
-                            self.sender
-                                .send(context.fingerprint, shared_response)
-                                .expect("Failed to send response to waiting receivers");
-                        }
-                        web_response
-                    })
-                    .proceed();
-            }
-            payload.proceed()
+    ) -> OnHttpRequestHookFuture<'req> {
+        Box::pin(async move {
+            payload.on_end(|payload: OnHttpResponseHookPayload| {
+                if let Some(context) = payload.context.get_ref::<PluginContext>() {
+                    return payload
+                        .map_response(|web_response| {
+                            // Take body, headers and status
+                            let response = web_response.response();
+                            if let ResponseBody::Body(Body::Bytes(bytes)) = response.body() {
+                                let shared_response = SharedResponse {
+                                    body: bytes.clone(),
+                                    headers: response.headers().clone().into(),
+                                    status: response.status(),
+                                };
+                                // Send to all waiting receivers
+                                self.sender
+                                    .send(context.fingerprint, shared_response)
+                                    .expect("Failed to send response to waiting receivers");
+                            }
+                            web_response
+                        })
+                        .proceed();
+                }
+                payload.proceed()
+            })
         })
     }
 }
