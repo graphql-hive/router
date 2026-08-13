@@ -157,9 +157,9 @@ pub mod units {
 
 pub mod names {
     pub const GRAPHQL_ERRORS_TOTAL: &str = "hive.router.graphql.errors_total";
-    pub const COST_ESTIMATED: &str = "cost.estimated";
-    pub const COST_ACTUAL: &str = "cost.actual";
-    pub const COST_DELTA: &str = "cost.delta";
+    pub const COST_ESTIMATED: &str = "hive.router.demand_control.cost.estimated";
+    pub const COST_ACTUAL: &str = "hive.router.demand_control.cost.actual";
+    pub const COST_DELTA: &str = "hive.router.demand_control.cost.delta";
     pub const SUPERGRAPH_POLL_TOTAL: &str = "hive.router.supergraph.poll.total";
     pub const SUPERGRAPH_POLL_DURATION: &str = "hive.router.supergraph.poll.duration";
     pub const SUPERGRAPH_PROCESS_DURATION: &str = "hive.router.supergraph.process.duration";
