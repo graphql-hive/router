@@ -8,6 +8,7 @@ use super::http_request::{HttpClientRequestSpan, HttpInflightRequestSpan, HttpSe
 use crate::graphql::ObservedError;
 use crate::telemetry::metrics::demand_control_metrics::DemandControlResultCode;
 use crate::telemetry::traces::spans::http_request::HttpServerSpanRequest;
+use crate::telemetry::utils::RequestRoutePattern;
 use bytes::Bytes;
 use hive_router_config::telemetry::{ClientIpHeaderConfig, ClientIpHeaderTrustedProxiesConfig};
 use http::header::{FORWARDED, HOST, USER_AGENT};
@@ -54,6 +55,15 @@ impl From<TestRequest> for HttpRequestMock {
 impl HttpServerSpanRequest for HttpRequestMock {
     fn headers(&self) -> &NtexHeaderMap {
         self.req.headers()
+    }
+
+    fn route_pattern(&self) -> String {
+        self.req
+            .extensions()
+            .get::<RequestRoutePattern>()
+            .map(|v| v.0.as_str())
+            .unwrap_or_default()
+            .to_string()
     }
 
     fn method(&self) -> &Method {
@@ -185,15 +195,11 @@ fn assert_fields(span: &Span, expected_fields: &[&str]) {
     );
 }
 
-/// The route template these tests report as `http.route`. Most of them only care
-/// about client-address resolution, so they share a single fixed route.
-const TEST_ROUTE: &str = "/graphql";
-
 fn http_server_span<Req: HttpServerSpanRequest>(
     request: &Req,
     client_ip_header_config: &Option<ClientIpHeaderConfig>,
 ) -> HttpServerRequestSpan {
-    HttpServerRequestSpan::from_request(request, client_ip_header_config, TEST_ROUTE)
+    HttpServerRequestSpan::from_request(request, client_ip_header_config)
 }
 
 fn ip_header_config(header: &str) -> Option<ClientIpHeaderConfig> {
@@ -287,7 +293,10 @@ fn test_http_server_request_span_route_is_the_template_not_the_path() {
             .header(HOST, "localhost:8080")
             .to_http_request();
 
-        let span = HttpServerRequestSpan::from_request(&req, &None, "/{tenant}/graphql");
+        req.extensions_mut()
+            .insert(RequestRoutePattern::new("/{tenant}/graphql"));
+
+        let span = HttpServerRequestSpan::from_request(&req, &None);
 
         // `http.route` is low-cardinality: the template, shared by every tenant.
         layer.assert_recorded_value(&span, attributes::HTTP_ROUTE, "/{tenant}/graphql");

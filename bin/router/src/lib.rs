@@ -74,6 +74,7 @@ use hive_router_internal::telemetry::{
     logging::{summary, targets},
     otel::{opentelemetry, tracing_opentelemetry::OpenTelemetrySpanExt},
     traces::spans::http_request::HttpServerRequestSpan,
+    utils::RequestRoutePattern,
     TelemetryContext,
 };
 pub use hive_router_internal::BoxError;
@@ -180,6 +181,9 @@ async fn graphql_endpoint_handler(
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> web::HttpResponse {
+    request.extensions_mut().insert(RequestRoutePattern::new(
+        app_state.router_config.graphql_path(),
+    ));
     let parent_ctx = app_state
         .telemetry_context
         .extract_context(&HeaderExtractor(request.headers()));
@@ -188,7 +192,7 @@ async fn graphql_endpoint_handler(
         .telemetry_context
         .metrics
         .http_server
-        .capture_request(&request, app_state.router_config.graphql_path());
+        .capture_request(&request);
 
     let started_at = std::time::Instant::now();
     let (response_mode, mut response, summary_guard) = async {
@@ -283,7 +287,6 @@ async fn graphql_endpoint_dispatch(
             .telemetry
             .client_identification
             .ip_header,
-        app_state.router_config.graphql_path(),
     );
     let _ = root_http_request_span.set_parent(parent_ctx);
 

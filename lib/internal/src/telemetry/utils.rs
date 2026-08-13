@@ -99,3 +99,11 @@ pub fn resolve_value_or_expression(
         }
     }
 }
+
+pub struct RequestRoutePattern(pub String);
+
+impl RequestRoutePattern {
+    pub fn new(path: &str) -> Self {
+        Self(path.to_string())
+    }
+}

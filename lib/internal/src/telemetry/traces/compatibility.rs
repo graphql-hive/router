@@ -326,7 +326,7 @@ mod tests {
         request: &Req,
         client_ip_header_config: &Option<ClientIpHeaderConfig>,
     ) -> HttpServerRequestSpan {
-        HttpServerRequestSpan::from_request(request, client_ip_header_config, "/test")
+        HttpServerRequestSpan::from_request(request, client_ip_header_config)
     }
 
     fn setup_tracing_subscriber(provider: &SdkTracerProvider) -> impl Drop {
