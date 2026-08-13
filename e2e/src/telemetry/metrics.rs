@@ -1149,6 +1149,111 @@ async fn test_otlp_http_client_transport_failure_sets_graphql_status_and_error_t
     );
 }
 
+/// Ensures `http.route` stays low-cardinality when it comes to the HTTP path: requests that resolve to different
+/// persisted-document paths under the same registered endpoint must all be reported
+/// under a single `http.route` series, not one series per concrete path.
+#[ntex::test]
+async fn test_otlp_http_route_metric_is_low_cardinality_for_persisted_document_paths() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let manifest = NamedTempFile::new().expect("failed to create temp persisted manifest");
+    std::fs::write(
+        manifest.path(),
+        sonic_rs::to_string(&sonic_rs::json!({
+            "doc-a": "{ topProducts { name } }",
+            "doc-b": "{ topProducts { name } }",
+            "doc-c": "{ topProducts { name } }",
+        }))
+        .expect("failed to serialize manifest"),
+    )
+    .expect("failed to write manifest");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_metrics_endpoint();
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          persisted_documents:
+            enabled: true
+            require_id: true
+            storage:
+              type: file
+              path: "{}"
+            selectors:
+              - type: url_path_param
+                template: /docs/:id
+
+          telemetry:
+            metrics:
+              exporters:
+                - kind: otlp
+                  endpoint: {}
+                  protocol: http
+                  interval: 30ms
+                  max_export_timeout: 2s
+      "#,
+            supergraph_path.to_str().unwrap(),
+            manifest.path().display(),
+            otlp_endpoint
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    // Each of these hits a distinct concrete request path (`/graphql/docs/doc-a`, etc.),
+    // but all match the same registered `/graphql` endpoint.
+    for doc_id in ["doc-a", "doc-b", "doc-c"] {
+        let response = router
+            .send_post_request(
+                &format!("/graphql/docs/{doc_id}"),
+                sonic_rs::json!({}),
+                None,
+            )
+            .await;
+        assert!(
+            response.status().is_success(),
+            "expected persisted document request to resolve successfully"
+        );
+    }
+
+    wait_for_metrics_export().await;
+
+    let metrics = otlp_collector.metrics_view().await;
+
+    // All 3 requests must have collapsed into the single, low-cardinality route template.
+    let (count, _sum) = metrics.latest_histogram_count_sum(
+        names::HTTP_SERVER_REQUEST_DURATION,
+        &[(labels::HTTP_ROUTE, "/graphql")],
+    );
+    assert_eq!(
+        count, 3,
+        "expected all 3 requests to share a single http.route=/graphql series"
+    );
+
+    // None of the concrete per-document paths must have leaked into `http.route`.
+    for doc_id in ["doc-a", "doc-b", "doc-c"] {
+        let concrete_path = format!("/graphql/docs/{doc_id}");
+        assert!(
+            !metrics.has_histogram(
+                names::HTTP_SERVER_REQUEST_DURATION,
+                &[(labels::HTTP_ROUTE, concrete_path.as_str())],
+            ),
+            "did not expect a dedicated http.route series for concrete path {concrete_path}"
+        );
+    }
+}
+
 /// Ensures counters scraped via the Prometheus exporter have exactly one `_total`
 /// suffix
 #[ntex::test]
