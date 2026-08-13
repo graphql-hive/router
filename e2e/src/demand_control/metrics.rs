@@ -184,13 +184,13 @@ mod metrics_tests {
                               max_export_timeout: 50ms
                         instrumentation:
                             instruments:
-                                cost.estimated:
+                                hive.router.demand_control.cost.estimated:
                                     attributes:
                                         graphql.operation.name: false
-                                cost.actual:
+                                hive.router.demand_control.cost.actual:
                                     attributes:
                                         graphql.operation.name: false
-                                cost.delta:
+                                hive.router.demand_control.cost.delta:
                                     attributes:
                                         graphql.operation.name: false
                 "#,
