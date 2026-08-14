@@ -22,7 +22,7 @@ pub trait HttpServerSpanRequest {
     fn uri(&self) -> &Uri;
     fn version(&self) -> Version;
     fn peer_addr(&self) -> Option<SocketAddr>;
-    fn route_pattern(&self) -> String;
+    fn route_pattern(&self) -> &'static str;
 }
 
 impl HttpServerSpanRequest for ntex::web::HttpRequest {
@@ -34,12 +34,11 @@ impl HttpServerSpanRequest for ntex::web::HttpRequest {
         self.method()
     }
 
-    fn route_pattern(&self) -> String {
+    fn route_pattern(&self) -> &'static str {
         self.extensions()
             .get::<RequestRoutePattern>()
-            .map(|v| v.0.as_str())
+            .map(|v| v.0)
             .unwrap_or_default()
-            .to_string()
     }
 
     fn uri(&self) -> &Uri {

@@ -57,13 +57,12 @@ impl HttpServerSpanRequest for HttpRequestMock {
         self.req.headers()
     }
 
-    fn route_pattern(&self) -> String {
+    fn route_pattern(&self) -> &'static str {
         self.req
             .extensions()
             .get::<RequestRoutePattern>()
-            .map(|v| v.0.as_str())
+            .map(|v| v.0)
             .unwrap_or_default()
-            .to_string()
     }
 
     fn method(&self) -> &Method {
@@ -294,7 +293,7 @@ fn test_http_server_request_span_route_is_the_template_not_the_path() {
             .to_http_request();
 
         req.extensions_mut()
-            .insert(RequestRoutePattern::new("/{tenant}/graphql"));
+            .insert(RequestRoutePattern("/{tenant}/graphql"));
 
         let span = HttpServerRequestSpan::from_request(&req, &None);
 

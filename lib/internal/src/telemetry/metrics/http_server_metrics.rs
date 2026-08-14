@@ -108,7 +108,7 @@ impl HttpServerMetrics {
         let req_extensions = request.extensions();
         let route = req_extensions
             .get::<RequestRoutePattern>()
-            .map(|v| v.0.as_str())
+            .map(|v| v.0)
             .unwrap_or_default();
 
         Capture::enabled(HttpServerRequestState {

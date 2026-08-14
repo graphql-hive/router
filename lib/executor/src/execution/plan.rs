@@ -1923,7 +1923,7 @@ mod tests {
 
         let executors = SubgraphExecutorMap::from_http_endpoint_map(
             &subgraph_endpoint_map,
-            HiveRouterConfig::default().into(),
+            HiveRouterConfig::default().into_static(),
             Arc::new(TelemetryContext::from_propagation_config(
                 &Default::default(),
                 &Default::default(),
@@ -2046,7 +2046,7 @@ mod tests {
             schema_metadata: &SchemaMetadata::default(),
             executors: &SubgraphExecutorMap::from_http_endpoint_map(
                 &subgraph_endpoint_map,
-                HiveRouterConfig::default().into(),
+                HiveRouterConfig::default().into_static(),
                 Arc::new(TelemetryContext::from_propagation_config(
                     &Default::default(),
                     &Default::default(),

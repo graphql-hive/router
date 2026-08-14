@@ -58,7 +58,7 @@ pub struct HTTPSubgraphExecutor {
     pub dedupe_enabled: bool,
     pub in_flight_requests: InflightRequestsMap,
     pub telemetry_context: Arc<TelemetryContext>,
-    pub config: Arc<HiveRouterConfig>,
+    pub config: &'static HiveRouterConfig,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
@@ -167,7 +167,7 @@ impl HTTPSubgraphExecutor {
         dedupe_enabled: bool,
         in_flight_requests: InflightRequestsMap,
         telemetry_context: Arc<TelemetryContext>,
-        config: Arc<HiveRouterConfig>,
+        config: &'static HiveRouterConfig,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(

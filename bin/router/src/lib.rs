@@ -181,9 +181,9 @@ async fn graphql_endpoint_handler(
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> web::HttpResponse {
-    request.extensions_mut().insert(RequestRoutePattern::new(
-        app_state.router_config.graphql_path(),
-    ));
+    request
+        .extensions_mut()
+        .insert(RequestRoutePattern(app_state.router_config.graphql_path()));
     let parent_ctx = app_state
         .telemetry_context
         .extract_context(&HeaderExtractor(request.headers()));
@@ -379,8 +379,8 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     }
 
     let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
-    let router_config = load_config(config_path)?;
-    let telemetry = telemetry::Telemetry::init_global(&router_config)?;
+    let router_config = load_config(config_path)?.into_static();
+    let telemetry = telemetry::Telemetry::init_global(router_config)?;
     let prometheus = telemetry
         .prometheus
         .as_ref()
@@ -451,7 +451,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
 
     let graphql_path = graphql_path.to_string();
     let long_lived_client_limit_service =
-        LongLivedClientLimitService::new(&shared_state.router_config);
+        LongLivedClientLimitService::new(shared_state.router_config);
 
     let mut server = web::HttpServer::new(async move || {
         let landing_page_path = graphql_path.clone();
@@ -554,7 +554,7 @@ pub async fn invoke_shutdown_hooks(shared_state: &RouterSharedState) {
 }
 
 pub async fn configure_app_from_config(
-    router_config: HiveRouterConfig,
+    router_config: &'static HiveRouterConfig,
     telemetry_context: TelemetryContext,
     bg_tasks_manager: &mut background_tasks::BackgroundTasksManager,
     plugin_registry: PluginRegistry,
@@ -570,18 +570,17 @@ pub async fn configure_app_from_config(
         }
         _ => None,
     };
-    let plugins_arc = plugin_registry.initialize_plugins(&router_config, bg_tasks_manager)?;
+    let plugins_arc = plugin_registry.initialize_plugins(router_config, bg_tasks_manager)?;
 
     let active_subscriptions =
         ActiveSubscriptions::new(router_config.subscriptions.broadcast_capacity);
     let storage_manager = Arc::new(StorageManager::new(&router_config.storages)?);
-    let router_config_arc = Arc::new(router_config);
     let telemetry_context_arc = Arc::new(telemetry_context);
 
     let schema_state = SchemaState::new_from_config(
         bg_tasks_manager,
         telemetry_context_arc.clone(),
-        router_config_arc.clone(),
+        router_config,
         plugins_arc.clone(),
         active_subscriptions.clone(),
         storage_manager.clone(),
@@ -590,32 +589,31 @@ pub async fn configure_app_from_config(
     let schema_state_arc = Arc::new(schema_state);
 
     let mut validation_plan = default_rules_validation_plan();
-    if let Some(max_depth_config) = &router_config_arc.limits.max_depth {
+    if let Some(max_depth_config) = &router_config.limits.max_depth {
         validation_plan.add_rule(Box::new(MaxDepthRule {
             config: max_depth_config.clone(),
         }));
     }
-    if let Some(max_directives_config) = &router_config_arc.limits.max_directives {
+    if let Some(max_directives_config) = &router_config.limits.max_directives {
         validation_plan.add_rule(Box::new(MaxDirectivesRule {
             config: max_directives_config.clone(),
         }));
     }
-    if let Some(max_aliases_config) = &router_config_arc.limits.max_aliases {
+    if let Some(max_aliases_config) = &router_config.limits.max_aliases {
         validation_plan.add_rule(Box::new(MaxAliasesRule {
             config: max_aliases_config.clone(),
         }));
     }
     let persisted_documents_runtime = PersistedDocumentsRuntime::init(
-        &router_config_arc.persisted_documents,
-        &router_config_arc.http.graphql_endpoint,
+        &router_config.persisted_documents,
+        &router_config.http.graphql_endpoint,
         bg_tasks_manager,
         &storage_manager,
     )
     .await
     .map_err(|err| crate::shared_state::SharedStateError::PersistedDocuments(Box::new(err)))?;
 
-    if !persisted_documents_runtime
-        .supports_graphql_endpoint(&router_config_arc.http.graphql_endpoint)
+    if !persisted_documents_runtime.supports_graphql_endpoint(&router_config.http.graphql_endpoint)
     {
         // url_path_param extractor depends on path segments relative to graphql endpoint.
         // Root endpoint would make all routes ambiguous for persisted-document extraction.
@@ -625,9 +623,9 @@ pub async fn configure_app_from_config(
         ));
     }
 
-    let metrics_enabled = router_config_arc.telemetry.metrics.is_enabled();
+    let metrics_enabled = router_config.telemetry.metrics.is_enabled();
     let shared_state = Arc::new(RouterSharedState::new(
-        router_config_arc,
+        router_config,
         persisted_documents_runtime,
         jwt_runtime,
         hive_usage_agent,
