@@ -3603,9 +3603,9 @@ checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
 name = "libc"
-version = "0.2.185"
+version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52ff2c0fe9bc6cb6b14a0592c2ff4fa9ceb83eea9db979b0487cd054946a2b8f"
+checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "libloading"
@@ -4045,9 +4045,9 @@ dependencies = [
 
 [[package]]
 name = "ntex"
-version = "3.10.0"
+version = "3.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f0baaa4f3df86d4f7e84b9cf7153743496360c79c689152ca9a2f1172ca5c2f"
+checksum = "bf010b0d2654465c75355a21295e6c9a66cf83719d324fccf8af1e0c941ab023"
 dependencies = [
  "base64",
  "bitflags 2.13.1",
@@ -4090,9 +4090,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-bytes"
-version = "1.7.6"
+version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c79595696d276a1be070159fb057e44c7b8b7c921f6690ddd3323cda71c70e92"
+checksum = "a926235646aee003de6b410c56efbfe3f8f5f6bbf8a69f1837b64f667dc03df9"
 dependencies = [
  "bytes",
  "serde",
@@ -4136,9 +4136,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-h2"
-version = "3.12.0"
+version = "3.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "462aedfed773643f8dce7b6173edcfeedc24f9dbf55a8f2c2fce3906163924f0"
+checksum = "b9169669ce11efc5ff8f14e419a982e53529c9d40e4f44be61766731ebf6590b"
 dependencies = [
  "bitflags 2.13.1",
  "foldhash 0.2.0",
@@ -4206,13 +4206,13 @@ dependencies = [
 
 [[package]]
 name = "ntex-macros"
-version = "3.3.0"
+version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c3d0edf86b3b7168391cae05c637be4923b23968f7f65ead861d38cdfa3db1e"
+checksum = "b3f33d1c84f7e2c18ce81b38dbdc27d443f45b6e16e1bba30457b6a342f5bb07"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.117",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -4270,9 +4270,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-rt"
-version = "3.15.4"
+version = "3.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "225e619aa588c9ef95940a7fb99e45077ed261646dfc5a1754ca1712126175c9"
+checksum = "3692fad48ebe4431289a51807dc08bd3205369ce9f1ab10d300fe12cccefd5c5"
 dependencies = [
  "async-channel",
  "async-task",
