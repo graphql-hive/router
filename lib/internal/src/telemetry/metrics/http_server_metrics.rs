@@ -33,7 +33,7 @@ pub struct HttpServerRequestState<'a> {
     _active_request_guard: HttpServerActiveRequestGuard<'a>,
     method: &'static str,
     scheme: &'static str,
-    route: String,
+    route: &'static str,
     protocol_version: &'static str,
     started_at: Instant,
 }
@@ -103,7 +103,7 @@ impl HttpServerMetrics {
         let method = request.method().as_static_str();
         let scheme = request.uri().scheme_static_str();
         let req_extensions = request.extensions();
-        let route = req_extensions
+        let route_pattern = req_extensions
             .get::<RequestRoutePattern>()
             .map(|v| v.0)
             .unwrap_or_default();
@@ -113,7 +113,7 @@ impl HttpServerMetrics {
             _active_request_guard: self.active_request_started(method, scheme),
             method,
             scheme,
-            route: route.to_string(),
+            route: route_pattern,
             protocol_version: request.version().as_static_str(),
             started_at: Instant::now(),
         })
