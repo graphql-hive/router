@@ -43,7 +43,7 @@ impl UniqueDirectivesPerLocation {
                         err_context.report_error(ValidationError {
                             error_code: self.error_code(),
                             locations: vec![directive.position],
-                            message: format!("Duplicate directive \"{}\"", &directive.name),
+                            message: format!("Duplicate directive \"{}\"", directive.name),
                         });
 
                         continue;
