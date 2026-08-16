@@ -1,5 +1,9 @@
 ---
 hive-console-sdk: patch
+hive-router-internal: patch
+hive-router-plan-executor: patch
+hive-router: patch
+hive-apollo-router-plugin: patch
 ---
 
 # Stop cancellation from interrupting an active usage flush
