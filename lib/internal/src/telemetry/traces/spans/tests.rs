@@ -8,6 +8,7 @@ use super::http_request::{HttpClientRequestSpan, HttpInflightRequestSpan, HttpSe
 use crate::graphql::ObservedError;
 use crate::telemetry::metrics::demand_control_metrics::DemandControlResultCode;
 use crate::telemetry::traces::spans::http_request::HttpServerSpanRequest;
+use crate::telemetry::utils::RequestRoutePattern;
 use bytes::Bytes;
 use hive_router_config::telemetry::{ClientIpHeaderConfig, ClientIpHeaderTrustedProxiesConfig};
 use http::header::{FORWARDED, HOST, USER_AGENT};
@@ -54,6 +55,14 @@ impl From<TestRequest> for HttpRequestMock {
 impl HttpServerSpanRequest for HttpRequestMock {
     fn headers(&self) -> &NtexHeaderMap {
         self.req.headers()
+    }
+
+    fn route_pattern(&self) -> &'static str {
+        self.req
+            .extensions()
+            .get::<RequestRoutePattern>()
+            .map(|v| v.0)
+            .unwrap_or_default()
     }
 
     fn method(&self) -> &Method {
@@ -263,6 +272,28 @@ fn test_http_server_request_span() {
         layer.assert_recorded_value(&span, attributes::HTTP_RESPONSE_STATUS_CODE, "500");
         layer.assert_recorded_value(&span, attributes::OTEL_STATUS_CODE, "Error");
         layer.assert_recorded_value(&span, attributes::ERROR_TYPE, "500");
+    });
+}
+
+#[test]
+fn test_http_server_request_span_route_is_the_template_not_the_path() {
+    let layer = RecordingLayer::default();
+    let subscriber = Registry::default().with(layer.clone());
+
+    with_default(subscriber, || {
+        let req = TestRequest::with_uri("/acme/graphql?foo=bar")
+            .header(HOST, "localhost:8080")
+            .to_http_request();
+
+        req.extensions_mut()
+            .insert(RequestRoutePattern("/{tenant}/graphql"));
+
+        let span = HttpServerRequestSpan::from_request(&req, &None);
+
+        // `http.route` is low-cardinality: the template, shared by every tenant.
+        layer.assert_recorded_value(&span, attributes::HTTP_ROUTE, "/{tenant}/graphql");
+        // The concrete path stays available on the high-cardinality attributes.
+        layer.assert_recorded_value(&span, attributes::URL_PATH, "/acme/graphql");
     });
 }
 

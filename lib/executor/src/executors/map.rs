@@ -158,7 +158,7 @@ pub struct SubgraphExecutorMap {
     timeouts_by_subgraph: TimeoutsBySubgraph,
     circuit_breakers_by_subgraph: CircuitBreakersBySubgraph,
     global_timeout: DurationOrProgram,
-    config: Arc<HiveRouterConfig>,
+    config: &'static HiveRouterConfig,
     client: Arc<HttpClient>,
     semaphores_by_origin: DashMap<String, Arc<Semaphore>>,
     max_connections_per_host: usize,
@@ -177,7 +177,7 @@ pub struct SubgraphExecutorMap {
 }
 impl SubgraphExecutorMap {
     pub fn new(
-        config: Arc<HiveRouterConfig>,
+        config: &'static HiveRouterConfig,
         global_timeout: DurationOrProgram,
         telemetry_context: Arc<TelemetryContext>,
     ) -> Result<Self, SubgraphExecutorError> {
@@ -217,7 +217,7 @@ impl SubgraphExecutorMap {
 
     pub fn from_http_endpoint_map(
         subgraph_endpoint_map: &HashMap<SubgraphName, String>,
-        config: Arc<HiveRouterConfig>,
+        config: &'static HiveRouterConfig,
         telemetry_context: Arc<TelemetryContext>,
         active_callback_subscriptions: CallbackSubscriptionsMap,
     ) -> Result<Self, SubgraphExecutorError> {
@@ -230,7 +230,7 @@ impl SubgraphExecutorMap {
                     )
                 })?;
         let mut subgraph_executor_map =
-            SubgraphExecutorMap::new(config.clone(), global_timeout, telemetry_context)?;
+            SubgraphExecutorMap::new(config, global_timeout, telemetry_context)?;
         subgraph_executor_map.callback_subscriptions = active_callback_subscriptions;
 
         // The `all` expression is configured once but evaluated against each subgraph.
@@ -839,7 +839,7 @@ impl SubgraphExecutorMap {
                     subgraph_config.dedupe_enabled,
                     self.in_flight_requests.clone(),
                     self.telemetry_context.clone(),
-                    self.config.clone(),
+                    self.config,
                 )
                 .to_boxed_arc();
 

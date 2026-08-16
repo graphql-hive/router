@@ -328,7 +328,7 @@ pub struct RouterSharedState {
     pub validation_plan: Arc<ValidationPlan>,
     pub parse_cache: Cache<u64, ParseCacheEntry>,
     pub persisted_documents_runtime: PersistedDocumentsRuntime,
-    pub router_config: Arc<HiveRouterConfig>,
+    pub router_config: &'static HiveRouterConfig,
     pub headers_plan: Arc<HeaderRulesPlan>,
     pub extensions_plan: Arc<ExtensionsPlan>,
     pub override_labels_evaluator: OverrideLabelsEvaluator,
@@ -362,7 +362,7 @@ pub struct RouterSharedState {
 impl RouterSharedState {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        router_config: Arc<HiveRouterConfig>,
+        router_config: &'static HiveRouterConfig,
         persisted_documents_runtime: PersistedDocumentsRuntime,
         jwt_auth_runtime: Option<JwtAuthRuntime>,
         hive_usage_agent: Option<UsageAgent>,
@@ -404,7 +404,7 @@ impl RouterSharedState {
                 .max_capacity(10_000)
                 .expire_after(JwtClaimsExpiry)
                 .build(),
-            router_config: router_config.clone(),
+            router_config,
             override_labels_evaluator: OverrideLabelsEvaluator::from_config(
                 &router_config.override_labels,
             )

@@ -22,6 +22,7 @@ pub trait HttpServerSpanRequest {
     fn uri(&self) -> &Uri;
     fn version(&self) -> Version;
     fn peer_addr(&self) -> Option<SocketAddr>;
+    fn route_pattern(&self) -> &'static str;
 }
 
 impl HttpServerSpanRequest for ntex::web::HttpRequest {
@@ -31,6 +32,13 @@ impl HttpServerSpanRequest for ntex::web::HttpRequest {
 
     fn method(&self) -> &Method {
         self.method()
+    }
+
+    fn route_pattern(&self) -> &'static str {
+        self.extensions()
+            .get::<RequestRoutePattern>()
+            .map(|v| v.0)
+            .unwrap_or_default()
     }
 
     fn uri(&self) -> &Uri {
@@ -46,7 +54,6 @@ impl HttpServerSpanRequest for ntex::web::HttpRequest {
     }
 }
 
-use crate::http::{HttpMethodAsStr, HttpUriAsStr, HttpVersionAsStr};
 use crate::telemetry::traces::{
     disabled_span, is_level_enabled,
     spans::{
@@ -54,6 +61,10 @@ use crate::telemetry::traces::{
         kind::HiveSpanKind,
         TARGET_NAME,
     },
+};
+use crate::{
+    http::{HttpMethodAsStr, HttpUriAsStr, HttpVersionAsStr},
+    telemetry::utils::RequestRoutePattern,
 };
 
 pub struct HttpServerRequestSpan {
@@ -134,7 +145,7 @@ impl HttpServerRequestSpan {
             "user_agent.original" = header_user_agent.as_ref().and_then(|v| v.to_str().ok()),
             "http.response.status_code" = Empty,
             "http.response.body.size" = Empty,
-            "http.route" = url.path(),
+            "http.route" = request.route_pattern(),
             // Client
             "client.address" = client_address,
             "client.port" = client_port,

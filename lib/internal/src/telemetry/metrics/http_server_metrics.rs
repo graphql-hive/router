@@ -10,6 +10,7 @@ use crate::telemetry::metrics::capture::Capture;
 #[cfg(debug_assertions)]
 use crate::telemetry::metrics::catalog::debug_assert_attrs;
 use crate::telemetry::metrics::catalog::{labels, names, values};
+use crate::telemetry::utils::RequestRoutePattern;
 
 struct HttpServerInstruments {
     request_duration: Option<Histogram<f64>>,
@@ -32,7 +33,7 @@ pub struct HttpServerRequestState<'a> {
     _active_request_guard: HttpServerActiveRequestGuard<'a>,
     method: &'static str,
     scheme: &'static str,
-    route: String,
+    route: &'static str,
     protocol_version: &'static str,
     started_at: Instant,
 }
@@ -101,13 +102,18 @@ impl HttpServerMetrics {
 
         let method = request.method().as_static_str();
         let scheme = request.uri().scheme_static_str();
+        let req_extensions = request.extensions();
+        let route_pattern = req_extensions
+            .get::<RequestRoutePattern>()
+            .map(|v| v.0)
+            .unwrap_or_default();
 
         Capture::enabled(HttpServerRequestState {
             instruments: &self.instruments,
             _active_request_guard: self.active_request_started(method, scheme),
             method,
             scheme,
-            route: request.path().to_string(),
+            route: route_pattern,
             protocol_version: request.version().as_static_str(),
             started_at: Instant::now(),
         })

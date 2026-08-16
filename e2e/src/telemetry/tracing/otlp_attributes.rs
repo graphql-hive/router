@@ -1,3 +1,5 @@
+use sonic_rs::json;
+
 use crate::testkit::{otel::OtlpCollector, some_header_map, TestRouter, TestSubgraphs};
 
 /// Verify only deprecated attributes are emitted for deprecated mode
@@ -290,6 +292,107 @@ async fn test_spec_and_deprecated_span_attributes() {
         target: hive-router
         url.full: http://[address]:[port]/accounts
         url.path: /accounts
+        url.scheme: http
+    "
+    );
+}
+
+/// Verify both spec-compliant and deprecated attributes are emitted for spec_and_deprecated mode
+#[ntex::test]
+async fn test_http_route_attribute_is_low_cardinality() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let _insta_settings_guard = otlp_collector.insta_filter_settings().bind_to_scope();
+    let otlp_endpoint = otlp_collector.grpc_endpoint();
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+          supergraph:
+            source: file
+            path: {supergraph_path}
+
+          http:
+            graphql_endpoint: /{{tenant}}/graphql
+
+          telemetry:
+            tracing:
+              instrumentation:
+                spans:
+                  mode: spec_and_deprecated
+              propagation:
+                trace_context: true
+              exporters:
+                - kind: otlp
+                  endpoint: {otlp_endpoint}
+                  protocol: grpc
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 2s
+      "#,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    let res = router
+        .send_post_request(
+            "/test/graphql",
+            json!({
+              "query": "{ users { id } }"
+            }),
+            None,
+        )
+        .await;
+
+    assert!(res.status().is_success());
+
+    // Wait for exports to be sent
+    let http_server_span = otlp_collector
+        .wait_for_span_by_hive_kind_one("http.server")
+        .await;
+
+    insta::assert_snapshot!(
+      http_server_span,
+      @"
+    Span: http.server
+      Kind: Server
+      Status: message='' code='1'
+      Attributes:
+        client.address: [address]
+        client.port: [port]
+        hive.kind: http.server
+        http.flavor: 1.1
+        http.host: localhost
+        http.method: POST
+        http.request.body.size: 28
+        http.request.method: POST
+        http.request_content_length: 28
+        http.response.body.size: 86
+        http.response.status_code: 200
+        http.response_content_length: 86
+        http.route: /{tenant}/graphql
+        http.scheme: http
+        http.status_code: 200
+        http.target: /test/graphql
+        http.url: /test/graphql
+        network.peer.address: [address]
+        network.peer.port: [port]
+        network.protocol.version: 1.1
+        router.request_id: [request_id]
+        server.address: localhost
+        server.port: [port]
+        target: hive-router
+        url.full: /test/graphql
+        url.path: /test/graphql
         url.scheme: http
     "
     );

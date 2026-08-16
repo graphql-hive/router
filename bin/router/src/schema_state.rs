@@ -85,13 +85,13 @@ pub struct RouterSupergraphRuntime {
 impl RouterSupergraphRuntime {
     pub fn build(
         snapshot: &SupergraphSnapshot,
-        router_config: &Arc<HiveRouterConfig>,
+        router_config: &'static HiveRouterConfig,
         telemetry_context: &Arc<TelemetryContext>,
         callback_subscriptions: &CallbackSubscriptionsMap,
     ) -> Result<Self, RouterSupergraphRuntimeError> {
         let subgraph_executor_map = Arc::new(SubgraphExecutorMap::from_http_endpoint_map(
             &snapshot.planner.supergraph.subgraph_endpoint_map,
-            router_config.clone(),
+            router_config,
             telemetry_context.clone(),
             callback_subscriptions.clone(),
         )?);
@@ -153,7 +153,7 @@ const RUNTIME_CACHE_MAX_SIZE: usize = 10;
 type RouterSupergraphRuntimeCache = Mutex<VecDeque<(u64, Arc<RouterSupergraphRuntime>)>>;
 
 pub struct SchemaState {
-    router_config: Arc<HiveRouterConfig>,
+    router_config: &'static HiveRouterConfig,
     /// The supergraph configured through the router config that can be loaded (and polled)
     ///   - `Some` when the router's configured supergraph is available and has been loaded
     ///   - sometimes `None` when the supergraph is being fetched and built
@@ -278,7 +278,7 @@ impl SchemaState {
 
         let runtime = Arc::new(RouterSupergraphRuntime::build(
             snapshot,
-            &self.router_config,
+            self.router_config,
             &self.telemetry_context,
             &self.callback_subscriptions,
         )?);
@@ -328,7 +328,7 @@ impl SchemaState {
     pub async fn new_from_config(
         bg_tasks_manager: &mut BackgroundTasksManager,
         telemetry_context: Arc<TelemetryContext>,
-        router_config: Arc<HiveRouterConfig>,
+        router_config: &'static HiveRouterConfig,
         plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
         active_subscriptions: ActiveSubscriptions,
         storage_manager: Arc<StorageManager>,
@@ -357,7 +357,6 @@ impl SchemaState {
                 .register_task(SupergraphBackgroundLoaderTask(Arc::new(background_loader)));
 
             let configured_spawn_clone = configured.clone();
-            let router_config_for_task = router_config.clone();
             let task_telemetry = telemetry_context.clone();
             let callback_subscriptions_for_reload = callback_subscriptions.clone();
 
@@ -410,7 +409,7 @@ impl SchemaState {
 
                     let query_planner_options =
                         hive_router_query_planner::planner::QueryPlannerOptions {
-                            experimental_abstract_type_folding: router_config_for_task
+                            experimental_abstract_type_folding: router_config
                                 .query_planner
                                 .experimental_abstract_type_folding,
                         };
@@ -451,7 +450,7 @@ impl SchemaState {
                             let snapshot = new_supergraph.snapshot();
                             let runtime = RouterSupergraphRuntime::build(
                                 &snapshot,
-                                &router_config_for_task,
+                                router_config,
                                 &task_telemetry,
                                 &callback_subscriptions_for_reload,
                             )?;
@@ -774,7 +773,7 @@ mod plugin_runtime_cache_tests {
             configured: Arc::new(ArcSwap::from(Arc::new(None))),
             runtime_cache: Arc::new(Mutex::new(VecDeque::with_capacity(RUNTIME_CACHE_MAX_SIZE))),
             runtime_cache_cleanup: None,
-            router_config: Arc::new(HiveRouterConfig::default()),
+            router_config: HiveRouterConfig::default().into_static(),
             telemetry_context: Arc::new(TelemetryContext::from_propagation_config(
                 &Default::default(),
                 &Default::default(),
@@ -1018,7 +1017,7 @@ mod plugin_runtime_cache_tests {
                 Arc::new(
                     RouterSupergraphRuntime::build(
                         &owner.snapshot(),
-                        &Arc::new(HiveRouterConfig::default()),
+                        HiveRouterConfig::default().into_static(),
                         &Arc::new(TelemetryContext::from_propagation_config(
                             &Default::default(),
                             &Default::default(),

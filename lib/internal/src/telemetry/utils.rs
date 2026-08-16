@@ -99,3 +99,10 @@ pub fn resolve_value_or_expression(
         }
     }
 }
+
+/// A simple identity struct inject to request's `extensions` in order to provide the
+/// route template used for /graphql.
+/// This is needed because `ntex` does not expose the template, only the final url and the matchers.
+///
+/// Used for telemetry (traces/spans) reporting.
+pub struct RequestRoutePattern(pub &'static str);

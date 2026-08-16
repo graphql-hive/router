@@ -205,6 +205,10 @@ pub fn default_plugin_warn_on_error() -> bool {
 }
 
 impl HiveRouterConfig {
+    pub fn into_static(self) -> &'static HiveRouterConfig {
+        Box::leak(Box::new(self))
+    }
+
     pub fn address(&self) -> String {
         format!("{}:{}", self.http.host, self.http.port)
     }

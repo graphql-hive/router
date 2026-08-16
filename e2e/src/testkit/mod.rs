@@ -705,7 +705,7 @@ impl TestRouterBuilder {
             callback_conf: config.callback_conf().cloned(),
             port: self.port,
             listener: self.listener,
-            config: Some(config),
+            config: Some(config.into_static()),
             plugins: self.plugins,
             handle: None,
             _hold_until_drop,
@@ -796,7 +796,7 @@ pub struct TestRouter<State> {
     callback_conf: Option<CallbackConfig>,
     port: u16,
     listener: Option<std::net::TcpListener>,
-    config: Option<HiveRouterConfig>,
+    config: Option<&'static HiveRouterConfig>,
     plugins: Vec<Box<dyn Fn(PluginRegistry) -> PluginRegistry>>,
     handle: Option<TestRouterHandle>,
     _hold_until_drop: Vec<Box<dyn Any>>,
@@ -813,7 +813,7 @@ impl TestRouter<Built> {
     pub async fn start_without_healthcheck(mut self) -> TestRouter<Started> {
         init_rustls_crypto_provider();
         let config = self.config.take().unwrap();
-        let (telemetry, subscriber) = Telemetry::init_testing_subscriber(&config)
+        let (telemetry, subscriber) = Telemetry::init_testing_subscriber(config)
             .expect("failed to initialize telemetry subscriber");
         let subscription_guard = tracing::subscriber::set_default(subscriber);
         let prometheus = telemetry
@@ -901,7 +901,7 @@ impl TestRouter<Built> {
             .port();
         let serv_paths = paths.clone();
         let serv_prometheus = prometheus.clone();
-        let long_lived_limit = LongLivedClientLimitService::new(&shared_state.router_config);
+        let long_lived_limit = LongLivedClientLimitService::new(shared_state.router_config);
         let mut serv_config = test::config()
             .client_timeout(Seconds(
                 shared_state

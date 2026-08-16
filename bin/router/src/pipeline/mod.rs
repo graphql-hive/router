@@ -767,7 +767,7 @@ pub async fn execute_pipeline<'exec>(
         CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
 
     let (mut normalize_payload, authorization_errors) = enforce_operation_authorization(
-        &shared_state.router_config,
+        shared_state.router_config,
         &normalize_payload,
         &supergraph.runtime.authorization,
         &supergraph.snapshot.metadata,
