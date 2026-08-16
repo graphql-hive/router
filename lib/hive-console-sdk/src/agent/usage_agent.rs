@@ -353,12 +353,12 @@ impl UsageAgentExt for UsageAgent {
 
     async fn start_flush_interval(&self, token: &CancellationToken) {
         loop {
-            tokio::time::sleep(self.inner().flush_interval).await;
-
-            if token.is_cancelled() {
-                debug!(target: USAGE_REPORTING_TARGET, "Shutting down.");
-
-                return;
+            tokio::select! {
+                _ = token.cancelled() => {
+                    debug!(target: USAGE_REPORTING_TARGET, "Shutting down.");
+                    return;
+                }
+                _ = tokio::time::sleep(self.inner().flush_interval) => {}
             }
 
             self.flush()

@@ -42,7 +42,9 @@ mod tests {
             .start()
             .await;
 
-        let res = router.send_graphql_request("{ me { name } }", None, None).await;
+        let res = router
+            .send_graphql_request("{ me { name } }", None, None)
+            .await;
 
         assert!(res.status().is_success(), "Expected 200 OK");
         assert_eq!(

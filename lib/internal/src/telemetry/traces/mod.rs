@@ -14,22 +14,25 @@
 //! Public helpers like `TracerLayer` and tracing control functions are re-exported here
 //! for the rest of the codebase to use.
 use hive_router_config::telemetry::{
-    hive::{is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig},
+    hive::HiveTelemetryConfig,
     tracing::{BatchProcessorConfig, OtlpProtocol, TracingExporterConfig},
     TelemetryConfig,
 };
 use opentelemetry_otlp::{
     Protocol, SpanExporter, WithExportConfig, WithHttpConfig, WithTonicConfig,
 };
+#[cfg(not(feature = "noop_otlp_exporter"))]
+use opentelemetry_sdk::error::OTelSdkError;
 use opentelemetry_sdk::{
+    error::OTelSdkResult,
     runtime,
     trace::{
         self, span_processor_with_async_runtime, BatchConfigBuilder, IdGenerator, Sampler,
-        SdkTracerProvider, SpanProcessor, TracerProviderBuilder,
+        SdkTracerProvider, SpanData, SpanProcessor, TracerProviderBuilder,
     },
     Resource,
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Mutex, time::Duration};
 use tracing_opentelemetry::OpenTelemetryLayer;
 
 #[cfg(feature = "noop_otlp_exporter")]
@@ -223,6 +226,90 @@ fn build_batched_span_processor(
     processor
 }
 
+struct TargetedHiveExporter {
+    endpoint: String,
+    token: String,
+    timeout: Duration,
+    resource: Mutex<Option<Resource>>,
+}
+
+impl std::fmt::Debug for TargetedHiveExporter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let masked: String = self.token.chars().take(5).collect::<String>() + "***";
+
+        f.debug_struct("TargetedHiveExporter")
+            .field("endpoint", &self.endpoint)
+            .field("token", &masked)
+            .field("timeout", &self.timeout)
+            .finish_non_exhaustive()
+    }
+}
+
+impl TargetedHiveExporter {
+    fn target_by_trace(batch: &[SpanData]) -> HashMap<opentelemetry::TraceId, String> {
+        batch
+            .iter()
+            .filter_map(|span| {
+                span.attributes
+                    .iter()
+                    .find(|attribute| attribute.key.as_str() == "hive.target")
+                    .and_then(|attribute| match &attribute.value {
+                        opentelemetry::Value::String(target) => {
+                            Some((span.span_context.trace_id(), target.as_str().to_string()))
+                        }
+                        _ => None,
+                    })
+            })
+            .collect()
+    }
+}
+
+impl trace::SpanExporter for TargetedHiveExporter {
+    async fn export(&self, batch: Vec<SpanData>) -> OTelSdkResult {
+        let targets = Self::target_by_trace(&batch);
+        let mut partitions: HashMap<String, Vec<SpanData>> = HashMap::new();
+        for span in batch {
+            if let Some(target) = targets.get(&span.span_context.trace_id()) {
+                partitions.entry(target.clone()).or_default().push(span);
+            }
+        }
+
+        for (target, spans) in partitions {
+            #[cfg(not(feature = "noop_otlp_exporter"))]
+            let exporter = SpanExporter::builder()
+                .with_http()
+                .with_endpoint(self.endpoint.clone())
+                .with_timeout(self.timeout)
+                .with_headers(HashMap::from([
+                    (
+                        "authorization".to_string(),
+                        format!("Bearer {}", self.token),
+                    ),
+                    ("x-hive-target-ref".to_string(), target),
+                ]))
+                .with_protocol(Protocol::HttpBinary)
+                .build()
+                .map_err(|error| OTelSdkError::InternalFailure(error.to_string()))?;
+            #[cfg(feature = "noop_otlp_exporter")]
+            let exporter = {
+                let _ = (&self.endpoint, &self.token, self.timeout, target);
+                NoopExporter::new()
+            };
+
+            let mut exporter = HiveConsoleExporter::new(exporter);
+            if let Some(resource) = self.resource.lock().unwrap().as_ref() {
+                trace::SpanExporter::set_resource(&mut exporter, resource);
+            }
+            trace::SpanExporter::export(&exporter, spans).await?;
+        }
+        Ok(())
+    }
+
+    fn set_resource(&mut self, resource: &Resource) {
+        *self.resource.lock().unwrap() = Some(resource.clone());
+    }
+}
+
 fn setup_hive_exporter(
     config: &HiveTelemetryConfig,
     resource: &Resource,
@@ -237,43 +324,12 @@ fn setup_hive_exporter(
             ))
         }
     };
-    let target = match &config.target {
-        Some(t) => resolve_value_or_expression(t, "Hive Telemetry target")?,
-        None => {
-            return Err(TelemetryError::TracesExporterSetup(
-                "Hive Tracing target is required but not provided".to_string(),
-            ))
-        }
+    let hive_exporter = TargetedHiveExporter {
+        endpoint,
+        token,
+        timeout: config.tracing.batch_processor.max_export_timeout,
+        resource: Mutex::new(None),
     };
-
-    if !is_uuid_target_ref(&target) && !is_slug_target_ref(&target) {
-        return Err(TelemetryError::TracesExporterSetup(format!(
-            "Invalid Hive Tracing target format: '{}'. It must be either in slug format '$organizationSlug/$projectSlug/$targetSlug' or UUID format 'a0f4c605-6541-4350-8cfe-b31f21a4bf80'",
-            target
-        )));
-    }
-
-    let headers: HashMap<String, String> = HashMap::from_iter(vec![
-        ("authorization".to_string(), format!("Bearer {}", token)),
-        ("x-hive-target-ref".to_string(), target.clone()),
-    ]);
-
-    let exporter = SpanExporter::builder()
-        .with_http()
-        .with_endpoint(endpoint)
-        .with_timeout(config.tracing.batch_processor.max_export_timeout)
-        .with_headers(headers)
-        .with_protocol(Protocol::HttpBinary)
-        .build()
-        .map_err(|e| TelemetryError::TracesExporterSetup(e.to_string()))?;
-
-    #[cfg(feature = "noop_otlp_exporter")]
-    let exporter = {
-        let _ = exporter;
-        NoopExporter::new()
-    };
-
-    let hive_exporter = HiveConsoleExporter::new(exporter);
     let mut trace_batching_processor =
         TraceBatchSpanProcessor::new(hive_exporter, &config.tracing.batch_processor)?;
 

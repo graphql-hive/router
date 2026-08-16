@@ -1,3 +1,4 @@
+use futures::StreamExt;
 use hive_console_sdk::agent::usage_agent::RequestDetails;
 use hive_router_plan_executor::headers::response::ResponseHeaderSink;
 use http::Method;
@@ -40,6 +41,7 @@ use crate::jwt::errors::JwtError;
 use crate::pipeline::active_subscriptions::SubscriptionEvent;
 use crate::pipeline::error::{ClientPipelineError, PipelineError};
 use crate::pipeline::execute_planned_request;
+use crate::pipeline::execution_request::{OperationPreparation, OperationPreparationResult};
 use crate::pipeline::header::{ResponseMode, SingleContentType, StreamContentType};
 use crate::pipeline::{
     connection_fingerprint, hash_graphql_extensions, hash_graphql_variables,
@@ -243,7 +245,7 @@ async fn handle_text_frame(
     // browsers cannot interpret a rejected HTTP Upgrade request and will show a cryptic
     // error to clients. instead, we accept the connection but close it immediately if no
     // supergraph is available, which results in a more understandable error
-    let supergraph = match schema_state.select_supergraph(req) {
+    let supergraph = match schema_state.select_supergraph(req).await {
         Ok(supergraph) => supergraph,
         Err(err) => {
             error!(target: targets::WEBSOCKET_SERVER, err = ?err, "Supergraph runtime error");
@@ -302,6 +304,9 @@ async fn handle_text_frame(
 
             let started_at = Instant::now();
             let operation_span = GraphQLOperationSpan::new();
+            operation_span.record_hive_target(
+                supergraph.and_then(|selected| selected.snapshot.options.hive_target.as_deref()),
+            );
             let span_clone = operation_span.clone();
 
             let result = async {
@@ -379,7 +384,7 @@ async fn handle_text_frame(
                   }
 
                   let payload = GraphQLParams {
-                      query: Some(payload.query),
+                      query: (!payload.query.is_empty()).then_some(payload.query),
                       operation_name: payload.operation_name,
                       variables: payload.variables.unwrap_or_default(),
                       extensions: payload.extensions,
@@ -428,6 +433,43 @@ async fn handle_text_frame(
                               .version_header.get_header_ref(),
                       )
                       .and_then(|v| v.to_str().ok());
+
+                  let payload = match OperationPreparation::prepare_websocket(
+                      req,
+                      shared_state,
+                      supergraph,
+                      &plugin_req_state,
+                      payload,
+                      client_name,
+                      client_version,
+                  )
+                  .await
+                  {
+                      Ok(OperationPreparationResult::Operation(operation)) => {
+                          summary::record(|summary| {
+                              summary.set_persisted_document_id(
+                                  operation.resolved_document_id.as_deref(),
+                              )
+                          });
+                          operation.graphql_params
+                      }
+                      Ok(OperationPreparationResult::EarlyResponse(mut response)) => {
+                          let mut response_body = response.take_body();
+                          let mut body = Vec::new();
+                          while let Some(chunk) = response_body.next().await {
+                              match chunk {
+                                  Ok(chunk) => body.extend_from_slice(&chunk),
+                                  Err(err) => {
+                                      error!(target: targets::WEBSOCKET_SERVER, error = ?err, "Failed to read GraphQL params hook response body");
+                                      return Some(CloseCode::InternalServerError(None).into());
+                                  }
+                              }
+                          }
+                          let _ = sink.send(ServerMessage::next(&id, &body)).await;
+                          return Some(ServerMessage::complete(&id));
+                      }
+                      Err(err) => return Some(err.into_server_message(&id, shared_state)),
+                  };
 
                   let parser_result =
                       match parse_operation_with_cache(shared_state, &payload, &plugin_req_state).await {
@@ -502,10 +544,8 @@ async fn handle_text_frame(
 
                   let request_dedupe_enabled =
                       shared_state.router_config.traffic_shaping.router.dedupe.enabled;
-                  let websocket_reuse_enabled = shared_state
-                      .router_config
-                      .traffic_shaping
-                      .any_websocket_connection_reuse_enabled();
+                  let websocket_reuse_enabled = supergraph.snapshot.options.traffic_shaping
+                  .any_websocket_connection_reuse_enabled();
 
                   let connection_fingerprint = (request_dedupe_enabled || websocket_reuse_enabled)
                     .then(|| connection_fingerprint(
@@ -621,7 +661,7 @@ async fn handle_text_frame(
                       }
                   };
 
-                  if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
+                  if let Some(hive_usage_agent) = &supergraph.runtime.hive_usage_agent {
                       let mut headers_vec = Vec::with_capacity(headers.len());
                       for (name, value) in headers.iter() {
                           if let Ok(val_str) = value.to_str() {

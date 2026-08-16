@@ -3,7 +3,6 @@
 // Needed because of ntex's way of defining middlewares
 #![recursion_limit = "256"]
 
-
 use hive_router::http::StatusCode;
 use serde::Deserialize;
 

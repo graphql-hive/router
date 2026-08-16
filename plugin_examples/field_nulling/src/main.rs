@@ -10,7 +10,8 @@ async fn main() -> Result<(), RouterInitError> {
     init_rustls_crypto_provider();
 
     router_entrypoint(
-        PluginRegistry::new().register::<field_nulling_plugin_example::plugin::FieldNullingPlugin>(),
+        PluginRegistry::new()
+            .register::<field_nulling_plugin_example::plugin::FieldNullingPlugin>(),
     )
     .await
 }

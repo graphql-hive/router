@@ -14,7 +14,7 @@ use hive_router::{
         hooks::{
             on_http_request::{OnHttpRequestHookFuture, OnHttpRequestHookPayload},
             on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
-            on_supergraph_load::Supergraph,
+            on_supergraph_load::{Supergraph, SupergraphOptions},
         },
         plugin_trait::{RouterPlugin, StartHookPayload},
     },
@@ -53,7 +53,13 @@ impl RouterPlugin for ReplaceSchemaPlugin {
         let document =
             safe_parse_schema(&SUPERGRAPH_SDL.replace("http://0.0.0.0:4200", &subgraphs_url))?;
         let document = strip_disabled_features(document, &["inStock", "shippingEstimate"]);
-        let basic_variant = Arc::new(Supergraph::from_document(document, Default::default())?);
+
+        let mut options = SupergraphOptions::default();
+        options.traffic_shaping.all.forward_operation_name = true;
+        options.error_masking.redacted_error_message = "Basic variant error".to_string();
+        options.hive_target = Some("example/router/basic".to_string());
+
+        let basic_variant = Arc::new(Supergraph::from_document(document, options)?);
         payload.initialize_plugin(Self { basic_variant })
     }
 

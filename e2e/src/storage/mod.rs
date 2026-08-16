@@ -27,7 +27,7 @@ mod storage_e2e_tests {
 
     #[ntex::test]
     #[should_panic(
-        expected = "failed to configure hive router from config: SharedStateError(PersistedDocuments(StorageNotFound(\"missing\")))"
+        expected = "failed to configure hive router from config: SupergraphManagerError(RouterSupergraphRuntimeError(PersistedDocumentsError(StorageNotFound(\"missing\"))))"
     )]
     async fn should_throw_when_storage_is_missing_in_persisted_docs() {
         TestRouter::builder()

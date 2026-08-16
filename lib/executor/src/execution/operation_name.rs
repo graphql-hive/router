@@ -1,6 +1,6 @@
 use std::{collections::HashSet, sync::Arc};
 
-use hive_router_config::traffic_shaping::TrafficShapingConfig;
+use hive_router_config::traffic_shaping::SupergraphTrafficShapingConfig;
 
 #[derive(Debug, Clone, Default)]
 pub enum OperationNameForwardConfig {
@@ -11,7 +11,7 @@ pub enum OperationNameForwardConfig {
 }
 
 impl OperationNameForwardConfig {
-    pub fn new<'a, I>(config: &'a TrafficShapingConfig, known_subgraph_names: I) -> Self
+    pub fn new<'a, I>(config: &'a SupergraphTrafficShapingConfig, known_subgraph_names: I) -> Self
     where
         I: IntoIterator<Item = &'a String>,
     {

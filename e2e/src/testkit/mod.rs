@@ -730,7 +730,10 @@ struct TestRouterHandle {
 
 impl Drop for TestRouterHandle {
     fn drop(&mut self) {
-        // shut down backgroun tasks
+        // this drop bg tasks synchronously. graceful_shutdown cannot be awaited here,
+        // and blocking another thread on it deadlocks because the graceful task handles
+        // still need this blocked ntex runtime to make progress immediate cancellation is intentional
+        // for generic test teardown; focused async tests cover final hive flush behavior though
         self.bg_tasks_manager.shutdown();
 
         // shutdown hooks and wait for complete (shutdown is async so yeah)

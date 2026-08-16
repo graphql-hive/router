@@ -3,6 +3,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use graphql_tools::static_graphql::schema::Document;
+use hive_router_config::{
+    demand_control::DemandControlConfig, error_masking::ErrorMaskingConfig, headers::HeadersConfig,
+    override_labels::OverrideLabelsConfig, override_subgraph_urls::OverrideSubgraphUrlsConfig,
+    persisted_documents::PersistedDocumentsConfig, subscriptions::SupergraphSubscriptionsConfig,
+    traffic_shaping::SupergraphTrafficShapingConfig,
+};
 use hive_router_query_planner::planner::{Planner, PlannerError, QueryPlannerOptions};
 use hive_router_query_planner::utils::parsing::safe_parse_schema;
 use tokio_util::sync::CancellationToken;
@@ -32,13 +38,30 @@ pub enum SupergraphBuildError {
 /// Monotonically increasing id allocated to each constructed supergraph.
 static NEXT_SUPERGRAPH_DATA_ID: AtomicU64 = AtomicU64::new(0);
 
-/// The schema-derived data shared by a [`Supergraph`] owner and every [`SupergraphSnapshot`]
-/// cloned from it. Never constructed directly; always reached through the owner or a snapshot.
+/// Immutable configuration whose meaning belongs to one supergraph generation.
+#[derive(Clone, Default)]
+pub struct SupergraphOptions {
+    pub query_planner: QueryPlannerOptions,
+    pub traffic_shaping: SupergraphTrafficShapingConfig,
+    pub override_subgraph_urls: OverrideSubgraphUrlsConfig,
+    pub headers: HeadersConfig,
+    pub override_labels: OverrideLabelsConfig,
+    pub demand_control: Option<DemandControlConfig>,
+    pub subscriptions: SupergraphSubscriptionsConfig,
+    pub error_masking: ErrorMaskingConfig,
+    pub persisted_documents: PersistedDocumentsConfig,
+    pub hive_target: Option<String>,
+}
+
+/// The schema and immutable graph-bound options shared by a [`Supergraph`] owner and every
+/// [`SupergraphSnapshot`] cloned from it. Never constructed directly; always reached through the
+/// owner or a snapshot.
 pub struct SupergraphData {
     /// Process-unique id allocated once per constructed supergraph. Never reused, so a later
     /// instance cannot reuse an earlier runtime or join its in-flight request deduplication,
     /// even when both have identical consumer schemas.
     pub cache_id: u64,
+    pub options: SupergraphOptions,
     pub metadata: Arc<SchemaMetadata>,
     pub planner: Planner,
     pub supergraph_schema: Arc<Document>,
@@ -89,8 +112,9 @@ impl SupergraphSnapshot {
 
 /// The owner handle for one constructed supergraph. Plugins and the router's configured source
 /// retain `Arc<Supergraph>` while a supergraph remains selectable for new requests. It contains
-/// only schema-derived data. Router runtime concerns such as subgraph executors and telemetry live
-/// in the router and are built separately from a [`SupergraphSnapshot`].
+/// schema-derived data and immutable graph-bound configuration. Live router infrastructure such as
+/// clients, caches, storage runtimes, and telemetry agents is built separately from a
+/// [`SupergraphSnapshot`].
 ///
 /// When the last `Arc<Supergraph>` reference drops, [`Drop`] publishes retirement: every
 /// [`SupergraphSnapshot`] taken from it observes this (immediately, or later via
@@ -128,9 +152,9 @@ impl Supergraph {
     /// Same as [`Self::from_sdl`], but takes an already-parsed supergraph document.
     pub fn from_document(
         document: Document,
-        options: QueryPlannerOptions,
+        options: SupergraphOptions,
     ) -> Result<Self, SupergraphBuildError> {
-        let planner = Planner::new_from_supergraph(&document, options)?;
+        let planner = Planner::new_from_supergraph(&document, options.query_planner.clone())?;
         let metadata = Arc::new(planner.consumer_schema.schema_metadata());
 
         let public_schema = PublicSchema {
@@ -143,6 +167,7 @@ impl Supergraph {
             .expect("supergraph id space exhausted");
         let data = SupergraphData {
             cache_id,
+            options,
             metadata,
             planner,
             supergraph_schema: Arc::new(document),
@@ -155,10 +180,8 @@ impl Supergraph {
         })
     }
 
-    /// Parses `sdl` into a supergraph document and builds a schema-only [`Supergraph`] from
-    /// it. `options` may only carry query-planner options - router configuration, telemetry, and
-    /// router runtime state do not belong here.
-    pub fn from_sdl(sdl: &str, options: QueryPlannerOptions) -> Result<Self, SupergraphBuildError> {
+    /// Parses `sdl` and builds a [`Supergraph`] with its immutable graph-bound options.
+    pub fn from_sdl(sdl: &str, options: SupergraphOptions) -> Result<Self, SupergraphBuildError> {
         Self::from_document(safe_parse_schema(sdl)?, options)
     }
 
