@@ -116,6 +116,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.1.1 (2026-08-16)
+
+### Features
+
+#### Isolate plugin-selected supergraph configuration
+
+Plugin-selected supergraphs no longer inherit graph-bound settings from the router's configured supergraph. Requests, WebSocket connections, persisted-document resolution, subgraph execution, usage reports, and Hive traces now use the options attached to the selected `Supergraph` snapshot.
+
+Persisted-document reloaders and Hive usage agents now use separate background-task groups scoped to the selected supergraph runtime. Cancelling a runtime waits for any active Hive flush and explicitly flushes the remaining report buffer before removing its worker. Router shutdown also waits for these graceful background tasks to finish.
+
+### Migration
+
+Configured supergraphs require no YAML changes. The router continues deriving their graph-bound options from the existing configuration.
+
+Plugins that construct supergraph variants must import `SupergraphOptions`, provide the graph-bound settings each variant needs, and retain the owner while it remains selectable:
+
+```rust
+use std::sync::Arc;
+
+use hive_router::plugins::hooks::on_supergraph_load::{Supergraph, SupergraphOptions};
+
+let mut options = SupergraphOptions::default();
+options.traffic_shaping.all.forward_operation_name = true;
+options.error_masking.redacted_error_message = "Variant error".to_string();
+options.hive_target = Some("organization/project/variant".to_string());
+
+let variant = Arc::new(Supergraph::from_sdl(sdl, options)?);
+```
+
+Move any existing `QueryPlannerOptions` into `SupergraphOptions::query_planner`. Also copy every graph-specific setting the variant previously inherited from router configuration, including subgraph traffic shaping, URL overrides, headers, override labels, demand control, subscription transports, error masking, persisted documents, and its Hive target. Omitted fields use `SupergraphOptions::default()` and no longer inherit values from the configured supergraph.
+
+### Fixes
+
+#### Add persisted documents support to WebSocket operations
+
+WebSocket `subscribe` payloads can now omit the GraphQL query and provide a persisted document ID through their extensions. The router resolves the document before parsing, validation, and execution.
+
+Persisted-document extraction, ID enforcement, resolution, metrics, and missing-ID logging use the supergraph selected for the WebSocket connection. This prevents an operation from resolving a document from one supergraph's manifest and executing it against another supergraph.
+
+#### Fix `http.route` lable value in metrics
+
+The `http.route` label value in metrics was set to the effective route path, instead of the route template.
+
+In setups with `http.graphql_endpoint` is used, or when persisted documents are used over HTTP paths, this led to high cardinality in metrics.
+
+Thanks [praguevara](https://github.com/praguevara) for contributing.
+
+#### Fix `http.route` lable value in traces
+
+The `http.route` span attribute was set to the effective route path, instead of the route template. 
+
+The [OTEL specification for HTTP spans](https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-server) describes the `http.router` field as:
+
+> The matched route template for the request. This MUST be low-cardinality and include all static path segments, with dynamic path segments represented with placeholders.
+
+Thanks [praguevara](https://github.com/praguevara) for contributing.
+
+#### Refactor internal `HiveRouterConfig`
+
+`HiveRouterConfig` can now be treated as `'&static` (by calling `.into_static()`). This makes the work with the config struct easier, as it can be used directly without worrying about lifetimes, and without cloning.
+
+#### Run GraphQL parameters hooks for WebSocket operations
+
+WebSocket `subscribe` payloads now run the `on_graphql_params` start hook and its registered end callbacks before parsing, validation, and execution. The start hook receives the synthetic WebSocket operation request and the already-decoded parameters in `OnGraphQLParamsStartHookPayload.graphql_params`.
+
+When a hook ends preparation with an early response, the router sends the response's GraphQL body as a WebSocket `next` message followed by `complete`. HTTP-only response metadata, including its status and headers, cannot be represented by the GraphQL over WebSocket protocol and is not forwarded.
+
+#### Stop cancellation from interrupting an active usage flush
+
+The usage agent now observes cancellation while waiting for the next flush interval instead of checking only after the full interval has elapsed. Cancellation remains pending while an active flush completes, preventing a drained report batch from being lost when its send future is interrupted.
+
+#### Bind graph-specific configuration to `Supergraph`
+
+`Supergraph::from_sdl` and `Supergraph::from_document` now accept `SupergraphOptions` instead of `QueryPlannerOptions`. The immutable options snapshot includes planner, executor, subgraph subscription, persisted-document, error-masking, and Hive target settings.
+
+### Migration
+
+Import `SupergraphOptions` with `Supergraph`:
+
+```rust
+use hive_router::plugins::hooks::on_supergraph_load::{Supergraph, SupergraphOptions};
+```
+
+Replace the query-planner options argument with a complete supergraph options value:
+
+```diff
+-use hive_router::plugins::hooks::on_supergraph_load::Supergraph;
++use hive_router::plugins::hooks::on_supergraph_load::{Supergraph, SupergraphOptions};
+ use hive_router::query_planner::planner::QueryPlannerOptions;
+
+ let query_planner = QueryPlannerOptions {
+     experimental_abstract_type_folding: true,
+ };
+-let supergraph = Supergraph::from_sdl(sdl, query_planner)?;
++let supergraph = Supergraph::from_sdl(
++    sdl,
++    SupergraphOptions {
++        query_planner,
++        ..SupergraphOptions::default()
++    },
++)?;
+```
+
+Callers that used `Default::default()` can migrate directly:
+
+```rust
+use hive_router::plugins::hooks::on_supergraph_load::{Supergraph, SupergraphOptions};
+
+let supergraph = Supergraph::from_sdl(sdl, SupergraphOptions::default())?;
+```
+
 ## 0.1.0 (2026-08-13)
 
 ### Breaking Changes

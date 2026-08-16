@@ -66,6 +66,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(hive-router)* fix docker image issues  ([#394](https://github.com/graphql-hive/router/pull/394))
+## 0.1.13 (2026-08-16)
+
+### Fixes
+
+#### Refactor internal `HiveRouterConfig`
+
+`HiveRouterConfig` can now be treated as `'&static` (by calling `.into_static()`). This makes the work with the config struct easier, as it can be used directly without worrying about lifetimes, and without cloning.
+
 ## 0.1.12 (2026-08-12)
 
 ### Features

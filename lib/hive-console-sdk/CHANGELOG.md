@@ -1,3 +1,11 @@
+## 0.3.20 (2026-08-16)
+
+### Fixes
+
+#### Stop cancellation from interrupting an active usage flush
+
+The usage agent now observes cancellation while waiting for the next flush interval instead of checking only after the full interval has elapsed. Cancellation remains pending while an active flush completes, preventing a drained report batch from being lost when its send future is interrupted.
+
 ## 0.3.19 (2026-07-26)
 
 ### Fixes
