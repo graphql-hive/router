@@ -279,7 +279,7 @@ impl<E: SpanExporter> SpanExporter for HttpCompatibilityExporter<E> {
 mod tests {
     use super::*;
     use crate::telemetry::traces::spans::http_request::{
-        HttpClientRequestSpan, HttpServerRequestSpan, HttpServerSpanRequest,
+        HttpClientRequestSpan, HttpServerRequestSpan,
     };
     use hive_router_config::telemetry::ClientIpHeaderConfig;
     use http::header::FORWARDED;
@@ -318,15 +318,6 @@ mod tests {
 
     fn forwarded_ip_header_config() -> Option<ClientIpHeaderConfig> {
         Some(ClientIpHeaderConfig::HeaderName(FORWARDED.as_str().into()))
-    }
-
-    /// Every HTTP server span below is built from a request to `/test`, so they all
-    /// report the same route template.
-    fn http_server_span<Req: HttpServerSpanRequest>(
-        request: &Req,
-        client_ip_header_config: &Option<ClientIpHeaderConfig>,
-    ) -> HttpServerRequestSpan {
-        HttpServerRequestSpan::from_request(request, client_ip_header_config)
     }
 
     fn setup_tracing_subscriber(provider: &SdkTracerProvider) -> impl Drop {
@@ -371,7 +362,8 @@ mod tests {
             ntex::web::HttpResponse::build(ntex::http::StatusCode::OK).body("response body");
 
         tracer.in_span("root", |_cx| {
-            let span = http_server_span(&http_req, &forwarded_ip_header_config());
+            let span =
+                HttpServerRequestSpan::from_request(&http_req, &forwarded_ip_header_config());
             span.record_body_size(body.len());
             span.record_response(&http_res);
         });
@@ -424,7 +416,8 @@ mod tests {
             ntex::web::HttpResponse::build(ntex::http::StatusCode::OK).body("response body");
 
         tracer.in_span("root", |_cx| {
-            let span = http_server_span(&http_req, &forwarded_ip_header_config());
+            let span =
+                HttpServerRequestSpan::from_request(&http_req, &forwarded_ip_header_config());
             span.record_body_size(body.len());
             span.record_response(&http_res);
         });
@@ -476,7 +469,8 @@ mod tests {
             ntex::web::HttpResponse::build(ntex::http::StatusCode::OK).body("response body");
 
         tracer.in_span("root", |_cx| {
-            let span = http_server_span(&http_req, &forwarded_ip_header_config());
+            let span =
+                HttpServerRequestSpan::from_request(&http_req, &forwarded_ip_header_config());
             span.record_body_size(body.len());
             span.record_response(&http_res);
         });

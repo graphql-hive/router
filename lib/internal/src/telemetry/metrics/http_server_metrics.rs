@@ -92,9 +92,6 @@ impl HttpServerMetrics {
         }
     }
 
-    /// `route` is the *route template* the request matched (e.g. `/{tenant}/graphql`),
-    /// not the concrete request path: `http.route` is a metric attribute, so a
-    /// per-request value would grow the time series cardinality without bound.
     pub fn capture_request<'a>(
         &'a self,
         request: &HttpRequest,

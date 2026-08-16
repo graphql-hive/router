@@ -194,13 +194,6 @@ fn assert_fields(span: &Span, expected_fields: &[&str]) {
     );
 }
 
-fn http_server_span<Req: HttpServerSpanRequest>(
-    request: &Req,
-    client_ip_header_config: &Option<ClientIpHeaderConfig>,
-) -> HttpServerRequestSpan {
-    HttpServerRequestSpan::from_request(request, client_ip_header_config)
-}
-
 fn ip_header_config(header: &str) -> Option<ClientIpHeaderConfig> {
     Some(ClientIpHeaderConfig::HeaderName(header.into()))
 }
@@ -231,7 +224,7 @@ fn test_http_server_request_span() {
             .to_http_request();
         let body = NtexBytes::from("test body");
 
-        let span = http_server_span(&req, &ip_header_config(XFF.as_str()));
+        let span = HttpServerRequestSpan::from_request(&req, &ip_header_config(XFF.as_str()));
         span.record_body_size(body.len());
         assert_fields(
             &span,
@@ -273,7 +266,7 @@ fn test_http_server_request_span() {
         layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "192.168.0.1");
         layer.assert_not_recorded(&span, attributes::CLIENT_PORT);
 
-        let span = http_server_span(&req, &ip_header_config(XFF.as_str()));
+        let span = HttpServerRequestSpan::from_request(&req, &ip_header_config(XFF.as_str()));
         span.record_internal_server_error();
 
         layer.assert_recorded_value(&span, attributes::HTTP_RESPONSE_STATUS_CODE, "500");
@@ -314,7 +307,10 @@ fn test_http_server_request_span_client_address_from_various_values() {
             .header(HOST, "localhost:8080")
             .header(XFF, "10.0.0.1:1234, 172.16.1.42:443")
             .to_http_request();
-        let span = http_server_span(&realistic_with_port, &ip_header_config(XFF.as_str()));
+        let span = HttpServerRequestSpan::from_request(
+            &realistic_with_port,
+            &ip_header_config(XFF.as_str()),
+        );
         layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "10.0.0.1");
         layer.assert_recorded_value(&span, attributes::CLIENT_PORT, "1234");
 
@@ -322,14 +318,20 @@ fn test_http_server_request_span_client_address_from_various_values() {
             .header(HOST, "localhost:8080")
             .header(XFF, "10.0.0.1, 172.16.1.42")
             .to_http_request();
-        let span = http_server_span(&realistic_without_port, &ip_header_config(XFF.as_str()));
+        let span = HttpServerRequestSpan::from_request(
+            &realistic_without_port,
+            &ip_header_config(XFF.as_str()),
+        );
         layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "10.0.0.1");
 
         let realistic_ipv6_with_port = TestRequest::with_uri("/graphql")
             .header(HOST, "localhost:8080")
             .header(XFF, "[2001:db8::1]:8080, [2001:db8::2]:8443")
             .to_http_request();
-        let span = http_server_span(&realistic_ipv6_with_port, &ip_header_config(XFF.as_str()));
+        let span = HttpServerRequestSpan::from_request(
+            &realistic_ipv6_with_port,
+            &ip_header_config(XFF.as_str()),
+        );
         layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "2001:db8::1");
         layer.assert_recorded_value(&span, attributes::CLIENT_PORT, "8080");
 
@@ -337,7 +339,7 @@ fn test_http_server_request_span_client_address_from_various_values() {
             .header(HOST, "localhost:8080")
             .header(XFF, "2001:db8::1, 2001:db8::2")
             .to_http_request();
-        let span = http_server_span(
+        let span = HttpServerRequestSpan::from_request(
             &realistic_ipv6_without_port,
             &ip_header_config(XFF.as_str()),
         );
@@ -348,7 +350,7 @@ fn test_http_server_request_span_client_address_from_various_values() {
             .header(HOST, "localhost:8080")
             .header(XFF, "2001:db8::2:8443")
             .to_http_request();
-        let span = http_server_span(
+        let span = HttpServerRequestSpan::from_request(
             &unrealistic_malformed_ipv6_with_port,
             &ip_header_config(XFF.as_str()),
         );
@@ -359,7 +361,10 @@ fn test_http_server_request_span_client_address_from_various_values() {
             .header(HOST, "localhost:8080")
             .header(XFF, ", ,")
             .to_http_request();
-        let span = http_server_span(&unrealistic_empty, &ip_header_config(XFF.as_str()));
+        let span = HttpServerRequestSpan::from_request(
+            &unrealistic_empty,
+            &ip_header_config(XFF.as_str()),
+        );
         layer.assert_not_recorded(&span, attributes::CLIENT_ADDRESS);
         layer.assert_not_recorded(&span, attributes::CLIENT_PORT);
     });
@@ -381,7 +386,7 @@ fn test_http_server_request_span_client_address_with_trusted_proxies() {
         )
         .with_peer_addr(peer_addr);
 
-        let span = http_server_span(
+        let span = HttpServerRequestSpan::from_request(
             &req,
             &trusted_ip_header_config(XFF.as_str(), vec!["10.0.0.0/8"]),
         );
@@ -396,7 +401,7 @@ fn test_http_server_request_span_client_address_with_trusted_proxies() {
         )
         .with_peer_addr(peer_addr);
 
-        let span = http_server_span(
+        let span = HttpServerRequestSpan::from_request(
             &all_trusted,
             &trusted_ip_header_config(XFF.as_str(), vec!["10.0.0.0/8"]),
         );
@@ -411,7 +416,7 @@ fn test_http_server_request_span_client_address_with_trusted_proxies() {
         )
         .with_peer_addr(peer_addr);
 
-        let span = http_server_span(
+        let span = HttpServerRequestSpan::from_request(
             &mixed_invalid,
             &trusted_ip_header_config(XFF.as_str(), vec!["10.0.0.0/8"]),
         );
@@ -426,7 +431,7 @@ fn test_http_server_request_span_client_address_with_trusted_proxies() {
         )
         .with_peer_addr(peer_addr);
 
-        let span = http_server_span(
+        let span = HttpServerRequestSpan::from_request(
             &non_ip_tokens,
             &trusted_ip_header_config(XFF.as_str(), vec!["10.0.0.0/8"]),
         );
@@ -447,7 +452,7 @@ fn test_http_server_request_span_client_address_from_forwarded() {
             .header(FORWARDED, "for=198.51.100.7;proto=https, for=10.0.0.2")
             .to_http_request();
 
-        let span = http_server_span(&req, &ip_header_config(FORWARDED.as_str()));
+        let span = HttpServerRequestSpan::from_request(&req, &ip_header_config(FORWARDED.as_str()));
 
         layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "198.51.100.7");
         layer.assert_not_recorded(&span, attributes::CLIENT_PORT);
@@ -457,7 +462,7 @@ fn test_http_server_request_span_client_address_from_forwarded() {
             .header(FORWARDED, r#"for="198.51.100.7:1234";proto=https"#)
             .to_http_request();
 
-        let span = http_server_span(&req, &ip_header_config(FORWARDED.as_str()));
+        let span = HttpServerRequestSpan::from_request(&req, &ip_header_config(FORWARDED.as_str()));
 
         layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "198.51.100.7");
         layer.assert_recorded_value(&span, attributes::CLIENT_PORT, "1234");
@@ -467,7 +472,7 @@ fn test_http_server_request_span_client_address_from_forwarded() {
             .header(FORWARDED, r#"for="[2001:db8::1]:8080";proto=https"#)
             .to_http_request();
 
-        let span = http_server_span(&req, &ip_header_config(FORWARDED.as_str()));
+        let span = HttpServerRequestSpan::from_request(&req, &ip_header_config(FORWARDED.as_str()));
 
         layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "2001:db8::1");
         layer.assert_recorded_value(&span, attributes::CLIENT_PORT, "8080");
@@ -477,7 +482,7 @@ fn test_http_server_request_span_client_address_from_forwarded() {
             .header(FORWARDED, "for=_hidden, proto=https")
             .to_http_request();
 
-        let span = http_server_span(&req, &ip_header_config(FORWARDED.as_str()));
+        let span = HttpServerRequestSpan::from_request(&req, &ip_header_config(FORWARDED.as_str()));
 
         layer.assert_not_recorded(&span, attributes::CLIENT_ADDRESS);
         layer.assert_not_recorded(&span, attributes::CLIENT_PORT);
@@ -499,7 +504,7 @@ fn test_http_server_request_span_client_address_from_forwarded_trusted_proxies()
         )
         .with_peer_addr(peer_addr);
 
-        let span = http_server_span(
+        let span = HttpServerRequestSpan::from_request(
             &req,
             &trusted_ip_header_config(FORWARDED.as_str(), vec!["10.0.0.0/8"]),
         );
@@ -514,7 +519,7 @@ fn test_http_server_request_span_client_address_from_forwarded_trusted_proxies()
         )
         .with_peer_addr(peer_addr);
 
-        let span = http_server_span(
+        let span = HttpServerRequestSpan::from_request(
             &all_trusted,
             &trusted_ip_header_config(FORWARDED.as_str(), vec!["10.0.0.0/8"]),
         );
@@ -529,7 +534,7 @@ fn test_http_server_request_span_client_address_from_forwarded_trusted_proxies()
         )
         .with_peer_addr(peer_addr);
 
-        let span = http_server_span(
+        let span = HttpServerRequestSpan::from_request(
             &with_port,
             &trusted_ip_header_config(FORWARDED.as_str(), vec!["10.0.0.0/8"]),
         );
@@ -544,7 +549,7 @@ fn test_http_server_request_span_client_address_from_forwarded_trusted_proxies()
         )
         .with_peer_addr(peer_addr);
 
-        let span = http_server_span(
+        let span = HttpServerRequestSpan::from_request(
             &invalid_tokens,
             &trusted_ip_header_config(FORWARDED.as_str(), vec!["10.0.0.0/8"]),
         );
