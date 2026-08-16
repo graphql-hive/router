@@ -1,3 +1,33 @@
+## 0.1.1 (2026-08-16)
+
+### Fixes
+
+#### Fix `http.route` lable value in metrics
+
+The `http.route` label value in metrics was set to the effective route path, instead of the route template.
+
+In setups with `http.graphql_endpoint` is used, or when persisted documents are used over HTTP paths, this led to high cardinality in metrics.
+
+Thanks [praguevara](https://github.com/praguevara) for contributing.
+
+#### Fix `http.route` lable value in traces
+
+The `http.route` span attribute was set to the effective route path, instead of the route template. 
+
+The [OTEL specification for HTTP spans](https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-server) describes the `http.router` field as:
+
+> The matched route template for the request. This MUST be low-cardinality and include all static path segments, with dynamic path segments represented with placeholders.
+
+Thanks [praguevara](https://github.com/praguevara) for contributing.
+
+#### Refactor internal `HiveRouterConfig`
+
+`HiveRouterConfig` can now be treated as `'&static` (by calling `.into_static()`). This makes the work with the config struct easier, as it can be used directly without worrying about lifetimes, and without cloning.
+
+#### Stop cancellation from interrupting an active usage flush
+
+The usage agent now observes cancellation while waiting for the next flush interval instead of checking only after the full interval has elapsed. Cancellation remains pending while an active flush completes, preventing a drained report batch from being lost when its send future is interrupted.
+
 ## 0.1.0 (2026-08-13)
 
 ### Breaking Changes

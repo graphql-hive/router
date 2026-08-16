@@ -3221,7 +3221,7 @@ dependencies = [
 
 [[package]]
 name = "hive-apollo-router-plugin"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "anyhow",
  "apollo-router",
@@ -3246,7 +3246,7 @@ dependencies = [
 
 [[package]]
 name = "hive-console-sdk"
-version = "0.3.19"
+version = "0.3.20"
 dependencies = [
  "ahash",
  "anyhow",
