@@ -29,6 +29,7 @@ pub struct RequestSummary {
     pub persisted_document_id: OnceLock<String>,
     pub subgraph_requests: AtomicU32,
     pub involved_subgraphs: Mutex<HashSet<String>>,
+    pub subgraph_calls_duration: Mutex<BTreeMap<String, Vec<Duration>>>,
     pub error_count: AtomicU32,
     pub partial_response: AtomicBool,
     pub response_code: OnceLock<&'static str>,
@@ -107,6 +108,15 @@ impl RequestSummary {
             if !subgraphs.contains(name) {
                 subgraphs.insert(name.to_string());
             }
+        }
+    }
+
+    pub fn record_subgraph_call_duration(&self, name: &str, duration: Duration) {
+        if let Ok(mut durations) = self.subgraph_calls_duration.lock() {
+            durations
+                .entry(name.to_string())
+                .or_default()
+                .push(duration);
         }
     }
 

@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use dashmap::DashMap;
@@ -463,6 +463,7 @@ impl SubgraphExecutorMap {
             None => {
                 debug!(target: targets::EXECUTOR, operation = execution_request.query, dedupe = execution_request.dedupe, subgraph = subgraph_name, executor = executor.executor_name(), "executing subgraph request");
                 summary::record(|s| s.record_subgraph(subgraph_name));
+                let call_started_at = Instant::now();
 
                 let exec_fut = executor.execute(execution_request, timeout, plugin_req_state);
                 // Clone the circuit breaker out of the DashMap before awaiting to avoid
@@ -471,7 +472,7 @@ impl SubgraphExecutorMap {
                     .circuit_breakers_by_subgraph
                     .get(subgraph_name)
                     .map(|r| r.value().clone());
-                match circuit_breaker {
+                let result = match circuit_breaker {
                     Some(circuit_breaker) => {
                         let SubgraphCircuitBreaker {
                             recloser,
@@ -527,7 +528,11 @@ impl SubgraphExecutorMap {
                             .await
                     }
                     None => exec_fut.await,
-                }?
+                };
+                summary::record(|s| {
+                    s.record_subgraph_call_duration(subgraph_name, call_started_at.elapsed())
+                });
+                result?
             }
         };
 
@@ -591,6 +596,7 @@ impl SubgraphExecutorMap {
         let timeout = self.resolve_subgraph_timeout(subgraph_name, client_request)?;
         debug!(target: targets::EXECUTOR, operation = execution_request.query, dedupe = execution_request.dedupe, subgraph = subgraph_name, executor = executor.executor_name(), "subscribing subgraph request");
         summary::record(|s| s.record_subgraph(subgraph_name));
+        let call_started_at = Instant::now();
 
         let subscribe_fut = executor.subscribe(execution_request, timeout);
 
@@ -605,7 +611,7 @@ impl SubgraphExecutorMap {
             .get(subgraph_name)
             .map(|r| r.value().clone());
 
-        match circuit_breaker {
+        let result = match circuit_breaker {
             Some(SubgraphCircuitBreaker { recloser, .. }) => {
                 let circuit_breaker_metrics = &self.telemetry_context.metrics.circuit_breaker;
                 recloser
@@ -627,7 +633,11 @@ impl SubgraphExecutorMap {
                     .await
             }
             None => subscribe_fut.await,
-        }
+        };
+        summary::record(|s| {
+            s.record_subgraph_call_duration(subgraph_name, call_started_at.elapsed())
+        });
+        result
     }
 
     fn resolve_subgraph_timeout(
