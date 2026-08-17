@@ -540,6 +540,46 @@ mod jwt_e2e_tests {
     }
 
     #[ntex::test]
+    async fn accepts_request_with_aud_claim_when_audiences_not_configured() {
+        // Regression test: when `audiences` is not set in the config, the docs say
+        // audience validation should be skipped entirely.
+        let router = TestRouter::builder()
+            .file_config("configs/jwt_auth.router.yaml")
+            .build()
+            .start()
+            .await;
+
+        let exp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3600;
+        let claims = json!({
+            "sub": "user1",
+            "iat": 1516239022,
+            "exp": exp,
+            "aud": ["some-audience", "another-audience"],
+        });
+        let token = generate_jwt(&claims);
+
+        let res = router
+            .send_graphql_request(
+                "{ __typename }",
+                None,
+                some_header_map! {
+                    http::header::AUTHORIZATION => format!("Bearer {}", token)
+                },
+            )
+            .await;
+
+        assert!(
+            res.status().is_success(),
+            "Expected 2xx status for a token with an `aud` claim when audiences are not configured, got {}",
+            res.status()
+        );
+    }
+
+    #[ntex::test]
     async fn rejects_request_with_wrong_algorithm() {
         let router = TestRouter::builder()
             .file_config("configs/jwt_auth_jwk_with_alg.router.yaml")
