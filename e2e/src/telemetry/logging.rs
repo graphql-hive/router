@@ -3,21 +3,25 @@ use crate::{
     testkit::{
         otel::OtlpCollector,
         stdout::{CaptureStdoutExt, StdOutCaptureBridge},
-        Started, TestRouter, TestRouterBuilder, TestSubgraphs,
+        ClientResponseExt, Started, TestRouter, TestRouterBuilder, TestSubgraphs,
     },
 };
 use hive_router::{
-    async_trait,
+    async_trait, get_current_summary,
+    plugins::hooks::on_execute::{
+        OnExecuteEndHookPayload, OnExecuteStartHookPayload, OnExecuteStartHookResult,
+    },
     plugins::hooks::on_http_request::{OnHttpRequestHookFuture, OnHttpRequestHookPayload},
     plugins::hooks::on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
-    plugins::plugin_trait::{RouterPlugin, StartHookPayload},
+    plugins::plugin_trait::{EndHookPayload, RouterPlugin, StartHookPayload},
     set_summary_attribute, set_summary_message,
 };
 use hive_router_internal::telemetry::logging::targets;
 use http::{HeaderMap, HeaderName, HeaderValue};
 use insta::assert_json_snapshot;
 use serde_json::{Map, Value};
-use sonic_rs::json;
+use sonic_rs::{json, JsonContainerTrait, JsonValueTrait};
+use std::collections::BTreeMap;
 use tracing::debug;
 
 const TEST_QUERY: &str = "{ users { id } }";
@@ -838,5 +842,86 @@ plugins:
     assert_eq!(
         find_attr(req_summary, "message"),
         Some("custom summary message from plugin".to_string())
+    );
+}
+
+#[derive(Default)]
+struct TestSubgraphDurationsPlugin;
+
+#[async_trait]
+impl RouterPlugin for TestSubgraphDurationsPlugin {
+    type Config = ();
+
+    fn plugin_name() -> &'static str {
+        "test_subgraph_durations"
+    }
+
+    fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
+        payload.initialize_plugin_with_defaults()
+    }
+
+    async fn on_execute<'exec>(
+        &'exec self,
+        payload: OnExecuteStartHookPayload<'exec>,
+    ) -> OnExecuteStartHookResult<'exec> {
+        payload.on_end(|mut end_payload: OnExecuteEndHookPayload<'exec>| {
+            let subgraph_calls: BTreeMap<String, u64> = get_current_summary()
+                .and_then(|summary| {
+                    summary
+                        .subgraph_calls_duration
+                        .lock()
+                        .ok()
+                        .map(|durations| {
+                            durations
+                                .iter()
+                                .map(|(name, calls)| {
+                                    let total_ms = calls.iter().map(|d| d.as_millis() as u64).sum();
+                                    (name.clone(), total_ms)
+                                })
+                                .collect()
+                        })
+                })
+                .unwrap_or_default();
+
+            end_payload.add_extension("subgraph_calls", subgraph_calls);
+            end_payload.proceed()
+        })
+    }
+}
+
+#[ntex::test]
+async fn plugin_can_report_subgraph_calls_duration_from_summary() {
+    let (_subgraphs, router) = setup_router(
+        router_with_telemetry(
+            "\
+log:
+  level: info
+  format: json
+plugins:
+  test_subgraph_durations:
+    enabled: true
+",
+        )
+        .register_plugin::<TestSubgraphDurationsPlugin>(),
+    )
+    .await;
+
+    let res = router
+        .send_graphql_request(r#"{ topProducts(first: 1) { upc inStock } }"#, None, None)
+        .await;
+
+    assert_eq!(res.status(), 200);
+
+    let body = res.json_body().await;
+    let subgraph_calls = &body["extensions"]["subgraph_calls"];
+
+    assert_eq!(subgraph_calls.as_object().map(|o| o.len()), Some(2));
+    assert!(
+        subgraph_calls["inventory"].is_u64(),
+        "expected a recorded duration for inventory, got: {subgraph_calls:?}"
+    );
+    assert!(
+        subgraph_calls["products"].is_u64(),
+        "expected a recorded duration for products, got: {subgraph_calls:?}"
     );
 }
