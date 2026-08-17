@@ -381,6 +381,9 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
     let router_config = load_config(config_path)?.into_static();
     let telemetry = telemetry::Telemetry::init_global(router_config)?;
+    for warning in router_config.from_env_warnings() {
+        warn!(target: targets::CONFIG, "{warning}");
+    }
     let prometheus = telemetry
         .prometheus
         .as_ref()
