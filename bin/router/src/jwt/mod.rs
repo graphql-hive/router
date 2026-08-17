@@ -230,8 +230,11 @@ impl JwtAuthRuntime {
         }
 
         // This only validates the existence of the claim, it does not validate the values, we'll do it after decoding.
-        if let Some(aud) = &self.config.audiences {
-            validation.set_audience(aud);
+        // When no audiences are configured, audience validation must be skipped entirely: `jsonwebtoken`
+        // defaults `validate_aud` to `true` and rejects any token with an `aud` claim if none is expected.
+        match &self.config.audiences {
+            Some(aud) => validation.set_audience(aud),
+            None => validation.validate_aud = false,
         }
 
         let token_data = match decode::<JwtClaims>(token, &decoding_key, &validation) {
