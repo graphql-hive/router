@@ -5,6 +5,6 @@
   },
   "license": "MIT",
   "dependencies": {
-    "jsonschema2mk": "2.2.1"
+    "jsonschema2mk": "2.2.2"
   }
 }
