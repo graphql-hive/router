@@ -1,5 +1,7 @@
 ---
 hive-router: minor
+hive-router-internal: minor
+hive-router-plan-executor: minor
 ---
 
 # Track per-subgraph call durations on the request summary
