@@ -1,15 +1,18 @@
 use std::sync::Arc;
 
-use crate::executor::projection::plan::{FieldProjectionPlan, ProjectionValueSource};
+use crate::executor::operation_filter::PathSegment;
+use crate::executor::projection::plan::{
+    FieldProjectionPlan, ProjectionValueSource, TypeCondition,
+};
+use crate::pipeline::trie::{PathIndex, Trie};
 use crate::query_planner::ast::{
     operation::OperationDefinition,
     selection_item::SelectionItem,
     selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
     value::Value,
 };
-use ahash::HashSet;
 
-use crate::pipeline::trie::{PathIndex, Trie};
+use ahash::HashSet;
 
 /// Reconstructs a GraphQL operation with nulled fields removed.
 pub(crate) fn rebuild_nulled_operation(
@@ -63,10 +66,10 @@ fn rebuild_nulled_selection_set(
     for selection in &original_selection_set.items {
         match selection {
             SelectionItem::Field(field) => {
-                let path_segment = field.alias.as_ref().unwrap_or(&field.name);
+                let path_segment = field.alias.as_deref().unwrap_or(&field.name);
 
-                let Some((child_path_position, is_nulled)) =
-                    nulled_field_trie.find_segment_at_position(path_position, path_segment)
+                let Some((child_path_position, is_nulled)) = nulled_field_trie
+                    .find_segment_at_position(path_position, PathSegment::Field(path_segment))
                 else {
                     collect_field_own_variables(field, used_variables);
                     collect_variables_recursive(&field.selections, used_variables);
@@ -94,10 +97,21 @@ fn rebuild_nulled_selection_set(
                 ));
             }
             SelectionItem::InlineFragment(fragment) => {
+                let fragment_segment = PathSegment::Fragment(&fragment.type_condition);
+
+                let Some((child_path_position, _)) =
+                    nulled_field_trie.find_segment_at_position(path_position, fragment_segment)
+                else {
+                    collect_fragment_own_variables(fragment, used_variables);
+                    collect_variables_recursive(&fragment.selections, used_variables);
+                    kept_items.push(selection.clone());
+                    continue;
+                };
+
                 let filtered_selections = rebuild_nulled_selection_set(
                     &fragment.selections,
                     nulled_field_trie,
-                    path_position,
+                    child_path_position,
                     used_variables,
                 );
 
@@ -137,9 +151,24 @@ fn rebuild_nulled_projection_plan_recursive(
     let mut kept_plans = Vec::with_capacity(original_plans.len());
 
     for plan in original_plans {
-        let path_segment = &plan.response_key;
+        let scoped_position = match &plan.parent_type_guard {
+            Some(TypeCondition::Exact(type_name)) => {
+                match nulled_field_trie
+                    .find_segment_at_position(path_position, PathSegment::Fragment(type_name))
+                {
+                    Some((child_position, _)) => child_position,
+                    None => {
+                        kept_plans.push(plan.clone());
+                        continue;
+                    }
+                }
+            }
+            _ => path_position,
+        };
+
+        let path_segment = PathSegment::Field(&plan.response_key);
         let Some((child_path_position, is_nulled)) =
-            nulled_field_trie.find_segment_at_position(path_position, path_segment)
+            nulled_field_trie.find_segment_at_position(scoped_position, path_segment)
         else {
             kept_plans.push(plan.clone());
             continue;

@@ -1,3 +1,4 @@
+use crate::executor::operation_filter::PathSegment;
 use ahash::HashMap;
 
 /// Type-safe position in the path trie structure.
@@ -25,8 +26,9 @@ impl PathIndex {
 /// Node in the path trie for tracking "marked" field paths.
 #[derive(Debug, Default)]
 struct PathNode<'p> {
-    /// Mapping from field name to child position, hashed by content.
-    children: HashMap<&'p str, PathIndex>,
+    /// Mapping from path segment (field response key, or fragment type
+    /// condition) to child position, hashed by content.
+    children: HashMap<PathSegment<'p>, PathIndex>,
     /// If true, the field corresponding to this path is marked. What a mark
     /// means is entirely up to the caller (e.g. nulling, per `rebuilder.rs`).
     marked: bool,
@@ -41,6 +43,9 @@ struct PathNode<'p> {
 /// callers query this trie with strings from independently-allocated trees
 /// (e.g. the operation's AST vs. the projection plan's `response_key`
 /// strings) that don't share the same memory addresses even when equal.
+///
+/// A segment is either a field's response key or an inline fragment's type
+/// condition.
 ///
 /// For marked paths like `["user", "posts", "title"]` and `["user", "email"]`:
 ///
@@ -74,7 +79,7 @@ impl<'p> Trie<'p> {
     }
 
     /// Builds a trie from a list of paths, marking each one.
-    pub(crate) fn from_paths(paths: &[Vec<&'p str>]) -> Self {
+    pub(crate) fn from_paths(paths: &[Vec<PathSegment<'p>>]) -> Self {
         let segment_count: usize = paths.iter().map(|path| path.len()).sum();
         let mut trie = Self::with_capacity(segment_count);
         for path in paths {
@@ -83,13 +88,13 @@ impl<'p> Trie<'p> {
         trie
     }
 
-    pub(crate) fn add_path(&mut self, segments: impl Iterator<Item = &'p str>) {
+    pub(crate) fn add_path(&mut self, segments: impl Iterator<Item = PathSegment<'p>>) {
         let mut current = PathIndex::root();
         let mut peekable = segments.peekable();
 
         while let Some(segment) = peekable.next() {
             let is_last = peekable.peek().is_none();
-            let child = self.nodes[current.get()].children.get(segment).copied();
+            let child = self.nodes[current.get()].children.get(&segment).copied();
 
             let next = match child {
                 Some(child_idx) => child_idx,
@@ -116,10 +121,10 @@ impl<'p> Trie<'p> {
     pub(super) fn find_segment_at_position(
         &self,
         parent_path_position: PathIndex,
-        segment: &str,
+        segment: PathSegment<'_>,
     ) -> Option<(PathIndex, bool)> {
         let parent_node = &self.nodes[parent_path_position.get()];
-        let child_path_position = parent_node.children.get(segment).copied()?;
+        let child_path_position = parent_node.children.get(&segment).copied()?;
         let child_node = &self.nodes[child_path_position.get()];
         Some((child_path_position, child_node.marked))
     }

@@ -818,6 +818,35 @@ mod type_authorization {
             "#);
         }
 
+        /// `Book` and `Movie` both have a `title` field with the same response key.
+        ///
+        /// Previously, having access to only one of them ended up with an empty output,
+        /// because the accessible type's field was also wiped out: rejected paths were
+        /// tracked purely by flattened response key (`media.title`).
+        #[test]
+        fn shared_field_name_across_union_members_is_authorized_independently() {
+            let supergraph_data = build_supergraph_data(UNION_SCHEMA);
+            let query = "
+              query {
+                media {
+                  ... on Book {
+                    title
+                  }
+                  ... on Movie {
+                    title
+                  }
+                }
+              }
+           ";
+
+            let decision = supergraph_data.decide(Some(vec!["a", "b"]), query);
+            insta::assert_snapshot!(decision, @r#"
+            [Modified]
+            Operation: {media{...on Book{title}}}
+            Errors:    ["Unauthorized field or type @ media"]
+            "#);
+        }
+
         #[test]
         fn allows_union_field_with_all_member_scopes() {
             let supergraph_data = build_supergraph_data(UNION_SCHEMA);

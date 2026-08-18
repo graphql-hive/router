@@ -78,11 +78,19 @@ impl NullPropagation {
     }
 }
 
+/// A single step in a rejected-path trail: either a field's response key, or the
+/// type condition of an inline fragment it was reached through
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PathSegment<'exec> {
+    Field(&'exec str),
+    Fragment(&'exec str),
+}
+
 #[derive(Default)]
 pub struct OperationFilterOutput<'exec> {
     /// Errors to report to the client, one per denied field or fragment.
     pub errors: Vec<GraphQLError>,
-    pub rejected_paths: Vec<Vec<&'exec str>>,
+    pub rejected_paths: Vec<Vec<PathSegment<'exec>>>,
 }
 
 impl<'exec> OperationFilterOutput<'exec> {
@@ -125,7 +133,7 @@ struct FilteringContext<'exec> {
     schema_metadata: &'exec SchemaMetadata,
     variable_payload: &'exec CoerceVariablesPayload,
     decisions: HashMap<(&'exec str, &'exec str), FilterDecision>,
-    path: Vec<&'exec str>,
+    path: Vec<PathSegment<'exec>>,
     result: OperationFilterOutput<'exec>,
 }
 
@@ -204,7 +212,7 @@ impl<'exec> FilteringContext<'exec> {
             }
         };
 
-        self.path.push(response_key);
+        self.path.push(PathSegment::Field(response_key));
         let rejected = match decision {
             FilterDecision::Reject { error } => {
                 self.record_rejected_path();
@@ -245,11 +253,23 @@ impl<'exec> FilteringContext<'exec> {
 
         match decision {
             FilterDecision::Keep => {
-                self.visit_selection_set(&fragment.selections, &fragment.type_condition, visitor)
+                self.path
+                    .push(PathSegment::Fragment(&fragment.type_condition));
+                let result = self.visit_selection_set(
+                    &fragment.selections,
+                    &fragment.type_condition,
+                    visitor,
+                );
+                self.path.pop();
+                result
             }
             FilterDecision::Reject { error } => {
                 self.record_error(error);
+                self.path
+                    .push(PathSegment::Fragment(&fragment.type_condition));
                 self.collect_all_field_paths(&fragment.selections);
+                self.path.pop();
+
                 Ok(NullPropagation::None)
             }
         }
@@ -261,12 +281,15 @@ impl<'exec> FilteringContext<'exec> {
                 SelectionItem::Field(field) => {
                     let response_key: &'exec str =
                         field.alias.as_deref().unwrap_or(field.name.as_str());
-                    self.path.push(response_key);
+                    self.path.push(PathSegment::Field(response_key));
                     self.record_rejected_path();
                     self.path.pop();
                 }
                 SelectionItem::InlineFragment(fragment) => {
+                    self.path
+                        .push(PathSegment::Fragment(&fragment.type_condition));
                     self.collect_all_field_paths(&fragment.selections);
+                    self.path.pop();
                 }
                 SelectionItem::FragmentSpread(_) => {}
             }
@@ -279,7 +302,16 @@ impl<'exec> FilteringContext<'exec> {
 
     fn record_error(&mut self, mut error: GraphQLError) {
         if error.extensions.affected_path.as_ref().is_none() {
-            error = error.add_affected_path(self.path.join("."));
+            let field_path = self
+                .path
+                .iter()
+                .filter_map(|segment| match segment {
+                    PathSegment::Field(name) => Some(*name),
+                    PathSegment::Fragment(_) => None,
+                })
+                .collect::<Vec<_>>()
+                .join(".");
+            error = error.add_affected_path(field_path);
         }
         self.result.errors.push(error);
     }
