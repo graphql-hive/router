@@ -27,3 +27,4 @@ pub const TELEMETRY: &str = "router::telemetry";
 pub const HTTP_CLIENT: &str = "router::http_client";
 pub const CACHE_CONTROL: &str = "router::cache_control";
 pub const SUMMARY: &str = "router::request";
+pub const CONFIG: &str = "router::config";

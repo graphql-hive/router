@@ -5,6 +5,7 @@ pub mod csrf;
 pub mod demand_control;
 mod env_overrides;
 pub mod error_masking;
+mod from_env;
 pub mod headers;
 pub mod http_server;
 pub mod introspection_policy;
@@ -18,6 +19,7 @@ pub mod persisted_documents;
 pub mod primitives;
 pub mod query_planner;
 pub mod response_extensions;
+pub mod schema_from_env;
 pub mod storage;
 pub mod subscriptions;
 pub mod supergraph;
@@ -54,6 +56,13 @@ use crate::{
 pub struct HiveRouterConfig {
     #[serde(skip)]
     root_directory: PathBuf,
+
+    /// Warnings collected while resolving `from_env` placeholders (e.g. a referenced
+    /// environment variable that was not set). Populated after deserialization, since it's
+    /// not part of the config file itself; not logged directly because config loading happens
+    /// before the tracing subscriber (whose format/level comes from this very config) exists.
+    #[serde(skip)]
+    from_env_warnings: Vec<String>,
 
     /// The router logger configuration.
     ///
@@ -209,6 +218,14 @@ impl HiveRouterConfig {
         Box::leak(Box::new(self))
     }
 
+    /// Warnings collected while resolving `from_env` placeholders.
+    /// Since config is loaded before tracing is set up, some warnings may be logged before the
+    /// tracing subscriber is set up.
+    /// We collect it here so it will be available after tracing is set up.
+    pub fn from_env_warnings(&self) -> &[String] {
+        &self.from_env_warnings
+    }
+
     pub fn address(&self) -> String {
         format!("{}:{}", self.http.host, self.http.port)
     }
@@ -294,11 +311,15 @@ pub fn load_config(
 
     config = env_overrides.apply_overrides(config)?;
 
-    let mut base_cfg = with_start_path(&config_root_path, || {
-        config.build()?.try_deserialize::<HiveRouterConfig>()
+    let (mut base_cfg, from_env_warnings) = with_start_path(&config_root_path, || {
+        let mut built = config.build()?;
+        let from_env_warnings = from_env::resolve_from_env_placeholders(&mut built.cache);
+        let cfg = built.try_deserialize::<HiveRouterConfig>()?;
+        Ok::<_, config::ConfigError>((cfg, from_env_warnings))
     })?;
 
     base_cfg.root_directory = config_root_path;
+    base_cfg.from_env_warnings = from_env_warnings;
 
     Ok(base_cfg)
 }
@@ -309,11 +330,80 @@ pub fn parse_yaml_config(config_raw: String) -> Result<HiveRouterConfig, RouterC
     let mut config = Config::builder();
     config = env_overrides.apply_overrides(config)?;
 
-    with_start_path(&config_root_path, || {
-        config
+    let (mut cfg, from_env_warnings) = with_start_path(&config_root_path, || {
+        let mut built = config
             .add_source(File::from_str(&config_raw, FileFormat::Yaml))
-            .build()?
-            .try_deserialize::<HiveRouterConfig>()
+            .build()?;
+        let from_env_warnings = from_env::resolve_from_env_placeholders(&mut built.cache);
+        let cfg = built.try_deserialize::<HiveRouterConfig>()?;
+        Ok::<_, config::ConfigError>((cfg, from_env_warnings))
     })
-    .map_err(RouterConfigError::ConfigLoadError)
+    .map_err(RouterConfigError::ConfigLoadError)?;
+
+    cfg.from_env_warnings = from_env_warnings;
+
+    Ok(cfg)
+}
+
+#[cfg(test)]
+mod plugin_config_from_env_tests {
+    use super::*;
+
+    // The plugin system hands plugins `plugins.<name>.config` as an opaque `serde_json::Value`
+    // (see `PluginConfig`) - it never gets its own `Deserialize` impl at this layer, since each
+    // plugin defines its own config shape independently. `from_env` resolution runs once over
+    // the whole `config::Value` tree before that split happens, so it should apply just as well
+    // inside a plugin's arbitrary config blob as it does for any statically-typed field.
+
+    #[test]
+    fn resolves_from_env_placeholders_nested_inside_plugin_config() {
+        unsafe { std::env::set_var("FROM_ENV_PLUGIN_TEST", "resolved-value") };
+
+        let yaml = r#"
+plugins:
+  my_plugin:
+    config:
+      nested:
+        from_env: FROM_ENV_PLUGIN_TEST
+      untouched: literal
+      list:
+        - a
+        - from_env: FROM_ENV_PLUGIN_TEST
+"#;
+        let config = parse_yaml_config(yaml.to_string()).unwrap();
+        let plugin = config.plugins.get("my_plugin").unwrap();
+
+        assert_eq!(plugin.config["nested"], serde_json::json!("resolved-value"));
+        assert_eq!(plugin.config["untouched"], serde_json::json!("literal"));
+        assert_eq!(
+            plugin.config["list"],
+            serde_json::json!(["a", "resolved-value"])
+        );
+
+        unsafe { std::env::remove_var("FROM_ENV_PLUGIN_TEST") };
+    }
+
+    #[test]
+    fn missing_env_var_inside_plugin_config_just_omits_the_key() {
+        unsafe { std::env::remove_var("FROM_ENV_PLUGIN_TEST_MISSING") };
+
+        let yaml = r#"
+plugins:
+  my_plugin:
+    config:
+      nested:
+        from_env: FROM_ENV_PLUGIN_TEST_MISSING
+      untouched: literal
+"#;
+        let config = parse_yaml_config(yaml.to_string()).unwrap();
+        let plugin = config.plugins.get("my_plugin").unwrap();
+
+        // A plugin's config is a bare `serde_json::Value`, not a struct with `#[serde(default)]`
+        // fields, so there's no "fall back to a default" here - the key is just absent, same as
+        // if the user never wrote it in the YAML at all.
+        assert!(plugin.config.get("nested").is_none());
+        assert_eq!(plugin.config["untouched"], serde_json::json!("literal"));
+        assert_eq!(config.from_env_warnings().len(), 1);
+        assert!(config.from_env_warnings()[0].contains("FROM_ENV_PLUGIN_TEST_MISSING"));
+    }
 }

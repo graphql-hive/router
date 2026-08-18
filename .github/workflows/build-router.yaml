@@ -30,31 +30,18 @@ env:
 
 jobs:
   config:
-    name: check / config
+    name: generate config schema
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'hive-router/v'))
+    if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'hive-router/v')
     steps:
       - name: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          token: ${{ github.ref == 'refs/heads/main' && secrets.BOT_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
       - name: generate config schema
         run: cargo router-config
-      - name: setup node
-        uses: the-guild-org/shared-config/setup@v1
-        with:
-          node-version-file: .node-version
-      - name: generate documentation
-        working-directory: docs/generator
-        run: npm run generate
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        name: upload config artifact
-        with:
-          name: router-config.schema.json
-          path: router-config.schema.json
-          if-no-files-found: error
       - name: Upload config to release
         uses: svenstaro/upload-release-action@29e53e917877a24fad85510ded594ab3c9ca12de # v2
         if: ${{ github.event_name == 'release' }}
@@ -63,20 +50,6 @@ jobs:
           file: router-config.schema.json
           asset_name: router-config.schema.json
           tag: ${{ github.ref }}
-      - name: diff
-        run: git diff --pretty ./docs/README.md
-      - name: commit if changes
-        if: github.ref != 'refs/heads/main'
-        uses: stefanzweifel/git-auto-commit-action@4a55954c782fc1ea30b9056cd3e7a2b40ca8887d # v7.2.0
-        with:
-          file_pattern: ./docs/README.md
-          commit_message: "docs: update documentation"
-          commit_user_name: theguild-bot
-          commit_user_email: bot@the-guild.dev
-          commit_author: theguild-bot <bot@the-guild.dev> # dont use the actor as an author
-      - name: fail if changes
-        if: github.ref == 'refs/heads/main'
-        run: git diff --exit-code ./docs/README.md
 
   binary:
     name: publish / binary / ${{ matrix.name }}

@@ -9,7 +9,8 @@ pub fn main() {
             s.inline_subschemas = true;
         })
         .into_generator();
-    let schema = generator.into_root_schema_for::<HiveRouterConfig>();
+    let mut schema = generator.into_root_schema_for::<HiveRouterConfig>();
+    hive_router_config::schema_from_env::augment_with_from_env(&mut schema);
     let schema_str = serde_json::to_string_pretty(&schema).unwrap();
     let args = std::env::args().collect::<Vec<String>>();
 

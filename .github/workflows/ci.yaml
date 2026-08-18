@@ -351,6 +351,7 @@ jobs:
       - name: Run Audits
         run: npm run ci:test:graphql-over-http
         working-directory: audits
+
   federation-audit:
     name: test / federation-audit
     runs-on: ubuntu-latest
