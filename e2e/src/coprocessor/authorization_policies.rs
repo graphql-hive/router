@@ -7,7 +7,6 @@ use crate::testkit::{
 };
 
 const REQUIRED_POLICIES_KEY: &str = "hive::authorization::required_policies";
-const GRANTED_POLICIES_KEY: &str = "hive::authorization::granted_policies";
 
 /// Router config wiring the `graphql.analysis` stage to the policy supergraph.
 /// The stage receives the request context and answers with the granted policies.
@@ -55,26 +54,33 @@ fn policy_router_config_with_jwt(host: &str) -> String {
     )
 }
 
+/// Builds a `graphql.analysis` answer that grants exactly the given policies by
+/// echoing `required_policies` back with those entries set to `true`. Mirrors
+/// how a coprocessor mutates Apollo Router's `apollo::authorization::required_policies`.
 fn granting(policies: &[&str]) -> String {
+    let granted: std::collections::HashMap<&str, bool> =
+        policies.iter().map(|policy| (*policy, true)).collect();
+    let decisions: Value = granted.iter().collect();
+
     json!({
         "version": 1,
         "control": "continue",
         "context": {
-            GRANTED_POLICIES_KEY: policies,
+            REQUIRED_POLICIES_KEY: decisions,
         }
     })
     .to_string()
 }
 
-/// Reads `hive::authorization::required_policies` out of a coprocessor payload,
-/// sorted so assertions do not depend on set ordering.
+/// Reads the policy names published under `hive::authorization::required_policies`
+/// out of a coprocessor payload, sorted so assertions do not depend on map ordering.
 fn required_policies(payload: &Value) -> Option<Vec<String>> {
     let mut policies: Vec<String> = payload
         .get("context")?
         .pointer(&[REQUIRED_POLICIES_KEY])?
-        .as_array()?
+        .as_object()?
         .iter()
-        .filter_map(|value| value.as_str().map(str::to_string))
+        .map(|(policy, _decision)| policy.to_string())
         .collect();
 
     policies.sort();
@@ -308,10 +314,10 @@ async fn denies_policies_left_undecided_by_the_coprocessor() {
     analysis_stage_mock.assert_async().await;
 }
 
-/// `required_policies` is owned by the router, a coprocessor trying to rewrite it
-/// gets the request rejected instead of widening what it is asked to decide.
+/// `required_policies` must stay an object of policy -> boolean/null, the shape a
+/// coprocessor is expected to echo back. Anything else is rejected.
 #[ntex::test]
-async fn rejects_coprocessor_writes_to_required_policies() {
+async fn rejects_malformed_required_policies_from_the_coprocessor() {
     let subgraphs = TestSubgraphs::builder().build().start().await;
     let mut coprocessor = TestCoprocessor::new().await;
     let host = coprocessor.host_with_port();
@@ -325,7 +331,7 @@ async fn rejects_coprocessor_writes_to_required_policies() {
                 "version": 1,
                 "control": "continue",
                 "context": {
-                    REQUIRED_POLICIES_KEY: [],
+                    REQUIRED_POLICIES_KEY: ["read_inventory"],
                 }
             })
             .to_string(),
@@ -346,7 +352,7 @@ async fn rejects_coprocessor_writes_to_required_policies() {
 
     assert!(
         !response.status().is_success(),
-        "the router should reject a write to a reserved context key"
+        "the router should reject a required_policies value that isn't an object"
     );
 
     analysis_stage_mock.assert_async().await;

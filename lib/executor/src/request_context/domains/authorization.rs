@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use ahash::{HashMap, HashMapExt};
 
 use serde::ser::SerializeMap;
 use sonic_rs::{JsonValueTrait, Value};
@@ -13,36 +13,44 @@ pub trait CanWriteAuthorization {}
 impl CanWriteAuthorization for hooks::OnGraphqlAnalysis {}
 
 pub(crate) const REQUIRED_POLICIES_KEY: &str = "hive::authorization::required_policies";
-pub(crate) const GRANTED_POLICIES_KEY: &str = "hive::authorization::granted_policies";
 
 /// Context domain for custom authorization policies (`@policy`).
 ///
-/// The router publishes the policies the current operation depends on in
-/// `required_policies`, and a coprocessor (or plugin) answers with the subset it
-/// grants in `granted_policies`. Anything not granted is treated as denied.
+/// The router seeds `required_policies` with every policy the current operation
+/// depends on, each mapped to `null`. A coprocessor (or plugin) decides by
+/// overwriting entries with `true`/`false`; anything left `null`, or missing
+/// entirely, is treated as denied. Mirrors Apollo Router's
+/// `apollo::authorization::required_policies` contract.
 #[derive(Debug, Clone, Default)]
 pub struct AuthorizationContext {
-    /// The policies the current operation requires a decision on.
-    pub required_policies: Option<HashSet<String>>,
-    /// The policies that were granted for this request.
-    pub granted_policies: Option<HashSet<String>>,
+    pub required_policies: Option<HashMap<String, Option<bool>>>,
 }
 
 impl AuthorizationContext {
-    fn set_granted_policies_value(&mut self, value: Value) -> Result<(), RequestContextError> {
+    fn set_required_policies_value(&mut self, value: Value) -> Result<(), RequestContextError> {
         if value.is_null() {
-            self.granted_policies = None;
+            self.required_policies = None;
             return Ok(());
         }
 
-        let array = value.expect_array(GRANTED_POLICIES_KEY, "array of strings or null")?;
-        let mut policies = HashSet::with_capacity(array.len());
-        for item in array {
-            let policy = item.expect_str(GRANTED_POLICIES_KEY, "array of strings or null")?;
-            policies.insert(policy.to_string());
+        let object = value.expect_object(
+            REQUIRED_POLICIES_KEY,
+            "object mapping policy names to booleans or null",
+        )?;
+        let mut policies = HashMap::with_capacity(object.len());
+        for (policy, decision) in object.iter() {
+            let decision = if decision.is_null() {
+                None
+            } else {
+                Some(decision.expect_bool(
+                    REQUIRED_POLICIES_KEY,
+                    "object mapping policy names to booleans or null",
+                )?)
+            };
+            policies.insert(policy.to_string(), decision);
         }
 
-        self.granted_policies = Some(policies);
+        self.required_policies = Some(policies);
         Ok(())
     }
 }
@@ -53,14 +61,11 @@ pub struct RequestContextAuthorizationRead<'a> {
 }
 
 impl RequestContextAuthorizationRead<'_> {
-    /// Returns the policies the current operation requires a decision on.
-    pub fn required_policies(&self) -> Option<&HashSet<String>> {
+    /// Returns the policies the current operation requires a decision on, each
+    /// mapped to its current decision. `None` means undecided, and is denied
+    /// by default just like an entry that was never granted.
+    pub fn required_policies(&self) -> Option<&HashMap<String, Option<bool>>> {
         self.context.required_policies.as_ref()
-    }
-
-    /// Returns the policies currently granted for this request.
-    pub fn granted_policies(&self) -> Option<&HashSet<String>> {
-        self.context.granted_policies.as_ref()
     }
 }
 
@@ -70,10 +75,12 @@ pub struct RequestContextAuthorizationWrite<'a> {
 }
 
 impl RequestContextAuthorizationWrite<'_> {
-    /// Sets the policies granted for the current request.
-    /// Providing `None` is equivalent to an empty set, so nothing is granted.
-    pub fn set_granted_policies(&mut self, policies: Option<HashSet<String>>) -> &mut Self {
-        self.context.granted_policies = policies;
+    /// Grants or denies a single policy for this request.
+    pub fn set_policy_decision(&mut self, policy: impl Into<String>, granted: bool) -> &mut Self {
+        self.context
+            .required_policies
+            .get_or_insert_with(HashMap::default)
+            .insert(policy.into(), Some(granted));
         self
     }
 }
@@ -102,14 +109,12 @@ impl RequestContextDomain for AuthorizationContext {
 
     fn set_key_value(&mut self, key: &str, value: Value) -> Result<(), RequestContextError> {
         match key {
-            REQUIRED_POLICIES_KEY => self.forbidden_mutation(key),
-            GRANTED_POLICIES_KEY => self.set_granted_policies_value(value),
+            REQUIRED_POLICIES_KEY => self.set_required_policies_value(value),
             _ => self.unknown_key(key),
         }
     }
 
     super::impl_domain_serde!(
         REQUIRED_POLICIES_KEY => required_policies,
-        GRANTED_POLICIES_KEY => granted_policies,
     );
 }

@@ -13,12 +13,11 @@ authorization rules that the router cannot evaluate on its own.
 `@policy(policies: [[...]])` takes an OR of AND groups, the same shape as `@requiresScopes`.
 Access is granted when every policy of at least one group is granted for the request.
 
-The decision is made in the `graphql.analysis` coprocessor stage, through two request context keys:
-
-- `hive::authorization::required_policies` — written by the router, listing every policy the
-  incoming operation depends on. It is read-only, a coprocessor that writes to it fails the request.
-- `hive::authorization::granted_policies` — written by the coprocessor with the subset it grants.
-  Policies left out are denied, so an absent or empty answer grants nothing.
+The decision is made in the `graphql.analysis` coprocessor stage, through a single request context
+key, `hive::authorization::required_policies` — mirroring Apollo Router's
+`apollo::authorization::required_policies` contract. The router seeds it with every policy the
+incoming operation depends on, each mapped to `null`. A coprocessor decides by overwriting entries
+with `true`/`false`; anything left `null`, or missing from the answer entirely, is denied.
 
 Unauthorized fields are then handled by the existing
 `authorization.directives.unauthorized.mode` setting: `filter` (default) nulls them and reports an
@@ -37,7 +36,9 @@ Example coprocessor answer for the `graphql.analysis` stage:
   "version": 1,
   "control": "continue",
   "context": {
-    "hive::authorization::granted_policies": ["read_profile"]
+    "hive::authorization::required_policies": {
+      "read_profile": true
+    }
   }
 }
 ```

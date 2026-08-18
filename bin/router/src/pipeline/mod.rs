@@ -775,7 +775,12 @@ pub async fn execute_pipeline<'exec>(
     )?;
     if !required_policies.is_empty() {
         request_context.update(|ctx| {
-            ctx.authorization.required_policies = Some(required_policies);
+            ctx.authorization.required_policies = Some(
+                required_policies
+                    .into_iter()
+                    .map(|policy| (policy, None))
+                    .collect(),
+            );
         })?;
     }
 
@@ -833,9 +838,12 @@ pub async fn execute_pipeline<'exec>(
     let granted_policies = request_context
         .read_lock()?
         .authorization
-        .granted_policies
+        .required_policies
         .clone()
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|(policy, granted)| granted.unwrap_or(false).then_some(policy))
+        .collect();
 
     let (mut normalize_payload, authorization_errors) = enforce_operation_authorization(
         &shared_state.router_config,
