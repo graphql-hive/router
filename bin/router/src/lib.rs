@@ -3,7 +3,7 @@
 
 mod cache_state;
 mod consts;
-// pub mod error;
+mod error;
 mod http_utils;
 mod jwt;
 pub mod pipeline;
