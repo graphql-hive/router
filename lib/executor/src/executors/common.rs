@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
-use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
+use hive_router_query_planner::planner::response_shape::ResponseShape;
 use http::{HeaderMap, Uri};
 use sonic_rs::Value;
 
@@ -95,7 +95,7 @@ pub struct SubgraphExecutionRequest<'a> {
     pub headers: HeaderMap,
     pub raw_variable_values: Option<Vec<(&'a str, Vec<u8>)>>,
     pub extensions: Option<SubgraphRequestExtensions>,
-    pub custom_scalar_paths: Option<&'a CustomScalarPaths>,
+    pub response_shape: Option<&'a ResponseShape>,
     /// Identifies an existing pooled connection that may execute this request.
     ///
     /// `None` disables pooled lookup and preserves the request's normal transport behavior.

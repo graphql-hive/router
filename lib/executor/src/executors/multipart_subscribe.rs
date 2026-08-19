@@ -2,7 +2,7 @@ use std::str::Utf8Error;
 
 use bytes::{Buf, Bytes};
 use futures::stream::BoxStream;
-use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
+use hive_router_query_planner::planner::response_shape::ResponseShape;
 use http_body_util::BodyExt;
 use hyper::body::Body;
 
@@ -76,7 +76,7 @@ pub fn parse_boundary_from_header(content_type: &str) -> Result<&str, ParseError
 pub fn parse_to_stream<B>(
     boundary: &str,
     body_stream: B,
-    custom_scalar_paths: Option<CustomScalarPaths>,
+    response_shape: Option<ResponseShape>,
 ) -> BoxStream<'static, Result<SubgraphResponse<'static>, ParseError>>
 where
     B: Body + Send + Unpin + 'static,
@@ -103,7 +103,7 @@ where
                 buffer.drain(..skip_len);
 
                 if !part_bytes.is_empty() {
-                    match parse_part(&part_bytes, custom_scalar_paths.as_ref()) {
+                    match parse_part(&part_bytes, response_shape.as_ref()) {
                         Ok(Some(response)) => {
                             yield Ok(response);
                         }
@@ -189,7 +189,7 @@ fn find_next_part(
 
 fn parse_part(
     raw: &[u8],
-    custom_scalar_paths: Option<&CustomScalarPaths>,
+    response_shape: Option<&ResponseShape>,
 ) -> Result<Option<SubgraphResponse<'static>>, ParseError> {
     let text = std::str::from_utf8(raw)?;
     let body = extract_body_after_headers(text);
@@ -198,7 +198,7 @@ fn parse_part(
         return Ok(None);
     }
 
-    extract_payload(body, custom_scalar_paths)
+    extract_payload(body, response_shape)
 }
 
 fn extract_body_after_headers(content: &str) -> &str {
@@ -213,7 +213,7 @@ fn extract_body_after_headers(content: &str) -> &str {
 
 fn extract_payload(
     body: &str,
-    custom_scalar_paths: Option<&CustomScalarPaths>,
+    response_shape: Option<&ResponseShape>,
 ) -> Result<Option<SubgraphResponse<'static>>, ParseError> {
     // cheap heartbeat check: subgraphs send `{}` as a keep-alive ping
     if body == "{}" {
@@ -232,7 +232,7 @@ fn extract_payload(
                     let transport_err = format!(r#"{{"errors":{}}}"#, errors_lv.as_raw_str());
                     return SubgraphResponse::deserialize_from_bytes(
                         Bytes::from(transport_err),
-                        custom_scalar_paths,
+                        response_shape,
                     )
                     .map_err(ParseError::InvalidSubgraphResponse)
                     .map(Some);
@@ -243,7 +243,7 @@ fn extract_payload(
             // happy path: deserialize the raw payload substring directly - no re-serialization
             SubgraphResponse::deserialize_from_bytes(
                 Bytes::copy_from_slice(raw.as_bytes()),
-                custom_scalar_paths,
+                response_shape,
             )
             .map_err(ParseError::InvalidSubgraphResponse)
             .map(Some)
@@ -252,7 +252,7 @@ fn extract_payload(
             // no payload wrapper, treat the whole body as a subgraph response
             SubgraphResponse::deserialize_from_bytes(
                 Bytes::from(body.to_owned()),
-                custom_scalar_paths,
+                response_shape,
             )
             .map_err(ParseError::InvalidSubgraphResponse)
             .map(Some)
@@ -267,7 +267,7 @@ fn extract_payload(
 mod tests {
     use super::*;
     use bytes::Bytes;
-    use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
+    use hive_router_query_planner::planner::response_shape::ResponseShape;
 
     #[test]
     fn test_parse_boundary_from_header_simple() {
@@ -655,14 +655,14 @@ mod tests {
             ),
         ))];
 
-        let mut custom_scalar_paths = CustomScalarPaths::default();
-        custom_scalar_paths.insert_path(["custom"]);
+        let mut response_shape = ResponseShape::default();
+        response_shape.insert_raw_path(["custom"]);
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream("graphql", body, Some(custom_scalar_paths));
+        let mut stream = parse_to_stream("graphql", body, Some(response_shape));
 
         let first = stream.next().await.unwrap().unwrap();
         let data = first.data.as_object().unwrap();
-        assert!(data[0].1.as_raw_json().is_some());
+        assert!(data[0].as_raw_json().is_some());
     }
 }

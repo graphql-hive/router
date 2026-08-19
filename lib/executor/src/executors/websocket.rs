@@ -106,7 +106,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         let endpoint = self.endpoint.clone();
         let subgraph_name = self.subgraph_name.clone();
         let tls_config = self.tls_config.clone();
-        let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
+        let response_shape = execution_request.response_shape.cloned();
         debug!(
             target: targets::WEBSOCKET_CLIENT,
             subgraph = subgraph_name, endpoint = %endpoint,
@@ -155,7 +155,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 );
 
                 let mut stream = client
-                    .subscribe(subscribe_payload, custom_scalar_paths)
+                    .subscribe(subscribe_payload, response_shape)
                     .await?;
 
                 match stream.next().await {
@@ -222,7 +222,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
         let endpoint = self.endpoint.clone();
         let subgraph_name = self.subgraph_name.clone();
         let tls_config = self.tls_config.clone();
-        let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
+        let response_shape = execution_request.response_shape.cloned();
         let headers = execution_request.headers.clone();
         let init_payload = (!headers.is_empty()).then(|| headers.into());
         let subscribe_payload = execution_request.try_into()?;
@@ -281,7 +281,7 @@ impl SubgraphExecutor for WsSubgraphExecutor {
                 );
 
             let stream = match client
-                .subscribe(subscribe_payload, custom_scalar_paths)
+                .subscribe(subscribe_payload, response_shape)
                 .await
             {
                 Ok(stream) => stream.map(|item| item.map_err(SubgraphExecutorError::from)),

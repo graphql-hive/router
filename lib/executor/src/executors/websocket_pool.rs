@@ -14,7 +14,7 @@ use hive_router_internal::telemetry::{
     },
     TelemetryContext,
 };
-use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
+use hive_router_query_planner::planner::response_shape::ResponseShape;
 use http::{HeaderMap, Uri};
 use ntex::rt;
 use tokio::{
@@ -394,7 +394,7 @@ async fn initialize_connection(
 
 struct ConnectionCommand {
     payload: SubscribePayload,
-    custom_scalar_paths: Option<CustomScalarPaths>,
+    response_shape: Option<ResponseShape>,
     responses: mpsc::Sender<SubscriptionItem>,
     ready: oneshot::Sender<Result<(), WsClientError>>,
 }
@@ -450,13 +450,13 @@ impl PooledWebSocketExecutor {
             SubgraphExecutorError::WebSocketArbiterChannelClosed
         })?;
 
-        let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
+        let response_shape = execution_request.response_shape.cloned();
         let payload = SubscribePayload::try_from(execution_request)?;
         let (responses, receiver) = mpsc::channel(response_capacity);
         let (ready, ready_rx) = oneshot::channel();
         permit.send(ConnectionCommand {
             payload,
-            custom_scalar_paths,
+            response_shape,
             responses,
             ready,
         });
@@ -644,7 +644,7 @@ impl ConnectionOwner {
                 command = self.commands.recv() => {
                     let Some(ConnectionCommand {
                         payload,
-                        custom_scalar_paths,
+                        response_shape,
                         responses,
                         ready,
                     }) = command else {
@@ -665,7 +665,7 @@ impl ConnectionOwner {
                     // and one sink. the cancellation branch is safe because WsClient removes a
                     // partially registered operation with its own drop guard.
                     let subscribe_result = {
-                        let subscribe = self.client.subscribe(payload, custom_scalar_paths);
+                        let subscribe = self.client.subscribe(payload, response_shape);
                         tokio::pin!(subscribe);
                         tokio::select! {
                             result = &mut subscribe => Some(result),

@@ -23,7 +23,10 @@ use crate::{
 pub mod best;
 mod error;
 pub mod fetch;
+pub mod merged_shape;
 pub mod plan_nodes;
+pub mod response_shape;
+pub mod slot_path;
 pub mod query_plan;
 pub mod tree;
 pub mod walker;
@@ -110,8 +113,15 @@ impl Planner {
             cancellation_token,
         )?;
         add_variables_to_fetch_steps(&mut fetch_graph, &normalized_operation.variable_definitions)?;
-        let query_plan =
+        let mut query_plan =
             build_query_plan_from_fetch_graph(fetch_graph, &self.supergraph, cancellation_token)?;
+
+        // Give every fetch the merged tree's shape for its position, so responses that land
+        // in the same place share one field order and a field's index can act as its slot.
+        query_plan.response_shape = match query_plan.node.as_mut() {
+            Some(node) => merged_shape::unify_response_shapes(node, normalized_operation),
+            None => merged_shape::response_shape_for_operation(normalized_operation),
+        };
 
         Ok(query_plan)
     }

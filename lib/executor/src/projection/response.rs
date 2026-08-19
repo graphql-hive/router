@@ -16,8 +16,9 @@ use crate::introspection::schema::{FieldNullability, SchemaMetadata};
 use crate::json_writer::{write_and_escape_string, write_f64, write_i64, write_u64};
 use crate::utils::consts::{
     CLOSE_BRACE, CLOSE_BRACKET, COLON, COMMA, EMPTY_OBJECT, FALSE, NULL, OPEN_BRACE, OPEN_BRACKET,
-    QUOTE, TRUE, TYPENAME_FIELD_NAME,
+    QUOTE, TRUE,
 };
+use hive_router_query_planner::planner::response_shape::TYPENAME_SLOT;
 
 enum NullPropagationDecision {
     /// An indicator that the `null` value should be propagated, since the field is non-null
@@ -111,12 +112,12 @@ pub fn project_by_operation(
 
     let mut errors = errors;
 
-    if let Some(data_map) = data.as_object() {
+    if data.is_object() {
         let null_propagation_checkpoint = buffer.len();
         // Start with first as true to add the opening brace
         let mut first = true;
         let null_propagation_decision = project_selection_set_with_map(
-            data_map,
+            data,
             &mut errors,
             selections,
             variable_values,
@@ -168,7 +169,7 @@ pub fn project_by_operation(
 
 pub fn serialize_value_to_buffer(data: &Value, buffer: &mut Vec<u8>) {
     match data {
-        Value::Null => buffer.put(NULL),
+        Value::Absent | Value::Null => buffer.put(NULL),
         Value::Bool(true) => buffer.put(TRUE),
         Value::Bool(false) => buffer.put(FALSE),
         Value::U64(num) => write_u64(buffer, *num),
@@ -176,19 +177,13 @@ pub fn serialize_value_to_buffer(data: &Value, buffer: &mut Vec<u8>) {
         Value::F64(num) => write_f64(buffer, *num),
         Value::String(value) => write_and_escape_string(buffer, value),
         Value::RawJson(raw) => buffer.put_slice(raw.as_bytes()),
-        Value::Object(value) => {
-            buffer.put(OPEN_BRACE);
-            let mut first = true;
-            for (key, val) in value.iter() {
-                if !first {
-                    buffer.put(COMMA);
-                }
-                write_and_escape_string(buffer, key);
-                buffer.put(COLON);
-                serialize_value_to_buffer(val, buffer);
-                first = false;
-            }
-            buffer.put(CLOSE_BRACE);
+        // Objects carry no keys of their own, so this is only reachable if a subgraph
+        // answered a builtin-scalar or enum field with an object — a malformed response.
+        // Every leaf that can legitimately hold one (a custom scalar) is a passthrough and
+        // arrives as `RawJson`.
+        Value::Object(_) => {
+            debug_assert!(false, "an object at a leaf position has no keys to serialize");
+            buffer.put(EMPTY_OBJECT)
         }
         Value::Array(arr) => {
             buffer.put(OPEN_BRACKET);
@@ -251,7 +246,7 @@ fn project_selection_set<'a>(
             buffer.put(CLOSE_BRACKET);
             Ok(NullPropagationDecision::KeepNullValue)
         }
-        Value::Object(obj) => {
+        Value::Object(_) => {
             match &selection.value {
                 ProjectionValueSource::ResponseData {
                     selections: Some(selections),
@@ -265,7 +260,7 @@ fn project_selection_set<'a>(
                         schema_metadata,
                     );
                     let null_propagation_decision = project_selection_set_with_map(
-                        obj,
+                        data,
                         errors,
                         selections,
                         variable_values,
@@ -301,7 +296,7 @@ fn project_selection_set<'a>(
                 }
             }
         }
-        Value::Null => {
+        Value::Absent | Value::Null => {
             buffer.put(NULL);
             Ok(NullPropagationDecision::PropagateNullValue)
         }
@@ -316,7 +311,7 @@ fn project_selection_set<'a>(
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
 fn project_selection_set_with_map<'a>(
-    obj: &'a [(&str, Value)],
+    obj: &'a Value<'a>,
     errors: &mut Vec<GraphQLError>,
     plans: &'a [FieldProjectionPlan],
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
@@ -334,10 +329,8 @@ fn project_selection_set_with_map<'a>(
             }
         }
 
-        let field_val = obj
-            .binary_search_by_key(&plan.response_key.as_str(), |(k, _)| *k)
-            .ok()
-            .map(|idx| &obj[idx].1);
+        // The response tree carries values by slot, so the field is an index away.
+        let field_val = obj.slot(plan.slot);
 
         let res = if let Some(conditions) = &plan.conditions {
             let field_type_name_cell = OnceCell::new();
@@ -576,13 +569,10 @@ fn resolve_type_name<'a>(
         return Ok("String");
     }
 
+    // `__typename` is reserved at slot 0 of every position the client can see.
     let typename_field = field_val
-        .and_then(|value| value.as_object())
-        .and_then(|obj| {
-            obj.binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| *k)
-                .ok()
-                .and_then(|idx| obj[idx].1.as_str())
-        });
+        .and_then(|value| value.slot(TYPENAME_SLOT))
+        .and_then(Value::as_str);
 
     if let Some(typename) = typename_field {
         return Ok(typename);
@@ -612,12 +602,13 @@ mod tests {
         state::supergraph_state::SupergraphState,
         utils::parsing::parse_operation,
     };
+    use hive_router_query_planner::planner::merged_shape::response_shape_for_operation;
     use sonic_rs::json;
 
+    use crate::response::subgraph_response::SubgraphResponse;
     use crate::{
         introspection::schema::SchemaWithMetadata,
         projection::{plan::FieldProjectionPlan, response::project_by_operation},
-        response::value::Value,
     };
 
     #[test]
@@ -665,19 +656,16 @@ mod tests {
         );
         let (operation_type_name, selections) =
             FieldProjectionPlan::from_operation(&normalized_operation.operation, &schema_metadata);
-        let data_json = json!({
+        // A literal, not `json!`: a custom scalar is passed through verbatim now, so the
+        // exact bytes matter and sonic's object ordering must not decide the assertion.
+        let data_json = r#"{
             "__typename": "Query",
             "metadatas": [
                 {
                     "__typename": "Metadata",
                     "id": "meta1",
                     "timestamp": "2024-01-01T00:00:00Z",
-                    "data": {
-                        "float": 41.5,
-                        "int": -42,
-                        "str": "value1",
-                        "unsigned": 123,
-                    }
+                    "data": {"float":41.5,"int":-42,"str":"value1","unsigned":123}
                 },
                 {
                     "__typename": "Metadata",
@@ -685,10 +673,16 @@ mod tests {
                     "data": null
                 }
             ]
-        });
-        let data = Value::from(data_json.as_ref());
+        }"#;
+        // Projection reads by slot, so the payload is parsed against the same shape the
+        // projection plan resolved its slots from. A shape built from the operation alone has
+        // no schema to tell it `data` is a custom scalar, which the query planner's merged
+        // shape marks as a passthrough — so mark it here.
+        let mut shape = response_shape_for_operation(&normalized_operation.operation);
+        shape.insert_raw_path(["metadatas", "data"]);
+        let owned = SubgraphResponse::parse_data_with_shape(data_json, &shape);
         let projection = project_by_operation(
-            &data,
+            &owned.data,
             vec![],
             &Default::default(),
             operation_type_name,
@@ -699,6 +693,7 @@ mod tests {
         );
         let projected_bytes = projection.unwrap();
         let projected_str = String::from_utf8(projected_bytes).unwrap();
+        // The scalar's own bytes come back exactly as the subgraph sent them.
         let expected_response = r#"{"data":{"metadatas":[{"id":"meta1","data":{"float":41.5,"int":-42,"str":"value1","unsigned":123}},{"id":"meta2","data":null}]}}"#;
         assert_eq!(projected_str, expected_response);
     }
@@ -796,9 +791,18 @@ mod tests {
                 }
             ]
         });
-        let data = Value::from(data_json.as_ref());
+        // Projection reads by slot, so the payload is parsed against the same shape the
+        // projection plan resolved its slots from. A shape built from the operation alone has
+        // no schema to tell it `data` is a custom scalar, which the query planner's merged
+        // shape would have marked as a passthrough — so mark it here.
+        let mut shape = response_shape_for_operation(&normalized_operation.operation);
+        shape.insert_raw_path(["metadatas", "data"]);
+        let owned = SubgraphResponse::parse_data_with_shape(
+            &sonic_rs::to_string(&data_json).unwrap(),
+            &shape,
+        );
         let projection = project_by_operation(
-            &data,
+            &owned.data,
             vec![],
             &Default::default(),
             operation_type_name,

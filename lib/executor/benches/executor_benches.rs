@@ -3,9 +3,11 @@ use criterion::{criterion_group, criterion_main};
 use hive_router_plan_executor::introspection::schema::SchemaWithMetadata;
 use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
 use hive_router_plan_executor::projection::response::project_by_operation;
-use hive_router_plan_executor::response::value::Value;
+use hive_router_plan_executor::response::subgraph_response::SubgraphResponse;
+use hive_router_query_planner::planner::merged_shape::response_shape_for_operation;
 use hive_router_query_planner::ast::normalization::normalize_operation;
 use hive_router_query_planner::utils::parsing::{parse_operation, parse_schema};
+use sonic_rs::JsonValueTrait;
 use std::hint::black_box;
 pub mod raw_result;
 
@@ -31,32 +33,33 @@ fn project_data_by_operation_test(c: &mut Criterion) {
     let (root_type_name, projection_plan) =
         FieldProjectionPlan::from_operation(normalized_operation, schema_metadata);
     let result_as_string = raw_result::get_result_as_string();
-    let projected_data_as_json: sonic_rs::Value =
-        sonic_rs::from_slice(result_as_string.as_bytes()).unwrap();
+    // The response tree is slot-addressed, so the payload is parsed against the same shape
+    // the projection plan resolved its slots from. Parsing stays outside the timed closure,
+    // as it did before, since projection only borrows the data.
+    let shape = response_shape_for_operation(normalized_operation);
+    let payload: sonic_rs::Value = sonic_rs::from_slice(result_as_string.as_bytes()).unwrap();
+    let data_json = sonic_rs::to_string(payload.get("data").expect("payload has a data field"))
+        .unwrap();
+    let owned = SubgraphResponse::parse_data_with_shape(&data_json, &shape);
+    let data = &owned.data;
+
     c.bench_function("project_data_by_operation", |b| {
-        b.iter_batched(
-            || {
-                let val: Value = Value::from(projected_data_as_json.as_ref());
-                val
-            },
-            |data| {
-                let bb_projection_plan = black_box(&projection_plan);
-                let bb_root_type_name = black_box(root_type_name);
-                let result = project_by_operation(
-                    &data,
-                    vec![],
-                    &Default::default(),
-                    bb_root_type_name,
-                    &bb_projection_plan,
-                    &None,
-                    result_as_string.len(),
-                    schema_metadata,
-                )
-                .unwrap();
-                black_box(result);
-            },
-            criterion::BatchSize::SmallInput,
-        );
+        b.iter(|| {
+            let bb_projection_plan = black_box(&projection_plan);
+            let bb_root_type_name = black_box(root_type_name);
+            let result = project_by_operation(
+                black_box(data),
+                vec![],
+                &Default::default(),
+                bb_root_type_name,
+                bb_projection_plan,
+                &None,
+                result_as_string.len(),
+                schema_metadata,
+            )
+            .unwrap();
+            black_box(result);
+        });
     });
 }
 

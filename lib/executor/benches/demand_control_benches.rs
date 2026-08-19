@@ -1,9 +1,10 @@
 use criterion::Criterion;
 use criterion::{criterion_group, criterion_main};
+use hive_router_plan_executor::response::subgraph_response::SubgraphResponse;
+use hive_router_query_planner::planner::merged_shape::response_shape_for_operation;
 use hive_router_plan_executor::execution::demand_control::{
     compile_actual_subgraph_cost_plan, estimate_actual_subgraph_response_cost_with_compiled_plan,
 };
-use hive_router_plan_executor::response::value::Value;
 use hive_router_query_planner::ast::{
     document::Document, normalization::normalize_operation, operation::SubgraphFetchOperation,
 };
@@ -61,9 +62,15 @@ fn demand_control_benchmarks(c: &mut Criterion) {
         }
         "#,
     );
-    let nested_compiled_plan =
-        compile_actual_subgraph_cost_plan(&nested_operation, &nested_supergraph_state);
-    let nested_response: Value<'static> = sonic_rs::from_str(
+    // The response tree is slot-addressed, so a payload has to be parsed against the shape
+    // its slots come from — here, the fetch's own operation.
+    let nested_shape = response_shape_for_operation(&nested_operation.document.operation);
+    let nested_compiled_plan = compile_actual_subgraph_cost_plan(
+        &nested_operation,
+        &nested_supergraph_state,
+        &nested_shape,
+    );
+    let nested_owned = SubgraphResponse::parse_data_with_shape(
         r#"{
             "products": [
                 { "id": "p1", "details": { "sku": "sku-1" } },
@@ -71,8 +78,9 @@ fn demand_control_benchmarks(c: &mut Criterion) {
                 { "id": "p3", "details": { "sku": "sku-3" } }
             ]
         }"#,
-    )
-    .unwrap();
+        &nested_shape,
+    );
+    let nested_response = &nested_owned.data;
     let nested_variable_values = Some(std::collections::HashMap::from([(
         "includeDetails".to_string(),
         sonic_rs::json!(true),
@@ -82,7 +90,7 @@ fn demand_control_benchmarks(c: &mut Criterion) {
         b.iter(|| {
             black_box(estimate_actual_subgraph_response_cost_with_compiled_plan(
                 black_box(&nested_compiled_plan),
-                black_box(&nested_response),
+                black_box(nested_response),
                 black_box(&nested_variable_values),
             ))
         });
@@ -109,9 +117,13 @@ fn demand_control_benchmarks(c: &mut Criterion) {
         }
         "#,
     );
-    let entities_compiled_plan =
-        compile_actual_subgraph_cost_plan(&entities_operation, &entities_supergraph_state);
-    let entities_response: Value<'static> = sonic_rs::from_str(
+    let entities_shape = response_shape_for_operation(&entities_operation.document.operation);
+    let entities_compiled_plan = compile_actual_subgraph_cost_plan(
+        &entities_operation,
+        &entities_supergraph_state,
+        &entities_shape,
+    );
+    let entities_owned = SubgraphResponse::parse_data_with_shape(
         r#"{
             "_entities": [
                 { "__typename": "Book", "title": "Book A" },
@@ -119,14 +131,15 @@ fn demand_control_benchmarks(c: &mut Criterion) {
                 { "__typename": "Book", "title": "Book C" }
             ]
         }"#,
-    )
-    .unwrap();
+        &entities_shape,
+    );
+    let entities_response = &entities_owned.data;
 
     c.bench_function("demand_control/entities_flatten_fetch/compiled", |b| {
         b.iter(|| {
             black_box(estimate_actual_subgraph_response_cost_with_compiled_plan(
                 black_box(&entities_compiled_plan),
-                black_box(&entities_response),
+                black_box(entities_response),
                 black_box(&None::<std::collections::HashMap<String, sonic_rs::Value>>),
             ))
         });
@@ -173,9 +186,13 @@ fn demand_control_benchmarks(c: &mut Criterion) {
         document: batch_doc,
         name_write_position: 0,
     };
-    let batch_compiled_plan =
-        compile_actual_subgraph_cost_plan(&batch_operation, &batch_supergraph_state);
-    let batch_response: Value<'static> = sonic_rs::from_str(
+    let batch_shape = response_shape_for_operation(&batch_operation.document.operation);
+    let batch_compiled_plan = compile_actual_subgraph_cost_plan(
+        &batch_operation,
+        &batch_supergraph_state,
+        &batch_shape,
+    );
+    let batch_owned = SubgraphResponse::parse_data_with_shape(
         r#"{
             "_e0": [
                 { "__typename": "Book", "title": "Book A" },
@@ -185,14 +202,15 @@ fn demand_control_benchmarks(c: &mut Criterion) {
                 { "__typename": "Author", "name": "Author X" }
             ]
         }"#,
-    )
-    .unwrap();
+        &batch_shape,
+    );
+    let batch_response = &batch_owned.data;
 
     c.bench_function("demand_control/entities_batch_fetch/compiled", |b| {
         b.iter(|| {
             black_box(estimate_actual_subgraph_response_cost_with_compiled_plan(
                 black_box(&batch_compiled_plan),
-                black_box(&batch_response),
+                black_box(batch_response),
                 black_box(&None::<std::collections::HashMap<String, sonic_rs::Value>>),
             ))
         });

@@ -284,8 +284,13 @@ pub fn apply_authorization_to_operation(
 
     let new_operation =
         rebuild_nulled_operation(&normalized_payload.operation_for_plan, &nulled_field_trie);
-    let new_projection_plan =
+    let mut new_projection_plan =
         rebuild_nulled_projection_plan(&normalized_payload.projection_plan, &nulled_field_trie);
+    // The query plan is rebuilt from `new_operation`, so its response shape — and therefore
+    // the slots the data lands in — comes from `new_operation` too. The projection plan is
+    // cloned from the original and still carries the original operation's slots, and dropping
+    // a rejected field shifts every slot after it.
+    FieldProjectionPlan::reassign_slots(&mut new_projection_plan, &new_operation);
 
     Ok(AuthorizationDecision::Modified {
         new_operation_definition: new_operation,

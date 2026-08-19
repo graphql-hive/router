@@ -1,6 +1,6 @@
 use bytes::{Buf, Bytes};
 use futures::stream::BoxStream;
-use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
+use hive_router_query_planner::planner::response_shape::ResponseShape;
 use http_body_util::BodyExt;
 use hyper::body::Body;
 
@@ -26,7 +26,7 @@ pub enum ParseError {
 
 pub fn parse_to_stream<B>(
     body_stream: B,
-    custom_scalar_paths: Option<CustomScalarPaths>,
+    response_shape: Option<ResponseShape>,
 ) -> BoxStream<'static, Result<SubgraphResponse<'static>, ParseError>>
 where
     B: Body + Send + Unpin + 'static,
@@ -46,7 +46,7 @@ where
                             Some("next") if !sse_event.data.is_empty() => {
                                 match SubgraphResponse::deserialize_from_bytes(
                                     Bytes::from(sse_event.data.clone()),
-                                    custom_scalar_paths.as_ref(),
+                                    response_shape.as_ref(),
                                 ) {
                                     Ok(response) => {
                                         yield Ok(response);
@@ -179,7 +179,7 @@ fn parse(raw: &[u8]) -> Result<Option<SubgraphSseEvent>, ParseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
+    use hive_router_query_planner::planner::response_shape::ResponseShape;
 
     #[test]
     fn test_parse_single_event_with_data() {
@@ -398,14 +398,14 @@ event: complete
             ),
         ))];
 
-        let mut custom_scalar_paths = CustomScalarPaths::default();
-        custom_scalar_paths.insert_path(["custom"]);
+        let mut response_shape = ResponseShape::default();
+        response_shape.insert_raw_path(["custom"]);
 
         let body = StreamBody::new(futures::stream::iter(chunks));
-        let mut stream = parse_to_stream(body, Some(custom_scalar_paths));
+        let mut stream = parse_to_stream(body, Some(response_shape));
 
         let first = stream.next().await.unwrap().unwrap();
         let data = first.data.as_object().unwrap();
-        assert!(data[0].1.as_raw_json().is_some());
+        assert!(data[0].as_raw_json().is_some());
     }
 }

@@ -18,6 +18,7 @@ use hive_router_plan_executor::execution::demand_control::{
 };
 use hive_router_plan_executor::execution::plan::CoerceVariablesPayload;
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphSnapshot;
+use hive_router_query_planner::planner::response_shape::ResponseShape;
 use hive_router_query_planner::ast::operation::{OperationDefinition, SubgraphFetchOperation};
 use hive_router_query_planner::planner::plan_nodes::{PlanNode, QueryPlan};
 use hive_router_query_planner::state::supergraph_state::{OperationKind, SupergraphState};
@@ -297,11 +298,13 @@ impl DemandControlRuntime {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn compile_formula_fetch_node(
         &self,
         service_name: &str,
         operation_kind: Option<&OperationKind>,
         operation: &SubgraphFetchOperation,
+        response_shape: &ResponseShape,
         supergraph_state: &SupergraphState,
         actual_plans_by_fetch_hash: &mut Option<AHashMap<u64, CompiledSubgraphActualCostPlan>>,
     ) -> FormulaFetchNode {
@@ -310,7 +313,9 @@ impl DemandControlRuntime {
         if let Some(actual_plans_by_fetch_hash) = actual_plans_by_fetch_hash {
             actual_plans_by_fetch_hash
                 .entry(operation.hash)
-                .or_insert_with(|| compile_actual_subgraph_cost_plan(operation, supergraph_state));
+                .or_insert_with(|| {
+                    compile_actual_subgraph_cost_plan(operation, supergraph_state, response_shape)
+                });
         }
         FormulaFetchNode {
             service_name: service_name.to_string(),
@@ -336,6 +341,7 @@ impl DemandControlRuntime {
                 &fetch_node.service_name,
                 fetch_node.operation_kind.as_ref(),
                 &fetch_node.operation,
+                &fetch_node.response_shape,
                 supergraph_state,
                 actual_plans_by_fetch_hash,
             )),
@@ -344,6 +350,7 @@ impl DemandControlRuntime {
                     &batch_fetch_node.service_name,
                     batch_fetch_node.operation_kind.as_ref(),
                     &batch_fetch_node.operation,
+                    &batch_fetch_node.response_shape,
                     supergraph_state,
                     actual_plans_by_fetch_hash,
                 ))
@@ -401,6 +408,7 @@ impl DemandControlRuntime {
                     &subscription.primary.service_name,
                     subscription.primary.operation_kind.as_ref(),
                     &subscription.primary.operation,
+                    &subscription.primary.response_shape,
                     supergraph_state,
                     actual_plans_by_fetch_hash,
                 ))

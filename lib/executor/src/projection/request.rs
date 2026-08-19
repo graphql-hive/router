@@ -1,16 +1,99 @@
+use ahash::HashMap as AHashMap;
 use bytes::BufMut;
-use hive_router_query_planner::ast::selection_item::SelectionItem;
+use hive_router_query_planner::planner::response_shape::TYPENAME_SLOT;
+use hive_router_query_planner::planner::slot_path::{RequiresStep, SlotRewrite};
+use std::collections::hash_map::Entry;
+use xxhash_rust::xxh3::xxh3_64;
+
+use crate::execution::rewrites::SlotRewriteExt;
 
 use crate::{
     introspection::schema::PossibleTypes,
     json_writer::{write_and_escape_string, write_f64, write_i64, write_u64},
-    projection::response::serialize_value_to_buffer,
     response::value::Value,
     utils::consts::{
         CLOSE_BRACE, CLOSE_BRACKET, COLON, COMMA, FALSE, NULL, OPEN_BRACE, OPEN_BRACKET, QUOTE,
         TRUE, TYPENAME_FIELD_NAME, TYPENAME_JSON_FIELD,
     },
 };
+
+/// Projects one entity into the `representations` array, deduplicating on the bytes it
+/// produced, and returns the hash to record for this entity's position.
+///
+/// Deduplicating on the projected bytes — rather than walking the `requires` selection set a
+/// second time to hash the tree — removes a whole traversal per entity, along with its
+/// `binary_search` per field. It is also more precise: two entities that differ only in
+/// fields `requires` does not select now collapse into one representation.
+///
+/// The trade: a duplicate now has to be projected before it can be recognised as one,
+/// where the tree hash could reject it first. So the cost here is flat in the duplicate
+/// ratio, ~83-105us per 1000 entities, while the old cost scaled with how many were
+/// unique. Measured over 1000 entities:
+///
+/// | distinct | before   | after   |
+/// |----------|---------:|--------:|
+/// | 1000     | 266.7 us |  99.5 us|
+/// | 50       |  75.9 us |  83.1 us|
+///
+/// A 2.7x win when entities are mostly unique, against ~9% when almost all are duplicates.
+///
+/// `None` means nothing was written for this position: either the entity was null, or
+/// projection produced no fields. Both are treated the same way at merge time.
+#[allow(clippy::too_many_arguments)]
+pub fn push_representation(
+    possible_types: &PossibleTypes,
+    requires: &[RequiresStep],
+    input_rewrites: &[SlotRewrite],
+    arena: &bumpalo::Bump,
+    entity: &Value<'_>,
+    buffer: &mut Vec<u8>,
+    seen: &mut AHashMap<u64, usize>,
+    next_index: &mut usize,
+) -> Option<u64> {
+    if entity.is_null() {
+        return None;
+    }
+
+    // Rewrites have to run before hashing, because they change the bytes that get sent.
+    // That means a duplicate entity is now cloned and rewritten before being discarded,
+    // where before it was discarded first — only when `input_rewrites` is set, which is
+    // rare, and it buys dedup on the post-rewrite value.
+    let rewritten;
+    let entity = if input_rewrites.is_empty() {
+        entity
+    } else {
+        rewritten = arena.alloc(entity.clone());
+        for rewrite in input_rewrites {
+            rewrite.rewrite(possible_types, rewritten);
+        }
+        &*rewritten
+    };
+
+    // The separator is written before the entry and rolled back with it, so it never ends
+    // up inside the hashed bytes — otherwise the same entity would hash differently
+    // depending on its position in the array.
+    let entry_start = buffer.len();
+    if *next_index > 0 {
+        buffer.put(COMMA);
+    }
+    let bytes_start = buffer.len();
+
+    if !project_requires(possible_types, requires, entity, buffer, true, None) {
+        buffer.truncate(entry_start);
+        return None;
+    }
+
+    let hash = xxh3_64(&buffer[bytes_start..]);
+    match seen.entry(hash) {
+        Entry::Occupied(_) => buffer.truncate(entry_start),
+        Entry::Vacant(vacant) => {
+            vacant.insert(*next_index);
+            *next_index += 1;
+        }
+    }
+
+    Some(hash)
+}
 
 fn write_response_key(first: bool, response_key: Option<&str>, buffer: &mut Vec<u8>) {
     if !first {
@@ -30,21 +113,26 @@ fn write_typename_field(buffer: &mut Vec<u8>, type_name: &str) {
     write_and_escape_string(buffer, type_name);
 }
 
+/// Writes one entity's `representations` entry by running the compiled `requires` program.
+///
+/// The program resolved every response key to a slot at plan time, so this walks the entity
+/// by index — no key comparison, no `binary_search` per field, and no interpreting of
+/// `SelectionItem`s.
 pub fn project_requires(
     possible_types: &PossibleTypes,
-    requires_selections: &Vec<SelectionItem>,
+    steps: &[RequiresStep],
     entity: &Value,
     buffer: &mut Vec<u8>,
     first: bool,
     response_key: Option<&str>,
 ) -> bool {
     match entity {
-        Value::Null => {
-            return false;
-        }
+        // An absent field is left out of the representation entirely; an explicit `null` is
+        // handled by the caller, which writes it.
+        Value::Absent | Value::Null => return false,
         Value::Bool(b) => {
             write_response_key(first, response_key, buffer);
-            buffer.put(if b == &true { TRUE } else { FALSE });
+            buffer.put(if *b { TRUE } else { FALSE });
         }
         Value::F64(n) => {
             write_response_key(first, response_key, buffer);
@@ -66,44 +154,30 @@ pub fn project_requires(
             write_response_key(first, response_key, buffer);
             buffer.put_slice(raw.as_bytes());
         }
-        Value::Array(entity_array) => {
+        Value::Array(items) => {
             write_response_key(first, response_key, buffer);
             buffer.put(OPEN_BRACKET);
 
             let mut first = true;
-            for entity_item in entity_array {
-                let projected = project_requires(
-                    possible_types,
-                    requires_selections,
-                    entity_item,
-                    buffer,
-                    first,
-                    None,
-                );
-                if projected {
+            for item in items {
+                if project_requires(possible_types, steps, item, buffer, first, None) {
                     // Only update `first` if we actually write something
                     first = false;
                 }
             }
             buffer.put(CLOSE_BRACKET);
         }
-        Value::Object(entity_obj) => {
-            if requires_selections.is_empty() {
-                // It is probably a scalar with an object value, so we write it directly
-                write_response_key(first, response_key, buffer);
-                serialize_value_to_buffer(entity, buffer);
-                return true;
-            }
-            if entity_obj.is_empty() {
+        Value::Object(slots) => {
+            if steps.is_empty() || slots.is_empty() {
                 return false;
             }
 
             let parent_first = first;
             let mut first = true;
-            project_requires_map_mut(
+            project_requires_steps(
                 possible_types,
-                requires_selections,
-                entity_obj,
+                steps,
+                entity,
                 buffer,
                 &mut first,
                 response_key,
@@ -113,38 +187,35 @@ pub fn project_requires(
                 // If no fields were projected, "first" is still true,
                 // so we skip writing the closing brace
                 return false;
-            } else {
-                buffer.put(CLOSE_BRACE);
             }
+            buffer.put(CLOSE_BRACE);
         }
     };
     true
 }
 
-fn project_requires_map_mut(
+#[inline]
+fn is_typename_step(step: &RequiresStep) -> bool {
+    matches!(step, RequiresStep::Leaf { key, .. } if key == TYPENAME_FIELD_NAME)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn project_requires_steps(
     possible_types: &PossibleTypes,
-    requires_selections: &Vec<SelectionItem>,
-    entity_obj: &Vec<(&str, Value<'_>)>,
+    steps: &[RequiresStep],
+    entity: &Value<'_>,
     buffer: &mut Vec<u8>,
     first: &mut bool,
     parent_response_key: Option<&str>,
     parent_first: bool,
 ) {
-    // First, check if __typename is present in the entity object, we'll use it later
-    let type_name = entity_obj
-        .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
-        .ok()
-        .and_then(|idx| entity_obj[idx].1.as_str());
+    // Read `__typename` up front; it is reserved at slot 0 of every client-visible position.
+    let type_name = entity.slot(TYPENAME_SLOT).and_then(Value::as_str);
 
     // An indicator that only `__typename` is used for the key fields.
     // This is an edge case that we need to identify, in order to detect when
     // `__typename` alone is a valid key but other fields are also required
-    let only_typename = requires_selections.len() == 1 && requires_selections.iter().all(|selection| {
-        matches!(selection, SelectionItem::Field(field) if field.selection_identifier() == TYPENAME_FIELD_NAME)
-    });
-
-    // If the requires selection is only `__typename`, we can skip the rest of the logic, and just write the `__typename` field
-    if only_typename {
+    if steps.len() == 1 && is_typename_step(&steps[0]) {
         if let Some(type_name) = type_name {
             write_response_key(parent_first, parent_response_key, buffer);
             buffer.put(OPEN_BRACE);
@@ -155,29 +226,41 @@ fn project_requires_map_mut(
         }
     }
 
-    for requires_selection in requires_selections {
-        match &requires_selection {
-            SelectionItem::Field(requires_selection) => {
-                let field_name = &requires_selection.name;
-                let response_key = requires_selection.selection_identifier();
+    for step in steps {
+        match step {
+            RequiresStep::OnType {
+                typename_slot,
+                type_condition,
+                steps,
+            } => {
+                let type_name = typename_slot
+                    .and_then(|slot| entity.slot(slot))
+                    .and_then(Value::as_str)
+                    .unwrap_or(type_condition);
 
-                if response_key == TYPENAME_FIELD_NAME {
+                // For projection, both sides of the condition are valid
+                if possible_types.entity_satisfies_type_condition(type_name, type_condition)
+                    || possible_types.entity_satisfies_type_condition(type_condition, type_name)
+                {
+                    project_requires_steps(
+                        possible_types,
+                        steps,
+                        entity,
+                        buffer,
+                        first,
+                        parent_response_key,
+                        parent_first,
+                    );
+                }
+            }
+            _ if is_typename_step(step) => continue,
+            RequiresStep::Leaf { key, slot } | RequiresStep::Enter { key, slot, .. } => {
+                let original = entity.slot_or_absent(*slot);
+                // A field no response ever filled in is left out of the representation. An
+                // explicit `null` below is kept, because the subgraph may key on it.
+                if original.is_absent() {
                     continue;
                 }
-
-                let original = entity_obj
-                    .binary_search_by_key(&field_name.as_str(), |(k, _)| k)
-                    .ok()
-                    .or_else(|| {
-                        entity_obj
-                            .binary_search_by_key(&response_key, |(k, _)| k)
-                            .ok()
-                    })
-                    .map(|idx| &entity_obj[idx].1);
-
-                let Some(original) = original else {
-                    continue;
-                };
 
                 // In most requests, required fields are present and projection succeeds.
                 // If projection ends up writing nothing, we rewind to this offset.
@@ -197,19 +280,24 @@ fn project_requires_map_mut(
 
                 if original.is_null() {
                     // The field exists and is null, so keep it in the representation.
-                    write_response_key(*first, Some(response_key), buffer);
+                    write_response_key(*first, Some(key.as_str()), buffer);
                     buffer.put(NULL);
                     *first = false;
                     continue;
                 }
 
+                let nested: &[RequiresStep] = match step {
+                    RequiresStep::Enter { steps, .. } => steps,
+                    _ => &[],
+                };
+
                 let projected = project_requires(
                     possible_types,
-                    &requires_selection.selections.items,
+                    nested,
                     original,
                     buffer,
                     *first,
-                    Some(response_key),
+                    Some(key.as_str()),
                 );
 
                 if projected {
@@ -222,35 +310,6 @@ fn project_requires_map_mut(
                     }
                 }
             }
-            SelectionItem::InlineFragment(requires_selection) => {
-                let type_condition = &requires_selection.type_condition;
-
-                let type_name = match entity_obj
-                    .iter()
-                    .find(|(key, _)| key == &TYPENAME_FIELD_NAME)
-                    .and_then(|(_, val)| val.as_str())
-                {
-                    Some(type_name) => type_name,
-                    _ => type_condition,
-                };
-                // For projection, both sides of the condition are valid
-                if possible_types.entity_satisfies_type_condition(type_name, type_condition)
-                    || possible_types.entity_satisfies_type_condition(type_condition, type_name)
-                {
-                    project_requires_map_mut(
-                        possible_types,
-                        &requires_selection.selections.items,
-                        entity_obj,
-                        buffer,
-                        first,
-                        parent_response_key,
-                        parent_first,
-                    );
-                }
-            }
-            SelectionItem::FragmentSpread(_name_ref) => {
-                // We only minify the queries to subgraphs, so we never have fragment spreads here.
-            }
         }
     }
 }
@@ -258,15 +317,19 @@ fn project_requires_map_mut(
 #[cfg(test)]
 mod tests {
     use super::project_requires;
-    use crate::{introspection::schema::PossibleTypes, response::value::Value};
+    use crate::introspection::schema::PossibleTypes;
     use graphql_tools::parser::query;
     use hive_router_query_planner::ast::{
-        selection_item::SelectionItem, selection_set::SelectionSet,
+        selection_set::SelectionSet,
     };
+    use hive_router_query_planner::planner::merged_shape::response_shape_for_selections;
+    use hive_router_query_planner::planner::slot_path::compile_requires;
     use hive_router_query_planner::utils::parsing::parse_operation;
     use sonic_rs::json;
 
-    fn requires_from_str(requires: &str) -> Vec<SelectionItem> {
+    use crate::response::subgraph_response::SubgraphResponse;
+
+    fn requires_from_str(requires: &str) -> SelectionSet {
         let operation = parse_operation(&format!("query {{ {requires} }}"));
 
         let selection_set = operation
@@ -286,19 +349,26 @@ mod tests {
             })
             .expect("operation must contain a selection set");
 
-        let selection_set: SelectionSet = selection_set.into();
-        selection_set.items
+        selection_set.into()
     }
 
     fn project_requires_pretty(requires: &str, entity_json: sonic_rs::Value) -> Option<String> {
-        let requires = requires_from_str(requires);
-        let entity = Value::from(entity_json.as_ref());
+        // The entity is parsed against the same shape the `requires` program is compiled
+        // from, which is what pairs its slots with the program's.
+        let selections = requires_from_str(requires);
+        let shape = response_shape_for_selections(&selections);
+        let compiled = compile_requires(&selections, &shape);
+
+        let owned = SubgraphResponse::parse_data_with_shape(
+            &sonic_rs::to_string(&entity_json).unwrap(),
+            &shape,
+        );
 
         let mut buffer = Vec::new();
         let projected = project_requires(
             &PossibleTypes::default(),
-            &requires,
-            &entity,
+            &compiled,
+            &owned.data,
             &mut buffer,
             true,
             None,
@@ -308,7 +378,7 @@ mod tests {
             return None;
         }
 
-        let json: Value = sonic_rs::from_slice(&buffer).unwrap();
+        let json: sonic_rs::Value = sonic_rs::from_slice(&buffer).unwrap();
         Some(sonic_rs::to_string_pretty(&json).unwrap())
     }
 
@@ -341,11 +411,13 @@ mod tests {
                 "id": "1"
             }),
           ).expect("projection should produce output"),
+          // Fields come out in `requires` selection order, which is what the compiled
+          // program walks.
           @r#"
           {
             "__typename": "Ad",
-            "contactOptions": null,
-            "id": "1"
+            "id": "1",
+            "contactOptions": null
           }
         "#);
 

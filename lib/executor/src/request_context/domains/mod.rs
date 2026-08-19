@@ -5,10 +5,10 @@ use super::domains::progressive_override::ProgressiveOverrideContext;
 use super::domains::telemetry::TelemetryContext;
 use super::RequestContextError;
 
-use crate::response::value::Value as ResponseValue;
 
 use hive_router_config::coprocessor::ContextSelection;
 use serde::{ser::SerializeMap, Serialize};
+use sonic_rs::JsonValueTrait;
 use sonic_rs::Value;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -198,14 +198,13 @@ impl CustomContext {
         self.0.iter().map(|(key, value)| (key, value))
     }
 
-    pub(crate) fn apply(&mut self, key: &str, value: ResponseValue<'_>) {
+    pub(crate) fn apply(&mut self, key: &str, value: Value) {
         if value.is_null() {
             // Remove
             self.0.retain(|(current_key, _)| current_key != key);
             return;
         }
 
-        let value = value.as_ref().into();
         if let Some((_, current)) = self.0.iter_mut().find(|(name, _)| *name == key) {
             // Update existing value
             *current = value;

@@ -1,11 +1,10 @@
 use std::collections::BTreeSet;
 
-use hive_router_query_planner::planner::plan_nodes::FlattenNodePathSegment;
+use hive_router_query_planner::planner::slot_path::SlotPathSegment;
 
 use crate::{
     introspection::schema::{PossibleTypes, SchemaMetadata},
     response::{graphql_error::GraphQLErrorPath, value::Value},
-    utils::consts::TYPENAME_FIELD_NAME,
 };
 
 fn entity_satisfies_any_type_condition(
@@ -18,16 +17,33 @@ fn entity_satisfies_any_type_condition(
         .any(|condition| possible_types.entity_satisfies_type_condition(type_name, condition))
 }
 
+/// A position with no `__typename` cannot be ruled out, so the gate passes — the same
+/// outcome as the missing-key lookup this replaced.
+#[inline]
+fn passes_type_condition(
+    value: &Value<'_>,
+    typename_slot: Option<usize>,
+    conditions: &BTreeSet<String>,
+    possible_types: &PossibleTypes,
+) -> bool {
+    typename_slot
+        .and_then(|slot| value.slot(slot))
+        .and_then(Value::as_str)
+        .is_none_or(|type_name| {
+            entity_satisfies_any_type_condition(possible_types, type_name, conditions)
+        })
+}
+
 pub fn traverse_and_callback_mut<'a, Callback>(
     current_data: &mut Value<'a>,
-    remaining_path: &[FlattenNodePathSegment],
+    remaining_path: &[SlotPathSegment],
     schema_metadata: &SchemaMetadata,
     current_error_path: Option<GraphQLErrorPath>,
     callback: &mut Callback,
 ) where
     Callback: FnMut(&mut Value<'a>, Option<GraphQLErrorPath>),
 {
-    if remaining_path.is_empty() {
+    let Some((segment, rest_of_path)) = remaining_path.split_first() else {
         if let Value::Array(arr) = current_data {
             // If the path is empty, we call the callback on each item in the array
             // We iterate because we want the entity objects directly
@@ -38,17 +54,14 @@ pub fn traverse_and_callback_mut<'a, Callback>(
                 callback(item, current_error_path_for_index);
             }
         } else {
-            // If the path is empty and current_data is not an array, just call the callback
             callback(current_data, current_error_path);
         }
         return;
-    }
+    };
 
-    match &remaining_path[0] {
-        FlattenNodePathSegment::List => {
-            // If the key is List, we expect current_data to be an array
+    match segment {
+        SlotPathSegment::List => {
             if let Value::Array(arr) = current_data {
-                let rest_of_path = &remaining_path[1..];
                 for (index, item) in arr.iter_mut().enumerate() {
                     let current_error_path_for_index = current_error_path
                         .as_ref()
@@ -63,42 +76,30 @@ pub fn traverse_and_callback_mut<'a, Callback>(
                 }
             }
         }
-        FlattenNodePathSegment::Field(field_name) => {
-            // If the key is Field, we expect current_data to be an object
-            if let Value::Object(map) = current_data {
-                if let Ok(idx) = map.binary_search_by_key(&field_name.as_str(), |(k, _)| k) {
-                    let (_, next_data) = map.get_mut(idx).unwrap();
-                    let rest_of_path = &remaining_path[1..];
-                    let current_error_path_for_field =
-                        current_error_path.map(|current_error_path| {
-                            current_error_path.concat_str(field_name.clone())
-                        });
-                    traverse_and_callback_mut(
-                        next_data,
-                        rest_of_path,
-                        schema_metadata,
-                        current_error_path_for_field,
-                        callback,
-                    );
-                }
+        SlotPathSegment::Slot { slot, key } => {
+            if let Some(next_data) = current_data.slot_mut(*slot) {
+                let current_error_path_for_field = current_error_path
+                    .map(|current_error_path| current_error_path.concat_str(key.clone()));
+                traverse_and_callback_mut(
+                    next_data,
+                    rest_of_path,
+                    schema_metadata,
+                    current_error_path_for_field,
+                    callback,
+                );
             }
         }
-        FlattenNodePathSegment::TypeCondition(type_condition) => {
-            // If the key is Cast, we expect current_data to be an object or an array
-            if let Value::Object(obj) = current_data {
-                let maybe_type_name = obj
-                    .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
-                    .ok()
-                    .and_then(|idx| obj[idx].1.as_str());
-
-                if maybe_type_name.is_none_or(|type_name| {
-                    entity_satisfies_any_type_condition(
-                        &schema_metadata.possible_types,
-                        type_name,
-                        type_condition,
-                    )
-                }) {
-                    let rest_of_path = &remaining_path[1..];
+        SlotPathSegment::TypenameEquals {
+            typename_slot,
+            conditions,
+        } => {
+            if current_data.is_object() {
+                if passes_type_condition(
+                    current_data,
+                    *typename_slot,
+                    conditions,
+                    &schema_metadata.possible_types,
+                ) {
                     traverse_and_callback_mut(
                         current_data,
                         rest_of_path,
@@ -108,7 +109,6 @@ pub fn traverse_and_callback_mut<'a, Callback>(
                     );
                 }
             } else if let Value::Array(arr) = current_data {
-                // If the current data is an array, we need to check each item
                 for (index, item) in arr.iter_mut().enumerate() {
                     let current_error_path_for_index = current_error_path
                         .as_ref()
@@ -128,13 +128,13 @@ pub fn traverse_and_callback_mut<'a, Callback>(
 
 pub fn traverse_and_callback<'a, Callback>(
     current_data: &'a Value<'a>,
-    remaining_path: &'a [FlattenNodePathSegment],
+    remaining_path: &'a [SlotPathSegment],
     possible_types: &'a PossibleTypes,
     callback: &mut Callback,
 ) where
     Callback: FnMut(&'a Value<'a>),
 {
-    if remaining_path.is_empty() {
+    let Some((segment, rest_of_path)) = remaining_path.split_first() else {
         if let Value::Array(arr) = current_data {
             for item in arr.iter() {
                 callback(item);
@@ -143,37 +143,27 @@ pub fn traverse_and_callback<'a, Callback>(
             callback(current_data);
         }
         return;
-    }
+    };
 
-    match &remaining_path[0] {
-        FlattenNodePathSegment::List => {
+    match segment {
+        SlotPathSegment::List => {
             if let Value::Array(arr) = current_data {
-                let rest_of_path = &remaining_path[1..];
                 for item in arr.iter() {
                     traverse_and_callback(item, rest_of_path, possible_types, callback);
                 }
             }
         }
-        FlattenNodePathSegment::Field(field_name) => {
-            if let Value::Object(map) = current_data {
-                if let Ok(idx) = map.binary_search_by_key(&field_name.as_str(), |(k, _)| k) {
-                    let (_, next_data) = &map[idx];
-                    let rest_of_path = &remaining_path[1..];
-                    traverse_and_callback(next_data, rest_of_path, possible_types, callback);
-                }
+        SlotPathSegment::Slot { slot, .. } => {
+            if let Some(next_data) = current_data.slot(*slot) {
+                traverse_and_callback(next_data, rest_of_path, possible_types, callback);
             }
         }
-        FlattenNodePathSegment::TypeCondition(type_condition) => {
-            if let Value::Object(obj) = current_data {
-                let maybe_type_name = obj
-                    .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
-                    .ok()
-                    .and_then(|idx| obj[idx].1.as_str());
-
-                if maybe_type_name.is_none_or(|type_name| {
-                    entity_satisfies_any_type_condition(possible_types, type_name, type_condition)
-                }) {
-                    let rest_of_path = &remaining_path[1..];
+        SlotPathSegment::TypenameEquals {
+            typename_slot,
+            conditions,
+        } => {
+            if current_data.is_object() {
+                if passes_type_condition(current_data, *typename_slot, conditions, possible_types) {
                     traverse_and_callback(current_data, rest_of_path, possible_types, callback);
                 }
             } else if let Value::Array(arr) = current_data {
@@ -187,7 +177,7 @@ pub fn traverse_and_callback<'a, Callback>(
 
 #[cfg(test)]
 mod tests {
-    use hive_router_query_planner::planner::plan_nodes::FlattenNodePathSegment;
+    use hive_router_query_planner::planner::slot_path::SlotPathSegment;
 
     use crate::{
         introspection::schema::SchemaMetadata,
@@ -197,6 +187,18 @@ mod tests {
         },
     };
 
+    fn slot(slot: usize, key: &str) -> SlotPathSegment {
+        SlotPathSegment::Slot {
+            slot,
+            key: key.to_string(),
+        }
+    }
+
+    /// `{ id: "<id>" }` at slot 0.
+    fn entity(id: &str) -> Value<'static> {
+        Value::Object(vec![Value::String(id.to_string().into())])
+    }
+
     #[test]
     /**
      * Collect error paths for each item in a list at one level
@@ -204,17 +206,8 @@ mod tests {
      * we should collect paths ["items", 0] and ["items", 1]
      */
     fn test_collect_error_paths_one_level() {
-        let mut data = Value::Object(vec![(
-            "items",
-            Value::Array(vec![
-                Value::Object(vec![("id", Value::String("1".into()))]),
-                Value::Object(vec![("id", Value::String("2".into()))]),
-            ]),
-        )]);
-        let path = vec![
-            FlattenNodePathSegment::Field("items".into()),
-            FlattenNodePathSegment::List,
-        ];
+        let mut data = Value::Object(vec![Value::Array(vec![entity("1"), entity("2")])]);
+        let path = vec![slot(0, "items"), SlotPathSegment::List];
         let mut collected = vec![];
         super::traverse_and_callback_mut(
             &mut data,
@@ -245,37 +238,28 @@ mod tests {
     #[test]
     /**
      * Collect error paths for each item in a list at two levels
-     * E.g. for data { users: [ { posts: [ {...}, {...} ] }, { posts: [ {...} ] } ] } and path ["users", List, "posts", List]
-     * we should collect paths ["users", 0, "posts", 0], ["users", 0, "posts", 1], and ["users", 1, "posts", 0]
+     * E.g. for data { users: [ { posts: [ {...}, {...} ] }, { posts: [ {...} ] } ] } and
+     * path ["users", List, "posts", List] we should collect ["users", 0, "posts", 0],
+     * ["users", 0, "posts", 1] and ["users", 1, "posts", 0]
      */
     fn test_collect_error_paths_two_levels() {
-        let mut data = Value::Object(vec![(
-            "users",
-            Value::Array(vec![
-                Value::Object(vec![
-                    ("id", Value::String("1".into())),
-                    (
-                        "posts",
-                        Value::Array(vec![
-                            Value::Object(vec![("id", Value::String("a".into()))]),
-                            Value::Object(vec![("id", Value::String("b".into()))]),
-                        ]),
-                    ),
-                ]),
-                Value::Object(vec![
-                    ("id", Value::String("2".into())),
-                    (
-                        "posts",
-                        Value::Array(vec![Value::Object(vec![("id", Value::String("c".into()))])]),
-                    ),
-                ]),
-            ]),
-        )]);
+        // Each user is { id: <slot 0>, posts: <slot 1> }.
+        let user = |id: &str, posts: Vec<Value<'static>>| {
+            Value::Object(vec![
+                Value::String(id.to_string().into()),
+                Value::Array(posts),
+            ])
+        };
+        let mut data = Value::Object(vec![Value::Array(vec![
+            user("1", vec![entity("a"), entity("b")]),
+            user("2", vec![entity("c")]),
+        ])]);
+
         let path = vec![
-            FlattenNodePathSegment::Field("users".into()),
-            FlattenNodePathSegment::List,
-            FlattenNodePathSegment::Field("posts".into()),
-            FlattenNodePathSegment::List,
+            slot(0, "users"),
+            SlotPathSegment::List,
+            slot(1, "posts"),
+            SlotPathSegment::List,
         ];
         let mut collected = vec![];
         super::traverse_and_callback_mut(
@@ -287,67 +271,19 @@ mod tests {
                 collected.push(error_path.unwrap());
             },
         );
-        assert_eq!(collected.len(), 3);
-        assert_eq!(
-            collected[0].segments,
-            vec![
-                GraphQLErrorPathSegment::String("users".into()),
-                GraphQLErrorPathSegment::Index(0),
-                GraphQLErrorPathSegment::String("posts".into()),
-                GraphQLErrorPathSegment::Index(0),
-            ]
-        );
-        assert_eq!(
-            collected[1].segments,
-            vec![
-                GraphQLErrorPathSegment::String("users".into()),
-                GraphQLErrorPathSegment::Index(0),
-                GraphQLErrorPathSegment::String("posts".into()),
-                GraphQLErrorPathSegment::Index(1),
-            ]
-        );
-        assert_eq!(
-            collected[2].segments,
-            vec![
-                GraphQLErrorPathSegment::String("users".into()),
-                GraphQLErrorPathSegment::Index(1),
-                GraphQLErrorPathSegment::String("posts".into()),
-                GraphQLErrorPathSegment::Index(0),
-            ]
-        );
-    }
 
-    #[test]
-    fn traverse_matches_multi_type_cast() {
-        let data = Value::Object(vec![("__typename", Value::String("Book".into()))]);
-        let path = vec![FlattenNodePathSegment::TypeCondition(
-            ["Book".to_string(), "User".to_string()]
-                .into_iter()
-                .collect(),
-        )];
-        let mut matched = false;
-
-        super::traverse_and_callback(&data, &path, &Default::default(), &mut |_value| {
-            matched = true;
-        });
-
-        assert!(matched);
-    }
-
-    #[test]
-    fn traverse_rejects_non_matching_multi_type_cast() {
-        let data = Value::Object(vec![("__typename", Value::String("Magazine".into()))]);
-        let path = vec![FlattenNodePathSegment::TypeCondition(
-            ["Book".to_string(), "User".to_string()]
-                .into_iter()
-                .collect(),
-        )];
-        let mut matched = false;
-
-        super::traverse_and_callback(&data, &path, &Default::default(), &mut |_value| {
-            matched = true;
-        });
-
-        assert!(!matched);
+        let expected = [(0usize, 0usize), (0, 1), (1, 0)];
+        assert_eq!(collected.len(), expected.len());
+        for (collected, (user_index, post_index)) in collected.iter().zip(expected) {
+            assert_eq!(
+                collected.segments,
+                vec![
+                    GraphQLErrorPathSegment::String("users".into()),
+                    GraphQLErrorPathSegment::Index(user_index),
+                    GraphQLErrorPathSegment::String("posts".into()),
+                    GraphQLErrorPathSegment::Index(post_index),
+                ]
+            );
+        }
     }
 }

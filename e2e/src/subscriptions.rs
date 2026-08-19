@@ -1708,20 +1708,34 @@ mod subscriptions_e2e_tests {
             .expect("Failed to subscribe")
             .map(|response| response.expect("WebSocket response failed"));
 
+        // Assert on the raw payload rather than the parsed `data`. `WsClient` is the
+        // executor's subgraph client, used here as a plain client against the router, so it
+        // has no `ResponseShape` to parse against — and the response tree is slot-addressed,
+        // so without one there is nowhere for the fields to land. The wire bytes are what
+        // this test is really about anyway.
+        let payload_contains = |response: &hive_router_plan_executor::response::subgraph_response::SubgraphResponse<'_>, needle: &str| {
+            response
+                .bytes
+                .as_ref()
+                .map(|bytes| String::from_utf8_lossy(bytes).contains(needle))
+                .unwrap_or(false)
+        };
+
         // consume 3 events from sub1 to let the source stream advance
         let response = ws_stream.next().await.unwrap();
         assert!(
-            response.data.to_string().contains(r#""id": "1""#),
-            "Expected first event to be id=1"
+            payload_contains(&response, r#""id":"1""#),
+            "Expected first event to be id=1, got {:?}",
+            response.bytes.as_ref().map(|b| String::from_utf8_lossy(b))
         );
         let response = ws_stream.next().await.unwrap();
         assert!(
-            response.data.to_string().contains(r#""id": "2""#),
+            payload_contains(&response, r#""id":"2""#),
             "Expected second event to be id=2"
         );
         let response = ws_stream.next().await.unwrap();
         assert!(
-            response.data.to_string().contains(r#""id": "3""#),
+            payload_contains(&response, r#""id":"3""#),
             "Expected third event to be id=3"
         );
 

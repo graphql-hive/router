@@ -100,7 +100,12 @@ impl<'exec> FilterOutputExt<'exec> for OperationFilterOutput<'exec> {
     ) -> (Arc<GraphQLNormalizationPayload>, Vec<GraphQLError>) {
         let trie = Trie::from_paths(&self.rejected_paths);
         let new_op = rebuild_nulled_operation(&payload.operation_for_plan, &trie);
-        let new_projection = rebuild_nulled_projection_plan(&payload.projection_plan, &trie);
+        let mut new_projection = rebuild_nulled_projection_plan(&payload.projection_plan, &trie);
+        // The plan is rebuilt from `new_op`, so its response shape comes from `new_op` too.
+        // The projection plan is cloned from the original and still carries the original
+        // operation's slots — dropping a rejected field shifts everything after it, so the
+        // slots have to be resolved again against the operation actually being planned.
+        FieldProjectionPlan::reassign_slots(&mut new_projection, &new_op);
         (payload.with_operation(new_op, new_projection), self.errors)
     }
 }

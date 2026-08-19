@@ -1,7 +1,6 @@
 use super::super::domains::{RequestContext, HIVE_PREFIX};
 use super::super::error::RequestContextError;
 
-use crate::response::value::Value as ResponseValue;
 use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use std::fmt;
@@ -29,14 +28,13 @@ impl RequestContextCoprocessorApi<'_> {
     /// Sets a value for a specific key in the context.
     /// If the key starts with `hive::`, it is routed to a reserved domain.
     /// Otherwise, it is stored in the custom context.
-    fn set(&mut self, key: &str, value: ResponseValue<'_>) -> Result<(), RequestContextError> {
+    fn set(&mut self, key: &str, value: sonic_rs::Value) -> Result<(), RequestContextError> {
         if !key.starts_with(HIVE_PREFIX) {
             self.context.custom.apply(key, value);
             return Ok(());
         }
 
-        self.context
-            .try_set_reserved_key(key, value.as_ref().into())
+        self.context.try_set_reserved_key(key, value)
     }
 
     /// Applies multiple context updates from an external patch object.
@@ -50,9 +48,13 @@ impl RequestContextCoprocessorApi<'_> {
 }
 
 /// A collection of context updates received from an external coprocessor.
+///
+/// Coprocessor payloads are arbitrary JSON with no shape the router knows in advance, so
+/// they are `sonic_rs::Value` rather than the slot-addressed response `Value` — which is
+/// also where they end up, so this drops a conversion.
 #[derive(Debug, Default)]
 pub struct RequestContextPatch<'a> {
-    pub(crate) entries: Vec<(&'a str, ResponseValue<'a>)>,
+    pub(crate) entries: Vec<(&'a str, sonic_rs::Value)>,
 }
 
 impl<'a, 'de: 'a> Deserialize<'de> for RequestContextPatch<'a> {
@@ -74,7 +76,7 @@ impl<'a, 'de: 'a> Deserialize<'de> for RequestContextPatch<'a> {
                 A: MapAccess<'de>,
             {
                 let mut patch = RequestContextPatch::default();
-                while let Some((key, value)) = map.next_entry::<&'de str, ResponseValue<'de>>()? {
+                while let Some((key, value)) = map.next_entry::<&'de str, sonic_rs::Value>()? {
                     patch.entries.push((key, value));
                 }
 

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use hive_router_query_planner::planner::plan_nodes::FlattenNodePath;
+use hive_router_query_planner::planner::slot_path::{slot_path_to_string, SlotPathSegment};
 
 use crate::{
     execution::demand_control::subgraph_response_tracker::SubgraphResponseCostTracker,
@@ -18,7 +18,7 @@ pub struct ExecutionContext<'a> {
     pub data: Value<'a>,
     pub errors: Vec<GraphQLError>,
     pub response_headers_aggregator: ResponseHeaderAggregator,
-    pub extensions_aggregator: ExtensionsAggregator<'a>,
+    pub extensions_aggregator: ExtensionsAggregator,
     pub subgraph_response_cost_tracker: SubgraphResponseCostTracker<'a>,
 }
 
@@ -47,12 +47,12 @@ impl<'a> ExecutionContext<'a> {
     pub fn handle_errors(
         &mut self,
         subgraph_name: &str,
-        affected_path: Option<&FlattenNodePath>,
+        affected_path: Option<&[SlotPathSegment]>,
         errors: Option<Vec<GraphQLError>>,
         entity_index_error_map: Option<HashMap<&usize, Vec<GraphQLErrorPath>>>,
     ) {
         if let Some(response_errors) = errors {
-            let affected_path = affected_path.map(|path| path.to_string());
+            let affected_path = affected_path.map(slot_path_to_string);
             for response_error in response_errors {
                 let mut processed_error = response_error.add_subgraph_name(subgraph_name);
 

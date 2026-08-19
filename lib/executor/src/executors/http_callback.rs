@@ -6,7 +6,7 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use futures::stream::BoxStream;
 use hive_router_internal::telemetry::logging::targets;
-use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
+use hive_router_query_planner::planner::response_shape::ResponseShape;
 use http::{HeaderMap, HeaderValue};
 use http_body_util::BodyExt;
 use http_body_util::Full;
@@ -170,8 +170,8 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
         BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
         SubgraphExecutorError,
     > {
-        let custom_scalar_paths: Option<CustomScalarPaths> =
-            execution_request.custom_scalar_paths.cloned();
+        let response_shape: Option<ResponseShape> =
+            execution_request.response_shape.cloned();
         let subscription_id = Ulid::generate().to_string();
         let verifier = Ulid::generate().to_string();
 
@@ -294,7 +294,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
                         );
                         match SubgraphResponse::deserialize_from_bytes(
                             payload,
-                            custom_scalar_paths.as_ref(),
+                            response_shape.as_ref(),
                         ) {
                             Ok(response) => yield Ok(response),
                             Err(e) => {

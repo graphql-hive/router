@@ -11,6 +11,7 @@ use hive_router_query_planner::{
         selection_item::SelectionItem,
         selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
     },
+    planner::{merged_shape::response_shape_for_operation, response_shape::ResponseShape},
     state::supergraph_state::OperationKind,
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
@@ -133,7 +134,18 @@ pub struct FieldProjectionPlan {
     pub parent_type_guard: Option<TypeCondition>,
     pub conditions: Option<FieldProjectionCondition>,
     pub value: ProjectionValueSource,
+    /// Where this field's value sits in the response tree at this position.
+    ///
+    /// Response keys the client asked for are absorbed into the shape before anything the
+    /// planner injects, in the operation's own order, so these slots are identical for every
+    /// plan built from this operation — which is what lets them be resolved here, once per
+    /// operation, rather than per plan.
+    pub slot: usize,
 }
+
+/// A slot that no field occupies: the value reads as absent, which is how a field the
+/// subgraph never answered already behaves.
+pub const MISSING_SLOT: usize = usize::MAX;
 
 #[cfg(debug_assertions)]
 fn debug_plans_vec(plans: &[FieldProjectionPlan]) {
@@ -260,7 +272,37 @@ impl FieldProjectionPlan {
             Self::remove_redundant_child_guards(plan, schema_metadata);
         }
 
+        // The same operation the query planner absorbs into the merged response shape, so
+        // the slots resolved here are the ones the data actually uses.
+        let shape = response_shape_for_operation(operation);
+        Self::assign_slots(&mut plans, &shape);
+
         (root_type_name, plans)
+    }
+
+    /// Re-resolves slots against `operation`.
+    ///
+    /// Needed whenever the operation the query plan is built from is not the one this
+    /// projection plan was built from — authorization rebuilds both to drop rejected fields,
+    /// and dropping a field shifts every slot after it.
+    pub fn reassign_slots(plans: &mut [FieldProjectionPlan], operation: &OperationDefinition) {
+        let shape = response_shape_for_operation(operation);
+        Self::assign_slots(plans, &shape);
+    }
+
+    fn assign_slots(plans: &mut [FieldProjectionPlan], shape: &ResponseShape) {
+        for plan in plans {
+            plan.slot = shape.slot_of(&plan.response_key).unwrap_or(MISSING_SLOT);
+
+            if let ProjectionValueSource::ResponseData {
+                selections: Some(selections),
+            } = &mut plan.value
+            {
+                if let Some(child) = shape.child(plan.slot) {
+                    Self::assign_slots(Arc::make_mut(selections).as_mut_slice(), child);
+                }
+            }
+        }
     }
 
     #[instrument(level = "trace", skip_all, fields(
@@ -927,6 +969,7 @@ impl FieldProjectionPlan {
             // We hit a case where the field is marked as `skip_in_response_projection`,
             // but we still need to project it as an object with no children.
             FieldProjectionPlan {
+                slot: MISSING_SLOT,
                 field_name: field.name.to_string(),
                 response_key,
                 parent_type_guard,
@@ -941,6 +984,7 @@ impl FieldProjectionPlan {
             }
         } else {
             FieldProjectionPlan {
+                slot: MISSING_SLOT,
                 field_name: field_name.to_string(),
                 response_key,
                 parent_type_guard,
@@ -1028,6 +1072,7 @@ impl FieldProjectionPlan {
 
     pub fn with_new_value(&self, new_value: ProjectionValueSource) -> FieldProjectionPlan {
         FieldProjectionPlan {
+            slot: MISSING_SLOT,
             field_name: self.field_name.clone(),
             response_key: self.response_key.clone(),
             parent_type_guard: self.parent_type_guard.clone(),

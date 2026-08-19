@@ -26,6 +26,7 @@ pub enum QueryPlanResult {
 }
 static EMPTY_QUERY_PLAN: LazyLock<Arc<QueryPlan>> = LazyLock::new(|| {
     Arc::new(QueryPlan {
+        response_shape: Default::default(),
         kind: QUERY_PLAN_KIND,
         node: None,
     })

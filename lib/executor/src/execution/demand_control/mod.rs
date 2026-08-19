@@ -1,5 +1,18 @@
 pub mod subgraph_response_tracker;
 
+use hive_router_query_planner::planner::merged_shape::response_shape_for_operation;
+use hive_router_query_planner::planner::response_shape::{ResponseShape, TYPENAME_SLOT};
+
+use crate::projection::plan::MISSING_SLOT;
+
+/// Stand-in for a position the shape does not describe: no fields, so every slot lookup
+/// misses and the cost falls back to the field's base cost.
+static EMPTY_SHAPE: ResponseShape = ResponseShape {
+    fields: Vec::new(),
+    raw: false,
+    inert: true,
+};
+
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,
@@ -229,7 +242,7 @@ enum CompiledActualCostRootPlan {
 
 #[derive(Debug)]
 struct CompiledEntityGroup {
-    response_key: String,
+    slot: usize,
     entity_plans_by_type: AHashMap<String, CompiledEntityTypePlan>,
 }
 
@@ -255,7 +268,8 @@ enum CompiledSelectionItemActualCostPlan {
 
 #[derive(Debug)]
 struct CompiledFieldActualCostPlan {
-    response_key: String,
+    /// Where this field sits in the response tree at this position.
+    slot: usize,
     field_base_cost: u64,
     return_type_cost: u64,
     is_list: bool,
@@ -273,9 +287,16 @@ struct CompiledInlineFragmentActualCostPlan {
     child: CompiledSelectionSetActualCostPlan,
 }
 
+/// `shape` is the fetch's own response shape, which is where its slots come from.
+///
+/// ponytail: the caller caches these by subgraph-operation hash. Two fetches in one plan
+/// that share an operation but sit at different response positions could in principle be
+/// given different shapes; the first one wins, and the cost number (never the response) may
+/// then read the wrong slot. Key the cache by fetch id if that ever shows up.
 pub fn compile_actual_subgraph_cost_plan(
     operation: &SubgraphFetchOperation,
     supergraph_state: &SupergraphState,
+    shape: &ResponseShape,
 ) -> CompiledSubgraphActualCostPlan {
     let operation_def = &operation.document.operation;
     let root_type_name =
@@ -298,11 +319,10 @@ pub fn compile_actual_subgraph_cost_plan(
                 continue;
             };
 
-            let response_key = field
-                .alias
-                .as_deref()
-                .unwrap_or(field.name.as_str())
-                .to_string();
+            let slot = shape
+                .slot_of(field.selection_identifier())
+                .unwrap_or(MISSING_SLOT);
+            let entities_shape = shape.child(slot).unwrap_or(&EMPTY_SHAPE);
 
             let mut referenced_entity_types = AHashSet::default();
             collect_entity_root_type_conditions(&field.selections, &mut referenced_entity_types);
@@ -317,13 +337,14 @@ pub fn compile_actual_subgraph_cost_plan(
                             &field.selections,
                             type_name,
                             supergraph_state,
+                            entities_shape,
                         ),
                     },
                 );
             }
 
             groups.push(CompiledEntityGroup {
-                response_key,
+                slot,
                 entity_plans_by_type,
             });
         }
@@ -338,6 +359,7 @@ pub fn compile_actual_subgraph_cost_plan(
             &operation_def.selection_set,
             root_type_name,
             supergraph_state,
+            shape,
         )),
     }
 }
@@ -347,11 +369,15 @@ pub fn compile_actual_response_shape_cost_plan(
     root_type_name: &str,
     supergraph_state: &SupergraphState,
 ) -> CompiledResponseShapeActualCostPlan {
+    // Evaluated against the merged response tree, whose client-visible slots come from this
+    // same operation.
+    let shape = response_shape_for_operation(operation);
     CompiledResponseShapeActualCostPlan {
         root: compile_selection_set_actual_cost_plan(
             &operation.selection_set,
             root_type_name,
             supergraph_state,
+            &shape,
         ),
     }
 }
@@ -378,7 +404,7 @@ pub fn estimate_actual_subgraph_response_cost_with_compiled_plan(
             for group in groups {
                 let entities = response_data
                     .as_object()
-                    .and_then(|obj| response_object_get(obj, group.response_key.as_str()))
+                    .and_then(|_| response_data.slot(group.slot))
                     .and_then(|value| match value {
                         Value::Array(items) => Some(items),
                         _ => None,
@@ -389,10 +415,7 @@ pub fn estimate_actual_subgraph_response_cost_with_compiled_plan(
                 };
 
                 for entity in entities.iter() {
-                    let entity_type = entity
-                        .as_object()
-                        .and_then(|obj| response_object_get(obj, "__typename"))
-                        .and_then(|value| value.as_str());
+                    let entity_type = entity.slot(TYPENAME_SLOT).and_then(Value::as_str);
 
                     // If typename is present, look it up in the map. Otherwise, when the map
                     // has exactly one entry (the common federation case where each _entities fetch
@@ -441,23 +464,27 @@ fn compile_selection_set_actual_cost_plan(
     selection_set: &SelectionSet,
     parent_type_name: &str,
     supergraph_state: &SupergraphState,
+    shape: &ResponseShape,
 ) -> CompiledSelectionSetActualCostPlan {
     let mut items = Vec::with_capacity(selection_set.items.len());
 
     for item in &selection_set.items {
         match item {
             SelectionItem::Field(field) => items.push(CompiledSelectionItemActualCostPlan::Field(
-                compile_field_actual_cost_plan(field, parent_type_name, supergraph_state),
+                compile_field_actual_cost_plan(field, parent_type_name, supergraph_state, shape),
             )),
             SelectionItem::InlineFragment(fragment) => {
                 items.push(CompiledSelectionItemActualCostPlan::InlineFragment(
                     CompiledInlineFragmentActualCostPlan {
                         type_condition: fragment.type_condition.clone(),
                         apply_when_typename_missing: fragment.type_condition == parent_type_name,
+                        // A polymorphic position is one node holding the union of every
+                        // branch, so the fragment reads the same shape as its parent.
                         child: compile_selection_set_actual_cost_plan(
                             &fragment.selections,
                             fragment.type_condition.as_str(),
                             supergraph_state,
+                            shape,
                         ),
                     },
                 ))
@@ -475,7 +502,12 @@ fn compile_field_actual_cost_plan(
     field: &FieldSelection,
     parent_type_name: &str,
     supergraph_state: &SupergraphState,
+    shape: &ResponseShape,
 ) -> CompiledFieldActualCostPlan {
+    let slot = shape
+        .slot_of(field.selection_identifier())
+        .unwrap_or(MISSING_SLOT);
+    let child_shape = shape.child(slot).unwrap_or(&EMPTY_SHAPE);
     // `__typename` is a built-in introspection field returning String. It
     // never appears in the parent type's `fields()` map, so the generic
     // fallback below would compute `return_type_cost = dc_type_cost(parent)`
@@ -483,7 +515,7 @@ fn compile_field_actual_cost_plan(
     // the actual cost. Treat it as a free scalar.
     if field.name.as_str() == "__typename" {
         return CompiledFieldActualCostPlan {
-            response_key: field.selection_identifier().to_string(),
+            slot,
             field_base_cost: 0,
             return_type_cost: 0,
             is_list: false,
@@ -541,7 +573,7 @@ fn compile_field_actual_cost_plan(
     };
 
     CompiledFieldActualCostPlan {
-        response_key: field.selection_identifier().to_string(),
+        slot,
         field_base_cost,
         return_type_cost: demand_control_definition_cost(supergraph_state, return_type_name),
         is_list: field_type.is_list(),
@@ -551,6 +583,7 @@ fn compile_field_actual_cost_plan(
             &field.selections,
             return_type_name,
             supergraph_state,
+            child_shape,
         ),
     }
 }
@@ -605,9 +638,7 @@ fn evaluate_field_actual_cost_plan(
         return 0;
     }
 
-    let value = parent_value
-        .as_object()
-        .and_then(|obj| response_object_get(obj, field.response_key.as_str()));
+    let value = parent_value.slot(field.slot);
 
     if field.is_list {
         let Some(items) = value.and_then(|v| match v {
@@ -648,10 +679,7 @@ fn should_skip_inline_fragment(
     type_condition: &str,
     apply_when_typename_missing: bool,
 ) -> bool {
-    let typename = parent_value
-        .as_object()
-        .and_then(|obj| response_object_get(obj, "__typename"))
-        .and_then(|value| value.as_str());
+    let typename = parent_value.slot(TYPENAME_SLOT).and_then(Value::as_str);
 
     if let Some(typename) = typename {
         return typename != type_condition;
@@ -661,10 +689,6 @@ fn should_skip_inline_fragment(
 }
 
 #[inline]
-fn response_object_get<'a>(obj: &'a [(&'a str, Value<'a>)], key: &str) -> Option<&'a Value<'a>> {
-    obj.iter().find(|(k, _)| *k == key).map(|(_, v)| v)
-}
-
 pub fn demand_control_definition_cost(supergraph_state: &SupergraphState, type_name: &str) -> u64 {
     let Some(definition) = supergraph_state.definitions.get(type_name) else {
         return 0;

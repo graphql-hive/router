@@ -1,152 +1,90 @@
 use std::collections::BTreeSet;
 
-use hive_router_query_planner::planner::plan_nodes::{
-    FetchNodePathSegment, FetchRewrite, KeyRenamer, ValueSetter,
-};
+use hive_router_query_planner::planner::slot_path::{SlotPathSegment, SlotRewrite};
 
-use crate::{
-    introspection::schema::PossibleTypes, response::value::Value,
-    utils::consts::TYPENAME_FIELD_NAME,
-};
+use crate::{introspection::schema::PossibleTypes, response::value::Value};
 
-pub trait FetchRewriteExt {
-    fn rewrite<'a>(&'a self, possible_types: &PossibleTypes, value: &mut Value<'a>);
+pub trait SlotRewriteExt {
+    fn rewrite(&self, possible_types: &PossibleTypes, value: &mut Value<'_>);
 }
 
-impl FetchRewriteExt for FetchRewrite {
-    fn rewrite<'a>(&'a self, possible_types: &PossibleTypes, value: &mut Value<'a>) {
+impl SlotRewriteExt for SlotRewrite {
+    fn rewrite(&self, possible_types: &PossibleTypes, value: &mut Value<'_>) {
         match self {
-            FetchRewrite::KeyRenamer(key_renamer) => key_renamer.apply(possible_types, value),
-            FetchRewrite::ValueSetter(value_setter) => value_setter.apply(possible_types, value),
+            // Renaming a key is a move between slots: the response tree carries values by
+            // position, so there is no key left to rewrite.
+            SlotRewrite::RenameSlot { path, from, to } => {
+                walk(possible_types, value, path, &mut |target| {
+                    let Some(moved) = target.slot_mut(*from).map(std::mem::take) else {
+                        return;
+                    };
+                    if let Some(destination) = target.slot_mut(*to) {
+                        *destination = moved;
+                    }
+                });
+            }
+            SlotRewrite::SetValue { path, value: new } => {
+                walk(possible_types, value, path, &mut |target| {
+                    *target = Value::String(new.as_str().to_owned().into());
+                });
+            }
         }
     }
-}
-
-trait RewriteApplier {
-    fn apply<'a>(&'a self, possible_types: &PossibleTypes, value: &mut Value<'a>);
-    fn apply_path<'a>(
-        &'a self,
-        possible_types: &PossibleTypes,
-        value: &mut Value<'a>,
-        path: &'a [FetchNodePathSegment],
-    );
 }
 
 fn entity_satisfies_any_type_condition(
     possible_types: &PossibleTypes,
     type_name: &str,
-    type_condition: &BTreeSet<String>,
+    conditions: &BTreeSet<String>,
 ) -> bool {
-    type_condition
+    conditions
         .iter()
         .any(|condition| possible_types.entity_satisfies_type_condition(type_name, condition))
 }
 
-impl RewriteApplier for KeyRenamer {
-    fn apply<'a>(&'a self, possible_types: &PossibleTypes, value: &mut Value<'a>) {
-        self.apply_path(possible_types, value, &self.path)
-    }
-    fn apply_path<'a>(
-        &'a self,
-        possible_types: &PossibleTypes,
-        value: &mut Value<'a>,
-        path: &'a [FetchNodePathSegment],
-    ) {
-        let current_segment = &path[0];
-        let remaining_path = &path[1..];
-        match value {
-            Value::Array(arr) => {
-                for item in arr {
-                    self.apply_path(possible_types, item, path);
-                }
-            }
-            Value::Object(obj) => match current_segment {
-                FetchNodePathSegment::TypenameEquals(type_condition) => {
-                    let type_name = obj
-                        .iter()
-                        .find(|(key, _)| key == &TYPENAME_FIELD_NAME)
-                        .and_then(|(_, val)| val.as_str());
-                    if type_name.is_none_or(|type_name| {
-                        entity_satisfies_any_type_condition(
-                            possible_types,
-                            type_name,
-                            type_condition,
-                        )
-                    }) {
-                        self.apply_path(possible_types, value, remaining_path)
-                    }
-                }
-                FetchNodePathSegment::Key(field_name) => {
-                    if remaining_path.is_empty() {
-                        if field_name != &self.rename_key_to {
-                            if let Some((key, _)) =
-                                obj.iter_mut().find(|(key, _)| key == field_name)
-                            {
-                                *key = self.rename_key_to.as_str()
-                            }
-                        }
-                    } else if let Some(data) = obj.iter_mut().find(|r| r.0 == field_name) {
-                        self.apply_path(possible_types, &mut data.1, remaining_path)
-                    }
-                }
-            },
-            // If the value is not an object or an array, we can't apply the rewrite.
-            _ => (),
+/// Walks every position `path` addresses and hands each one to `apply`.
+fn walk<'a, F>(
+    possible_types: &PossibleTypes,
+    value: &mut Value<'a>,
+    path: &[SlotPathSegment],
+    apply: &mut F,
+) where
+    F: FnMut(&mut Value<'a>),
+{
+    // Lists are transparent: every element sits at the same response position.
+    if let Value::Array(items) = value {
+        for item in items {
+            walk(possible_types, item, path, apply);
         }
-    }
-}
-
-impl RewriteApplier for ValueSetter {
-    fn apply<'a>(&'a self, possible_types: &PossibleTypes, data: &mut Value<'a>) {
-        self.apply_path(possible_types, data, &self.path)
+        return;
     }
 
-    fn apply_path<'a>(
-        &'a self,
-        possible_types: &PossibleTypes,
-        data: &mut Value<'a>,
-        path: &'a [FetchNodePathSegment],
-    ) {
-        if path.is_empty() {
-            *data = Value::String(self.set_value_to.as_str().into());
-            return;
+    let Some((segment, remaining)) = path.split_first() else {
+        apply(value);
+        return;
+    };
+
+    match segment {
+        SlotPathSegment::List => walk(possible_types, value, remaining, apply),
+        SlotPathSegment::TypenameEquals {
+            typename_slot,
+            conditions,
+        } => {
+            // A position with no `__typename` cannot be excluded, so the gate passes — the
+            // same outcome as the missing-key lookup this replaced.
+            let type_name = typename_slot
+                .and_then(|slot| value.slot(slot))
+                .and_then(Value::as_str);
+            if type_name.is_none_or(|type_name| {
+                entity_satisfies_any_type_condition(possible_types, type_name, conditions)
+            }) {
+                walk(possible_types, value, remaining, apply);
+            }
         }
-
-        match data {
-            Value::Array(arr) => {
-                for data in arr {
-                    self.apply_path(possible_types, data, path);
-                }
+        SlotPathSegment::Slot { slot, .. } => {
+            if let Some(child) = value.slot_mut(*slot) {
+                walk(possible_types, child, remaining, apply);
             }
-            Value::Object(map) => {
-                let current_segment = &path[0];
-                let remaining_path = &path[1..];
-
-                match current_segment {
-                    FetchNodePathSegment::TypenameEquals(type_condition) => {
-                        let type_name = map
-                            .iter()
-                            .find(|(key, _)| key == &TYPENAME_FIELD_NAME)
-                            .and_then(|(_, val)| val.as_str());
-                        if type_name.is_none_or(|type_name| {
-                            entity_satisfies_any_type_condition(
-                                possible_types,
-                                type_name,
-                                type_condition,
-                            )
-                        }) {
-                            self.apply_path(possible_types, data, remaining_path)
-                        }
-                    }
-                    FetchNodePathSegment::Key(field_name) => {
-                        if let Some(data) = map.iter_mut().find(|r| r.0 == field_name) {
-                            self.apply_path(possible_types, &mut data.1, remaining_path)
-                        }
-                    }
-                }
-            }
-            // If the value is not an object or an array, we can't apply the rewrite.
-            _ => (),
         }
     }
 }

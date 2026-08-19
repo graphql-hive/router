@@ -1,19 +1,21 @@
 use std::collections::HashMap;
 
 use ahash::{HashMap as AHashMap, HashMapExt};
-use sonic_rs::Value as SonicValue;
-
-use crate::response::value::Value;
+use sonic_rs::{JsonContainerTrait, Value as SonicValue};
 
 use super::plan::{ExtensionsMergeStrategy, ExtensionsPlan};
 
 const RESERVED_KEY: &str = "queryPlan";
 
-pub struct ExtensionsAggregator<'a> {
-    entries: AHashMap<&'a str, (ExtensionsMergeStrategy, Vec<Value<'a>>)>,
+/// Subgraph `extensions` are arbitrary JSON with no shape the router knows in advance, so
+/// they stay on `sonic_rs::Value` rather than the response `Value` — which is slot-addressed
+/// and needs a shape for every object. This also drops a conversion: the aggregator used to
+/// rebuild every entry as a `SonicValue` on the way out anyway.
+pub struct ExtensionsAggregator {
+    entries: AHashMap<String, (ExtensionsMergeStrategy, Vec<SonicValue>)>,
 }
 
-impl Default for ExtensionsAggregator<'_> {
+impl Default for ExtensionsAggregator {
     fn default() -> Self {
         Self {
             entries: AHashMap::new(),
@@ -21,11 +23,11 @@ impl Default for ExtensionsAggregator<'_> {
     }
 }
 
-impl<'a> ExtensionsAggregator<'a> {
-    fn write(&mut self, key: &'a str, value: Value<'a>, strategy: ExtensionsMergeStrategy) {
+impl ExtensionsAggregator {
+    fn write(&mut self, key: &str, value: SonicValue, strategy: ExtensionsMergeStrategy) {
         match self.entries.get_mut(key) {
             None => {
-                self.entries.insert(key, (strategy, vec![value]));
+                self.entries.insert(key.to_string(), (strategy, vec![value]));
             }
             Some((_, values)) => match strategy {
                 ExtensionsMergeStrategy::First => {
@@ -48,43 +50,40 @@ impl<'a> ExtensionsAggregator<'a> {
         for (key, (strategy, values)) in self.entries {
             let sonic_val = match strategy {
                 ExtensionsMergeStrategy::Append => {
-                    let arr: sonic_rs::Array = values.iter().map(SonicValue::from).collect();
+                    let arr: sonic_rs::Array = values.into_iter().collect();
                     SonicValue::from(arr)
                 }
-                ExtensionsMergeStrategy::First | ExtensionsMergeStrategy::Last => {
-                    let v = values
-                        .into_iter()
-                        .next()
-                        .expect("First/Last entry guaranteed non-empty by write()");
-                    SonicValue::from(&v)
-                }
+                ExtensionsMergeStrategy::First | ExtensionsMergeStrategy::Last => values
+                    .into_iter()
+                    .next()
+                    .expect("First/Last entry guaranteed non-empty by write()"),
             };
-            target.entry(key.to_string()).or_insert(sonic_val);
+            target.entry(key).or_insert(sonic_val);
         }
     }
 }
 
 /// Apply top-level keys from `subgraph_extensions` into the aggregator,
 /// filtered and merged per the plan.
-pub fn apply_subgraph_extensions<'a>(
+pub fn apply_subgraph_extensions(
     plan: &ExtensionsPlan,
-    subgraph_extensions: &Value<'a>,
-    agg: &mut ExtensionsAggregator<'a>,
+    subgraph_extensions: &SonicValue,
+    agg: &mut ExtensionsAggregator,
 ) {
     let Some(ref propagate) = plan.propagate else {
         return;
     };
 
-    let Value::Object(entries) = subgraph_extensions else {
+    let Some(entries) = subgraph_extensions.as_object() else {
         return;
     };
 
-    for (key, val) in entries {
-        if *key == RESERVED_KEY {
+    for (key, val) in entries.iter() {
+        if key == RESERVED_KEY {
             continue;
         }
         if let Some(ref allow) = propagate.allow {
-            if !allow.contains(*key) {
+            if !allow.contains(key) {
                 continue;
             }
         }
@@ -94,13 +93,10 @@ pub fn apply_subgraph_extensions<'a>(
 
 #[cfg(test)]
 mod tests {
-    use std::borrow::Cow;
-
     use super::*;
     use crate::extensions::plan::{
         ExtensionsMergeStrategy, ExtensionsPlan, ExtensionsPropagatePlan,
     };
-    use crate::response::value::Value;
     use ahash::HashSet;
     use sonic_rs::json;
 
@@ -117,13 +113,16 @@ mod tests {
         }
     }
 
-    fn obj<'a>(pairs: Vec<(&'a str, Value<'a>)>) -> Value<'a> {
-        Value::Object(pairs)
+    fn obj(pairs: Vec<(&str, SonicValue)>) -> SonicValue {
+        let mut object = sonic_rs::Object::new();
+        for (key, value) in pairs {
+            object.insert(&key, value);
+        }
+        SonicValue::from(object)
     }
 
-    // Value::String holds a Cow<str>; Borrowed wraps a &'static str with no allocation
-    fn str(v: &'static str) -> Value<'static> {
-        Value::String(Cow::Borrowed(v))
+    fn str(v: &'static str) -> SonicValue {
+        SonicValue::from(v)
     }
 
     #[test]
@@ -267,7 +266,7 @@ mod tests {
         let plan = make_plan(ExtensionsMergeStrategy::Last, None);
         let mut agg = ExtensionsAggregator::default();
 
-        apply_subgraph_extensions(&plan, &Value::String(Cow::Borrowed("oops")), &mut agg);
+        apply_subgraph_extensions(&plan, &str("oops"), &mut agg);
 
         let mut out = HashMap::new();
         agg.merge_into(&mut out);

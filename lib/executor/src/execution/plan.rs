@@ -1,4 +1,3 @@
-use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::vec;
@@ -18,12 +17,16 @@ use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
 };
 use hive_router_query_planner::ast::operation::SubgraphFetchOperation;
-use hive_router_query_planner::planner::plan_nodes::{CustomScalarPaths, FetchNode, FlattenNode};
+use hive_router_query_planner::planner::{
+    plan_nodes::{FetchNode, FlattenNode},
+    response_shape::ResponseShape,
+    slot_path::{slot_path_to_string, SlotPathSegment, SlotRewrite},
+};
 use hive_router_query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use hive_router_query_planner::{
     ast::operation::OperationDefinition,
     planner::plan_nodes::{
-        ConditionNode, EntityBatch, EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
+        ConditionNode, EntityBatch, EntityBatchAlias, PlanNode,
         QueryPlan, SequenceNode,
     },
     state::supergraph_state::OperationKind,
@@ -44,7 +47,7 @@ use crate::{
         client_request_details::ClientRequestDetails,
         error::{IntoPlanExecutionError, LazyPlanContext, PlanExecutionError},
         jwt_forward::JwtAuthForwardingPlan,
-        rewrites::FetchRewriteExt,
+        rewrites::SlotRewriteExt,
     },
     execution_context::ExecutionContext,
     executors::{common::SubgraphExecutionRequest, map::SubgraphExecutorMap},
@@ -69,7 +72,7 @@ use crate::{
     plugin_trait::{EarlyHTTPResponse, EndControlFlow, StartControlFlow},
     plugins::hooks,
     projection::{
-        plan::FieldProjectionPlan, request::project_requires, response::project_by_operation,
+        plan::FieldProjectionPlan, request::push_representation, response::project_by_operation,
     },
     response::{
         graphql_error::{GraphQLError, GraphQLErrorPath, GraphQLErrorPathSegment},
@@ -264,6 +267,7 @@ pub async fn execute_query_plan<'exec>(
         // we assemble a synthetic query plan for entity resolution from remaining nodes
         // because we might need entity resolution after receiving each subscription event
         let query_plan: Arc<QueryPlan> = Arc::new(QueryPlan {
+            response_shape: Default::default(),
             kind: QUERY_PLAN_KIND,
             node: remaining_nodes.map(|nodes| {
                 if nodes.len() == 1 {
@@ -303,7 +307,7 @@ pub async fn execute_query_plan<'exec>(
             headers: headers_map,
             raw_variable_values: None,
             extensions: None,
-            custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
+            response_shape: Some(&fetch_node.response_shape),
             connection_fingerprint: opts.connection_fingerprint,
         };
 
@@ -443,12 +447,23 @@ pub async fn execute_query_plan<'exec>(
     // query or mutation
 
     let introspection_context_clone = Arc::clone(&opts.introspection_context);
+    let root_slots = opts.query_plan.response_shape.fields.len();
     let data = if let Some(introspection_query) = &introspection_context_clone.query {
-        resolve_introspection(introspection_query, &introspection_context_clone)
+        let mut data = resolve_introspection(introspection_query, &introspection_context_clone);
+        // Introspection builds against the client's own shape, which stops at the keys the
+        // client asked for. The merged tree appends whatever the planner injected after
+        // those, so the root has to be grown to the full layout or a positional merge would
+        // drop every injected slot.
+        if let Value::Object(slots) = &mut data {
+            slots.resize_with(root_slots.max(slots.len()), || Value::Null);
+        }
+        data
     } else if opts.projection_plan.is_empty() {
         Value::Null
     } else {
-        Value::Object(Vec::new())
+        // Seeded with the merged tree's root layout, so every fetch merges positionally into
+        // slots that already exist.
+        Value::empty_object(root_slots)
     };
 
     let output = execute_query_plan_with_data(data, opts).await?;
@@ -717,19 +732,21 @@ pub enum ExecutionJob<'exec> {
         subgraph_name: &'exec str,
         operation: &'exec SubgraphFetchOperation,
         response: SubgraphResponse<'exec>,
-        output_rewrites: Option<&'exec [FetchRewrite]>,
+        output_rewrites: &'exec [SlotRewrite],
         // By default, this job is merged at the root. When this is set, we merge at
         // a specific path instead of the root (used for root re-entry fetches)
-        merge_path: Option<&'exec FlattenNodePath>,
+        merge_path: Option<&'exec [SlotPathSegment]>,
     },
     FlattenFetch {
         subgraph_name: &'exec str,
         operation: &'exec SubgraphFetchOperation,
         response: SubgraphResponse<'exec>,
-        flatten_node_path: &'exec FlattenNodePath,
+        flatten_node_path: &'exec [SlotPathSegment],
         representation_hashes: Vec<Option<u64>>,
         representation_hash_to_index: AHashMap<u64, usize>,
-        output_rewrites: Option<&'exec [FetchRewrite]>,
+        output_rewrites: &'exec [SlotRewrite],
+        /// Slot of `_entities` in this fetch's response.
+        entities_slot: Option<usize>,
     },
     BatchFetch {
         subgraph_name: &'exec str,
@@ -746,7 +763,7 @@ pub struct AliasBatchState<'exec> {
 }
 
 struct AliasPathState<'exec> {
-    merge_path: &'exec FlattenNodePath,
+    merge_path: &'exec [SlotPathSegment],
     representation_hashes: Arc<Vec<Option<u64>>>,
 }
 
@@ -792,7 +809,7 @@ impl<'exec> ExecutionJob<'exec> {
         }
     }
 
-    fn affected_path(&self) -> Option<&'exec FlattenNodePath> {
+    fn affected_path(&self) -> Option<&'exec [SlotPathSegment]> {
         match self {
             ExecutionJob::Fetch { merge_path, .. } => *merge_path,
             ExecutionJob::FlattenFetch {
@@ -815,13 +832,13 @@ struct PrepareExecutionJobOpts<'exec> {
     // Operation
     operation: &'exec SubgraphFetchOperation,
     // Output rewrites
-    output_rewrites: Option<&'exec [FetchRewrite]>,
+    output_rewrites: &'exec [SlotRewrite],
     // Response paths whose values should stay raw JSON in `data`
-    custom_scalar_paths: Option<&'exec CustomScalarPaths>,
+    response_shape: Option<&'exec ResponseShape>,
     // If the fetch job is for a flatten node, we pass the filtered representations,
     raw_variable_values: Option<Vec<(&'exec str, Vec<u8>)>>,
     // and the path to the representations in the original response for error handling and normalization
-    affected_path: Option<&'exec FlattenNodePath>,
+    affected_path: Option<&'exec [SlotPathSegment]>,
 }
 
 impl<'exec> Executor<'exec> {
@@ -880,10 +897,10 @@ impl<'exec> Executor<'exec> {
                 .generate(&fetch_node.service_name, fetch_node.id),
             operation_kind: fetch_node.operation_kind.as_ref(),
             operation: &fetch_node.operation,
-            output_rewrites: fetch_node.output_rewrites.as_deref(),
-            custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
+            output_rewrites: &fetch_node.compiled.output_rewrites,
+            response_shape: Some(&fetch_node.response_shape),
             raw_variable_values: None,
-            affected_path: Some(&flatten_node.path),
+            affected_path: Some(&flatten_node.slot_path),
         })
         .boxed()
     }
@@ -911,8 +928,8 @@ impl<'exec> Executor<'exec> {
                         .generate(&fetch_node.service_name, fetch_node.id),
                     operation_kind: fetch_node.operation_kind.as_ref(),
                     operation: &fetch_node.operation,
-                    output_rewrites: fetch_node.output_rewrites.as_deref(),
-                    custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
+                    output_rewrites: &fetch_node.compiled.output_rewrites,
+                    response_shape: Some(&fetch_node.response_shape),
                     raw_variable_values: None,
                     affected_path: None,
                 })
@@ -946,8 +963,8 @@ impl<'exec> Executor<'exec> {
                             .generate(&batch_fetch_node.service_name, batch_fetch_node.id),
                         operation_kind: batch_fetch_node.operation_kind.as_ref(),
                         operation: &batch_fetch_node.operation,
-                        output_rewrites: None,
-                        custom_scalar_paths: batch_fetch_node.custom_scalar_paths.as_ref(),
+                        output_rewrites: &[],
+                        response_shape: Some(&batch_fetch_node.response_shape),
                         raw_variable_values: Some(raw_variable_values),
                         affected_path: None,
                     })
@@ -969,12 +986,12 @@ impl<'exec> Executor<'exec> {
                 // If there are no requirements in the node (no _entities call), then we only need to make
                 // a regular call. This happens when we perform subgraph re-entry.
                 // So we can just create the fetch step future with the info we have
-                let Some(requires_nodes) = fetch_node.requires.as_ref() else {
+                let Some(_requires) = fetch_node.requires.as_ref() else {
                     return Some(self.prepare_root_reentry_fetch_job(flatten_node, fetch_node));
                 };
 
                 let mut index = 0;
-                let normalized_path = flatten_node.path.as_slice();
+                let normalized_path = flatten_node.slot_path.as_slice();
                 let mut filtered_representations = Vec::new();
                 filtered_representations.put(OPEN_BRACKET);
                 let possible_types = &self.schema_metadata.possible_types;
@@ -987,43 +1004,16 @@ impl<'exec> Executor<'exec> {
                     normalized_path,
                     &self.schema_metadata.possible_types,
                     &mut |entity| {
-                        if entity.is_null() {
-                            representation_hashes.push(None);
-                            return;
-                        }
-
-                        let hash = entity.to_hash(&requires_nodes.items, possible_types);
-                        representation_hashes.push(Some(hash));
-                        let is_first_representation = representation_hash_to_index.is_empty();
-                        let vacant_entry = match representation_hash_to_index.entry(hash) {
-                            Entry::Occupied(_) => return,
-                            Entry::Vacant(vacant_entry) => vacant_entry,
-                        };
-
-                        let entity = if let Some(input_rewrites) = &fetch_node.input_rewrites {
-                            let new_entity = arena.alloc(entity.clone());
-                            for input_rewrite in input_rewrites {
-                                input_rewrite
-                                    .rewrite(&self.schema_metadata.possible_types, new_entity);
-                            }
-                            new_entity
-                        } else {
-                            entity
-                        };
-
-                        let is_projected = project_requires(
+                        representation_hashes.push(push_representation(
                             possible_types,
-                            &requires_nodes.items,
+                            &fetch_node.compiled.requires,
+                            &fetch_node.compiled.input_rewrites,
+                            &arena,
                             entity,
                             &mut filtered_representations,
-                            is_first_representation,
-                            None,
-                        );
-
-                        if is_projected {
-                            vacant_entry.insert(index);
-                            index += 1;
-                        }
+                            &mut representation_hash_to_index,
+                            &mut index,
+                        ));
                     },
                 );
 
@@ -1043,22 +1033,23 @@ impl<'exec> Executor<'exec> {
                             .generate(&fetch_node.service_name, fetch_node.id),
                         operation_kind: fetch_node.operation_kind.as_ref(),
                         operation: &fetch_node.operation,
-                        output_rewrites: fetch_node.output_rewrites.as_deref(),
-                        custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
+                        output_rewrites: &fetch_node.compiled.output_rewrites,
+                        response_shape: Some(&fetch_node.response_shape),
                         raw_variable_values: Some(vec![(
                             "representations",
                             filtered_representations,
                         )]),
-                        affected_path: Some(&flatten_node.path),
+                        affected_path: Some(&flatten_node.slot_path),
                     })
                     .map_ok(|fetch_job| ExecutionJob::FlattenFetch {
                         operation: fetch_job.operation(),
-                        flatten_node_path: &flatten_node.path,
+                        flatten_node_path: &flatten_node.slot_path,
+                        entities_slot: fetch_node.compiled.entities_slot,
                         response: fetch_job.response(),
                         subgraph_name: fetch_node.service_name.as_str(),
                         representation_hashes,
                         representation_hash_to_index,
-                        output_rewrites: fetch_node.output_rewrites.as_deref(),
+                        output_rewrites: &fetch_node.compiled.output_rewrites,
                     })
                     .boxed(),
                 )
@@ -1128,7 +1119,7 @@ impl<'exec> Executor<'exec> {
                     )
                     .with_plan_context(LazyPlanContext {
                         subgraph_name: || Some(subgraph_name.to_string()),
-                        affected_path: || affected_path.map(|p| p.to_string()),
+                        affected_path: || affected_path.map(slot_path_to_string),
                     }) {
                         self.log_error(err);
                         ctx.errors.push(err.into());
@@ -1153,13 +1144,9 @@ impl<'exec> Executor<'exec> {
                         if let Some(response_bytes) = response.bytes {
                             ctx.response_storage.add_response(response_bytes);
                         }
-                        if let Some(output_rewrites) = output_rewrites {
-                            for output_rewrite in output_rewrites {
-                                output_rewrite.rewrite(
-                                    &self.schema_metadata.possible_types,
-                                    &mut response.data,
-                                );
-                            }
+                        for output_rewrite in output_rewrites {
+                            output_rewrite
+                                .rewrite(&self.schema_metadata.possible_types, &mut response.data);
                         }
 
                         match merge_path {
@@ -1170,7 +1157,7 @@ impl<'exec> Executor<'exec> {
                                 let source = response.data;
                                 traverse_and_callback_mut(
                                     &mut ctx.data,
-                                    merge_path.as_slice(),
+                                    merge_path,
                                     self.schema_metadata,
                                     None,
                                     &mut |target, _error_path| {
@@ -1188,23 +1175,24 @@ impl<'exec> Executor<'exec> {
                         representation_hashes,
                         ref representation_hash_to_index,
                         output_rewrites,
+                        entities_slot,
                         ..
                     } => {
                         if let Some(response_bytes) = response.bytes {
                             ctx.response_storage.add_response(response_bytes);
                         }
-                        if let Some(mut entities) = response.data.take_entities() {
-                            if let Some(output_rewrites) = output_rewrites {
-                                for output_rewrite in output_rewrites {
-                                    for entity in &mut entities {
-                                        output_rewrite
-                                            .rewrite(&self.schema_metadata.possible_types, entity);
-                                    }
+                        if let Some(mut entities) = entities_slot
+                            .and_then(|slot| response.data.take_entities_at(slot))
+                        {
+                            for output_rewrite in output_rewrites {
+                                for entity in &mut entities {
+                                    output_rewrite
+                                        .rewrite(&self.schema_metadata.possible_types, entity);
                                 }
                             }
 
                             let mut index = 0;
-                            let normalized_path = flatten_node_path.as_slice();
+                            let normalized_path = flatten_node_path;
                             // If there is an error in the response, then collect the paths for normalizing the error
                             let initial_error_path = response.errors.as_ref().map(|_| {
                                 GraphQLErrorPath::with_capacity(normalized_path.len() + 2)
@@ -1399,7 +1387,11 @@ impl<'exec> Executor<'exec> {
 
         for (alias_index, alias_state) in aliases.iter().enumerate() {
             let Some(entities) =
-                response_data.take_entities_by_key(alias_state.alias_spec.alias.as_str())
+                alias_state
+                    .alias_spec
+                    .compiled
+                    .alias_slot
+                    .and_then(|slot| response_data.take_entities_at(slot))
             else {
                 continue;
             };
@@ -1423,8 +1415,8 @@ impl<'exec> Executor<'exec> {
             return entity_index_error_map;
         };
 
-        if let Some(output_rewrites) = alias_state.alias_spec.output_rewrites.as_ref() {
-            for output_rewrite in output_rewrites {
+        {
+            for output_rewrite in &alias_state.alias_spec.compiled.output_rewrites {
                 for entity in entities.iter_mut() {
                     output_rewrite.rewrite(&self.schema_metadata.possible_types, entity);
                 }
@@ -1438,7 +1430,7 @@ impl<'exec> Executor<'exec> {
         // We walk each merge path
         for path_state in &alias_state.paths {
             let mut index = 0;
-            let normalized_path = path_state.merge_path.as_slice();
+            let normalized_path = path_state.merge_path;
             let initial_error_path = has_alias_errors
                 // Small extra capacity for path segments that will be appended later.
                 .then(|| GraphQLErrorPath::with_capacity(normalized_path.len() + 2));
@@ -1506,12 +1498,19 @@ impl<'exec> Executor<'exec> {
             filtered_representations.put(OPEN_BRACKET);
             let mut representation_hash_to_index: AHashMap<u64, usize> = AHashMap::new();
             let arena = bumpalo::Bump::new();
+            // Indexed by compiled path, which is what the grouping below walks.
             let mut path_hashes_by_index: Vec<Option<Arc<Vec<Option<u64>>>>> =
-                vec![None; alias_spec.merge_paths.len()];
+                vec![None; alias_spec.compiled.merge_slot_paths.len()];
 
-            let mut path_groups: Vec<(&FlattenNodePath, Vec<usize>)> =
-                Vec::with_capacity(alias_spec.merge_paths.len());
-            for (path_index, merge_path) in alias_spec.merge_paths.iter().enumerate() {
+            let mut path_groups: Vec<(&[SlotPathSegment], Vec<usize>)> =
+                Vec::with_capacity(alias_spec.compiled.merge_slot_paths.len());
+            for (path_index, merge_path) in alias_spec
+                .compiled
+                .merge_slot_paths
+                .iter()
+                .map(Vec::as_slice)
+                .enumerate()
+            {
                 if let Some((_, target_indices)) =
                     path_groups.iter_mut().find(|(path, _)| *path == merge_path)
                 {
@@ -1524,43 +1523,17 @@ impl<'exec> Executor<'exec> {
             for (merge_path, grouped_target_indices) in path_groups {
                 let mut representation_hashes: Vec<Option<u64>> = Vec::new();
 
-                traverse_and_callback(data, merge_path.as_slice(), possible_types, &mut |entity| {
-                    if entity.is_null() {
-                        representation_hashes.push(None);
-                        return;
-                    }
-
-                    let hash = entity.to_hash(&alias_spec.requires.items, possible_types);
-                    representation_hashes.push(Some(hash));
-                    let is_first_representation = representation_hash_to_index.is_empty();
-                    let vacant_entry = match representation_hash_to_index.entry(hash) {
-                        Entry::Occupied(_) => return,
-                        Entry::Vacant(vacant_entry) => vacant_entry,
-                    };
-
-                    let entity = if let Some(input_rewrites) = &alias_spec.input_rewrites {
-                        let new_entity = arena.alloc(entity.clone());
-                        for input_rewrite in input_rewrites {
-                            input_rewrite.rewrite(&self.schema_metadata.possible_types, new_entity);
-                        }
-                        new_entity
-                    } else {
-                        entity
-                    };
-
-                    let is_projected = project_requires(
+                traverse_and_callback(data, merge_path, possible_types, &mut |entity| {
+                    representation_hashes.push(push_representation(
                         possible_types,
-                        &alias_spec.requires.items,
+                        &alias_spec.compiled.requires,
+                        &alias_spec.compiled.input_rewrites,
+                        &arena,
                         entity,
                         &mut filtered_representations,
-                        is_first_representation,
-                        None,
-                    );
-
-                    if is_projected {
-                        vacant_entry.insert(index);
-                        index += 1;
-                    }
+                        &mut representation_hash_to_index,
+                        &mut index,
+                    ));
                 });
 
                 let representation_hashes = Arc::new(representation_hashes);
@@ -1572,8 +1545,14 @@ impl<'exec> Executor<'exec> {
 
             filtered_representations.put(CLOSE_BRACKET);
 
-            let mut paths = Vec::with_capacity(alias_spec.merge_paths.len());
-            for (path_index, merge_path) in alias_spec.merge_paths.iter().enumerate() {
+            let mut paths = Vec::with_capacity(alias_spec.compiled.merge_slot_paths.len());
+            for (path_index, merge_path) in alias_spec
+                .compiled
+                .merge_slot_paths
+                .iter()
+                .map(Vec::as_slice)
+                .enumerate()
+            {
                 paths.push(AliasPathState {
                     merge_path,
                     representation_hashes: path_hashes_by_index[path_index]
@@ -1609,7 +1588,7 @@ impl<'exec> Executor<'exec> {
             // TODO: We could optimize header map creation by caching them per service name
             let mut headers_map = HeaderMap::new();
             let subgraph_name_factory = || Some(opts.subgraph_name.to_string());
-            let affected_path_factory = || opts.affected_path.map(|p| p.to_string());
+            let affected_path_factory = || opts.affected_path.map(slot_path_to_string);
             modify_subgraph_request_headers(
                 self.headers_plan,
                 opts.subgraph_name,
@@ -1631,7 +1610,7 @@ impl<'exec> Executor<'exec> {
                 raw_variable_values: opts.raw_variable_values,
                 headers: headers_map,
                 extensions: None,
-                custom_scalar_paths: opts.custom_scalar_paths,
+                response_shape: opts.response_shape,
                 connection_fingerprint: self.connection_fingerprint,
             };
 
@@ -1738,6 +1717,35 @@ fn select_fetch_variables<'a>(
 
 #[cfg(test)]
 mod tests {
+    use hive_router_query_planner::ast::selection_set::SelectionSet;
+    use hive_router_query_planner::planner::merged_shape::response_shape_for_selections;
+    use hive_router_query_planner::planner::plan_nodes::CompiledBatchAlias;
+    use hive_router_query_planner::planner::response_shape::ResponseShape;
+    use hive_router_query_planner::planner::slot_path::compile_requires;
+
+    use crate::response::subgraph_response::SubgraphResponse;
+
+    fn document_into_selection<'a>(
+        doc: query::Document<'a, String>,
+    ) -> query::SelectionSet<'a, String> {
+        doc.definitions
+            .iter()
+            .find_map(|def| {
+                let query::Definition::Operation(op) = def else {
+                    return None;
+                };
+                match op {
+                    query::OperationDefinition::SelectionSet(sel) => Some(sel),
+                    query::OperationDefinition::Query(q) => Some(&q.selection_set),
+                    query::OperationDefinition::Mutation(m) => Some(&m.selection_set),
+                    query::OperationDefinition::Subscription(s) => Some(&s.selection_set),
+                }
+            })
+            .unwrap()
+            .clone()
+    }
+
+
     use crate::{
         execution::{
             client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
@@ -1960,38 +1968,39 @@ mod tests {
             connection_fingerprint: None,
         };
 
-        let data: ResponseValue = sonic_rs::from_str(
+        // Slot 0 is `__typename`, slot 1 is `upc` — the layout
+        // `response_shape_for_selections` produces for this selection.
+        let product_shape = response_shape_for_selections(&document_into_selection(
+            parse_operation("{ __typename upc }"),
+        ).into());
+        let data_shape = ResponseShape {
+            fields: vec![
+                hive_router_query_planner::planner::response_shape::ResponseShapeField {
+                    key: "products".to_string(),
+                    shape: product_shape,
+                },
+            ],
+            raw: false,
+            inert: false,
+        };
+        let owned = SubgraphResponse::parse_data_with_shape(
             r#"{
                 "products": [
                     {"__typename": "Product", "upc": "1"},
                     {"__typename": "Product", "upc": "2"}
                 ]
             }"#,
-        )
-        .unwrap();
-
-        fn document_into_selection<'a>(
-            doc: query::Document<'a, String>,
-        ) -> query::SelectionSet<'a, String> {
-            doc.definitions
-                .iter()
-                .find_map(|def| {
-                    let query::Definition::Operation(op) = def else {
-                        return None;
-                    };
-                    match op {
-                        query::OperationDefinition::SelectionSet(sel) => Some(sel),
-                        query::OperationDefinition::Query(q) => Some(&q.selection_set),
-                        query::OperationDefinition::Mutation(m) => Some(&m.selection_set),
-                        query::OperationDefinition::Subscription(s) => Some(&s.selection_set),
-                    }
-                })
-                .unwrap()
-                .clone()
-        }
+            &data_shape,
+        );
+        let data = &owned.data;
 
         let requires_query = parse_operation("{ ... on Product { upc } }");
         let requires_selection = document_into_selection(requires_query);
+        let requires: SelectionSet = requires_selection.clone().into();
+        let compiled_requires = compile_requires(
+            &requires,
+            data_shape.child(0).expect("products shape"),
+        );
 
         let shared_var = "__batch_reps_0".to_string();
         let entity_batch = EntityBatch {
@@ -1999,24 +2008,36 @@ mod tests {
                 EntityBatchAlias {
                     alias: "_e0".to_string(),
                     representations_variable_name: shared_var.clone(),
-                    merge_paths: vec![],
-                    requires: requires_selection.clone().into(),
+                    merge_paths: vec![Default::default()],
+                    requires: requires.clone(),
                     input_rewrites: None,
                     output_rewrites: None,
+                    compiled: CompiledBatchAlias {
+                        alias_slot: Some(0),
+                        requires: compiled_requires.clone(),
+                        merge_slot_paths: vec![Vec::new()],
+                        ..Default::default()
+                    },
                 },
                 EntityBatchAlias {
                     alias: "_e1".to_string(),
                     representations_variable_name: shared_var,
-                    merge_paths: vec![],
-                    requires: requires_selection.into(),
+                    merge_paths: vec![Default::default()],
+                    requires,
                     input_rewrites: None,
                     output_rewrites: None,
+                    compiled: CompiledBatchAlias {
+                        alias_slot: Some(1),
+                        requires: compiled_requires,
+                        merge_slot_paths: vec![Vec::new()],
+                        ..Default::default()
+                    },
                 },
             ],
         };
 
         let (raw_variable_values, aliases) =
-            executor.prepare_batch_fetch_job_state(&entity_batch, &data);
+            executor.prepare_batch_fetch_job_state(&entity_batch, data);
 
         assert_eq!(aliases.len(), 2);
         assert_eq!(raw_variable_values.len(), 1);
@@ -2028,7 +2049,13 @@ mod tests {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let mut subgraph_a = mockito::Server::new_async().await;
         let mut subgraph_b = mockito::Server::new_async().await;
-        let data = crate::response::value::Value::Null;
+
+        // Both fetches write into the same root position, so in a real plan they share one
+        // shape — `from_a` at slot 0, `from_b` at slot 1 — and the root is seeded with it.
+        let root_shape = response_shape_for_selections(&document_into_selection(parse_operation(
+            "{ from_a from_b }",
+        )).into());
+        let data = ResponseValue::empty_object(root_shape.fields.len());
         let subgraph_endpoint_map = HashMap::from([
             (
                 "subgraph_a".to_string(),
@@ -2109,12 +2136,9 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(1000));
                 // data should have `from_a` field from subgraph_a's response,
                 // so data the merging process does not wait for subgraph_b's response to merge subgraph_a's response
-                if let Some(data) = data_ref.as_object() {
-                    let from_a_index = data.iter().position(|(k, _)| k == &"from_a");
-                    let from_a_value = from_a_index
-                        .and_then(|index| data.get(index))
-                        .and_then(|(_, v)| v.as_str());
-                    if let Some(from_a_value) = from_a_value {
+                {
+                    // Slot 0 is `__typename`; `from_a` is slot 1.
+                    if let Some(from_a_value) = data_ref.slot(1).and_then(ResponseValue::as_str) {
                         sender
                             .send(from_a_value.to_string())
                             .expect("Failed to send from_a value through channel");
@@ -2130,12 +2154,13 @@ mod tests {
                 &PlanNode::Parallel(ParallelNode {
                     nodes: vec![
                         PlanNode::Fetch(FetchNode {
+                            compiled: Default::default(),
                             id: 1,
                             service_name: "subgraph_a".to_string(),
                             operation: SubgraphFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_a }"),
                             ),
-                            custom_scalar_paths: None,
+                            response_shape: root_shape.clone(),
                             requires: None,
                             input_rewrites: None,
                             output_rewrites: None,
@@ -2143,12 +2168,13 @@ mod tests {
                             operation_kind: None,
                         }),
                         PlanNode::Fetch(FetchNode {
+                            compiled: Default::default(),
                             id: 2,
                             service_name: "subgraph_b".to_string(),
                             operation: SubgraphFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_b }"),
                             ),
-                            custom_scalar_paths: None,
+                            response_shape: root_shape.clone(),
                             requires: None,
                             input_rewrites: None,
                             output_rewrites: None,

@@ -15,6 +15,7 @@ use hive_router_query_planner::ast::{
 };
 use sonic_rs::JsonValueTrait;
 
+use hive_router_query_planner::planner::merged_shape::response_shape_for_selections;
 use crate::execution::plan::CoerceVariablesPayload;
 use crate::introspection::schema::SchemaMetadata;
 use crate::response::value::Value;
@@ -24,6 +25,26 @@ pub struct IntrospectionContext {
     pub schema: Arc<Document>,
     pub metadata: Arc<SchemaMetadata>,
     pub variables: Arc<CoerceVariablesPayload>,
+}
+
+
+/// Places named entries into the slots the response tree uses at this position.
+///
+/// The tree carries values by slot, so introspection — which resolves fields by name —
+/// converts once here, against the same shape rule the query planner applies to the client
+/// operation. Introspection is a cold path, so building the shape per object is fine.
+fn into_slots<'exec>(
+    entries: Vec<(&'exec str, Value<'exec>)>,
+    selections: &SelectionSet,
+) -> Value<'exec> {
+    let shape = response_shape_for_selections(selections);
+    let mut slots = vec![Value::Null; shape.fields.len()];
+    for (key, value) in entries {
+        if let Some(slot) = shape.slot_of(key) {
+            slots[slot] = value;
+        }
+    }
+    Value::Object(slots)
 }
 
 fn resolve_boolean_variable(
@@ -109,9 +130,7 @@ fn resolve_input_value<'exec>(
     selections: &'exec SelectionSet,
     ctx: &'exec IntrospectionContext,
 ) -> Value<'exec> {
-    let mut iv_data = resolve_input_value_selections(iv, &selections.items, ctx);
-    iv_data.sort_by_key(|(k, _)| *k);
-    Value::Object(iv_data)
+    into_slots(resolve_input_value_selections(iv, &selections.items, ctx), selections)
 }
 
 fn resolve_input_value_selections<'exec>(
@@ -156,9 +175,7 @@ fn resolve_field<'exec>(
     selections: &'exec SelectionSet,
     ctx: &'exec IntrospectionContext,
 ) -> Value<'exec> {
-    let mut field_data = resolve_field_selections(f, &selections.items, ctx);
-    field_data.sort_by_key(|(k, _)| *k);
-    Value::Object(field_data)
+    into_slots(resolve_field_selections(f, &selections.items, ctx), selections)
 }
 
 fn resolve_field_selections<'exec>(
@@ -206,9 +223,7 @@ fn resolve_enum_value<'exec>(
     ev: &'exec EnumValue,
     selections: &'exec SelectionSet,
 ) -> Value<'exec> {
-    let mut ev_data = resolve_enum_value_selections(ev, &selections.items);
-    ev_data.sort_by_key(|(k, _)| *k);
-    Value::Object(ev_data)
+    into_slots(resolve_enum_value_selections(ev, &selections.items), selections)
 }
 
 fn resolve_enum_value_selections<'exec>(
@@ -247,9 +262,7 @@ fn resolve_type_definition<'exec>(
     selections: &'exec SelectionSet,
     ctx: &'exec IntrospectionContext,
 ) -> Value<'exec> {
-    let mut type_data = resolve_type_definition_selections(type_def, &selections.items, ctx);
-    type_data.sort_by_key(|(k, _)| *k);
-    Value::Object(type_data)
+    into_slots(resolve_type_definition_selections(type_def, &selections.items, ctx), selections)
 }
 
 fn resolve_type_definition_selections<'exec>(
@@ -417,9 +430,7 @@ fn resolve_wrapper_type<'exec>(
     selections: &'exec SelectionSet,
     ctx: &'exec IntrospectionContext,
 ) -> Value<'exec> {
-    let mut type_data = resolve_wrapper_type_selections(kind, inner_type, &selections.items, ctx);
-    type_data.sort_by_key(|(k, _)| *k);
-    Value::Object(type_data)
+    into_slots(resolve_wrapper_type_selections(kind, inner_type, &selections.items, ctx), selections)
 }
 
 fn resolve_wrapper_type_selections<'exec>(
@@ -476,9 +487,7 @@ fn resolve_directive<'exec>(
     selections: &'exec SelectionSet,
     ctx: &'exec IntrospectionContext,
 ) -> Value<'exec> {
-    let mut directive_data = resolve_directive_selections(d, &selections.items, ctx);
-    directive_data.sort_by_key(|(k, _)| *k);
-    Value::Object(directive_data)
+    into_slots(resolve_directive_selections(d, &selections.items, ctx), selections)
 }
 
 fn resolve_directive_selections<'exec>(
@@ -531,10 +540,10 @@ fn resolve_schema_field<'exec>(
     field: &'exec FieldSelection,
     ctx: &'exec IntrospectionContext,
 ) -> Value<'exec> {
-    let mut schema_data = resolve_schema_selections(&field.selections.items, ctx);
-
-    schema_data.sort_by_key(|(k, _)| *k);
-    Value::Object(schema_data)
+    into_slots(
+        resolve_schema_selections(&field.selections.items, ctx),
+        &field.selections,
+    )
 }
 
 fn resolve_schema_selections<'exec>(
@@ -618,11 +627,10 @@ pub fn resolve_introspection<'exec>(
         .metadata
         .expect_root_type_name(operation_definition.operation_kind.as_ref());
 
-    let mut data =
-        resolve_root_introspection_selections(root_type_name, &root_selection_set.items, ctx);
-
-    data.sort_by_key(|(k, _)| *k);
-    Value::Object(data)
+    into_slots(
+        resolve_root_introspection_selections(root_type_name, &root_selection_set.items, ctx),
+        root_selection_set,
+    )
 }
 
 fn resolve_root_introspection_selections<'exec>(

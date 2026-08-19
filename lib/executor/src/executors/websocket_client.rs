@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use hive_router_internal::telemetry::logging::targets;
-use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
+use hive_router_query_planner::planner::response_shape::ResponseShape;
 use hyper_rustls::ConfigBuilderExt;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
@@ -146,7 +146,7 @@ pub(crate) type WsResponseStream = LocalBoxStream<'static, WsResponse>;
 #[derive(Clone)]
 struct ClientSubscription {
     sender: mpsc::Sender<WsResponse>,
-    custom_scalar_paths: Option<CustomScalarPaths>,
+    response_shape: Option<ResponseShape>,
 }
 
 /// The client's WebSocket state. Its subscriptions map subscription IDs to their response senders.
@@ -331,7 +331,7 @@ impl WsClient<Initialized> {
     pub async fn subscribe(
         &mut self,
         subscribe_payload: SubscribePayload,
-        custom_scalar_paths: Option<CustomScalarPaths>,
+        response_shape: Option<ResponseShape>,
     ) -> Result<WsResponseStream, WsClientError> {
         let subscribe_id = self.next_subscription_id()?;
 
@@ -341,7 +341,7 @@ impl WsClient<Initialized> {
             subscribe_id.clone(),
             ClientSubscription {
                 sender: tx,
-                custom_scalar_paths,
+                response_shape,
             },
         );
 
@@ -502,7 +502,7 @@ fn handle_text_frame(text: String, state: &WsStateRef) -> Option<ws::Message> {
                 let payload_bytes = Bytes::from(sonic_rs::to_vec(&payload).unwrap_or_default());
                 let response = match SubgraphResponse::deserialize_from_bytes(
                     payload_bytes,
-                    subscription.custom_scalar_paths.as_ref(),
+                    subscription.response_shape.as_ref(),
                 ) {
                     Ok(response) => Ok(response),
                     Err(e) => {
@@ -560,14 +560,14 @@ mod tests {
         let (ack_tx, _ack_rx) = oneshot::channel();
         let state: WsStateRef = Rc::new(RefCell::new(WsState::new(ack_tx)));
         let (tx, mut rx) = mpsc::channel();
-        let mut custom_scalar_paths = CustomScalarPaths::default();
-        custom_scalar_paths.insert_path(["custom"]);
+        let mut response_shape = ResponseShape::default();
+        response_shape.insert_raw_path(["custom"]);
 
         state.borrow_mut().subscriptions.insert(
             "1".to_string(),
             ClientSubscription {
                 sender: tx,
-                custom_scalar_paths: Some(custom_scalar_paths),
+                response_shape: Some(response_shape),
             },
         );
 
@@ -579,6 +579,6 @@ mod tests {
 
         let response = rx.next().await.expect("response").expect("valid response");
         let data = response.data.as_object().unwrap();
-        assert!(data[0].1.as_raw_json().is_some());
+        assert!(data[0].as_raw_json().is_some());
     }
 }

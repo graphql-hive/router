@@ -85,3 +85,19 @@ harness = false
 [[bench]]
 name = "coprocessor_benches"
 harness = false
+
+[[bench]]
+name = "deserialize_benches"
+harness = false
+
+[[bench]]
+name = "merge_benches"
+harness = false
+
+[[bench]]
+name = "requires_benches"
+harness = false
+
+[[bench]]
+name = "roundtrip_benches"
+harness = false

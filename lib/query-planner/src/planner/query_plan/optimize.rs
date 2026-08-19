@@ -69,8 +69,10 @@ use crate::{
     },
     planner::error::QueryPlanError,
     planner::plan_nodes::{
-        custom_scalar_paths_for_entities_selection, BatchFetchNode, CustomScalarPaths, EntityBatch,
-        EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
+        BatchFetchNode, EntityBatch, EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
+    },
+    planner::response_shape::{
+        response_shape_for_entities_selection, ResponseShape, ResponseShapeField,
     },
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
 };
@@ -105,7 +107,9 @@ struct BatchFetchBuilder<'a> {
     representations_var_index: usize,
     variable_usages: BTreeSet<String>,
     representations_var_by_input_key: HashMap<RepresentationsInputKey, String>,
-    custom_scalar_paths: CustomScalarPaths,
+    /// One entry per alias, in emission order, so the field list stays complete even when
+    /// an alias has nothing to pass through — the deserializer's cursor relies on that.
+    alias_shapes: Vec<(String, ResponseShape)>,
 }
 
 impl<'a> BatchFetchBuilder<'a> {
@@ -127,7 +131,7 @@ impl<'a> BatchFetchBuilder<'a> {
             representations_var_index: 0,
             variable_usages: BTreeSet::new(),
             representations_var_by_input_key: HashMap::new(),
-            custom_scalar_paths: CustomScalarPaths::default(),
+            alias_shapes: Vec::with_capacity(alias_count),
         }
     }
 
@@ -170,14 +174,10 @@ impl<'a> BatchFetchBuilder<'a> {
                 omit_from_response: false,
             }));
 
-        if let Some(alias_paths) = custom_scalar_paths_for_entities_selection(
-            &representative.entities_selection,
-            supergraph,
-        ) {
-            self.custom_scalar_paths
-                .children
-                .insert(alias.clone(), alias_paths);
-        }
+        self.alias_shapes.push((
+            alias.clone(),
+            response_shape_for_entities_selection(&representative.entities_selection, supergraph),
+        ));
 
         self.batched_aliases.push(EntityBatchAlias {
             alias,
@@ -186,9 +186,26 @@ impl<'a> BatchFetchBuilder<'a> {
             requires: representative.requires.clone(),
             input_rewrites: representative.input_rewrites.clone(),
             output_rewrites: representative.output_rewrites.clone(),
+            compiled: Default::default(),
         });
 
         Ok(())
+    }
+
+    /// Every alias is listed even when it has nothing to pass through, so the deserializer's
+    /// cursor stays aligned across the batch.
+    fn build_response_shape(alias_shapes: Vec<(String, ResponseShape)>) -> ResponseShape {
+        let fields: Vec<ResponseShapeField> = alias_shapes
+            .into_iter()
+            .map(|(key, shape)| ResponseShapeField { key, shape })
+            .collect();
+        let inert = fields.iter().all(|field| field.shape.inert);
+
+        ResponseShape {
+            fields,
+            raw: false,
+            inert,
+        }
     }
 
     fn collect_merge_paths(shape_group: &[EntityFetch]) -> Vec<FlattenNodePath> {
@@ -284,8 +301,7 @@ impl<'a> BatchFetchBuilder<'a> {
             },
             operation_kind: Some(OperationKind::Query),
             operation: SubgraphFetchOperation::from_anonymous_operation(document),
-            custom_scalar_paths: (!self.custom_scalar_paths.is_empty())
-                .then_some(self.custom_scalar_paths),
+            response_shape: Self::build_response_shape(self.alias_shapes),
             entity_batch: EntityBatch {
                 aliases: self.batched_aliases,
             },
@@ -858,6 +874,7 @@ fn optimize_plan_sequence(nodes: Vec<PlanNode>) -> Vec<PlanNode> {
 
 #[cfg(test)]
 mod tests {
+    use crate::planner::response_shape::ResponseShape;
     use std::{
         collections::{BTreeSet, HashSet},
         fs,
@@ -919,6 +936,7 @@ mod tests {
             .expect("optimize should work");
 
         let query_plan = QueryPlan {
+            response_shape: Default::default(),
             kind: "QueryPlan",
             node: Some(optimized),
         };
@@ -1008,6 +1026,7 @@ mod tests {
             .expect("optimize should work");
 
         let query_plan = QueryPlan {
+            response_shape: Default::default(),
             kind: "QueryPlan",
             node: Some(optimized),
         };
@@ -1072,6 +1091,7 @@ mod tests {
             .expect("optimize should work");
 
         let query_plan = QueryPlan {
+            response_shape: Default::default(),
             kind: "QueryPlan",
             node: Some(optimized),
         };
@@ -1136,6 +1156,7 @@ mod tests {
             .expect("optimize should work");
 
         let query_plan = QueryPlan {
+            response_shape: Default::default(),
             kind: "QueryPlan",
             node: Some(optimized),
         };
@@ -1209,6 +1230,7 @@ mod tests {
             .expect("optimize should work");
 
         let query_plan = QueryPlan {
+            response_shape: Default::default(),
             kind: "QueryPlan",
             node: Some(optimized),
         };
@@ -1283,6 +1305,7 @@ mod tests {
             .expect("optimize should work");
 
         let query_plan = QueryPlan {
+            response_shape: Default::default(),
             kind: "QueryPlan",
             node: Some(optimized),
         };
@@ -1358,6 +1381,7 @@ mod tests {
             .expect("optimize should work");
 
         let query_plan = QueryPlan {
+            response_shape: Default::default(),
             kind: "QueryPlan",
             node: Some(optimized),
         };
@@ -1426,6 +1450,7 @@ mod tests {
             .expect("optimize should work");
 
         let query_plan = QueryPlan {
+            response_shape: Default::default(),
             kind: "QueryPlan",
             node: Some(optimized),
         };
@@ -1503,6 +1528,7 @@ mod tests {
                 .expect("optimize should work");
 
         let query_plan = QueryPlan {
+            response_shape: Default::default(),
             kind: "QueryPlan",
             node: Some(optimized),
         };
@@ -1576,6 +1602,7 @@ mod tests {
             .expect("optimize should work");
 
         let query_plan = QueryPlan {
+            response_shape: Default::default(),
             kind: "QueryPlan",
             node: Some(optimized),
         };
@@ -1678,6 +1705,7 @@ mod tests {
         );
 
         let query_plan = QueryPlan {
+            response_shape: Default::default(),
             kind: "QueryPlan",
             node: Some(optimized),
         };
@@ -1755,6 +1783,7 @@ mod tests {
             .expect("optimize should work");
 
         let query_plan = QueryPlan {
+            response_shape: Default::default(),
             kind: "QueryPlan",
             node: Some(optimized),
         };
@@ -1833,6 +1862,7 @@ mod tests {
             .expect("optimize should work");
 
         let query_plan = QueryPlan {
+            response_shape: Default::default(),
             kind: "QueryPlan",
             node: Some(optimized),
         };
@@ -1920,6 +1950,7 @@ mod tests {
             .expect("optimize should work");
 
         let query_plan = QueryPlan {
+            response_shape: Default::default(),
             kind: "QueryPlan",
             node: Some(optimized),
         };
@@ -2007,6 +2038,7 @@ mod tests {
             .expect("optimize should work");
 
         let query_plan = QueryPlan {
+            response_shape: Default::default(),
             kind: "QueryPlan",
             node: Some(optimized),
         };
@@ -2055,6 +2087,7 @@ mod tests {
             .expect("optimize should work");
 
         let query_plan = QueryPlan {
+            response_shape: Default::default(),
             kind: "QueryPlan",
             node: Some(optimized),
         };
@@ -2103,6 +2136,7 @@ mod tests {
             .expect("optimize should work");
 
         let query_plan = QueryPlan {
+            response_shape: Default::default(),
             kind: "QueryPlan",
             node: Some(optimized),
         };
@@ -2160,6 +2194,7 @@ mod tests {
             .expect("optimize should work");
 
         let query_plan = QueryPlan {
+            response_shape: Default::default(),
             kind: "QueryPlan",
             node: Some(optimized),
         };
@@ -2261,12 +2296,13 @@ mod tests {
         let operation = SubgraphFetchOperation::from_anonymous_operation(entities_document);
 
         let fetch_node = FetchNode {
+            compiled: Default::default(),
             id,
             service_name: service_name.to_string(),
             variable_usages: non_representation_variable_names,
             operation_kind: Some(OperationKind::Query),
             operation,
-            custom_scalar_paths: None,
+            response_shape: ResponseShape::default(),
             requires: Some(requires),
             input_rewrites: None,
             output_rewrites: None,
@@ -2282,6 +2318,7 @@ mod tests {
         ]));
 
         PlanNode::Flatten(FlattenNode {
+            slot_path: Vec::new(),
             path,
             node: Box::new(PlanNode::Fetch(fetch_node)),
         })
@@ -2328,12 +2365,13 @@ mod tests {
         ));
 
         FetchNode {
+            compiled: Default::default(),
             id,
             service_name: service_name.to_string(),
             variable_usages: None,
             operation_kind: Some(OperationKind::Query),
             operation,
-            custom_scalar_paths: None,
+            response_shape: ResponseShape::default(),
             requires: None,
             input_rewrites: None,
             output_rewrites: None,

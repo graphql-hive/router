@@ -2,7 +2,7 @@ use core::fmt;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
+use hive_router_query_planner::planner::response_shape::ResponseShape;
 use http::{HeaderMap, StatusCode};
 use serde::{
     de::{self, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor},
@@ -19,7 +19,9 @@ use crate::{
 pub struct SubgraphResponse<'a> {
     pub data: Value<'a>,
     pub errors: Option<Vec<GraphQLError>>,
-    pub extensions: Option<Value<'a>>,
+    /// Arbitrary subgraph JSON with no shape known in advance, so it is not a response
+    /// `Value` — see `extensions::aggregator`.
+    pub extensions: Option<sonic_rs::Value>,
     pub headers: Option<Arc<HeaderMap>>,
     pub bytes: Option<Bytes>,
     pub status: Option<StatusCode>,
@@ -40,17 +42,18 @@ impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
     where
         D: Deserializer<'de>,
     {
-        deserialize_subgraph_response_with_paths(deserializer, &EMPTY_CUSTOM_SCALAR_PATHS)
+        deserialize_subgraph_response_with_shape(deserializer, &EMPTY_RESPONSE_SHAPE)
     }
 }
 
-static EMPTY_CUSTOM_SCALAR_PATHS: CustomScalarPaths = CustomScalarPaths {
-    children: std::collections::BTreeMap::new(),
-    terminal: false,
+static EMPTY_RESPONSE_SHAPE: ResponseShape = ResponseShape {
+    fields: Vec::new(),
+    raw: false,
+    inert: true,
 };
 
 struct SubgraphResponseSeed<'a> {
-    custom_scalar_paths: &'a CustomScalarPaths,
+    response_shape: &'a ResponseShape,
 }
 
 impl<'a, 'de> DeserializeSeed<'de> for SubgraphResponseSeed<'a> {
@@ -60,24 +63,22 @@ impl<'a, 'de> DeserializeSeed<'de> for SubgraphResponseSeed<'a> {
     where
         D: Deserializer<'de>,
     {
-        deserialize_subgraph_response_with_paths(deserializer, self.custom_scalar_paths)
+        deserialize_subgraph_response_with_shape(deserializer, self.response_shape)
     }
 }
 
-fn deserialize_subgraph_response_with_paths<'a, 'de, D>(
+fn deserialize_subgraph_response_with_shape<'a, 'de, D>(
     deserializer: D,
-    custom_scalar_paths: &'a CustomScalarPaths,
+    response_shape: &'a ResponseShape,
 ) -> Result<SubgraphResponse<'de>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    deserializer.deserialize_map(SubgraphResponseVisitor {
-        custom_scalar_paths,
-    })
+    deserializer.deserialize_map(SubgraphResponseVisitor { response_shape })
 }
 
 struct SubgraphResponseVisitor<'a> {
-    custom_scalar_paths: &'a CustomScalarPaths,
+    response_shape: &'a ResponseShape,
 }
 
 impl<'a, 'de> Visitor<'de> for SubgraphResponseVisitor<'a> {
@@ -102,7 +103,7 @@ impl<'a, 'de> Visitor<'de> for SubgraphResponseVisitor<'a> {
                         return Err(de::Error::duplicate_field("data"));
                     }
                     data = Some(map.next_value_seed(ValueSeed {
-                        custom_scalar_paths: self.custom_scalar_paths,
+                        response_shape: self.response_shape,
                     })?);
                 }
                 "errors" => {
@@ -137,7 +138,7 @@ impl<'a, 'de> Visitor<'de> for SubgraphResponseVisitor<'a> {
 
 #[derive(Clone, Copy)]
 struct ValueSeed<'a> {
-    custom_scalar_paths: &'a CustomScalarPaths,
+    response_shape: &'a ResponseShape,
 }
 
 impl<'a, 'de> DeserializeSeed<'de> for ValueSeed<'a> {
@@ -147,36 +148,37 @@ impl<'a, 'de> DeserializeSeed<'de> for ValueSeed<'a> {
     where
         D: Deserializer<'de>,
     {
-        deserialize_value_with_paths(deserializer, self.custom_scalar_paths)
+        deserialize_value_with_shape(deserializer, self.response_shape)
     }
 }
 
-fn deserialize_value_with_paths<'a, 'de, D>(
+fn deserialize_value_with_shape<'a, 'de, D>(
     deserializer: D,
-    custom_scalar_paths: &'a CustomScalarPaths,
+    response_shape: &'a ResponseShape,
 ) -> Result<Value<'de>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    if custom_scalar_paths.is_empty() {
-        return Value::deserialize(deserializer);
-    }
-
-    if custom_scalar_paths.terminal {
+    if response_shape.raw {
         let raw = LazyValue::deserialize(deserializer)?;
-        return Ok(Value::RawJson(raw.as_raw_cow()));
+        let raw = raw.as_raw_cow();
+        // A passthrough `null` still has to be a real `Value::Null`: projection propagates
+        // it through non-null positions, and merge treats a null source as a no-op. A
+        // `RawJson("null")` would silently defeat both.
+        if raw == "null" {
+            return Ok(Value::Null);
+        }
+        return Ok(Value::RawJson(raw));
     }
 
-    deserializer.deserialize_any(PathAwareValueVisitor {
-        custom_scalar_paths,
-    })
+    deserializer.deserialize_any(ShapedValueVisitor { response_shape })
 }
 
-struct PathAwareValueVisitor<'a> {
-    custom_scalar_paths: &'a CustomScalarPaths,
+struct ShapedValueVisitor<'a> {
+    response_shape: &'a ResponseShape,
 }
 
-impl<'a, 'de> Visitor<'de> for PathAwareValueVisitor<'a> {
+impl<'a, 'de> Visitor<'de> for ShapedValueVisitor<'a> {
     type Value = Value<'de>;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -228,9 +230,10 @@ impl<'a, 'de> Visitor<'de> for PathAwareValueVisitor<'a> {
     where
         A: SeqAccess<'de>,
     {
+        // Lists are transparent: every element sits at the same response position.
         let mut elements = Vec::with_capacity(seq.size_hint().unwrap_or(0));
         while let Some(elem) = seq.next_element_seed(ValueSeed {
-            custom_scalar_paths: self.custom_scalar_paths,
+            response_shape: self.response_shape,
         })? {
             elements.push(elem);
         }
@@ -241,25 +244,55 @@ impl<'a, 'de> Visitor<'de> for PathAwareValueVisitor<'a> {
     where
         M: MapAccess<'de>,
     {
-        let mut entries = Vec::with_capacity(map.size_hint().unwrap_or(0));
+        let field_count = self.response_shape.fields.len();
+        // One slot per field in the shape, plus a scratch slot at the end for keys the plan
+        // never asked for. Anything the subgraph omits stays `Absent`, which is distinct from
+        // a `null` it actually answered — `requires` leaves the first out of a representation
+        // and sends the second.
+        let mut slots = vec![Value::Absent; field_count + 1];
+
+        // Subgraphs answer in the order the fetch asked, so the cursor lands on the right
+        // field with one string compare; `resolve_slot` falls back to a scan when it does not.
+        let mut cursor = 0usize;
         while let Some(key) = map.next_key::<&'de str>()? {
-            let value = match self.custom_scalar_paths.children.get(key) {
-                Some(child_paths) if !child_paths.is_empty() => map.next_value_seed(ValueSeed {
-                    custom_scalar_paths: child_paths,
-                })?,
-                _ => map.next_value()?,
+            // One call site on purpose, including for unknown keys. Branching here between
+            // `next_value_seed` and `next_value`/`IgnoredAny` instantiates two fully-inlined
+            // parse paths inside the loop, which measured ~25% slower on key-dense payloads;
+            // routing everything through the seed keeps the loop body small and lets the
+            // branch live one level down.
+            let (slot, child) = match self.response_shape.resolve_slot(&mut cursor, key) {
+                Some(slot) => (slot, &self.response_shape.fields[slot].shape),
+                None => (field_count, &EMPTY_RESPONSE_SHAPE),
             };
-            entries.push((key, value));
+            slots[slot] = map.next_value_seed(ValueSeed {
+                response_shape: child,
+            })?;
         }
-        entries.sort_unstable_by_key(|(key, _)| *key);
-        Ok(Value::Object(entries))
+
+        slots.truncate(field_count);
+        Ok(Value::Object(slots))
     }
 }
 
 impl<'a> SubgraphResponse<'a> {
+    /// Parses a subgraph response.
+    ///
+    /// `response_shape` is not optional in practice: the response tree is slot-addressed, so
+    /// a shape is the only thing that says where a field's value goes. Passing `None` — or a
+    /// shape that does not describe the payload — yields empty objects rather than an error,
+    /// because a key the plan never asked for is legitimately ignored and there is no way to
+    /// tell that case apart from a missing shape.
+    ///
+    /// Every fetch carries a `ResponseShape`, so production callers always have one. A client
+    /// that has no shape (a test harness, or anything pointing this at a server it did not
+    /// plan for) should read `bytes` instead of `data`.
+    ///
+    /// ponytail: `Option` is kept only because `WsClient` doubles as a generic client. Making
+    /// it required, with a named constant for the unshaped case, would turn a silent
+    /// data-discard into something the caller has to acknowledge.
     pub fn deserialize_from_bytes(
         bytes: Bytes,
-        custom_scalar_paths: Option<&CustomScalarPaths>,
+        response_shape: Option<&ResponseShape>,
     ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
         let bytes_ref: &[u8] = &bytes;
 
@@ -273,7 +306,7 @@ impl<'a> SubgraphResponse<'a> {
         let mut deserializer = sonic_rs::Deserializer::from_slice(bytes_ref);
 
         SubgraphResponseSeed {
-            custom_scalar_paths: custom_scalar_paths.unwrap_or(&EMPTY_CUSTOM_SCALAR_PATHS),
+            response_shape: response_shape.unwrap_or(&EMPTY_RESPONSE_SHAPE),
         }
         .deserialize(&mut deserializer)
         .map_err(|e| SubgraphExecutorError::ResponseDeserializationFailure(e, None))
@@ -292,10 +325,22 @@ impl<'a> SubgraphResponse<'a> {
     }
 }
 
+impl SubgraphResponse<'static> {
+    /// Parses a bare `data` object against a shape, for tests and benchmarks.
+    ///
+    /// The returned response owns the bytes its values borrow from, so it has to outlive any
+    /// use of `data`.
+    pub fn parse_data_with_shape(json: &str, shape: &ResponseShape) -> SubgraphResponse<'static> {
+        let envelope = format!(r#"{{"data":{json}}}"#);
+        Self::deserialize_from_bytes(Bytes::from(envelope), Some(shape))
+            .expect("valid data payload")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use hive_router_query_planner::planner::plan_nodes::CustomScalarPaths;
+    use hive_router_query_planner::planner::response_shape::ResponseShape;
     use hive_router_query_planner::{
         graph::PlannerOverrideContext,
         planner::{plan_nodes::PlanNode, Planner},
@@ -305,6 +350,9 @@ mod tests {
         },
     };
 
+    use sonic_rs::JsonValueTrait;
+
+    use super::SubgraphResponse;
     use crate::response::value::Value;
 
     #[test]
@@ -339,8 +387,8 @@ mod tests {
 
     #[test]
     fn deserializes_custom_scalar_data_field_as_raw_json() {
-        let mut paths = CustomScalarPaths::default();
-        paths.insert_path(["labels"]);
+        let mut paths = ResponseShape::default();
+        paths.insert_raw_path(["labels"]);
 
         let response = super::SubgraphResponse::deserialize_from_bytes(
             Bytes::from_static(br#"{"data":{"labels":{"generic.learnMore.button\t":"Learn more"}},"extensions":{"statusCode":200}}"#),
@@ -348,19 +396,20 @@ mod tests {
         )
         .unwrap();
 
-        let data = response.data.as_object().unwrap();
-        assert!(matches!(data[0].1, Value::RawJson(_)));
+        assert!(matches!(response.data.slot(0), Some(Value::RawJson(_))));
 
         let extensions = response.extensions.unwrap();
-        assert!(matches!(extensions, Value::Object(_)));
+        assert!(extensions.is_object(), "extensions stay on sonic_rs::Value");
     }
 
     #[test]
     fn deserializes_mixed_sibling_paths_with_only_marked_path_as_raw_json() {
-        let mut paths = CustomScalarPaths::default();
-        paths.insert_path(["custom"]);
+        let mut shape = ResponseShape::default();
+        shape.insert_raw_path(["custom"]);
+        // A sibling the shape describes but does not mark: parsed structurally.
+        shape.insert_raw_path(["plain", "message"]);
 
-        let response = super::SubgraphResponse::deserialize_from_bytes(
+        let response = SubgraphResponse::deserialize_from_bytes(
             Bytes::from_static(
                 br#"{
                     "data": {
@@ -368,53 +417,114 @@ mod tests {
                             "generic.learnMore.button\t": "Learn more"
                         },
                         "plain": {
-                            "message": "hello",
-                            "nested": {
-                                "count": 1
-                            }
+                            "message": "hello"
                         }
                     }
                 }"#,
             ),
-            Some(&paths),
+            Some(&shape),
         )
         .unwrap();
 
-        let data = response.data.as_object().unwrap();
-
-        let custom = data
-            .iter()
-            .find(|(key, _)| *key == "custom")
-            .unwrap()
-            .1
-            .as_raw_json()
+        let custom = response
+            .data
+            .slot(0)
+            .and_then(Value::as_raw_json)
             .expect("custom path should deserialize as raw json");
         assert!(custom.contains("\"generic.learnMore.button\\t\""));
         assert!(custom.contains("\"Learn more\""));
 
-        let plain = data
-            .iter()
-            .find(|(key, _)| *key == "plain")
-            .unwrap()
-            .1
-            .as_object()
-            .expect("plain path should stay structured");
-        let message = plain
-            .iter()
-            .find(|(key, _)| *key == "message")
-            .unwrap()
-            .1
-            .as_str();
-        assert_eq!(message, Some("hello"));
+        let plain = response.data.slot(1).expect("plain stays structured");
+        assert_eq!(
+            plain.slot(0).and_then(Value::as_raw_json),
+            Some(r#""hello""#)
+        );
+    }
 
-        let nested = plain
-            .iter()
-            .find(|(key, _)| *key == "nested")
-            .unwrap()
-            .1
-            .as_object()
-            .expect("nested object should stay structured");
-        assert!(matches!(nested[0].1, Value::U64(1)));
+    /// Looks a field up by name through the shape, since the data itself carries no keys.
+    fn field_by<'a>(data: &'a Value<'a>, shape: &ResponseShape, key: &str) -> &'a Value<'a> {
+        let slot = shape
+            .slot_of(key)
+            .unwrap_or_else(|| panic!("missing field {key} in shape"));
+        data.slot(slot)
+            .unwrap_or_else(|| panic!("missing slot {slot} for {key}"))
+    }
+
+    fn deserialize(json: &'static str, shape: &ResponseShape) -> SubgraphResponse<'static> {
+        SubgraphResponse::deserialize_from_bytes(Bytes::from_static(json.as_bytes()), Some(shape))
+            .expect("deserialize")
+    }
+
+    #[test]
+    fn passthrough_null_becomes_a_real_null() {
+        // `RawJson("null")` would defeat null propagation in projection and make merge treat
+        // the field as present, so the deserializer has to normalize it back.
+        let mut shape = ResponseShape::default();
+        shape.insert_raw_path(["user", "nickname"]);
+
+        let response = deserialize(r#"{"data":{"user":{"nickname":null}}}"#, &shape);
+        let nickname = response
+            .data
+            .slot(0)
+            .and_then(|user| user.slot(0))
+            .expect("nickname slot");
+        assert!(
+            nickname.is_null(),
+            "expected Value::Null, got {nickname:?} — null propagation would break"
+        );
+    }
+
+    #[test]
+    fn passthrough_covers_leaf_lists_verbatim() {
+        let mut shape = ResponseShape::default();
+        shape.insert_raw_path(["product", "tags"]);
+
+        shape.insert_raw_path(["product", "id"]);
+
+        let response = deserialize(
+            r#"{"data":{"product":{"tags":["a","b\t","c"],"id":"p1"}}}"#,
+            &shape,
+        );
+        let product = response.data.slot(0).expect("product slot");
+        assert_eq!(
+            product.slot(0).and_then(Value::as_raw_json),
+            Some(r#"["a","b\t","c"]"#),
+            "a leaf list should survive as untouched bytes, escapes included"
+        );
+        assert_eq!(product.slot(1).and_then(Value::as_raw_json), Some(r#""p1""#));
+    }
+
+    #[test]
+    fn out_of_order_keys_still_resolve() {
+        // The cursor assumes the subgraph answers in fetch order; the scan has to cover the
+        // case where it does not.
+        let mut shape = ResponseShape::default();
+        shape.insert_raw_path(["a"]);
+        shape.insert_raw_path(["b"]);
+        shape.insert_raw_path(["c"]);
+
+        let response = deserialize(r#"{"data":{"c":3,"a":1,"b":2}}"#, &shape);
+        for (slot, expected) in [(0, "1"), (1, "2"), (2, "3")] {
+            assert_eq!(
+                response.data.slot(slot).and_then(Value::as_raw_json),
+                Some(expected),
+                "slot {slot} should hold {expected} regardless of arrival order"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_keys_fall_back_to_structured_parsing() {
+        let mut shape = ResponseShape::default();
+        shape.insert_raw_path(["known"]);
+
+        let response = deserialize(r#"{"data":{"known":"k","surprise":{"n":1}}}"#, &shape);
+        assert_eq!(
+            response.data.slot(0).and_then(Value::as_raw_json),
+            Some(r#""k""#)
+        );
+        // A key the plan never asked for has no slot, so it is simply not kept.
+        assert_eq!(response.data.as_object().map(Vec::len), Some(1));
     }
 
     #[test]
@@ -550,65 +660,23 @@ mod tests {
             )
             .expect("query plan");
 
-        insta::assert_snapshot!(format!("{}", plan), @r#"
-        QueryPlan {
-          Fetch(service: "test") {
-            {
-              interfaceThing {
-                __typename
-                ... on JsonInterfaceThing {
-                  meta
-                }
-                ... on StringInterfaceThing {
-                  _internal_qp_alias_0: meta
-                }
-              }
-              unionThing {
-                __typename
-                ... on JsonUnionThing {
-                  meta
-                }
-                ... on StringUnionThing {
-                  _internal_qp_alias_0: meta
-                }
-              }
-            }
-          },
-        },
-        "#);
+        let response_shape =
+            find_fetch_response_shape(plan.node.as_ref(), "test").expect("response shape");
 
-        let custom_scalar_paths = find_fetch_custom_scalar_paths(plan.node.as_ref(), "test")
-            .expect("custom scalar paths");
-
-        let interface_paths = custom_scalar_paths
-            .children
-            .get("interfaceThing")
-            .expect("interfaceThing paths");
+        // The planner aliases the two branches apart, so they get independent decisions:
+        // the custom scalar is a passthrough, the plain `String` behind the alias is not.
+        let interface = shape_field(response_shape, "interfaceThing");
+        assert!(shape_field(interface, "meta").raw);
         assert!(
-            interface_paths
-                .children
-                .get("meta")
-                .is_some_and(|path| path.terminal),
-            "json interface branch should keep a terminal custom-scalar path"
+            !shape_field(interface, "_internal_qp_alias_0").raw,
+            "a single builtin scalar is not worth a passthrough"
         );
-        assert!(!interface_paths
-            .children
-            .contains_key("_internal_qp_alias_0"));
-
-        let union_paths = custom_scalar_paths
-            .children
-            .get("unionThing")
-            .expect("unionThing paths");
         assert!(
-            union_paths
-                .children
-                .get("meta")
-                .is_some_and(|path| path.terminal),
-            "json union branch should keep a terminal custom-scalar path"
+            !shape_field(interface, "__typename").raw,
+            "__typename is read back as a &str and must stay structured"
         );
-        assert!(!union_paths.children.contains_key("_internal_qp_alias_0"));
 
-        let response = super::SubgraphResponse::deserialize_from_bytes(
+        let response = SubgraphResponse::deserialize_from_bytes(
             Bytes::from_static(
                 br#"{
                     "data": {
@@ -625,67 +693,63 @@ mod tests {
                     }
                 }"#,
             ),
-            Some(custom_scalar_paths),
+            Some(response_shape),
         )
         .unwrap();
 
-        let data = response.data.as_object().unwrap();
+        let interface_thing = field_by(&response.data, response_shape, "interfaceThing");
+        assert_eq!(
+            field_by(interface_thing, interface, "_internal_qp_alias_0").as_str(),
+            Some("interface string")
+        );
+        assert_eq!(
+            field_by(interface_thing, interface, "__typename").as_str(),
+            Some("StringInterfaceThing")
+        );
 
-        let interface_thing = data
-            .iter()
-            .find(|(key, _)| *key == "interfaceThing")
-            .unwrap()
-            .1
-            .as_object()
-            .expect("interfaceThing should stay structured");
-        let interface_meta = interface_thing
-            .iter()
-            .find(|(key, _)| *key == "_internal_qp_alias_0")
-            .unwrap()
-            .1
-            .as_str();
-        assert_eq!(interface_meta, Some("interface string"));
-
-        let union_thing = data
-            .iter()
-            .find(|(key, _)| *key == "unionThing")
-            .unwrap()
-            .1
-            .as_object()
-            .expect("unionThing should stay structured");
-        let union_meta = union_thing
-            .iter()
-            .find(|(key, _)| *key == "meta")
-            .unwrap()
-            .1
-            .as_raw_json()
-            .expect("json union branch should deserialize as raw json");
+        let union_shape = shape_field(response_shape, "unionThing");
+        let union_meta = field_by(
+            field_by(&response.data, response_shape, "unionThing"),
+            union_shape,
+            "meta",
+        )
+        .as_raw_json()
+        .expect("json union branch should deserialize as raw json");
         assert!(union_meta.contains("union.key\\t"));
     }
 
-    fn find_fetch_custom_scalar_paths<'a>(
+    fn shape_field<'a>(shape: &'a ResponseShape, key: &str) -> &'a ResponseShape {
+        &shape
+            .fields
+            .iter()
+            .find(|f| f.key == key)
+            .unwrap_or_else(|| panic!("missing shape field {key} in {shape:?}"))
+            .shape
+    }
+
+    fn find_fetch_response_shape<'a>(
         node: Option<&'a PlanNode>,
         service_name: &str,
-    ) -> Option<&'a CustomScalarPaths> {
+    ) -> Option<&'a ResponseShape> {
         match node? {
             PlanNode::Fetch(fetch) if fetch.service_name == service_name => {
-                fetch.custom_scalar_paths.as_ref()
+                Some(&fetch.response_shape)
             }
             PlanNode::BatchFetch(fetch) if fetch.service_name == service_name => {
-                fetch.custom_scalar_paths.as_ref()
+                Some(&fetch.response_shape)
             }
             PlanNode::Sequence(sequence) => sequence
                 .nodes
                 .iter()
-                .find_map(|node| find_fetch_custom_scalar_paths(Some(node), service_name)),
+                .find_map(|node| find_fetch_response_shape(Some(node), service_name)),
             PlanNode::Parallel(parallel) => parallel
                 .nodes
                 .iter()
-                .find_map(|node| find_fetch_custom_scalar_paths(Some(node), service_name)),
+                .find_map(|node| find_fetch_response_shape(Some(node), service_name)),
             PlanNode::Flatten(flatten) => {
-                find_fetch_custom_scalar_paths(Some(&flatten.node), service_name)
+                find_fetch_response_shape(Some(&flatten.node), service_name)
             }
-            PlanNode::Condition(condition) => find_fetch_custom_scalar_paths(
+            PlanNode::Condition(condition) => find_fetch_response_shape(
                 condition
                     .if_clause
                     .as_deref()

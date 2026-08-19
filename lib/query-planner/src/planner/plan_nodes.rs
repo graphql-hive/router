@@ -1,3 +1,4 @@
+use crate::planner::slot_path::{RequiresStep, SlotPathSegment, SlotRewrite};
 use crate::{
     ast::{
         merge_path::{Condition, MergePath, Segment},
@@ -10,12 +11,13 @@ use crate::{
     planner::fetch::{
         fetch_step_data::FetchStepData, selections::FetchStepSelections, state::MultiTypeFetchStep,
     },
+    planner::response_shape::{response_shape_from_fetch_output, ResponseShape},
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     fmt::{Display, Formatter as FmtFormatter, Result as FmtResult},
     hash::{Hash, Hasher},
 };
@@ -27,6 +29,10 @@ pub struct QueryPlan {
     pub kind: &'static str, // "QueryPlan"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node: Option<PlanNode>,
+    /// Shape of the whole merged response tree. Derived, so it stays out of the plan's JSON
+    /// for the same reason `FetchNode::response_shape` does.
+    #[serde(skip)]
+    pub response_shape: ResponseShape,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -112,14 +118,34 @@ pub struct FetchNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_kind: Option<OperationKind>,
     pub operation: SubgraphFetchOperation,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub custom_scalar_paths: Option<CustomScalarPaths>,
+    /// Derived from the operation, never part of the query plan's public JSON: plans are
+    /// only ever serialized outward (to JS, snapshots, plugin hooks) and the executor always
+    /// runs the in-memory plan, so a round trip that lost the shape would only fall back to
+    /// structured parsing.
+    #[serde(skip)]
+    pub response_shape: ResponseShape,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requires: Option<SelectionSet>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_rewrites: Option<Vec<FetchRewrite>>,
+    /// `requires`, the rewrites and the position of `_entities` resolved to slots against
+    /// `response_shape`. Derived like the shape itself, so all of it stays out of the plan's
+    /// JSON.
+    #[serde(skip)]
+    pub compiled: CompiledFetch,
+}
+
+/// Everything about a fetch that had to be looked up by response key before the response
+/// tree became slot-addressed.
+#[derive(Debug, Clone, Default)]
+pub struct CompiledFetch {
+    /// Slot of `_entities` in the fetch's own response shape.
+    pub entities_slot: Option<usize>,
+    pub requires: Vec<RequiresStep>,
+    pub input_rewrites: Vec<SlotRewrite>,
+    pub output_rewrites: Vec<SlotRewrite>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,205 +159,13 @@ pub struct BatchFetchNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_kind: Option<OperationKind>,
     pub operation: SubgraphFetchOperation,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub custom_scalar_paths: Option<CustomScalarPaths>,
+    /// Derived from the operation, never part of the query plan's public JSON: plans are
+    /// only ever serialized outward (to JS, snapshots, plugin hooks) and the executor always
+    /// runs the in-memory plan, so a round trip that lost the shape would only fall back to
+    /// structured parsing.
+    #[serde(skip)]
+    pub response_shape: ResponseShape,
     pub entity_batch: EntityBatch,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct CustomScalarPaths {
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub children: BTreeMap<String, CustomScalarPaths>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub terminal: bool,
-}
-
-impl CustomScalarPaths {
-    pub fn insert_path<I, S>(&mut self, path: I)
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
-    {
-        let mut node = self;
-        for segment in path {
-            node = node
-                .children
-                .entry(segment.as_ref().to_string())
-                .or_default();
-        }
-        node.terminal = true;
-    }
-
-    pub fn is_empty(&self) -> bool {
-        !self.terminal && self.children.is_empty()
-    }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct CustomScalarPathState {
-    children: BTreeMap<String, CustomScalarPathState>,
-    custom_scalar_seen: bool,
-    standard_scalar_seen: bool,
-}
-
-impl CustomScalarPathState {
-    fn mark_custom_scalar<I, S>(&mut self, path: I)
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
-    {
-        let mut node = self;
-        for segment in path {
-            node = node
-                .children
-                .entry(segment.as_ref().to_string())
-                .or_default();
-        }
-        node.custom_scalar_seen = true;
-    }
-
-    fn mark_standard_scalar<I, S>(&mut self, path: I)
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
-    {
-        let mut node = self;
-        for segment in path {
-            node = node
-                .children
-                .entry(segment.as_ref().to_string())
-                .or_default();
-        }
-        node.standard_scalar_seen = true;
-    }
-
-    fn into_custom_scalar_paths(self) -> Option<CustomScalarPaths> {
-        let mut children = BTreeMap::new();
-
-        for (key, child) in self.children {
-            if let Some(paths) = child.into_custom_scalar_paths() {
-                children.insert(key, paths);
-            }
-        }
-
-        let terminal = self.custom_scalar_seen && !self.standard_scalar_seen && children.is_empty();
-        let paths = CustomScalarPaths { children, terminal };
-
-        (!paths.is_empty()).then_some(paths)
-    }
-}
-
-fn collect_custom_scalar_path_state(
-    path_kinds: &mut CustomScalarPathState,
-    response_path: &mut Vec<String>,
-    parent_type_name: &str,
-    selections: &SelectionSet,
-    supergraph: &SupergraphState,
-) {
-    let Some(parent_def) = supergraph.definitions.get(parent_type_name) else {
-        return;
-    };
-
-    let parent_fields = parent_def.fields();
-
-    for item in &selections.items {
-        match item {
-            SelectionItem::Field(field) => {
-                let Some(field_def) = parent_fields.get(&field.name) else {
-                    continue;
-                };
-
-                let response_key = field.selection_identifier();
-                let field_type_name = field_def.field_type.inner_type();
-
-                response_path.push(response_key.to_string());
-
-                if supergraph.is_custom_scalar_type(field_type_name) {
-                    path_kinds.mark_custom_scalar(response_path.iter().map(String::as_str));
-                } else {
-                    path_kinds.mark_standard_scalar(response_path.iter().map(String::as_str));
-
-                    if !field.selections.is_empty() {
-                        collect_custom_scalar_path_state(
-                            path_kinds,
-                            response_path,
-                            field_type_name,
-                            &field.selections,
-                            supergraph,
-                        );
-                    }
-                }
-
-                response_path.pop();
-            }
-            SelectionItem::InlineFragment(fragment) => {
-                collect_custom_scalar_path_state(
-                    path_kinds,
-                    response_path,
-                    &fragment.type_condition,
-                    &fragment.selections,
-                    supergraph,
-                );
-            }
-            SelectionItem::FragmentSpread(_) => {}
-        }
-    }
-}
-
-fn custom_scalar_paths_from_fetch_output(
-    output: &FetchStepSelections<MultiTypeFetchStep>,
-    supergraph: &SupergraphState,
-    entities_root_key: Option<&str>,
-) -> Option<CustomScalarPaths> {
-    let mut state = CustomScalarPathState::default();
-
-    for (type_name, selection_set) in output.iter_selections() {
-        let mut response_path = entities_root_key
-            .map(|root| vec![root.to_string()])
-            .unwrap_or_default();
-        collect_custom_scalar_path_state(
-            &mut state,
-            &mut response_path,
-            type_name,
-            selection_set,
-            supergraph,
-        );
-    }
-
-    state.into_custom_scalar_paths()
-}
-
-/// A dedicated function to produce custom scalar paths based on a `_entities` selection set.
-///
-/// Why? The regular `custom_scalar_paths_for_type_selection` requires a starting type name,
-/// which is not available for `_entities` selections.
-///
-/// The entity calls are always built from top-level `... on Type` fragments,
-/// so the starting type name is not needed.
-///
-/// Each fragment is visited using its own type condition.
-pub fn custom_scalar_paths_for_entities_selection(
-    selection_set: &SelectionSet,
-    supergraph: &SupergraphState,
-) -> Option<CustomScalarPaths> {
-    let mut state = CustomScalarPathState::default();
-    let mut response_path = Vec::new();
-
-    for item in &selection_set.items {
-        if let SelectionItem::InlineFragment(fragment) = item {
-            response_path.clear();
-            collect_custom_scalar_path_state(
-                &mut state,
-                &mut response_path,
-                &fragment.type_condition,
-                &fragment.selections,
-                supergraph,
-            );
-        }
-    }
-
-    state.into_custom_scalar_paths()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -352,6 +186,19 @@ pub struct EntityBatchAlias {
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_rewrites: Option<Vec<FetchRewrite>>,
+    #[serde(skip)]
+    pub compiled: CompiledBatchAlias,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CompiledBatchAlias {
+    /// Slot of this alias in the batch fetch's response shape.
+    pub alias_slot: Option<usize>,
+    pub requires: Vec<RequiresStep>,
+    pub input_rewrites: Vec<SlotRewrite>,
+    pub output_rewrites: Vec<SlotRewrite>,
+    /// One compiled path per entry in `merge_paths`.
+    pub merge_slot_paths: Vec<Vec<SlotPathSegment>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -359,6 +206,8 @@ pub struct EntityBatchAlias {
 pub struct FlattenNode {
     pub path: FlattenNodePath,
     pub node: Box<PlanNode>,
+    #[serde(skip)]
+    pub slot_path: Vec<SlotPathSegment>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -476,12 +325,16 @@ impl FlattenNodePathSegment {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct FlattenNodePath(Vec<FlattenNodePathSegment>);
 
 impl FlattenNodePath {
     pub fn as_slice(&self) -> &[FlattenNodePathSegment] {
         &self.0
+    }
+
+    pub fn from_segments(segments: Vec<FlattenNodePathSegment>) -> Self {
+        FlattenNodePath(segments)
     }
 }
 
@@ -714,7 +567,7 @@ impl FetchNode {
                 variable_usages: step.variable_usages.clone(),
                 operation_kind: Some(OperationKind::Query),
                 operation: create_output_operation(step, supergraph),
-                custom_scalar_paths: custom_scalar_paths_from_fetch_output(
+                response_shape: response_shape_from_fetch_output(
                     &step.output,
                     supergraph,
                     Some("_entities"),
@@ -722,6 +575,7 @@ impl FetchNode {
                 requires: Some(create_input_selection_set(&step.input)),
                 input_rewrites: step.input_rewrites.clone(),
                 output_rewrites: step.output_rewrites.clone(),
+                compiled: CompiledFetch::default(),
             },
             false => {
                 let root_type_name = supergraph.expect_root_type_name(Some(&step.operation_kind));
@@ -740,7 +594,7 @@ impl FetchNode {
                     variable_usages: step.variable_usages.clone(),
                     operation_kind: Some(step.operation_kind.clone()),
                     operation: SubgraphFetchOperation::from_anonymous_operation(document),
-                    custom_scalar_paths: custom_scalar_paths_from_fetch_output(
+                    response_shape: response_shape_from_fetch_output(
                         &step.output,
                         supergraph,
                         None,
@@ -748,6 +602,7 @@ impl FetchNode {
                     requires: None,
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),
+                    compiled: CompiledFetch::default(),
                 }
             }
         }
@@ -765,6 +620,7 @@ impl PlanNode {
             PlanNode::Flatten(FlattenNode {
                 path: step.response_path.clone().into(),
                 node: Box::new(PlanNode::Fetch(fetch)),
+                slot_path: Vec::new(),
             })
         } else if matches!(fetch.operation_kind, Some(OperationKind::Subscription)) {
             PlanNode::Subscription(SubscriptionNode { primary: fetch })
@@ -986,67 +842,4 @@ pub fn hash_minified_query(minified_query: &str) -> u64 {
     let mut hasher = Xxh3::new();
     minified_query.hash(&mut hasher);
     hasher.finish()
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{
-        planner::fetch::{selections::FetchStepSelections, state::SingleTypeFetchStep},
-        state::supergraph_state::SupergraphState,
-        utils::parsing::parse_schema,
-    };
-
-    use super::{custom_scalar_paths_from_fetch_output, SelectionSet};
-
-    fn selection_set_for_field(field_name: &str) -> SelectionSet {
-        let selection = format!("{{ {field_name} }}");
-
-        graphql_tools::parser::parse_query(&selection)
-            .unwrap()
-            .into_static()
-            .definitions
-            .into_iter()
-            .find_map(|definition| match definition {
-                graphql_tools::parser::query::Definition::Operation(
-                    graphql_tools::parser::query::OperationDefinition::SelectionSet(selection_set),
-                ) => Some(selection_set.into()),
-                _ => None,
-            })
-            .expect("selection set")
-    }
-
-    #[test]
-    fn custom_scalar_paths_do_not_mark_custom_scalar_vs_builtin_scalar_collision() {
-        let schema = parse_schema(
-            r#"
-            scalar JSONBlob
-
-            type TypeA {
-              meta: JSONBlob
-            }
-
-            type TypeB {
-              meta: String
-            }
-
-            type Query {
-              root: String
-            }
-            "#,
-        );
-        let supergraph = SupergraphState::new(&schema);
-
-        let mut output = FetchStepSelections::<SingleTypeFetchStep>::new_empty().into_multi_type();
-        output.declare_known_type("TypeA");
-        output.declare_known_type("TypeB");
-        *output.selections_for_definition_mut("TypeA").unwrap() = selection_set_for_field("meta");
-        *output.selections_for_definition_mut("TypeB").unwrap() = selection_set_for_field("meta");
-
-        let paths = custom_scalar_paths_from_fetch_output(&output, &supergraph, Some("_entities"));
-
-        assert!(
-            paths.is_none(),
-            "custom-scalar vs built-in-scalar collision must not emit a terminal custom scalar path"
-        );
-    }
 }

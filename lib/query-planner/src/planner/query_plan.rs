@@ -188,6 +188,8 @@ pub fn build_query_plan_from_fetch_graph(
     let root_node = optimize_root_node(root_node, supergraph)?;
 
     Ok(QueryPlan {
+        // Filled in by `merged_shape::unify_response_shapes` once the plan is complete.
+        response_shape: Default::default(),
         kind: QUERY_PLAN_KIND,
         node: Some(root_node),
     })
