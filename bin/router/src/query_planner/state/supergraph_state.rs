@@ -684,7 +684,7 @@ impl SupergraphState {
         let mut subgraphs = HashSet::new();
 
         // Add subgraphs from join_field directives
-        for (_field_name, field) in fields.iter() {
+        for field in fields.values() {
             for join_field in field.join_field.iter() {
                 if let Some(graph) = &join_field.graph_id {
                     subgraphs.insert(graph.to_string());

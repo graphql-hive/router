@@ -307,7 +307,7 @@ impl Debug for Edge {
             Edge::ReentryMove(fm) => write!(f, "🔁 {}", fm.name),
             Edge::FieldMove(fm) => {
                 // Start with the field name
-                let mut result = write!(f, "{}", &fm.name);
+                let mut result = write!(f, "{}", fm.name);
 
                 // Add requires directive if present
                 if let Some(jf) = &fm.join_field {

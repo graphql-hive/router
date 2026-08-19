@@ -363,9 +363,9 @@ fn create_prometheus_runtime(
     .disable_signals()
     .bind(listen_address);
 
-    let server = match server {
-        Ok(server) => server.run(),
-        Err(err) => return Err(err.into()),
+    let server = {
+        let server = server?;
+        server.run()
     };
 
     tracing::info!(
