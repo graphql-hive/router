@@ -116,6 +116,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.2.1 (2026-08-19)
+
+### Fixes
+
+#### Fix authorized fields being nulled out when a sibling fragment rejects a field of the same response key.
+
+Given:
+
+```graphql
+union Media = Book | Movie
+
+type Book @requiresScopes(scopes: [["a", "b"]]) {
+  title: String
+}
+
+type Movie @requiresScopes(scopes: [["c", "d"]]) {
+  title: String
+}
+```
+
+A token granted only `a` + `b` (fully satisfying `Book`, not `Movie`) querying:
+
+**Before:** rejected fields were tracked only by their flattened response-key path
+(`media.title`), with no notion of which fragment they came from. `Book.title` and
+`Movie.title` collapsed into the same entry, so rejecting `Movie`'s `title` nulled
+out `Book`'s too, even though it was correctly authorized on its own.
+
+```graphql
+{
+  media {
+    ... on Book { title }    # a + b - granted
+    ... on Movie { title }   # c + d - not granted
+  }
+}
+```
+
+**After:** inline fragments are also tracked as type conditions, so sibling
+fragments selecting the same field name are tracked independently:
+
+```graphql
+{
+  media {
+    ... on Book { title }    # kept
+    ... on Movie { title }   # rejected
+  }
+}
+```
+
+#### Fix `@requiresScopes`/`@authenticated` on union members being combined into a single
+
+all-or-nothing rule for the whole union, instead of being checked independently per member.
+
+Given:
+
+```graphql
+union Media = Book | Movie
+
+type Book @requiresScopes(scopes: [["a", "b"]]) {
+  title: String
+}
+
+type Movie @requiresScopes(scopes: [["c", "d"]]) {
+  title: String
+}
+
+type Query {
+  media: Media!
+}
+```
+
+Before this fix, we required the following scopes for each field in the given query:
+
+```graphql
+{
+  media { # a + b + c +d 
+    __typename # a + b + c +d ((inherited from media's gate))
+    ... on Book { title } # a + b (but it wasn't reachable because "media" validation gated it with a+b+c+d)
+    ... on Movie { title } # c + d (but it wasn't reachable because "media" validation gated it with a+b+c+d)
+  }
+}
+```
+
+And with the fix, now: 
+
+```graphql
+{
+  media { # none
+    __typename # none
+    ... on Book { title } # a + b
+    ... on Movie { title } # c + d
+  }
+}
+```
+
 ## 0.2.0 (2026-08-19)
 
 ### Breaking Changes
