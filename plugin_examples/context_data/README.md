@@ -47,7 +47,7 @@ if let Some(context_data) = payload.context.get_mut::<ContextData>() {
 
 ### Reading data in context
 
-In order to read the data in the context, we can use `payload.context.get` to get a reference to the data and then read it.
+In order to read the data in the context, we can use `payload.context.get_ref` to get a reference to the data and then read it.
 
 ```rust
 if let Some(context_data) = payload.context.get_ref::<ContextData>() {

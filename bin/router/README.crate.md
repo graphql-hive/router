@@ -11,12 +11,13 @@ use hive_router::{
     configure_global_allocator, error::RouterInitError, init_rustls_crypto_provider, ntex,
     router_entrypoint, PluginRegistry, RouterGlobalAllocator,
 };
+use hive_router::plugins::hooks::on_plugin_init::{OnPluginInitPayload, OnPluginInitResult};
 use hive_router::plugins::plugin_trait::RouterPlugin;
  
 // Configure the global allocator required for Hive Router runtime
 configure_global_allocator!();
  
-// Declare and implement a simple plugin with no configuration and no hooks.
+// Declare and implement a simple plugin with no configuration and no extra hooks.
 struct MyPlugin;
  
 #[async_trait]
@@ -28,7 +29,10 @@ impl RouterPlugin for MyPlugin {
         "my_plugin"
     }
  
-    // Your hooks implementation goes here...
+    // `on_plugin_init` is required; other hooks are optional and go here.
+    fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
+        payload.initialize_plugin(Self)
+    }
 }
  
 // This is the main entrypoint of the Router

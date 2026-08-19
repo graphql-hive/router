@@ -1,6 +1,6 @@
 # Async Authentication
 
-This example plugin demonstrates how to perform an asynchronous authentication in a plugin. The plugin reads client IDs from a file and allows requests with those client IDs to pass through, while rejecting others using `on_graphql_params` hook.
+This example plugin demonstrates how to perform an asynchronous authentication in a plugin. The plugin reads client IDs from a file and allows requests with those client IDs to pass through, while rejecting others using the `on_graphql_params` hook.
 
 ## How to run?
 
@@ -19,7 +19,7 @@ pub struct AllowClientIdConfig {
 }
 ```
 
-Then in the `on_plugin_init` hook, we get the configuration;
+Then in the `on_plugin_init` hook, we get the configuration:
 ```rust
 fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
         let config = payload.config()?;

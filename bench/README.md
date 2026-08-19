@@ -48,7 +48,7 @@ cargo build --release -p hive-router
 
 ```
 cargo build -p bench-coprocessor --release
-./target/release/bench_coprocessor
+./target/release/bench-coprocessor
 ```
 
 ## Load test

@@ -14,8 +14,8 @@ export LD_SDK_KEY="your-launchdarkly-server-sdk-key"
 ## Run
 
 ```bash
-cargo run -p progressive-override-launchdarkly-plugin-example -- \
-  --config ./plugin_examples/progressive_override_launchdarkly/router.config.yaml
+ROUTER_CONFIG_FILE_PATH=./plugin_examples/progressive_override_launchdarkly/router.config.yaml \
+  cargo run -p progressive-override-launchdarkly-plugin-example
 ```
 
 The plugin reads the context key from the `x-user-id` header by default

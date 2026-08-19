@@ -2,7 +2,7 @@
 
 The following instructions will guide you through the process of compiling and packaging the router, **locally**.
 
-> This process is also automated using GitHub Actions, see [workflow file](../.github/workflows/build.yaml).
+> This process is also automated using GitHub Actions, see [workflow file](../.github/workflows/build-router.yaml).
 
 ## Step 1: Cross-build the binary
 
@@ -13,7 +13,7 @@ brew install zig
 cargo install --locked cargo-zigbuild
 ```
 
-From the root of the project, run the following to build the `router` binaries (cross-build):
+From the root of the project, run the following to build the `hive_router` binaries (cross-build):
 
 ```bash
 ./docker/build-binary.sh

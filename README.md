@@ -9,7 +9,7 @@ A fully open-source MIT-licensed GraphQL API router that can act as a [GraphQL f
 >
 > Interested in the benchmark results? Check out the [Federation Gateway Performance comparison](https://the-guild.dev/graphql/hive/federation-gateway-performance)
 
-It can be run as a standalone binary or a Docker Image. Query planner can be used as a standalone Crate library.
+It can be run as a standalone binary or a Docker Image. The query planner is bundled into the `hive-router` crate, which can also be used as a library.
 
 [Binary Releases](https://github.com/graphql-hive/router/releases) | [Docker Releases](https://github.com/graphql-hive/router/pkgs/container/router) | [Documentation](https://the-guild.dev/graphql/hive/docs/router)
 
@@ -32,7 +32,7 @@ supergraph:
   path: ./supergraph.graphql
 ```
 
-Alternativly, you can use environment variables to configure the router:
+Alternatively, you can use environment variables to configure the router:
 
 ```env
 SUPERGRAPH_FILE_PATH=./supergraph.graphql
@@ -52,7 +52,7 @@ See [GitHub Releases](https://github.com/graphql-hive/router/releases) to the fu
 
 ### Docker
 
-The router image is being published to [Docker to GitHub Container Registry](https://github.com/graphql-hive/router/pkgs/container/router). You may use it directly using the following command:
+The router image is published to the [GitHub Container Registry](https://github.com/graphql-hive/router/pkgs/container/router). You may use it directly using the following command:
 
 ```bash
 docker run \
@@ -64,7 +64,7 @@ docker run \
 
 > Replace `my-supergraph.graphql` with a local supergraph file.
 
-Alternativly, you can mount the configuration file using `-v` and pass all other configurations there:
+Alternatively, you can mount the configuration file using `-v` and pass all other configurations there:
 
 ```bash
 docker run \
@@ -83,4 +83,3 @@ docker run \
 - Run `cargo test_e2e` to execute all e2e tests.
 - Run `cargo test_qp` to execute all query planner tests.
 - Run `cargo test_qpe` to execute all plan executor tests.
-- See [lib/query-planner/README.md](lib/query-planner/README.md) for more information, logging and configuration.

@@ -16,7 +16,7 @@ At the moment, the following are implemented:
 - Persisted Operations using Hive's
   [App Deployments](https://the-guild.dev/graphql/hive/docs/schema-registry/app-deployments)
 
-This project is constructed as a Rust project that implements Apollo-Router plugin interface.
+This project is constructed as a Rust project that implements the Apollo-Router plugin interface.
 
 This build of this project creates an artifact identical to Apollo-Router releases, with additional
 features provided by Hive.
@@ -73,9 +73,9 @@ fn main() {
 
 ## Development
 
-0. Install latest version of Rust
-1. To get started with development, it is recommended to ensure Rust-analyzer extension is enabled
-   on your VSCode instance.
+0. Install the latest version of Rust
+1. To get started with development, it is recommended to ensure the Rust-analyzer extension is enabled
+   in your VSCode setup.
 2. Validate project status by running `cargo check`
 3. To start the server with the demo config file (`./router.yaml`), use
    `cargo run -- --config router.yaml`. Make sure to set environment variables required for your

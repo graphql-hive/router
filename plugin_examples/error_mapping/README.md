@@ -1,7 +1,7 @@
 # Error Mapping Plugin Example
 
 This example demonstrates how to implement a plugin that maps GraphQL errors to custom HTTP responses.
-So you can change the status code, and the error code and message in the response body based on the error type or other criteria.
+So you can change the status code and the error code in the response body based on the error type or other criteria.
 It uses `on_graphql_error` hook to intercept errors and modify the response accordingly.
 
 ```yaml

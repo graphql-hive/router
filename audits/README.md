@@ -11,7 +11,7 @@ npm install
 
 ## Running Federation Audits
 
-Run all the test cases;
+Run all the test cases:
 
 ```bash
 npm run test:federation-all
