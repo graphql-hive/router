@@ -67,6 +67,36 @@ pub fn deep_merge_from_ref<'a>(target: &mut Value<'a>, source: &Value<'a>) {
     }
 }
 
+/// Writes one deduplicated entity into one of the targets that asked for it, moving the
+/// entity instead of cloning it once no other target is left.
+///
+/// `remaining[index]` is how many targets still have to receive entity `index`. When an
+/// entity feeds a single target -- the common case -- nothing is cloned at all, and the
+/// entity list is already empty by the time it is dropped. Cloning entity subtrees and then
+/// dropping the originals together cost more than JSON parsing in a load profile.
+pub fn merge_entity_into<'a>(
+    target: &mut Value<'a>,
+    entities: &mut [Value<'a>],
+    index: usize,
+    remaining: &mut [u32],
+) {
+    let (Some(count), Some(entity)) = (remaining.get_mut(index), entities.get_mut(index)) else {
+        return;
+    };
+
+    // A count that ran out means an entity was written into more targets than were counted,
+    // and the extra writes would silently merge an emptied entity. The counts come from the
+    // same hash lists the traversal reads, so this cannot drift.
+    debug_assert!(*count > 0, "entity {index} written to more targets than counted");
+
+    *count = count.saturating_sub(1);
+    if *count == 0 {
+        deep_merge(target, std::mem::take(entity));
+    } else {
+        deep_merge_from_ref(target, entity);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

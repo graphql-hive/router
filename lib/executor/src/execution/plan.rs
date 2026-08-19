@@ -76,7 +76,7 @@ use crate::{
     },
     response::{
         graphql_error::{GraphQLError, GraphQLErrorPath, GraphQLErrorPathSegment},
-        merge::{deep_merge, deep_merge_from_ref},
+        merge::{deep_merge, deep_merge_from_ref, merge_entity_into},
         subgraph_response::SubgraphResponse,
         value::Value,
     },
@@ -760,6 +760,30 @@ pub enum ExecutionJob<'exec> {
     },
 }
 
+/// How many targets each deduplicated entity still has to be written into.
+///
+/// Entities are deduplicated by representation hash, so one entity can feed several targets --
+/// but usually feeds exactly one. Counting first lets the last (often only) target take the
+/// entity instead of cloning it. The counts come from the same hash lists the merge traversal
+/// reads, so they match it exactly.
+fn entity_fanout_counts(
+    entity_count: usize,
+    hash_lists: impl IntoIterator<Item = impl AsRef<[Option<u64>]>>,
+    index_by_hash: &AHashMap<u64, usize>,
+) -> Vec<u32> {
+    let mut counts = vec![0u32; entity_count];
+    for hashes in hash_lists {
+        for hash in hashes.as_ref().iter().flatten() {
+            if let Some(&index) = index_by_hash.get(hash) {
+                if let Some(count) = counts.get_mut(index) {
+                    *count += 1;
+                }
+            }
+        }
+    }
+    counts
+}
+
 pub struct AliasBatchState<'exec> {
     alias_spec: &'exec EntityBatchAlias,
     representation_hash_to_index: AHashMap<u64, usize>,
@@ -1195,6 +1219,11 @@ impl<'exec> Executor<'exec> {
                                 }
                             }
 
+                            let mut remaining = entity_fanout_counts(
+                                entities.len(),
+                                [representation_hashes.as_slice()],
+                                representation_hash_to_index,
+                            );
                             let mut index = 0;
                             let normalized_path = flatten_node_path;
                             // If there is an error in the response, then collect the paths for normalizing the error
@@ -1229,9 +1258,12 @@ impl<'exec> Executor<'exec> {
                                                 .or_insert_with(Vec::new);
                                             error_paths.push(error_path);
                                         }
-                                        if let Some(entity) = entities.get(*entity_index) {
-                                            deep_merge_from_ref(target, entity);
-                                        }
+                                        merge_entity_into(
+                                            target,
+                                            &mut entities,
+                                            *entity_index,
+                                            &mut remaining,
+                                        );
                                     }
                                 },
                             );
@@ -1426,6 +1458,15 @@ impl<'exec> Executor<'exec> {
             return entity_index_error_map;
         }
 
+        let mut remaining = entity_fanout_counts(
+            entities.len(),
+            alias_state
+                .paths
+                .iter()
+                .map(|path_state| path_state.representation_hashes.as_slice()),
+            &alias_state.representation_hash_to_index,
+        );
+
         // We walk each merge path
         for path_state in &alias_state.paths {
             let mut index = 0;
@@ -1461,9 +1502,12 @@ impl<'exec> Executor<'exec> {
                                 .or_insert_with(Vec::new);
                             error_paths.push(error_path);
                         }
-                        if let Some(entity) = entities.get(*entity_index) {
-                            deep_merge_from_ref(target_data, entity);
-                        }
+                        merge_entity_into(
+                            target_data,
+                            entities,
+                            *entity_index,
+                            &mut remaining,
+                        );
                     }
                 },
             );
