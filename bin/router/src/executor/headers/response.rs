@@ -1,0 +1,417 @@
+use crate::executor::{
+    execution::client_request_details::ClientRequestDetails,
+    headers::{
+        errors::HeaderRuleRuntimeError,
+        expression::vrl_value_to_header_value,
+        plan::{
+            HeaderAggregationStrategy, HeaderRulesPlan, ResponseHeaderRule,
+            ResponseInsertExpression, ResponseInsertStatic, ResponsePropagateNamed,
+            ResponsePropagateRegex, ResponseRemoveNamed, ResponseRemoveRegex,
+        },
+    },
+};
+use crate::vrl::expressions::ExecutableProgram;
+use ahash::HashMap;
+use ntex::http::HeaderMap as NtexHeaderMap;
+use std::iter::once;
+use std::sync::{Arc, Mutex};
+
+use super::sanitizer::{is_denied_response_header, is_never_join_header};
+use http::{header::InvalidHeaderValue, HeaderMap, HeaderName, HeaderValue};
+
+pub fn apply_subgraph_response_headers(
+    header_rule_plan: &HeaderRulesPlan,
+    subgraph_name: &str,
+    subgraph_headers: &HeaderMap,
+    client_request_details: &ClientRequestDetails,
+    accumulator: &mut ResponseHeaderAggregator,
+) -> Result<(), HeaderRuleRuntimeError> {
+    let global_actions = &header_rule_plan.response.global;
+    let subgraph_actions = header_rule_plan.response.by_subgraph.get(subgraph_name);
+
+    let ctx = ResponseExpressionContext {
+        subgraph_name,
+        subgraph_headers,
+        client_request: client_request_details,
+    };
+
+    for action in global_actions
+        .iter()
+        .chain(subgraph_actions.into_iter().flatten())
+    {
+        action.apply_response_headers(&ctx, accumulator)?;
+    }
+
+    Ok(())
+}
+
+pub struct ResponseExpressionContext<'a> {
+    pub subgraph_name: &'a str,
+    pub client_request: &'a ClientRequestDetails<'a>,
+    pub subgraph_headers: &'a HeaderMap,
+}
+
+trait ApplyResponseHeader {
+    fn apply_response_headers(
+        &self,
+        ctx: &ResponseExpressionContext,
+        accumulator: &mut ResponseHeaderAggregator,
+    ) -> Result<(), HeaderRuleRuntimeError>;
+}
+
+impl ApplyResponseHeader for ResponseHeaderRule {
+    fn apply_response_headers(
+        &self,
+        ctx: &ResponseExpressionContext,
+        accumulator: &mut ResponseHeaderAggregator,
+    ) -> Result<(), HeaderRuleRuntimeError> {
+        match self {
+            ResponseHeaderRule::PropagateNamed(data) => {
+                data.apply_response_headers(ctx, accumulator)
+            }
+            ResponseHeaderRule::PropagateRegex(data) => {
+                data.apply_response_headers(ctx, accumulator)
+            }
+            ResponseHeaderRule::InsertStatic(data) => data.apply_response_headers(ctx, accumulator),
+            ResponseHeaderRule::InsertExpression(data) => {
+                data.apply_response_headers(ctx, accumulator)
+            }
+            ResponseHeaderRule::RemoveNamed(data) => data.apply_response_headers(ctx, accumulator),
+            ResponseHeaderRule::RemoveRegex(data) => data.apply_response_headers(ctx, accumulator),
+        }
+    }
+}
+
+impl ApplyResponseHeader for ResponsePropagateNamed {
+    fn apply_response_headers(
+        &self,
+        ctx: &ResponseExpressionContext,
+        accumulator: &mut ResponseHeaderAggregator,
+    ) -> Result<(), HeaderRuleRuntimeError> {
+        let mut matched = false;
+
+        for header_name in &self.names {
+            if is_denied_response_header(header_name) {
+                continue;
+            }
+
+            if is_never_join_header(header_name) {
+                // Never-join-headers (like `set-cookie`) can appear multiple
+                // times in a single subgraph response, so we need to propagate them all
+                for header_value in ctx.subgraph_headers.get_all(header_name) {
+                    matched = true;
+                    accumulator.write(
+                        self.rename.as_ref().unwrap_or(header_name),
+                        header_value,
+                        self.strategy,
+                    );
+                }
+            } else if let Some(header_value) = ctx.subgraph_headers.get(header_name) {
+                matched = true;
+                accumulator.write(
+                    self.rename.as_ref().unwrap_or(header_name),
+                    header_value,
+                    self.strategy,
+                );
+            }
+        }
+
+        if !matched {
+            if let (Some(default_value), Some(first_name)) = (&self.default, self.names.first()) {
+                let destination_name = self.rename.as_ref().unwrap_or(first_name);
+
+                if is_denied_response_header(destination_name) {
+                    return Ok(());
+                }
+
+                accumulator.write(destination_name, default_value, self.strategy);
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl ApplyResponseHeader for ResponsePropagateRegex {
+    fn apply_response_headers(
+        &self,
+        ctx: &ResponseExpressionContext,
+        accumulator: &mut ResponseHeaderAggregator,
+    ) -> Result<(), HeaderRuleRuntimeError> {
+        for (header_name, header_value) in ctx.subgraph_headers {
+            if is_denied_response_header(header_name) {
+                continue;
+            }
+
+            let header_bytes = header_name.as_str().as_bytes();
+
+            let Some(include_regex) = &self.include else {
+                continue;
+            };
+
+            if !include_regex.is_match(header_bytes) {
+                continue;
+            }
+
+            if self
+                .exclude
+                .as_ref()
+                .is_some_and(|regex| regex.is_match(header_bytes))
+            {
+                continue;
+            }
+
+            accumulator.write(header_name, header_value, self.strategy);
+        }
+
+        Ok(())
+    }
+}
+
+impl ApplyResponseHeader for ResponseInsertStatic {
+    fn apply_response_headers(
+        &self,
+        _ctx: &ResponseExpressionContext,
+        accumulator: &mut ResponseHeaderAggregator,
+    ) -> Result<(), HeaderRuleRuntimeError> {
+        if is_denied_response_header(&self.name) {
+            return Ok(());
+        }
+
+        let strategy = if is_never_join_header(&self.name) {
+            HeaderAggregationStrategy::Append
+        } else {
+            self.strategy
+        };
+
+        accumulator.write(&self.name, &self.value, strategy);
+
+        Ok(())
+    }
+}
+
+impl ApplyResponseHeader for ResponseInsertExpression {
+    fn apply_response_headers(
+        &self,
+        ctx: &ResponseExpressionContext,
+        accumulator: &mut ResponseHeaderAggregator,
+    ) -> Result<(), HeaderRuleRuntimeError> {
+        if is_denied_response_header(&self.name) {
+            return Ok(());
+        }
+        let value = self.expression.execute(ctx.into()).map_err(|err| {
+            HeaderRuleRuntimeError::ExpressionEvaluation(self.name.to_string(), Box::new(err.0))
+        })?;
+        if let Some(header_value) = vrl_value_to_header_value(value) {
+            let strategy = if is_never_join_header(&self.name) {
+                HeaderAggregationStrategy::Append
+            } else {
+                self.strategy
+            };
+
+            accumulator.write(&self.name, &header_value, strategy);
+        }
+
+        Ok(())
+    }
+}
+
+impl ApplyResponseHeader for ResponseRemoveNamed {
+    fn apply_response_headers(
+        &self,
+        _ctx: &ResponseExpressionContext,
+        accumulator: &mut ResponseHeaderAggregator,
+    ) -> Result<(), HeaderRuleRuntimeError> {
+        for header_name in &self.names {
+            if is_denied_response_header(header_name) {
+                continue;
+            }
+            accumulator.entries.remove(header_name);
+        }
+
+        Ok(())
+    }
+}
+
+impl ApplyResponseHeader for ResponseRemoveRegex {
+    fn apply_response_headers(
+        &self,
+        _ctx: &ResponseExpressionContext,
+        accumulator: &mut ResponseHeaderAggregator,
+    ) -> Result<(), HeaderRuleRuntimeError> {
+        accumulator.entries.retain(|name, _| {
+            if is_denied_response_header(name) {
+                // Denied headers (hop-by–hop) are never inserted in the first place
+                // and should not be removed here.
+                return true;
+            }
+
+            !self.regex.is_match(name.as_str().as_bytes())
+        });
+
+        Ok(())
+    }
+}
+
+impl ResponseHeaderAggregator {
+    /// Modify the outgoing client response headers based on the aggregated headers from subgraphs.
+    #[inline]
+    pub fn modify_client_response_headers(
+        self,
+        headers: &mut ntex::http::HeaderMap,
+    ) -> Result<(), HeaderRuleRuntimeError> {
+        for (name, (agg_strategy, mut values)) in self.entries {
+            if values.is_empty() {
+                continue;
+            }
+
+            if is_never_join_header(&name) {
+                // never-join headers must be emitted as multiple header fields
+                for value in values {
+                    headers.append(name.clone(), value.into());
+                }
+                continue;
+            }
+
+            if values.len() == 1 {
+                headers.insert(name, values.pop().unwrap().into());
+                continue;
+            }
+
+            if matches!(agg_strategy, HeaderAggregationStrategy::Append) {
+                let joined = join_with_comma(&values)
+                    .map_err(|_| HeaderRuleRuntimeError::BadHeaderValue(name.to_string()))?;
+                headers.insert(name, joined.into());
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[inline]
+fn join_with_comma(values: &[HeaderValue]) -> Result<HeaderValue, InvalidHeaderValue> {
+    // Compute capacity: sum of lengths + ", ".len() * (n-1)
+    let mut cap = 0usize;
+
+    for value in values {
+        cap += value.as_bytes().len();
+    }
+
+    if values.len() > 1 {
+        cap += 2 * (values.len() - 1);
+    }
+
+    let mut buf = Vec::with_capacity(cap);
+    for (idx, value) in values.iter().enumerate() {
+        if idx > 0 {
+            buf.extend_from_slice(b", ");
+        }
+        buf.extend_from_slice(value.as_bytes());
+    }
+    HeaderValue::from_bytes(&buf)
+}
+
+type AggregatedHeader = (HeaderAggregationStrategy, Vec<HeaderValue>);
+
+#[derive(Default, Debug)]
+pub struct ResponseHeaderAggregator {
+    pub entries: HashMap<HeaderName, AggregatedHeader>,
+}
+
+#[derive(Clone, Default, Debug)]
+pub struct ResponseHeaderSink(Arc<Mutex<ResponseHeaderAggregator>>);
+
+impl ResponseHeaderSink {
+    pub fn store(&self, aggregator: ResponseHeaderAggregator) {
+        match self.0.lock() {
+            Ok(mut sink) => sink.replace_with(aggregator),
+            Err(poisoned) => poisoned.into_inner().replace_with(aggregator),
+        }
+    }
+
+    pub fn take(&self) -> ResponseHeaderAggregator {
+        match self.0.lock() {
+            Ok(mut sink) => std::mem::take(&mut *sink),
+            Err(poisoned) => {
+                let mut sink = poisoned.into_inner();
+                std::mem::take(&mut *sink)
+            }
+        }
+    }
+}
+
+impl ResponseHeaderAggregator {
+    pub fn replace_with(&mut self, other: Self) {
+        self.entries = other.entries
+    }
+
+    /// Write a header to the aggregator according to the specified strategy.
+    pub fn write(
+        &mut self,
+        name: &HeaderName,
+        value: &HeaderValue,
+        strategy: HeaderAggregationStrategy,
+    ) {
+        let strategy = if is_never_join_header(name) {
+            HeaderAggregationStrategy::Append
+        } else {
+            strategy
+        };
+
+        if !self.entries.contains_key(name) {
+            self.entries
+                .insert(name.clone(), (strategy, once(value.clone()).collect()));
+            return;
+        }
+
+        // The `expect` is safe because we just inserted the entry if it didn't exist
+        let (strategy, values) = self.entries.get_mut(name).expect("Expected entry to exist");
+
+        match (strategy, values.len()) {
+            (HeaderAggregationStrategy::First, 0) => {
+                values.push(value.clone());
+            }
+            (HeaderAggregationStrategy::Last, _) => {
+                values.clear();
+                values.push(value.clone());
+            }
+            (HeaderAggregationStrategy::Append, _) => {
+                values.push(value.clone());
+            }
+            (_, _) => {}
+        }
+    }
+
+    // I deliberately chose to have a dedicated funtion over From<T>
+    // to convert headers from "early return responses" (from coprocessor and plugins),
+    // to prevent us from accidentally using First, Last or Append strategies,
+    // when converting from ntex's HeaderMap to the ResponseHeaderAggregator.
+    pub fn from_early_response(headers: &NtexHeaderMap) -> Self {
+        let mut aggregator = Self::default();
+        for (name, value) in headers.iter() {
+            aggregator.write(
+                name,
+                // SAFETY: Awkward but since ntex's HeaderValue was built,
+                // then the http's HeaderValue should be safe to convert to.
+                &HeaderValue::from_bytes(value.as_bytes()).expect("Failed to convert header value"),
+                // Why Last and not First or Append?
+                // Coprocessors return headers in `{<name>: [<value1>,<value2>] | <value1> }` format,
+                // meaning there's always a single entry, and when it has multiple values,
+                // it's handled already by ntex's HeaderMap.
+                HeaderAggregationStrategy::Last,
+            );
+        }
+        aggregator
+    }
+
+    pub fn from_http_headers(headers: &HeaderMap) -> Self {
+        let mut aggregator = Self::default();
+        for (name, value) in headers {
+            // Why Last and not First or Append?
+            // Check the comment in from_early_response fn
+            aggregator.write(name, value, HeaderAggregationStrategy::Append);
+        }
+        aggregator
+    }
+}

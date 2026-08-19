@@ -1,5 +1,5 @@
-use hive_router_config::telemetry::ClientIdentificationConfig;
-use hive_router_plan_executor::request_context::{RequestContextError, SharedRequestContext};
+use crate::config::telemetry::ClientIdentificationConfig;
+use crate::executor::request_context::{RequestContextError, SharedRequestContext};
 use ntex::http::HeaderMap;
 
 pub struct ClientIdentity {

@@ -1,14 +1,7 @@
 use std::{sync::Arc, vec};
 
-use futures_util::stream;
-use graphql_tools::validation::utils::ValidationError;
-use hive_console_sdk::expressions::{
-    values::boolean::BooleanConversionError, ProgramResolutionError,
-};
-use hive_router_internal::http::ReadBodyStreamError;
-use hive_router_internal::telemetry::logging::{summary, targets};
-use hive_router_plan_executor::variables::VariableCoercionError;
-use hive_router_plan_executor::{
+use crate::executor::variables::VariableCoercionError;
+use crate::executor::{
     coprocessor::CoprocessorError,
     execution::{
         error::PlanExecutionError, jwt_forward::JwtForwardingError, plan::FailedExecutionResult,
@@ -20,8 +13,13 @@ use hive_router_plan_executor::{
     request_context::{RequestContextError, RequestContextExt},
     response::graphql_error::GraphQLError,
 };
-use hive_router_query_planner::{
-    ast::normalization::error::NormalizationError, planner::PlannerError,
+use crate::http_utils::body::ReadBodyStreamError;
+use crate::query_planner::{ast::normalization::error::NormalizationError, planner::PlannerError};
+use crate::telemetry::logging::{summary, targets};
+use futures_util::stream;
+use graphql_tools::validation::utils::ValidationError;
+use hive_console_sdk::expressions::{
+    values::boolean::BooleanConversionError, ProgramResolutionError,
 };
 use http::{header, HeaderValue};
 use http::{HeaderName, Method, StatusCode};

@@ -1,7 +1,7 @@
 use std::{collections::HashSet, sync::Arc};
 
 use graphql_tools::parser::{query, schema};
-use hive_router_query_planner::{
+use hive_router::query_planner::{
     ast::normalization::{error::NormalizationError, normalize_operation},
     graph::{PlannerOverrideContext, PERCENTAGE_SCALE_FACTOR},
     planner::{plan_nodes::QueryPlan, Planner, PlannerError},

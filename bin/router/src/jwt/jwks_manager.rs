@@ -1,8 +1,6 @@
-use hive_router_config::jwt_auth::{JwksProviderSourceConfig, JwtAuthConfig};
-use hive_router_internal::{
-    background_tasks::{BackgroundTask, BackgroundTasksManager},
-    telemetry::logging::targets,
-};
+use crate::background_tasks::{BackgroundTask, BackgroundTasksManager};
+use crate::config::jwt_auth::{JwksProviderSourceConfig, JwtAuthConfig};
+use crate::telemetry::logging::targets;
 use sonic_rs::from_str;
 use std::sync::{Arc, RwLock};
 use tokio::fs::read_to_string;

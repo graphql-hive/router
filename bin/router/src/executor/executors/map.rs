@@ -1,0 +1,1165 @@
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
+use crate::config::{
+    demand_control::DemandControlMode,
+    override_subgraph_urls::{OverrideSubgraphUrlsConfig, UrlOrExpression},
+    subscriptions::{SubscriptionProtocol, SupergraphSubscriptionsConfig},
+    traffic_shaping::{
+        DurationOrExpression, StatusCodeMatcher, SupergraphTrafficShapingConfig,
+        WebSocketExecuteMode,
+    },
+};
+use crate::executor::executors::inflight::InFlightMap;
+use crate::telemetry::logging::{summary, targets};
+use crate::telemetry::TelemetryContext;
+use crate::vrl::expressions::{
+    CompileExpression, DurationOrProgram, ExecutableProgram, ExpressionCompileError, ProgramHints,
+    ValueOrProgram, VrlFunction, VrlProgram, VrlValue,
+};
+use dashmap::DashMap;
+use futures::{stream::BoxStream, FutureExt};
+use hive_console_sdk::circuit_breaker::{CircuitBreakerBuilder, CircuitBreakerError};
+use http::{StatusCode, Uri};
+use hyper_util::{
+    client::legacy::Client,
+    rt::{TokioExecutor, TokioTimer},
+};
+use recloser::AsyncRecloser;
+use tokio::sync::Semaphore;
+use tracing::{debug, error};
+
+use crate::executor::{
+    execution::{
+        client_request_details::ClientRequestDetails, demand_control::DemandControlExecutionContext,
+    },
+    executors::{
+        common::{SubgraphExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
+        error::SubgraphExecutorError,
+        http::{HTTPSubgraphExecutor, HttpClient, SubgraphHttpResponse},
+        http_callback::{CallbackSubscriptionsMap, HttpCallbackSubgraphExecutor},
+        tls::{build_https_client_config, build_https_connector, get_merged_tls_config},
+        websocket::WsSubgraphExecutor,
+        websocket_pool::{WebSocketConnectionId, WebSocketPool},
+    },
+    hooks::on_subgraph_execute::{
+        OnSubgraphExecuteEndHookPayload, OnSubgraphExecuteStartHookPayload,
+    },
+    plugin_context::PluginRequestState,
+    plugin_trait::{EndControlFlow, StartControlFlow},
+    plugins::hooks,
+    response::subgraph_response::SubgraphResponse,
+};
+
+type SubgraphName = String;
+type SubgraphEndpoint = String;
+type ExecutorsBySubgraphMap =
+    DashMap<SubgraphName, DashMap<SubgraphEndpoint, SubgraphExecutorBoxedArc>>;
+type StaticEndpointsBySubgraphMap = DashMap<SubgraphName, SubgraphEndpoint>;
+type ExpressionEndpointsBySubgraphMap = HashMap<SubgraphName, VrlProgram>;
+type TimeoutsBySubgraph = DashMap<SubgraphName, DurationOrProgram>;
+
+#[derive(Default)]
+struct GlobalSubgraphUrlOverride {
+    /// Subgraphs that have a per-subgraph URL override (static URL or expression).
+    /// They opt out of the global `all` expression.
+    ignored_subgraphs: Vec<SubgraphName>,
+    /// VRL expression applied to all subgraphs that don't have a per-subgraph override.
+    program: Option<VrlProgram>,
+}
+
+impl GlobalSubgraphUrlOverride {
+    fn new(all_url_config: Option<&str>) -> Result<Self, SubgraphExecutorError> {
+        let Some(expression) = all_url_config else {
+            return Ok(Self::default());
+        };
+
+        let program = expression.compile_expression(None).map_err(|err| {
+            SubgraphExecutorError::EndpointExpressionBuild("all".to_string(), err.diagnostics)
+        })?;
+
+        Ok(Self {
+            ignored_subgraphs: Vec::new(),
+            program: Some(program),
+        })
+    }
+
+    fn ignore_subgraph(&mut self, name: SubgraphName) {
+        self.ignored_subgraphs.push(name);
+    }
+
+    fn get_expression_for_subgraph(&self, name: &str) -> Option<&VrlProgram> {
+        (!self.ignored_subgraphs.iter().any(|n| n.as_str() == name))
+            .then_some(self.program.as_ref())
+            .flatten()
+    }
+}
+
+#[derive(Clone)]
+struct SubgraphCircuitBreaker {
+    recloser: AsyncRecloser,
+    /// HTTP status code matchers that should be counted as failures by the
+    /// circuit breaker. A response counts as a failure if its status code
+    /// matches any entry. Wrapped in `Arc` so the value is cheap to clone
+    /// out of the `DashMap`.
+    error_status_codes: Arc<Vec<StatusCodeMatcher>>,
+}
+type CircuitBreakersBySubgraph = DashMap<SubgraphName, SubgraphCircuitBreaker>;
+
+lazy_static::lazy_static! {
+    /// Default HTTP statuses tracked as failures by the circuit breaker when
+    /// the user does not configure `error_status_codes` explicitly. These
+    /// cover the most common "infrastructure" 5xx codes that indicate the
+    /// subgraph cannot serve the request right now (as opposed to a
+    /// resolver-level error returned with a 200/2xx response):
+    ///
+    /// - 500 Internal Server Error
+    /// - 502 Bad Gateway
+    /// - 503 Service Unavailable
+    /// - 504 Gateway Timeout
+    static ref DEFAULT_CIRCUIT_BREAKER_ERROR_STATUS_CODES: Arc<Vec<StatusCodeMatcher>> = Arc::new(
+        vec![
+            StatusCodeMatcher::Exact(StatusCode::INTERNAL_SERVER_ERROR),
+            StatusCodeMatcher::Exact(StatusCode::BAD_GATEWAY),
+            StatusCodeMatcher::Exact(StatusCode::SERVICE_UNAVAILABLE),
+            StatusCodeMatcher::Exact(StatusCode::GATEWAY_TIMEOUT),
+        ],
+    );
+}
+
+struct ResolvedSubgraphConfig<'a> {
+    client: Arc<HttpClient>,
+    timeout_config: &'a DurationOrExpression,
+    dedupe_enabled: bool,
+}
+
+pub type InflightRequestsMap = InFlightMap<u64, (SubgraphHttpResponse, u64)>;
+
+#[derive(Clone)]
+pub struct HttpCallbackRuntimeConfig {
+    pub public_url: Uri,
+    pub heartbeat_interval: Duration,
+}
+
+struct SubgraphExecutorConfig {
+    traffic_shaping: SupergraphTrafficShapingConfig,
+    override_subgraph_urls: OverrideSubgraphUrlsConfig,
+    subscriptions: SupergraphSubscriptionsConfig,
+    callback: Option<HttpCallbackRuntimeConfig>,
+}
+
+pub struct SubgraphExecutorMap {
+    http_executors_by_subgraph: ExecutorsBySubgraphMap,
+    subscription_executors_by_subgraph: ExecutorsBySubgraphMap,
+    /// Mapping from subgraph name to static endpoint for quick lookup
+    /// based on subgraph SDL and static overrides from router's config.
+    static_endpoints_by_subgraph: StaticEndpointsBySubgraphMap,
+    /// Mapping from subgraph name to VRL expression program
+    /// Only contains subgraphs with expression-based endpoint overrides
+    expression_endpoints_by_subgraph: ExpressionEndpointsBySubgraphMap,
+    all_endpoint_expression: GlobalSubgraphUrlOverride,
+    timeouts_by_subgraph: TimeoutsBySubgraph,
+    circuit_breakers_by_subgraph: CircuitBreakersBySubgraph,
+    global_timeout: DurationOrProgram,
+    config: Arc<SubgraphExecutorConfig>,
+    client: Arc<HttpClient>,
+    semaphores_by_origin: DashMap<String, Arc<Semaphore>>,
+    max_connections_per_host: usize,
+    in_flight_requests: InflightRequestsMap,
+    telemetry_context: Arc<TelemetryContext>,
+    /// Shared map of active HTTP callback subscriptions
+    callback_subscriptions: CallbackSubscriptionsMap,
+    /// Shared pool of initialized subgraph WebSocket connections.
+    ///
+    /// See [`ConnectionFingerprint`] for more information about connection fingerprinting.
+    ///
+    /// Subscription executors populate it, while query and mutation execution only performs
+    /// initialized-only lookups. Pool keys include the logical subgraph, resolved WebSocket
+    /// endpoint, and inbound connection fingerprint.
+    websocket_pool: Arc<WebSocketPool>,
+}
+impl SubgraphExecutorMap {
+    fn new(
+        config: Arc<SubgraphExecutorConfig>,
+        global_timeout: DurationOrProgram,
+        telemetry_context: Arc<TelemetryContext>,
+    ) -> Result<Self, SubgraphExecutorError> {
+        let mut client_builder = Client::builder(TokioExecutor::new());
+        client_builder
+            .pool_timer(TokioTimer::new())
+            .pool_idle_timeout(config.traffic_shaping.all.pool_idle_timeout)
+            .pool_max_idle_per_host(config.traffic_shaping.max_connections_per_host);
+        if config.traffic_shaping.all.allow_only_http2 {
+            client_builder.http2_only(true);
+        }
+        let client: HttpClient = client_builder.build(build_https_connector(
+            config.traffic_shaping.all.tls.as_ref(),
+        )?);
+
+        let max_connections_per_host = config.traffic_shaping.max_connections_per_host;
+
+        Ok(SubgraphExecutorMap {
+            http_executors_by_subgraph: Default::default(),
+            subscription_executors_by_subgraph: Default::default(),
+            static_endpoints_by_subgraph: Default::default(),
+            expression_endpoints_by_subgraph: Default::default(),
+            all_endpoint_expression: Default::default(),
+            config,
+            client: Arc::new(client),
+            semaphores_by_origin: Default::default(),
+            max_connections_per_host,
+            in_flight_requests: InFlightMap::default(),
+            timeouts_by_subgraph: Default::default(),
+            circuit_breakers_by_subgraph: Default::default(),
+            global_timeout,
+            telemetry_context,
+            callback_subscriptions: Arc::new(DashMap::new()),
+            websocket_pool: Arc::new(WebSocketPool::default()),
+        })
+    }
+
+    pub fn from_http_endpoint_map(
+        subgraph_endpoint_map: &HashMap<SubgraphName, String>,
+        traffic_shaping: SupergraphTrafficShapingConfig,
+        override_subgraph_urls: OverrideSubgraphUrlsConfig,
+        subscriptions: SupergraphSubscriptionsConfig,
+        callback: Option<HttpCallbackRuntimeConfig>,
+        telemetry_context: Arc<TelemetryContext>,
+        active_callback_subscriptions: CallbackSubscriptionsMap,
+    ) -> Result<Self, SubgraphExecutorError> {
+        let config = Arc::new(SubgraphExecutorConfig {
+            traffic_shaping,
+            override_subgraph_urls,
+            subscriptions,
+            callback,
+        });
+        let global_timeout =
+            compile_duration_or_expression(&config.traffic_shaping.all.request_timeout, None)
+                .map_err(|err| {
+                    SubgraphExecutorError::RequestTimeoutExpressionBuild(
+                        "all".to_string(),
+                        err.diagnostics,
+                    )
+                })?;
+        let mut subgraph_executor_map =
+            SubgraphExecutorMap::new(config.clone(), global_timeout, telemetry_context)?;
+        subgraph_executor_map.callback_subscriptions = active_callback_subscriptions;
+
+        // The `all` expression is configured once but evaluated against each subgraph.
+        // It only applies as a fallback when there is no per-subgraph override.
+        let mut global_url_override =
+            GlobalSubgraphUrlOverride::new(config.override_subgraph_urls.get_all_url())?;
+
+        for (subgraph_name, original_endpoint_str) in subgraph_endpoint_map.iter() {
+            let endpoint_config = config
+                .override_subgraph_urls
+                .get_subgraph_url(subgraph_name);
+
+            let endpoint_str = match endpoint_config {
+                Some(UrlOrExpression::Url(url)) => {
+                    global_url_override.ignore_subgraph(subgraph_name.clone());
+                    url
+                }
+                Some(UrlOrExpression::Expression { expression }) => {
+                    global_url_override.ignore_subgraph(subgraph_name.clone());
+                    subgraph_executor_map
+                        .register_endpoint_expression(subgraph_name, expression)?;
+                    original_endpoint_str
+                }
+                None => original_endpoint_str,
+            };
+
+            subgraph_executor_map.register_static_endpoint(subgraph_name, endpoint_str);
+            subgraph_executor_map.register_executor(subgraph_name, endpoint_str, false)?;
+            subgraph_executor_map.register_subgraph_timeout(subgraph_name)?;
+            subgraph_executor_map.register_circuit_breaker(subgraph_name)?;
+        }
+
+        subgraph_executor_map.all_endpoint_expression = global_url_override;
+
+        Ok(subgraph_executor_map)
+    }
+
+    /// Returns the shared active callback subscriptions map for use by callback handlers.
+    pub fn callback_subscriptions(&self) -> CallbackSubscriptionsMap {
+        self.callback_subscriptions.clone()
+    }
+
+    pub async fn execute<'exec>(
+        &self,
+        subgraph_name: &'exec str,
+        mut execution_request: SubgraphExecutionRequest<'exec>,
+        client_request: &ClientRequestDetails<'exec>,
+        plugin_req_state: Option<&'exec PluginRequestState<'exec>>,
+        demand_control_ctx: Option<&DemandControlExecutionContext>,
+    ) -> Result<SubgraphResponse<'exec>, SubgraphExecutorError> {
+        if let Some(demand_control_opts) = demand_control_ctx {
+            if let Some(subgraph_max_cost) = demand_control_opts
+                .subgraphs
+                .blocked_subgraphs
+                .get(subgraph_name)
+            {
+                let estimated_cost = demand_control_opts
+                    .evaluation
+                    .estimated_cost_for_subgraph(subgraph_name);
+
+                match demand_control_opts.subgraphs.enforcement_mode {
+                    DemandControlMode::Enforce => {
+                        tracing::warn!(
+                            target: targets::DEMAND_CONTROL,
+                            subgraph = subgraph_name,
+                            estimated_cost,
+                            subgraph_max_cost = *subgraph_max_cost,
+                            "skipping subgraph fetch: estimated cost exceeds subgraph budget"
+                        );
+
+                        return Err(SubgraphExecutorError::CostEstimatedTooExpensive);
+                    }
+                    DemandControlMode::Measure => {
+                        tracing::warn!(
+                            target: targets::DEMAND_CONTROL,
+                            subgraph = subgraph_name,
+                            estimated_cost,
+                            subgraph_max_cost = *subgraph_max_cost,
+                            "subgraph budget exceeded: estimated cost exceeds subgraph budget (not enforced)"
+                        );
+                    }
+                }
+            }
+        }
+
+        // resolve once because both the normal http executor and any websocket pool lookup must
+        // use the same destination, including request-dependent endpoint overrides
+        let endpoint_str = self.resolve_endpoint(subgraph_name, client_request)?;
+        let mut executor = self.get_or_create_http_executor(subgraph_name, &endpoint_str)?;
+        // keep the exact original executor so plugin replacement can be detected after hooks run
+        let http_executor = executor.clone();
+
+        let timeout = self.resolve_subgraph_timeout(subgraph_name, client_request)?;
+
+        let mut on_end_callbacks = vec![];
+
+        let mut execution_result: Option<SubgraphResponse<'exec>> = None;
+        if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+            let mut start_payload = OnSubgraphExecuteStartHookPayload {
+                router_http_request: &plugin_req_state.router_http_request,
+                context: &plugin_req_state.context,
+                request_context: plugin_req_state
+                    .request_context
+                    .for_plugin::<hooks::OnSubgraphExecute>(),
+                subgraph_name,
+                executor,
+                execution_request,
+            };
+            for plugin in plugin_req_state.plugins.as_ref() {
+                let result = plugin.on_subgraph_execute(start_payload).await;
+                start_payload = result.payload;
+                match result.control_flow {
+                    StartControlFlow::Proceed => {
+                        // continue to next plugin
+                    }
+                    StartControlFlow::EndWithResponse(response) => {
+                        debug!(target: targets::EXECUTOR, subgraph = subgraph_name, "execution was skipped due to response override by a plugin");
+                        execution_result = Some(response);
+                        break;
+                    }
+                    StartControlFlow::OnEnd(callback) => {
+                        on_end_callbacks.push(callback);
+                    }
+                }
+            }
+            // Give the ownership back to variables
+            execution_request = start_payload.execution_request;
+            executor = start_payload.executor;
+        }
+
+        // plugins run before opportunistic websocket routing so their decisions always win
+        // over the router's transport preference
+        //
+        // a plugin can either return a response immediately or replace the executor. only
+        // consider the pool when neither happened and the original http executor is still
+        // selected. ptr_eq checks that exact executor identity without requiring trait-object
+        // equality
+        if execution_result.is_none() && Arc::ptr_eq(&executor, &http_executor) {
+            // WebSocket endpoint configuration declares capability, while traffic shaping decides
+            // whether ordinary query and mutation fetches are allowed to use that capability
+            if self
+                .config
+                .subscriptions
+                .get_protocol_for_subgraph(subgraph_name)
+                == SubscriptionProtocol::WebSocket
+            {
+                let reuse_connections = self
+                    .config
+                    .traffic_shaping
+                    .websocket_reuse_connections(subgraph_name);
+                match self
+                    .config
+                    .traffic_shaping
+                    .websocket_execute_mode(subgraph_name)
+                {
+                    WebSocketExecuteMode::Http => {
+                        // keep defaults, nothing to do here
+                    }
+                    WebSocketExecuteMode::ReuseExisting if reuse_connections => {
+                        // reusing an existing connection requires the same connection fingerprint
+                        // used when the subscription initialized the pool entry. missing identity,
+                        // missing entries, and entries still connecting are immediate HTTP misses
+                        let pooled =
+                            execution_request
+                                .connection_fingerprint
+                                .and_then(|fingerprint| {
+                                    self.subscription_executors_by_subgraph
+                                        .get(subgraph_name)
+                                        .and_then(|endpoints| {
+                                            endpoints.get(&endpoint_str).and_then(|executor| {
+                                                let id = WebSocketConnectionId::new(
+                                                    subgraph_name,
+                                                    executor.endpoint().clone(),
+                                                    fingerprint,
+                                                );
+                                                self.websocket_pool.get_initialized(&id)
+                                            })
+                                        })
+                                });
+                        self.telemetry_context
+                            .metrics
+                            .websocket_pool
+                            .record_connection_lookup(subgraph_name, pooled.is_some());
+                        if let Some(pooled) = pooled {
+                            executor = Arc::new(
+                                Box::new(pooled) as Box<dyn SubgraphExecutor + Send + Sync>
+                            );
+                        }
+                    }
+                    WebSocketExecuteMode::Websocket => {
+                        // the configured WebSocket executor initializes a pooled connection when
+                        // reuse is enabled, or creates a dedicated connection for this operation
+                        // when reuse is disabled
+                        executor =
+                            self.get_or_create_subscription_executor(subgraph_name, &endpoint_str)?;
+                    }
+                    WebSocketExecuteMode::ReuseExisting => {
+                        // reuse is disabled (reuse_connections=false), so there cannot be
+                        // an eligible pooled connection. keep defaults, nothing further to do
+                    }
+                }
+            }
+        }
+
+        let mut execution_result = match execution_result {
+            Some(execution_result) => execution_result,
+            None => {
+                debug!(target: targets::EXECUTOR, operation = execution_request.query, dedupe = execution_request.dedupe, subgraph = subgraph_name, executor = executor.executor_name(), "executing subgraph request");
+                summary::record(|s| s.record_subgraph(subgraph_name));
+                let call_started_at = Instant::now();
+
+                let exec_fut = executor.execute(execution_request, timeout, plugin_req_state);
+                // Clone the circuit breaker out of the DashMap before awaiting to avoid
+                // holding the shard read-lock across an await point (potential deadlock).
+                let circuit_breaker = self
+                    .circuit_breakers_by_subgraph
+                    .get(subgraph_name)
+                    .map(|r| r.value().clone());
+                let result = match circuit_breaker {
+                    Some(circuit_breaker) => {
+                        let SubgraphCircuitBreaker {
+                            recloser,
+                            error_status_codes,
+                        } = circuit_breaker;
+                        // Treat configured status codes as errors so the
+                        // circuit breaker can track them. Default: 500, 502,
+                        // 503 and 504.
+                        let exec_fut = exec_fut.map(move |exec_res| match exec_res {
+                            Ok(succ_res) => {
+                                if succ_res.status.is_some_and(|status| {
+                                    error_status_codes.iter().any(|m| m.matches(status))
+                                }) {
+                                    // Save the original response in case the circuit breaker treats it as an error and returns it through the error variant
+                                    Err(SubgraphExecutorError::InternalServerError(succ_res.into()))
+                                } else {
+                                    Ok(succ_res)
+                                }
+                            }
+                            Err(err) => Err(err),
+                        });
+                        let circuit_breaker_metrics =
+                            &self.telemetry_context.metrics.circuit_breaker;
+                        recloser
+                            .call(exec_fut)
+                            .map(|exec_res| match exec_res {
+                                Err(recloser::Error::Inner(e)) => {
+                                    // The call was permitted by the breaker but the
+                                    // inner future returned an error. The breaker
+                                    // counts it as a failure regardless of whether
+                                    // we surface the original response or not.
+                                    circuit_breaker_metrics.record_failure(subgraph_name);
+                                    match e {
+                                        // If it's an error we wrapped above, unwrap it and return the original successful response instead of treating it as a failure for the caller
+                                        // This allows the circuit breaker to track 5xx responses without impacting the actual response returned to the client,
+                                        // which is important for use cases where clients want to handle 5xx responses differently but still want the circuit breaker to be aware of them.
+                                        SubgraphExecutorError::InternalServerError(succ_ress) => {
+                                            Ok(*succ_ress)
+                                        }
+                                        other_err => Err(other_err),
+                                    }
+                                }
+                                Err(recloser::Error::Rejected) => {
+                                    error!(target: targets::EXECUTOR, subgraph = subgraph_name, executor = executor.executor_name(), "circuit breaker rejected");
+                                    circuit_breaker_metrics.record_short_circuit(subgraph_name);
+                                    Err(SubgraphExecutorError::CircuitBreakerRejected)
+                                }
+                                Ok(res) => {
+                                    circuit_breaker_metrics.record_success(subgraph_name);
+                                    Ok(res)
+                                }
+                            })
+                            .await
+                    }
+                    None => exec_fut.await,
+                };
+                summary::record(|s| {
+                    s.record_subgraph_call_duration(subgraph_name, call_started_at.elapsed())
+                });
+                result?
+            }
+        };
+
+        if !on_end_callbacks.is_empty() {
+            if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+                let mut end_payload = OnSubgraphExecuteEndHookPayload {
+                    context: &plugin_req_state.context,
+                    request_context: plugin_req_state
+                        .request_context
+                        .for_plugin::<hooks::OnSubgraphExecute>(),
+                    execution_result,
+                };
+
+                for callback in on_end_callbacks {
+                    let result = callback(end_payload);
+                    end_payload = result.payload;
+                    match result.control_flow {
+                        EndControlFlow::Proceed => {
+                            // continue to next callback
+                        }
+                        EndControlFlow::EndWithResponse(response) => {
+                            end_payload.execution_result = response;
+                        }
+                    }
+                }
+
+                // Give the ownership back to variables
+                execution_result = end_payload.execution_result;
+            }
+        }
+
+        let error_count = execution_result
+            .errors
+            .as_ref()
+            .map(|e| e.len())
+            .unwrap_or(0);
+
+        debug!(target: targets::EXECUTOR,
+          subgraph = subgraph_name,
+          executor = executor.executor_name(),
+          error_count,
+          partial_response = error_count > 0 && !execution_result.data.is_null(),
+          http_status = execution_result.status.map(|s| s.as_u16()).unwrap_or(0),
+          "subgraph execution completed"
+        );
+
+        Ok(execution_result)
+    }
+
+    pub async fn subscribe<'exec>(
+        &self,
+        subgraph_name: &str,
+        execution_request: SubgraphExecutionRequest<'exec>,
+        client_request: &ClientRequestDetails<'exec>,
+    ) -> Result<
+        BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
+        SubgraphExecutorError,
+    > {
+        let endpoint_str = self.resolve_endpoint(subgraph_name, client_request)?;
+        let executor = self.get_or_create_subscription_executor(subgraph_name, &endpoint_str)?;
+        let timeout = self.resolve_subgraph_timeout(subgraph_name, client_request)?;
+        debug!(target: targets::EXECUTOR, operation = execution_request.query, dedupe = execution_request.dedupe, subgraph = subgraph_name, executor = executor.executor_name(), "subscribing subgraph request");
+        summary::record(|s| s.record_subgraph(subgraph_name));
+        let call_started_at = Instant::now();
+
+        let subscribe_fut = executor.subscribe(execution_request, timeout);
+
+        // The circuit breaker only guards the establishment of the
+        // subscription (the first `Result` returned by `subscribe`). Errors
+        // emitted by the returned stream are intentionally ignored because
+        // once the subscription is established we already know the subgraph
+        // is reachable, and treating in-stream errors as failures would
+        // incorrectly trigger the breaker.
+        let circuit_breaker = self
+            .circuit_breakers_by_subgraph
+            .get(subgraph_name)
+            .map(|r| r.value().clone());
+
+        let result = match circuit_breaker {
+            Some(SubgraphCircuitBreaker { recloser, .. }) => {
+                let circuit_breaker_metrics = &self.telemetry_context.metrics.circuit_breaker;
+                recloser
+                    .call(subscribe_fut)
+                    .map(|res| match res {
+                        Ok(stream) => {
+                            circuit_breaker_metrics.record_success(subgraph_name);
+                            Ok(stream)
+                        }
+                        Err(recloser::Error::Inner(e)) => {
+                            circuit_breaker_metrics.record_failure(subgraph_name);
+                            Err(e)
+                        }
+                        Err(recloser::Error::Rejected) => {
+                            circuit_breaker_metrics.record_short_circuit(subgraph_name);
+                            Err(SubgraphExecutorError::CircuitBreakerRejected)
+                        }
+                    })
+                    .await
+            }
+            None => subscribe_fut.await,
+        };
+        summary::record(|s| {
+            s.record_subgraph_call_duration(subgraph_name, call_started_at.elapsed())
+        });
+        result
+    }
+
+    fn resolve_subgraph_timeout(
+        &self,
+        subgraph_name: &str,
+        client_request: &ClientRequestDetails<'_>,
+    ) -> Result<Option<Duration>, SubgraphExecutorError> {
+        self.timeouts_by_subgraph
+            .get(subgraph_name)
+            .map(|t| {
+                let global_timeout_duration =
+                    resolve_timeout(&self.global_timeout, client_request, None)?;
+                resolve_timeout(t.value(), client_request, Some(global_timeout_duration))
+            })
+            .transpose()
+    }
+
+    fn resolve_endpoint(
+        &self,
+        subgraph_name: &str,
+        client_request: &ClientRequestDetails<'_>,
+    ) -> Result<String, SubgraphExecutorError> {
+        let expression = self
+            .expression_endpoints_by_subgraph
+            .get(subgraph_name)
+            // Fallbacks to the global `all` expression when no per-subgraph override is set
+            .or_else(|| {
+                self.all_endpoint_expression
+                    .get_expression_for_subgraph(subgraph_name)
+            });
+
+        if let Some(expression) = expression {
+            let original_url_value = VrlValue::Bytes(
+                self.static_endpoints_by_subgraph
+                    .get(subgraph_name)
+                    .map(|endpoint| endpoint.value().clone())
+                    .ok_or_else(|| SubgraphExecutorError::StaticEndpointNotFound)?
+                    .into(),
+            );
+
+            let subgraph_value =
+                VrlValue::Object(BTreeMap::from([("name".into(), subgraph_name.into())]));
+
+            let value = VrlValue::Object(BTreeMap::from([
+                ("request".into(), client_request.into()),
+                ("default".into(), original_url_value),
+                ("subgraph".into(), subgraph_value),
+            ]));
+
+            let endpoint_result = expression.execute(value).map_err(|err| {
+                SubgraphExecutorError::EndpointExpressionResolutionFailure(err.to_string())
+            })?;
+
+            match endpoint_result.as_str() {
+                Some(s) => Ok(s.to_string()),
+                None => Err(SubgraphExecutorError::EndpointExpressionWrongType),
+            }
+        } else {
+            self.static_endpoints_by_subgraph
+                .get(subgraph_name)
+                .map(|e| e.value().clone())
+                .ok_or_else(|| SubgraphExecutorError::StaticEndpointNotFound)
+        }
+    }
+
+    /// Returns the HTTP executor for an already resolved endpoint.
+    ///
+    /// Endpoint resolution happens in `execute` so HTTP selection and WebSocket pool matching use
+    /// one destination. Resolving again could evaluate an endpoint expression twice and produce
+    /// mismatched transports.
+    fn get_or_create_http_executor(
+        &self,
+        subgraph_name: &str,
+        endpoint_str: &str,
+    ) -> Result<SubgraphExecutorBoxedArc, SubgraphExecutorError> {
+        if let Some(executor) = self
+            .http_executors_by_subgraph
+            .get(subgraph_name)
+            .and_then(|endpoints| endpoints.get(endpoint_str).map(|e| e.clone()))
+        {
+            return Ok(executor);
+        }
+
+        self.register_executor(subgraph_name, endpoint_str, false)
+    }
+
+    /// Returns the subscription transport executor for an already resolved endpoint.
+    ///
+    /// Query and mutation WebSocket routing uses this variant so request-dependent endpoint
+    /// expressions are evaluated exactly once before transport selection.
+    fn get_or_create_subscription_executor(
+        &self,
+        subgraph_name: &str,
+        endpoint_str: &str,
+    ) -> Result<SubgraphExecutorBoxedArc, SubgraphExecutorError> {
+        if let Some(executor) = self
+            .subscription_executors_by_subgraph
+            .get(subgraph_name)
+            .and_then(|endpoints| endpoints.get(endpoint_str).map(|e| e.clone()))
+        {
+            return Ok(executor);
+        }
+
+        self.register_executor(subgraph_name, endpoint_str, true)
+    }
+
+    /// Registers a new HTTP subgraph executor for the given subgraph name and endpoint URL.
+    /// It makes it availble for future requests.
+    fn register_endpoint_expression(
+        &mut self,
+        subgraph_name: &str,
+        expression: &str,
+    ) -> Result<(), SubgraphExecutorError> {
+        let program = expression.compile_expression(None).map_err(|err| {
+            SubgraphExecutorError::EndpointExpressionBuild(
+                subgraph_name.to_string(),
+                err.diagnostics,
+            )
+        })?;
+        self.expression_endpoints_by_subgraph
+            .insert(subgraph_name.to_string(), program);
+
+        Ok(())
+    }
+
+    /// Registers a static endpoint for the given subgraph name.
+    /// This is used for quick lookup when no expression is defined
+    /// or when resolving the expression (to have the original URL available there).
+    fn register_static_endpoint(&self, subgraph_name: &str, endpoint_str: &str) {
+        self.static_endpoints_by_subgraph
+            .insert(subgraph_name.to_string(), endpoint_str.to_string());
+    }
+
+    /// Converts a resolved HTTP endpoint into the exact WebSocket pool key endpoint.
+    ///
+    /// The configured WebSocket path takes precedence over the resolved endpoint path. This must
+    /// match the endpoint built for `WsSubgraphExecutor`, otherwise subscriptions would populate a
+    /// different pool key than query and mutation execution looks up.
+    fn convert_to_websocket_endpoint(
+        &self,
+        subgraph_name: &str,
+        endpoint_uri: &Uri,
+    ) -> Result<Uri, SubgraphExecutorError> {
+        let ws_scheme = match endpoint_uri.scheme_str() {
+            Some("https") => "wss",
+            _ => "ws",
+        };
+        let path_and_query = self
+            .config
+            .subscriptions
+            .get_websocket_path(subgraph_name)
+            .or_else(|| endpoint_uri.path_and_query().map(|path| path.as_str()))
+            // fallback to default if neither is set, but this should never happen
+            .unwrap_or_default();
+
+        // build the final WebSocket URI
+        Uri::builder()
+            .scheme(ws_scheme)
+            .authority(
+                endpoint_uri
+                    .authority()
+                    .map(|authority| authority.as_str())
+                    .unwrap_or_default(),
+            )
+            .path_and_query(path_and_query)
+            .build()
+            .map_err(|error| {
+                SubgraphExecutorError::WebSocketEndpointBuildFailure(
+                    format!(
+                        "{}://{}{}",
+                        ws_scheme,
+                        endpoint_uri
+                            .authority()
+                            .map(|authority| authority.as_str())
+                            .unwrap_or_default(),
+                        path_and_query
+                    ),
+                    error,
+                )
+            })
+    }
+
+    /// Registers a subgraph executor for the given subgraph name and endpoint URL.
+    /// If `subscription_protocol` is Some, creates the appropriate executor for that protocol
+    /// and stores it in `subscription_executors_by_subgraph`.
+    /// If `subscription_protocol` is None, creates an HTTP executor and stores it in `http_executors_by_subgraph`.
+    fn register_executor(
+        &self,
+        subgraph_name: &str,
+        endpoint_str: &str,
+        for_subscription: bool,
+    ) -> Result<SubgraphExecutorBoxedArc, SubgraphExecutorError> {
+        let endpoint_uri = endpoint_str.parse::<Uri>().map_err(|e| {
+            SubgraphExecutorError::EndpointParseFailure(endpoint_str.to_string(), e)
+        })?;
+
+        let origin = format!(
+            "{}://{}:{}",
+            endpoint_uri.scheme_str().unwrap_or("http"),
+            endpoint_uri.host().unwrap_or(""),
+            endpoint_uri.port_u16().unwrap_or_else(|| {
+                match endpoint_uri.scheme_str() {
+                    Some("https") | Some("wss") => 443,
+                    _ => 80,
+                }
+            })
+        );
+
+        let semaphore = self
+            .semaphores_by_origin
+            .entry(origin)
+            .or_insert_with(|| Arc::new(Semaphore::new(self.max_connections_per_host)))
+            .clone();
+
+        let protocol = if for_subscription {
+            self.config
+                .subscriptions
+                .get_protocol_for_subgraph(subgraph_name)
+        } else {
+            SubscriptionProtocol::HTTP
+        };
+
+        match protocol {
+            SubscriptionProtocol::HTTP => {
+                let subgraph_config = self.resolve_subgraph_config(subgraph_name)?;
+
+                let http_executor = HTTPSubgraphExecutor::new(
+                    subgraph_name.to_string(),
+                    endpoint_uri,
+                    subgraph_config.client,
+                    semaphore,
+                    subgraph_config.dedupe_enabled,
+                    self.in_flight_requests.clone(),
+                    self.telemetry_context.clone(),
+                    self.config.subscriptions.subgraph_buffer_capacity,
+                )
+                .to_boxed_arc();
+
+                self.http_executors_by_subgraph
+                    .entry(subgraph_name.to_string())
+                    .or_default()
+                    .insert(endpoint_str.to_string(), http_executor.clone());
+
+                Ok(http_executor)
+            }
+            SubscriptionProtocol::WebSocket => {
+                let ws_endpoint_uri =
+                    self.convert_to_websocket_endpoint(subgraph_name, &endpoint_uri)?;
+
+                // Resolve TLS config for the subgraph (merging global + per-subgraph)
+                let tls_config = get_merged_tls_config(
+                    self.config.traffic_shaping.all.tls.as_ref(),
+                    self.config
+                        .traffic_shaping
+                        .subgraphs
+                        .get(subgraph_name)
+                        .and_then(|s| s.tls.as_ref()),
+                );
+                let ws_tls_config = match tls_config.as_ref() {
+                    Some(tls) => Some(Arc::new(build_https_client_config(Some(tls))?)),
+                    None => None,
+                };
+
+                let ws_executor = WsSubgraphExecutor::new(
+                    subgraph_name.to_string(),
+                    // we use the new constructed ws_endpoint_uri here
+                    ws_endpoint_uri,
+                    ws_tls_config,
+                    self.config.subscriptions.subgraph_buffer_capacity,
+                    self.telemetry_context.clone(),
+                    // every websocket subscription executor contributes to the same pool so
+                    // normal execution can reuse connections initialized by subscriptions
+                    self.websocket_pool.clone(),
+                    // WebSocket pooling uses the same inherited lifetime as the HTTP pool.
+                    self.config.traffic_shaping.pool_idle_timeout(subgraph_name),
+                    self.config
+                        .traffic_shaping
+                        .websocket_reuse_connections(subgraph_name),
+                )
+                .to_boxed_arc();
+
+                self.subscription_executors_by_subgraph
+                    .entry(subgraph_name.to_string())
+                    .or_default()
+                    // we store the original endpoint_str as the key for faster lookups
+                    .insert(endpoint_str.to_string(), ws_executor.clone());
+
+                Ok(ws_executor)
+            }
+            SubscriptionProtocol::HTTPCallback => {
+                let callback_config = self
+                    .config
+                    .callback
+                    .as_ref()
+                    .ok_or_else(|| SubgraphExecutorError::HttpCallbackNotConfigured)?;
+
+                let heartbeat_interval_ms = callback_config.heartbeat_interval.as_millis() as u64;
+
+                let subgraph_config = self.resolve_subgraph_config(subgraph_name)?;
+
+                let callback_executor = HttpCallbackSubgraphExecutor::new(
+                    subgraph_name.to_string(),
+                    endpoint_uri,
+                    subgraph_config.client,
+                    callback_config.public_url.to_string(),
+                    heartbeat_interval_ms,
+                    self.callback_subscriptions.clone(),
+                    self.telemetry_context.clone(),
+                )
+                .to_boxed_arc();
+
+                self.subscription_executors_by_subgraph
+                    .entry(subgraph_name.to_string())
+                    .or_default()
+                    .insert(endpoint_str.to_string(), callback_executor.clone());
+
+                Ok(callback_executor)
+            }
+        }
+    }
+
+    /// Resolves traffic shaping configuration for a specific subgraph, applying subgraph-specific
+    /// overrides on top of global settings
+    fn resolve_subgraph_config<'a>(
+        &'a self,
+        subgraph_name: &'a str,
+    ) -> Result<ResolvedSubgraphConfig<'a>, SubgraphExecutorError> {
+        let mut config = ResolvedSubgraphConfig {
+            client: self.client.clone(),
+            timeout_config: &self.config.traffic_shaping.all.request_timeout,
+            dedupe_enabled: self.config.traffic_shaping.all.dedupe_enabled,
+        };
+
+        let Some(subgraph_config) = self.config.traffic_shaping.subgraphs.get(subgraph_name) else {
+            return Ok(config);
+        };
+
+        let pool_idle_timeout = self.config.traffic_shaping.pool_idle_timeout(subgraph_name);
+        // A separate client is needed when connection lifetime or protocol settings differ.
+        let subgraph_allow_only_http2 = subgraph_config
+            .allow_only_http2
+            .unwrap_or(self.config.traffic_shaping.all.allow_only_http2);
+        if pool_idle_timeout != self.config.traffic_shaping.all.pool_idle_timeout
+            || subgraph_config.tls.is_some()
+            || subgraph_allow_only_http2 != self.config.traffic_shaping.all.allow_only_http2
+        {
+            let tls_config = get_merged_tls_config(
+                self.config.traffic_shaping.all.tls.as_ref(),
+                subgraph_config.tls.as_ref(),
+            );
+            let mut client_builder = Client::builder(TokioExecutor::new());
+            client_builder
+                .pool_timer(TokioTimer::new())
+                .pool_idle_timeout(pool_idle_timeout)
+                .pool_max_idle_per_host(self.max_connections_per_host);
+            if subgraph_allow_only_http2 {
+                client_builder.http2_only(true);
+            }
+            config.client =
+                Arc::new(client_builder.build(build_https_connector(tls_config.as_ref())?));
+        }
+
+        // Apply other subgraph-specific overrides
+        if let Some(dedupe_enabled) = subgraph_config.dedupe_enabled {
+            config.dedupe_enabled = dedupe_enabled;
+        }
+
+        if let Some(custom_timeout) = &subgraph_config.request_timeout {
+            config.timeout_config = custom_timeout;
+        }
+
+        Ok(config)
+    }
+
+    /// Compiles and registers a timeout for a specific subgraph.
+    /// If the subgraph has a custom timeout configuration, it will be used.
+    /// Otherwise, the global timeout configuration will be used.
+    fn register_subgraph_timeout(&self, subgraph_name: &str) -> Result<(), SubgraphExecutorError> {
+        // Check if this subgraph already has a timeout registered
+        if self.timeouts_by_subgraph.contains_key(subgraph_name) {
+            return Ok(());
+        }
+
+        // Get the timeout configuration for this subgraph, or fall back to global
+        let timeout_config = self
+            .config
+            .traffic_shaping
+            .subgraphs
+            .get(subgraph_name)
+            .and_then(|s| s.request_timeout.as_ref())
+            .unwrap_or(&self.config.traffic_shaping.all.request_timeout);
+
+        // Compile the timeout configuration into a DurationOrProgram
+        let timeout_prog = compile_duration_or_expression(timeout_config, None).map_err(|err| {
+            SubgraphExecutorError::RequestTimeoutExpressionBuild(
+                subgraph_name.to_string(),
+                err.diagnostics,
+            )
+        })?;
+
+        // Register the compiled timeout
+        self.timeouts_by_subgraph
+            .insert(subgraph_name.to_string(), timeout_prog);
+
+        Ok(())
+    }
+
+    /// Registers a circuit breaker for a specific subgraph.
+    /// If the subgraph already has a circuit breaker registered, it will do nothing.
+    fn register_circuit_breaker(&self, subgraph_name: &str) -> Result<(), SubgraphExecutorError> {
+        if self
+            .circuit_breakers_by_subgraph
+            .contains_key(subgraph_name)
+        {
+            return Ok(());
+        }
+
+        let global_circuit_breaker_cfg = self.config.traffic_shaping.all.circuit_breaker.as_ref();
+        let subgraph_circuit_breaker_cfg = self
+            .config
+            .traffic_shaping
+            .subgraphs
+            .get(subgraph_name)
+            .and_then(|s| s.circuit_breaker.as_ref());
+
+        let circuit_breaker_enabled = subgraph_circuit_breaker_cfg
+            .and_then(|c| c.enabled)
+            .or_else(|| global_circuit_breaker_cfg.and_then(|c| c.enabled))
+            .unwrap_or(false);
+
+        if circuit_breaker_enabled {
+            let mut builder = CircuitBreakerBuilder::default();
+
+            if let Some(error_threshold) = subgraph_circuit_breaker_cfg
+                .and_then(|c| c.error_threshold)
+                .or_else(|| global_circuit_breaker_cfg.and_then(|c| c.error_threshold))
+            {
+                let error_threshold = error_threshold.as_f64() as f32;
+                if !error_threshold.is_finite() {
+                    return Err(SubgraphExecutorError::CircuitBreakerCreationError(
+                        CircuitBreakerError::InvalidErrorThreshold(error_threshold),
+                        subgraph_name.to_string(),
+                    ));
+                }
+                builder = builder.error_threshold(error_threshold);
+            }
+
+            if let Some(volume_threshold) = subgraph_circuit_breaker_cfg
+                .and_then(|c| c.volume_threshold)
+                .or_else(|| global_circuit_breaker_cfg.and_then(|c| c.volume_threshold))
+            {
+                builder = builder.volume_threshold(volume_threshold);
+            }
+
+            if let Some(reset_timeout) = subgraph_circuit_breaker_cfg
+                .and_then(|c| c.reset_timeout)
+                .or_else(|| global_circuit_breaker_cfg.and_then(|c| c.reset_timeout))
+            {
+                builder = builder.reset_timeout(reset_timeout);
+            }
+
+            if let Some(half_open_attempts) = subgraph_circuit_breaker_cfg
+                .and_then(|c| c.half_open_attempts)
+                .or_else(|| global_circuit_breaker_cfg.and_then(|c| c.half_open_attempts))
+            {
+                builder = builder.half_open_attempts(half_open_attempts);
+            }
+
+            let recloser = builder.build_async().map_err(|e| {
+                SubgraphExecutorError::CircuitBreakerCreationError(e, subgraph_name.to_string())
+            })?;
+
+            let error_status_codes = subgraph_circuit_breaker_cfg
+                .and_then(|c| c.error_status_codes.as_ref())
+                .or_else(|| global_circuit_breaker_cfg.and_then(|c| c.error_status_codes.as_ref()))
+                .map(|codes| Arc::new(codes.clone()))
+                .unwrap_or_else(|| DEFAULT_CIRCUIT_BREAKER_ERROR_STATUS_CODES.clone());
+
+            self.circuit_breakers_by_subgraph.insert(
+                subgraph_name.to_string(),
+                SubgraphCircuitBreaker {
+                    recloser,
+                    error_status_codes,
+                },
+            );
+
+            self.telemetry_context
+                .metrics
+                .circuit_breaker
+                .register_subgraph(subgraph_name);
+        }
+
+        Ok(())
+    }
+}
+
+/// Resolves a timeout DurationOrProgram to a concrete Duration.
+/// Optionally includes a default timeout value in the VRL context.
+fn resolve_timeout(
+    duration_or_program: &DurationOrProgram,
+    client_request: &ClientRequestDetails<'_>,
+    default_timeout: Option<Duration>,
+) -> Result<Duration, SubgraphExecutorError> {
+    duration_or_program
+        .resolve(|| {
+            let mut context_map = BTreeMap::new();
+            context_map.insert("request".into(), client_request.into());
+
+            if let Some(default) = default_timeout {
+                context_map.insert(
+                    "default".into(),
+                    VrlValue::Integer(default.as_millis() as i64),
+                );
+            }
+
+            VrlValue::Object(context_map)
+        })
+        .map_err(|err| SubgraphExecutorError::TimeoutExpressionResolution(err.to_string()))
+}
+
+pub fn compile_duration_or_expression(
+    config: &DurationOrExpression,
+    fns: Option<&[Box<dyn VrlFunction>]>,
+) -> Result<ValueOrProgram<Duration>, ExpressionCompileError> {
+    match config {
+        DurationOrExpression::Duration(dur) => Ok(ValueOrProgram::Value(*dur)),
+        DurationOrExpression::Expression { expression } => {
+            let program = expression.as_str().compile_expression(fns)?;
+            let hints = ProgramHints::from_program(&program);
+            Ok(ValueOrProgram::Program(Box::new(program), hints))
+        }
+    }
+}

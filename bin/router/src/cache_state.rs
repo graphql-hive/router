@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use hive_router_internal::telemetry::TelemetryContext;
+use crate::telemetry::TelemetryContext;
 use moka::Entry;
 
 use crate::schema_state::SchemaState;

@@ -3,14 +3,14 @@ use std::{future::Future, pin::Pin, sync::Arc};
 use async_trait::async_trait;
 use futures::{stream::FuturesUnordered, StreamExt};
 
-use hive_console_sdk::expressions::{CompileExpression, ProgramHints};
-use hive_router_config::persisted_documents::{
+use crate::background_tasks::{BackgroundTask, CancellationToken};
+use crate::config::persisted_documents::{
     PersistedDocumentsConfig, PersistedDocumentsStorageConfig,
 };
-use hive_router_config::primitives::value_or_expression::ValueOrExpression;
-use hive_router_internal::background_tasks::{BackgroundTask, CancellationToken};
-use hive_router_internal::expressions::{ToVrlValue, ValueOrProgram};
-use hive_router_plan_executor::execution::client_request_details::ntex_header_map_to_vrl_value;
+use crate::config::primitives::value_or_expression::ValueOrExpression;
+use crate::executor::execution::client_request_details::ntex_header_map_to_vrl_value;
+use crate::vrl::expressions::{ToVrlValue, ValueOrProgram};
+use hive_console_sdk::expressions::{CompileExpression, ProgramHints};
 use ntex::web::HttpRequest;
 use tokio::sync::{mpsc, Mutex};
 

@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use hive_router_internal::telemetry::logging::targets;
-use hive_router_internal::telemetry::traces::spans::graphql::GraphQLVariableCoercionSpan;
-use hive_router_plan_executor::execution::plan::CoerceVariablesPayload;
-use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphSnapshot;
-use hive_router_plan_executor::variables::collect_variables;
+use crate::executor::execution::plan::CoerceVariablesPayload;
+use crate::executor::hooks::on_supergraph_load::SupergraphSnapshot;
+use crate::executor::variables::collect_variables;
+use crate::telemetry::logging::targets;
+use crate::telemetry::traces::spans::graphql::GraphQLVariableCoercionSpan;
 use sonic_rs::Value;
 use tracing::{debug, warn};
 

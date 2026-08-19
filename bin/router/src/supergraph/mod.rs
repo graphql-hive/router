@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use hive_router_config::supergraph::SupergraphSource;
-use hive_router_internal::telemetry::logging::targets;
+use crate::config::supergraph::SupergraphSource;
+use crate::telemetry::logging::targets;
 
 use crate::{
     storage::{utils::resolve_value_or_expression, StorageManager},

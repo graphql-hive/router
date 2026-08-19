@@ -3,10 +3,10 @@ mod subscription_metrics_e2e_tests {
     use std::time::Duration;
 
     use futures::StreamExt;
-    use hive_router_internal::telemetry::metrics::catalog::labels;
-    use hive_router_plan_executor::executors::{
+    use hive_router::executor::executors::{
         graphql_transport_ws::SubscribePayload, websocket_client::WsClient,
     };
+    use hive_router::telemetry::metrics::catalog::labels;
     use ntex::http;
 
     use crate::testkit::{otel::OtlpCollector, some_header_map, TestRouter, TestSubgraphs};

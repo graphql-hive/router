@@ -1,4 +1,4 @@
-use hive_router_config::persisted_documents::PersistedDocumentUrlTemplate;
+use crate::config::persisted_documents::PersistedDocumentUrlTemplate;
 use matchit::Router;
 
 use crate::pipeline::persisted_documents::extract::HttpRequestContext;

@@ -4,7 +4,7 @@
 //! Everything injected here is served to every browser that opens the Laboratory and is visible
 //! via "view source". It is a convenience for Laboratory users, not a place for secrets.
 
-use hive_router_config::{
+use crate::config::{
     laboratory::{LaboratoryCollectionConfig, LaboratoryConfig, LaboratoryOperationConfig},
     primitives::http_header::HttpHeaderName,
 };

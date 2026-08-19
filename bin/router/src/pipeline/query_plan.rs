@@ -2,21 +2,21 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Arc, LazyLock};
 
 use crate::cache_state::{CacheHitMiss, EntryResultHitMissExt};
+use crate::executor::execution::plan::PlanExecutionOutput;
+use crate::executor::hooks::on_query_plan::{
+    OnQueryPlanEndHookPayload, OnQueryPlanStartHookPayload,
+};
+use crate::executor::plugin_context::PluginRequestState;
+use crate::executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow};
+use crate::executor::plugins::hooks;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
+use crate::query_planner::planner::plan_nodes::QueryPlan;
+use crate::query_planner::planner::query_plan::QUERY_PLAN_KIND;
+use crate::query_planner::utils::cancellation::CancellationToken;
 use crate::schema_state::{SchemaState, SelectedSupergraph};
-use hive_router_internal::telemetry::traces::spans::graphql::GraphQLPlanSpan;
-use hive_router_plan_executor::execution::plan::PlanExecutionOutput;
-use hive_router_plan_executor::hooks::on_query_plan::{
-    OnQueryPlanEndHookPayload, OnQueryPlanStartHookPayload,
-};
-use hive_router_plan_executor::plugin_context::PluginRequestState;
-use hive_router_plan_executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow};
-use hive_router_plan_executor::plugins::hooks;
-use hive_router_query_planner::planner::plan_nodes::QueryPlan;
-use hive_router_query_planner::planner::query_plan::QUERY_PLAN_KIND;
-use hive_router_query_planner::utils::cancellation::CancellationToken;
+use crate::telemetry::traces::spans::graphql::GraphQLPlanSpan;
 use tracing::Instrument;
 use xxhash_rust::xxh3::Xxh3;
 

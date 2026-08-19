@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
-use hive_router_config::introspection_policy::IntrospectionPermissionConfig;
-use hive_router_internal::{
-    expressions::{BooleanOrProgram, CompileExpression, ExpressionCompileError, ProgramHints},
-    telemetry::logging::targets,
+use crate::config::introspection_policy::IntrospectionPermissionConfig;
+use crate::executor::execution::client_request_details::ClientRequestDetailsView;
+use crate::telemetry::logging::targets;
+use crate::vrl::expressions::{
+    BooleanOrProgram, CompileExpression, ExpressionCompileError, ProgramHints,
 };
-use hive_router_plan_executor::execution::client_request_details::ClientRequestDetailsView;
 use tracing::warn;
 use vrl::core::Value as VrlValue;
 

@@ -1,5 +1,6 @@
 use std::{cmp, collections::HashMap};
 
+use crate::config::limits::MaxDepthRuleConfig;
 use graphql_tools::{
     ast::{OperationVisitor, OperationVisitorContext},
     static_graphql::query::{Definition, Document, FragmentDefinition, Selection},
@@ -8,7 +9,6 @@ use graphql_tools::{
         utils::{ValidationError, ValidationErrorContext},
     },
 };
-use hive_router_config::limits::MaxDepthRuleConfig;
 
 use crate::pipeline::validation::shared::{CountableNode, VisitedFragment};
 
@@ -161,9 +161,9 @@ impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for MaxDepthVisitor<'d
 
 #[cfg(test)]
 mod tests {
+    use crate::config::limits::MaxDepthRuleConfig;
     use graphql_tools::parser::{parse_query, parse_schema};
     use graphql_tools::validation::validate::ValidationPlan;
-    use hive_router_config::limits::MaxDepthRuleConfig;
 
     use crate::pipeline::validation::max_depth_rule::MaxDepthRule;
 

@@ -5,7 +5,16 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::background_tasks::{BackgroundTask, CancellationToken};
+use crate::config::{
+    headers::OneOrMany,
+    telemetry::hive::HiveTelemetryConfig,
+    usage_reporting::{UsageReportingExclude, UsageReportingSamplingKeyKind},
+};
 use crate::consts::ROUTER_VERSION;
+use crate::query_planner::state::supergraph_state::OperationKind;
+use crate::telemetry::logging::targets;
+use crate::telemetry::utils::resolve_value_or_expression;
 use async_trait::async_trait;
 use futures::{stream::FuturesUnordered, StreamExt};
 use graphql_tools::parser::schema::Document;
@@ -13,17 +22,6 @@ use hive_console_sdk::agent::usage_agent::{
     AgentError, ExecutionReport, OperationType, RequestDetails, SamplingKey, UsageAgent,
     UsageAgentExt,
 };
-use hive_router_config::{
-    headers::OneOrMany,
-    telemetry::hive::HiveTelemetryConfig,
-    usage_reporting::{UsageReportingExclude, UsageReportingSamplingKeyKind},
-};
-use hive_router_internal::telemetry::utils::resolve_value_or_expression;
-use hive_router_internal::{
-    background_tasks::{BackgroundTask, CancellationToken},
-    telemetry::logging::targets,
-};
-use hive_router_query_planner::state::supergraph_state::OperationKind;
 use tokio::sync::{mpsc, Mutex};
 use tracing::error;
 

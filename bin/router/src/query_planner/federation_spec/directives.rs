@@ -1,0 +1,28 @@
+pub use crate::query_planner::federation_spec::authorization::AuthenticatedDirective;
+pub use crate::query_planner::federation_spec::authorization::RequiresScopesDirective;
+pub use crate::query_planner::federation_spec::directive_trait::FederationDirective;
+pub use crate::query_planner::federation_spec::inacessible::InaccessibleDirective;
+pub use crate::query_planner::federation_spec::join_enum_value::JoinEnumValueDirective;
+pub use crate::query_planner::federation_spec::join_field::JoinFieldDirective;
+pub use crate::query_planner::federation_spec::join_graph::JoinGraphDirective;
+pub use crate::query_planner::federation_spec::join_implements::JoinImplementsDirective;
+pub use crate::query_planner::federation_spec::join_type::JoinTypeDirective;
+pub use crate::query_planner::federation_spec::join_union::JoinUnionMemberDirective;
+
+pub struct TagDirective {}
+
+impl TagDirective {
+    pub const NAME: &str = "tag";
+}
+
+pub struct LinkDirective {}
+
+impl LinkDirective {
+    pub const NAME: &str = "link";
+}
+
+pub struct CoreDirective {}
+
+impl CoreDirective {
+    pub const NAME: &str = "core";
+}

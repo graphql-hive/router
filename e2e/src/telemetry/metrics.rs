@@ -5,13 +5,13 @@ use crate::testkit::{
     otel::{CollectedMetrics, OtlpCollector},
     ClientResponseExt, TestRouter, TestSubgraphs,
 };
+use hive_router::telemetry::metrics::catalog::{labels, labels_for, names, values};
 use hive_router::{
     async_trait, plugins::hooks::on_graphql_error::OnGraphQLErrorHookPayload,
     plugins::hooks::on_graphql_error::OnGraphQLErrorHookResult,
     plugins::hooks::on_plugin_init::OnPluginInitPayload,
     plugins::hooks::on_plugin_init::OnPluginInitResult, plugins::plugin_trait::RouterPlugin,
 };
-use hive_router_internal::telemetry::metrics::catalog::{labels, labels_for, names, values};
 use sonic_rs::json;
 use tempfile::NamedTempFile;
 

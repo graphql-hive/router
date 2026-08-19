@@ -2,10 +2,10 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ops::Deref;
 
-use hive_router_config::persisted_documents::{
+use crate::config::persisted_documents::{
     PersistedDocumentExtractorConfig, PersistedDocumentUrlTemplate, PersistedDocumentsConfig,
 };
-use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
+use crate::executor::hooks::on_graphql_params::GraphQLParams;
 use ntex::web::HttpRequest;
 use sonic_rs::OwnedLazyValue;
 use thiserror::Error;

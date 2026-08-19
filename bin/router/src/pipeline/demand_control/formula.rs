@@ -1,12 +1,11 @@
 use ahash::{HashMap as AHashMap, HashMapExt, HashSet as AHashSet, HashSetExt};
 
-use hive_router_internal::telemetry::logging::targets;
-use hive_router_plan_executor::execution::demand_control::demand_control_definition_cost;
-use hive_router_plan_executor::execution::demand_control::CompiledActualCostPlan;
-use hive_router_plan_executor::execution::demand_control::DemandControlEvaluation;
-use hive_router_plan_executor::execution::plan::CoerceVariablesPayload;
-use hive_router_query_planner::federation_spec::demand_control::ListSizeDirective;
-use hive_router_query_planner::{
+use crate::executor::execution::demand_control::demand_control_definition_cost;
+use crate::executor::execution::demand_control::CompiledActualCostPlan;
+use crate::executor::execution::demand_control::DemandControlEvaluation;
+use crate::executor::execution::plan::CoerceVariablesPayload;
+use crate::query_planner::federation_spec::demand_control::ListSizeDirective;
+use crate::query_planner::{
     ast::{
         fragment::FragmentDefinition,
         operation::OperationDefinition,
@@ -16,6 +15,7 @@ use hive_router_query_planner::{
     },
     state::supergraph_state::{OperationKind, SupergraphDefinition, SupergraphState, TypeNode},
 };
+use crate::telemetry::logging::targets;
 use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
 use tracing::warn;
 

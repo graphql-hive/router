@@ -4,9 +4,10 @@ pub mod jwks_manager;
 
 use std::{str::FromStr, sync::Arc};
 
+use crate::background_tasks::BackgroundTasksManager;
+use crate::config::jwt_auth::{JwtAuthConfig, JwtAuthPluginLookupLocation};
+use crate::telemetry::logging::targets;
 use cookie::Cookie;
-use hive_router_config::jwt_auth::{JwtAuthConfig, JwtAuthPluginLookupLocation};
-use hive_router_internal::{background_tasks::BackgroundTasksManager, telemetry::logging::targets};
 use http::header::COOKIE;
 use jsonwebtoken::{
     decode, decode_header,

@@ -1,4 +1,4 @@
-use hive_router_config::cors::{CORSConfig, CORSPolicyConfig};
+use crate::config::cors::{CORSConfig, CORSPolicyConfig};
 use http::{header, StatusCode};
 use ntex::{
     http::{header::HeaderValue, HeaderMap, Method},
@@ -303,7 +303,7 @@ fn append_vary(headers: &mut HeaderMap, token: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hive_router_config::cors::{CORSConfig, CORSPolicyConfig};
+    use crate::config::cors::{CORSConfig, CORSPolicyConfig};
     use ntex::{
         http::header,
         http::{Method, StatusCode},

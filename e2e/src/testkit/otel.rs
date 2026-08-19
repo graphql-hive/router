@@ -1,4 +1,4 @@
-use hive_router_internal::telemetry::traces::spans::attributes::HIVE_KIND;
+use hive_router::telemetry::traces::spans::attributes::HIVE_KIND;
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Display;

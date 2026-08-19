@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
+use crate::executor::response::graphql_error::GraphQLError;
+use crate::telemetry::logging::targets;
 use bytes::Bytes;
 use dashmap::DashMap;
-use hive_router_internal::telemetry::logging::targets;
-use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use tokio::sync::broadcast;
 use tracing::trace;
 use ulid::Ulid;

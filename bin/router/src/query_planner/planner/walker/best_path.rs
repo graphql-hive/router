@@ -1,0 +1,80 @@
+use std::collections::{btree_map::Entry, BTreeMap};
+
+use crate::query_planner::graph::Graph;
+
+use super::{error::WalkOperationError, path::OperationPath};
+
+pub struct BestPathTracker<'graph> {
+    graph: &'graph Graph,
+    /// A map from subgraph name to the best path and its cost.
+    /// BTreeMap instead of HashMap to keep the order of inserted keys deterministic.
+    subgraph_to_best_paths: BTreeMap<&'graph str, (Vec<OperationPath<'graph>>, u64)>,
+}
+
+pub fn find_best_paths<'graph>(paths: Vec<OperationPath<'graph>>) -> Vec<OperationPath<'graph>> {
+    let mut best_paths = Vec::new();
+    let mut best_cost = 0;
+
+    for path in paths {
+        if best_cost == 0 {
+            best_cost = path.cost;
+            best_paths = vec![path];
+        } else if best_cost == path.cost {
+            best_paths.push(path);
+        } else if best_cost > path.cost {
+            best_cost = path.cost;
+            best_paths = vec![path];
+        }
+    }
+
+    best_paths
+}
+
+impl<'graph> BestPathTracker<'graph> {
+    pub fn new(graph: &'graph Graph) -> Self {
+        Self {
+            graph,
+            subgraph_to_best_paths: BTreeMap::new(),
+        }
+    }
+
+    pub fn add(&mut self, path: &OperationPath<'graph>) -> Result<(), WalkOperationError> {
+        let tail_graph_id = self
+            .graph
+            .node(path.tail())?
+            .graph_id()
+            .expect("Graph ID not found in node");
+
+        match self.subgraph_to_best_paths.entry(tail_graph_id) {
+            Entry::Occupied(mut entry) => {
+                let (existing_paths, existing_cost) = entry.get_mut();
+
+                match path.cost.cmp(existing_cost) {
+                    std::cmp::Ordering::Less => {
+                        *existing_cost = path.cost;
+                        existing_paths.clear();
+                        existing_paths.push(path.clone());
+                    }
+                    std::cmp::Ordering::Equal => {
+                        existing_paths.push(path.clone());
+                    }
+                    std::cmp::Ordering::Greater => {
+                        // ignore this path
+                    }
+                }
+            }
+            Entry::Vacant(entry) => {
+                entry.insert((vec![path.clone()], path.cost));
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn get_best_paths(self) -> Vec<OperationPath<'graph>> {
+        self.subgraph_to_best_paths
+            .into_values()
+            .flat_map(|(paths, _)| paths)
+            .collect::<Vec<OperationPath<'graph>>>()
+    }
+}

@@ -1,5 +1,5 @@
-use hive_router_config::RouterConfigError;
-use hive_router_plan_executor::executors::error::TlsCertificatesError;
+use crate::config::RouterConfigError;
+use crate::executor::executors::error::TlsCertificatesError;
 
 use crate::{
     jwt::jwks_manager::JwksSourceError, plugins::registry::PluginRegistryError,

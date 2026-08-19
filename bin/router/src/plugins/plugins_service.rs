@@ -1,6 +1,6 @@
 use std::{ops::ControlFlow, sync::Arc};
 
-use hive_router_plan_executor::{
+use crate::executor::{
     hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpResponseHookPayload},
     plugin_context::PluginContext,
     plugin_trait::{EndControlFlow, StartControlFlow},

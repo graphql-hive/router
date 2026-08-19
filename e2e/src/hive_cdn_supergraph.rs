@@ -2,8 +2,8 @@
 mod hive_cdn_supergraph_e2e_tests {
     use std::time::Duration;
 
-    use hive_router_config::supergraph::SupergraphSource;
-    use hive_router_config::{load_config, primitives::single_or_multiple::SingleOrMultiple};
+    use hive_router::config::supergraph::SupergraphSource;
+    use hive_router::config::{load_config, primitives::single_or_multiple::SingleOrMultiple};
     use ntex::time;
     use sonic_rs::{JsonContainerTrait, JsonValueTrait};
     use tokio::time::sleep;

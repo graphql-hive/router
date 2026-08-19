@@ -1,8 +1,8 @@
 use std::time::Duration;
 
+use crate::config::primitives::file_path::FilePath;
+use crate::telemetry::logging::targets;
 use async_trait::async_trait;
-use hive_router_config::primitives::file_path::FilePath;
-use hive_router_internal::telemetry::logging::targets;
 use tokio::{fs, sync::RwLock};
 use tracing::{debug, trace};
 

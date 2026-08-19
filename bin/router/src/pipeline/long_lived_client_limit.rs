@@ -38,7 +38,7 @@ pub struct LongLivedClientLimitService {
 }
 
 impl LongLivedClientLimitService {
-    pub fn new(router_config: &hive_router_config::HiveRouterConfig) -> Self {
+    pub fn new(router_config: &crate::config::HiveRouterConfig) -> Self {
         let limit = router_config.traffic_shaping.router.max_long_lived_clients;
         Self {
             // the middleware only counts WebSocket connections; HTTP streaming

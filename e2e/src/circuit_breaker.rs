@@ -2,7 +2,7 @@
 mod circuit_breaker_e2e_tests {
     use std::{thread::sleep, time::Duration};
 
-    use hive_router_internal::telemetry::{
+    use hive_router::telemetry::{
         metrics::catalog::{labels, names},
         traces::spans::{
             attributes::{

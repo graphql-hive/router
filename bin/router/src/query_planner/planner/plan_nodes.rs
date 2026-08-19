@@ -1,0 +1,1052 @@
+use crate::query_planner::{
+    ast::{
+        merge_path::{Condition, MergePath, Segment},
+        minification::minify_operation,
+        operation::{OperationDefinition, SubgraphFetchOperation, VariableDefinition},
+        selection_item::SelectionItem,
+        selection_set::{FieldSelection, SelectionSet},
+        value::Value,
+    },
+    planner::fetch::{
+        fetch_step_data::FetchStepData, selections::FetchStepSelections, state::MultiTypeFetchStep,
+    },
+    state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
+    utils::pretty_display::{get_indent, PrettyDisplay},
+};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::{Display, Formatter as FmtFormatter, Result as FmtResult},
+    hash::{Hash, Hasher},
+};
+use xxhash_rust::xxh3::Xxh3;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryPlan {
+    pub kind: &'static str, // "QueryPlan"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node: Option<PlanNode>,
+}
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "kind")]
+pub enum PlanNode {
+    Fetch(FetchNode),
+    BatchFetch(BatchFetchNode),
+    Sequence(SequenceNode),
+    Parallel(ParallelNode),
+    Flatten(FlattenNode),
+    Condition(ConditionNode),
+    Subscription(SubscriptionNode),
+    Defer(DeferNode),
+}
+
+impl PlanNode {
+    pub fn as_fetch(&self) -> Option<&FetchNode> {
+        match self {
+            PlanNode::Fetch(node) => Some(node),
+            _ => None,
+        }
+    }
+
+    pub fn as_batch_fetch(&self) -> Option<&BatchFetchNode> {
+        match self {
+            PlanNode::BatchFetch(node) => Some(node),
+            _ => None,
+        }
+    }
+
+    pub fn as_sequence(&self) -> Option<&SequenceNode> {
+        match self {
+            PlanNode::Sequence(node) => Some(node),
+            _ => None,
+        }
+    }
+
+    pub fn as_parallel(&self) -> Option<&ParallelNode> {
+        match self {
+            PlanNode::Parallel(node) => Some(node),
+            _ => None,
+        }
+    }
+
+    pub fn as_flatten(&self) -> Option<&FlattenNode> {
+        match self {
+            PlanNode::Flatten(node) => Some(node),
+            _ => None,
+        }
+    }
+
+    pub fn as_condition(&self) -> Option<&ConditionNode> {
+        match self {
+            PlanNode::Condition(node) => Some(node),
+            _ => None,
+        }
+    }
+
+    pub fn as_subscription(&self) -> Option<&SubscriptionNode> {
+        match self {
+            PlanNode::Subscription(node) => Some(node),
+            _ => None,
+        }
+    }
+
+    pub fn as_defer(&self) -> Option<&DeferNode> {
+        match self {
+            PlanNode::Defer(node) => Some(node),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FetchNode {
+    #[serde(skip_serializing)]
+    pub id: i64,
+    pub service_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variable_usages: Option<BTreeSet<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_kind: Option<OperationKind>,
+    pub operation: SubgraphFetchOperation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_scalar_paths: Option<CustomScalarPaths>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requires: Option<SelectionSet>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_rewrites: Option<Vec<FetchRewrite>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_rewrites: Option<Vec<FetchRewrite>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchFetchNode {
+    #[serde(skip_serializing)]
+    pub id: i64,
+    pub service_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variable_usages: Option<BTreeSet<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_kind: Option<OperationKind>,
+    pub operation: SubgraphFetchOperation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_scalar_paths: Option<CustomScalarPaths>,
+    pub entity_batch: EntityBatch,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomScalarPaths {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub children: BTreeMap<String, CustomScalarPaths>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub terminal: bool,
+}
+
+impl CustomScalarPaths {
+    pub fn insert_path<I, S>(&mut self, path: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut node = self;
+        for segment in path {
+            node = node
+                .children
+                .entry(segment.as_ref().to_string())
+                .or_default();
+        }
+        node.terminal = true;
+    }
+
+    pub fn is_empty(&self) -> bool {
+        !self.terminal && self.children.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct CustomScalarPathState {
+    children: BTreeMap<String, CustomScalarPathState>,
+    custom_scalar_seen: bool,
+    standard_scalar_seen: bool,
+}
+
+impl CustomScalarPathState {
+    fn mark_custom_scalar<I, S>(&mut self, path: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut node = self;
+        for segment in path {
+            node = node
+                .children
+                .entry(segment.as_ref().to_string())
+                .or_default();
+        }
+        node.custom_scalar_seen = true;
+    }
+
+    fn mark_standard_scalar<I, S>(&mut self, path: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut node = self;
+        for segment in path {
+            node = node
+                .children
+                .entry(segment.as_ref().to_string())
+                .or_default();
+        }
+        node.standard_scalar_seen = true;
+    }
+
+    fn into_custom_scalar_paths(self) -> Option<CustomScalarPaths> {
+        let mut children = BTreeMap::new();
+
+        for (key, child) in self.children {
+            if let Some(paths) = child.into_custom_scalar_paths() {
+                children.insert(key, paths);
+            }
+        }
+
+        let terminal = self.custom_scalar_seen && !self.standard_scalar_seen && children.is_empty();
+        let paths = CustomScalarPaths { children, terminal };
+
+        (!paths.is_empty()).then_some(paths)
+    }
+}
+
+fn collect_custom_scalar_path_state(
+    path_kinds: &mut CustomScalarPathState,
+    response_path: &mut Vec<String>,
+    parent_type_name: &str,
+    selections: &SelectionSet,
+    supergraph: &SupergraphState,
+) {
+    let Some(parent_def) = supergraph.definitions.get(parent_type_name) else {
+        return;
+    };
+
+    let parent_fields = parent_def.fields();
+
+    for item in &selections.items {
+        match item {
+            SelectionItem::Field(field) => {
+                let Some(field_def) = parent_fields.get(&field.name) else {
+                    continue;
+                };
+
+                let response_key = field.selection_identifier();
+                let field_type_name = field_def.field_type.inner_type();
+
+                response_path.push(response_key.to_string());
+
+                if supergraph.is_custom_scalar_type(field_type_name) {
+                    path_kinds.mark_custom_scalar(response_path.iter().map(String::as_str));
+                } else {
+                    path_kinds.mark_standard_scalar(response_path.iter().map(String::as_str));
+
+                    if !field.selections.is_empty() {
+                        collect_custom_scalar_path_state(
+                            path_kinds,
+                            response_path,
+                            field_type_name,
+                            &field.selections,
+                            supergraph,
+                        );
+                    }
+                }
+
+                response_path.pop();
+            }
+            SelectionItem::InlineFragment(fragment) => {
+                collect_custom_scalar_path_state(
+                    path_kinds,
+                    response_path,
+                    &fragment.type_condition,
+                    &fragment.selections,
+                    supergraph,
+                );
+            }
+            SelectionItem::FragmentSpread(_) => {}
+        }
+    }
+}
+
+fn custom_scalar_paths_from_fetch_output(
+    output: &FetchStepSelections<MultiTypeFetchStep>,
+    supergraph: &SupergraphState,
+    entities_root_key: Option<&str>,
+) -> Option<CustomScalarPaths> {
+    let mut state = CustomScalarPathState::default();
+
+    for (type_name, selection_set) in output.iter_selections() {
+        let mut response_path = entities_root_key
+            .map(|root| vec![root.to_string()])
+            .unwrap_or_default();
+        collect_custom_scalar_path_state(
+            &mut state,
+            &mut response_path,
+            type_name,
+            selection_set,
+            supergraph,
+        );
+    }
+
+    state.into_custom_scalar_paths()
+}
+
+/// A dedicated function to produce custom scalar paths based on a `_entities` selection set.
+///
+/// Why? The regular `custom_scalar_paths_for_type_selection` requires a starting type name,
+/// which is not available for `_entities` selections.
+///
+/// The entity calls are always built from top-level `... on Type` fragments,
+/// so the starting type name is not needed.
+///
+/// Each fragment is visited using its own type condition.
+pub fn custom_scalar_paths_for_entities_selection(
+    selection_set: &SelectionSet,
+    supergraph: &SupergraphState,
+) -> Option<CustomScalarPaths> {
+    let mut state = CustomScalarPathState::default();
+    let mut response_path = Vec::new();
+
+    for item in &selection_set.items {
+        if let SelectionItem::InlineFragment(fragment) = item {
+            response_path.clear();
+            collect_custom_scalar_path_state(
+                &mut state,
+                &mut response_path,
+                &fragment.type_condition,
+                &fragment.selections,
+                supergraph,
+            );
+        }
+    }
+
+    state.into_custom_scalar_paths()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntityBatch {
+    pub aliases: Vec<EntityBatchAlias>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntityBatchAlias {
+    pub alias: String,
+    pub representations_variable_name: String,
+    #[serde(rename = "paths")]
+    pub merge_paths: Vec<FlattenNodePath>,
+    pub requires: SelectionSet,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_rewrites: Option<Vec<FetchRewrite>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_rewrites: Option<Vec<FetchRewrite>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlattenNode {
+    pub path: FlattenNodePath,
+    pub node: Box<PlanNode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SequenceNode {
+    pub nodes: Vec<PlanNode>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParallelNode {
+    pub nodes: Vec<PlanNode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConditionNode {
+    pub condition: String, // The variable name acting as the condition
+    pub if_clause: Option<Box<PlanNode>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub else_clause: Option<Box<PlanNode>>,
+}
+
+impl ConditionNode {
+    /// Checks if this condition node can be merged with another.
+    pub fn can_merge_with(&self, other: &Self) -> bool {
+        if self.condition != other.condition {
+            return false;
+        }
+
+        let both_if = self.else_clause.is_none() && other.else_clause.is_none();
+        let both_else = self.if_clause.is_none() && other.if_clause.is_none();
+
+        both_if || both_else
+    }
+
+    /// Merges another compatible condition node into this one.
+    pub fn merge(&mut self, mut other: Self) {
+        let merge_into_if_clause = self.if_clause.is_some();
+        let mut nodes = self.take_inner_nodes();
+        nodes.extend(other.take_inner_nodes());
+
+        let merged_body = PlanNode::sequence(nodes);
+
+        if merge_into_if_clause {
+            self.if_clause = Some(Box::new(merged_body));
+        } else {
+            self.else_clause = Some(Box::new(merged_body));
+        }
+    }
+
+    fn take_inner_nodes(&mut self) -> Vec<PlanNode> {
+        self.if_clause
+            .take()
+            .or_else(|| self.else_clause.take())
+            .map(|n| n.flatten_sequence())
+            .unwrap_or_default()
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyRenamer {
+    pub path: Vec<FetchNodePathSegment>,
+    pub rename_key_to: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum FetchNodePathSegment {
+    Key(String),
+    TypenameEquals(BTreeSet<String>),
+}
+
+impl FetchNodePathSegment {
+    pub fn typename_equals_from_type(type_name: String) -> Self {
+        Self::TypenameEquals(BTreeSet::from_iter([type_name]))
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum FetchRewrite {
+    ValueSetter(ValueSetter),
+    KeyRenamer(KeyRenamer),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum FlattenNodePathSegment {
+    Field(String),
+    TypeCondition(BTreeSet<String>),
+    #[serde(rename = "@")]
+    List,
+}
+
+impl From<&MergePath> for Vec<FetchNodePathSegment> {
+    fn from(value: &MergePath) -> Self {
+        value
+            .inner
+            .iter()
+            .filter_map(|path_segment| match path_segment {
+                Segment::TypeCondition(type_names, _) => {
+                    Some(FetchNodePathSegment::TypenameEquals(type_names.clone()))
+                }
+                Segment::Field(field_seg, _args_hash, _) => Some(FetchNodePathSegment::Key(
+                    field_seg.response_key().to_string(),
+                )),
+                Segment::List => None,
+            })
+            .collect()
+    }
+}
+
+impl FlattenNodePathSegment {
+    pub fn to_field(&self) -> Option<&String> {
+        match self {
+            FlattenNodePathSegment::Field(field_name) => Some(field_name),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FlattenNodePath(Vec<FlattenNodePathSegment>);
+
+impl FlattenNodePath {
+    pub fn as_slice(&self) -> &[FlattenNodePathSegment] {
+        &self.0
+    }
+}
+
+impl Display for FlattenNodePathSegment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FlattenNodePathSegment::Field(field_name) => write!(f, "{}", field_name),
+            FlattenNodePathSegment::TypeCondition(type_names) => {
+                write!(
+                    f,
+                    "|[{}]",
+                    type_names.iter().cloned().collect::<Vec<_>>().join("|")
+                )
+            }
+            FlattenNodePathSegment::List => write!(f, "@"),
+        }
+    }
+}
+
+impl Display for FlattenNodePath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut segments_iter = self.0.iter().peekable();
+
+        while let Some(segment) = segments_iter.next() {
+            write!(f, "{}", segment)?;
+            if let Some(peeked) = segments_iter.peek() {
+                match peeked {
+                    FlattenNodePathSegment::TypeCondition(_) => {
+                        // Don't add a dot before TypeCondition
+                    }
+                    _ => write!(f, ".")?,
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl From<&MergePath> for FlattenNodePath {
+    fn from(path: &MergePath) -> Self {
+        FlattenNodePath(
+            path.inner
+                .iter()
+                .map(|seg| match seg {
+                    Segment::TypeCondition(type_names, _) => {
+                        FlattenNodePathSegment::TypeCondition(type_names.clone())
+                    }
+                    Segment::Field(field_seg, _args_hash, _) => {
+                        FlattenNodePathSegment::Field(field_seg.response_key().to_string())
+                    }
+                    Segment::List => FlattenNodePathSegment::List,
+                })
+                .collect(),
+        )
+    }
+}
+
+impl From<MergePath> for FlattenNodePath {
+    fn from(path: MergePath) -> Self {
+        (&path).into()
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub struct ValueSetter {
+    pub path: Vec<FetchNodePathSegment>,
+    pub set_value_to: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriptionNode {
+    // A subscription node can only really have a primary fetch node.
+    pub primary: FetchNode,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DeferNode {
+    pub primary: DeferPrimary,
+    pub deferred: Vec<DeferredNode>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DeferPrimary {
+    pub subselection: Option<String>,
+    pub node: Option<Box<PlanNode>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DeferredNode {
+    pub depends: Vec<DeferDependency>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub query_path: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subselection: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node: Option<Box<PlanNode>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DeferDependency {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub defer_label: Option<String>,
+}
+
+impl PlanNode {
+    pub fn into_nodes(self) -> Vec<PlanNode> {
+        match self {
+            PlanNode::Sequence(node) => node.nodes,
+            PlanNode::Parallel(node) => node.nodes,
+            other => vec![other],
+        }
+    }
+
+    /// If the node is a Sequence, returns its children. Otherwise, returns the node itself in a Vec.
+    /// This is used to "splice" nodes into a parent Sequence without creating nested Sequences.
+    pub fn flatten_sequence(self) -> Vec<PlanNode> {
+        match self {
+            PlanNode::Sequence(node) => node.nodes,
+            other => vec![other],
+        }
+    }
+
+    /// Flattens nested Parallel nodes into a single list of nodes.
+    pub fn flatten_parallel(nodes: Vec<PlanNode>) -> Vec<PlanNode> {
+        let mut flattened = Vec::with_capacity(nodes.len());
+        for node in nodes {
+            match node {
+                PlanNode::Parallel(p) => flattened.extend(p.nodes),
+                other => flattened.push(other),
+            }
+        }
+        flattened
+    }
+
+    pub fn sequence(mut nodes: Vec<PlanNode>) -> PlanNode {
+        if nodes.len() == 1 {
+            nodes.remove(0)
+        } else {
+            PlanNode::Sequence(SequenceNode { nodes })
+        }
+    }
+
+    pub fn parallel(mut nodes: Vec<PlanNode>) -> PlanNode {
+        if nodes.len() == 1 {
+            nodes.remove(0)
+        } else {
+            PlanNode::Parallel(ParallelNode { nodes })
+        }
+    }
+
+    pub fn is_fetching_node(&self) -> bool {
+        match self {
+            PlanNode::Fetch(_) | PlanNode::BatchFetch(_) => true,
+            PlanNode::Flatten(flatten_node) => {
+                matches!(flatten_node.node.as_ref(), PlanNode::Fetch(_))
+            }
+            _ => false,
+        }
+    }
+}
+
+fn create_input_selection_set(
+    input_selections: &FetchStepSelections<MultiTypeFetchStep>,
+) -> SelectionSet {
+    let selection_set = input_selections.to_non_root_selection_set();
+
+    selection_set.strip_for_plan_input()
+}
+
+fn create_output_operation(
+    step: &FetchStepData<MultiTypeFetchStep>,
+    supergraph: &SupergraphState,
+) -> SubgraphFetchOperation {
+    let mut variables = vec![VariableDefinition {
+        name: "representations".to_string(),
+        variable_type: TypeNode::NonNull(Box::new(TypeNode::List(Box::new(TypeNode::NonNull(
+            Box::new(TypeNode::Named("_Any".to_string())),
+        ))))),
+        default_value: None,
+    }];
+
+    if let Some(additional_vars) = &step.variable_definitions {
+        variables.extend(additional_vars.clone());
+    }
+
+    let operation_def = OperationDefinition {
+        name: None,
+        operation_kind: Some(OperationKind::Query),
+        variable_definitions: Some(variables),
+        selection_set: SelectionSet {
+            items: vec![SelectionItem::Field(FieldSelection {
+                name: "_entities".to_string(),
+                selections: step.output.to_non_root_selection_set(),
+                alias: None,
+                arguments: Some(
+                    (
+                        "representations".to_string(),
+                        Value::Variable("representations".to_string()),
+                    )
+                        .into(),
+                ),
+                skip_if: None,
+                include_if: None,
+                omit_from_response: false,
+            })],
+        },
+    };
+
+    let document = minify_operation(operation_def, supergraph).expect("Failed to minify");
+
+    SubgraphFetchOperation::from_anonymous_operation(document)
+}
+
+impl FetchNode {
+    pub fn from_fetch_step(
+        step: &FetchStepData<MultiTypeFetchStep>,
+        supergraph: &SupergraphState,
+    ) -> Self {
+        match step.is_entity_call() {
+            true => FetchNode {
+                id: step.id,
+                service_name: step.service_name.0.clone(),
+                variable_usages: step.variable_usages.clone(),
+                operation_kind: Some(OperationKind::Query),
+                operation: create_output_operation(step, supergraph),
+                custom_scalar_paths: custom_scalar_paths_from_fetch_output(
+                    &step.output,
+                    supergraph,
+                    Some("_entities"),
+                ),
+                requires: Some(create_input_selection_set(&step.input)),
+                input_rewrites: step.input_rewrites.clone(),
+                output_rewrites: step.output_rewrites.clone(),
+            },
+            false => {
+                let root_type_name = supergraph.expect_root_type_name(Some(&step.operation_kind));
+                let operation_def = OperationDefinition {
+                    name: None,
+                    operation_kind: Some(step.operation_kind.clone()),
+                    selection_set: step.output.to_root_selection_set(root_type_name),
+                    variable_definitions: step.variable_definitions.clone(),
+                };
+                let document =
+                    minify_operation(operation_def, supergraph).expect("Failed to minify");
+
+                FetchNode {
+                    id: step.id,
+                    service_name: step.service_name.0.clone(),
+                    variable_usages: step.variable_usages.clone(),
+                    operation_kind: Some(step.operation_kind.clone()),
+                    operation: SubgraphFetchOperation::from_anonymous_operation(document),
+                    custom_scalar_paths: custom_scalar_paths_from_fetch_output(
+                        &step.output,
+                        supergraph,
+                        None,
+                    ),
+                    requires: None,
+                    input_rewrites: step.input_rewrites.clone(),
+                    output_rewrites: step.output_rewrites.clone(),
+                }
+            }
+        }
+    }
+}
+
+impl PlanNode {
+    pub fn from_fetch_step(
+        step: &FetchStepData<MultiTypeFetchStep>,
+        supergraph: &SupergraphState,
+    ) -> Self {
+        let fetch = FetchNode::from_fetch_step(step, supergraph);
+
+        let node = if !step.response_path.is_empty() {
+            PlanNode::Flatten(FlattenNode {
+                path: step.response_path.clone().into(),
+                node: Box::new(PlanNode::Fetch(fetch)),
+            })
+        } else if matches!(fetch.operation_kind, Some(OperationKind::Subscription)) {
+            PlanNode::Subscription(SubscriptionNode { primary: fetch })
+        } else {
+            PlanNode::Fetch(fetch)
+        };
+
+        match step.condition.as_ref() {
+            Some(condition) => match condition {
+                Condition::Include(var_name) => PlanNode::Condition(ConditionNode {
+                    condition: var_name.clone(),
+                    if_clause: Some(Box::new(node)),
+                    else_clause: None,
+                }),
+                Condition::Skip(var_name) => PlanNode::Condition(ConditionNode {
+                    condition: var_name.clone(),
+                    if_clause: None,
+                    else_clause: Some(Box::new(node)),
+                }),
+                Condition::SkipAndInclude { skip, include } => {
+                    let include_node = PlanNode::Condition(ConditionNode {
+                        condition: include.clone(),
+                        if_clause: Some(Box::new(node)),
+                        else_clause: None,
+                    });
+                    PlanNode::Condition(ConditionNode {
+                        condition: skip.clone(),
+                        if_clause: None,
+                        else_clause: Some(Box::new(include_node)),
+                    })
+                }
+            },
+            None => node,
+        }
+    }
+}
+
+impl Display for QueryPlan {
+    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
+        self.pretty_fmt(f, 0)
+    }
+}
+
+impl Display for PlanNode {
+    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
+        self.pretty_fmt(f, 0)
+    }
+}
+
+impl Display for FetchNode {
+    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
+        self.pretty_fmt(f, 0)
+    }
+}
+
+impl Display for BatchFetchNode {
+    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
+        self.pretty_fmt(f, 0)
+    }
+}
+
+impl Display for FlattenNode {
+    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
+        self.pretty_fmt(f, 0)
+    }
+}
+
+impl Display for SubscriptionNode {
+    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
+        self.pretty_fmt(f, 0)
+    }
+}
+
+impl PrettyDisplay for QueryPlan {
+    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+        let indent = get_indent(depth);
+        writeln!(f, "{indent}QueryPlan {{",)?;
+        if let Some(node) = &self.node {
+            node.pretty_fmt(f, depth + 1)?;
+        } else {
+            writeln!(f, "{indent}  None,")?;
+        }
+        writeln!(f, "{indent}}},")?;
+        Ok(())
+    }
+}
+
+impl PrettyDisplay for FetchNode {
+    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+        let indent = get_indent(depth);
+        writeln!(f, "{indent}Fetch(service: \"{}\") {{", self.service_name)?;
+        if let Some(requires) = &self.requires {
+            writeln!(f, "{indent}  {{")?;
+            requires.pretty_fmt(f, depth + 2)?;
+            writeln!(f, "{indent}  }} =>")?;
+        }
+        self.operation.pretty_fmt(f, depth)?;
+        writeln!(f, "{indent}}},")?;
+
+        Ok(())
+    }
+}
+
+impl PrettyDisplay for BatchFetchNode {
+    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+        let indent = get_indent(depth);
+        writeln!(
+            f,
+            "{indent}BatchFetch(service: \"{}\") {{",
+            self.service_name
+        )?;
+        writeln!(f, "{indent}  {{")?;
+        for alias in &self.entity_batch.aliases {
+            writeln!(f, "{indent}    {} {{", alias.alias)?;
+            writeln!(f, "{indent}      paths: [")?;
+            for merge_path in &alias.merge_paths {
+                writeln!(f, "{indent}        \"{}\"", merge_path)?;
+            }
+            writeln!(f, "{indent}      ]")?;
+            writeln!(f, "{indent}      {{")?;
+            alias.requires.pretty_fmt(f, depth + 4)?;
+            writeln!(f, "{indent}      }}")?;
+            writeln!(f, "{indent}    }}")?;
+        }
+        writeln!(f, "{indent}  }}")?;
+        self.operation.pretty_fmt(f, depth)?;
+        writeln!(f, "{indent}}},")?;
+
+        Ok(())
+    }
+}
+
+impl PrettyDisplay for FlattenNode {
+    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+        let indent = get_indent(depth);
+
+        writeln!(f, "{indent}Flatten(path: \"{}\") {{", self.path)?;
+        self.node.pretty_fmt(f, depth + 1)?;
+        writeln!(f, "{indent}}},")?;
+
+        Ok(())
+    }
+}
+
+impl PrettyDisplay for SequenceNode {
+    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+        let indent = get_indent(depth);
+        writeln!(f, "{indent}Sequence {{")?;
+        for node in &self.nodes {
+            node.pretty_fmt(f, depth + 1)?;
+        }
+        writeln!(f, "{indent}}},")?;
+        Ok(())
+    }
+}
+
+impl PrettyDisplay for ParallelNode {
+    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+        let indent = get_indent(depth);
+        writeln!(f, "{indent}Parallel {{")?;
+        for node in &self.nodes {
+            node.pretty_fmt(f, depth + 1)?;
+        }
+        writeln!(f, "{indent}}},")?;
+        Ok(())
+    }
+}
+
+impl PrettyDisplay for ConditionNode {
+    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+        let indent = get_indent(depth);
+
+        match (self.if_clause.as_ref(), self.else_clause.as_ref()) {
+            (Some(if_clause), None) => {
+                writeln!(f, "{indent}Include(if: ${}) {{", self.condition)?;
+                if_clause.pretty_fmt(f, depth + 1)?;
+                writeln!(f, "{indent}}},")?;
+            }
+            (None, Some(else_clause)) => {
+                writeln!(f, "{indent}Skip(if: ${}) {{", self.condition)?;
+                else_clause.pretty_fmt(f, depth + 1)?;
+                writeln!(f, "{indent}}},")?;
+            }
+            (Some(_if_clause), Some(_else_clause)) => {
+                todo!("Implement pretty_fmt for ConditionNode with both if and else clauses");
+            }
+            _ => panic!("Invalid condition node"),
+        }
+        Ok(())
+    }
+}
+
+impl PrettyDisplay for SubscriptionNode {
+    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+        let indent = get_indent(depth);
+        writeln!(f, "{indent}Subscription {{")?;
+        self.primary.pretty_fmt(f, depth + 1)?;
+        writeln!(f, "{indent}}},")?;
+        Ok(())
+    }
+}
+
+impl PrettyDisplay for PlanNode {
+    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+        match self {
+            PlanNode::Fetch(node) => node.pretty_fmt(f, depth),
+            PlanNode::BatchFetch(node) => node.pretty_fmt(f, depth),
+            PlanNode::Flatten(node) => node.pretty_fmt(f, depth),
+            PlanNode::Sequence(node) => node.pretty_fmt(f, depth),
+            PlanNode::Parallel(node) => node.pretty_fmt(f, depth),
+            PlanNode::Condition(node) => node.pretty_fmt(f, depth),
+            PlanNode::Subscription(node) => node.pretty_fmt(f, depth),
+            _ => Ok(()),
+        }
+    }
+}
+
+pub fn hash_minified_query(minified_query: &str) -> u64 {
+    let mut hasher = Xxh3::new();
+    minified_query.hash(&mut hasher);
+    hasher.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::query_planner::{
+        planner::fetch::{selections::FetchStepSelections, state::SingleTypeFetchStep},
+        state::supergraph_state::SupergraphState,
+        utils::parsing::parse_schema,
+    };
+
+    use super::{custom_scalar_paths_from_fetch_output, SelectionSet};
+
+    fn selection_set_for_field(field_name: &str) -> SelectionSet {
+        let selection = format!("{{ {field_name} }}");
+
+        graphql_tools::parser::parse_query(&selection)
+            .unwrap()
+            .into_static()
+            .definitions
+            .into_iter()
+            .find_map(|definition| match definition {
+                graphql_tools::parser::query::Definition::Operation(
+                    graphql_tools::parser::query::OperationDefinition::SelectionSet(selection_set),
+                ) => Some(selection_set.into()),
+                _ => None,
+            })
+            .expect("selection set")
+    }
+
+    #[test]
+    fn custom_scalar_paths_do_not_mark_custom_scalar_vs_builtin_scalar_collision() {
+        let schema = parse_schema(
+            r#"
+            scalar JSONBlob
+
+            type TypeA {
+              meta: JSONBlob
+            }
+
+            type TypeB {
+              meta: String
+            }
+
+            type Query {
+              root: String
+            }
+            "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+
+        let mut output = FetchStepSelections::<SingleTypeFetchStep>::new_empty().into_multi_type();
+        output.declare_known_type("TypeA");
+        output.declare_known_type("TypeB");
+        *output.selections_for_definition_mut("TypeA").unwrap() = selection_set_for_field("meta");
+        *output.selections_for_definition_mut("TypeB").unwrap() = selection_set_for_field("meta");
+
+        let paths = custom_scalar_paths_from_fetch_output(&output, &supergraph, Some("_entities"));
+
+        assert!(
+            paths.is_none(),
+            "custom-scalar vs built-in-scalar collision must not emit a terminal custom scalar path"
+        );
+    }
+}

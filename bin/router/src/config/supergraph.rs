@@ -1,0 +1,190 @@
+use std::time::Duration;
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use crate::config::primitives::{
+    file_path::FilePath, retry_policy::RetryPolicyConfig, single_or_multiple::SingleOrMultiple,
+    value_or_expression::ValueOrExpression,
+};
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields, tag = "source")]
+pub enum SupergraphSource {
+    /// Loads a supergraph from the filesystem.
+    /// The path can be either absolute or relative to the router's working directory.
+    #[serde(rename = "file")]
+    File {
+        /// The path to the supergraph file.
+        ///
+        /// Can also be set using the `SUPERGRAPH_FILE_PATH` environment variable.
+        path: Option<FilePath>,
+        /// Optional interval at which the file should be polled for changes.
+        /// If not provided, the file will only be loaded once when the router starts.
+        #[serde(
+            default = "default_file_poll_interval",
+            deserialize_with = "humantime_serde::deserialize",
+            serialize_with = "humantime_serde::serialize"
+        )]
+        #[schemars(with = "String")]
+        poll_interval: Option<Duration>,
+    },
+    /// Loads a supergraph from Hive Console CDN.
+    #[serde(rename = "hive")]
+    HiveConsole {
+        /// The CDN endpoint from Hive Console target.
+        ///
+        /// Can also be set using the `HIVE_CDN_ENDPOINT` environment variable.
+        endpoint: Option<SingleOrMultiple<String>>,
+        /// The CDN Access Token with from the Hive Console target.
+        ///
+        /// Can also be set using the `HIVE_CDN_KEY` environment variable.
+        key: Option<String>,
+        /// Interval at which the Hive Console should be polled for changes.
+        ///
+        /// Can also be set using the `HIVE_CDN_POLL_INTERVAL` environment variable.
+        #[serde(
+            default = "default_hive_poll_interval",
+            deserialize_with = "humantime_serde::deserialize",
+            serialize_with = "humantime_serde::serialize"
+        )]
+        #[schemars(with = "String")]
+        poll_interval: Duration,
+        /// Request timeout for the Hive Console CDN requests.
+        #[serde(
+            default = "default_hive_request_timeout",
+            deserialize_with = "humantime_serde::deserialize",
+            serialize_with = "humantime_serde::serialize"
+        )]
+        #[schemars(with = "String")]
+        request_timeout: Duration,
+        /// Connect timeout for the Hive Console CDN requests.
+        #[serde(
+            default = "default_hive_connect_timeout",
+            deserialize_with = "humantime_serde::deserialize",
+            serialize_with = "humantime_serde::serialize"
+        )]
+        #[schemars(with = "String")]
+        connect_timeout: Duration,
+        /// Whether to accept invalid TLS certificates when connecting to the Hive Console CDN.
+        #[serde(default = "default_accept_invalid_certs")]
+        accept_invalid_certs: bool,
+        /// Interval at which the Hive Console should be polled for changes.
+        ///
+        /// By default, an exponential backoff retry policy is used, with 10 attempts.
+        #[serde(default = "default_hive_retry_policy")]
+        retry_policy: RetryPolicyConfig,
+    },
+    /// Loads a supergraph from Apollo GraphOS Uplink.
+    #[serde(rename = "apollo_graphos")]
+    ApolloGraphOS {
+        /// The graph ref of the managed federation graph (`<GRAPH_ID>@<VARIANT>`).
+        ///
+        /// Can also be set using the `APOLLO_GRAPH_REF` environment variable.
+        graph_ref: Option<String>,
+        /// The Apollo API key, with at least the `service:read` permission.
+        ///
+        /// Can also be set using the `APOLLO_KEY` environment variable.
+        key: Option<String>,
+        /// The Apollo Uplink endpoint(s) to poll, tried in order on each poll.
+        ///
+        /// Can also be set using the `APOLLO_UPLINK_ENDPOINTS` environment variable
+        /// (comma-separated).
+        #[serde(default = "default_apollo_uplink_endpoints")]
+        endpoint: SingleOrMultiple<String>,
+        /// The timeout for a single HTTP call to Apollo Uplink.
+        #[serde(
+            default = "default_apollo_uplink_timeout",
+            deserialize_with = "humantime_serde::deserialize",
+            serialize_with = "humantime_serde::serialize"
+        )]
+        #[schemars(with = "String")]
+        timeout: Duration,
+        /// Whether to accept invalid TLS certificates when connecting to Apollo Uplink.
+        #[serde(default = "default_accept_invalid_certs")]
+        accept_invalid_certs: bool,
+    },
+    #[serde(rename = "storage")]
+    Storage {
+        /// The storage id as it was defined in the config file, under `storages:` field.
+        storage_id: String,
+        /// The path to the supergraph file in the storage/bucket.
+        location: ValueOrExpression<String>,
+        /// Optional interval at which the file should be polled for changes.
+        /// If not provided, the file will only be loaded once when the router starts.
+        #[serde(
+            default = "default_file_poll_interval",
+            deserialize_with = "humantime_serde::deserialize",
+            serialize_with = "humantime_serde::serialize"
+        )]
+        #[schemars(with = "String")]
+        poll_interval: Option<Duration>,
+    },
+    /// No configured supergraph source. A plugin must select a supergraph for every GraphQL
+    /// request and WebSocket upgrade that needs one, via `set_supergraph` in
+    /// `on_http_request`.
+    ///
+    /// There is deliberately no fallback: if no plugin supplies one, the request fails with
+    /// the same `NO_SUPERGRAPH_AVAILABLE` response the router uses while a configured supergraph
+    /// hasn't loaded yet.
+    #[serde(rename = "plugin")]
+    Plugin,
+}
+
+fn default_accept_invalid_certs() -> bool {
+    false
+}
+
+fn default_hive_request_timeout() -> Duration {
+    Duration::from_secs(60)
+}
+
+fn default_hive_connect_timeout() -> Duration {
+    Duration::from_secs(10)
+}
+
+fn default_hive_retry_policy() -> RetryPolicyConfig {
+    RetryPolicyConfig { max_retries: 10 }
+}
+
+/// Apollo's managed federation Uplink endpoints: GCP first, AWS as fallback.
+/// Matches the default order used by Apollo Router itself.
+fn default_apollo_uplink_endpoints() -> SingleOrMultiple<String> {
+    SingleOrMultiple::Multiple(vec![
+        "https://uplink.api.apollographql.com/".to_string(),
+        "https://aws.uplink.api.apollographql.com/".to_string(),
+    ])
+}
+
+fn default_apollo_uplink_timeout() -> Duration {
+    Duration::from_secs(30)
+}
+
+impl SupergraphSource {
+    pub fn source_name(&self) -> &str {
+        match self {
+            SupergraphSource::File { .. } => "file",
+            SupergraphSource::HiveConsole { .. } => "hive",
+            SupergraphSource::ApolloGraphOS { .. } => "apollo_graphos",
+            SupergraphSource::Storage { storage_id, .. } => storage_id.as_str(),
+            SupergraphSource::Plugin => "plugin",
+        }
+    }
+}
+
+fn default_hive_poll_interval() -> Duration {
+    Duration::from_secs(10)
+}
+
+fn default_file_poll_interval() -> Option<Duration> {
+    None
+}
+
+impl Default for SupergraphSource {
+    fn default() -> Self {
+        SupergraphSource::File {
+            path: FilePath::new_from_relative("supergraph.graphql").ok(),
+            poll_interval: default_file_poll_interval(),
+        }
+    }
+}

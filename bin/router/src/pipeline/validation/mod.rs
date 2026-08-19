@@ -2,20 +2,20 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use crate::cache_state::{CacheHitMiss, EntryValueHitMissExt};
+use crate::executor::hooks::on_graphql_validation::{
+    OnGraphQLValidationEndHookPayload, OnGraphQLValidationStartHookPayload,
+};
+use crate::executor::plugin_context::PluginRequestState;
+use crate::executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow};
+use crate::executor::plugins::hooks;
 use crate::pipeline::error::{ClientPipelineError, PipelineError};
 use crate::pipeline::parser::GraphQLParserPayload;
 use crate::schema_state::SelectedSupergraph;
 use crate::shared_state::RouterSharedState;
+use crate::telemetry::logging::targets;
+use crate::telemetry::traces::spans::graphql::GraphQLValidateSpan;
 use crate::SchemaState;
 use graphql_tools::validation::validate::validate;
-use hive_router_internal::telemetry::logging::targets;
-use hive_router_internal::telemetry::traces::spans::graphql::GraphQLValidateSpan;
-use hive_router_plan_executor::hooks::on_graphql_validation::{
-    OnGraphQLValidationEndHookPayload, OnGraphQLValidationStartHookPayload,
-};
-use hive_router_plan_executor::plugin_context::PluginRequestState;
-use hive_router_plan_executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow};
-use hive_router_plan_executor::plugins::hooks;
 use tracing::{debug, warn, Instrument};
 use xxhash_rust::xxh3::Xxh3;
 pub mod max_aliases_rule;

@@ -1,27 +1,27 @@
 use std::env;
 use std::process;
 
-use hive_router_plan_executor::introspection::schema::SchemaWithMetadata;
-use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
-use hive_router_query_planner::ast::normalization::normalize_operation;
-use hive_router_query_planner::ast::operation::OperationDefinition;
-use hive_router_query_planner::consumer_schema::ConsumerSchema;
-use hive_router_query_planner::graph::Graph;
-use hive_router_query_planner::graph::PlannerOverrideContext;
-use hive_router_query_planner::planner::best::find_best_combination;
-use hive_router_query_planner::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
-use hive_router_query_planner::planner::fetch::fetch_graph::FetchGraph;
-use hive_router_query_planner::planner::fetch::state::MultiTypeFetchStep;
-use hive_router_query_planner::planner::plan_nodes::QueryPlan;
-use hive_router_query_planner::planner::query_plan::build_query_plan_from_fetch_graph;
-use hive_router_query_planner::planner::tree::query_tree::QueryTree;
-use hive_router_query_planner::planner::walker::walk_operation;
-use hive_router_query_planner::planner::QueryPlannerOptions;
-use hive_router_query_planner::state::supergraph_state::OperationKind;
-use hive_router_query_planner::state::supergraph_state::SupergraphState;
-use hive_router_query_planner::utils::cancellation::CancellationToken;
-use hive_router_query_planner::utils::parsing::parse_operation;
-use hive_router_query_planner::utils::parsing::parse_schema;
+use hive_router::executor::introspection::schema::SchemaWithMetadata;
+use hive_router::executor::projection::plan::FieldProjectionPlan;
+use hive_router::query_planner::ast::normalization::normalize_operation;
+use hive_router::query_planner::ast::operation::OperationDefinition;
+use hive_router::query_planner::consumer_schema::ConsumerSchema;
+use hive_router::query_planner::graph::Graph;
+use hive_router::query_planner::graph::PlannerOverrideContext;
+use hive_router::query_planner::planner::best::find_best_combination;
+use hive_router::query_planner::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
+use hive_router::query_planner::planner::fetch::fetch_graph::FetchGraph;
+use hive_router::query_planner::planner::fetch::state::MultiTypeFetchStep;
+use hive_router::query_planner::planner::plan_nodes::QueryPlan;
+use hive_router::query_planner::planner::query_plan::build_query_plan_from_fetch_graph;
+use hive_router::query_planner::planner::tree::query_tree::QueryTree;
+use hive_router::query_planner::planner::walker::walk_operation;
+use hive_router::query_planner::planner::QueryPlannerOptions;
+use hive_router::query_planner::state::supergraph_state::OperationKind;
+use hive_router::query_planner::state::supergraph_state::SupergraphState;
+use hive_router::query_planner::utils::cancellation::CancellationToken;
+use hive_router::query_planner::utils::parsing::parse_operation;
+use hive_router::query_planner::utils::parsing::parse_schema;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 fn main() {

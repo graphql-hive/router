@@ -1,7 +1,8 @@
+use crate::background_tasks::BackgroundTask;
+use crate::config::persisted_documents::PersistedDocumentsStorageRefConfig;
+use crate::telemetry::logging::targets;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use hive_router_config::persisted_documents::PersistedDocumentsStorageRefConfig;
-use hive_router_internal::{background_tasks::BackgroundTask, telemetry::logging::targets};
 use object_store::path::Path;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::RwLock;

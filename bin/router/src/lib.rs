@@ -1,13 +1,17 @@
 // Needed because of ntex's way of defining middlewares
 #![recursion_limit = "256"]
 
+pub mod background_tasks;
 mod cache_state;
+pub mod config;
 mod consts;
 pub mod error;
+pub mod executor;
 mod http_utils;
 mod jwt;
 pub mod pipeline;
 pub mod plugins;
+pub mod query_planner;
 mod schema_state;
 mod shared_state;
 mod storage;
@@ -28,6 +32,7 @@ use crate::{
     consts::ROUTER_VERSION,
     error::RouterInitError,
     http_utils::{
+        body::read_request_body_size,
         landing_page::landing_page_handler,
         probes::{health_check_handler, readiness_check_handler},
     },
@@ -59,37 +64,33 @@ use crate::{
     telemetry::{HeaderExtractor, PrometheusAttached},
 };
 
+use crate::background_tasks::{BackgroundTask, CancellationToken};
 use crate::cache_state::register_cache_size_observers;
+pub use crate::config::humantime_serde;
+use crate::config::{load_config, subscriptions::CallbackConfig, HiveRouterConfig};
+pub use crate::executor::execution::plan::PlanExecutionOutput;
+pub use crate::executor::executors::http::SubgraphHttpResponse;
+use crate::executor::headers::response::ResponseHeaderSink;
+pub use crate::executor::response::graphql_error::GraphQLError;
+pub use crate::pipeline::authorization::user_auth_context::{
+    AuthorizationMetadataError, UserAuthContext,
+};
 pub use crate::plugins::registry::PluginRegistry;
+use crate::telemetry::logging::request_id::{self, REQUEST_IDENTIFIERS};
+use crate::telemetry::metrics::catalog::values::GraphQLResponseStatus;
+use crate::telemetry::{
+    logging::{summary, targets},
+    traces::spans::http_request::HttpServerRequestSpan,
+    utils::RequestRoutePattern,
+    TelemetryContext,
+};
+pub use crate::utils::BoxError;
 pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 pub use arc_swap::ArcSwap;
 pub use async_trait::async_trait;
 pub use dashmap::DashMap;
 pub use graphql_tools;
 use graphql_tools::validation::rules::default_rules_validation_plan;
-pub use hive_router_config::humantime_serde;
-use hive_router_config::{load_config, subscriptions::CallbackConfig, HiveRouterConfig};
-pub use hive_router_internal::background_tasks;
-use hive_router_internal::telemetry::{
-    logging::{summary, targets},
-    otel::{opentelemetry, tracing_opentelemetry::OpenTelemetrySpanExt},
-    traces::spans::http_request::HttpServerRequestSpan,
-    utils::RequestRoutePattern,
-    TelemetryContext,
-};
-pub use hive_router_internal::BoxError;
-use hive_router_internal::{
-    background_tasks::{BackgroundTask, CancellationToken},
-    telemetry::logging::request_id::{self, REQUEST_IDENTIFIERS},
-};
-use hive_router_internal::{
-    http::read_request_body_size, telemetry::metrics::catalog::values::GraphQLResponseStatus,
-};
-pub use hive_router_plan_executor::execution::plan::PlanExecutionOutput;
-pub use hive_router_plan_executor::executors::http::SubgraphHttpResponse;
-use hive_router_plan_executor::headers::response::ResponseHeaderSink;
-pub use hive_router_plan_executor::response::graphql_error::GraphQLError;
-pub use hive_router_query_planner as query_planner;
 pub use http;
 pub use mimalloc::MiMalloc as RouterGlobalAllocator;
 pub use ntex;
@@ -100,11 +101,14 @@ use ntex::{
     web::{self, HttpRequest},
     SharedCfg,
 };
+pub use opentelemetry;
 pub use sonic_rs;
 pub use tokio;
 pub use tracing;
 use tracing::{info, warn, Instrument};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 pub mod tls;
+mod vrl;
 
 #[cfg(not(feature = "graphiql"))]
 static LABORATORY_HTML: &str = include_str!(concat!(env!("OUT_DIR"), "/laboratory.html"));
