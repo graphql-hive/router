@@ -17,25 +17,44 @@ use crate::{
     },
 };
 
-/// Projects one entity into the `representations` array, deduplicating on the bytes it
-/// produced, and returns the hash to record for this entity's position.
+/// Projects one entity into the `representations` array, deduplicating it, and returns the
+/// key to record for this entity's position.
 ///
-/// Deduplicating on the projected bytes — rather than walking the `requires` selection set a
-/// second time to hash the tree — removes a whole traversal per entity, along with its
-/// `binary_search` per field. It is also more precise: two entities that differ only in
-/// fields `requires` does not select now collapse into one representation.
+/// Two ways of recognising a repeat, and the cheap one covers the fetches a query plan
+/// actually produces:
 ///
-/// The trade: a duplicate now has to be projected before it can be recognised as one,
-/// where the tree hash could reject it first. So the cost here is flat in the duplicate
-/// ratio, ~83-105us per 1000 entities, while the old cost scaled with how many were
-/// unique. Measured over 1000 entities:
+/// **By value.** A flat `requires` program — leaves and type conditions over one object, no
+/// nested `Enter` — writes a pure function of `__typename` plus one value per slot, so those
+/// values identify the entry before anything is written. A repeat costs one map lookup and no
+/// bytes at all. That is what a deeply nested query needs: in
+/// `reviews { product { reviews { author { … } } } }` the same handful of products and users
+/// are asked for over and over, and the `requires`-projection symbols fall from 8.7% to 1.6%
+/// of on-CPU time in a load profile.
 ///
-/// | distinct | before   | after   |
-/// |----------|---------:|--------:|
-/// | 1000     | 266.7 us |  99.5 us|
-/// | 50       |  75.9 us |  83.1 us|
+/// **By projected bytes.** Everything else projects first and hashes what it wrote, then
+/// rolls the buffer back if those bytes were already there. Deduplicating on the bytes rather
+/// than walking the `requires` selection set a second time to hash the tree is what made this
+/// affordable in the first place — it removed a whole traversal per entity, and it is more
+/// precise, since two entities differing only in fields `requires` does not select collapse
+/// into one representation.
 ///
-/// A 2.7x win when entities are mostly unique, against ~9% when almost all are duplicates.
+/// Over 1000 entities, tree hash → bytes → value key:
+///
+/// | distinct    | tree hash | bytes   | value key |
+/// |-------------|----------:|--------:|----------:|
+/// | all 1000    |  266.7 us | 62.2 us |   72.1 us |
+/// | half        |         — | 51.7 us |   44.6 us |
+/// | few         |         — | 42.7 us |   19.7 us |
+/// | almost none |   75.9 us | 40.8 us |   17.2 us |
+///
+/// The first row is the cost of the value key never paying off: entities that are all
+/// distinct are hashed once for nothing before being projected anyway. Entity fetches exist
+/// because entities repeat, so that row is the unusual one — but it is a real 16%, and if a
+/// workload ever lives there the fix is to stop computing the key, not to compute it better.
+///
+/// Either way the returned value is only an identifier: it is matched against itself when
+/// entities come back, and never interpreted. The two kinds never mix inside one call, since
+/// the program is fixed for the whole fetch.
 ///
 /// `None` means nothing was written for this position: either the entity was null, or
 /// projection produced no fields. Both are treated the same way at merge time.
@@ -54,6 +73,26 @@ pub fn push_representation(
         return None;
     }
 
+    // A rewritten entity is projected from a clone, whose values this key never sees, so the
+    // value path is only taken when there are no rewrites.
+    if input_rewrites.is_empty() {
+        if let Some(key) = flat_requires_key(requires, entity) {
+            // One map operation, not a lookup and then an insert: `entry` claims the index
+            // for a first sighting, and the rare entity that projects to nothing gives it
+            // back below.
+            match seen.entry(key) {
+                Entry::Occupied(_) => return Some(key),
+                Entry::Vacant(vacant) => vacant.insert(*next_index),
+            };
+            if !project_entry(possible_types, requires, entity, buffer, *next_index) {
+                seen.remove(&key);
+                return None;
+            }
+            *next_index += 1;
+            return Some(key);
+        }
+    }
+
     // Rewrites have to run before hashing, because they change the bytes that get sent.
     // That means a duplicate entity is now cloned and rewritten before being discarded,
     // where before it was discarded first — only when `input_rewrites` is set, which is
@@ -69,19 +108,13 @@ pub fn push_representation(
         &*rewritten
     };
 
-    // The separator is written before the entry and rolled back with it, so it never ends
-    // up inside the hashed bytes — otherwise the same entity would hash differently
-    // depending on its position in the array.
     let entry_start = buffer.len();
-    if *next_index > 0 {
-        buffer.put(COMMA);
-    }
-    let bytes_start = buffer.len();
-
-    if !project_requires(possible_types, requires, entity, buffer, true, None) {
-        buffer.truncate(entry_start);
+    if !project_entry(possible_types, requires, entity, buffer, *next_index) {
         return None;
     }
+    // The separator is excluded from the hashed bytes, so the same entity hashes the same way
+    // wherever it lands in the array.
+    let bytes_start = entry_start + if *next_index > 0 { 1 } else { 0 };
 
     let hash = xxh3_64(&buffer[bytes_start..]);
     match seen.entry(hash) {
@@ -93,6 +126,111 @@ pub fn push_representation(
     }
 
     Some(hash)
+}
+
+/// Writes one `representations` entry, with its leading separator, and rolls both back if the
+/// entity projected to nothing.
+fn project_entry(
+    possible_types: &PossibleTypes,
+    requires: &[RequiresStep],
+    entity: &Value<'_>,
+    buffer: &mut Vec<u8>,
+    index: usize,
+) -> bool {
+    let entry_start = buffer.len();
+    if index > 0 {
+        buffer.put(COMMA);
+    }
+    if !project_requires(possible_types, requires, entity, buffer, true, None) {
+        buffer.truncate(entry_start);
+        return false;
+    }
+    true
+}
+
+/// A key over the values a flat `requires` program reads, cheap enough to recognise a repeat
+/// entity before paying to project it.
+///
+/// `None` unless every step is a leaf over a scalar slot, or a type condition over more of
+/// the same. A nested `Enter` or a list at a leaf slot makes the written bytes depend on more
+/// than one value per slot, and those keep projecting first and deduplicating on the bytes.
+///
+/// `__typename` is hashed whether or not the program selects it, because `project_requires`
+/// writes it from slot 0 whenever it is there.
+///
+/// The key covers each value's variant as well as its payload, which makes it *more*
+/// discriminating than the bytes, never less. Two entities with the same key therefore
+/// project to the same bytes; two that would project alike from differently-typed values
+/// simply fail to collapse, which costs one extra entry in `representations` and nothing
+/// else. That asymmetry is the point -- the dangerous direction is impossible.
+fn flat_requires_key(steps: &[RequiresStep], entity: &Value<'_>) -> Option<u64> {
+    let slots = entity.as_object()?;
+    let mut key = scalar_key(slots.get(TYPENAME_SLOT).unwrap_or(&Value::Absent))?;
+    hash_flat_steps(steps, slots, &mut key)?;
+    Some(key)
+}
+
+/// Mixes in the slots a flat program reads, or gives up.
+fn hash_flat_steps(steps: &[RequiresStep], slots: &[Value<'_>], key: &mut u64) -> Option<()> {
+    for step in steps {
+        match step {
+            RequiresStep::Leaf { slot, .. } => {
+                *key = mix(*key, scalar_key(slots.get(*slot).unwrap_or(&Value::Absent))?);
+            }
+            // A type condition reads the same object, and which branch runs is decided by a
+            // `__typename` this key already covers against a condition fixed in the program.
+            // Slots under a branch that does not run are mixed in anyway, which can only cost
+            // a missed collapse.
+            RequiresStep::OnType {
+                typename_slot,
+                steps,
+                ..
+            } => {
+                if let Some(slot) = typename_slot {
+                    *key = mix(*key, scalar_key(slots.get(*slot).unwrap_or(&Value::Absent))?);
+                }
+                hash_flat_steps(steps, slots, key)?;
+            }
+            // A nested object or a list under a leaf would need the same reasoning one level
+            // down; those keep projecting first and deduplicating on the bytes.
+            RequiresStep::Enter { .. } => return None,
+        }
+    }
+    Some(())
+}
+
+/// Identifies one scalar slot by variant and payload, or gives up on a container.
+///
+/// `String` and `OwnedString` share a tag because they write the same bytes; every other
+/// variant gets its own, so two values that write differently can never share a key.
+#[inline]
+fn scalar_key(value: &Value<'_>) -> Option<u64> {
+    let (tag, payload) = match value {
+        Value::Absent => (0, 0),
+        Value::Null => (1, 0),
+        Value::Bool(b) => (2, *b as u64),
+        Value::I64(n) => (3, *n as u64),
+        Value::U64(n) => (4, *n),
+        Value::F64(n) => (5, n.to_bits()),
+        Value::String(s) => (6, xxh3_64(s.as_bytes())),
+        Value::OwnedString(s) => (6, xxh3_64(s.as_bytes())),
+        Value::RawJson(raw) => (7, xxh3_64(raw.as_bytes())),
+        Value::Array(_) | Value::Object(_) => return None,
+    };
+    Some(mix(tag, payload))
+}
+
+/// One round of avalanche over a running accumulator.
+///
+/// Written out rather than reached for through `Hasher`: this runs once per required field
+/// per entity, and building an `AHasher` per entity cost more than the projection it was
+/// meant to skip -- 1000 unique entities went from 62 to 114 us.
+#[inline]
+fn mix(state: u64, value: u64) -> u64 {
+    let mut hash = state.rotate_left(27) ^ value;
+    hash = hash.wrapping_mul(0x9e37_79b1_85eb_ca87);
+    hash ^= hash >> 31;
+    hash
 }
 
 fn write_response_key(first: bool, response_key: Option<&str>, buffer: &mut Vec<u8>) {
@@ -320,7 +458,8 @@ fn project_requires_steps(
 
 #[cfg(test)]
 mod tests {
-    use super::project_requires;
+    use super::{project_requires, push_representation};
+    use ahash::HashMap as AHashMap;
     use crate::introspection::schema::PossibleTypes;
     use graphql_tools::parser::query;
     use hive_router_query_planner::ast::{
@@ -543,5 +682,147 @@ mod tests {
             "id": "1"
           }
         "#);
+    }
+
+    /// The value-key path must produce exactly what projecting every entity and
+    /// deduplicating on the resulting bytes produces: the same `representations` array, and
+    /// the same grouping of entities onto entries.
+    ///
+    /// The reference is written out independently rather than by disabling the fast path, so
+    /// it checks the fast path against the meaning of the operation and not against another
+    /// copy of itself. Returns the grouping so each caller can also pin what it expects.
+    fn assert_dedup_matches_reference(
+        requires: &str,
+        entities: &[sonic_rs::Value],
+    ) -> (Vec<Option<usize>>, usize) {
+        let selections = requires_from_str(requires);
+        let shape = response_shape_for_selections(&selections);
+        let compiled = compile_requires(&selections, &shape);
+        let possible_types = PossibleTypes::default();
+
+        let parsed: Vec<_> = entities
+            .iter()
+            .map(|entity| {
+                SubgraphResponse::parse_data_with_shape(
+                    &sonic_rs::to_string(entity).unwrap(),
+                    &shape,
+                )
+            })
+            .collect();
+
+        let arena = bumpalo::Bump::new();
+        let mut buffer = Vec::new();
+        let mut seen: AHashMap<u64, usize> = AHashMap::default();
+        let mut next_index = 0usize;
+        let keys: Vec<_> = parsed
+            .iter()
+            .map(|owned| {
+                push_representation(
+                    &possible_types,
+                    &compiled,
+                    &[],
+                    &arena,
+                    &owned.data,
+                    &mut buffer,
+                    &mut seen,
+                    &mut next_index,
+                )
+            })
+            .collect();
+
+        // Reference: project each entity on its own, then deduplicate on the exact bytes.
+        let mut entries: Vec<Vec<u8>> = Vec::new();
+        let mut reference_groups: Vec<Option<usize>> = Vec::new();
+        for owned in &parsed {
+            let mut one = Vec::new();
+            if !project_requires(&possible_types, &compiled, &owned.data, &mut one, true, None) {
+                reference_groups.push(None);
+                continue;
+            }
+            let group = match entries.iter().position(|entry| *entry == one) {
+                Some(group) => group,
+                None => {
+                    entries.push(one);
+                    entries.len() - 1
+                }
+            };
+            reference_groups.push(Some(group));
+        }
+
+        // The returned keys are opaque identifiers, so compare how they group entities
+        // rather than their values.
+        let mut order: Vec<u64> = Vec::new();
+        let groups: Vec<Option<usize>> = keys
+            .iter()
+            .map(|key| {
+                key.map(|key| match order.iter().position(|seen| *seen == key) {
+                    Some(group) => group,
+                    None => {
+                        order.push(key);
+                        order.len() - 1
+                    }
+                })
+            })
+            .collect();
+
+        assert_eq!(
+            String::from_utf8(buffer).unwrap(),
+            String::from_utf8(entries.join(&b','.to_owned())).unwrap(),
+            "representations differ for `{requires}`"
+        );
+        assert_eq!(groups, reference_groups, "grouping differs for `{requires}`");
+        assert_eq!(next_index, entries.len());
+
+        (groups, entries.len())
+    }
+
+    fn dedup_test_entities() -> Vec<sonic_rs::Value> {
+        vec![
+            json!({ "__typename": "Product", "upc": "1" }),
+            json!({ "__typename": "Product", "upc": "2" }),
+            // Same key field, different type: must not collapse into the entry above.
+            json!({ "__typename": "Other", "upc": "1" }),
+            // An answered `null` is kept in the representation; a field no response filled in
+            // is left out, so these two must stay apart -- and the second projects to nothing.
+            json!({ "__typename": "Product", "upc": null }),
+            json!({ "__typename": "Product" }),
+            // Repeats, now that the map has other entries in it.
+            json!({ "__typename": "Product", "upc": "1" }),
+            json!({ "__typename": "Other", "upc": "1" }),
+            // A number where the others had a string: same digits, different bytes.
+            json!({ "__typename": "Product", "upc": 1 }),
+        ]
+    }
+
+    #[test]
+    fn value_key_dedup_matches_projecting_every_entity() {
+        let entities = dedup_test_entities();
+        let (groups, distinct) = assert_dedup_matches_reference("__typename upc", &entities);
+
+        // Guard the test itself: it is only meaningful if these entities really do exercise
+        // both collapsing and staying apart.
+        assert_eq!(distinct, 5);
+        assert_eq!(groups[5], groups[0]);
+        assert_eq!(groups[6], groups[2]);
+        assert_eq!(groups[4], None);
+        assert_ne!(groups[0], groups[7]);
+    }
+
+    /// A query plan writes `requires` as an inline fragment on the entity type, so the type
+    /// condition — not the bare field list above — is the shape that actually reaches the
+    /// router.
+    #[test]
+    fn value_key_dedup_handles_a_type_condition() {
+        let entities = dedup_test_entities();
+        let (groups, distinct) =
+            assert_dedup_matches_reference("... on Product { __typename upc }", &entities);
+
+        // Same grouping as the bare field list: the condition is decided by a `__typename`
+        // the key already covers, so it changes what is written, never how entities collapse.
+        assert_eq!(distinct, 4, "groups: {groups:?}");
+        assert_eq!(groups[5], groups[0]);
+        assert_eq!(groups[6], groups[2]);
+        assert_eq!(groups[4], None);
+        assert_ne!(groups[0], groups[7]);
     }
 }
