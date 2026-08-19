@@ -114,6 +114,20 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --all
 
+  semver-checks:
+    name: breaking changes / hive-router crate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: check semver
+        uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
+        with:
+          package: hive-router
+          baseline-rev: origin/main
+
   benchmark:
     strategy:
       matrix:
