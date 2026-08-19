@@ -106,6 +106,8 @@ fn authorization_benchmark(c: &mut Criterion) {
                     bubble_up.schema_metadata,
                     bubble_up.variable_payload,
                     &jwt_req_details,
+                    &Default::default(),
+                    true,
                     false,
                 )
                 .unwrap(),
@@ -139,6 +141,8 @@ fn authorization_benchmark(c: &mut Criterion) {
                     complex.schema_metadata,
                     complex.variable_payload,
                     &jwt_req_details,
+                    &Default::default(),
+                    true,
                     false,
                 )
                 .unwrap(),
@@ -177,6 +181,8 @@ fn authorization_benchmark(c: &mut Criterion) {
                     complex_partially.schema_metadata,
                     complex_partially.variable_payload,
                     &jwt_req_details,
+                    &Default::default(),
+                    true,
                     false,
                 )
                 .unwrap(),
@@ -261,6 +267,8 @@ fn authorization_benchmark(c: &mut Criterion) {
                     large_mostly_auth.schema_metadata,
                     large_mostly_auth.variable_payload,
                     &jwt_req_details,
+                    &Default::default(),
+                    true,
                     false,
                 )
                 .unwrap(),
@@ -332,6 +340,8 @@ fn authorization_benchmark(c: &mut Criterion) {
                     large_partially_denied.schema_metadata,
                     large_partially_denied.variable_payload,
                     &jwt_req_details,
+                    &Default::default(),
+                    true,
                     false,
                 )
                 .unwrap(),
@@ -414,6 +424,8 @@ fn authorization_benchmark(c: &mut Criterion) {
                     deep_nested.schema_metadata,
                     deep_nested.variable_payload,
                     &jwt_req_details,
+                    &Default::default(),
+                    true,
                     false,
                 )
                 .unwrap(),
@@ -472,6 +484,8 @@ fn authorization_benchmark(c: &mut Criterion) {
                     large_unauth.schema_metadata,
                     large_unauth.variable_payload,
                     &jwt_req_details,
+                    &Default::default(),
+                    true,
                     false,
                 )
                 .unwrap(),
@@ -519,6 +533,8 @@ fn authorization_benchmark(c: &mut Criterion) {
                     interface_auth_inline_unauth.schema_metadata,
                     interface_auth_inline_unauth.variable_payload,
                     &jwt_req_details,
+                    &Default::default(),
+                    true,
                     false,
                 )
                 .unwrap(),
@@ -572,6 +588,8 @@ fn authorization_benchmark(c: &mut Criterion) {
                     interface_auth_inline_auth.schema_metadata,
                     interface_auth_inline_auth.variable_payload,
                     &jwt_req_details,
+                    &Default::default(),
+                    true,
                     false,
                 )
                 .unwrap(),

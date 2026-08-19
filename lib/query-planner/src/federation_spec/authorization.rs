@@ -87,3 +87,50 @@ impl PartialOrd for RequiresScopesDirective {
         Some(self.cmp(other))
     }
 }
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct PolicyDirective {
+    pub policies: AstValue,
+}
+
+impl PolicyDirective {
+    pub const NAME: &str = "policy";
+}
+
+impl FederationDirective for PolicyDirective {
+    fn directive_name() -> &'static str {
+        Self::NAME
+    }
+
+    fn parse(directive: &Directive<'_, String>) -> Self
+    where
+        Self: Sized,
+    {
+        let mut result = Self {
+            policies: AstValue::Null,
+        };
+
+        for (arg_name, arg_value) in &directive.arguments {
+            if arg_name.eq("policies") {
+                // Same reasoning as `@requiresScopes(scopes:)` above: we only "read"
+                // the argument here and leave validation to the higher level code,
+                // which can report errors with `Result<T, E>`.
+                result.policies = arg_value.into()
+            }
+        }
+
+        result
+    }
+}
+
+impl Ord for PolicyDirective {
+    fn cmp(&self, _other: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
+    }
+}
+
+impl PartialOrd for PolicyDirective {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}

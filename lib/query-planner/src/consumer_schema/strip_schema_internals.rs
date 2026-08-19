@@ -5,13 +5,14 @@ use crate::{
     federation_spec::{
         definitions::{
             CorePurposesEnum, JoinDirectiveArgumentsScalar, JoinFieldSetScalar, JoinGraphEnum,
-            LinkImportScalar, LinkPurposeEnum, RequiresScopesScopeScalar,
+            LinkImportScalar, LinkPurposeEnum, PolicyPolicyScalar, RequiresScopesScopeScalar,
         },
         demand_control::{CostDirective, ListSizeDirective},
         directives::{
             AuthenticatedDirective, CoreDirective, InaccessibleDirective, JoinEnumValueDirective,
             JoinFieldDirective, JoinGraphDirective, JoinImplementsDirective, JoinTypeDirective,
-            JoinUnionMemberDirective, LinkDirective, RequiresScopesDirective, TagDirective,
+            JoinUnionMemberDirective, LinkDirective, PolicyDirective, RequiresScopesDirective,
+            TagDirective,
         },
         join_directive::JoinDirectiveDirective,
         join_owner::JoinOwnerDirective,
@@ -22,7 +23,7 @@ use crate::{
 // directive @inaccessible on FIELD_DEFINITION | OBJECT | INTERFACE | UNION | ENUM | ENUM_VALUE | SCALAR | INPUT_OBJECT | INPUT_FIELD_DEFINITION | ARGUMENT_DEFINITION
 pub(crate) struct StripSchemaInternals;
 
-static DIRECTIVES_TO_STRIP: [&str; 16] = [
+static DIRECTIVES_TO_STRIP: [&str; 17] = [
     JoinTypeDirective::NAME,
     JoinEnumValueDirective::NAME,
     JoinFieldDirective::NAME,
@@ -37,11 +38,12 @@ static DIRECTIVES_TO_STRIP: [&str; 16] = [
     CoreDirective::NAME,
     AuthenticatedDirective::NAME,
     RequiresScopesDirective::NAME,
+    PolicyDirective::NAME,
     CostDirective::NAME,
     ListSizeDirective::NAME,
 ];
 
-static DEFINITIONS_TO_STRIP: [&str; 7] = [
+static DEFINITIONS_TO_STRIP: [&str; 8] = [
     LinkPurposeEnum::NAME,
     LinkImportScalar::NAME,
     JoinGraphEnum::NAME,
@@ -49,6 +51,7 @@ static DEFINITIONS_TO_STRIP: [&str; 7] = [
     JoinDirectiveArgumentsScalar::NAME,
     CorePurposesEnum::NAME,
     RequiresScopesScopeScalar::NAME,
+    PolicyPolicyScalar::NAME,
 ];
 
 impl StripSchemaInternals {

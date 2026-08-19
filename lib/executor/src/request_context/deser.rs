@@ -1,6 +1,6 @@
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
-use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
+use sonic_rs::{JsonContainerTrait, JsonValueTrait, Object, Value};
 
 use super::error::RequestContextError;
 use super::{RequestContext, SelectedRequestContext};
@@ -21,6 +21,11 @@ pub trait RequestContextValueExt {
         key: &'static str,
         expected: &'static str,
     ) -> Result<&'a [Value], RequestContextError>;
+    fn expect_object<'a>(
+        &'a self,
+        key: &'static str,
+        expected: &'static str,
+    ) -> Result<&'a Object, RequestContextError>;
 }
 
 impl RequestContextValueExt for Value {
@@ -67,6 +72,18 @@ impl RequestContextValueExt for Value {
                 })?;
 
         Ok(value.as_slice())
+    }
+
+    fn expect_object<'a>(
+        &'a self,
+        key: &'static str,
+        allowed_types: &'static str,
+    ) -> Result<&'a Object, RequestContextError> {
+        self.as_object()
+            .ok_or_else(|| RequestContextError::ReservedKeyTypeMismatch {
+                key: key.to_string(),
+                expected: allowed_types,
+            })
     }
 }
 

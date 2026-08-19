@@ -1,4 +1,6 @@
 #[cfg(test)]
+mod authorization_policies;
+#[cfg(test)]
 mod context;
 #[cfg(test)]
 mod failures;
