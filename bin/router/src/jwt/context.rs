@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use hive_router_plan_executor::execution::jwt_forward::JwtForwardingError;
+use crate::executor::execution::jwt_forward::JwtForwardingError;
 use jsonwebtoken::TokenData;
 use serde::{Deserialize, Serialize};
 

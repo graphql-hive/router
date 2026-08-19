@@ -7,10 +7,10 @@ pub use crate::testkit::{
     otel::{CollectedMetrics, OtlpCollector},
     ClientResponseExt, TestRouter, TestSubgraphs,
 };
-pub use hive_router_internal::telemetry::metrics::catalog::{labels, names};
-pub use hive_router_plan_executor::executors::{
+pub use hive_router::executor::executors::{
     graphql_transport_ws::SubscribePayload, websocket_client::WsClient,
 };
+pub use hive_router::telemetry::metrics::catalog::{labels, names};
 
 pub(super) async fn wait_for_metrics_export() {
     tokio::time::sleep(Duration::from_millis(300)).await;

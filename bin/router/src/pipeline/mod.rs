@@ -1,33 +1,34 @@
-use futures::StreamExt;
-use hive_router_internal::{
-    http::{drain_body_stream, read_body_stream},
-    telemetry::{
-        logging::{scope::RequestLogScope, summary, targets},
-        traces::spans::{graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan},
-    },
-};
-use hive_router_plan_executor::{
-    coprocessor::runtime::MutableRequestState,
-    execution::{
-        client_request_details::{
-            JwtRequestDetails, MutableClientRequestDetails, OperationDetails, PathParams,
-        },
-        plan::{CoerceVariablesPayload, PlanExecutionOutput, QueryPlanExecutionResult},
-    },
-    executors::common::{ConnectionFingerprint, InboundRequestFingerprint},
-    headers::response::{ResponseHeaderAggregator, ResponseHeaderSink},
-    hooks::{
-        on_graphql_analysis::{OnGraphqlAnalysisHookPayload, OnGraphqlAnalysisHookResult},
-        on_graphql_params::GraphQLParams,
-    },
-    plugin_context::{PluginContext, PluginRequestState},
-    plugins::hooks,
-    request_context::{RequestContextExt, SharedRequestContext},
-    response::graphql_error::GraphQLError,
-};
-use hive_router_query_planner::{
+use crate::http_utils::body::read_body_stream;
+use crate::query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
+use crate::telemetry::{
+    logging::{scope::RequestLogScope, summary, targets},
+    traces::spans::{graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan},
+};
+use crate::{
+    executor::{
+        coprocessor::runtime::MutableRequestState,
+        execution::{
+            client_request_details::{
+                JwtRequestDetails, MutableClientRequestDetails, OperationDetails, PathParams,
+            },
+            plan::{CoerceVariablesPayload, PlanExecutionOutput, QueryPlanExecutionResult},
+        },
+        executors::common::{ConnectionFingerprint, InboundRequestFingerprint},
+        headers::response::{ResponseHeaderAggregator, ResponseHeaderSink},
+        hooks::{
+            on_graphql_analysis::{OnGraphqlAnalysisHookPayload, OnGraphqlAnalysisHookResult},
+            on_graphql_params::GraphQLParams,
+        },
+        plugin_context::{PluginContext, PluginRequestState},
+        plugins::hooks,
+        request_context::{RequestContextExt, SharedRequestContext},
+        response::graphql_error::GraphQLError,
+    },
+    http_utils::body::drain_body_stream,
+};
+use futures::StreamExt;
 use http::{
     header::{CONTENT_TYPE, RETRY_AFTER},
     HeaderValue, Method,
@@ -80,7 +81,7 @@ use crate::{
     },
 };
 
-use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
+use crate::telemetry::metrics::catalog::values::GraphQLResponseStatus;
 
 pub mod active_subscriptions;
 pub mod authorization;

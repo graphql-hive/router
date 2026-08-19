@@ -1,5 +1,5 @@
-use hive_router_config::csrf::CSRFPreventionConfig;
-use hive_router_internal::telemetry::logging::targets;
+use crate::config::csrf::CSRFPreventionConfig;
+use crate::telemetry::logging::targets;
 use ntex::web::HttpRequest;
 use tracing::warn;
 

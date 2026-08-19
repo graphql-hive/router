@@ -12,24 +12,8 @@ pull_request.title = "chore(release): router crates and artifacts"
 owner = "graphql-hive"
 repo = "router"
 
-[packages.hive-router-query-planner]
-versioned_files = ["lib/query-planner/Cargo.toml", { path = "lib/executor/Cargo.toml", dependency = "hive-router-query-planner" }, { path = "bin/router/Cargo.toml", dependency = "hive-router-query-planner" }, "Cargo.lock"]
-changelog = "lib/query-planner/CHANGELOG.md"
-
-[packages.hive-router-plan-executor]
-versioned_files = ["lib/executor/Cargo.toml", { path = "bin/router/Cargo.toml", dependency = "hive-router-plan-executor" }, "Cargo.lock"]
-changelog = "lib/executor/CHANGELOG.md"
-
-[packages.hive-router-config]
-versioned_files = ["lib/router-config/Cargo.toml", { path = "lib/executor/Cargo.toml", dependency = "hive-router-config" }, { path = "bin/router/Cargo.toml", dependency = "hive-router-config" }, { path = "lib/internal/Cargo.toml", dependency = "hive-router-config" }, "Cargo.lock"]
-changelog = "lib/router-config/CHANGELOG.md"
-
-[packages.hive-router-internal]
-versioned_files = ["lib/internal/Cargo.toml", { path = "lib/executor/Cargo.toml", dependency = "hive-router-internal" }, { path = "bin/router/Cargo.toml", dependency = "hive-router-internal" }, "Cargo.lock"]
-changelog = "lib/internal/CHANGELOG.md"
-
 [packages.graphql-tools]
-versioned_files = ["lib/graphql-tools/Cargo.toml", { path = "lib/executor/Cargo.toml", dependency = "graphql-tools" }, { path = "lib/query-planner/Cargo.toml", dependency = "graphql-tools" }, { path = "lib/hive-console-sdk/Cargo.toml", dependency = "graphql-tools" }, { path = "bin/router/Cargo.toml", dependency = "graphql-tools" }, "Cargo.lock"]
+versioned_files = ["lib/graphql-tools/Cargo.toml", { path = "lib/hive-console-sdk/Cargo.toml", dependency = "graphql-tools" }, { path = "bin/router/Cargo.toml", dependency = "graphql-tools" }, "Cargo.lock"]
 changelog = "lib/graphql-tools/CHANGELOG.md"
 
 [packages.hive-console-sdk]

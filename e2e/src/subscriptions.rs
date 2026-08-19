@@ -1553,7 +1553,7 @@ mod subscriptions_e2e_tests {
     #[ntex::test]
     async fn active_across_transports_subscriptions_deduplication() {
         use futures::StreamExt;
-        use hive_router_plan_executor::executors::{
+        use hive_router::executor::executors::{
             graphql_transport_ws::SubscribePayload, websocket_client::WsClient,
         };
 
@@ -1658,7 +1658,7 @@ mod subscriptions_e2e_tests {
     #[ntex::test]
     async fn active_across_transports_subscriptions_deduplication_promotion() {
         use futures::StreamExt;
-        use hive_router_plan_executor::executors::{
+        use hive_router::executor::executors::{
             graphql_transport_ws::SubscribePayload, websocket_client::WsClient,
         };
 

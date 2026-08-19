@@ -1,7 +1,7 @@
+use crate::config::storage::{StorageConfigMap, StorageSourceConfig};
 use crate::storage::error::StorageError;
+use crate::telemetry::logging::targets;
 use async_trait::async_trait;
-use hive_router_config::storage::{StorageConfigMap, StorageSourceConfig};
-use hive_router_internal::telemetry::logging::targets;
 use object_store::path::Path;
 use std::{collections::HashMap, sync::Arc};
 use tracing::debug;

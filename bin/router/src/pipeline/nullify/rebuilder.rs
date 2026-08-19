@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use ahash::HashSet;
-use hive_router_plan_executor::projection::plan::{FieldProjectionPlan, ProjectionValueSource};
-use hive_router_query_planner::ast::{
+use crate::executor::projection::plan::{FieldProjectionPlan, ProjectionValueSource};
+use crate::query_planner::ast::{
     operation::OperationDefinition,
     selection_item::SelectionItem,
     selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
     value::Value,
 };
+use ahash::HashSet;
 
 use crate::pipeline::trie::{PathIndex, Trie};
 

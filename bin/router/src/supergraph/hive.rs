@@ -1,8 +1,8 @@
+use crate::telemetry::logging::targets;
 use async_trait::async_trait;
 use hive_console_sdk::supergraph_fetcher::{
     async_fetcher::SupergraphFetcherAsyncState, SupergraphFetcher, SupergraphFetcherError,
 };
-use hive_router_internal::telemetry::logging::targets;
 use std::time::Duration;
 use tracing::{debug, error};
 

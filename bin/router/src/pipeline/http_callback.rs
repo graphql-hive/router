@@ -1,14 +1,14 @@
-use bytes::Bytes as BytesLib;
-use dashmap::mapref::one::Ref;
-use hive_router_internal::telemetry::logging::targets;
-use hive_router_internal::telemetry::metrics::subscription_metrics::SubscriptionTransport;
-use hive_router_internal::telemetry::TelemetryContext;
-use hive_router_plan_executor::executors::http_callback::{
+use crate::executor::executors::http_callback::{
     CallbackMessage, CallbackSubscription, CallbackSubscriptionsMap, CALLBACK_PROTOCOL_VERSION,
     SUBSCRIPTION_PROTOCOL_HEADER,
 };
-use hive_router_plan_executor::executors::subscription_buffer::{try_send_or_drop, SendOutcome};
-use hive_router_plan_executor::response::graphql_error::GraphQLError;
+use crate::executor::executors::subscription_buffer::{try_send_or_drop, SendOutcome};
+use crate::executor::response::graphql_error::GraphQLError;
+use crate::telemetry::logging::targets;
+use crate::telemetry::metrics::subscription_metrics::SubscriptionTransport;
+use crate::telemetry::TelemetryContext;
+use bytes::Bytes as BytesLib;
+use dashmap::mapref::one::Ref;
 use http::StatusCode;
 use ntex::util::Bytes;
 use ntex::web::WebResponseError;

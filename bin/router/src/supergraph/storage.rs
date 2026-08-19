@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
+use crate::telemetry::logging::targets;
 use async_trait::async_trait;
-use hive_router_internal::telemetry::logging::targets;
 use object_store::path::Path;
 use tokio::sync::RwLock;
 use tracing::error;

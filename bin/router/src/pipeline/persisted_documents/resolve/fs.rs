@@ -1,6 +1,6 @@
+use crate::telemetry::logging::targets;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use hive_router_internal::telemetry::logging::targets;
 use notify::{Config as NotifyConfig, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
@@ -11,8 +11,8 @@ use thiserror::Error;
 use tokio::sync::{Mutex, Notify};
 use tracing::{info, warn};
 
-use hive_router_config::persisted_documents::PersistedDocumentsFileStorageConfig;
-use hive_router_internal::background_tasks::{BackgroundTask, CancellationToken};
+use crate::background_tasks::{BackgroundTask, CancellationToken};
+use crate::config::persisted_documents::PersistedDocumentsFileStorageConfig;
 
 use crate::pipeline::persisted_documents::resolve::shared_file_manifest::{
     parse_manifest, DocumentsById,

@@ -1,6 +1,6 @@
+use crate::executor::headers::response::ResponseHeaderSink;
 use futures::StreamExt;
 use hive_console_sdk::agent::usage_agent::RequestDetails;
-use hive_router_plan_executor::headers::response::ResponseHeaderSink;
 use http::Method;
 use ntex::channel::oneshot;
 use ntex::http::{header::HeaderName, header::HeaderValue, HeaderMap};
@@ -18,24 +18,22 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn, Instrument};
 
-use hive_router_internal::telemetry::metrics::catalog::values::SubscriptionEndReason;
-use hive_router_internal::telemetry::metrics::subscription_metrics::{
-    ActiveClientConnectionGuard, SubscriptionTransport,
-};
-use hive_router_internal::telemetry::traces::spans::graphql::GraphQLOperationSpan;
-use hive_router_plan_executor::executors::graphql_transport_ws::{
+use crate::executor::executors::graphql_transport_ws::{
     ClientMessage, CloseCode, ConnectionInitPayload, ServerMessage, WS_SUBPROTOCOL,
 };
-use hive_router_plan_executor::executors::websocket_common::{
+use crate::executor::executors::websocket_common::{
     handshake_timeout, heartbeat, parse_frame_to_text, FrameNotParsedToText, WsState,
 };
-use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
-use hive_router_plan_executor::plugin_context::{
-    PluginContext, PluginRequestState, RouterHttpRequest,
+use crate::executor::hooks::on_graphql_params::GraphQLParams;
+use crate::executor::plugin_context::{PluginContext, PluginRequestState, RouterHttpRequest};
+use crate::executor::request_context::{RequestContextExt, SharedRequestContext};
+use crate::executor::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
+use crate::query_planner::state::supergraph_state::OperationKind;
+use crate::telemetry::metrics::catalog::values::SubscriptionEndReason;
+use crate::telemetry::metrics::subscription_metrics::{
+    ActiveClientConnectionGuard, SubscriptionTransport,
 };
-use hive_router_plan_executor::request_context::{RequestContextExt, SharedRequestContext};
-use hive_router_plan_executor::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
-use hive_router_query_planner::state::supergraph_state::OperationKind;
+use crate::telemetry::traces::spans::graphql::GraphQLOperationSpan;
 
 use crate::jwt::errors::JwtError;
 use crate::pipeline::active_subscriptions::SubscriptionEvent;
@@ -50,11 +48,11 @@ use crate::pipeline::{
 };
 use crate::schema_state::SchemaState;
 use crate::shared_state::{RouterSharedState, SharedRouterResponse};
+use crate::telemetry::logging::request_id::WithRequestIdentifiers;
+use crate::telemetry::logging::scope::RequestLogScope;
+use crate::telemetry::logging::summary::{self, WithRequestSummary};
+use crate::telemetry::logging::targets;
 use crate::telemetry::HeaderExtractor;
-use hive_router_internal::telemetry::logging::request_id::WithRequestIdentifiers;
-use hive_router_internal::telemetry::logging::scope::RequestLogScope;
-use hive_router_internal::telemetry::logging::summary::{self, WithRequestSummary};
-use hive_router_internal::telemetry::logging::targets;
 
 type WsStateRef = Rc<RefCell<WsState<tokio::sync::mpsc::Sender<()>>>>;
 

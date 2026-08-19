@@ -1,9 +1,9 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use hive_router::config::persisted_documents::PersistedDocumentsConfig;
+use hive_router::executor::hooks::on_graphql_params::GraphQLParams;
 use hive_router::pipeline::persisted_documents::extract::{
     DocumentIdResolver, DocumentIdResolverInput, HttpRequestContext,
 };
-use hive_router_config::persisted_documents::PersistedDocumentsConfig;
-use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
 use std::hint::black_box;
 
 struct PathCase {

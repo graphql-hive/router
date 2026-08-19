@@ -1,10 +1,10 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use crate::config::persisted_documents::PersistedDocumentsHiveStorageConfig;
 use async_trait::async_trait;
 use hive_console_sdk::circuit_breaker::CircuitBreakerBuilder;
 use hive_console_sdk::persisted_documents::{PersistedDocumentsError, PersistedDocumentsManager};
-use hive_router_config::persisted_documents::PersistedDocumentsHiveStorageConfig;
 use thiserror::Error;
 
 use crate::consts::ROUTER_VERSION;

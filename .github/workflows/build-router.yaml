@@ -90,7 +90,7 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
         with:
           target: ${{ matrix.rust_target }}
-          cache-key: ${{ matrix.name }}
+          cache-key: cache_v2_${{ matrix.name }}
 
       # Only if using Zigbuild
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
@@ -125,7 +125,7 @@ jobs:
       - name: node-addon build (${{ matrix.rust_target }})
         working-directory: lib/node-addon
         env:
-          CROSS_COMPILE: ${{ matrix.zigbuild }}
+          USE_CROSS_COMPILE: ${{ matrix.zigbuild }}
           TARGET: ${{ matrix.rust_target }}
         run: npm run build
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

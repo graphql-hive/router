@@ -35,10 +35,6 @@ jobs:
       - check
     env:
       CRATES_PUBLISH_JSON: ${{ needs.check.outputs.crates_to_publish }}
-      PUBLISH_CONFIG_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-router-config"') }}
-      PUBLISH_INTERNAL_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-router-internal"') }}
-      PUBLISH_QUERY_PLANNER_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-router-query-planner"') }}
-      PUBLISH_EXECUTOR_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-router-plan-executor"') }}
       PUBLISH_ROUTER_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-router"') }}
       PUBLISH_GRAPHQL_TOOLS_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"graphql-tools"') }}
       PUBLISH_CONSOLE_SDK_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-console-sdk"') }}
@@ -81,34 +77,6 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           cargo publish --manifest-path ${{ fromJson(needs.check.outputs.crates_to_publish).hive-apollo-router-plugin }}
-
-      - name: publish config lib
-        if: env.PUBLISH_CONFIG_CRATE == 'true'
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        run: |
-          cargo publish --manifest-path ${{ fromJson(needs.check.outputs.crates_to_publish).hive-router-config }}
-
-      - name: publish internal lib
-        if: env.PUBLISH_INTERNAL_CRATE == 'true'
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        run: |
-          cargo publish --manifest-path ${{ fromJson(needs.check.outputs.crates_to_publish).hive-router-internal }}
-
-      - name: publish query-planner lib
-        if: env.PUBLISH_QUERY_PLANNER_CRATE == 'true'
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        run: |
-          cargo publish --manifest-path ${{ fromJson(needs.check.outputs.crates_to_publish).hive-router-query-planner }}
-
-      - name: publish executor lib
-        if: env.PUBLISH_EXECUTOR_CRATE == 'true'
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        run: |
-          cargo publish --manifest-path ${{ fromJson(needs.check.outputs.crates_to_publish).hive-router-plan-executor }}
 
       - name: publish router lib
         if: env.PUBLISH_ROUTER_CRATE == 'true'

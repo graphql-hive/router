@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::config::limits::MaxDirectivesRuleConfig;
 use graphql_tools::{
     ast::{OperationVisitor, OperationVisitorContext},
     static_graphql::query::{Definition, Document, FragmentDefinition},
@@ -8,7 +9,6 @@ use graphql_tools::{
         utils::{ValidationError, ValidationErrorContext},
     },
 };
-use hive_router_config::limits::MaxDirectivesRuleConfig;
 
 use crate::pipeline::validation::shared::{CountableNode, VisitedFragment};
 
@@ -131,9 +131,9 @@ impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for MaxDirectivesVisit
 
 #[cfg(test)]
 mod tests {
+    use crate::config::limits::MaxDirectivesRuleConfig;
     use graphql_tools::parser::{parse_query, parse_schema};
     use graphql_tools::validation::validate::{validate, ValidationPlan};
-    use hive_router_config::limits::MaxDirectivesRuleConfig;
 
     use crate::pipeline::validation::max_directives_rule::MaxDirectivesRule;
 

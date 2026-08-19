@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use hive_router_config::traffic_shaping::ServerTLSConfig;
-use hive_router_plan_executor::executors::{
+use crate::config::traffic_shaping::ServerTLSConfig;
+use crate::executor::executors::{
     error::TlsCertificatesError, tls::from_cert_file_config_to_certificate_der,
 };
 use rustls::{

@@ -1,26 +1,26 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use ahash::{HashMap as AHashMap, HashMapExt};
-use hive_router_config::demand_control::{
+use crate::config::demand_control::{
     DemandControlActualCostMode, DemandControlConfig, DemandControlExposeHeadersConfig,
     DemandControlMode,
 };
-use hive_router_internal::telemetry::logging::targets;
-use hive_router_internal::telemetry::metrics::demand_control_metrics::DemandControlResultCode;
-use hive_router_internal::telemetry::metrics::Metrics;
-use hive_router_internal::telemetry::traces::spans::graphql::GraphQLSpanOperationIdentity;
-use hive_router_plan_executor::execution::demand_control::{
+use crate::executor::execution::demand_control::{
     compile_actual_response_shape_cost_plan, compile_actual_subgraph_cost_plan,
     CompiledActualCostPlan, CompiledSubgraphActualCostPlan, DemandControlEvaluation,
     DemandControlExecutionActualCostContext, DemandControlExecutionContext,
     DemandControlExecutionOperationContext, DemandControlExecutionSubgraphsContext,
 };
-use hive_router_plan_executor::execution::plan::CoerceVariablesPayload;
-use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphSnapshot;
-use hive_router_query_planner::ast::operation::{OperationDefinition, SubgraphFetchOperation};
-use hive_router_query_planner::planner::plan_nodes::{PlanNode, QueryPlan};
-use hive_router_query_planner::state::supergraph_state::{OperationKind, SupergraphState};
+use crate::executor::execution::plan::CoerceVariablesPayload;
+use crate::executor::hooks::on_supergraph_load::SupergraphSnapshot;
+use crate::query_planner::ast::operation::{OperationDefinition, SubgraphFetchOperation};
+use crate::query_planner::planner::plan_nodes::{PlanNode, QueryPlan};
+use crate::query_planner::state::supergraph_state::{OperationKind, SupergraphState};
+use crate::telemetry::logging::targets;
+use crate::telemetry::metrics::demand_control_metrics::DemandControlResultCode;
+use crate::telemetry::metrics::Metrics;
+use crate::telemetry::traces::spans::graphql::GraphQLSpanOperationIdentity;
+use ahash::{HashMap as AHashMap, HashMapExt};
 use http::{HeaderName, HeaderValue};
 use moka::future::Cache;
 use tracing::{debug, info, warn};

@@ -1,24 +1,22 @@
-use futures::Stream;
-use graphql_tools::validation::validate::ValidationPlan;
-use hive_router_config::traffic_shaping::{
+use crate::config::traffic_shaping::{
     TrafficShapingRouterDedupeHeadersConfig, TrafficShapingRouterDedupeHeadersKeyword,
 };
-use hive_router_config::HiveRouterConfig;
-use hive_router_internal::expressions::{BooleanOrProgram, ExpressionCompileError};
-use hive_router_internal::inflight::{InFlightCleanupGuard, InFlightMap};
-use hive_router_internal::telemetry::logging::targets;
-use hive_router_internal::telemetry::metrics::catalog::values::SubscriptionEndReason;
-use hive_router_internal::telemetry::metrics::subscription_metrics::SubscriptionTransport;
-use hive_router_internal::telemetry::metrics::Metrics;
-use hive_router_internal::telemetry::TelemetryContext;
-use hive_router_plan_executor::coprocessor::{CoprocessorError, CoprocessorRuntime};
-use hive_router_plan_executor::execution::plan::FailedExecutionResult;
-use hive_router_plan_executor::executors::common::InboundRequestFingerprint;
-use hive_router_plan_executor::extensions::{
-    compile::compile_extensions_plan, plan::ExtensionsPlan,
-};
-use hive_router_plan_executor::headers::sanitizer::is_never_join_header;
-use hive_router_plan_executor::plugin_trait::RouterPluginBoxed;
+use crate::config::HiveRouterConfig;
+use crate::executor::coprocessor::{CoprocessorError, CoprocessorRuntime};
+use crate::executor::execution::plan::FailedExecutionResult;
+use crate::executor::executors::common::InboundRequestFingerprint;
+use crate::executor::executors::inflight::{InFlightCleanupGuard, InFlightMap};
+use crate::executor::extensions::{compile::compile_extensions_plan, plan::ExtensionsPlan};
+use crate::executor::headers::sanitizer::is_never_join_header;
+use crate::executor::plugin_trait::RouterPluginBoxed;
+use crate::telemetry::logging::targets;
+use crate::telemetry::metrics::catalog::values::SubscriptionEndReason;
+use crate::telemetry::metrics::subscription_metrics::SubscriptionTransport;
+use crate::telemetry::metrics::Metrics;
+use crate::telemetry::TelemetryContext;
+use crate::vrl::expressions::{BooleanOrProgram, ExpressionCompileError};
+use futures::Stream;
+use graphql_tools::validation::validate::ValidationPlan;
 use http::StatusCode;
 use moka::future::Cache;
 use moka::Expiry;
@@ -406,7 +404,7 @@ impl RouterSharedState {
 
 #[cfg(not(feature = "graphiql"))]
 fn render_laboratory_page(
-    config: &hive_router_config::laboratory::LaboratoryConfig,
+    config: &crate::config::laboratory::LaboratoryConfig,
 ) -> Result<Bytes, SharedStateError> {
     let html = render_laboratory_html(crate::LABORATORY_HTML, config).map_err(Box::new)?;
 
@@ -417,7 +415,7 @@ fn render_laboratory_page(
 /// put the seed values.
 #[cfg(feature = "graphiql")]
 fn render_laboratory_page(
-    config: &hive_router_config::laboratory::LaboratoryConfig,
+    config: &crate::config::laboratory::LaboratoryConfig,
 ) -> Result<Bytes, SharedStateError> {
     if !config.operations.is_empty()
         || !config.collections.is_empty()
@@ -448,7 +446,7 @@ pub enum SharedStateError {
 #[cfg(test)]
 mod tests {
     use super::RouterRequestDedupeHeaderPolicy;
-    use hive_router_config::traffic_shaping::{
+    use crate::config::traffic_shaping::{
         TrafficShapingRouterDedupeHeadersConfig, TrafficShapingRouterDedupeHeadersKeyword,
     };
 

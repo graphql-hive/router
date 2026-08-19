@@ -1,0 +1,322 @@
+use std::sync::Arc;
+use std::time::Duration;
+
+use crate::telemetry::logging::targets;
+use async_trait::async_trait;
+use futures::channel::oneshot;
+use futures::stream::BoxStream;
+use futures_util::StreamExt;
+use ntex::rt;
+use tokio::sync::mpsc;
+use tracing::debug;
+
+use crate::telemetry::metrics::subscription_metrics::SubscriptionTransport;
+use crate::telemetry::TelemetryContext;
+
+use crate::executor::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
+use crate::executor::executors::error::SubgraphExecutorError;
+use crate::executor::executors::subscription_buffer::drain_into;
+use crate::executor::executors::websocket_client::{self, WsClient};
+use crate::executor::executors::websocket_pool::{
+    WebSocketConnectionId, WebSocketInit, WebSocketPool,
+};
+use crate::executor::response::subgraph_response::SubgraphResponse;
+
+pub struct WsSubgraphExecutor {
+    subgraph_name: String,
+    endpoint: http::Uri,
+    tls_config: Option<Arc<rustls::ClientConfig>>,
+    buffer_capacity: usize,
+    telemetry_context: Arc<TelemetryContext>,
+    pool: Arc<WebSocketPool>,
+    idle_timeout: Duration,
+    reuse_connections: bool,
+}
+
+impl WsSubgraphExecutor {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        subgraph_name: String,
+        endpoint: http::Uri,
+        tls_config: Option<Arc<rustls::ClientConfig>>,
+        buffer_capacity: usize,
+        telemetry_context: Arc<TelemetryContext>,
+        pool: Arc<WebSocketPool>,
+        idle_timeout: Duration,
+        reuse_connections: bool,
+    ) -> Self {
+        Self {
+            subgraph_name,
+            endpoint,
+            tls_config,
+            buffer_capacity,
+            telemetry_context,
+            pool,
+            idle_timeout,
+            reuse_connections,
+        }
+    }
+}
+
+#[async_trait]
+impl SubgraphExecutor for WsSubgraphExecutor {
+    fn executor_name(&self) -> &str {
+        "websocket"
+    }
+
+    fn endpoint(&self) -> &http::Uri {
+        &self.endpoint
+    }
+
+    async fn execute<'a>(
+        &self,
+        execution_request: SubgraphExecutionRequest<'a>,
+        timeout: Option<Duration>,
+        _plugin_req_state: Option<&'a crate::executor::plugin_context::PluginRequestState<'a>>,
+    ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
+        if self.reuse_connections {
+            if let Some(fingerprint) = execution_request.connection_fingerprint {
+                let id = WebSocketConnectionId::new(
+                    self.subgraph_name.clone(),
+                    self.endpoint.clone(),
+                    fingerprint,
+                );
+                let operation = async {
+                    let executor = self
+                        .pool
+                        .get_or_initialize(
+                            id,
+                            WebSocketInit {
+                                endpoint: self.endpoint.clone(),
+                                headers: execution_request.headers.clone(),
+                                tls_config: self.tls_config.clone(),
+                                buffer_capacity: self.buffer_capacity,
+                                idle_timeout: self.idle_timeout,
+                                telemetry_context: self.telemetry_context.clone(),
+                            },
+                        )
+                        .await?;
+                    executor.execute(execution_request, None, None).await
+                };
+                return match timeout {
+                    Some(timeout) => tokio::time::timeout(timeout, operation).await?,
+                    None => operation.await,
+                };
+            }
+        }
+
+        let endpoint = self.endpoint.clone();
+        let subgraph_name = self.subgraph_name.clone();
+        let tls_config = self.tls_config.clone();
+        let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
+        debug!(
+            target: targets::WEBSOCKET_CLIENT,
+            subgraph = subgraph_name, endpoint = %endpoint,
+            "establishing WebSocket connection to subgraph"
+        );
+
+        let headers = execution_request.headers.clone();
+        let init_payload = (!headers.is_empty()).then(|| headers.into());
+        let subscribe_payload = execution_request.try_into()?;
+
+        let (tx, rx) = oneshot::channel();
+
+        // run this on ntex runtime instead of Handle::spawn because the websocket path builds
+        // and awaits futures that capture ntex local types like Rc and RefCell via WsClient.
+        // those futures are not Send, so they cannot cross a tokio multi-threaded spawn boundary.
+        // ntex::rt::spawn keeps the whole websocket flow on the local ntex runtime, while this
+        // async_trait method still stays Send by awaiting only the futures oneshot receiver here.
+        // this task ends after the first websocket response is forwarded through the oneshot,
+        // or earlier if connect/init fails.
+        rt::spawn(async move {
+            let result = async {
+                let wsconn = websocket_client::connect(&endpoint, tls_config)
+                    .await
+                    .map_err(|e| {
+                        SubgraphExecutorError::WebSocketConnectFailure(
+                            endpoint.to_string(),
+                            e.to_string(),
+                        )
+                    })?;
+                let client = WsClient::new(wsconn);
+
+                let mut client = match client.init(init_payload).await {
+                    Ok(client) => client,
+                    Err(e) => {
+                        return Err(SubgraphExecutorError::WebSocketHandshakeFailure(
+                            endpoint.to_string(),
+                            e.to_string(),
+                        ));
+                    }
+                };
+
+                debug!(
+                    target: targets::WEBSOCKET_CLIENT,
+                    subgraph = subgraph_name, endpoint = %endpoint,
+                    "WebSocket connection to subgraph established"
+                );
+
+                let mut stream = client
+                    .subscribe(subscribe_payload, custom_scalar_paths)
+                    .await?;
+
+                match stream.next().await {
+                    Some(response) => Ok(response?),
+                    None => Err(SubgraphExecutorError::WebSocketStreamClosedEmpty(
+                        endpoint.to_string(),
+                    )),
+                }
+            }
+            .await;
+
+            let _ = tx.send(result);
+        });
+
+        let response = async {
+            rx.await
+                .map_err(|_| SubgraphExecutorError::WebSocketArbiterChannelClosed)?
+        };
+        match timeout {
+            Some(timeout) => tokio::time::timeout(timeout, response).await?,
+            None => response.await,
+        }
+    }
+
+    async fn subscribe<'a>(
+        &self,
+        execution_request: SubgraphExecutionRequest<'a>,
+        _timeout: Option<Duration>,
+    ) -> Result<
+        BoxStream<'static, Result<SubgraphResponse<'static>, SubgraphExecutorError>>,
+        SubgraphExecutorError,
+    > {
+        if self.reuse_connections {
+            if let Some(fingerprint) = execution_request.connection_fingerprint {
+                let id = WebSocketConnectionId::new(
+                    self.subgraph_name.clone(),
+                    self.endpoint.clone(),
+                    fingerprint,
+                );
+                let executor = self
+                    .pool
+                    .get_or_initialize(
+                        id,
+                        WebSocketInit {
+                            endpoint: self.endpoint.clone(),
+                            headers: execution_request.headers.clone(),
+                            tls_config: self.tls_config.clone(),
+                            buffer_capacity: self.buffer_capacity,
+                            idle_timeout: self.idle_timeout,
+                            telemetry_context: self.telemetry_context.clone(),
+                        },
+                    )
+                    .await?;
+                return executor.subscribe(execution_request, None).await;
+            }
+        }
+
+        // buffer decouples the emitting subgraph from slow downstream consumers, dropping
+        // messages under backpressure instead of throttling the subgraph
+        let (tx, mut rx) = mpsc::channel::<Result<SubgraphResponse<'static>, SubgraphExecutorError>>(
+            self.buffer_capacity,
+        );
+
+        let endpoint = self.endpoint.clone();
+        let subgraph_name = self.subgraph_name.clone();
+        let tls_config = self.tls_config.clone();
+        let custom_scalar_paths = execution_request.custom_scalar_paths.cloned();
+        let headers = execution_request.headers.clone();
+        let init_payload = (!headers.is_empty()).then(|| headers.into());
+        let subscribe_payload = execution_request.try_into()?;
+
+        debug!(
+            target: targets::WEBSOCKET_CLIENT,
+            subgraph = self.subgraph_name, endpoint = %self.endpoint,
+            "establishing WebSocket subscription connection to subgraph"
+        );
+
+        let subgraph_name_for_metrics = self.subgraph_name.clone();
+        let telemetry_context = self.telemetry_context.clone();
+
+        // no await intentionally. the task runs the subscription in the background
+        // and sends responses through the channel. The spawned future itself stays local
+        // to ntex runtime, so it can hold non-Send websocket client state.
+        // this task ends when the websocket stream completes or the client drops the receiver.
+        // If the channel fills due to back-pressure, the latest event is dropped (with a
+        // warning log) and the subscription continues.
+        drop(rt::spawn(async move {
+            let wsconn = match websocket_client::connect(&endpoint, tls_config).await {
+                Ok(client) => client,
+                Err(e) => {
+                    let _ = tx.try_send(Err(SubgraphExecutorError::WebSocketConnectFailure(
+                        endpoint.to_string(),
+                        e.to_string(),
+                    )));
+                    return;
+                }
+            };
+            let client = WsClient::new(wsconn);
+
+            let mut client = match client.init(init_payload).await {
+                Ok(client) => client,
+                Err(e) => {
+                    let _ = tx.try_send(Err(SubgraphExecutorError::WebSocketHandshakeFailure(
+                        endpoint.to_string(),
+                        e.to_string(),
+                    )));
+                    return;
+                }
+            };
+
+            debug!(
+                target: targets::WEBSOCKET_CLIENT,
+                subgraph = subgraph_name, endpoint = %endpoint,
+                "WebSocket subscription connection to subgraph established"
+            );
+
+            let _conn_guard = telemetry_context
+                .metrics
+                .subscriptions
+                .active_subgraph_connection(
+                    &subgraph_name_for_metrics,
+                    SubscriptionTransport::WebSocket,
+                );
+
+            let stream = match client
+                .subscribe(subscribe_payload, custom_scalar_paths)
+                .await
+            {
+                Ok(stream) => stream.map(|item| item.map_err(SubgraphExecutorError::from)),
+                Err(error) => {
+                    let _ = tx.try_send(Err(error.into()));
+                    return;
+                }
+            };
+
+            drain_into(
+                stream,
+                tx,
+                &telemetry_context,
+                SubscriptionTransport::WebSocket,
+                &subgraph_name,
+                &endpoint.to_string(),
+            )
+            .await;
+        }));
+
+        // op_guard lives with the receiver stream, so the active-operation metric stays up for
+        // as long as a consumer is actually pulling from it, and drops the moment the stream
+        // itself is dropped (subscription unsubscribed/disconnected)
+        let op_guard = self
+            .telemetry_context
+            .metrics
+            .subscriptions
+            .active_subgraph_operation(&self.subgraph_name);
+        Ok(Box::pin(async_stream::stream! {
+            let _op_guard = op_guard;
+            while let Some(item) = rx.recv().await {
+                yield item;
+            }
+        }))
+    }
+}

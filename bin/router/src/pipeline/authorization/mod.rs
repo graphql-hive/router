@@ -9,9 +9,11 @@
 mod tests;
 
 pub mod metadata;
+pub mod user_auth_context;
 
 use std::sync::Arc;
 
+use crate::pipeline::authorization::user_auth_context::UserAuthContext;
 use crate::pipeline::error::{ClientPipelineError, PipelineError};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::nullify::rebuilder::{
@@ -20,21 +22,20 @@ use crate::pipeline::nullify::rebuilder::{
 use crate::pipeline::trie::Trie;
 use crate::utils::StrByAddr;
 
+use crate::config::authorization::UnauthorizedMode;
+use crate::config::HiveRouterConfig;
+use crate::executor::execution::client_request_details::JwtRequestDetails;
+use crate::executor::execution::plan::CoerceVariablesPayload;
+use crate::executor::introspection::schema::SchemaMetadata;
+use crate::executor::operation_filter::{OperationFilter, Selection};
+use crate::executor::projection::plan::FieldProjectionPlan;
+use crate::executor::response::graphql_error::GraphQLError;
+use crate::pipeline::authorization::metadata::{AuthorizationMetadata, AuthorizationRule};
+use crate::query_planner::ast::operation::OperationDefinition;
+use crate::telemetry::logging::targets;
 use ahash::HashMap;
-use hive_router_config::authorization::UnauthorizedMode;
-use hive_router_config::HiveRouterConfig;
-use hive_router_internal::authorization::metadata::{AuthorizationMetadata, AuthorizationRule};
-use hive_router_internal::telemetry::logging::targets;
-use hive_router_plan_executor::execution::client_request_details::JwtRequestDetails;
-use hive_router_plan_executor::execution::plan::CoerceVariablesPayload;
-use hive_router_plan_executor::introspection::schema::SchemaMetadata;
-use hive_router_plan_executor::operation_filter::{OperationFilter, Selection};
-use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
-use hive_router_plan_executor::response::graphql_error::GraphQLError;
-use hive_router_query_planner::ast::operation::OperationDefinition;
 
-use hive_router_internal::telemetry::traces::spans::graphql::GraphQLAuthorizeSpan;
-pub use metadata::{AuthorizationMetadataError, AuthorizationMetadataExt, UserAuthContext};
+use crate::telemetry::traces::spans::graphql::GraphQLAuthorizeSpan;
 
 /// Error representing an unauthorized field access.
 ///

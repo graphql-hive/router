@@ -6,6 +6,7 @@ use crate::{
         ClientResponseExt, Started, TestRouter, TestRouterBuilder, TestSubgraphs,
     },
 };
+use hive_router::telemetry::logging::targets;
 use hive_router::{
     async_trait, get_current_summary,
     plugins::hooks::on_execute::{
@@ -16,7 +17,6 @@ use hive_router::{
     plugins::plugin_trait::{EndHookPayload, RouterPlugin, StartHookPayload},
     set_summary_attribute, set_summary_message,
 };
-use hive_router_internal::telemetry::logging::targets;
 use http::{HeaderMap, HeaderName, HeaderValue};
 use insta::assert_json_snapshot;
 use serde_json::{Map, Value};

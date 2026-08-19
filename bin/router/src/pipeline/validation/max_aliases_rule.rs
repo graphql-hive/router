@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::config::limits::MaxAliasesRuleConfig;
 use graphql_tools::{
     ast::{OperationVisitor, OperationVisitorContext},
     static_graphql::query::{Definition, Document, FragmentDefinition},
@@ -8,7 +9,6 @@ use graphql_tools::{
         utils::{ValidationError, ValidationErrorContext},
     },
 };
-use hive_router_config::limits::MaxAliasesRuleConfig;
 
 use crate::pipeline::validation::shared::{CountableNode, VisitedFragment};
 
@@ -135,11 +135,11 @@ impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for MaxAliasesVisitor<
 mod tests {
     use std::vec;
 
+    use crate::config::limits::MaxAliasesRuleConfig;
     use graphql_tools::{
         parser::parse_schema,
         validation::validate::{validate, ValidationPlan},
     };
-    use hive_router_config::limits::MaxAliasesRuleConfig;
 
     use crate::pipeline::validation::max_aliases_rule::MaxAliasesRule;
 

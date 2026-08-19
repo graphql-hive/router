@@ -8,10 +8,8 @@ name = "graphql-diff"
 path = "src/main.rs"
 
 [dependencies]
-hive-router-query-planner = { path = "../../lib/query-planner" }
-hive-router-plan-executor = { path = "../../lib/executor" }
 graphql-tools =  { path = "../../lib/graphql-tools" }
 rand = { workspace = true }
 tokio = { workspace = true }
-reqwest = { workspace = true }
+reqwest = { workspace = true, features = ["json"] }
 serde_json = { workspace = true }

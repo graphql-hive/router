@@ -1,5 +1,5 @@
+use crate::telemetry::logging::targets;
 use headers_accept::Accept;
-use hive_router_internal::telemetry::logging::targets;
 use http::{header::ACCEPT, Method};
 use mediatype::{
     names::{HTML, TEXT},

@@ -1,21 +1,23 @@
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use hive_router_internal::telemetry::logging::targets;
-use hive_router_internal::telemetry::traces::spans::graphql::{
+use crate::executor::hooks::on_graphql_params::GraphQLParams;
+use crate::executor::hooks::on_supergraph_load::SupergraphSnapshot;
+use crate::executor::introspection::partition::partition_operation;
+use crate::executor::projection::plan::FieldProjectionPlan;
+use crate::query_planner::ast::normalization::error::NormalizationError;
+use crate::query_planner::ast::normalization::normalize_operation;
+use crate::query_planner::ast::operation::OperationDefinition;
+use crate::query_planner::state::supergraph_state::OperationKind;
+use crate::telemetry::logging::targets;
+use crate::telemetry::traces::spans::graphql::{
     GraphQLNormalizeSpan, GraphQLSpanOperationIdentity,
 };
-use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
-use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphSnapshot;
-use hive_router_plan_executor::introspection::partition::partition_operation;
-use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
-use hive_router_query_planner::ast::normalization::error::NormalizationError;
-use hive_router_query_planner::ast::normalization::normalize_operation;
-use hive_router_query_planner::ast::operation::OperationDefinition;
-use hive_router_query_planner::state::supergraph_state::OperationKind;
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::cache_state::{CacheHitMiss, EntryResultHitMissExt};
+use crate::executor::operation_filter::OperationFilterOutput;
+use crate::executor::response::graphql_error::GraphQLError;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::nullify::rebuilder::{
     rebuild_nulled_operation, rebuild_nulled_projection_plan,
@@ -23,8 +25,6 @@ use crate::pipeline::nullify::rebuilder::{
 use crate::pipeline::parser::GraphQLParserPayload;
 use crate::pipeline::trie::Trie;
 use crate::schema_state::{RouterSupergraphRuntime, SchemaState};
-use hive_router_plan_executor::operation_filter::OperationFilterOutput;
-use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use tracing::{debug, Instrument};
 
 #[derive(Debug, Clone)]

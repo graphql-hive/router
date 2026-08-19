@@ -1,6 +1,6 @@
 use ntex::web::HttpRequest;
 
-use hive_router_internal::telemetry::metrics::catalog::values::GraphQLResponseStatus;
+use crate::telemetry::metrics::catalog::values::GraphQLResponseStatus;
 
 #[derive(Debug, Clone, Default)]
 pub struct GraphQLOperationMetricIdentity {

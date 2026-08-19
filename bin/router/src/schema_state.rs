@@ -1,27 +1,10 @@
-use crate::pipeline::active_subscriptions::ActiveSubscriptions;
-use crate::storage::StorageManager;
-use arc_swap::ArcSwap;
-use async_trait::async_trait;
-use dashmap::DashMap;
-use futures::stream::FuturesUnordered;
-use futures::StreamExt;
-use graphql_tools::validation::utils::ValidationError;
-use hive_console_sdk::agent::usage_agent::UsageAgent;
-use hive_router_config::telemetry::hive::{
-    is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig,
-};
-use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
-use hive_router_internal::authorization::metadata::AuthorizationMetadata;
-use hive_router_internal::background_tasks::{BackgroundTask, BackgroundTasksManager};
-use hive_router_internal::telemetry::logging::targets;
-use hive_router_internal::telemetry::utils::resolve_value_or_expression;
-use hive_router_internal::telemetry::{metrics::Metrics, TelemetryContext};
-use hive_router_plan_executor::execution::operation_name::OperationNameForwardConfig;
-use hive_router_plan_executor::executors::http_callback::{
-    CallbackMessage, CallbackSubscriptionsMap,
-};
-use hive_router_plan_executor::response::graphql_error::GraphQLErrorExtensions;
-use hive_router_plan_executor::{
+use crate::background_tasks::{BackgroundTask, BackgroundTasksManager};
+use crate::config::telemetry::hive::{is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig};
+use crate::config::{supergraph::SupergraphSource, HiveRouterConfig};
+use crate::executor::execution::operation_name::OperationNameForwardConfig;
+use crate::executor::executors::http_callback::{CallbackMessage, CallbackSubscriptionsMap};
+use crate::executor::response::graphql_error::GraphQLErrorExtensions;
+use crate::executor::{
     execution::error_masking::ErrorMaskingRuntime,
     executors::{error::SubgraphExecutorError, map::HttpCallbackRuntimeConfig},
     hooks::on_supergraph_load::{
@@ -32,9 +15,20 @@ use hive_router_plan_executor::{
     response::graphql_error::GraphQLError,
     SubgraphExecutorMap,
 };
-use hive_router_query_planner::{
-    planner::plan_nodes::QueryPlan, utils::parsing::safe_parse_schema,
-};
+use crate::pipeline::active_subscriptions::ActiveSubscriptions;
+use crate::pipeline::authorization::metadata::AuthorizationMetadata;
+use crate::query_planner::{planner::plan_nodes::QueryPlan, utils::parsing::safe_parse_schema};
+use crate::storage::StorageManager;
+use crate::telemetry::logging::targets;
+use crate::telemetry::utils::resolve_value_or_expression;
+use crate::telemetry::{metrics::Metrics, TelemetryContext};
+use arc_swap::ArcSwap;
+use async_trait::async_trait;
+use dashmap::DashMap;
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
+use graphql_tools::validation::utils::ValidationError;
+use hive_console_sdk::agent::usage_agent::UsageAgent;
 use http::Uri;
 use moka::future::Cache;
 use ntex::web::HttpRequest;
@@ -46,13 +40,12 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 
-use hive_router_plan_executor::headers::{
+use crate::executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
 };
 
 use crate::{
-    pipeline::authorization::AuthorizationMetadataError,
-    pipeline::authorization::AuthorizationMetadataExt,
+    pipeline::authorization::user_auth_context::AuthorizationMetadataError,
     pipeline::demand_control::runtime::DemandControlRuntime,
     pipeline::normalize::GraphQLNormalizationPayload,
     pipeline::persisted_documents::{
@@ -422,7 +415,7 @@ fn supergraph_options(
         .transpose()?;
 
     Ok(SupergraphOptions {
-        query_planner: hive_router_query_planner::planner::QueryPlannerOptions {
+        query_planner: crate::query_planner::planner::QueryPlannerOptions {
             experimental_abstract_type_folding: config
                 .query_planner
                 .experimental_abstract_type_folding,

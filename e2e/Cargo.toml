@@ -34,10 +34,6 @@ arc-swap = { workspace = true }
 rustls = { workspace = true }
 
 hive-router = { path = "../bin/router", features = ["testing"] }
-hive-router-config = { path = "../lib/router-config" }
-hive-router-plan-executor = { path = "../lib/executor" }
-hive-router-query-planner = { path = "../lib/query-planner" }
-hive-router-internal = { path = "../lib/internal" }
 subgraphs = { path = "../bench/subgraphs" }
 graphql-tools = { path = "../lib/graphql-tools" }
 

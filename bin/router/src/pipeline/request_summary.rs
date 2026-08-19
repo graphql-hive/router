@@ -1,4 +1,4 @@
-use hive_router_internal::telemetry::logging::summary::WithRequestSummary;
+use crate::telemetry::logging::summary::WithRequestSummary;
 use ntex::{
     service::{Service, ServiceCtx},
     web::{self, DefaultError},

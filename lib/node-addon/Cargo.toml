@@ -8,7 +8,7 @@ publish = true
 crate-type = ["cdylib"]
 
 [dependencies]
-hive-router-query-planner = { path = "../query-planner", version = "2.0.0" }
+hive-router = { path = "../../bin/router" }
 graphql-tools = { path = "../graphql-tools", version = "0.5.2" }
 napi = { version = "3.9.0", features = ["async", "serde-json"] }
 napi-derive = "3.5.6"

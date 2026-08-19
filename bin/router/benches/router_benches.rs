@@ -1,13 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use hive_router::pipeline::authorization::metadata::AuthorizationMetadataExt;
-use hive_router::pipeline::normalize::hash_normalized_operation;
-use hive_router::pipeline::{
-    authorization::apply_authorization_to_operation,
-    normalize::{GraphQLNormalizationPayload, OperationIdentity},
-};
-use hive_router_internal::authorization::metadata::AuthorizationMetadata;
-use hive_router_plan_executor::execution::plan::CoerceVariablesPayload;
-use hive_router_plan_executor::{
+use hive_router::executor::execution::plan::CoerceVariablesPayload;
+use hive_router::executor::{
     execution::client_request_details::JwtRequestDetails,
     introspection::{
         partition::partition_operation,
@@ -15,8 +8,14 @@ use hive_router_plan_executor::{
     },
     projection::plan::FieldProjectionPlan,
 };
-use hive_router_query_planner::state::supergraph_state::OperationKind;
-use hive_router_query_planner::{
+use hive_router::pipeline::authorization::metadata::AuthorizationMetadata;
+use hive_router::pipeline::normalize::hash_normalized_operation;
+use hive_router::pipeline::{
+    authorization::apply_authorization_to_operation,
+    normalize::{GraphQLNormalizationPayload, OperationIdentity},
+};
+use hive_router::query_planner::state::supergraph_state::OperationKind;
+use hive_router::query_planner::{
     ast::normalization::normalize_operation,
     planner::Planner,
     state::supergraph_state::SupergraphState,

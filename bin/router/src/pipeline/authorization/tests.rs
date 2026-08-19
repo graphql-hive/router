@@ -1,8 +1,6 @@
 use std::{fmt::Display, sync::Arc};
 
-use graphql_tools::parser::parse_query;
-use hive_router_internal::authorization::metadata::AuthorizationMetadata;
-use hive_router_plan_executor::{
+use crate::executor::{
     execution::client_request_details::JwtRequestDetails,
     introspection::{
         partition::partition_operation,
@@ -11,18 +9,17 @@ use hive_router_plan_executor::{
     projection::plan::FieldProjectionPlan,
     response::graphql_error::GraphQLError,
 };
-use hive_router_query_planner::{
+use crate::pipeline::authorization::metadata::AuthorizationMetadata;
+use crate::query_planner::{
     ast::normalization::normalize_operation,
     consumer_schema::ConsumerSchema,
     state::supergraph_state::{OperationKind, SupergraphState},
     utils::parsing::parse_schema,
 };
+use graphql_tools::parser::parse_query;
 
 use crate::pipeline::{
-    authorization::{
-        apply_authorization_to_operation, metadata::AuthorizationMetadataExt,
-        AuthorizationDecision, AuthorizationError,
-    },
+    authorization::{apply_authorization_to_operation, AuthorizationDecision, AuthorizationError},
     normalize::{hash_normalized_operation, GraphQLNormalizationPayload, OperationIdentity},
 };
 

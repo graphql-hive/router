@@ -7,7 +7,7 @@ pub mod stdout;
 use axum_server::{tls_rustls::RustlsConfig, Handle};
 use bytes::Bytes;
 use dashmap::DashMap;
-use hive_router_plan_executor::plugin_trait::RouterPlugin;
+use hive_router::executor::plugin_trait::RouterPlugin;
 use lazy_static::lazy_static;
 use mockito::Mock;
 use ntex::{
@@ -37,6 +37,10 @@ use tempfile::{NamedTempFile, TempPath};
 use tokio::{sync::Semaphore, time};
 use tracing::{info, warn};
 
+use hive_router::config::{
+    load_config, parse_yaml_config, subscriptions::CallbackConfig, HiveRouterConfig,
+};
+use hive_router::executor::executors::websocket_client;
 use hive_router::{
     add_callback_handler, background_tasks::BackgroundTasksManager, configure_app_from_config,
     configure_ntex_app, init_rustls_crypto_provider, invoke_shutdown_hooks,
@@ -45,10 +49,6 @@ use hive_router::{
     pipeline::request_summary::RequestSummaryService, plugins::plugins_service::PluginService,
     telemetry::Telemetry, PluginRegistry, RouterPaths, RouterSharedState, SchemaState,
 };
-use hive_router_config::{
-    load_config, parse_yaml_config, subscriptions::CallbackConfig, HiveRouterConfig,
-};
-use hive_router_plan_executor::executors::websocket_client;
 use subgraphs::{subgraphs_app, HTTPStreamingSubscriptionProtocol};
 
 /// Binds a TCP listener to an OS-assigned port and returns that port number.
@@ -671,7 +671,7 @@ impl TestRouterBuilder {
         // change the supergraph to use the test subgraphs address
         if let Some(subgraphs_url) = self.subgraphs_url {
             match &config.supergraph {
-                hive_router_config::supergraph::SupergraphSource::File { path, .. } => {
+                hive_router::config::supergraph::SupergraphSource::File { path, .. } => {
                     let supergraph_path = path.as_ref().expect("supergraph file path is required");
 
                     let temp_path = supergraph_temp_file_with_subgraphs(
@@ -680,12 +680,12 @@ impl TestRouterBuilder {
                     );
 
                     let supergraph_file_path =
-                        hive_router_config::primitives::file_path::FilePath {
+                        hive_router::config::primitives::file_path::FilePath {
                             relative: temp_path.to_str().unwrap().to_string(),
                             absolute: temp_path.to_str().unwrap().to_string(),
                         };
 
-                    config.supergraph = hive_router_config::supergraph::SupergraphSource::File {
+                    config.supergraph = hive_router::config::supergraph::SupergraphSource::File {
                         path: Some(supergraph_file_path),
                         // TODO: we disable polling, but what if it was enabled?
                         poll_interval: None,

@@ -2,16 +2,16 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 
-use hive_router_internal::json::MapAccessSerdeExt;
-use hive_router_internal::telemetry::logging::targets;
-use hive_router_internal::telemetry::metrics::Metrics;
-use hive_router_plan_executor::hooks::on_graphql_params::{
+use crate::executor::hooks::on_graphql_params::{
     GraphQLParams, OnGraphQLParamsEndHookPayload, OnGraphQLParamsStartHookPayload,
 };
-use hive_router_plan_executor::plugin_context::PluginRequestState;
-use hive_router_plan_executor::plugin_trait::{EndControlFlow, StartControlFlow};
-use hive_router_plan_executor::plugins::hooks;
-use hive_router_plan_executor::request_context::RequestContextExt;
+use crate::executor::plugin_context::PluginRequestState;
+use crate::executor::plugin_trait::{EndControlFlow, StartControlFlow};
+use crate::executor::plugins::hooks;
+use crate::executor::request_context::RequestContextExt;
+use crate::telemetry::logging::targets;
+use crate::telemetry::metrics::Metrics;
+use crate::utils::MapAccessSerdeExt;
 use http::{header::CONTENT_TYPE, Method};
 use ntex::util::Bytes;
 use ntex::web::types::Query;
@@ -646,13 +646,13 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
+    use crate::config::persisted_documents::PersistedDocumentsConfig;
+    use crate::executor::hooks::on_graphql_params::GraphQLParams;
+    use crate::executor::plugin_context::{PluginContext, PluginRequestState};
+    use crate::executor::request_context::{RequestContextExt, SharedRequestContext};
+    use crate::telemetry::metrics::Metrics;
+    use crate::vrl::expressions::ValueOrProgram;
     use async_trait::async_trait;
-    use hive_router_config::persisted_documents::PersistedDocumentsConfig;
-    use hive_router_internal::expressions::ValueOrProgram;
-    use hive_router_internal::telemetry::metrics::Metrics;
-    use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
-    use hive_router_plan_executor::plugin_context::{PluginContext, PluginRequestState};
-    use hive_router_plan_executor::request_context::{RequestContextExt, SharedRequestContext};
     use ntex::util::Bytes;
     use ntex::web::test::TestRequest;
     use ntex::web::HttpRequest;

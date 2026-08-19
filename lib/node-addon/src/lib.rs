@@ -1,10 +1,10 @@
 #![deny(clippy::all)]
 
 mod query_plan;
-use hive_router_query_planner::graph::PERCENTAGE_SCALE_FACTOR;
-use hive_router_query_planner::planner::Planner;
-use hive_router_query_planner::utils::cancellation::CancellationToken;
-use hive_router_query_planner::utils::parsing::safe_parse_schema;
+use hive_router::query_planner::graph::PERCENTAGE_SCALE_FACTOR;
+use hive_router::query_planner::planner::Planner;
+use hive_router::query_planner::utils::cancellation::CancellationToken;
+use hive_router::query_planner::utils::parsing::safe_parse_schema;
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;

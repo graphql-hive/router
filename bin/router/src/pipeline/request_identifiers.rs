@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use hive_router_internal::telemetry::logging::request_id::WithRequestIdentifiers;
+use crate::telemetry::logging::request_id::WithRequestIdentifiers;
 use ntex::{
     service::{Service, ServiceCtx},
     web::{self, DefaultError},

@@ -1,8 +1,8 @@
 use std::sync::RwLock;
 use std::time::Duration;
 
+use crate::telemetry::logging::targets;
 use async_trait::async_trait;
-use hive_router_internal::telemetry::logging::targets;
 use serde::Deserialize;
 use tracing::{debug, error, trace};
 

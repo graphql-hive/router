@@ -1,14 +1,14 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use hive_router_config::override_labels::{LabelOverrideValue, OverrideLabelsConfig};
-use hive_router_internal::expressions::CompileExpression;
-use hive_router_plan_executor::execution::client_request_details::ClientRequestDetailsView;
-use hive_router_plan_executor::request_context::RequestContextError;
-use hive_router_plan_executor::request_context::SharedRequestContext;
-use hive_router_query_planner::{
+use crate::config::override_labels::{LabelOverrideValue, OverrideLabelsConfig};
+use crate::executor::execution::client_request_details::ClientRequestDetailsView;
+use crate::executor::request_context::RequestContextError;
+use crate::executor::request_context::SharedRequestContext;
+use crate::query_planner::{
     graph::{PlannerOverrideContext, PERCENTAGE_SCALE_FACTOR},
     state::supergraph_state::SupergraphState,
 };
+use crate::vrl::expressions::CompileExpression;
 use rand::prelude::*;
 use vrl::{
     compiler::Program as VrlProgram,

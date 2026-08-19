@@ -1,5 +1,5 @@
+use crate::config::primitives::value_or_expression::ValueOrExpression;
 use hive_console_sdk::expressions::{CompileExpression, ExecutableProgram};
-use hive_router_config::primitives::value_or_expression::ValueOrExpression;
 use vrl::core::Value;
 
 use crate::storage::error::StorageError;

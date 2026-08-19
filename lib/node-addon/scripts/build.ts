@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 const cli = new NapiCli();
 
 const release = process.env["RELEASE"] === "true";
-const crossCompile = process.env["CROSS_COMPILE"] === "true";
+const crossCompile = process.env["USE_CROSS_COMPILE"] === "true";
 
 (async function build() {
   const target = process.env["TARGET"];

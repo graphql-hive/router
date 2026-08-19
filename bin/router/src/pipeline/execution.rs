@@ -1,25 +1,23 @@
+use crate::executor::execution::client_request_details::ClientRequestDetails;
+use crate::executor::execution::demand_control::DemandControlExecutionContext;
+use crate::executor::execution::jwt_forward::JwtAuthForwardingPlan;
+use crate::executor::execution::operation_name::OperationNameFactory;
+use crate::executor::execution::plan::{
+    execute_query_plan, CoerceVariablesPayload, ExecutionResultExtensions, PlanExecutionOutput,
+    QueryPlanExecutionOpts, QueryPlanExecutionResult,
+};
+use crate::executor::executors::common::ConnectionFingerprint;
+use crate::executor::headers::response::ResponseHeaderSink;
 use crate::pipeline::error::{InternalPipelineError, PipelineError};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::schema_state::SelectedSupergraph;
 use crate::shared_state::RouterSharedState;
-use hive_router_internal::telemetry::traces::spans::graphql::{
-    GraphQLExecuteSpan, GraphQLOperationSpan,
-};
-use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
-use hive_router_plan_executor::execution::demand_control::DemandControlExecutionContext;
-use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
-use hive_router_plan_executor::execution::operation_name::OperationNameFactory;
-use hive_router_plan_executor::execution::plan::{
-    execute_query_plan, CoerceVariablesPayload, ExecutionResultExtensions, PlanExecutionOutput,
-    QueryPlanExecutionOpts, QueryPlanExecutionResult,
-};
-use hive_router_plan_executor::executors::common::ConnectionFingerprint;
-use hive_router_plan_executor::headers::response::ResponseHeaderSink;
+use crate::telemetry::traces::spans::graphql::{GraphQLExecuteSpan, GraphQLOperationSpan};
 
-use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
-use hive_router_plan_executor::plugin_context::PluginRequestState;
-use hive_router_plan_executor::response::graphql_error::GraphQLError;
-use hive_router_query_planner::planner::plan_nodes::QueryPlan;
+use crate::executor::introspection::resolve::IntrospectionContext;
+use crate::executor::plugin_context::PluginRequestState;
+use crate::executor::response::graphql_error::GraphQLError;
+use crate::query_planner::planner::plan_nodes::QueryPlan;
 use http::HeaderName;
 use sonic_rs::json;
 use std::sync::Arc;

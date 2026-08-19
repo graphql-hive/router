@@ -5,6 +5,10 @@ mod websocket_e2e_tests {
     use std::collections::HashMap;
 
     use crate::testkit::{TestRouter, TestSubgraphs};
+    use hive_router::executor::executors::{
+        graphql_transport_ws::{ConnectionInitPayload, SubscribePayload},
+        websocket_client::WsClient,
+    };
     use hive_router::{
         async_trait,
         http::StatusCode,
@@ -18,10 +22,6 @@ mod websocket_e2e_tests {
             plugin_trait::{EndHookPayload, RouterPlugin, StartHookPayload},
         },
         GraphQLError,
-    };
-    use hive_router_plan_executor::executors::{
-        graphql_transport_ws::{ConnectionInitPayload, SubscribePayload},
-        websocket_client::WsClient,
     };
 
     #[derive(Default)]

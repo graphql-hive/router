@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use hive_router_config::HiveRouterConfig;
-use hive_router_internal::{
-    background_tasks::BackgroundTasksManager, telemetry::logging::targets, BoxError,
-};
-use hive_router_plan_executor::{
+use crate::background_tasks::BackgroundTasksManager;
+use crate::config::HiveRouterConfig;
+use crate::executor::{
     hooks::on_plugin_init::OnPluginInitPayload,
     plugin_trait::{RouterPlugin, RouterPluginBoxed},
 };
+use crate::telemetry::logging::targets;
+use crate::utils::BoxError;
 use tracing::{error, info, warn};
 
 type PluginFactory = Box<
@@ -128,9 +128,9 @@ impl PluginRegistry {
 mod tests {
     use std::collections::HashMap;
 
-    use hive_router_config::{HiveRouterConfig, PluginConfig};
-    use hive_router_internal::background_tasks::BackgroundTasksManager;
-    use hive_router_plan_executor::{
+    use crate::background_tasks::BackgroundTasksManager;
+    use crate::config::{HiveRouterConfig, PluginConfig};
+    use crate::executor::{
         hooks::{
             on_graphql_params::{
                 GraphQLParams, OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult,
