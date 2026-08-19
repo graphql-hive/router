@@ -718,8 +718,11 @@ mod type_authorization {
           }
        "#;
 
+        /// Resolving __typename is allowed since it does not reveal any data.
+        ///
+        /// In case it's being queried by itself, we do not implement any logic to protect it.
         #[test]
-        fn disallows_typename_on_unauthorized_union_members() {
+        fn allows_bare_typename_on_a_union_field_regardless_of_member_scopes() {
             let supergraph_data = build_supergraph_data(UNION_SCHEMA);
             let query = "
               query {
@@ -730,13 +733,11 @@ mod type_authorization {
            ";
 
             let decision = supergraph_data.decide(None, query);
-            insta::assert_snapshot!(decision, @r#"
-            [Modified]
-            Operation: <empty>
-            Errors:    ["Unauthorized field or type @ media"]
-            "#);
+            insta::assert_snapshot!(decision, @"[NoChange]");
         }
 
+        /// Each fragment (and concrete type) is authorized independently against its own member's
+        /// scopes
         #[test]
         fn removes_all_unauthorized_union_member_fragments() {
             let supergraph_data = build_supergraph_data(UNION_SCHEMA);
@@ -757,21 +758,46 @@ mod type_authorization {
             insta::assert_snapshot!(decision, @r#"
             [Modified]
             Operation: <empty>
-            Errors:    ["Unauthorized field or type @ media"]
+            Errors:    ["Unauthorized field or type @ media", "Unauthorized field or type @ media"]
             "#);
         }
 
+        /// This test ensures that we apply scope validation correctly on unions.
+        /// Since we know the concrete type statically, we should be able to apply
+        /// member-specific scopes without combining them with the union's own scopes.
+        ///
+        /// Previously, the authz logic was merging the union member's scopes into one big
+        /// rule. But that's wrong since it gates all variations of the union.
+        ///
+        /// In the schema here, both rules were applied, so in order to access `media`, a token needs to ahve
+        /// ALL `a` + `b` + `c` + `d` scopes.
         #[test]
-        fn removes_union_fragments_with_partial_member_scopes() {
-            let supergraph_data = build_supergraph_data(UNION_SCHEMA);
+        fn union_members_are_authorized_independently_of_each_other() {
+            let supergraph_data = build_supergraph_data(
+                r#"
+                type Query {
+                  media: Media!
+                }
+
+                union Media = Book | Movie
+
+                type Book @requiresScopes(scopes: [["a", "b"]]) {
+                  author: String
+                }
+
+                type Movie @requiresScopes(scopes: [["c", "d"]]) {
+                  director: String
+                }
+                "#,
+            );
             let query = "
               query {
                 media {
                   ... on Book {
-                    title
+                    author
                   }
                   ... on Movie {
-                    title
+                    director
                   }
                 }
               }
@@ -780,7 +806,14 @@ mod type_authorization {
             let decision = supergraph_data.decide(Some(vec!["a", "b"]), query);
             insta::assert_snapshot!(decision, @r#"
             [Modified]
-            Operation: <empty>
+            Operation: {media{...on Book{author}}}
+            Errors:    ["Unauthorized field or type @ media"]
+            "#);
+
+            let decision = supergraph_data.decide(Some(vec!["c", "d"]), query);
+            insta::assert_snapshot!(decision, @r#"
+            [Modified]
+            Operation: {media{...on Movie{director}}}
             Errors:    ["Unauthorized field or type @ media"]
             "#);
         }

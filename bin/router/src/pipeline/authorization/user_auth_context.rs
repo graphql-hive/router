@@ -78,9 +78,6 @@ impl AuthorizationMetadata {
             )?;
         }
 
-        // Compute authorization for union types based on their members
-        Self::compute_union_type_rules(schema_metadata, &mut type_rules);
-
         // Compute which types have any auth rules in their subtree
         let type_has_any_auth = Self::compute_type_auth_metadata(
             &supergraph.definitions,
@@ -178,86 +175,6 @@ impl AuthorizationMetadata {
         }
 
         false
-    }
-
-    /// Computes and adds authorization rules for union types based on their members.
-    /// For each union, combines the authorization requirements of all member types.
-    fn compute_union_type_rules(schema_metadata: &SchemaMetadata, type_rules: &mut TypeRulesMap) {
-        for union_name in &schema_metadata.union_types {
-            // Skip if union already has explicit authorization
-            if type_rules.contains_key(union_name) {
-                continue;
-            }
-
-            if let Some(members) = schema_metadata.get_possible_types(union_name) {
-                if let Some(rule) = Self::compute_union_authorization_rule(members, type_rules) {
-                    type_rules.insert(union_name.clone(), rule);
-                }
-            }
-        }
-    }
-
-    /// Computes the combined authorization rule for a union from its members.
-    /// Combines member requirements with AND logic (user must have access to all members).
-    fn compute_union_authorization_rule(
-        member_names: &HashSet<String>,
-        type_rules: &TypeRulesMap,
-    ) -> Option<AuthorizationRule> {
-        let mut member_scopes: Vec<&RequiredScopes> = Vec::new();
-        let mut needs_authenticated = false;
-
-        // Collect rules from all members
-        for member_name in member_names {
-            if let Some(rule) = type_rules.get(member_name) {
-                match rule {
-                    AuthorizationRule::Authenticated => {
-                        needs_authenticated = true;
-                    }
-                    AuthorizationRule::RequiresScopes(scopes) => {
-                        needs_authenticated = true; // scopes implies authenticated
-                        member_scopes.push(scopes);
-                    }
-                }
-            }
-        }
-
-        if !needs_authenticated {
-            return None;
-        }
-
-        // Some members have @authenticated but no scopes
-        if member_scopes.is_empty() {
-            return Some(AuthorizationRule::Authenticated);
-        }
-
-        Some(AuthorizationRule::RequiresScopes(
-            Self::cross_product_required_scopes(&member_scopes),
-        ))
-    }
-
-    /// Combines multiple RequiredScopes using AND logic via cross product.
-    /// Example: [["a"], ["b"]] AND [["c"], ["d"]] = [["a", "c"], ["a", "d"], ["b", "c"], ["b", "d"]]
-    fn cross_product_required_scopes(member_scopes: &[&RequiredScopes]) -> RequiredScopes {
-        let mut result: Vec<ScopeAndGroup> = vec![ScopeAndGroup(vec![])];
-
-        for member_scope in member_scopes {
-            let mut new_result = Vec::new();
-
-            for existing_and_group in &result {
-                for member_and_group in &member_scope.0 {
-                    // Combine existing AND group with member's AND group
-                    let mut combined = existing_and_group.0.clone();
-                    combined.extend(member_and_group.0.iter().copied());
-                    combined.sort();
-                    combined.dedup();
-                    new_result.push(ScopeAndGroup(combined));
-                }
-            }
-
-            result = new_result;
-        }
-
-        RequiredScopes(result)
     }
 
     /// Processes a type definition, extracting authorization rules for the type and its fields.
