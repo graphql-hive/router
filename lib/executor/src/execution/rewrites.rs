@@ -5,11 +5,11 @@ use hive_router_query_planner::planner::slot_path::{SlotPathSegment, SlotRewrite
 use crate::{introspection::schema::PossibleTypes, response::value::Value};
 
 pub trait SlotRewriteExt {
-    fn rewrite(&self, possible_types: &PossibleTypes, value: &mut Value<'_>);
+    fn rewrite<'a>(&'a self, possible_types: &PossibleTypes, value: &mut Value<'a>);
 }
 
 impl SlotRewriteExt for SlotRewrite {
-    fn rewrite(&self, possible_types: &PossibleTypes, value: &mut Value<'_>) {
+    fn rewrite<'a>(&'a self, possible_types: &PossibleTypes, value: &mut Value<'a>) {
         match self {
             // Renaming a key is a move between slots: the response tree carries values by
             // position, so there is no key left to rewrite.
@@ -25,7 +25,8 @@ impl SlotRewriteExt for SlotRewrite {
             }
             SlotRewrite::SetValue { path, value: new } => {
                 walk(possible_types, value, path, &mut |target| {
-                    *target = Value::String(new.as_str().to_owned().into());
+                    // The rewrite lives in the query plan, which outlives the response tree.
+                    *target = Value::String(new.as_str());
                 });
             }
         }

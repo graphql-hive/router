@@ -196,7 +196,7 @@ mod tests {
 
     /// `{ id: "<id>" }` at slot 0.
     fn entity(id: &str) -> Value<'static> {
-        Value::Object(vec![Value::String(id.to_string().into())])
+        Value::Object(vec![Value::OwnedString(id.to_string().into())].into_boxed_slice())
     }
 
     #[test]
@@ -206,7 +206,9 @@ mod tests {
      * we should collect paths ["items", 0] and ["items", 1]
      */
     fn test_collect_error_paths_one_level() {
-        let mut data = Value::Object(vec![Value::Array(vec![entity("1"), entity("2")])]);
+        let mut data = Value::Object(
+            vec![Value::Array(vec![entity("1"), entity("2")].into_boxed_slice())].into_boxed_slice(),
+        );
         let path = vec![slot(0, "items"), SlotPathSegment::List];
         let mut collected = vec![];
         super::traverse_and_callback_mut(
@@ -245,15 +247,24 @@ mod tests {
     fn test_collect_error_paths_two_levels() {
         // Each user is { id: <slot 0>, posts: <slot 1> }.
         let user = |id: &str, posts: Vec<Value<'static>>| {
-            Value::Object(vec![
-                Value::String(id.to_string().into()),
-                Value::Array(posts),
-            ])
+            Value::Object(
+                vec![
+                    Value::OwnedString(id.to_string().into()),
+                    Value::Array(posts.into_boxed_slice()),
+                ]
+                .into_boxed_slice(),
+            )
         };
-        let mut data = Value::Object(vec![Value::Array(vec![
-            user("1", vec![entity("a"), entity("b")]),
-            user("2", vec![entity("c")]),
-        ])]);
+        let mut data = Value::Object(
+            vec![Value::Array(
+                vec![
+                    user("1", vec![entity("a"), entity("b")]),
+                    user("2", vec![entity("c")]),
+                ]
+                .into_boxed_slice(),
+            )]
+            .into_boxed_slice(),
+        );
 
         let path = vec![
             slot(0, "users"),

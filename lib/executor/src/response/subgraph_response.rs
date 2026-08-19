@@ -2,7 +2,7 @@ use core::fmt;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use hive_router_query_planner::planner::response_shape::ResponseShape;
+use hive_router_query_planner::planner::response_shape::{ListLengthHint, ResponseShape};
 use http::{HeaderMap, StatusCode};
 use serde::{
     de::{self, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor},
@@ -50,6 +50,7 @@ static EMPTY_RESPONSE_SHAPE: ResponseShape = ResponseShape {
     fields: Vec::new(),
     raw: false,
     inert: true,
+    list_len_hint: ListLengthHint::none(),
 };
 
 struct SubgraphResponseSeed<'a> {
@@ -161,7 +162,17 @@ where
 {
     if response_shape.raw {
         let raw = LazyValue::deserialize(deserializer)?;
-        let raw = raw.as_raw_cow();
+        // Borrowed for any slice-backed input, which is all this deserializer ever sees
+        // (`Deserializer::from_slice`). The owned case only arises for `FastStr`-backed
+        // input; erroring out is better than silently escaping raw JSON as a string.
+        let raw = match raw.as_raw_cow() {
+            std::borrow::Cow::Borrowed(raw) => raw,
+            std::borrow::Cow::Owned(_) => {
+                return Err(de::Error::custom(
+                    "raw JSON passthrough requires slice-backed input",
+                ))
+            }
+        };
         // A passthrough `null` still has to be a real `Value::Null`: projection propagates
         // it through non-null positions, and merge treats a null source as a no-op. A
         // `RawJson("null")` would silently defeat both.
@@ -205,21 +216,22 @@ impl<'a, 'de> Visitor<'de> for ShapedValueVisitor<'a> {
     where
         E: de::Error,
     {
-        Ok(Value::String(value.into()))
+        Ok(Value::String(value))
     }
 
+    /// Only reached for a string that had to be unescaped, so it cannot borrow the buffer.
     fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(Value::String(value.to_owned().into()))
+        Ok(Value::OwnedString(value.into()))
     }
 
     fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(Value::String(value.into()))
+        Ok(Value::OwnedString(value.into_boxed_str()))
     }
 
     fn visit_unit<E>(self) -> Result<Self::Value, E> {
@@ -231,25 +243,37 @@ impl<'a, 'de> Visitor<'de> for ShapedValueVisitor<'a> {
         A: SeqAccess<'de>,
     {
         // Lists are transparent: every element sits at the same response position.
-        let mut elements = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+        //
+        // sonic gives no `size_hint`, so without a hint every list would start empty and
+        // realloc its way up — 2-3 extra allocations per list, measured. The shape remembers
+        // the last length seen here, which after the first response is normally exact.
+        let capacity = seq
+            .size_hint()
+            .unwrap_or_else(|| self.response_shape.list_len_hint.get());
+        let mut elements = Vec::with_capacity(capacity);
         while let Some(elem) = seq.next_element_seed(ValueSeed {
             response_shape: self.response_shape,
         })? {
             elements.push(elem);
         }
-        Ok(Value::Array(elements))
+        if elements.len() != capacity {
+            self.response_shape.list_len_hint.record(elements.len());
+        }
+        Ok(Value::Array(elements.into_boxed_slice()))
     }
 
     fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
     where
         M: MapAccess<'de>,
     {
-        let field_count = self.response_shape.fields.len();
-        // One slot per field in the shape, plus a scratch slot at the end for keys the plan
-        // never asked for. Anything the subgraph omits stays `Absent`, which is distinct from
-        // a `null` it actually answered — `requires` leaves the first out of a representation
+        // Exactly one slot per field in the shape, so the boxed slice below needs no
+        // reallocation. Anything the subgraph omits stays `Absent`, which is distinct from a
+        // `null` it actually answered — `requires` leaves the first out of a representation
         // and sends the second.
-        let mut slots = vec![Value::Absent; field_count + 1];
+        let mut slots = vec![Value::Absent; self.response_shape.fields.len()];
+        // Keys the plan never asked for are parsed and thrown away here, so the loop keeps a
+        // single call site (see below).
+        let mut discard = Value::Absent;
 
         // Subgraphs answer in the order the fetch asked, so the cursor lands on the right
         // field with one string compare; `resolve_slot` falls back to a scan when it does not.
@@ -260,17 +284,16 @@ impl<'a, 'de> Visitor<'de> for ShapedValueVisitor<'a> {
             // parse paths inside the loop, which measured ~25% slower on key-dense payloads;
             // routing everything through the seed keeps the loop body small and lets the
             // branch live one level down.
-            let (slot, child) = match self.response_shape.resolve_slot(&mut cursor, key) {
-                Some(slot) => (slot, &self.response_shape.fields[slot].shape),
-                None => (field_count, &EMPTY_RESPONSE_SHAPE),
+            let (target, child) = match self.response_shape.resolve_slot(&mut cursor, key) {
+                Some(slot) => (&mut slots[slot], &self.response_shape.fields[slot].shape),
+                None => (&mut discard, &EMPTY_RESPONSE_SHAPE),
             };
-            slots[slot] = map.next_value_seed(ValueSeed {
+            *target = map.next_value_seed(ValueSeed {
                 response_shape: child,
             })?;
         }
 
-        slots.truncate(field_count);
-        Ok(Value::Object(slots))
+        Ok(Value::Object(slots.into_boxed_slice()))
     }
 }
 
@@ -524,7 +547,7 @@ mod tests {
             Some(r#""k""#)
         );
         // A key the plan never asked for has no slot, so it is simply not kept.
-        assert_eq!(response.data.as_object().map(Vec::len), Some(1));
+        assert_eq!(response.data.as_object().map(<[_]>::len), Some(1));
     }
 
     #[test]

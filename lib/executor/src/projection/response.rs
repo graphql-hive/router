@@ -176,6 +176,7 @@ pub fn serialize_value_to_buffer(data: &Value, buffer: &mut Vec<u8>) {
         Value::I64(num) => write_i64(buffer, *num),
         Value::F64(num) => write_f64(buffer, *num),
         Value::String(value) => write_and_escape_string(buffer, value),
+        Value::OwnedString(value) => write_and_escape_string(buffer, value),
         Value::RawJson(raw) => buffer.put_slice(raw.as_bytes()),
         // Objects carry no keys of their own, so this is only reachable if a subgraph
         // answered a builtin-scalar or enum field with an object — a malformed response.
@@ -253,12 +254,18 @@ fn project_selection_set<'a>(
                 } => {
                     let null_propagation_checkpoint = buffer.len();
                     let mut first = true;
-                    let type_name = TypeName::deferred(
-                        selection,
-                        Some(data),
-                        parent_type_name,
-                        schema_metadata,
-                    );
+                    // A concrete object type is known from the schema, so its children need
+                    // no lazy parent chain — and no allocation to hold one. Only a
+                    // polymorphic position has to read `__typename` out of the data.
+                    let type_name = match &selection.concrete_type_name {
+                        Some(name) => TypeName::resolved(name),
+                        None => TypeName::deferred(
+                            selection,
+                            Some(data),
+                            parent_type_name,
+                            schema_metadata,
+                        ),
+                    };
                     let null_propagation_decision = project_selection_set_with_map(
                         data,
                         errors,
@@ -541,8 +548,8 @@ where
             }
         }
         FieldProjectionCondition::EnumValuesCondition(enum_values) => {
-            if let Some(Value::String(string_value)) = field_value {
-                if enum_values.contains(string_value.as_ref()) {
+            if let Some(string_value) = field_value.and_then(Value::as_str) {
+                if enum_values.contains(string_value) {
                     Ok(())
                 } else {
                     Err(FieldProjectionConditionError::InvalidEnumValue)

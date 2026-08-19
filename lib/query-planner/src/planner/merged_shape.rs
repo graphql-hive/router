@@ -152,6 +152,7 @@ impl MergedNode {
                 fields: Vec::new(),
                 raw: true,
                 inert: false,
+                list_len_hint: Default::default(),
             };
         }
 
@@ -169,6 +170,7 @@ impl MergedNode {
             fields,
             raw: false,
             inert,
+            list_len_hint: Default::default(),
         }
     }
 
@@ -433,6 +435,7 @@ fn assign(node: &mut PlanNode, path: &FlattenNodePath, root: &MergedNode) {
                 fields,
                 raw: false,
                 inert,
+                list_len_hint: Default::default(),
             };
         }
         PlanNode::Flatten(flatten) => {
@@ -485,6 +488,7 @@ fn wrap_entities(shape: ResponseShape) -> ResponseShape {
         }],
         raw: false,
         inert,
+        list_len_hint: Default::default(),
     }
 }
 

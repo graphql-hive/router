@@ -205,6 +205,7 @@ impl<'a> BatchFetchBuilder<'a> {
             fields,
             raw: false,
             inert,
+            list_len_hint: Default::default(),
         }
     }
 

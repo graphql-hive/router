@@ -1,7 +1,7 @@
 pub mod subgraph_response_tracker;
 
 use hive_router_query_planner::planner::merged_shape::response_shape_for_operation;
-use hive_router_query_planner::planner::response_shape::{ResponseShape, TYPENAME_SLOT};
+use hive_router_query_planner::planner::response_shape::{ListLengthHint, ResponseShape, TYPENAME_SLOT};
 
 use crate::projection::plan::MISSING_SLOT;
 
@@ -11,6 +11,7 @@ static EMPTY_SHAPE: ResponseShape = ResponseShape {
     fields: Vec::new(),
     raw: false,
     inert: true,
+    list_len_hint: ListLengthHint::none(),
 };
 
 use std::{

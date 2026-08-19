@@ -110,6 +110,7 @@ fn requires_benches(c: &mut Criterion) {
         ],
         raw: false,
         inert: false,
+        list_len_hint: Default::default(),
     };
 
     let mut group = c.benchmark_group("requires");

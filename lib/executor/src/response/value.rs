@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     fmt::Display,
     hash::{Hash, Hasher},
 };
@@ -27,10 +26,20 @@ pub enum Value<'a> {
     I64(i64),
     U64(u64),
     Bool(bool),
-    String(Cow<'a, str>),
-    RawJson(Cow<'a, str>),
-    Array(Vec<Value<'a>>),
-    Object(Vec<Value<'a>>),
+    /// Borrowed straight out of the response buffer — the overwhelming majority of strings,
+    /// since a JSON string only needs rewriting if it contains escapes.
+    String(&'a str),
+    /// The rare string that had to be unescaped, or one the router synthesized. A separate
+    /// variant rather than a `Cow` because `Cow<str>` is 24 bytes and would set the size of
+    /// the whole enum, while `Box<str>` is 16 like everything else here.
+    OwnedString(Box<str>),
+    RawJson(&'a str),
+    /// Boxed slices, not `Vec`s: a `Vec` carries a capacity field it never needs here — both
+    /// are built once and then only mutated in place — and dropping that word is what brings
+    /// `Value` from 32 bytes to 24. Every copy, drop and `memmove` of a response tree shrinks
+    /// by a quarter with it, and those were 15% of on-CPU time in a load profile.
+    Array(Box<[Value<'a>]>),
+    Object(Box<[Value<'a>]>),
 }
 
 impl<'a> AsRef<Value<'a>> for Value<'a> {
@@ -49,6 +58,7 @@ impl Hash for Value<'_> {
             Value::U64(u) => u.hash(state),
             Value::Bool(b) => b.hash(state),
             Value::String(s) => s.hash(state),
+            Value::OwnedString(s) => s.hash(state),
             Value::RawJson(raw) => raw.hash(state),
             Value::Array(arr) => arr.hash(state),
             Value::Object(slots) => slots.hash(state),
@@ -59,7 +69,7 @@ impl Hash for Value<'_> {
 impl<'a> Value<'a> {
     /// Takes the entity list out of a subgraph response. `slot` is where `_entities` (or a
     /// batch alias) sits in the fetch's response shape.
-    pub fn take_entities_at(&mut self, slot: usize) -> Option<Vec<Value<'a>>> {
+    pub fn take_entities_at(&mut self, slot: usize) -> Option<Box<[Value<'a>]>> {
         match self.slot_mut(slot).map(std::mem::take) {
             Some(Value::Array(entities)) => Some(entities),
             _ => None,
@@ -91,10 +101,10 @@ impl<'a> Value<'a> {
 
     /// An object with every slot empty, ready for a shape of `len` fields.
     pub fn empty_object(len: usize) -> Value<'a> {
-        Value::Object(vec![Value::Absent; len])
+        Value::Object(vec![Value::Absent; len].into_boxed_slice())
     }
 
-    pub fn as_object(&self) -> Option<&Vec<Value<'a>>> {
+    pub fn as_object(&self) -> Option<&[Value<'a>]> {
         match self {
             Value::Object(slots) => Some(slots),
             _ => None,
@@ -104,6 +114,7 @@ impl<'a> Value<'a> {
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Value::String(s) => Some(s),
+            Value::OwnedString(s) => Some(s),
             _ => None,
         }
     }
@@ -141,6 +152,7 @@ impl Display for Value<'_> {
             Value::Null => write!(f, "null"),
             Value::Bool(b) => write!(f, "{}", b),
             Value::String(s) => write!(f, "{:?}", s),
+            Value::OwnedString(s) => write!(f, "{:?}", s),
             Value::RawJson(raw) => write!(f, "{}", raw),
             Value::F64(n) => write!(f, "{}", n),
             Value::U64(n) => write!(f, "{}", n),
@@ -187,7 +199,7 @@ mod tests {
     fn an_answered_null_is_not_absent() {
         // `requires` sends an explicit null but leaves an absent field out, so the two must
         // stay distinguishable.
-        let object = Value::Object(vec![Value::Null, Value::Absent]);
+        let object = Value::Object(vec![Value::Null, Value::Absent].into_boxed_slice());
         assert!(!object.slot(0).unwrap().is_absent());
         assert!(object.slot(0).unwrap().is_null());
         assert!(object.slot(1).unwrap().is_absent());
@@ -195,10 +207,13 @@ mod tests {
 
     #[test]
     fn take_entities_at_empties_the_slot() {
-        let mut object = Value::Object(vec![
-            Value::Null,
-            Value::Array(vec![Value::I64(1), Value::I64(2)]),
-        ]);
+        let mut object = Value::Object(
+            vec![
+                Value::Null,
+                Value::Array(vec![Value::I64(1), Value::I64(2)].into_boxed_slice()),
+            ]
+            .into_boxed_slice(),
+        );
         let entities = object.take_entities_at(1).expect("entities");
         assert_eq!(entities.len(), 2);
         assert!(object.slot(1).unwrap().is_absent());

@@ -101,3 +101,7 @@ harness = false
 [[bench]]
 name = "roundtrip_benches"
 harness = false
+
+[[bench]]
+name = "alloc_profile"
+harness = false

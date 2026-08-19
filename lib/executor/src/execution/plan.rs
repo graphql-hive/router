@@ -76,7 +76,7 @@ use crate::{
     },
     response::{
         graphql_error::{GraphQLError, GraphQLErrorPath, GraphQLErrorPathSegment},
-        merge::deep_merge,
+        merge::{deep_merge, deep_merge_from_ref},
         subgraph_response::SubgraphResponse,
         value::Value,
     },
@@ -455,7 +455,11 @@ pub async fn execute_query_plan<'exec>(
         // those, so the root has to be grown to the full layout or a positional merge would
         // drop every injected slot.
         if let Value::Object(slots) = &mut data {
-            slots.resize_with(root_slots.max(slots.len()), || Value::Null);
+            if slots.len() < root_slots {
+                let mut grown = std::mem::take(slots).into_vec();
+                grown.resize_with(root_slots, || Value::Absent);
+                *slots = grown.into_boxed_slice();
+            }
         }
         data
     } else if opts.projection_plan.is_empty() {
@@ -1161,7 +1165,7 @@ impl<'exec> Executor<'exec> {
                                     self.schema_metadata,
                                     None,
                                     &mut |target, _error_path| {
-                                        deep_merge(target, source.clone());
+                                        deep_merge_from_ref(target, &source);
                                     },
                                 );
                             }
@@ -1226,12 +1230,7 @@ impl<'exec> Executor<'exec> {
                                             error_paths.push(error_path);
                                         }
                                         if let Some(entity) = entities.get(*entity_index) {
-                                            // SAFETY: `new_val` is a clone of an entity that lives for `'a`.
-                                            // The transmute is to satisfy the compiler, but the lifetime
-                                            // is valid.
-                                            let new_val: Value<'_> =
-                                                unsafe { std::mem::transmute(entity.clone()) };
-                                            deep_merge(target, new_val);
+                                            deep_merge_from_ref(target, entity);
                                         }
                                     }
                                 },
@@ -1379,10 +1378,10 @@ impl<'exec> Executor<'exec> {
     fn collect_batched_entities_by_alias(
         response_data: &mut Value<'exec>,
         aliases: &[AliasBatchState<'exec>],
-    ) -> AHashMap<AliasIndex, Vec<Value<'exec>>> {
+    ) -> AHashMap<AliasIndex, Box<[Value<'exec>]>> {
         // Take entity arrays from response data once per alias.
         // This avoids repeated lookups/mutations on response data.
-        let mut entities_by_alias: AHashMap<AliasIndex, Vec<Value<'exec>>> =
+        let mut entities_by_alias: AHashMap<AliasIndex, Box<[Value<'exec>]>> =
             AHashMap::with_capacity(aliases.len());
 
         for (alias_index, alias_state) in aliases.iter().enumerate() {
@@ -1406,7 +1405,7 @@ impl<'exec> Executor<'exec> {
         &self,
         ctx: &mut ExecutionContext<'exec>,
         alias_state: &'alias AliasBatchState<'exec>,
-        entities: Option<&mut Vec<Value<'exec>>>,
+        entities: Option<&mut Box<[Value<'exec>]>>,
         alias_errors: Option<&[GraphQLError]>,
     ) -> Option<HashMap<&'alias usize, Vec<GraphQLErrorPath>>> {
         let has_alias_errors = alias_errors.is_some();
@@ -1463,10 +1462,7 @@ impl<'exec> Executor<'exec> {
                             error_paths.push(error_path);
                         }
                         if let Some(entity) = entities.get(*entity_index) {
-                            // SAFETY: `new_val` is a clone of an entity that lives for `'a`.
-                            // The transmute is to satisfy the compiler, but the lifetime is valid.
-                            let new_val: Value<'_> = unsafe { std::mem::transmute(entity.clone()) };
-                            deep_merge(target_data, new_val);
+                            deep_merge_from_ref(target_data, entity);
                         }
                     }
                 },
@@ -1982,6 +1978,7 @@ mod tests {
             ],
             raw: false,
             inert: false,
+            list_len_hint: Default::default(),
         };
         let owned = SubgraphResponse::parse_data_with_shape(
             r#"{

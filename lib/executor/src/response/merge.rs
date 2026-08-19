@@ -34,6 +34,39 @@ fn deep_merge_internal<'a>(target: &mut Value<'a>, source: Value<'a>) {
     }
 }
 
+/// Merges `source` into `target` without taking ownership of it.
+///
+/// One deduplicated entity is written into every position that asked for it, and cloning the
+/// whole entity subtree once per position was the second-hottest symbol in a load profile —
+/// more than JSON parsing. Walking the source by reference clones only what the target does
+/// not already have, and at a leaf that clone is a 32-byte copy of a value borrowing the
+/// response buffer, with no allocation at all.
+///
+/// Equivalent to `deep_merge(target, source.clone())`, minus the copy of everything the
+/// target was going to overwrite or already had.
+pub fn deep_merge_from_ref<'a>(target: &mut Value<'a>, source: &Value<'a>) {
+    match (target, source) {
+        // Neither an unanswered slot nor an answered `null` clears what is already there.
+        (_, Value::Absent | Value::Null) => {}
+
+        // Same position, same shape: recurse in place, allocating nothing.
+        (Value::Object(target_slots), Value::Object(source_slots)) => {
+            for (target_slot, source_value) in target_slots.iter_mut().zip(source_slots.iter()) {
+                deep_merge_from_ref(target_slot, source_value);
+            }
+        }
+
+        (Value::Array(target_items), Value::Array(source_items)) => {
+            for (target_item, source_item) in target_items.iter_mut().zip(source_items.iter()) {
+                deep_merge_from_ref(target_item, source_item);
+            }
+        }
+
+        // The target has nothing here, so this subtree does have to be materialized.
+        (target_value, source_value) => *target_value = source_value.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -48,6 +81,10 @@ mod tests {
                 })
                 .collect(),
         )
+    }
+
+    fn boxed<'a>(items: Vec<Value<'a>>) -> Box<[Value<'a>]> {
+        items.into_boxed_slice()
     }
 
     fn slots(value: &Value<'_>) -> Vec<Option<i64>> {
@@ -86,18 +123,21 @@ mod tests {
 
     #[test]
     fn nested_objects_merge_recursively() {
-        let mut target = Value::Object(vec![obj(&[Some(1), None])]);
-        deep_merge(&mut target, Value::Object(vec![obj(&[None, Some(2)])]));
+        let mut target = Value::Object(boxed(vec![obj(&[Some(1), None])]));
+        deep_merge(&mut target, Value::Object(boxed(vec![obj(&[None, Some(2)])])));
         let inner = target.slot(0).unwrap();
         assert_eq!(slots(inner), [Some(1), Some(2)]);
     }
 
     #[test]
     fn arrays_merge_element_wise() {
-        let mut target = Value::Array(vec![obj(&[Some(1), None]), obj(&[Some(3), None])]);
+        let mut target = Value::Array(boxed(vec![
+            obj(&[Some(1), None]),
+            obj(&[Some(3), None]),
+        ]));
         deep_merge(
             &mut target,
-            Value::Array(vec![obj(&[None, Some(2)]), obj(&[None, Some(4)])]),
+            Value::Array(boxed(vec![obj(&[None, Some(2)]), obj(&[None, Some(4)])])),
         );
         match &target {
             Value::Array(items) => {
@@ -109,10 +149,44 @@ mod tests {
     }
 
     #[test]
+    fn merging_from_a_reference_matches_merging_an_owned_clone() {
+        // The whole point of `deep_merge_from_ref` is to avoid the clone, so it has to land
+        // in exactly the same place the clone would have.
+        let cases: Vec<(Value<'static>, Value<'static>)> = vec![
+            (obj(&[Some(1), None, Some(3)]), obj(&[None, Some(2), None])),
+            (obj(&[Some(1), Some(2)]), obj(&[Some(10), None])),
+            (
+                Value::Object(boxed(vec![obj(&[Some(1), None])])),
+                Value::Object(boxed(vec![obj(&[None, Some(2)])])),
+            ),
+            (
+                Value::Array(boxed(vec![obj(&[Some(1), None])])),
+                Value::Array(boxed(vec![obj(&[None, Some(2)])])),
+            ),
+            (Value::Absent, obj(&[Some(7)])),
+            (obj(&[Some(1)]), Value::Null),
+        ];
+
+        for (target, source) in cases {
+            let mut by_clone = target.clone();
+            deep_merge(&mut by_clone, source.clone());
+
+            let mut by_ref = target.clone();
+            deep_merge_from_ref(&mut by_ref, &source);
+
+            assert_eq!(
+                format!("{by_clone:?}"),
+                format!("{by_ref:?}"),
+                "diverged for target={target:?} source={source:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_shorter_source_leaves_the_remaining_target_slots_alone() {
         // A partial response still zips: `zip` stops at the shorter side.
         let mut target = obj(&[Some(1), Some(2), Some(3)]);
-        deep_merge(&mut target, Value::Object(vec![Value::I64(10)]));
+        deep_merge(&mut target, Value::Object(vec![Value::I64(10)].into_boxed_slice()));
         assert_eq!(slots(&target), [Some(10), Some(2), Some(3)]);
     }
 }

@@ -17,6 +17,7 @@ fn leaf() -> ResponseShape {
         fields: Vec::new(),
         raw: false,
         inert: true,
+        list_len_hint: Default::default(),
     }
 }
 
@@ -32,6 +33,7 @@ fn shape_for(keys: &[String]) -> ResponseShape {
             .collect(),
         raw: false,
         inert: true,
+        list_len_hint: Default::default(),
     };
     ResponseShape {
         fields: vec![ResponseShapeField {
@@ -40,6 +42,7 @@ fn shape_for(keys: &[String]) -> ResponseShape {
         }],
         raw: false,
         inert: true,
+        list_len_hint: Default::default(),
     }
 }
 

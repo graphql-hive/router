@@ -31,6 +31,7 @@ fn strip_raw(shape: &ResponseShape) -> ResponseShape {
         fields,
         raw: false,
         inert,
+        list_len_hint: Default::default(),
     }
 }
 

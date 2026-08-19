@@ -134,6 +134,14 @@ pub struct FieldProjectionPlan {
     pub parent_type_guard: Option<TypeCondition>,
     pub conditions: Option<FieldProjectionCondition>,
     pub value: ProjectionValueSource,
+    /// The field's output type when it is a concrete object type.
+    ///
+    /// Projection needs a parent type name for its children, and for a polymorphic position
+    /// (interface or union) that can only come from the data's `__typename`, which is why
+    /// `TypeName` resolves lazily through a parent chain. A concrete object type is known
+    /// here and now, so the chain — and the allocation backing it — is not needed at all.
+    /// Measured: one `Rc` allocation per object projected.
+    pub concrete_type_name: Option<String>,
     /// Where this field's value sits in the response tree at this position.
     ///
     /// Response keys the client asked for are absorbed into the shape before anything the
@@ -288,6 +296,17 @@ impl FieldProjectionPlan {
     pub fn reassign_slots(plans: &mut [FieldProjectionPlan], operation: &OperationDefinition) {
         let shape = response_shape_for_operation(operation);
         Self::assign_slots(plans, &shape);
+    }
+
+    /// `Some(name)` when the field's output type is a concrete object, so its children's
+    /// parent type name needs no lookup in the data.
+    fn concrete_type_name(
+        field_type: &str,
+        schema_metadata: &SchemaMetadata,
+    ) -> Option<String> {
+        schema_metadata
+            .is_object_type(field_type)
+            .then(|| field_type.to_string())
     }
 
     fn assign_slots(plans: &mut [FieldProjectionPlan], shape: &ResponseShape) {
@@ -976,6 +995,7 @@ impl FieldProjectionPlan {
                 is_typename: field_name == TYPENAME_FIELD_NAME,
                 nullability: nullability.clone(),
                 conditions: final_conditions,
+                concrete_type_name: Self::concrete_type_name(&field_type, schema_metadata),
                 // We use Some(vec![]) as it means "project an object, but with no children".
                 // None would be treated as "no projection plan available".
                 value: ProjectionValueSource::ResponseData {
@@ -991,6 +1011,7 @@ impl FieldProjectionPlan {
                 is_typename: field_name == TYPENAME_FIELD_NAME,
                 nullability: nullability.clone(),
                 conditions: final_conditions,
+                concrete_type_name: Self::concrete_type_name(&field_type, schema_metadata),
                 value: ProjectionValueSource::ResponseData {
                     selections: Self::from_selection_set(
                         &field.selections,
@@ -1076,6 +1097,7 @@ impl FieldProjectionPlan {
             field_name: self.field_name.clone(),
             response_key: self.response_key.clone(),
             parent_type_guard: self.parent_type_guard.clone(),
+            concrete_type_name: self.concrete_type_name.clone(),
             conditions: self.conditions.clone(),
             is_typename: self.is_typename,
             nullability: self.nullability.clone(),

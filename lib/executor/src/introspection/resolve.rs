@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::sync::Arc;
 
 use graphql_tools::parser::query::Value as QueryValue;
@@ -44,7 +43,7 @@ fn into_slots<'exec>(
             slots[slot] = value;
         }
     }
-    Value::Object(slots)
+    Value::Object(slots.into_boxed_slice())
 }
 
 fn resolve_boolean_variable(
@@ -113,16 +112,15 @@ fn is_one_of(directives: &[Directive]) -> bool {
     directives.iter().any(|d| d.name == "oneOf")
 }
 
-fn kind_to_str<'exec>(type_def: &'exec TypeDefinition) -> Cow<'exec, str> {
-    (match type_def {
+fn kind_to_str(type_def: &TypeDefinition) -> &'static str {
+    match type_def {
         TypeDefinition::Scalar(_) => "SCALAR",
         TypeDefinition::Object(_) => "OBJECT",
         TypeDefinition::Interface(_) => "INTERFACE",
         TypeDefinition::Union(_) => "UNION",
         TypeDefinition::Enum(_) => "ENUM",
         TypeDefinition::InputObject(_) => "INPUT_OBJECT",
-    })
-    .into()
+    }
 }
 
 fn resolve_input_value<'exec>(
@@ -142,20 +140,20 @@ fn resolve_input_value_selections<'exec>(
     for item in selection_items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
-                "name" => Value::String(iv.name.as_str().into()),
+                "name" => Value::String(iv.name.as_str()),
                 "description" => iv
                     .description
                     .as_ref()
-                    .map_or(Value::Null, |s| Value::String(s.into())),
+                    .map_or(Value::Null, |s| Value::String(s.as_str())),
                 "type" => resolve_type(&iv.value_type, &field.selections, ctx),
                 "defaultValue" => iv
                     .default_value
                     .as_ref()
-                    .map_or_else(|| Value::Null, |ast| Value::String(ast.to_string().into())), // TODO: support default values
+                    .map_or_else(|| Value::Null, |ast| Value::OwnedString(ast.to_string().into())), // TODO: support default values
                 "isDeprecated" => Value::Bool(is_deprecated(&iv.directives)),
                 "deprecationReason" => get_deprecation_reason(&iv.directives)
-                    .map_or(Value::Null, |s| Value::String(s.into())),
-                "__typename" => Value::String("__InputValue".into()),
+                    .map_or(Value::Null, Value::String),
+                "__typename" => Value::String("__InputValue"),
                 _ => Value::Null,
             };
             iv_data.push((field.selection_identifier(), value));
@@ -187,24 +185,24 @@ fn resolve_field_selections<'exec>(
     for item in selection_items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
-                "name" => Value::String(f.name.as_str().into()),
+                "name" => Value::String(f.name.as_str()),
                 "description" => f
                     .description
                     .as_ref()
-                    .map_or(Value::Null, |s| Value::String(s.into())),
+                    .map_or(Value::Null, |s| Value::String(s.as_str())),
                 "args" => {
                     let args: Vec<_> = f
                         .arguments
                         .iter()
                         .map(|arg| resolve_input_value(arg, &field.selections, ctx))
                         .collect();
-                    Value::Array(args)
+                    Value::Array(args.into_boxed_slice())
                 }
                 "type" => resolve_type(&f.field_type, &field.selections, ctx),
                 "isDeprecated" => Value::Bool(is_deprecated(&f.directives)),
                 "deprecationReason" => get_deprecation_reason(&f.directives)
-                    .map_or(Value::Null, |s| Value::String(s.into())),
-                "__typename" => Value::String("__Field".into()),
+                    .map_or(Value::Null, Value::String),
+                "__typename" => Value::String("__Field"),
                 _ => Value::Null,
             };
             field_data.push((field.selection_identifier(), value));
@@ -234,15 +232,15 @@ fn resolve_enum_value_selections<'exec>(
     for item in selection_items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
-                "name" => Value::String(ev.name.as_str().into()),
+                "name" => Value::String(ev.name.as_str()),
                 "description" => ev
                     .description
                     .as_ref()
-                    .map_or(Value::Null, |s| Value::String(s.into())),
+                    .map_or(Value::Null, |s| Value::String(s.as_str())),
                 "isDeprecated" => Value::Bool(is_deprecated_enum(ev)),
                 "deprecationReason" => get_deprecation_reason(&ev.directives)
-                    .map_or(Value::Null, |s| Value::String(s.into())),
-                "__typename" => Value::String("__EnumValue".into()),
+                    .map_or(Value::Null, Value::String),
+                "__typename" => Value::String("__EnumValue"),
                 _ => Value::Null,
             };
             ev_data.push((field.selection_identifier(), value));
@@ -284,7 +282,7 @@ fn resolve_type_definition_selections<'exec>(
                     TypeDefinition::Enum(e) => Some(&e.name),
                     TypeDefinition::InputObject(io) => Some(&io.name),
                 }
-                .map(|s| Value::String(s.into()))
+                .map(|s| Value::String(s.as_str()))
                 .unwrap_or(Value::Null),
                 "description" => match type_def {
                     TypeDefinition::Scalar(s) => s.description.as_ref(),
@@ -294,11 +292,11 @@ fn resolve_type_definition_selections<'exec>(
                     TypeDefinition::Enum(e) => e.description.as_ref(),
                     TypeDefinition::InputObject(io) => io.description.as_ref(),
                 }
-                .map_or(Value::Null, |s| Value::String(s.into())),
+                .map_or(Value::Null, |s| Value::String(s.as_str())),
                 "specifiedByURL" => {
                     if let TypeDefinition::Scalar(scalar) = type_def {
                         get_specified_by_url(&scalar.directives)
-                            .map_or(Value::Null, |url| Value::String(url.into()))
+                            .map_or(Value::Null, Value::String)
                     } else {
                         Value::Null
                     }
@@ -338,7 +336,7 @@ fn resolve_type_definition_selections<'exec>(
                             })
                             .map(|f| resolve_field(f, &field.selections, ctx))
                             .collect();
-                        Value::Array(fields_values)
+                        Value::Array(fields_values.into_boxed_slice())
                     } else {
                         Value::Null
                     }
@@ -351,7 +349,7 @@ fn resolve_type_definition_selections<'exec>(
                             .filter_map(|iface_name| ctx.schema.type_by_name(iface_name))
                             .map(|t| resolve_type_definition(t, &field.selections, ctx))
                             .collect();
-                        Value::Array(interface_values)
+                        Value::Array(interface_values.into_boxed_slice())
                     } else {
                         Value::Null
                     }
@@ -367,7 +365,7 @@ fn resolve_type_definition_selections<'exec>(
                             .filter_map(|name| ctx.schema.type_by_name(name.as_str()))
                             .map(|t| resolve_type_definition(t, &field.selections, ctx))
                             .collect();
-                        Value::Array(possible_types)
+                        Value::Array(possible_types.into_boxed_slice())
                     } else {
                         Value::Null
                     }
@@ -393,7 +391,7 @@ fn resolve_type_definition_selections<'exec>(
                             .filter(|v| include_deprecated || !is_deprecated_enum(v))
                             .map(|v| resolve_enum_value(v, &field.selections))
                             .collect();
-                        Value::Array(enum_values)
+                        Value::Array(enum_values.into_boxed_slice())
                     } else {
                         Value::Null
                     }
@@ -405,12 +403,12 @@ fn resolve_type_definition_selections<'exec>(
                             .iter()
                             .map(|f| resolve_input_value(f, &field.selections, ctx))
                             .collect();
-                        Value::Array(fields_values)
+                        Value::Array(fields_values.into_boxed_slice())
                     }
                     _ => Value::Null,
                 },
                 "ofType" => Value::Null,
-                "__typename" => Value::String("__Type".into()),
+                "__typename" => Value::String("__Type"),
                 _ => Value::Null,
             };
             type_data.push((field.selection_identifier(), value));
@@ -443,10 +441,10 @@ fn resolve_wrapper_type_selections<'exec>(
     for item in selection_items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
-                "kind" => Value::String(kind.into()),
+                "kind" => Value::String(kind),
                 "name" => Value::Null,
                 "ofType" => resolve_type(inner_type, &field.selections, ctx),
-                "__typename" => Value::String("__Type".into()),
+                "__typename" => Value::String("__Type"),
                 _ => Value::Null,
             };
             type_data.push((field.selection_identifier(), value));
@@ -499,18 +497,18 @@ fn resolve_directive_selections<'exec>(
     for item in selection_items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
-                "name" => Value::String(d.name.as_str().into()),
+                "name" => Value::String(d.name.as_str()),
                 "description" => d
                     .description
                     .as_ref()
-                    .map_or(Value::Null, |s| Value::String(s.into())),
+                    .map_or(Value::Null, |s| Value::String(s.as_str())),
                 "locations" => {
                     let locs: Vec<_> = d
                         .locations
                         .iter()
-                        .map(|l| Value::String(l.as_str().into()))
+                        .map(|l| Value::String(l.as_str()))
                         .collect();
-                    Value::Array(locs)
+                    Value::Array(locs.into_boxed_slice())
                 }
                 "args" => {
                     let args: Vec<_> = d
@@ -518,10 +516,10 @@ fn resolve_directive_selections<'exec>(
                         .iter()
                         .map(|arg| resolve_input_value(arg, &field.selections, ctx))
                         .collect();
-                    Value::Array(args)
+                    Value::Array(args.into_boxed_slice())
                 }
                 "isRepeatable" => Value::Bool(d.repeatable),
-                "__typename" => Value::String("__Directive".into()),
+                "__typename" => Value::String("__Directive"),
                 _ => Value::Null,
             };
             directive_data.push((field.selection_identifier(), value));
@@ -557,13 +555,13 @@ fn resolve_schema_selections<'exec>(
             let value = match inner_field.name.as_str() {
                 "description" => Value::Null,
                 "types" => {
-                    let types = ctx
+                    let types: Vec<Value<'_>> = ctx
                         .schema
                         .type_map()
                         .values()
                         .map(|t| resolve_type_definition(t, &inner_field.selections, ctx))
                         .collect();
-                    Value::Array(types)
+                    Value::Array(types.into_boxed_slice())
                 }
                 "queryType" => {
                     let query_type = ctx
@@ -591,7 +589,7 @@ fn resolve_schema_selections<'exec>(
                         resolve_type_definition(t, &inner_field.selections, ctx)
                     }),
                 "directives" => {
-                    let directives = ctx
+                    let directives: Vec<Value<'_>> = ctx
                         .schema
                         .definitions
                         .iter()
@@ -601,9 +599,9 @@ fn resolve_schema_selections<'exec>(
                         })
                         .map(|d| resolve_directive(d, &inner_field.selections, ctx))
                         .collect();
-                    Value::Array(directives)
+                    Value::Array(directives.into_boxed_slice())
                 }
-                "__typename" => Value::String("__Schema".into()),
+                "__typename" => Value::String("__Schema"),
                 _ => Value::Null,
             };
             schema_data.push((inner_field.selection_identifier(), value));
@@ -671,7 +669,7 @@ fn resolve_root_introspection_selections<'exec>(
                         Value::Null
                     }
                 }
-                "__typename" => Value::String(root_type_name.into()),
+                "__typename" => Value::String(root_type_name),
                 _ => Value::Null,
             };
             data.push((field.selection_identifier(), value));
