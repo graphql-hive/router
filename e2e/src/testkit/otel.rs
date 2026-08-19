@@ -1226,7 +1226,7 @@ impl Display for CollectedSpan {
                 writeln!(
                     f,
                     "  Status: message='{}' code='{}'",
-                    &status.message, &status.code,
+                    status.message, status.code,
                 )?;
             }
             None => {
