@@ -59,6 +59,25 @@ impl QueryPlanner {
         })
     }
 
+    #[napi]
+    pub fn compute_cache_key<'a>(
+        &self,
+        query: String,
+        operation_name: Option<String>,
+        active_labels: HashSet<String>,
+        percentage_value: f64,
+    ) -> Result<String> {
+        let cache_key = query_plan::compute_cache_key(
+            &self.planner,
+            query.as_str(),
+            operation_name.as_deref(),
+            active_labels,
+            percentage_value,
+        )?;
+
+        Ok(cache_key)
+    }
+
     // queryplan located in query-plan.d.ts and will be merged with index.d.ts on build
     // because of napi-rs limitations, the queryplan from hive-query-planner cannot be used
     #[napi(ts_return_type = "QueryPlan")]

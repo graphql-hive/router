@@ -5,6 +5,7 @@ export declare class QueryPlanner {
   overrideLabels: Array<string>
   overridePercentages: Array<number>
   constructor(supergraphSdl: string)
+  computeCacheKey(query: string, operationName: string | undefined | null, activeLabels: Set<string>, percentageValue: number): string
   plan(query: string, operationName: string | undefined | null, activeLabels: Set<string>, percentageValue: number, signal?: AbortSignal | undefined | null): QueryPlan
   planAsync(query: string, operationName: string | undefined | null, activeLabels: Set<string>, percentageValue: number, signal?: AbortSignal | undefined | null): Promise<QueryPlan>
 }

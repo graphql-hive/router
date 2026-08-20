@@ -1,11 +1,17 @@
 use std::{collections::HashSet, sync::Arc};
 
 use graphql_tools::parser::{query, schema};
-use hive_router::query_planner::{
-    ast::normalization::{error::NormalizationError, normalize_operation},
-    graph::{PlannerOverrideContext, PERCENTAGE_SCALE_FACTOR},
-    planner::{plan_nodes::QueryPlan, Planner, PlannerError},
-    utils::{cancellation::CancellationToken, parsing::safe_parse_operation},
+use hive_router::{
+    pipeline::{
+        progressive_override::{RequestOverrideContext, StableOverrideContext},
+        query_plan::calculate_cache_key,
+    },
+    query_planner::{
+        ast::normalization::{error::NormalizationError, normalize_operation},
+        graph::{PlannerOverrideContext, PERCENTAGE_SCALE_FACTOR},
+        planner::{plan_nodes::QueryPlan, Planner, PlannerError},
+        utils::{cancellation::CancellationToken, parsing::safe_parse_operation},
+    },
 };
 use napi::{Task, Unknown};
 
@@ -27,6 +33,32 @@ impl From<QueryPlanError> for napi::Error {
     }
 }
 
+pub fn compute_cache_key(
+    planner: &Planner,
+    query: &str,
+    operation_name: Option<&str>,
+    active_labels: HashSet<String>,
+    percentage_value: f64,
+) -> core::result::Result<String, QueryPlanError> {
+    let parsed_operation = safe_parse_operation(query)?;
+
+    let normalized_operation =
+        normalize_operation(&planner.supergraph, &parsed_operation, operation_name)?;
+
+    let request_override_context = RequestOverrideContext {
+        active_flags: active_labels,
+        percentage_value: (percentage_value * (PERCENTAGE_SCALE_FACTOR as f64)) as u64,
+    };
+
+    let stable_override_context =
+        StableOverrideContext::new(&planner.supergraph, &request_override_context);
+
+    let operation_hash = normalized_operation.operation.hash();
+    let cache_key = calculate_cache_key(operation_hash, &stable_override_context);
+
+    Ok(cache_key.to_string())
+}
+
 pub fn query_plan(
     planner: &Planner,
     query: &str,
@@ -36,7 +68,6 @@ pub fn query_plan(
     cancellation_token: &CancellationToken,
 ) -> core::result::Result<QueryPlan, QueryPlanError> {
     let parsed_operation = safe_parse_operation(query)?;
-
     let normalized_operation =
         normalize_operation(&planner.supergraph, &parsed_operation, operation_name)?;
 

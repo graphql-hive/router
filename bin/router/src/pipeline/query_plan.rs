@@ -181,7 +181,7 @@ pub async fn plan_operation_with_cache(
 }
 
 #[inline]
-fn calculate_cache_key(operation_hash: u64, context: &StableOverrideContext) -> u64 {
+pub fn calculate_cache_key(operation_hash: u64, context: &StableOverrideContext) -> u64 {
     let mut hasher = Xxh3::new();
     operation_hash.hash(&mut hasher);
     context.hash(&mut hasher);
