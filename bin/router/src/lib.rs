@@ -96,7 +96,7 @@ pub use mimalloc::MiMalloc as RouterGlobalAllocator;
 pub use ntex;
 pub use ntex::main;
 use ntex::{
-    http::HttpServiceConfig,
+    http::{HttpServiceConfig, KeepAlive},
     time::Seconds,
     web::{self, HttpRequest},
     SharedCfg,
@@ -373,6 +373,19 @@ async fn graphql_endpoint_dispatch(
     .await
 }
 
+/// ntex expresses HTTP/1 keep-alive in whole seconds. Sub-second values round
+/// up so a configured timeout cannot collapse to "close immediately", and
+/// oversized values clamp instead of wrapping. Zero disables keep-alive.
+fn to_ntex_keep_alive(duration: std::time::Duration) -> KeepAlive {
+    let secs = duration.as_secs() + u64::from(duration.subsec_nanos() > 0);
+
+    match u16::try_from(secs) {
+        Ok(0) => KeepAlive::Disabled,
+        Ok(secs) => KeepAlive::Timeout(Seconds(secs)),
+        Err(_) => KeepAlive::Timeout(Seconds(u16::MAX)),
+    }
+}
+
 pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), RouterInitError> {
     if cfg!(debug_assertions) && std::env::var("CARGO").is_err() {
         eprintln!("WARNING: You are running Hive Router using a debug binary, which is not recommended for production use.");
@@ -398,6 +411,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     let websocket_path = router_config.websocket_path().map(|p| p.to_string());
     let callback_conf = router_config.callback_conf().cloned();
     let workers = router_config.workers();
+    let keep_alive = to_ntex_keep_alive(router_config.keep_alive());
     let mut bg_tasks_manager = background_tasks::BackgroundTasksManager::new();
     let (shared_state, schema_state) = configure_app_from_config(
         router_config,
@@ -439,7 +453,10 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
                 );
                 cb_server_builder = cb_server_builder.workers(workers.get());
             }
+            let cb_cfg = SharedCfg::new("HIVE_ROUTER_CALLBACK")
+                .add(HttpServiceConfig::new().set_keepalive(keep_alive));
             let cb_server = cb_server_builder
+                .config(cb_cfg)
                 .bind(&cb_addr)
                 .map_err(|err| RouterInitError::HttpCallbackServerBindError(cb_addr, err))?
                 .run();
@@ -495,6 +512,8 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
         server = server.workers(workers.get());
     }
 
+    info!(target: targets::CORE, keep_alive = ?keep_alive, "configuring HTTP server keep-alive");
+
     let ntex_timeout = u16::try_from(
         shared_state_clone
             .router_config
@@ -513,6 +532,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
         .to_bytes() as usize;
 
     let http_cfg = HttpServiceConfig::new()
+        .set_keepalive(keep_alive)
         // ntex HTTP timeout is set as a safe-guard on top of Hive Router's timeout
         .set_client_timeout(Seconds(ntex_timeout))
         // ntex's parse buffer must fit the whole request head, otherwise limits
@@ -785,4 +805,49 @@ macro_rules! configure_global_allocator {
         #[global_allocator]
         static GLOBAL: RouterGlobalAllocator = RouterGlobalAllocator;
     };
+}
+
+#[cfg(test)]
+mod to_ntex_keep_alive_tests {
+    use std::time::Duration;
+
+    use ntex::{http::KeepAlive, time::Seconds};
+
+    use super::to_ntex_keep_alive;
+
+    #[test]
+    fn keeps_whole_seconds() {
+        assert_eq!(
+            to_ntex_keep_alive(Duration::from_secs(80)),
+            KeepAlive::Timeout(Seconds(80))
+        );
+    }
+
+    #[test]
+    fn rounds_partial_seconds_up() {
+        assert_eq!(
+            to_ntex_keep_alive(Duration::from_millis(1)),
+            KeepAlive::Timeout(Seconds(1))
+        );
+        assert_eq!(
+            to_ntex_keep_alive(Duration::from_millis(1500)),
+            KeepAlive::Timeout(Seconds(2))
+        );
+    }
+
+    #[test]
+    fn disables_keep_alive_for_zero() {
+        assert_eq!(
+            to_ntex_keep_alive(Duration::from_secs(0)),
+            KeepAlive::Disabled
+        );
+    }
+
+    #[test]
+    fn clamps_oversized_durations() {
+        assert_eq!(
+            to_ntex_keep_alive(Duration::from_secs(u64::from(u16::MAX) + 1)),
+            KeepAlive::Timeout(Seconds(u16::MAX))
+        );
+    }
 }

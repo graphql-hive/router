@@ -1,4 +1,5 @@
 use std::num::NonZeroUsize;
+use std::time::Duration;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -36,6 +37,30 @@ pub struct HttpServerConfig {
     /// Can also be set via the `ROUTER_HTTP_WORKERS` environment variable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workers: Option<NonZeroUsize>,
+
+    /// How long the HTTP server waits for a follow-up request on an idle
+    /// keep-alive connection before closing it.
+    ///
+    /// Defaults to 5 seconds, which matches ntex's own default.
+    ///
+    /// When the router sits behind a reverse proxy, set this above that proxy's
+    /// idle timeout so the proxy closes first. Closing first from the router
+    /// leaves the proxy holding a socket the server has already dropped, which
+    /// then fails the next reused request.
+    ///
+    /// ```yaml
+    /// http:
+    ///   keep_alive: 80s
+    /// ```
+    ///
+    /// Can also be set via the `ROUTER_HTTP_KEEP_ALIVE` environment variable.
+    #[serde(
+        default = "http_server_keep_alive_default",
+        deserialize_with = "humantime_serde::deserialize",
+        serialize_with = "humantime_serde::serialize"
+    )]
+    #[schemars(with = "String")]
+    pub keep_alive: Duration,
 }
 
 impl Default for HttpServerConfig {
@@ -45,6 +70,7 @@ impl Default for HttpServerConfig {
             port: http_server_port_default(),
             graphql_endpoint: graphql_endpoint_default(),
             workers: None,
+            keep_alive: http_server_keep_alive_default(),
         }
     }
 }
@@ -59,4 +85,48 @@ fn graphql_endpoint_default() -> String {
 
 fn http_server_port_default() -> u16 {
     4000
+}
+
+/// Matches ntex's own default HTTP/1 keep-alive, so configurations that omit
+/// `keep_alive` keep their existing behaviour.
+fn http_server_keep_alive_default() -> Duration {
+    Duration::from_secs(5)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::HttpServerConfig;
+
+    #[test]
+    fn keep_alive_defaults_to_five_seconds() {
+        let config: HttpServerConfig =
+            serde_json::from_str("{}").expect("empty config should deserialize");
+
+        assert_eq!(config.keep_alive, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn keep_alive_accepts_human_readable_durations() {
+        let config: HttpServerConfig = serde_json::from_str(r#"{ "keep_alive": "80s" }"#)
+            .expect("human readable duration should deserialize");
+
+        assert_eq!(config.keep_alive, Duration::from_secs(80));
+    }
+
+    #[test]
+    fn keep_alive_serializes_back_to_a_duration_string() {
+        let config = HttpServerConfig {
+            keep_alive: Duration::from_secs(80),
+            ..Default::default()
+        };
+
+        let serialized = serde_json::to_value(&config)
+            .expect("config should serialize")
+            .get("keep_alive")
+            .cloned();
+
+        assert_eq!(serialized, Some(serde_json::json!("1m 20s")));
+    }
 }
