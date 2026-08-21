@@ -35,6 +35,8 @@ pub struct EnvVarOverrides {
     pub http_host: Option<String>,
     #[envconfig(from = "ROUTER_HTTP_WORKERS")]
     pub http_workers: Option<usize>,
+    #[envconfig(from = "ROUTER_HTTP_SHUTDOWN_TIMEOUT")]
+    pub http_shutdown_timeout: Option<String>,
 
     // Supergraph overrides
     #[envconfig(from = "SUPERGRAPH_FILE_PATH")]
@@ -122,6 +124,11 @@ impl EnvVarOverrides {
             // cast to u64 because the `config` crate doesn't implement `Into<Value>` for `usize`;
             // the value is then deserialized into `Option<NonZeroUsize>`, which rejects `0`.
             config = config.set_override("http.workers", http_workers as u64)?;
+        }
+
+        if let Some(http_shutdown_timeout) = self.http_shutdown_timeout.take() {
+            debug!(target: CONFIG_LOGGING_TARGET, value = http_shutdown_timeout, "overriding 'http.shutdown_timeout'");
+            config = config.set_override("http.shutdown_timeout", http_shutdown_timeout)?;
         }
 
         let configured_supergraph_sources = [
@@ -312,6 +319,44 @@ telemetry:
         .unwrap();
 
         assert_eq!(config.telemetry.tracing.collect.sampling, 0.1);
+    }
+
+    #[test]
+    fn http_shutdown_timeout_override_sets_http_shutdown_timeout() {
+        let config = config_from_overrides(EnvVarOverrides {
+            http_shutdown_timeout: Some("90s".to_string()),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            config.http.shutdown_timeout,
+            std::time::Duration::from_secs(90)
+        );
+    }
+
+    #[test]
+    fn http_shutdown_timeout_override_wins_over_config_file_value() {
+        let config = EnvVarOverrides {
+            http_shutdown_timeout: Some("90s".to_string()),
+            ..Default::default()
+        }
+        .apply_overrides(Config::builder().add_source(File::from_str(
+            r#"
+http:
+  shutdown_timeout: 45s
+"#,
+            FileFormat::Yaml,
+        )))
+        .unwrap()
+        .build()
+        .unwrap()
+        .try_deserialize::<HiveRouterConfig>()
+        .unwrap();
+
+        assert_eq!(
+            config.http.shutdown_timeout,
+            std::time::Duration::from_secs(90)
+        );
     }
 
     #[test]
