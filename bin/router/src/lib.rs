@@ -436,7 +436,6 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     let websocket_path = router_config.websocket_path().map(|p| p.to_string());
     let callback_conf = router_config.callback_conf().cloned();
     let workers = router_config.workers();
-    let keep_alive = to_ntex_keep_alive(router_config.keep_alive());
     let mut bg_tasks_manager = background_tasks::BackgroundTasksManager::new();
     let (shared_state, schema_state) = configure_app_from_config(
         router_config,
@@ -482,6 +481,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
                 .add(build_http_service_config(router_config));
             let cb_server = cb_server_builder
                 .config(cb_cfg)
+                .shutdown_timeout(router_config.shutdown_timeout())
                 .bind(&cb_addr)
                 .map_err(|err| RouterInitError::HttpCallbackServerBindError(cb_addr, err))?
                 .run();
@@ -537,11 +537,11 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
         server = server.workers(workers.get());
     }
 
-    info!(target: targets::CORE, keep_alive = ?keep_alive, "configuring HTTP server keep-alive");
-
     let cfg = SharedCfg::new("HIVE_ROUTER").add(build_http_service_config(router_config));
 
-    server = server.config(cfg);
+    server = server
+        .config(cfg)
+        .shutdown_timeout(router_config.shutdown_timeout());
 
     let tls_config = shared_state_clone
         .router_config
@@ -809,11 +809,9 @@ macro_rules! configure_global_allocator {
 
 #[cfg(test)]
 mod to_ntex_keep_alive_tests {
-    use std::time::Duration;
-
-    use ntex::{http::KeepAlive, time::Seconds};
-
     use super::to_ntex_keep_alive;
+    use ntex::{http::KeepAlive, time::Seconds};
+    use std::time::Duration;
 
     #[test]
     fn keeps_whole_seconds() {

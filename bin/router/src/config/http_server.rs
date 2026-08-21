@@ -1,4 +1,5 @@
 use std::num::NonZeroUsize;
+use std::time::Duration;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -36,6 +37,32 @@ pub struct HttpServerConfig {
     /// Can also be set via the `ROUTER_HTTP_WORKERS` environment variable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workers: Option<NonZeroUsize>,
+
+    /// How long the HTTP server waits for in-flight requests to complete after
+    /// receiving a termination signal (`SIGTERM`), before remaining workers are
+    /// force-dropped.
+    ///
+    /// Defaults to 30 seconds.
+    ///
+    /// Set this above `traffic_shaping.router.request_timeout` if you need the
+    /// longest requests the router accepts to also survive a shutdown. In
+    /// orchestrated environments the platform's own grace period (for example
+    /// Kubernetes' `terminationGracePeriodSeconds`) must in turn exceed this
+    /// value, otherwise the process is killed before the drain completes.
+    ///
+    /// ```yaml
+    /// http:
+    ///   shutdown_timeout: 90s
+    /// ```
+    ///
+    /// Can also be set via the `ROUTER_HTTP_SHUTDOWN_TIMEOUT` environment variable.
+    #[serde(
+        default = "http_server_shutdown_timeout_default",
+        deserialize_with = "humantime_serde::deserialize",
+        serialize_with = "humantime_serde::serialize"
+    )]
+    #[schemars(with = "String")]
+    pub shutdown_timeout: Duration,
 }
 
 impl Default for HttpServerConfig {
@@ -45,6 +72,7 @@ impl Default for HttpServerConfig {
             port: http_server_port_default(),
             graphql_endpoint: graphql_endpoint_default(),
             workers: None,
+            shutdown_timeout: http_server_shutdown_timeout_default(),
         }
     }
 }
@@ -59,4 +87,48 @@ fn graphql_endpoint_default() -> String {
 
 fn http_server_port_default() -> u16 {
     4000
+}
+
+/// Matches ntex's own default graceful shutdown timeout, so configurations that
+/// omit `shutdown_timeout` keep their existing behaviour.
+fn http_server_shutdown_timeout_default() -> Duration {
+    Duration::from_secs(30)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::HttpServerConfig;
+
+    #[test]
+    fn shutdown_timeout_defaults_to_thirty_seconds() {
+        let config: HttpServerConfig =
+            serde_json::from_str("{}").expect("empty config should deserialize");
+
+        assert_eq!(config.shutdown_timeout, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn shutdown_timeout_accepts_human_readable_durations() {
+        let config: HttpServerConfig = serde_json::from_str(r#"{ "shutdown_timeout": "1m30s" }"#)
+            .expect("human readable duration should deserialize");
+
+        assert_eq!(config.shutdown_timeout, Duration::from_secs(90));
+    }
+
+    #[test]
+    fn shutdown_timeout_serializes_back_to_a_duration_string() {
+        let config = HttpServerConfig {
+            shutdown_timeout: Duration::from_secs(90),
+            ..Default::default()
+        };
+
+        let serialized = serde_json::to_value(&config)
+            .expect("config should serialize")
+            .get("shutdown_timeout")
+            .cloned();
+
+        assert_eq!(serialized, Some(serde_json::json!("1m 30s")));
+    }
 }
