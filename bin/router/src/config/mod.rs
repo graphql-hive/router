@@ -242,6 +242,10 @@ impl HiveRouterConfig {
         self.http.workers
     }
 
+    pub fn shutdown_timeout(&self) -> std::time::Duration {
+        self.http.shutdown_timeout
+    }
+
     pub fn graphql_path(&self) -> &str {
         &self.http.graphql_endpoint
     }

@@ -373,6 +373,15 @@ async fn graphql_endpoint_dispatch(
     .await
 }
 
+/// ntex expresses server timeouts in whole seconds, so sub-second precision is
+/// rounded up to keep a configured timeout from collapsing to "no wait", and
+/// oversized values are clamped instead of wrapping.
+fn to_ntex_seconds(duration: std::time::Duration) -> Seconds {
+    let secs = duration.as_secs() + u64::from(duration.subsec_nanos() > 0);
+
+    Seconds(u16::try_from(secs).unwrap_or(u16::MAX))
+}
+
 pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), RouterInitError> {
     if cfg!(debug_assertions) && std::env::var("CARGO").is_err() {
         eprintln!("WARNING: You are running Hive Router using a debug binary, which is not recommended for production use.");
@@ -398,6 +407,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     let websocket_path = router_config.websocket_path().map(|p| p.to_string());
     let callback_conf = router_config.callback_conf().cloned();
     let workers = router_config.workers();
+    let shutdown_timeout = to_ntex_seconds(router_config.shutdown_timeout());
     let mut bg_tasks_manager = background_tasks::BackgroundTasksManager::new();
     let (shared_state, schema_state) = configure_app_from_config(
         router_config,
@@ -440,6 +450,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
                 cb_server_builder = cb_server_builder.workers(workers.get());
             }
             let cb_server = cb_server_builder
+                .shutdown_timeout(shutdown_timeout)
                 .bind(&cb_addr)
                 .map_err(|err| RouterInitError::HttpCallbackServerBindError(cb_addr, err))?
                 .run();
@@ -494,6 +505,9 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
         info!(target: targets::CORE, workers_count = workers, "configuring HTTP server worker(s)");
         server = server.workers(workers.get());
     }
+
+    info!(target: targets::CORE, shutdown_timeout_seconds = shutdown_timeout.0, "configuring HTTP server graceful shutdown timeout");
+    server = server.shutdown_timeout(shutdown_timeout);
 
     let ntex_timeout = u16::try_from(
         shared_state_clone
@@ -785,4 +799,30 @@ macro_rules! configure_global_allocator {
         #[global_allocator]
         static GLOBAL: RouterGlobalAllocator = RouterGlobalAllocator;
     };
+}
+
+#[cfg(test)]
+mod to_ntex_seconds_tests {
+    use std::time::Duration;
+
+    use super::to_ntex_seconds;
+
+    #[test]
+    fn keeps_whole_seconds() {
+        assert_eq!(to_ntex_seconds(Duration::from_secs(90)).0, 90);
+    }
+
+    #[test]
+    fn rounds_partial_seconds_up() {
+        assert_eq!(to_ntex_seconds(Duration::from_millis(1)).0, 1);
+        assert_eq!(to_ntex_seconds(Duration::from_millis(1500)).0, 2);
+    }
+
+    #[test]
+    fn clamps_oversized_durations() {
+        assert_eq!(
+            to_ntex_seconds(Duration::from_secs(u64::from(u16::MAX) + 1)).0,
+            u16::MAX
+        );
+    }
 }
