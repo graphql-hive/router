@@ -68,8 +68,11 @@ mod traffic_shaping_e2e_tests {
     }
 
     /// Reproduces a user report: a keep-alive connection that idles longer than ntex's default 5s
-    /// keep-alive gets closed by ntex itself, even though the router is configured with a higher
-    /// `request_timeout`.
+    /// keep-alive gets closed by ntex itself. Fixed by explicitly configuring `http.keep_alive`
+    /// above ntex's 5s default (see #1434). `request_timeout` is a separate, per-request
+    /// safeguard that does not govern idle keep-alive connections, but `keep_alive` is kept above
+    /// it here anyway — the recommended relationship, so a legitimately slow in-flight request
+    /// is never at risk of its connection being reclaimed as "idle" before its own timeout fires.
     ///
     // https://github.com/graphql-hive/router/issues/1144
     #[ntex::test]
@@ -80,9 +83,11 @@ mod traffic_shaping_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
+                http:
+                    keep_alive: 11s # kept above request_timeout, per the recommended relationship
                 traffic_shaping:
                     router:
-                        request_timeout: 10s # ntex keep-alive defaults to 5s; a higher router timeout proves the router governs, not ntex
+                        request_timeout: 10s
                 "#,
             )
             .build()
@@ -121,20 +126,21 @@ mod traffic_shaping_e2e_tests {
         let first = String::from_utf8_lossy(&buf[..n]);
         assert!(first.contains("200"), "t=0 expected 200 OK, got: {first:?}");
 
-        // Idle past ntex's 5s keep-alive default, but well within the router's 10s timeout.
+        // Idle past ntex's 5s keep-alive default, but well within the configured 11s keep_alive.
         ntex::time::sleep(Duration::from_secs(6)).await;
 
-        // t=6: the connection must still be usable. If ntex closed it at 5s, the write/read here
-        // observes a closed socket (read returns 0 bytes or errors) — that is the bug we guard against.
+        // t=6: the connection must still be usable. If ntex closed it at its 5s default, the
+        // write/read here observes a closed socket (read returns 0 bytes or errors) — that is
+        // the bug we guard against.
         let _ = stream.write_all(graphql_request.as_bytes()).await;
         let _ = stream.flush().await;
         let n = stream
             .read(&mut buf)
             .await
-            .expect("t=6 read failed: connection was closed by ntex before the router timeout");
+            .expect("t=6 read failed: connection was closed before the configured keep_alive");
         assert!(
             n > 0,
-            "t=6 connection was closed by the server (ntex keep-alive fired before the router's request_timeout)"
+            "t=6 connection was closed by the server (ntex's 5s default keep-alive fired instead of the configured 11s http.keep_alive)"
         );
         let second = String::from_utf8_lossy(&buf[..n]);
         assert!(

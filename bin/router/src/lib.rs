@@ -386,6 +386,31 @@ fn to_ntex_keep_alive(duration: std::time::Duration) -> KeepAlive {
     }
 }
 
+pub fn build_http_service_config(router_config: &HiveRouterConfig) -> HttpServiceConfig {
+    let keep_alive = to_ntex_keep_alive(router_config.keep_alive());
+
+    let ntex_timeout = u16::try_from(
+        router_config
+            .traffic_shaping
+            .router
+            .request_timeout
+            .as_secs()
+            .saturating_add(1),
+    )
+    .unwrap_or(u16::MAX);
+
+    let max_request_header_size = router_config.limits.max_request_header_size.to_bytes() as usize;
+
+    HttpServiceConfig::new()
+        .set_keepalive(keep_alive)
+        // ntex HTTP timeout is set as a safe-guard on top of Hive Router's timeout
+        .set_client_timeout(Seconds(ntex_timeout))
+        // ntex's parse buffer must fit the whole request head, otherwise limits
+        // above its 64KiB default would be unreachable; the exact per-request
+        // limit is enforced in the pipeline (`graphql_request_handler`)
+        .set_max_buf_size(max_request_header_size.max(64 * 1024))
+}
+
 pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), RouterInitError> {
     if cfg!(debug_assertions) && std::env::var("CARGO").is_err() {
         eprintln!("WARNING: You are running Hive Router using a debug binary, which is not recommended for production use.");
@@ -454,7 +479,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
                 cb_server_builder = cb_server_builder.workers(workers.get());
             }
             let cb_cfg = SharedCfg::new("HIVE_ROUTER_CALLBACK")
-                .add(HttpServiceConfig::new().set_keepalive(keep_alive));
+                .add(build_http_service_config(router_config));
             let cb_server = cb_server_builder
                 .config(cb_cfg)
                 .bind(&cb_addr)
@@ -514,32 +539,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
 
     info!(target: targets::CORE, keep_alive = ?keep_alive, "configuring HTTP server keep-alive");
 
-    let ntex_timeout = u16::try_from(
-        shared_state_clone
-            .router_config
-            .traffic_shaping
-            .router
-            .request_timeout
-            .as_secs()
-            .saturating_add(1),
-    )
-    .unwrap_or(u16::MAX);
-
-    let max_request_header_size = shared_state_clone
-        .router_config
-        .limits
-        .max_request_header_size
-        .to_bytes() as usize;
-
-    let http_cfg = HttpServiceConfig::new()
-        .set_keepalive(keep_alive)
-        // ntex HTTP timeout is set as a safe-guard on top of Hive Router's timeout
-        .set_client_timeout(Seconds(ntex_timeout))
-        // ntex's parse buffer must fit the whole request head, otherwise limits
-        // above its 64KiB default would be unreachable; the exact per-request
-        // limit is enforced in the pipeline (`graphql_request_handler`)
-        .set_max_buf_size(max_request_header_size.max(64 * 1024));
-    let cfg = SharedCfg::new("HIVE_ROUTER").add(http_cfg);
+    let cfg = SharedCfg::new("HIVE_ROUTER").add(build_http_service_config(router_config));
 
     server = server.config(cfg);
 
