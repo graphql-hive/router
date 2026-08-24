@@ -874,6 +874,7 @@ impl TestRouter<Built> {
                         .configure(move |m| add_callback_handler(m, &cb_path))
                 })
                 .config(cb_cfg)
+                .shutdown_timeout(config.shutdown_timeout())
                 .bind(&cb_addr)
                 .expect("failed to bind callback server")
                 .run();

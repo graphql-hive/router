@@ -31,6 +31,7 @@ pub mod websocket;
 use config_rs::{Config, File, FileFormat, FileSourceFile};
 use envconfig::Envconfig;
 pub use humantime_serde;
+use ntex::time::Seconds;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -244,6 +245,13 @@ impl HiveRouterConfig {
 
     pub fn keep_alive(&self) -> std::time::Duration {
         self.traffic_shaping.router.keep_alive
+    }
+
+    pub fn shutdown_timeout(&self) -> Seconds {
+        let secs = self.http.shutdown_timeout.as_secs()
+            + u64::from(self.http.shutdown_timeout.subsec_nanos() > 0);
+
+        Seconds(u16::try_from(secs).unwrap_or(u16::MAX))
     }
 
     pub fn graphql_path(&self) -> &str {

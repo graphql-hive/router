@@ -37,6 +37,8 @@ pub struct EnvVarOverrides {
     pub http_workers: Option<usize>,
     #[envconfig(from = "ROUTER_HTTP_KEEP_ALIVE")]
     pub http_keep_alive: Option<String>,
+    #[envconfig(from = "ROUTER_HTTP_SHUTDOWN_TIMEOUT")]
+    pub http_shutdown_timeout: Option<String>,
 
     // Supergraph overrides
     #[envconfig(from = "SUPERGRAPH_FILE_PATH")]
@@ -129,6 +131,11 @@ impl EnvVarOverrides {
         if let Some(http_keep_alive) = self.http_keep_alive.take() {
             debug!(target: CONFIG_LOGGING_TARGET, value = http_keep_alive, "overriding 'traffic_shaping.router.keep_alive'");
             config = config.set_override("traffic_shaping.router.keep_alive", http_keep_alive)?;
+        }
+
+        if let Some(http_shutdown_timeout) = self.http_shutdown_timeout.take() {
+            debug!(target: CONFIG_LOGGING_TARGET, value = http_shutdown_timeout, "overriding 'http.shutdown_timeout'");
+            config = config.set_override("http.shutdown_timeout", http_shutdown_timeout)?;
         }
 
         let configured_supergraph_sources = [
@@ -357,6 +364,44 @@ traffic_shaping:
         assert_eq!(
             config.traffic_shaping.router.keep_alive,
             std::time::Duration::from_secs(80)
+        );
+    }
+
+    #[test]
+    fn http_shutdown_timeout_override_sets_http_shutdown_timeout() {
+        let config = config_from_overrides(EnvVarOverrides {
+            http_shutdown_timeout: Some("90s".to_string()),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            config.http.shutdown_timeout,
+            std::time::Duration::from_secs(90)
+        );
+    }
+
+    #[test]
+    fn http_shutdown_timeout_override_wins_over_config_file_value() {
+        let config = EnvVarOverrides {
+            http_shutdown_timeout: Some("90s".to_string()),
+            ..Default::default()
+        }
+        .apply_overrides(Config::builder().add_source(File::from_str(
+            r#"
+http:
+  shutdown_timeout: 45s
+"#,
+            FileFormat::Yaml,
+        )))
+        .unwrap()
+        .build()
+        .unwrap()
+        .try_deserialize::<HiveRouterConfig>()
+        .unwrap();
+
+        assert_eq!(
+            config.http.shutdown_timeout,
+            std::time::Duration::from_secs(90)
         );
     }
 
