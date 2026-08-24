@@ -260,11 +260,11 @@ mod tests {
     use super::*;
     use graphql_tools::parser::schema::parse_schema;
 
-    // Reproduces https://github.com/graphql-hive/router/issues/1439: the router itself runs on
-    // ntex's current-thread runtime, where dropping the last `UsageAgent` reference aborts the
-    // process
+    // Regression test for https://github.com/graphql-hive/router/issues/1439: the router runs on
+    // ntex's current-thread runtime, so dropping the last `UsageAgent` reference must not abort
+    // the process.
     #[ntex::test]
-    async fn dropping_usage_agent_panics_on_ntex_current_thread_runtime() {
+    async fn dropping_usage_agent_does_not_panic_on_ntex_current_thread_runtime() {
         let agent = UsageAgent::builder()
             .token("token".into())
             .endpoint("http://localhost/usage".into())
@@ -274,7 +274,6 @@ mod tests {
         drop(agent);
     }
 
-    // usage agent async drop uses block_in_place, which requires tokio's multi-threaded runtime
     #[tokio::test(flavor = "multi_thread")]
     async fn lifetime_cancellation_flushes_before_the_worker_stops() {
         crate::init_rustls_crypto_provider();

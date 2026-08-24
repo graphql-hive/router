@@ -1092,6 +1092,42 @@ mod plugin_runtime_cache_tests {
         }
     }
 
+    /// Same as [`test_schema_state`], but with Hive usage reporting enabled so
+    /// `RouterSupergraphRuntime` actually builds a live `hive_usage_agent`.
+    ///
+    /// Related: https://github.com/graphql-hive/router/issues/1439
+    fn test_schema_state_with_hive_usage_reporting() -> SchemaState {
+        let mut state = test_schema_state();
+        state.runtime_context = Arc::new(RouterSupergraphRuntimeContext {
+            telemetry: state.runtime_context.telemetry.clone(),
+            callback_subscriptions: state.runtime_context.callback_subscriptions.clone(),
+            callback: state.runtime_context.callback.clone(),
+            persisted_documents_background_tasks: state
+                .runtime_context
+                .persisted_documents_background_tasks
+                .clone(),
+            hive_usage_reporting_background_tasks: state
+                .runtime_context
+                .hive_usage_reporting_background_tasks
+                .clone(),
+            hive: Some(HiveTelemetryConfig {
+                token: Some(
+                    crate::config::primitives::value_or_expression::ValueOrExpression::Value(
+                        "token".to_string(),
+                    ),
+                ),
+                usage_reporting: crate::config::usage_reporting::UsageReportingConfig {
+                    enabled: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            storage_manager: state.runtime_context.storage_manager.clone(),
+            graphql_endpoint: state.runtime_context.graphql_endpoint.clone(),
+        });
+        state
+    }
+
     fn test_owner() -> Arc<Supergraph> {
         crate::init_rustls_crypto_provider();
         Arc::new(
@@ -1159,6 +1195,22 @@ mod plugin_runtime_cache_tests {
         tokio::time::timeout(Duration::from_secs(1), lifetime.cancelled())
             .await
             .expect("final runtime drop should cancel its background workers promptly");
+    }
+
+    // Regression test for https://github.com/graphql-hive/router/issues/1439: retiring a
+    // supergraph generation with Hive usage reporting enabled dropped the runtime's
+    // `hive_usage_agent`, which used to abort the process on ntex's current-thread runtime.
+    #[ntex::test]
+    async fn dropping_a_runtime_with_hive_usage_reporting_does_not_panic() {
+        let state = test_schema_state_with_hive_usage_reporting();
+        let owner = test_owner();
+        let runtime = RouterSupergraphRuntime::build(&owner.snapshot(), &state.runtime_context)
+            .await
+            .unwrap();
+
+        assert!(runtime.hive_usage_agent.is_some());
+
+        drop(runtime);
     }
 
     #[ntex::test]

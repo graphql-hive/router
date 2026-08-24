@@ -1,6 +1,5 @@
 use std::{sync::Arc, time::Duration};
 
-use async_dropper_simple::AsyncDropper;
 use recloser::AsyncRecloser;
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest_middleware::ClientBuilder;
@@ -10,7 +9,7 @@ use std::sync::LazyLock;
 use crate::agent::buffer::Buffer;
 use crate::agent::usage_agent::{
     non_empty_string, AgentError, AtLeastOnceSampling, Exclude, SamplingKey, UsageAgent,
-    UsageAgentInner,
+    UsageAgentHandle, UsageAgentInner,
 };
 use crate::agent::utils::OperationProcessor;
 use crate::circuit_breaker;
@@ -268,7 +267,7 @@ impl UsageAgentBuilder {
     }
     pub fn build(self) -> Result<UsageAgent, AgentError> {
         let agent = self.build_agent()?;
-        Ok(Arc::new(AsyncDropper::new(agent)))
+        Ok(Arc::new(UsageAgentHandle::new(agent)))
     }
 }
 

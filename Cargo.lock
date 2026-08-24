@@ -323,19 +323,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-dropper-simple"
-version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7c4748dfe8cd3d625ec68fc424fa80c134319881185866f9e173af9e5d8add8"
-dependencies = [
- "async-scoped",
- "async-trait",
- "futures",
- "rustc_version",
- "tokio",
-]
-
-[[package]]
 name = "async-graphql"
 version = "8.0.0-rc.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -435,17 +422,6 @@ dependencies = [
  "event-listener",
  "event-listener-strategy",
  "pin-project-lite",
-]
-
-[[package]]
-name = "async-scoped"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4042078ea593edffc452eef14e99fdb2b120caa4ad9618bcdeabc4a023b98740"
-dependencies = [
- "futures",
- "pin-project",
- "tokio",
 ]
 
 [[package]]
@@ -2593,7 +2569,6 @@ version = "0.3.20"
 dependencies = [
  "ahash",
  "anyhow",
- "async-dropper-simple",
  "async-trait",
  "bytes",
  "futures-util",
