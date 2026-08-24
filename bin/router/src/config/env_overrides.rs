@@ -35,6 +35,8 @@ pub struct EnvVarOverrides {
     pub http_host: Option<String>,
     #[envconfig(from = "ROUTER_HTTP_WORKERS")]
     pub http_workers: Option<usize>,
+    #[envconfig(from = "ROUTER_HTTP_KEEP_ALIVE")]
+    pub http_keep_alive: Option<String>,
 
     // Supergraph overrides
     #[envconfig(from = "SUPERGRAPH_FILE_PATH")]
@@ -122,6 +124,11 @@ impl EnvVarOverrides {
             // cast to u64 because the `config` crate doesn't implement `Into<Value>` for `usize`;
             // the value is then deserialized into `Option<NonZeroUsize>`, which rejects `0`.
             config = config.set_override("http.workers", http_workers as u64)?;
+        }
+
+        if let Some(http_keep_alive) = self.http_keep_alive.take() {
+            debug!(target: CONFIG_LOGGING_TARGET, value = http_keep_alive, "overriding 'traffic_shaping.router.keep_alive'");
+            config = config.set_override("traffic_shaping.router.keep_alive", http_keep_alive)?;
         }
 
         let configured_supergraph_sources = [
@@ -312,6 +319,45 @@ telemetry:
         .unwrap();
 
         assert_eq!(config.telemetry.tracing.collect.sampling, 0.1);
+    }
+
+    #[test]
+    fn http_keep_alive_override_sets_http_keep_alive() {
+        let config = config_from_overrides(EnvVarOverrides {
+            http_keep_alive: Some("80s".to_string()),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            config.traffic_shaping.router.keep_alive,
+            std::time::Duration::from_secs(80)
+        );
+    }
+
+    #[test]
+    fn http_keep_alive_override_wins_over_config_file_value() {
+        let config = EnvVarOverrides {
+            http_keep_alive: Some("80s".to_string()),
+            ..Default::default()
+        }
+        .apply_overrides(Config::builder().add_source(File::from_str(
+            r#"
+traffic_shaping:
+  router:
+    keep_alive: 5s
+"#,
+            FileFormat::Yaml,
+        )))
+        .unwrap()
+        .build()
+        .unwrap()
+        .try_deserialize::<HiveRouterConfig>()
+        .unwrap();
+
+        assert_eq!(
+            config.traffic_shaping.router.keep_alive,
+            std::time::Duration::from_secs(80)
+        );
     }
 
     #[test]

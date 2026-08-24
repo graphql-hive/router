@@ -86,6 +86,7 @@ ntex-dispatcher = { workspace = true }
 ntex-error = { workspace = true }
 ntex-h2 = { workspace = true }
 ntex-rt = { workspace = true }
+ntex-httparse = { workspace = true }
 ntex-macros = { workspace = true }
 ntex-server = { workspace = true }
 ntex-service = { workspace = true }

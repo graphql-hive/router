@@ -13,9 +13,9 @@ use mockito::Mock;
 use ntex::{
     client::ClientResponse,
     io::Sealed,
-    time::Seconds,
-    web::{self, test},
+    web::{self, test, WebAppConfig},
     ws::WsConnection,
+    SharedCfg,
 };
 use rcgen::generate_simple_self_signed;
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
@@ -862,6 +862,8 @@ impl TestRouter<Built> {
                 let cb_subs = schema_state.callback_subscriptions.clone();
                 let cb_telemetry_context = shared_state.telemetry_context.clone();
 
+                let cb_cfg = SharedCfg::new("HIVE_ROUTER_TEST_CALLBACK")
+                    .add(hive_router::build_http_service_config(config));
                 let server = web::HttpServer::new(async move || {
                     let cb_subs = cb_subs.clone();
                     let cb_path = cb_path.clone();
@@ -871,6 +873,7 @@ impl TestRouter<Built> {
                         .state(telemetry_context)
                         .configure(move |m| add_callback_handler(m, &cb_path))
                 })
+                .config(cb_cfg)
                 .bind(&cb_addr)
                 .expect("failed to bind callback server")
                 .run();
@@ -898,24 +901,32 @@ impl TestRouter<Built> {
             std::net::TcpListener::bind(format!("127.0.0.1:{}", self.port))
                 .expect("failed to bind tcp listener for test server"),
         );
-        let serv_port = serv_listener
+        let serv_local_addr = serv_listener
             .local_addr()
-            .expect("failed to get local address of test server")
-            .port();
+            .expect("failed to get local address of test server");
+        let serv_port = serv_local_addr.port();
         let serv_paths = paths.clone();
         let serv_prometheus = prometheus.clone();
         let long_lived_limit = LongLivedClientLimitService::new(shared_state.router_config);
-        let mut serv_config = test::config()
-            .client_timeout(Seconds(
-                shared_state
-                    .router_config
-                    .traffic_shaping
-                    .router
-                    .request_timeout
-                    .as_secs() as u16
-                    + 1,
+
+        let secure = serv_shared_state
+            .router_config
+            .traffic_shaping
+            .router
+            .tls
+            .is_some();
+        let system_name = ntex::rt::System::current().name().to_string();
+        let srv_cfg = SharedCfg::new("HIVE_ROUTER_TEST")
+            .add(hive_router::build_http_service_config(config))
+            .add(WebAppConfig::with(
+                &system_name,
+                secure,
+                serv_local_addr,
+                format!("{serv_local_addr}"),
             ))
-            .listener(serv_listener);
+            .build();
+
+        let mut serv_config = test::config().server_cfg(srv_cfg).listener(serv_listener);
         if let Some(tls_config) = serv_shared_state
             .router_config
             .traffic_shaping
