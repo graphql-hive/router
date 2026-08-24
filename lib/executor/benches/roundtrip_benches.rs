@@ -92,6 +92,14 @@ fn bench_roundtrip(
     operation: &str,
     json: String,
     raw_paths: &[&[&str]],
+    // Just the number-typed leaves among `raw_paths`. Passthrough costs the same to parse
+    // whatever the type is and only pays back at projection, so what it is worth depends
+    // entirely on what writing that value would otherwise have cost: formatting a float is
+    // expensive, copying a string is not. This variant isolates the half that should win.
+    number_paths: &[&[&str]],
+    // Narrower still: only the float leaves. `write_f64` is a real formatting routine while
+    // `itoa` on an integer is nearly free, so the two may not belong in the same rule.
+    float_paths: &[&[&str]],
 ) {
     let fixture = fixture(operation);
     let mut group = c.benchmark_group("roundtrip");
@@ -101,7 +109,17 @@ fn bench_roundtrip(
     let bytes = Bytes::from(json);
 
     let raw_shape = with_raw_paths(&fixture.shape, raw_paths);
-    for (variant, shape) in [("structured", &fixture.shape), ("raw", &raw_shape)] {
+    let number_shape = with_raw_paths(&fixture.shape, number_paths);
+    let mut variants: Vec<(&str, &ResponseShape)> =
+        vec![("structured", &fixture.shape), ("raw", &raw_shape)];
+    let float_shape = with_raw_paths(&fixture.shape, float_paths);
+    if !number_paths.is_empty() {
+        variants.push(("raw_numbers", &number_shape));
+    }
+    if !float_paths.is_empty() {
+        variants.push(("raw_floats", &float_shape));
+    }
+    for (variant, shape) in variants {
         // A bench that projects nothing would look like a speedup, so make that impossible.
         let response =
             SubgraphResponse::deserialize_from_bytes(bytes.clone(), Some(shape)).unwrap();
@@ -163,6 +181,9 @@ fn roundtrip_benches(c: &mut Criterion) {
             &["users", "email"],
             &["users", "bio"],
         ],
+        // Nothing here is a number.
+        &[],
+        &[],
     );
 
     bench_roundtrip(
@@ -176,6 +197,14 @@ fn roundtrip_benches(c: &mut Criterion) {
             &["metrics", "ratio"],
             &["metrics", "total"],
         ],
+        // `id` is a string; the rest are numbers.
+        &[
+            &["metrics", "count"],
+            &["metrics", "ratio"],
+            &["metrics", "total"],
+        ],
+        // `ratio` is the only float; `count` and `total` are integers.
+        &[&["metrics", "ratio"]],
     );
 
     bench_roundtrip(
@@ -184,6 +213,9 @@ fn roundtrip_benches(c: &mut Criterion) {
         "{ products { id tags scores } }",
         payloads::scalar_lists(50, 50),
         &[&["products", "tags"], &["products", "scores"]],
+        // Both are lists, which the current rule already admits.
+        &[],
+        &[],
     );
 
     bench_roundtrip(
@@ -192,6 +224,10 @@ fn roundtrip_benches(c: &mut Criterion) {
         "{ articles { id title author views tags } }",
         payloads::mixed(200, 10),
         &[&["articles", "tags"]],
+        // The list plus the one number leaf.
+        &[&["articles", "tags"], &["articles", "views"]],
+        // No floats in this payload.
+        &[],
     );
 }
 
