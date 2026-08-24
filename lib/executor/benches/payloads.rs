@@ -128,13 +128,11 @@ pub fn shape(spec: &[(&str, Shape)]) -> hive_router_query_planner::planner::resp
                     fields: Vec::new(),
                     raw: true,
                     inert: false,
-                    list_len_hint: Default::default(),
                 },
                 Shape::Structured => ResponseShape {
                     fields: Vec::new(),
                     raw: false,
                     inert: true,
-                    list_len_hint: Default::default(),
                 },
                 Shape::Nested(inner) => self::shape(inner),
             },
@@ -145,7 +143,6 @@ pub fn shape(spec: &[(&str, Shape)]) -> hive_router_query_planner::planner::resp
         fields,
         raw: false,
         inert,
-        list_len_hint: Default::default(),
     }
 }
 

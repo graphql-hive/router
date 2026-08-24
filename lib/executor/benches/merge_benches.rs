@@ -5,6 +5,8 @@
 //! instead of a keyed rebuild.
 
 use bytes::Bytes;
+use bumpalo::Bump;
+use hive_router_plan_executor::response::arena::ResponseArena;
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use hive_router_plan_executor::response::{
     merge::deep_merge, subgraph_response::SubgraphResponse, value::Value,
@@ -17,7 +19,6 @@ fn leaf() -> ResponseShape {
         fields: Vec::new(),
         raw: false,
         inert: true,
-        list_len_hint: Default::default(),
     }
 }
 
@@ -33,7 +34,6 @@ fn shape_for(keys: &[String]) -> ResponseShape {
             .collect(),
         raw: false,
         inert: true,
-        list_len_hint: Default::default(),
     };
     ResponseShape {
         fields: vec![ResponseShapeField {
@@ -42,7 +42,6 @@ fn shape_for(keys: &[String]) -> ResponseShape {
         }],
         raw: false,
         inert: true,
-        list_len_hint: Default::default(),
     }
 }
 
@@ -64,9 +63,7 @@ fn payload(rows: usize, keys: &[String]) -> String {
 }
 
 fn fetch_keys(fetch_idx: usize, fields: usize) -> Vec<String> {
-    (0..fields)
-        .map(|f| format!("f{fetch_idx}_{f}"))
-        .collect()
+    (0..fields).map(|f| format!("f{fetch_idx}_{f}")).collect()
 }
 
 /// Keys that sort *between* the ones already present, the worst case for a keyed merge.
@@ -104,10 +101,14 @@ impl Fixture {
         Fixture { responses }
     }
 
-    fn target_and_rest(&self) -> (Value<'static>, Vec<Value<'static>>) {
+    /// Fresh copies for each iteration, in a scratch arena the caller drops afterwards.
+    fn target_and_rest<'a>(&self, arena: &'a Bump) -> (Value<'a>, Vec<Value<'a>>) {
         (
-            self.responses[0].data.clone(),
-            self.responses[1..].iter().map(|r| r.data.clone()).collect(),
+            self.responses[0].data.copy_into(arena),
+            self.responses[1..]
+                .iter()
+                .map(|r| r.data.copy_into(arena))
+                .collect(),
         )
     }
 }
@@ -119,12 +120,20 @@ fn bench_case<M: criterion::measurement::Measurement>(
 ) {
     group.bench_function(name, |b| {
         b.iter_batched(
-            || fixture.target_and_rest(),
-            |(mut target, rest)| {
+            // Setup allocates the copies in a fresh arena and hands it over with them, so the
+            // measured closure does the merge and nothing else, and the arena is dropped with
+            // the batch.
+            || {
+                let arena = ResponseArena::new();
+                let (target, rest) = fixture.target_and_rest(arena.borrow_unbounded());
+                (arena, target, rest)
+            },
+            |(arena, mut target, rest)| {
                 for source in rest {
                     deep_merge(&mut target, source);
                 }
-                black_box(target);
+                black_box(&target);
+                drop(arena);
             },
             BatchSize::SmallInput,
         );
@@ -135,10 +144,7 @@ fn merge_benches(c: &mut Criterion) {
     let mut group = c.benchmark_group("deep_merge");
 
     for fetches in [2usize, 5, 10] {
-        let fixture = Fixture::new(
-            100,
-            (0..fetches).map(|i| fetch_keys(i, 10)).collect(),
-        );
+        let fixture = Fixture::new(100, (0..fetches).map(|i| fetch_keys(i, 10)).collect());
         bench_case(
             &mut group,
             &format!("sequential_fetches/{fetches}x10_fields"),
@@ -159,7 +165,11 @@ fn merge_benches(c: &mut Criterion) {
     // a handful. A positional merge costs the width of the *shape*, not of the payload, so
     // this ratio is what decides whether it pays.
     let realistic = Fixture::new(100, (0..4).map(|i| fetch_keys(i, 5)).collect());
-    bench_case(&mut group, "realistic/4_fetches_x5_of_20_fields", &realistic);
+    bench_case(
+        &mut group,
+        "realistic/4_fetches_x5_of_20_fields",
+        &realistic,
+    );
 
     // One merge, many keys on both sides.
     let wide = Fixture::new(1, vec![fetch_keys(0, 60), fetch_keys(1, 60)]);

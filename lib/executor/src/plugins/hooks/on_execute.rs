@@ -85,7 +85,7 @@ pub struct OnExecuteStartHookPayload<'exec> {
 
     /// The root value of the execution
     /// Anything here will be merged into the execution result
-    pub data: Value<'exec>,
+    pub data: Value<'static>,
     /// Initial set of GraphQL errors in the execution result
     /// Any error passed here will be merged into the execution result errors list
     pub errors: Vec<GraphQLError>,
@@ -165,7 +165,7 @@ impl<'exec> OnExecuteStartHookPayload<'exec> {
     }
 }
 
-impl<'exec> StartHookPayload<OnExecuteEndHookPayload<'exec>, OnExecuteResponse>
+impl<'exec> StartHookPayload<OnExecuteEndHookPayload, OnExecuteResponse>
     for OnExecuteStartHookPayload<'exec>
 {
 }
@@ -173,14 +173,14 @@ impl<'exec> StartHookPayload<OnExecuteEndHookPayload<'exec>, OnExecuteResponse>
 pub type OnExecuteStartHookResult<'exec> = StartHookResult<
     'exec,
     OnExecuteStartHookPayload<'exec>,
-    OnExecuteEndHookPayload<'exec>,
+    OnExecuteEndHookPayload,
     OnExecuteResponse,
 >;
 
-pub struct OnExecuteEndHookPayload<'exec> {
+pub struct OnExecuteEndHookPayload {
     /// The final value of the execution result. This will be sent to the client as the "data" field in the GraphQL response.
     /// Plugins can modify this value before proceeding, and the modified value will be sent to the client.
-    pub data: Value<'exec>,
+    pub data: Value<'static>,
     /// The final list of GraphQL errors in the execution result.
     /// This will be sent to the client as the "errors" field in the GraphQL response.
     /// Plugins can modify this list before proceeding, and the modified list will be sent to the client.
@@ -200,7 +200,7 @@ pub struct OnExecuteEndHookPayload<'exec> {
     pub demand_control_cost: Option<DemandControlCost>,
 }
 
-impl<'exec> OnExecuteEndHookPayload<'exec> {
+impl OnExecuteEndHookPayload {
     pub fn with_error(&mut self, error: GraphQLError) {
         self.errors.push(error);
     }
@@ -221,10 +221,10 @@ impl<'exec> OnExecuteEndHookPayload<'exec> {
     }
 }
 
-impl<'exec> EndHookPayload<OnExecuteResponse> for OnExecuteEndHookPayload<'exec> {}
+impl EndHookPayload<OnExecuteResponse> for OnExecuteEndHookPayload {}
 
 pub type OnExecuteEndHookResult<'exec> =
-    EndHookResult<OnExecuteEndHookPayload<'exec>, OnExecuteResponse>;
+    EndHookResult<OnExecuteEndHookPayload, OnExecuteResponse>;
 
 impl FromGraphQLErrorToResponse for OnExecuteResponse {
     fn from_graphql_error_to_response(error: GraphQLError, status_code: http::StatusCode) -> Self {

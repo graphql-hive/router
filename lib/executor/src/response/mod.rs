@@ -1,3 +1,4 @@
+pub mod arena;
 pub mod graphql_error;
 pub mod merge;
 pub mod storage;

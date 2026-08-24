@@ -303,7 +303,7 @@ impl SubgraphExecutorMap {
         client_request: &ClientRequestDetails<'exec>,
         plugin_req_state: Option<&'exec PluginRequestState<'exec>>,
         demand_control_ctx: Option<&DemandControlExecutionContext>,
-    ) -> Result<SubgraphResponse<'exec>, SubgraphExecutorError> {
+    ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
         if let Some(demand_control_opts) = demand_control_ctx {
             if let Some(subgraph_max_cost) = demand_control_opts
                 .subgraphs
@@ -350,7 +350,7 @@ impl SubgraphExecutorMap {
 
         let mut on_end_callbacks = vec![];
 
-        let mut execution_result: Option<SubgraphResponse<'exec>> = None;
+        let mut execution_result: Option<SubgraphResponse<'static>> = None;
         if let Some(plugin_req_state) = plugin_req_state.as_ref() {
             let mut start_payload = OnSubgraphExecuteStartHookPayload {
                 router_http_request: &plugin_req_state.router_http_request,

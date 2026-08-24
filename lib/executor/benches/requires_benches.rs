@@ -110,7 +110,6 @@ fn requires_benches(c: &mut Criterion) {
         ],
         raw: false,
         inert: false,
-        list_len_hint: Default::default(),
     };
 
     let mut group = c.benchmark_group("requires");
@@ -127,8 +126,8 @@ fn requires_benches(c: &mut Criterion) {
             Some(&users_shape),
         )
         .unwrap();
-        let entities = match response.data.slot(0) {
-            Some(Value::Array(items)) => items.clone(),
+        let entities: &[Value] = match response.data.slot(0) {
+            Some(Value::Array(items)) => items,
             other => panic!("expected users array, got {other:?}"),
         };
 
@@ -136,7 +135,7 @@ fn requires_benches(c: &mut Criterion) {
             b.iter_batched(
                 || (),
                 |_| {
-                    let out = build_representations(&entities, &requires, possible_types);
+                    let out = build_representations(entities, &requires, possible_types);
                     black_box(out);
                 },
                 BatchSize::SmallInput,

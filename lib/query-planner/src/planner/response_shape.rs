@@ -22,58 +22,7 @@ const TYPENAME_FIELD_NAME: &str = "__typename";
 /// The shape of one position in a subgraph response.
 ///
 /// *Every* response key is listed, in selection order, so key resolution is a cursor hit
-/// rather than a map lookup, and so a field's index can serve as its slot. A subtree with
-/// no passthrough anywhere under it is marked `inert` instead of being dropped, which lets
-/// the deserializer keep its plain, lookup-free path there.
-#[derive(Debug, Default)]
-pub struct ListLengthHint(std::sync::atomic::AtomicU32);
-
-/// Remembers how long the list at this position was last time, so the next response can size
-/// its vector in one allocation instead of growing it from empty.
-///
-/// sonic offers no `size_hint` for arrays, so without this every list starts at capacity 0 and
-/// reallocs its way up — measured at 2-3 extra allocations per list. Plans are cached and
-/// reused, so after the first response the hint is normally exact. It is only a hint: being
-/// wrong costs one realloc, never correctness, which is why `Relaxed` is enough and why racing
-/// requests can share it freely.
-impl ListLengthHint {
-    /// Const-constructible so shapes can live in `static`s.
-    ///
-    /// A `const fn` rather than an associated `const`: a constant holding an atomic is a
-    /// footgun, since every mention of it would materialize a fresh, unshared counter.
-    pub const fn none() -> Self {
-        ListLengthHint(std::sync::atomic::AtomicU32::new(0))
-    }
-
-    #[inline]
-    pub fn get(&self) -> usize {
-        self.0.load(std::sync::atomic::Ordering::Relaxed) as usize
-    }
-
-    #[inline]
-    pub fn record(&self, len: usize) {
-        self.0
-            .store(len.min(u32::MAX as usize) as u32, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-impl Clone for ListLengthHint {
-    fn clone(&self) -> Self {
-        ListLengthHint(std::sync::atomic::AtomicU32::new(
-            self.0.load(std::sync::atomic::Ordering::Relaxed),
-        ))
-    }
-}
-
-impl PartialEq for ListLengthHint {
-    fn eq(&self, _: &Self) -> bool {
-        // A cache of observed sizes says nothing about whether two shapes are the same.
-        true
-    }
-}
-
-impl Eq for ListLengthHint {}
-
+/// rather than a map lookup, and so a field's index can serve as its slot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResponseShape {
     /// Every response key the fetch selects at this position, in selection order. The index
@@ -88,8 +37,6 @@ pub struct ResponseShape {
     /// lookup-free path to take. Kept because it is the natural way to ask "does this fetch
     /// pass anything through", which the shape tests do.
     pub inert: bool,
-    /// Length of the list last seen at this position, if any. See `ListLengthHint`.
-    pub list_len_hint: ListLengthHint,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -105,7 +52,6 @@ impl Default for ResponseShape {
             fields: Vec::new(),
             raw: false,
             inert: true,
-            list_len_hint: ListLengthHint::default(),
         }
     }
 }
@@ -306,7 +252,6 @@ impl ShapeBuilder {
                 fields: Vec::new(),
                 raw: true,
                 inert: false,
-                list_len_hint: Default::default(),
             };
         }
 
@@ -325,7 +270,6 @@ impl ShapeBuilder {
             fields,
             raw: false,
             inert,
-            list_len_hint: ListLengthHint::default(),
         }
     }
 }

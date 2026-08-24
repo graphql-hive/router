@@ -59,12 +59,14 @@ use crate::{
 /// `None` means nothing was written for this position: either the entity was null, or
 /// projection produced no fields. Both are treated the same way at merge time.
 #[allow(clippy::too_many_arguments)]
-pub fn push_representation(
+pub fn push_representation<'a: 'scratch, 'scratch>(
     possible_types: &PossibleTypes,
     requires: &[RequiresStep],
     input_rewrites: &[SlotRewrite],
-    arena: &bumpalo::Bump,
-    entity: &Value<'_>,
+    // Scratch space for the rewritten copy, and only that: nothing allocated here outlives
+    // the call, so the call site can pass a plain local arena.
+    arena: &'scratch bumpalo::Bump,
+    entity: &Value<'a>,
     buffer: &mut Vec<u8>,
     seen: &mut AHashMap<u64, usize>,
     next_index: &mut usize,
@@ -94,22 +96,24 @@ pub fn push_representation(
     }
 
     // Rewrites have to run before hashing, because they change the bytes that get sent.
-    // That means a duplicate entity is now cloned and rewritten before being discarded,
-    // where before it was discarded first — only when `input_rewrites` is set, which is
-    // rare, and it buys dedup on the post-rewrite value.
-    let rewritten;
-    let entity = if input_rewrites.is_empty() {
-        entity
-    } else {
-        rewritten = arena.alloc(entity.clone());
-        for rewrite in input_rewrites {
-            rewrite.rewrite(possible_types, rewritten);
-        }
-        &*rewritten
-    };
-
+    // That means a duplicate entity is now copied and rewritten before being discarded, where
+    // before it was discarded first — only when `input_rewrites` is set, which is rare, and it
+    // buys dedup on the post-rewrite value.
+    //
+    // The two branches project separately rather than unifying on one `&Value`: the rewritten
+    // copy lives in the scratch arena and is a `Value<'scratch>`, which is a different type
+    // from the response tree's `Value<'a>`.
     let entry_start = buffer.len();
-    if !project_entry(possible_types, requires, entity, buffer, *next_index) {
+    let projected = if input_rewrites.is_empty() {
+        project_entry(possible_types, requires, entity, buffer, *next_index)
+    } else {
+        let rewritten = arena.alloc(entity.copy_into(arena));
+        for rewrite in input_rewrites {
+            rewrite.rewrite(possible_types, rewritten, arena);
+        }
+        project_entry(possible_types, requires, rewritten, buffer, *next_index)
+    };
+    if !projected {
         return None;
     }
     // The separator is excluded from the hashed bytes, so the same entity hashes the same way
@@ -175,7 +179,10 @@ fn hash_flat_steps(steps: &[RequiresStep], slots: &[Value<'_>], key: &mut u64) -
     for step in steps {
         match step {
             RequiresStep::Leaf { slot, .. } => {
-                *key = mix(*key, scalar_key(slots.get(*slot).unwrap_or(&Value::Absent))?);
+                *key = mix(
+                    *key,
+                    scalar_key(slots.get(*slot).unwrap_or(&Value::Absent))?,
+                );
             }
             // A type condition reads the same object, and which branch runs is decided by a
             // `__typename` this key already covers against a condition fixed in the program.
@@ -187,7 +194,10 @@ fn hash_flat_steps(steps: &[RequiresStep], slots: &[Value<'_>], key: &mut u64) -
                 ..
             } => {
                 if let Some(slot) = typename_slot {
-                    *key = mix(*key, scalar_key(slots.get(*slot).unwrap_or(&Value::Absent))?);
+                    *key = mix(
+                        *key,
+                        scalar_key(slots.get(*slot).unwrap_or(&Value::Absent))?,
+                    );
                 }
                 hash_flat_steps(steps, slots, key)?;
             }
@@ -201,8 +211,7 @@ fn hash_flat_steps(steps: &[RequiresStep], slots: &[Value<'_>], key: &mut u64) -
 
 /// Identifies one scalar slot by variant and payload, or gives up on a container.
 ///
-/// `String` and `OwnedString` share a tag because they write the same bytes; every other
-/// variant gets its own, so two values that write differently can never share a key.
+/// Every variant gets its own tag, so two values that write differently can never share a key.
 #[inline]
 fn scalar_key(value: &Value<'_>) -> Option<u64> {
     let (tag, payload) = match value {
@@ -213,7 +222,6 @@ fn scalar_key(value: &Value<'_>) -> Option<u64> {
         Value::U64(n) => (4, *n),
         Value::F64(n) => (5, n.to_bits()),
         Value::String(s) => (6, xxh3_64(s.as_bytes())),
-        Value::OwnedString(s) => (6, xxh3_64(s.as_bytes())),
         Value::RawJson(raw) => (7, xxh3_64(raw.as_bytes())),
         Value::Array(_) | Value::Object(_) => return None,
     };
@@ -288,10 +296,6 @@ pub fn project_requires(
             write_response_key(first, response_key, buffer);
             write_and_escape_string(buffer, s);
         }
-        Value::OwnedString(s) => {
-            write_response_key(first, response_key, buffer);
-            write_and_escape_string(buffer, s);
-        }
         Value::RawJson(raw) => {
             write_response_key(first, response_key, buffer);
             buffer.put_slice(raw.as_bytes());
@@ -301,7 +305,7 @@ pub fn project_requires(
             buffer.put(OPEN_BRACKET);
 
             let mut first = true;
-            for item in items {
+            for item in items.iter() {
                 if project_requires(possible_types, steps, item, buffer, first, None) {
                     // Only update `first` if we actually write something
                     first = false;
@@ -459,12 +463,10 @@ fn project_requires_steps(
 #[cfg(test)]
 mod tests {
     use super::{project_requires, push_representation};
-    use ahash::HashMap as AHashMap;
     use crate::introspection::schema::PossibleTypes;
+    use ahash::HashMap as AHashMap;
     use graphql_tools::parser::query;
-    use hive_router_query_planner::ast::{
-        selection_set::SelectionSet,
-    };
+    use hive_router_query_planner::ast::selection_set::SelectionSet;
     use hive_router_query_planner::planner::merged_shape::response_shape_for_selections;
     use hive_router_query_planner::planner::slot_path::compile_requires;
     use hive_router_query_planner::utils::parsing::parse_operation;
@@ -735,7 +737,14 @@ mod tests {
         let mut reference_groups: Vec<Option<usize>> = Vec::new();
         for owned in &parsed {
             let mut one = Vec::new();
-            if !project_requires(&possible_types, &compiled, &owned.data, &mut one, true, None) {
+            if !project_requires(
+                &possible_types,
+                &compiled,
+                &owned.data,
+                &mut one,
+                true,
+                None,
+            ) {
                 reference_groups.push(None);
                 continue;
             }
@@ -770,7 +779,10 @@ mod tests {
             String::from_utf8(entries.join(&b','.to_owned())).unwrap(),
             "representations differ for `{requires}`"
         );
-        assert_eq!(groups, reference_groups, "grouping differs for `{requires}`");
+        assert_eq!(
+            groups, reference_groups,
+            "grouping differs for `{requires}`"
+        );
         assert_eq!(next_index, entries.len());
 
         (groups, entries.len())

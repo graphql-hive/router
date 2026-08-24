@@ -44,7 +44,12 @@ enum TypeName<'a> {
     Resolved(&'a str),
     Deferred {
         selection: &'a FieldProjectionPlan,
-        data: Option<&'a Value<'a>>,
+        /// The `__typename` the subgraph answered at this position, read at construction.
+        ///
+        /// Not the `Value` itself: the response tree is invariant in its lifetime, so holding
+        /// a `&'a Value<'a>` would force the tree's lifetime and the projection's to be the
+        /// same one. Only this string was ever read from it, and reading it is a slot load.
+        typename: Option<&'a str>,
         parent: Rc<TypeName<'a>>,
         schema: &'a SchemaMetadata,
         /// Cache for the resolved type name to avoid recomputation
@@ -59,15 +64,18 @@ impl<'a> TypeName<'a> {
     }
 
     #[inline]
-    fn deferred(
+    fn deferred<'v: 'a>(
         selection: &'a FieldProjectionPlan,
-        data: Option<&'a Value>,
+        data: Option<&'a Value<'v>>,
         parent: TypeName<'a>,
         schema: &'a SchemaMetadata,
     ) -> Self {
         TypeName::Deferred {
             selection,
-            data,
+            // `__typename` is reserved at slot 0 of every position the client can see.
+            typename: data
+                .and_then(|value| value.slot(TYPENAME_SLOT))
+                .and_then(Value::as_str),
             parent: Rc::new(parent),
             schema,
             cached: OnceCell::new(),
@@ -80,12 +88,12 @@ impl<'a> TypeName<'a> {
             TypeName::Resolved(name) => Ok(name),
             TypeName::Deferred {
                 selection,
-                data,
+                typename,
                 parent,
                 schema,
                 cached,
             } => cached
-                .get_or_init(|| resolve_type_name(selection, *data, parent, schema))
+                .get_or_init(|| resolve_type_name(selection, *typename, parent, schema))
                 .clone(),
         }
     }
@@ -94,7 +102,7 @@ impl<'a> TypeName<'a> {
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
 pub fn project_by_operation(
-    data: &Value,
+    data: &Value<'_>,
     errors: Vec<GraphQLError>,
     extensions: &ExecutionResultExtensions<'_>,
     operation_type_name: &str,
@@ -176,14 +184,16 @@ pub fn serialize_value_to_buffer(data: &Value, buffer: &mut Vec<u8>) {
         Value::I64(num) => write_i64(buffer, *num),
         Value::F64(num) => write_f64(buffer, *num),
         Value::String(value) => write_and_escape_string(buffer, value),
-        Value::OwnedString(value) => write_and_escape_string(buffer, value),
         Value::RawJson(raw) => buffer.put_slice(raw.as_bytes()),
         // Objects carry no keys of their own, so this is only reachable if a subgraph
         // answered a builtin-scalar or enum field with an object — a malformed response.
         // Every leaf that can legitimately hold one (a custom scalar) is a passthrough and
         // arrives as `RawJson`.
         Value::Object(_) => {
-            debug_assert!(false, "an object at a leaf position has no keys to serialize");
+            debug_assert!(
+                false,
+                "an object at a leaf position has no keys to serialize"
+            );
             buffer.put(EMPTY_OBJECT)
         }
         Value::Array(arr) => {
@@ -202,8 +212,8 @@ pub fn serialize_value_to_buffer(data: &Value, buffer: &mut Vec<u8>) {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn project_selection_set<'a>(
-    data: &'a Value,
+fn project_selection_set<'a, 'v: 'a>(
+    data: &'a Value<'v>,
     errors: &mut Vec<GraphQLError>,
     selection: &'a FieldProjectionPlan,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
@@ -317,8 +327,8 @@ fn project_selection_set<'a>(
 
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
-fn project_selection_set_with_map<'a>(
-    obj: &'a Value<'a>,
+fn project_selection_set_with_map<'a, 'v: 'a>(
+    obj: &'a Value<'v>,
     errors: &mut Vec<GraphQLError>,
     plans: &'a [FieldProjectionPlan],
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
@@ -344,7 +354,14 @@ fn project_selection_set_with_map<'a>(
             let field_type_name_fn = || {
                 field_type_name_cell
                     .get_or_init(|| {
-                        resolve_type_name(plan, field_val, &parent_type_name, schema_metadata)
+                        resolve_type_name(
+                            plan,
+                            field_val
+                                .and_then(|value| value.slot(TYPENAME_SLOT))
+                                .and_then(Value::as_str),
+                            &parent_type_name,
+                            schema_metadata,
+                        )
                     })
                     .clone()
             };
@@ -568,7 +585,7 @@ where
 /// or the type guard was not correctly enforced, resulting in applying a plan for a different parent type.
 fn resolve_type_name<'a>(
     plan: &'a FieldProjectionPlan,
-    field_val: Option<&'a Value>,
+    answered_typename: Option<&'a str>,
     parent_type_name: &TypeName<'a>,
     schema_metadata: &'a SchemaMetadata,
 ) -> Result<&'a str, ProjectionError> {
@@ -576,12 +593,7 @@ fn resolve_type_name<'a>(
         return Ok("String");
     }
 
-    // `__typename` is reserved at slot 0 of every position the client can see.
-    let typename_field = field_val
-        .and_then(|value| value.slot(TYPENAME_SLOT))
-        .and_then(Value::as_str);
-
-    if let Some(typename) = typename_field {
+    if let Some(typename) = answered_typename {
         return Ok(typename);
     }
 
@@ -603,13 +615,13 @@ fn resolve_type_name<'a>(
 #[cfg(test)]
 mod tests {
     use graphql_tools::parser::query::Definition;
+    use hive_router_query_planner::planner::merged_shape::response_shape_for_operation;
     use hive_router_query_planner::{
         ast::{document::NormalizedDocument, normalization::create_normalized_document},
         consumer_schema::ConsumerSchema,
         state::supergraph_state::SupergraphState,
         utils::parsing::parse_operation,
     };
-    use hive_router_query_planner::planner::merged_shape::response_shape_for_operation;
     use sonic_rs::json;
 
     use crate::response::subgraph_response::SubgraphResponse;

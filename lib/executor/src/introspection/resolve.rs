@@ -1,3 +1,4 @@
+use bumpalo::Bump;
 use std::sync::Arc;
 
 use graphql_tools::parser::query::Value as QueryValue;
@@ -14,10 +15,10 @@ use hive_router_query_planner::ast::{
 };
 use sonic_rs::JsonValueTrait;
 
-use hive_router_query_planner::planner::merged_shape::response_shape_for_selections;
 use crate::execution::plan::CoerceVariablesPayload;
 use crate::introspection::schema::SchemaMetadata;
 use crate::response::value::Value;
+use hive_router_query_planner::planner::merged_shape::response_shape_for_selections;
 
 pub struct IntrospectionContext {
     pub query: Option<Arc<OperationDefinition>>,
@@ -26,24 +27,34 @@ pub struct IntrospectionContext {
     pub variables: Arc<CoerceVariablesPayload>,
 }
 
-
 /// Places named entries into the slots the response tree uses at this position.
 ///
 /// The tree carries values by slot, so introspection — which resolves fields by name —
 /// converts once here, against the same shape rule the query planner applies to the client
 /// operation. Introspection is a cold path, so building the shape per object is fine.
-fn into_slots<'exec>(
-    entries: Vec<(&'exec str, Value<'exec>)>,
+fn into_slots<'a>(
+    entries: Vec<(&str, Value<'a>)>,
     selections: &SelectionSet,
-) -> Value<'exec> {
+    arena: &'a Bump,
+) -> Value<'a> {
     let shape = response_shape_for_selections(selections);
-    let mut slots = vec![Value::Null; shape.fields.len()];
+    let slots: &mut [Value<'a>] = arena.alloc_slice_fill_default(shape.fields.len());
     for (key, value) in entries {
         if let Some(slot) = shape.slot_of(key) {
             slots[slot] = value;
         }
     }
-    Value::Object(slots.into_boxed_slice())
+    Value::Object(slots)
+}
+
+/// Copies a schema string into the arena.
+///
+/// The response tree outlives the borrow of the schema it is read from, so introspection
+/// values own nothing they did not put in the arena. Introspection is a cold path, and these
+/// are short names.
+#[inline]
+fn str_value<'a>(arena: &'a Bump, text: &str) -> Value<'a> {
+    Value::String(arena.alloc_str(text))
 }
 
 fn resolve_boolean_variable(
@@ -123,36 +134,42 @@ fn kind_to_str(type_def: &TypeDefinition) -> &'static str {
     }
 }
 
-fn resolve_input_value<'exec>(
+fn resolve_input_value<'exec, 'a>(
     iv: &'exec InputValue,
     selections: &'exec SelectionSet,
     ctx: &'exec IntrospectionContext,
-) -> Value<'exec> {
-    into_slots(resolve_input_value_selections(iv, &selections.items, ctx), selections)
+    arena: &'a Bump,
+) -> Value<'a> {
+    into_slots(
+        resolve_input_value_selections(iv, &selections.items, ctx, arena),
+        selections,
+        arena,
+    )
 }
 
-fn resolve_input_value_selections<'exec>(
+fn resolve_input_value_selections<'exec, 'a>(
     iv: &'exec InputValue,
     selection_items: &'exec Vec<SelectionItem>,
     ctx: &'exec IntrospectionContext,
-) -> Vec<(&'exec str, Value<'exec>)> {
+    arena: &'a Bump,
+) -> Vec<(&'exec str, Value<'a>)> {
     let mut iv_data: Vec<(&str, Value<'_>)> = Vec::with_capacity(selection_items.len());
     for item in selection_items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
-                "name" => Value::String(iv.name.as_str()),
+                "name" => str_value(arena, iv.name.as_str()),
                 "description" => iv
                     .description
                     .as_ref()
-                    .map_or(Value::Null, |s| Value::String(s.as_str())),
-                "type" => resolve_type(&iv.value_type, &field.selections, ctx),
+                    .map_or(Value::Null, |s| str_value(arena, s.as_str())),
+                "type" => resolve_type(&iv.value_type, &field.selections, ctx, arena),
                 "defaultValue" => iv
                     .default_value
                     .as_ref()
-                    .map_or_else(|| Value::Null, |ast| Value::OwnedString(ast.to_string().into())), // TODO: support default values
+                    .map_or_else(|| Value::Null, |ast| str_value(arena, &ast.to_string())), // TODO: support default values
                 "isDeprecated" => Value::Bool(is_deprecated(&iv.directives)),
                 "deprecationReason" => get_deprecation_reason(&iv.directives)
-                    .map_or(Value::Null, Value::String),
+                    .map_or(Value::Null, |s| str_value(arena, s)),
                 "__typename" => Value::String("__InputValue"),
                 _ => Value::Null,
             };
@@ -160,7 +177,7 @@ fn resolve_input_value_selections<'exec>(
         } else if let SelectionItem::InlineFragment(_) = item {
             let selection_items = item.selections();
             if let Some(selection_items) = selection_items {
-                let new_data = resolve_input_value_selections(iv, selection_items, ctx);
+                let new_data = resolve_input_value_selections(iv, selection_items, ctx, arena);
                 iv_data.extend(new_data);
             }
         }
@@ -168,40 +185,46 @@ fn resolve_input_value_selections<'exec>(
     iv_data
 }
 
-fn resolve_field<'exec>(
+fn resolve_field<'exec, 'a>(
     f: &'exec Field,
     selections: &'exec SelectionSet,
     ctx: &'exec IntrospectionContext,
-) -> Value<'exec> {
-    into_slots(resolve_field_selections(f, &selections.items, ctx), selections)
+    arena: &'a Bump,
+) -> Value<'a> {
+    into_slots(
+        resolve_field_selections(f, &selections.items, ctx, arena),
+        selections,
+        arena,
+    )
 }
 
-fn resolve_field_selections<'exec>(
+fn resolve_field_selections<'exec, 'a>(
     f: &'exec Field,
     selection_items: &'exec Vec<SelectionItem>,
     ctx: &'exec IntrospectionContext,
-) -> Vec<(&'exec str, Value<'exec>)> {
+    arena: &'a Bump,
+) -> Vec<(&'exec str, Value<'a>)> {
     let mut field_data = Vec::with_capacity(selection_items.len());
     for item in selection_items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
-                "name" => Value::String(f.name.as_str()),
+                "name" => str_value(arena, f.name.as_str()),
                 "description" => f
                     .description
                     .as_ref()
-                    .map_or(Value::Null, |s| Value::String(s.as_str())),
+                    .map_or(Value::Null, |s| str_value(arena, s.as_str())),
                 "args" => {
                     let args: Vec<_> = f
                         .arguments
                         .iter()
-                        .map(|arg| resolve_input_value(arg, &field.selections, ctx))
+                        .map(|arg| resolve_input_value(arg, &field.selections, ctx, arena))
                         .collect();
-                    Value::Array(args.into_boxed_slice())
+                    Value::Array(arena.alloc_slice_fill_iter(args))
                 }
-                "type" => resolve_type(&f.field_type, &field.selections, ctx),
+                "type" => resolve_type(&f.field_type, &field.selections, ctx, arena),
                 "isDeprecated" => Value::Bool(is_deprecated(&f.directives)),
                 "deprecationReason" => get_deprecation_reason(&f.directives)
-                    .map_or(Value::Null, Value::String),
+                    .map_or(Value::Null, |s| str_value(arena, s)),
                 "__typename" => Value::String("__Field"),
                 _ => Value::Null,
             };
@@ -209,7 +232,7 @@ fn resolve_field_selections<'exec>(
         } else if let SelectionItem::InlineFragment(_) = item {
             let selection_items = item.selections();
             if let Some(selection_items) = selection_items {
-                let new_data = resolve_field_selections(f, selection_items, ctx);
+                let new_data = resolve_field_selections(f, selection_items, ctx, arena);
                 field_data.extend(new_data);
             }
         }
@@ -217,29 +240,35 @@ fn resolve_field_selections<'exec>(
     field_data
 }
 
-fn resolve_enum_value<'exec>(
+fn resolve_enum_value<'exec, 'a>(
     ev: &'exec EnumValue,
     selections: &'exec SelectionSet,
-) -> Value<'exec> {
-    into_slots(resolve_enum_value_selections(ev, &selections.items), selections)
+    arena: &'a Bump,
+) -> Value<'a> {
+    into_slots(
+        resolve_enum_value_selections(ev, &selections.items, arena),
+        selections,
+        arena,
+    )
 }
 
-fn resolve_enum_value_selections<'exec>(
+fn resolve_enum_value_selections<'exec, 'a>(
     ev: &'exec EnumValue,
     selection_items: &'exec Vec<SelectionItem>,
-) -> Vec<(&'exec str, Value<'exec>)> {
+    arena: &'a Bump,
+) -> Vec<(&'exec str, Value<'a>)> {
     let mut ev_data = Vec::with_capacity(selection_items.len());
     for item in selection_items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
-                "name" => Value::String(ev.name.as_str()),
+                "name" => str_value(arena, ev.name.as_str()),
                 "description" => ev
                     .description
                     .as_ref()
-                    .map_or(Value::Null, |s| Value::String(s.as_str())),
+                    .map_or(Value::Null, |s| str_value(arena, s.as_str())),
                 "isDeprecated" => Value::Bool(is_deprecated_enum(ev)),
                 "deprecationReason" => get_deprecation_reason(&ev.directives)
-                    .map_or(Value::Null, Value::String),
+                    .map_or(Value::Null, |s| str_value(arena, s)),
                 "__typename" => Value::String("__EnumValue"),
                 _ => Value::Null,
             };
@@ -247,7 +276,7 @@ fn resolve_enum_value_selections<'exec>(
         } else if let SelectionItem::InlineFragment(_) = item {
             let selection_items = item.selections();
             if let Some(selection_items) = selection_items {
-                let new_data = resolve_enum_value_selections(ev, selection_items);
+                let new_data = resolve_enum_value_selections(ev, selection_items, arena);
                 ev_data.extend(new_data);
             }
         }
@@ -255,19 +284,25 @@ fn resolve_enum_value_selections<'exec>(
     ev_data
 }
 
-fn resolve_type_definition<'exec>(
+fn resolve_type_definition<'exec, 'a>(
     type_def: &'exec TypeDefinition,
     selections: &'exec SelectionSet,
     ctx: &'exec IntrospectionContext,
-) -> Value<'exec> {
-    into_slots(resolve_type_definition_selections(type_def, &selections.items, ctx), selections)
+    arena: &'a Bump,
+) -> Value<'a> {
+    into_slots(
+        resolve_type_definition_selections(type_def, &selections.items, ctx, arena),
+        selections,
+        arena,
+    )
 }
 
-fn resolve_type_definition_selections<'exec>(
+fn resolve_type_definition_selections<'exec, 'a>(
     type_def: &'exec TypeDefinition,
     selection_items: &'exec Vec<SelectionItem>,
     ctx: &'exec IntrospectionContext,
-) -> Vec<(&'exec str, Value<'exec>)> {
+    arena: &'a Bump,
+) -> Vec<(&'exec str, Value<'a>)> {
     let mut type_data = Vec::with_capacity(selection_items.len());
 
     for item in selection_items {
@@ -282,7 +317,7 @@ fn resolve_type_definition_selections<'exec>(
                     TypeDefinition::Enum(e) => Some(&e.name),
                     TypeDefinition::InputObject(io) => Some(&io.name),
                 }
-                .map(|s| Value::String(s.as_str()))
+                .map(|s| str_value(arena, s.as_str()))
                 .unwrap_or(Value::Null),
                 "description" => match type_def {
                     TypeDefinition::Scalar(s) => s.description.as_ref(),
@@ -292,11 +327,11 @@ fn resolve_type_definition_selections<'exec>(
                     TypeDefinition::Enum(e) => e.description.as_ref(),
                     TypeDefinition::InputObject(io) => io.description.as_ref(),
                 }
-                .map_or(Value::Null, |s| Value::String(s.as_str())),
+                .map_or(Value::Null, |s| str_value(arena, s.as_str())),
                 "specifiedByURL" => {
                     if let TypeDefinition::Scalar(scalar) = type_def {
                         get_specified_by_url(&scalar.directives)
-                            .map_or(Value::Null, Value::String)
+                            .map_or(Value::Null, |s| str_value(arena, s))
                     } else {
                         Value::Null
                     }
@@ -328,15 +363,15 @@ fn resolve_type_definition_selections<'exec>(
                             })
                             .unwrap_or(false);
 
-                        let fields_values: Vec<Value<'exec>> = fields
+                        let fields_values: Vec<Value<'a>> = fields
                             .iter()
                             .filter(|f| {
                                 !f.name.starts_with("__")
                                     && (include_deprecated || !is_deprecated(&f.directives))
                             })
-                            .map(|f| resolve_field(f, &field.selections, ctx))
+                            .map(|f| resolve_field(f, &field.selections, ctx, arena))
                             .collect();
-                        Value::Array(fields_values.into_boxed_slice())
+                        Value::Array(arena.alloc_slice_fill_iter(fields_values))
                     } else {
                         Value::Null
                     }
@@ -347,25 +382,25 @@ fn resolve_type_definition_selections<'exec>(
                             .implements_interfaces
                             .iter()
                             .filter_map(|iface_name| ctx.schema.type_by_name(iface_name))
-                            .map(|t| resolve_type_definition(t, &field.selections, ctx))
+                            .map(|t| resolve_type_definition(t, &field.selections, ctx, arena))
                             .collect();
-                        Value::Array(interface_values.into_boxed_slice())
+                        Value::Array(arena.alloc_slice_fill_iter(interface_values))
                     } else {
                         Value::Null
                     }
                 }
                 "possibleTypes" => {
                     if let TypeDefinition::Interface(_) | TypeDefinition::Union(_) = type_def {
-                        let possible_types: Vec<Value<'exec>> = ctx
+                        let possible_types: Vec<Value<'a>> = ctx
                             .metadata
                             .possible_types
                             .get_possible_types(type_def.name())
                             .into_iter()
                             .filter(|v| v != type_def.name())
                             .filter_map(|name| ctx.schema.type_by_name(name.as_str()))
-                            .map(|t| resolve_type_definition(t, &field.selections, ctx))
+                            .map(|t| resolve_type_definition(t, &field.selections, ctx, arena))
                             .collect();
-                        Value::Array(possible_types.into_boxed_slice())
+                        Value::Array(arena.alloc_slice_fill_iter(possible_types))
                     } else {
                         Value::Null
                     }
@@ -389,9 +424,9 @@ fn resolve_type_definition_selections<'exec>(
                             .values
                             .iter()
                             .filter(|v| include_deprecated || !is_deprecated_enum(v))
-                            .map(|v| resolve_enum_value(v, &field.selections))
+                            .map(|v| resolve_enum_value(v, &field.selections, arena))
                             .collect();
-                        Value::Array(enum_values.into_boxed_slice())
+                        Value::Array(arena.alloc_slice_fill_iter(enum_values))
                     } else {
                         Value::Null
                     }
@@ -401,9 +436,9 @@ fn resolve_type_definition_selections<'exec>(
                         let fields_values: Vec<_> = io
                             .fields
                             .iter()
-                            .map(|f| resolve_input_value(f, &field.selections, ctx))
+                            .map(|f| resolve_input_value(f, &field.selections, ctx, arena))
                             .collect();
-                        Value::Array(fields_values.into_boxed_slice())
+                        Value::Array(arena.alloc_slice_fill_iter(fields_values))
                     }
                     _ => Value::Null,
                 },
@@ -415,35 +450,42 @@ fn resolve_type_definition_selections<'exec>(
         } else if let SelectionItem::InlineFragment(_) = item {
             let selection_items = item.selections();
             if let Some(selection_items) = selection_items {
-                let new_data = resolve_type_definition_selections(type_def, selection_items, ctx);
+                let new_data =
+                    resolve_type_definition_selections(type_def, selection_items, ctx, arena);
                 type_data.extend(new_data);
             }
         }
     }
     type_data
 }
-fn resolve_wrapper_type<'exec>(
+fn resolve_wrapper_type<'exec, 'a>(
     kind: &'exec str,
     inner_type: &'exec Type,
     selections: &'exec SelectionSet,
     ctx: &'exec IntrospectionContext,
-) -> Value<'exec> {
-    into_slots(resolve_wrapper_type_selections(kind, inner_type, &selections.items, ctx), selections)
+    arena: &'a Bump,
+) -> Value<'a> {
+    into_slots(
+        resolve_wrapper_type_selections(kind, inner_type, &selections.items, ctx, arena),
+        selections,
+        arena,
+    )
 }
 
-fn resolve_wrapper_type_selections<'exec>(
+fn resolve_wrapper_type_selections<'exec, 'a>(
     kind: &'exec str,
     inner_type: &'exec Type,
     selection_items: &'exec Vec<SelectionItem>,
     ctx: &'exec IntrospectionContext,
-) -> Vec<(&'exec str, Value<'exec>)> {
+    arena: &'a Bump,
+) -> Vec<(&'exec str, Value<'a>)> {
     let mut type_data = Vec::with_capacity(selection_items.len());
     for item in selection_items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
-                "kind" => Value::String(kind),
+                "kind" => str_value(arena, kind),
                 "name" => Value::Null,
-                "ofType" => resolve_type(inner_type, &field.selections, ctx),
+                "ofType" => resolve_type(inner_type, &field.selections, ctx, arena),
                 "__typename" => Value::String("__Type"),
                 _ => Value::Null,
             };
@@ -452,7 +494,7 @@ fn resolve_wrapper_type_selections<'exec>(
             let selection_items = item.selections();
             if let Some(selection_items) = selection_items {
                 let new_data =
-                    resolve_wrapper_type_selections(kind, inner_type, selection_items, ctx);
+                    resolve_wrapper_type_selections(kind, inner_type, selection_items, ctx, arena);
                 type_data.extend(new_data);
             }
         }
@@ -460,11 +502,12 @@ fn resolve_wrapper_type_selections<'exec>(
     type_data
 }
 
-fn resolve_type<'exec>(
+fn resolve_type<'exec, 'a>(
     t: &'exec Type,
     selections: &'exec SelectionSet,
     ctx: &'exec IntrospectionContext,
-) -> Value<'exec> {
+    arena: &'a Bump,
+) -> Value<'a> {
     match t {
         Type::NamedType(name) => {
             let type_def = ctx.schema.type_by_name(name).unwrap_or_else(|| {
@@ -473,50 +516,58 @@ fn resolve_type<'exec>(
                     name
                 );
             });
-            resolve_type_definition(type_def, selections, ctx)
+            resolve_type_definition(type_def, selections, ctx, arena)
         }
-        Type::ListType(inner_t) => resolve_wrapper_type("LIST", inner_t, selections, ctx),
-        Type::NonNullType(inner_t) => resolve_wrapper_type("NON_NULL", inner_t, selections, ctx),
+        Type::ListType(inner_t) => resolve_wrapper_type("LIST", inner_t, selections, ctx, arena),
+        Type::NonNullType(inner_t) => {
+            resolve_wrapper_type("NON_NULL", inner_t, selections, ctx, arena)
+        }
     }
 }
 
-fn resolve_directive<'exec>(
+fn resolve_directive<'exec, 'a>(
     d: &'exec DirectiveDefinition,
     selections: &'exec SelectionSet,
     ctx: &'exec IntrospectionContext,
-) -> Value<'exec> {
-    into_slots(resolve_directive_selections(d, &selections.items, ctx), selections)
+    arena: &'a Bump,
+) -> Value<'a> {
+    into_slots(
+        resolve_directive_selections(d, &selections.items, ctx, arena),
+        selections,
+        arena,
+    )
 }
 
-fn resolve_directive_selections<'exec>(
+fn resolve_directive_selections<'exec, 'a>(
     d: &'exec DirectiveDefinition,
     selection_items: &'exec Vec<SelectionItem>,
     ctx: &'exec IntrospectionContext,
-) -> Vec<(&'exec str, Value<'exec>)> {
+    arena: &'a Bump,
+) -> Vec<(&'exec str, Value<'a>)> {
     let mut directive_data = Vec::with_capacity(selection_items.len());
     for item in selection_items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
-                "name" => Value::String(d.name.as_str()),
+                "name" => str_value(arena, d.name.as_str()),
                 "description" => d
                     .description
                     .as_ref()
-                    .map_or(Value::Null, |s| Value::String(s.as_str())),
+                    .map_or(Value::Null, |s| str_value(arena, s.as_str())),
                 "locations" => {
                     let locs: Vec<_> = d
                         .locations
                         .iter()
-                        .map(|l| Value::String(l.as_str()))
+                        .map(|l| str_value(arena, l.as_str()))
                         .collect();
-                    Value::Array(locs.into_boxed_slice())
+                    Value::Array(arena.alloc_slice_fill_iter(locs))
                 }
                 "args" => {
                     let args: Vec<_> = d
                         .arguments
                         .iter()
-                        .map(|arg| resolve_input_value(arg, &field.selections, ctx))
+                        .map(|arg| resolve_input_value(arg, &field.selections, ctx, arena))
                         .collect();
-                    Value::Array(args.into_boxed_slice())
+                    Value::Array(arena.alloc_slice_fill_iter(args))
                 }
                 "isRepeatable" => Value::Bool(d.repeatable),
                 "__typename" => Value::String("__Directive"),
@@ -526,7 +577,7 @@ fn resolve_directive_selections<'exec>(
         } else if let SelectionItem::InlineFragment(_) = item {
             let selection_items = item.selections();
             if let Some(selection_items) = selection_items {
-                let new_data = resolve_directive_selections(d, selection_items, ctx);
+                let new_data = resolve_directive_selections(d, selection_items, ctx, arena);
                 directive_data.extend(new_data);
             }
         }
@@ -534,20 +585,23 @@ fn resolve_directive_selections<'exec>(
     directive_data
 }
 
-fn resolve_schema_field<'exec>(
+fn resolve_schema_field<'exec, 'a>(
     field: &'exec FieldSelection,
     ctx: &'exec IntrospectionContext,
-) -> Value<'exec> {
+    arena: &'a Bump,
+) -> Value<'a> {
     into_slots(
-        resolve_schema_selections(&field.selections.items, ctx),
+        resolve_schema_selections(&field.selections.items, ctx, arena),
         &field.selections,
+        arena,
     )
 }
 
-fn resolve_schema_selections<'exec>(
+fn resolve_schema_selections<'exec, 'a>(
     items: &'exec Vec<SelectionItem>,
     ctx: &'exec IntrospectionContext,
-) -> Vec<(&'exec str, Value<'exec>)> {
+    arena: &'a Bump,
+) -> Vec<(&'exec str, Value<'a>)> {
     let mut schema_data = Vec::with_capacity(items.len());
 
     for item in items {
@@ -559,9 +613,9 @@ fn resolve_schema_selections<'exec>(
                         .schema
                         .type_map()
                         .values()
-                        .map(|t| resolve_type_definition(t, &inner_field.selections, ctx))
+                        .map(|t| resolve_type_definition(t, &inner_field.selections, ctx, arena))
                         .collect();
-                    Value::Array(types.into_boxed_slice())
+                    Value::Array(arena.alloc_slice_fill_iter(types))
                 }
                 "queryType" => {
                     let query_type = ctx
@@ -572,21 +626,21 @@ fn resolve_schema_selections<'exec>(
                         // SAFETY: The query type is guaranteed to exist,
                         // every schema has a query type.
                         .expect("invariant violation: query type is guaranteed to exist because every schema must have a query type");
-                    resolve_type_definition(query_type, &inner_field.selections, ctx)
+                    resolve_type_definition(query_type, &inner_field.selections, ctx, arena)
                 }
                 "mutationType" => ctx
                     .schema
                     .mutation_type_name()
                     .and_then(|name| ctx.schema.type_by_name(name))
                     .map_or(Value::Null, |t| {
-                        resolve_type_definition(t, &inner_field.selections, ctx)
+                        resolve_type_definition(t, &inner_field.selections, ctx, arena)
                     }),
                 "subscriptionType" => ctx
                     .schema
                     .subscription_type_name()
                     .and_then(|name| ctx.schema.type_by_name(name))
                     .map_or(Value::Null, |t| {
-                        resolve_type_definition(t, &inner_field.selections, ctx)
+                        resolve_type_definition(t, &inner_field.selections, ctx, arena)
                     }),
                 "directives" => {
                     let directives: Vec<Value<'_>> = ctx
@@ -597,9 +651,9 @@ fn resolve_schema_selections<'exec>(
                             Definition::DirectiveDefinition(d) => Some(d),
                             _ => None,
                         })
-                        .map(|d| resolve_directive(d, &inner_field.selections, ctx))
+                        .map(|d| resolve_directive(d, &inner_field.selections, ctx, arena))
                         .collect();
-                    Value::Array(directives.into_boxed_slice())
+                    Value::Array(arena.alloc_slice_fill_iter(directives))
                 }
                 "__typename" => Value::String("__Schema"),
                 _ => Value::Null,
@@ -608,7 +662,7 @@ fn resolve_schema_selections<'exec>(
         } else if let SelectionItem::FragmentSpread(_) = item {
             let selection_items = item.selections();
             if let Some(selection_items) = selection_items {
-                let new_data = resolve_schema_selections(selection_items, ctx);
+                let new_data = resolve_schema_selections(selection_items, ctx, arena);
                 schema_data.extend(new_data);
             }
         }
@@ -616,37 +670,45 @@ fn resolve_schema_selections<'exec>(
     schema_data
 }
 
-pub fn resolve_introspection<'exec>(
+pub fn resolve_introspection<'exec, 'a>(
     operation_definition: &'exec OperationDefinition,
     ctx: &'exec IntrospectionContext,
-) -> Value<'exec> {
+    arena: &'a Bump,
+) -> Value<'a> {
     let root_selection_set = &operation_definition.selection_set;
     let root_type_name = ctx
         .metadata
         .expect_root_type_name(operation_definition.operation_kind.as_ref());
 
     into_slots(
-        resolve_root_introspection_selections(root_type_name, &root_selection_set.items, ctx),
+        resolve_root_introspection_selections(
+            root_type_name,
+            &root_selection_set.items,
+            ctx,
+            arena,
+        ),
         root_selection_set,
+        arena,
     )
 }
 
-fn resolve_root_introspection_selections<'exec>(
+fn resolve_root_introspection_selections<'exec, 'a>(
     root_type_name: &'exec str,
     items: &'exec Vec<SelectionItem>,
     ctx: &'exec IntrospectionContext,
-) -> Vec<(&'exec str, Value<'exec>)> {
+    arena: &'a Bump,
+) -> Vec<(&'exec str, Value<'a>)> {
     let mut data = Vec::with_capacity(items.len());
     for item in items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
-                "__schema" => resolve_schema_field(field, ctx),
+                "__schema" => resolve_schema_field(field, ctx, arena),
                 "__type" => {
                     if let Some(args) = &field.arguments {
                         let type_value = match args.get_argument("name") {
                             Some(AstValue::String(type_name)) => {
                                 ctx.schema.type_by_name(type_name).map_or(Value::Null, |t| {
-                                    resolve_type_definition(t, &field.selections, ctx)
+                                    resolve_type_definition(t, &field.selections, ctx, arena)
                                 })
                             }
                             Some(AstValue::Variable(var_name)) => {
@@ -654,7 +716,7 @@ fn resolve_root_introspection_selections<'exec>(
                                     resolve_str_variable(var_name.as_str(), &ctx.variables)
                                 {
                                     ctx.schema.type_by_name(var_value).map_or(Value::Null, |t| {
-                                        resolve_type_definition(t, &field.selections, ctx)
+                                        resolve_type_definition(t, &field.selections, ctx, arena)
                                     })
                                 } else {
                                     Value::Null
@@ -669,15 +731,19 @@ fn resolve_root_introspection_selections<'exec>(
                         Value::Null
                     }
                 }
-                "__typename" => Value::String(root_type_name),
+                "__typename" => str_value(arena, root_type_name),
                 _ => Value::Null,
             };
             data.push((field.selection_identifier(), value));
         } else if let SelectionItem::InlineFragment(_) = item {
             let selection_items = item.selections();
             if let Some(selection_items) = selection_items {
-                let new_data =
-                    resolve_root_introspection_selections(root_type_name, selection_items, ctx);
+                let new_data = resolve_root_introspection_selections(
+                    root_type_name,
+                    selection_items,
+                    ctx,
+                    arena,
+                );
                 data.extend(new_data);
             }
         }

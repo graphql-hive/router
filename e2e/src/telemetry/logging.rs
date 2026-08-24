@@ -864,7 +864,7 @@ impl RouterPlugin for TestSubgraphDurationsPlugin {
         &'exec self,
         payload: OnExecuteStartHookPayload<'exec>,
     ) -> OnExecuteStartHookResult<'exec> {
-        payload.on_end(|mut end_payload: OnExecuteEndHookPayload<'exec>| {
+        payload.on_end(|mut end_payload: OnExecuteEndHookPayload| {
             let subgraph_calls: BTreeMap<String, u64> = get_current_summary()
                 .and_then(|summary| {
                     summary

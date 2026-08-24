@@ -1,15 +1,34 @@
 use std::collections::BTreeSet;
 
+use bumpalo::Bump;
+
 use hive_router_query_planner::planner::slot_path::{SlotPathSegment, SlotRewrite};
 
 use crate::{introspection::schema::PossibleTypes, response::value::Value};
 
 pub trait SlotRewriteExt {
-    fn rewrite<'a>(&'a self, possible_types: &PossibleTypes, value: &mut Value<'a>);
+    /// `arena` is only touched by `SetValue`, which is the one rewrite that puts a new string
+    /// into the tree.
+    ///
+    /// The string is copied rather than borrowed from the plan: the response tree outlives its
+    /// own borrow of anything the plan owns, and `Value` is invariant in its lifetime, so a
+    /// plan-borrowed string cannot be narrowed into it the way it could before slots. Rewrites
+    /// are rare and the strings are short.
+    fn rewrite<'tree>(
+        &self,
+        possible_types: &PossibleTypes,
+        value: &mut Value<'tree>,
+        arena: &'tree Bump,
+    );
 }
 
 impl SlotRewriteExt for SlotRewrite {
-    fn rewrite<'a>(&'a self, possible_types: &PossibleTypes, value: &mut Value<'a>) {
+    fn rewrite<'tree>(
+        &self,
+        possible_types: &PossibleTypes,
+        value: &mut Value<'tree>,
+        arena: &'tree Bump,
+    ) {
         match self {
             // Renaming a key is a move between slots: the response tree carries values by
             // position, so there is no key left to rewrite.
@@ -25,8 +44,7 @@ impl SlotRewriteExt for SlotRewrite {
             }
             SlotRewrite::SetValue { path, value: new } => {
                 walk(possible_types, value, path, &mut |target| {
-                    // The rewrite lives in the query plan, which outlives the response tree.
-                    *target = Value::String(new.as_str());
+                    *target = Value::String(arena.alloc_str(new));
                 });
             }
         }
@@ -54,7 +72,7 @@ fn walk<'a, F>(
 {
     // Lists are transparent: every element sits at the same response position.
     if let Value::Array(items) = value {
-        for item in items {
+        for item in items.iter_mut() {
             walk(possible_types, item, path, apply);
         }
         return;

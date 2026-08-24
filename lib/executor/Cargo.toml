@@ -59,7 +59,7 @@ hyper-util = { version = "0.1.16", features = [
 itoa = "1.0.15"
 ryu = "1.0.20"
 indexmap = "2.10.0"
-bumpalo = "3.20.3"
+bumpalo = { version = "3.20.3", features = ["collections"] }
 sonic-simd = "0.1.2"
 async-stream = "0.3.6"
 futures-util = "0.3.31"

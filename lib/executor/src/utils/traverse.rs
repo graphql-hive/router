@@ -126,13 +126,13 @@ pub fn traverse_and_callback_mut<'a, Callback>(
     }
 }
 
-pub fn traverse_and_callback<'a, Callback>(
-    current_data: &'a Value<'a>,
-    remaining_path: &'a [SlotPathSegment],
-    possible_types: &'a PossibleTypes,
+pub fn traverse_and_callback<'d, 'a, Callback>(
+    current_data: &'d Value<'a>,
+    remaining_path: &'d [SlotPathSegment],
+    possible_types: &'d PossibleTypes,
     callback: &mut Callback,
 ) where
-    Callback: FnMut(&'a Value<'a>),
+    Callback: FnMut(&'d Value<'a>),
 {
     let Some((segment, rest_of_path)) = remaining_path.split_first() else {
         if let Value::Array(arr) = current_data {
@@ -177,6 +177,7 @@ pub fn traverse_and_callback<'a, Callback>(
 
 #[cfg(test)]
 mod tests {
+    use bumpalo::Bump;
     use hive_router_query_planner::planner::slot_path::SlotPathSegment;
 
     use crate::{
@@ -195,8 +196,8 @@ mod tests {
     }
 
     /// `{ id: "<id>" }` at slot 0.
-    fn entity(id: &str) -> Value<'static> {
-        Value::Object(vec![Value::OwnedString(id.to_string().into())].into_boxed_slice())
+    fn entity<'a>(arena: &'a Bump, id: &str) -> Value<'a> {
+        Value::Object(arena.alloc_slice_fill_iter([Value::String(arena.alloc_str(id))]))
     }
 
     #[test]
@@ -206,9 +207,10 @@ mod tests {
      * we should collect paths ["items", 0] and ["items", 1]
      */
     fn test_collect_error_paths_one_level() {
-        let mut data = Value::Object(
-            vec![Value::Array(vec![entity("1"), entity("2")].into_boxed_slice())].into_boxed_slice(),
-        );
+        let arena = Bump::new();
+        let mut data = Value::Object(arena.alloc_slice_fill_iter([Value::Array(
+            arena.alloc_slice_fill_iter([entity(&arena, "1"), entity(&arena, "2")]),
+        )]));
         let path = vec![slot(0, "items"), SlotPathSegment::List];
         let mut collected = vec![];
         super::traverse_and_callback_mut(
@@ -246,25 +248,19 @@ mod tests {
      */
     fn test_collect_error_paths_two_levels() {
         // Each user is { id: <slot 0>, posts: <slot 1> }.
-        let user = |id: &str, posts: Vec<Value<'static>>| {
-            Value::Object(
-                vec![
-                    Value::OwnedString(id.to_string().into()),
-                    Value::Array(posts.into_boxed_slice()),
-                ]
-                .into_boxed_slice(),
-            )
-        };
-        let mut data = Value::Object(
-            vec![Value::Array(
-                vec![
-                    user("1", vec![entity("a"), entity("b")]),
-                    user("2", vec![entity("c")]),
-                ]
-                .into_boxed_slice(),
-            )]
-            .into_boxed_slice(),
-        );
+        let arena = Bump::new();
+        fn user<'a>(arena: &'a Bump, id: &str, posts: Vec<Value<'a>>) -> Value<'a> {
+            Value::Object(arena.alloc_slice_fill_iter([
+                Value::String(arena.alloc_str(id)),
+                Value::Array(arena.alloc_slice_fill_iter(posts)),
+            ]))
+        }
+        let mut data = Value::Object(arena.alloc_slice_fill_iter([Value::Array(
+            arena.alloc_slice_fill_iter([
+                user(&arena, "1", vec![entity(&arena, "a"), entity(&arena, "b")]),
+                user(&arena, "2", vec![entity(&arena, "c")]),
+            ]),
+        )]));
 
         let path = vec![
             slot(0, "users"),

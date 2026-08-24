@@ -38,7 +38,7 @@ pub struct OnSubgraphExecuteStartHookPayload<'exec> {
     pub execution_request: SubgraphExecutionRequest<'exec>,
 }
 
-impl<'exec> StartHookPayload<OnSubgraphExecuteEndHookPayload<'exec>, SubgraphResponse<'exec>>
+impl<'exec> StartHookPayload<OnSubgraphExecuteEndHookPayload<'exec>, SubgraphResponse<'static>>
     for OnSubgraphExecuteStartHookPayload<'exec>
 {
 }
@@ -47,13 +47,13 @@ pub type OnSubgraphExecuteStartHookResult<'exec> = StartHookResult<
     'exec,
     OnSubgraphExecuteStartHookPayload<'exec>,
     OnSubgraphExecuteEndHookPayload<'exec>,
-    SubgraphResponse<'exec>,
+    SubgraphResponse<'static>,
 >;
 
 pub struct OnSubgraphExecuteEndHookPayload<'exec> {
     /// The execution result from the subgraph execution for the incoming GraphQL request.
     /// Plugins can modify the execution result before it is sent back to the client.
-    pub execution_result: SubgraphResponse<'exec>,
+    pub execution_result: SubgraphResponse<'static>,
     /// The context object that can be used to share data across different plugin hooks for the same request.
     /// It is unique per request and is dropped after the response is sent.
     ///
@@ -62,10 +62,10 @@ pub struct OnSubgraphExecuteEndHookPayload<'exec> {
     pub request_context: RequestContextApi,
 }
 
-impl<'exec> EndHookPayload<SubgraphResponse<'exec>> for OnSubgraphExecuteEndHookPayload<'exec> {}
+impl<'exec> EndHookPayload<SubgraphResponse<'static>> for OnSubgraphExecuteEndHookPayload<'exec> {}
 
 pub type OnSubgraphExecuteEndHookResult<'exec> =
-    EndHookResult<OnSubgraphExecuteEndHookPayload<'exec>, SubgraphResponse<'exec>>;
+    EndHookResult<OnSubgraphExecuteEndHookPayload<'exec>, SubgraphResponse<'static>>;
 
 impl FromGraphQLErrorToResponse for SubgraphResponse<'_> {
     fn from_graphql_error_to_response(error: GraphQLError, status_code: http::StatusCode) -> Self {

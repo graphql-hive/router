@@ -17,17 +17,16 @@ use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
 };
 use hive_router_query_planner::ast::operation::SubgraphFetchOperation;
+use hive_router_query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use hive_router_query_planner::planner::{
     plan_nodes::{FetchNode, FlattenNode},
     response_shape::ResponseShape,
     slot_path::{slot_path_to_string, SlotPathSegment, SlotRewrite},
 };
-use hive_router_query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use hive_router_query_planner::{
     ast::operation::OperationDefinition,
     planner::plan_nodes::{
-        ConditionNode, EntityBatch, EntityBatchAlias, PlanNode,
-        QueryPlan, SequenceNode,
+        ConditionNode, EntityBatch, EntityBatchAlias, PlanNode, QueryPlan, SequenceNode,
     },
     state::supergraph_state::OperationKind,
 };
@@ -42,6 +41,8 @@ use crate::execution::error_masking::ErrorMaskingRuntime;
 use crate::execution::operation_name::OperationNameFactory;
 use crate::executors::common::ConnectionFingerprint;
 use crate::headers::cache_control;
+use bumpalo::Bump;
+
 use crate::{
     execution::{
         client_request_details::ClientRequestDetails,
@@ -75,6 +76,7 @@ use crate::{
         plan::FieldProjectionPlan, request::push_representation, response::project_by_operation,
     },
     response::{
+        arena::ResponseArena,
         graphql_error::{GraphQLError, GraphQLErrorPath, GraphQLErrorPathSegment},
         merge::{deep_merge, deep_merge_from_ref, merge_entity_into},
         subgraph_response::SubgraphResponse,
@@ -363,7 +365,7 @@ pub async fn execute_query_plan<'exec>(
 
         let body_stream = Box::pin(async_stream::stream! {
             while let Some(stream_result) = response_stream.next().await {
-                let response = match stream_result.with_plan_context(LazyPlanContext {
+                let mut response = match stream_result.with_plan_context(LazyPlanContext {
                                 subgraph_name: || Some(subgraph_name.to_string()),
                                 affected_path: || None,
                             }) {
@@ -386,6 +388,8 @@ pub async fn execute_query_plan<'exec>(
                         return;
                     }
                 };
+                // The event's own arena, carried into the execution that merges into it.
+                let event_arena = response.arena.take().unwrap_or_default();
                 let mut initial_errors = opts.initial_errors.clone();
                 if let Some(new_errors) = response.errors {
                     initial_errors.extend(new_errors);
@@ -426,7 +430,7 @@ pub async fn execute_query_plan<'exec>(
                     error_masking_runtime: opts.error_masking_runtime.clone(),
                     connection_fingerprint: opts.connection_fingerprint,
                 };
-                match execute_query_plan_with_data(response.data, opts).await {
+                match execute_query_plan_with_data(response.data, event_arena, opts).await {
                     Ok(result) => yield result.body,
                     Err(ref err) => {
                         // fatal error, stream it and stop
@@ -448,17 +452,26 @@ pub async fn execute_query_plan<'exec>(
 
     let introspection_context_clone = Arc::clone(&opts.introspection_context);
     let root_slots = opts.query_plan.response_shape.fields.len();
+    // Everything the executor builds itself lives here; the context takes ownership below and
+    // keeps it alive for as long as the response tree.
+    let request_arena = ResponseArena::new();
+    let arena = request_arena.borrow_unbounded();
     let data = if let Some(introspection_query) = &introspection_context_clone.query {
-        let mut data = resolve_introspection(introspection_query, &introspection_context_clone);
+        let mut data =
+            resolve_introspection(introspection_query, &introspection_context_clone, arena);
         // Introspection builds against the client's own shape, which stops at the keys the
         // client asked for. The merged tree appends whatever the planner injected after
         // those, so the root has to be grown to the full layout or a positional merge would
         // drop every injected slot.
         if let Value::Object(slots) = &mut data {
             if slots.len() < root_slots {
-                let mut grown = std::mem::take(slots).into_vec();
-                grown.resize_with(root_slots, || Value::Absent);
-                *slots = grown.into_boxed_slice();
+                let filled = slots.len();
+                let grown: &mut [Value] = arena.alloc_slice_fill_default(root_slots);
+                for (target, source) in grown.iter_mut().zip(slots.iter_mut()) {
+                    *target = std::mem::take(source);
+                }
+                debug_assert!(grown[filled..].iter().all(Value::is_absent));
+                *slots = grown;
             }
         }
         data
@@ -467,16 +480,17 @@ pub async fn execute_query_plan<'exec>(
     } else {
         // Seeded with the merged tree's root layout, so every fetch merges positionally into
         // slots that already exist.
-        Value::empty_object(root_slots)
+        Value::empty_object(arena, root_slots)
     };
 
-    let output = execute_query_plan_with_data(data, opts).await?;
+    let output = execute_query_plan_with_data(data, request_arena, opts).await?;
 
     Ok(QueryPlanExecutionResult::Single(output))
 }
 
 async fn execute_query_plan_with_data<'exec>(
-    mut data: Value<'exec>,
+    mut data: Value<'static>,
+    request_arena: ResponseArena,
     mut opts: QueryPlanExecutionOpts<'exec>,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
     let mut errors = opts.initial_errors;
@@ -534,7 +548,7 @@ async fn execute_query_plan_with_data<'exec>(
         opts.extensions.extensions = start_payload.extensions;
     }
 
-    let mut exec_ctx = ExecutionContext::new(data, errors);
+    let mut exec_ctx = ExecutionContext::new(data, errors, request_arena);
     // No need for `new`, it has too many parameters
     // We can directly create `Executor` instance here
     let executor = Executor {
@@ -735,7 +749,7 @@ pub enum ExecutionJob<'exec> {
     Fetch {
         subgraph_name: &'exec str,
         operation: &'exec SubgraphFetchOperation,
-        response: SubgraphResponse<'exec>,
+        response: SubgraphResponse<'static>,
         output_rewrites: &'exec [SlotRewrite],
         // By default, this job is merged at the root. When this is set, we merge at
         // a specific path instead of the root (used for root re-entry fetches)
@@ -744,7 +758,7 @@ pub enum ExecutionJob<'exec> {
     FlattenFetch {
         subgraph_name: &'exec str,
         operation: &'exec SubgraphFetchOperation,
-        response: SubgraphResponse<'exec>,
+        response: SubgraphResponse<'static>,
         flatten_node_path: &'exec [SlotPathSegment],
         representation_hashes: Vec<Option<u64>>,
         representation_hash_to_index: AHashMap<u64, usize>,
@@ -755,7 +769,7 @@ pub enum ExecutionJob<'exec> {
     BatchFetch {
         subgraph_name: &'exec str,
         operation: &'exec SubgraphFetchOperation,
-        response: SubgraphResponse<'exec>,
+        response: SubgraphResponse<'static>,
         aliases: Vec<AliasBatchState<'exec>>,
     },
 }
@@ -805,7 +819,7 @@ struct BatchFetchErrors {
 }
 
 impl<'exec> ExecutionJob<'exec> {
-    fn response(self) -> SubgraphResponse<'exec> {
+    fn response(self) -> SubgraphResponse<'static> {
         match self {
             ExecutionJob::Fetch { response, .. } => response,
             ExecutionJob::FlattenFetch { response, .. } => response,
@@ -813,7 +827,7 @@ impl<'exec> ExecutionJob<'exec> {
         }
     }
 
-    pub fn response_ref(&self) -> &SubgraphResponse<'exec> {
+    pub fn response_ref(&self) -> &SubgraphResponse<'static> {
         match self {
             ExecutionJob::Fetch { response, .. } => response,
             ExecutionJob::FlattenFetch { response, .. } => response,
@@ -944,7 +958,7 @@ impl<'exec> Executor<'exec> {
     fn prepare_job_future<'wave>(
         &'wave self,
         node: &'exec PlanNode,
-        data: &Value<'exec>,
+        data: &Value<'static>,
     ) -> Option<BoxFuture<'wave, Result<ExecutionJob<'exec>, PlanExecutionError>>> {
         match node {
             PlanNode::Fetch(fetch_node) => Some(
@@ -1169,12 +1183,10 @@ impl<'exec> Executor<'exec> {
                         merge_path,
                         ..
                     } => {
-                        if let Some(response_bytes) = response.bytes {
-                            ctx.response_storage.add_response(response_bytes);
-                        }
+                        let arena = ctx.absorb(&mut response);
                         for output_rewrite in output_rewrites {
                             output_rewrite
-                                .rewrite(&self.schema_metadata.possible_types, &mut response.data);
+                                .rewrite(&self.schema_metadata.possible_types, &mut response.data, arena);
                         }
 
                         match merge_path {
@@ -1189,7 +1201,7 @@ impl<'exec> Executor<'exec> {
                                     self.schema_metadata,
                                     None,
                                     &mut |target, _error_path| {
-                                        deep_merge_from_ref(target, &source);
+                                        deep_merge_from_ref(target, &source, arena);
                                     },
                                 );
                             }
@@ -1206,16 +1218,17 @@ impl<'exec> Executor<'exec> {
                         entities_slot,
                         ..
                     } => {
-                        if let Some(response_bytes) = response.bytes {
-                            ctx.response_storage.add_response(response_bytes);
-                        }
-                        if let Some(mut entities) = entities_slot
-                            .and_then(|slot| response.data.take_entities_at(slot))
+                        let arena = ctx.absorb(&mut response);
+                        if let Some(entities) =
+                            entities_slot.and_then(|slot| response.data.take_entities_at(slot))
                         {
                             for output_rewrite in output_rewrites {
-                                for entity in &mut entities {
-                                    output_rewrite
-                                        .rewrite(&self.schema_metadata.possible_types, entity);
+                                for entity in entities.iter_mut() {
+                                    output_rewrite.rewrite(
+                                        &self.schema_metadata.possible_types,
+                                        entity,
+                                        arena,
+                                    );
                                 }
                             }
 
@@ -1260,9 +1273,10 @@ impl<'exec> Executor<'exec> {
                                         }
                                         merge_entity_into(
                                             target,
-                                            &mut entities,
+                                            entities,
                                             *entity_index,
                                             &mut remaining,
+                                            arena,
                                         );
                                     }
                                 },
@@ -1283,9 +1297,7 @@ impl<'exec> Executor<'exec> {
                         aliases,
                         ..
                     } => {
-                        if let Some(response_bytes) = response.bytes {
-                            ctx.response_storage.add_response(response_bytes);
-                        }
+                        let arena = ctx.absorb(&mut response);
 
                         // Split errors by alias
                         let mut errors =
@@ -1304,6 +1316,7 @@ impl<'exec> Executor<'exec> {
                                 alias_state,
                                 entities_by_alias.get_mut(&alias_index),
                                 alias_errors.as_deref(),
+                                arena,
                             );
 
                             let affected_path = if alias_state.paths.len() == 1 {
@@ -1408,21 +1421,20 @@ impl<'exec> Executor<'exec> {
     }
 
     fn collect_batched_entities_by_alias(
-        response_data: &mut Value<'exec>,
+        response_data: &mut Value<'static>,
         aliases: &[AliasBatchState<'exec>],
-    ) -> AHashMap<AliasIndex, Box<[Value<'exec>]>> {
+    ) -> AHashMap<AliasIndex, &'static mut [Value<'static>]> {
         // Take entity arrays from response data once per alias.
         // This avoids repeated lookups/mutations on response data.
-        let mut entities_by_alias: AHashMap<AliasIndex, Box<[Value<'exec>]>> =
+        let mut entities_by_alias: AHashMap<AliasIndex, &'static mut [Value<'static>]> =
             AHashMap::with_capacity(aliases.len());
 
         for (alias_index, alias_state) in aliases.iter().enumerate() {
-            let Some(entities) =
-                alias_state
-                    .alias_spec
-                    .compiled
-                    .alias_slot
-                    .and_then(|slot| response_data.take_entities_at(slot))
+            let Some(entities) = alias_state
+                .alias_spec
+                .compiled
+                .alias_slot
+                .and_then(|slot| response_data.take_entities_at(slot))
             else {
                 continue;
             };
@@ -1437,8 +1449,9 @@ impl<'exec> Executor<'exec> {
         &self,
         ctx: &mut ExecutionContext<'exec>,
         alias_state: &'alias AliasBatchState<'exec>,
-        entities: Option<&mut Box<[Value<'exec>]>>,
+        entities: Option<&mut &'static mut [Value<'static>]>,
         alias_errors: Option<&[GraphQLError]>,
+        arena: &'static Bump,
     ) -> Option<HashMap<&'alias usize, Vec<GraphQLErrorPath>>> {
         let has_alias_errors = alias_errors.is_some();
         let mut entity_index_error_map = has_alias_errors.then(HashMap::new);
@@ -1449,7 +1462,7 @@ impl<'exec> Executor<'exec> {
         {
             for output_rewrite in &alias_state.alias_spec.compiled.output_rewrites {
                 for entity in entities.iter_mut() {
-                    output_rewrite.rewrite(&self.schema_metadata.possible_types, entity);
+                    output_rewrite.rewrite(&self.schema_metadata.possible_types, entity, arena);
                 }
             }
         }
@@ -1507,6 +1520,7 @@ impl<'exec> Executor<'exec> {
                             entities,
                             *entity_index,
                             &mut remaining,
+                            arena,
                         );
                     }
                 },
@@ -1522,7 +1536,7 @@ impl<'exec> Executor<'exec> {
     fn prepare_batch_fetch_job_state(
         &self,
         entity_batch: &'exec EntityBatch,
-        data: &Value<'exec>,
+        data: &Value<'static>,
     ) -> (Vec<(&'exec str, Vec<u8>)>, Vec<AliasBatchState<'exec>>) {
         let mut raw_variable_values: Vec<(&'exec str, Vec<u8>)> =
             Vec::with_capacity(entity_batch.aliases.len());
@@ -1785,7 +1799,6 @@ mod tests {
             .clone()
     }
 
-
     use crate::{
         execution::{
             client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
@@ -2010,9 +2023,9 @@ mod tests {
 
         // Slot 0 is `__typename`, slot 1 is `upc` — the layout
         // `response_shape_for_selections` produces for this selection.
-        let product_shape = response_shape_for_selections(&document_into_selection(
-            parse_operation("{ __typename upc }"),
-        ).into());
+        let product_shape = response_shape_for_selections(
+            &document_into_selection(parse_operation("{ __typename upc }")).into(),
+        );
         let data_shape = ResponseShape {
             fields: vec![
                 hive_router_query_planner::planner::response_shape::ResponseShapeField {
@@ -2022,7 +2035,6 @@ mod tests {
             ],
             raw: false,
             inert: false,
-            list_len_hint: Default::default(),
         };
         let owned = SubgraphResponse::parse_data_with_shape(
             r#"{
@@ -2038,10 +2050,8 @@ mod tests {
         let requires_query = parse_operation("{ ... on Product { upc } }");
         let requires_selection = document_into_selection(requires_query);
         let requires: SelectionSet = requires_selection.clone().into();
-        let compiled_requires = compile_requires(
-            &requires,
-            data_shape.child(0).expect("products shape"),
-        );
+        let compiled_requires =
+            compile_requires(&requires, data_shape.child(0).expect("products shape"));
 
         let shared_var = "__batch_reps_0".to_string();
         let entity_batch = EntityBatch {
@@ -2093,10 +2103,11 @@ mod tests {
 
         // Both fetches write into the same root position, so in a real plan they share one
         // shape — `from_a` at slot 0, `from_b` at slot 1 — and the root is seeded with it.
-        let root_shape = response_shape_for_selections(&document_into_selection(parse_operation(
-            "{ from_a from_b }",
-        )).into());
-        let data = ResponseValue::empty_object(root_shape.fields.len());
+        let root_shape = response_shape_for_selections(
+            &document_into_selection(parse_operation("{ from_a from_b }")).into(),
+        );
+        let test_arena = crate::response::arena::ResponseArena::new();
+        let data = ResponseValue::empty_object(test_arena.borrow_unbounded(), root_shape.fields.len());
         let subgraph_endpoint_map = HashMap::from([
             (
                 "subgraph_a".to_string(),

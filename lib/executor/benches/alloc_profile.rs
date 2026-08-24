@@ -5,6 +5,8 @@
 
 use bytes::Bytes;
 use graphql_tools::parser::query::Definition;
+use bumpalo::Bump;
+use std::hint::black_box;
 use hive_router_plan_executor::{
     introspection::schema::{SchemaMetadata, SchemaWithMetadata},
     projection::{plan::FieldProjectionPlan, response::project_by_operation},
@@ -96,9 +98,11 @@ fn fixture(operation_source: &str) -> Fixture {
         })
         .expect("operation");
     let supergraph_state = SupergraphState::new(&supergraph);
-    let normalized: &'static NormalizedDocument = Box::leak(Box::new(
-        create_normalized_document(&supergraph_state, operation_ast.clone(), None),
-    ));
+    let normalized: &'static NormalizedDocument = Box::leak(Box::new(create_normalized_document(
+        &supergraph_state,
+        operation_ast.clone(),
+        None,
+    )));
     let (root_type_name, plan) =
         FieldProjectionPlan::from_operation(&normalized.operation, metadata);
     Fixture {
@@ -139,7 +143,8 @@ fn main() {
     println!("size_of::<Value>() = {}", std::mem::size_of::<Value>());
     println!(
         "size_of::<ResponseShapeField>() = {}",
-        std::mem::size_of::<hive_router_query_planner::planner::response_shape::ResponseShapeField>()
+        std::mem::size_of::<hive_router_query_planner::planner::response_shape::ResponseShapeField>(
+        )
     );
     println!("objects in payload = {objects} (1 root + {rows} articles)\n");
 
@@ -164,6 +169,8 @@ fn main() {
         });
         report(&format!("project [{variant}]"), objects, &c);
 
+        // Tearing down a response is dropping its arena and its buffer, not walking the
+        // tree: `Value` has no `Drop` glue at all.
         let (_, c) = measure(|| drop(response));
         report(&format!("drop response [{variant}]"), objects, &c);
         println!();
@@ -172,14 +179,17 @@ fn main() {
     // Merge: two responses landing in the same position.
     let a = SubgraphResponse::deserialize_from_bytes(bytes.clone(), Some(&f.shape)).unwrap();
     let b = SubgraphResponse::deserialize_from_bytes(bytes.clone(), Some(&f.shape)).unwrap();
-    let target = a.data.clone();
-    let source = b.data.clone();
+    let scratch = Bump::new();
+    let target = a.data.copy_into(&scratch);
+    let source = b.data.copy_into(&scratch);
     let (merged, c) = measure(|| {
         let mut t = target;
         deep_merge(&mut t, source);
         t
     });
     report("deep_merge (positional)", objects, &c);
-    let (_, c) = measure(|| drop(merged));
-    report("drop merged", objects, &c);
+    // `merged` borrows `scratch`, so what there is to free is the arena, and only the arena.
+    black_box(&merged);
+    let (_, c) = measure(|| drop(scratch));
+    report("drop merge arena", objects, &c);
 }

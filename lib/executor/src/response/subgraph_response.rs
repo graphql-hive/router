@@ -1,8 +1,9 @@
 use core::fmt;
 use std::sync::Arc;
 
+use bumpalo::Bump;
 use bytes::Bytes;
-use hive_router_query_planner::planner::response_shape::{ListLengthHint, ResponseShape};
+use hive_router_query_planner::planner::response_shape::ResponseShape;
 use http::{HeaderMap, StatusCode};
 use serde::{
     de::{self, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor},
@@ -12,7 +13,7 @@ use sonic_rs::LazyValue;
 
 use crate::{
     executors::error::SubgraphExecutorError,
-    response::{graphql_error::GraphQLError, value::Value},
+    response::{arena::ResponseArena, graphql_error::GraphQLError, value::Value},
 };
 
 #[derive(Debug, Default)]
@@ -24,6 +25,9 @@ pub struct SubgraphResponse<'a> {
     pub extensions: Option<sonic_rs::Value>,
     pub headers: Option<Arc<HeaderMap>>,
     pub bytes: Option<Bytes>,
+    /// The arena `data` was allocated in. Nothing reads it; it is carried so the values stay
+    /// valid, and handed to `ResponsesStorage` when the response is merged.
+    pub arena: Option<ResponseArena>,
     pub status: Option<StatusCode>,
 }
 
@@ -37,52 +41,48 @@ impl SubgraphResponse<'_> {
     }
 }
 
-impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserialize_subgraph_response_with_shape(deserializer, &EMPTY_RESPONSE_SHAPE)
-    }
-}
-
 static EMPTY_RESPONSE_SHAPE: ResponseShape = ResponseShape {
     fields: Vec::new(),
     raw: false,
     inert: true,
-    list_len_hint: ListLengthHint::none(),
 };
 
-struct SubgraphResponseSeed<'a> {
+struct SubgraphResponseSeed<'a, 'de> {
     response_shape: &'a ResponseShape,
+    arena: &'de Bump,
 }
 
-impl<'a, 'de> DeserializeSeed<'de> for SubgraphResponseSeed<'a> {
+impl<'a, 'de> DeserializeSeed<'de> for SubgraphResponseSeed<'a, 'de> {
     type Value = SubgraphResponse<'de>;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: Deserializer<'de>,
     {
-        deserialize_subgraph_response_with_shape(deserializer, self.response_shape)
+        deserialize_subgraph_response_with_shape(deserializer, self.response_shape, self.arena)
     }
 }
 
 fn deserialize_subgraph_response_with_shape<'a, 'de, D>(
     deserializer: D,
     response_shape: &'a ResponseShape,
+    arena: &'de Bump,
 ) -> Result<SubgraphResponse<'de>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    deserializer.deserialize_map(SubgraphResponseVisitor { response_shape })
+    deserializer.deserialize_map(SubgraphResponseVisitor {
+        response_shape,
+        arena,
+    })
 }
 
-struct SubgraphResponseVisitor<'a> {
+struct SubgraphResponseVisitor<'a, 'de> {
     response_shape: &'a ResponseShape,
+    arena: &'de Bump,
 }
 
-impl<'a, 'de> Visitor<'de> for SubgraphResponseVisitor<'a> {
+impl<'a, 'de> Visitor<'de> for SubgraphResponseVisitor<'a, 'de> {
     type Value = SubgraphResponse<'de>;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -104,6 +104,7 @@ impl<'a, 'de> Visitor<'de> for SubgraphResponseVisitor<'a> {
                         return Err(de::Error::duplicate_field("data"));
                     }
                     data = Some(map.next_value_seed(ValueSeed {
+                        arena: self.arena,
                         response_shape: self.response_shape,
                     })?);
                 }
@@ -132,30 +133,34 @@ impl<'a, 'de> Visitor<'de> for SubgraphResponseVisitor<'a> {
             extensions,
             headers: None,
             bytes: None,
+            // Filled in by the caller that owns the arena this parsed into.
+            arena: None,
             status: None,
         })
     }
 }
 
 #[derive(Clone, Copy)]
-struct ValueSeed<'a> {
+struct ValueSeed<'a, 'de> {
     response_shape: &'a ResponseShape,
+    arena: &'de Bump,
 }
 
-impl<'a, 'de> DeserializeSeed<'de> for ValueSeed<'a> {
+impl<'a, 'de> DeserializeSeed<'de> for ValueSeed<'a, 'de> {
     type Value = Value<'de>;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: Deserializer<'de>,
     {
-        deserialize_value_with_shape(deserializer, self.response_shape)
+        deserialize_value_with_shape(deserializer, self.response_shape, self.arena)
     }
 }
 
 fn deserialize_value_with_shape<'a, 'de, D>(
     deserializer: D,
     response_shape: &'a ResponseShape,
+    arena: &'de Bump,
 ) -> Result<Value<'de>, D::Error>
 where
     D: Deserializer<'de>,
@@ -182,14 +187,18 @@ where
         return Ok(Value::RawJson(raw));
     }
 
-    deserializer.deserialize_any(ShapedValueVisitor { response_shape })
+    deserializer.deserialize_any(ShapedValueVisitor {
+        response_shape,
+        arena,
+    })
 }
 
-struct ShapedValueVisitor<'a> {
+struct ShapedValueVisitor<'a, 'de> {
     response_shape: &'a ResponseShape,
+    arena: &'de Bump,
 }
 
-impl<'a, 'de> Visitor<'de> for ShapedValueVisitor<'a> {
+impl<'a, 'de> Visitor<'de> for ShapedValueVisitor<'a, 'de> {
     type Value = Value<'de>;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -219,19 +228,20 @@ impl<'a, 'de> Visitor<'de> for ShapedValueVisitor<'a> {
         Ok(Value::String(value))
     }
 
-    /// Only reached for a string that had to be unescaped, so it cannot borrow the buffer.
+    /// Only reached for a string that had to be unescaped, so it cannot borrow the buffer —
+    /// it goes in the arena instead, and is a plain `&str` like every other string here.
     fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(Value::OwnedString(value.into()))
+        Ok(Value::String(self.arena.alloc_str(value)))
     }
 
     fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(Value::OwnedString(value.into_boxed_str()))
+        Ok(Value::String(self.arena.alloc_str(&value)))
     }
 
     fn visit_unit<E>(self) -> Result<Self::Value, E> {
@@ -244,22 +254,20 @@ impl<'a, 'de> Visitor<'de> for ShapedValueVisitor<'a> {
     {
         // Lists are transparent: every element sits at the same response position.
         //
-        // sonic gives no `size_hint`, so without a hint every list would start empty and
-        // realloc its way up — 2-3 extra allocations per list, measured. The shape remembers
-        // the last length seen here, which after the first response is normally exact.
-        let capacity = seq
-            .size_hint()
-            .unwrap_or_else(|| self.response_shape.list_len_hint.get());
-        let mut elements = Vec::with_capacity(capacity);
+        // sonic gives no `size_hint`, so the vector grows from empty. The shape used to
+        // remember the length last seen here and pre-size from it, which measured 2-8% of
+        // deserialization on list-heavy payloads — but it was a mutable counter on a cached
+        // plan, shared by every request and every user that plan serves, and that is a poor
+        // trade for a fraction of a percent end to end.
+        let mut elements =
+            bumpalo::collections::Vec::with_capacity_in(seq.size_hint().unwrap_or(0), self.arena);
         while let Some(elem) = seq.next_element_seed(ValueSeed {
             response_shape: self.response_shape,
+            arena: self.arena,
         })? {
             elements.push(elem);
         }
-        if elements.len() != capacity {
-            self.response_shape.list_len_hint.record(elements.len());
-        }
-        Ok(Value::Array(elements.into_boxed_slice()))
+        Ok(Value::Array(elements.into_bump_slice_mut()))
     }
 
     fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
@@ -270,7 +278,9 @@ impl<'a, 'de> Visitor<'de> for ShapedValueVisitor<'a> {
         // reallocation. Anything the subgraph omits stays `Absent`, which is distinct from a
         // `null` it actually answered — `requires` leaves the first out of a representation
         // and sends the second.
-        let mut slots = vec![Value::Absent; self.response_shape.fields.len()];
+        let slots: &'de mut [Value<'de>] = self
+            .arena
+            .alloc_slice_fill_default(self.response_shape.fields.len());
         // Keys the plan never asked for are parsed and thrown away here, so the loop keeps a
         // single call site (see below).
         let mut discard = Value::Absent;
@@ -290,10 +300,11 @@ impl<'a, 'de> Visitor<'de> for ShapedValueVisitor<'a> {
             };
             *target = map.next_value_seed(ValueSeed {
                 response_shape: child,
+                arena: self.arena,
             })?;
         }
 
-        Ok(Value::Object(slots.into_boxed_slice()))
+        Ok(Value::Object(slots))
     }
 }
 
@@ -313,10 +324,10 @@ impl<'a> SubgraphResponse<'a> {
     /// ponytail: `Option` is kept only because `WsClient` doubles as a generic client. Making
     /// it required, with a named constant for the unshaped case, would turn a silent
     /// data-discard into something the caller has to acknowledge.
-    pub fn deserialize_from_bytes(
+    pub fn deserialize_from_bytes<'de>(
         bytes: Bytes,
         response_shape: Option<&ResponseShape>,
-    ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
+    ) -> Result<SubgraphResponse<'de>, SubgraphExecutorError> {
         let bytes_ref: &[u8] = &bytes;
 
         // SAFETY: The byte slice `bytes_ref` is transmuted to `'static`.
@@ -325,19 +336,25 @@ impl<'a> SubgraphResponse<'a> {
         // long as the `SubgraphResponse` does. The `data` field of `SubgraphResponse` contains
         // values that borrow from this buffer, creating a self-referential struct, which is why
         // `unsafe` is required.
-        let bytes_ref: &'static [u8] = unsafe { std::mem::transmute(bytes_ref) };
+        let bytes_ref: &'de [u8] = unsafe { std::mem::transmute(bytes_ref) };
         let mut deserializer = sonic_rs::Deserializer::from_slice(bytes_ref);
+
+        // The tree is allocated here and the arena travels with it, on the same reasoning as
+        // the bytes above: see `ResponseArena`.
+        let arena = ResponseArena::new();
 
         SubgraphResponseSeed {
             response_shape: response_shape.unwrap_or(&EMPTY_RESPONSE_SHAPE),
+            arena: arena.borrow_unbounded(),
         }
         .deserialize(&mut deserializer)
         .map_err(|e| SubgraphExecutorError::ResponseDeserializationFailure(e, None))
-        .and_then(|mut resp: SubgraphResponse<'static>| {
+        .and_then(|mut resp: SubgraphResponse<'de>| {
             deserializer
                 .end()
                 .map_err(|e| SubgraphExecutorError::ResponseDeserializationFailure(e, None))?;
             resp.bytes = Some(bytes);
+            resp.arena = Some(arena);
 
             if resp.data.is_null() && resp.errors.is_none() {
                 return Err(SubgraphExecutorError::MalformedResponse(None));
@@ -392,8 +409,11 @@ mod tests {
             ]
         }"#;
 
-        let response: super::SubgraphResponse =
-            sonic_rs::from_str(json_response).expect("Failed to deserialize");
+        let response = SubgraphResponse::deserialize_from_bytes(
+            Bytes::from(json_response),
+            Some(&super::EMPTY_RESPONSE_SHAPE),
+        )
+        .expect("Failed to deserialize");
 
         assert!(response.data.is_null());
         let errors = response.errors.as_ref().unwrap();
@@ -514,7 +534,10 @@ mod tests {
             Some(r#"["a","b\t","c"]"#),
             "a leaf list should survive as untouched bytes, escapes included"
         );
-        assert_eq!(product.slot(1).and_then(Value::as_raw_json), Some(r#""p1""#));
+        assert_eq!(
+            product.slot(1).and_then(Value::as_raw_json),
+            Some(r#""p1""#)
+        );
     }
 
     #[test]
