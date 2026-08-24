@@ -136,13 +136,22 @@ fn summarize_types(original_type: Option<&Value>) -> Option<Value> {
 }
 
 /// A schema is ineligible for a `from_env` alternative if it can only ever be satisfied by a
-/// bare object or array - there's no plain string an env var could resolve to that would match.
+/// bare object, or by an array of those - there's no plain string an env var could resolve to
+/// that would match. An array of *primitives* is the exception: [`resolve_from_env_placeholders`]
+/// splits the env var's value on `,` into one item per array entry, so it's eligible too.
 fn is_object_or_array_only(map: &Map<String, Value>) -> bool {
     if map.contains_key("properties") || map.contains_key("additionalProperties") {
         return true;
     }
-    if map.contains_key("items") || map.contains_key("prefixItems") {
+    // Tuple-shaped arrays have no single delimiter scheme that could fill every slot.
+    if map.contains_key("prefixItems") {
         return true;
+    }
+    if let Some(items) = map.get("items") {
+        return match items {
+            Value::Object(items_map) => is_object_or_array_only(items_map),
+            _ => true,
+        };
     }
 
     match map.get("type") {
@@ -337,7 +346,46 @@ mod tests {
             "items": { "type": "string" }
         }));
 
+        assert!(result["oneOf"][0]["items"]["oneOf"].is_array());
+    }
+
+    #[test]
+    fn adds_a_from_env_alternative_to_an_array_of_primitives() {
+        let result = augmented(json!({
+            "type": "array",
+            "items": { "type": "string" }
+        }));
+
+        let variants = result["oneOf"]
+            .as_array()
+            .expect("an array of primitives should be eligible for a from_env alternative");
+        assert_eq!(variants.len(), 2);
+        assert_eq!(variants[1]["required"], json!(["from_env"]));
+        // `default` must still be an array of the same item type as the field itself.
+        assert_eq!(
+            variants[1]["properties"]["default"]["items"]["type"],
+            json!(["string", "object"]),
+            "the default's items go through the same per-item from_env wrapping"
+        );
+    }
+
+    #[test]
+    fn does_not_add_a_from_env_alternative_to_an_array_of_objects() {
+        let result = augmented(json!({
+            "type": "array",
+            "items": { "type": "object", "properties": { "name": { "type": "string" } } }
+        }));
+
         assert!(result.get("oneOf").is_none());
-        assert!(result["items"]["oneOf"].is_array());
+    }
+
+    #[test]
+    fn does_not_add_a_from_env_alternative_to_a_nested_array() {
+        let result = augmented(json!({
+            "type": "array",
+            "items": { "type": "array", "items": { "type": "string" } }
+        }));
+
+        assert!(result.get("oneOf").is_none());
     }
 }

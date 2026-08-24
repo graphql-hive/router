@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod env_vars_e2e_tests {
-    use crate::testkit::{ClientResponseExt, EnvVarsGuard, TestRouter, TestSubgraphs};
+    use crate::testkit::{
+        some_header_map, ClientResponseExt, EnvVarsGuard, TestRouter, TestSubgraphs,
+    };
 
     #[ntex::test]
     /// Test that a dynamic URL override for a subgraph based on an env var is respected.
@@ -143,6 +145,97 @@ mod env_vars_e2e_tests {
                     .get("x-router-env")
                     .map(|v| v.to_str().unwrap()),
                 Some("e2e")
+            );
+        }
+    }
+
+    #[ntex::test]
+    async fn should_resolve_list_default_from_env_as_a_delimited_list() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+
+        // Without the env var set, the list `default` (`localhost:3000`/`4000`) is used as-is.
+        {
+            let router = TestRouter::builder()
+                .with_subgraphs(&subgraphs)
+                .file_config("configs/cors_origins_from_env.router.yaml")
+                .build()
+                .start()
+                .await;
+
+            let res = router
+                .send_graphql_request(
+                    "{ __typename }",
+                    None,
+                    some_header_map! {
+                        http::header::ORIGIN => "http://localhost:4000"
+                    },
+                )
+                .await;
+
+            assert_eq!(
+                res.headers()
+                    .get("access-control-allow-origin")
+                    .map(|v| v.to_str().unwrap()),
+                Some("http://localhost:4000"),
+                "expected the default origin list entry to be reflected"
+            );
+
+            drop(router); // Ensure router is dropped before subgraphs
+        }
+
+        // With the env var set to a comma-delimited list, each entry should be treated as its
+        // own allowed origin, not as one long literal string.
+        {
+            let _env_guard = EnvVarsGuard::new()
+                .set(
+                    "CORS_ALLOWED_ORIGINS",
+                    "http://foo.example.com,http://bar.example.com",
+                )
+                .apply()
+                .await;
+
+            let router = TestRouter::builder()
+                .with_subgraphs(&subgraphs)
+                .file_config("configs/cors_origins_from_env.router.yaml")
+                .build()
+                .start()
+                .await;
+
+            let res = router
+                .send_graphql_request(
+                    "{ __typename }",
+                    None,
+                    some_header_map! {
+                        http::header::ORIGIN => "http://bar.example.com"
+                    },
+                )
+                .await;
+
+            assert_eq!(
+                res.headers()
+                    .get("access-control-allow-origin")
+                    .map(|v| v.to_str().unwrap()),
+                Some("http://bar.example.com"),
+                "expected the second entry of the env var's delimited list to be reflected"
+            );
+
+            // An origin that isn't one of the two entries must still be rejected.
+            let res = router
+                .send_graphql_request(
+                    "{ __typename }",
+                    None,
+                    some_header_map! {
+                        http::header::ORIGIN => "http://localhost:3000"
+                    },
+                )
+                .await;
+
+            assert_eq!(
+                res.headers()
+                    .get("access-control-allow-origin")
+                    .map(|v| v.to_str().unwrap()),
+                Some("null"),
+                "expected an origin outside the env var's list to be rejected"
             );
         }
     }

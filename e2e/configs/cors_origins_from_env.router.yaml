@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../supergraph.graphql
+cors:
+  enabled: true
+  policies:
+    - origins:
+        from_env: CORS_ALLOWED_ORIGINS
+        default:
+          - "http://localhost:3000"
+          - "http://localhost:4000"
