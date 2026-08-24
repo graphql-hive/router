@@ -125,6 +125,14 @@ type SelectionVariants = IndexMap<String, Vec<FieldProjectionPlan>>;
 pub struct FieldProjectionPlan {
     pub field_name: String,
     pub response_key: String,
+    /// The response key already written out as JSON: `"key":`, quotes and colon included.
+    ///
+    /// Projection used to push the opening quote, the key, the closing quote and the colon as
+    /// four separate writes, per field, per object — four capacity checks and four one-or-few
+    /// byte copies where one suffices. The key has been known since the plan was built, so the
+    /// bytes are laid out once here. Response keys are GraphQL names, so there is nothing to
+    /// escape.
+    pub response_key_json: Box<[u8]>,
     pub is_typename: bool,
     pub nullability: FieldNullability,
     /// A condition that checks the name of the parent object.
@@ -246,6 +254,16 @@ impl FieldProjectionCondition {
             (left, right) => Or(Box::new(left.clone()), Box::new(right)),
         }
     }
+}
+
+/// `"key":` — see `FieldProjectionPlan::response_key_json`.
+fn response_key_json(response_key: &str) -> Box<[u8]> {
+    let mut json = Vec::with_capacity(response_key.len() + 3);
+    json.push(b'"');
+    json.extend_from_slice(response_key.as_bytes());
+    json.push(b'"');
+    json.push(b':');
+    json.into_boxed_slice()
 }
 
 impl FieldProjectionPlan {
@@ -990,6 +1008,7 @@ impl FieldProjectionPlan {
             FieldProjectionPlan {
                 slot: MISSING_SLOT,
                 field_name: field.name.to_string(),
+                response_key_json: response_key_json(&response_key),
                 response_key,
                 parent_type_guard,
                 is_typename: field_name == TYPENAME_FIELD_NAME,
@@ -1006,6 +1025,7 @@ impl FieldProjectionPlan {
             FieldProjectionPlan {
                 slot: MISSING_SLOT,
                 field_name: field_name.to_string(),
+                response_key_json: response_key_json(&response_key),
                 response_key,
                 parent_type_guard,
                 is_typename: field_name == TYPENAME_FIELD_NAME,
@@ -1095,6 +1115,7 @@ impl FieldProjectionPlan {
         FieldProjectionPlan {
             slot: MISSING_SLOT,
             field_name: self.field_name.clone(),
+            response_key_json: self.response_key_json.clone(),
             response_key: self.response_key.clone(),
             parent_type_guard: self.parent_type_guard.clone(),
             concrete_type_name: self.concrete_type_name.clone(),

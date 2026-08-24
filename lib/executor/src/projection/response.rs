@@ -386,10 +386,7 @@ fn project_selection_set_with_map<'a, 'v: 'a>(
                 }
                 *first = false;
 
-                buffer.put(QUOTE);
-                buffer.put(plan.response_key.as_bytes());
-                buffer.put(QUOTE);
-                buffer.put(COLON);
+                buffer.put_slice(&plan.response_key_json);
 
                 let null_propagation_decision = match &plan.value {
                     ProjectionValueSource::Null => {
@@ -446,10 +443,7 @@ fn project_selection_set_with_map<'a, 'v: 'a>(
                 }
                 *first = false;
 
-                buffer.put(QUOTE);
-                buffer.put(plan.response_key.as_bytes());
-                buffer.put(QUOTE);
-                buffer.put(COLON);
+                buffer.put_slice(&plan.response_key_json);
                 buffer.put(NULL);
                 errors.push(GraphQLError::from("Value is not a valid enum value"));
                 if plan.nullability.is_non_null() {
@@ -465,10 +459,7 @@ fn project_selection_set_with_map<'a, 'v: 'a>(
                 *first = false;
 
                 // Skip this field as the field type does not match
-                buffer.put(QUOTE);
-                buffer.put(plan.response_key.as_bytes());
-                buffer.put(QUOTE);
-                buffer.put(COLON);
+                buffer.put_slice(&plan.response_key_json);
                 buffer.put(NULL);
                 if plan.nullability.is_non_null() {
                     return Ok(NullPropagationDecision::PropagateNullValue);
