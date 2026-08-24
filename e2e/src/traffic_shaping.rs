@@ -83,10 +83,9 @@ mod traffic_shaping_e2e_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
-                http:
-                    keep_alive: 11s # kept above request_timeout, per the recommended relationship
                 traffic_shaping:
                     router:
+                        keep_alive: 11s # kept above request_timeout, per the recommended relationship
                         request_timeout: 10s
                 "#,
             )

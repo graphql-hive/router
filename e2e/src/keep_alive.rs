@@ -43,8 +43,9 @@ mod keep_alive_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
-                http:
-                    keep_alive: 1s
+                traffic_shaping:
+                    router:
+                        keep_alive: 1s
                 "#,
             )
             .build()
@@ -89,8 +90,9 @@ mod keep_alive_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
-                http:
-                    keep_alive: 2s
+                traffic_shaping:
+                    router:
+                        keep_alive: 2s
                 "#,
             )
             .build()
@@ -123,8 +125,9 @@ mod keep_alive_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
-                http:
-                    keep_alive: 0s
+                traffic_shaping:
+                    router:
+                        keep_alive: 0s
                 "#,
             )
             .build()
@@ -165,8 +168,9 @@ mod keep_alive_tests {
                 supergraph:
                     source: file
                     path: supergraph.graphql
-                http:
-                    keep_alive: 2s
+                traffic_shaping:
+                    router:
+                        keep_alive: 2s
                 "#,
             )
             .build()

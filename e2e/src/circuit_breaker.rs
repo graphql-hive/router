@@ -1154,6 +1154,9 @@ mod circuit_breaker_e2e_tests {
                               interval: 30ms
                               max_export_timeout: 50ms
                 traffic_shaping:
+                    router:
+                        keep_alive: 60s
+                        request_timeout: 60s
                     all:
                         # Plenty of headroom so the router never times the
                         # subgraph out within the test window; only the

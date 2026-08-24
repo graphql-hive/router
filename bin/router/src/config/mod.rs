@@ -243,7 +243,7 @@ impl HiveRouterConfig {
     }
 
     pub fn keep_alive(&self) -> std::time::Duration {
-        self.http.keep_alive
+        self.traffic_shaping.router.keep_alive
     }
 
     pub fn graphql_path(&self) -> &str {

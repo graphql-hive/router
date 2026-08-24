@@ -127,8 +127,8 @@ impl EnvVarOverrides {
         }
 
         if let Some(http_keep_alive) = self.http_keep_alive.take() {
-            debug!(target: CONFIG_LOGGING_TARGET, value = http_keep_alive, "overriding 'http.keep_alive'");
-            config = config.set_override("http.keep_alive", http_keep_alive)?;
+            debug!(target: CONFIG_LOGGING_TARGET, value = http_keep_alive, "overriding 'traffic_shaping.router.keep_alive'");
+            config = config.set_override("traffic_shaping.router.keep_alive", http_keep_alive)?;
         }
 
         let configured_supergraph_sources = [
@@ -328,7 +328,10 @@ telemetry:
             ..Default::default()
         });
 
-        assert_eq!(config.http.keep_alive, std::time::Duration::from_secs(80));
+        assert_eq!(
+            config.traffic_shaping.router.keep_alive,
+            std::time::Duration::from_secs(80)
+        );
     }
 
     #[test]
@@ -339,8 +342,9 @@ telemetry:
         }
         .apply_overrides(Config::builder().add_source(File::from_str(
             r#"
-http:
-  keep_alive: 5s
+traffic_shaping:
+  router:
+    keep_alive: 5s
 "#,
             FileFormat::Yaml,
         )))
@@ -350,7 +354,10 @@ http:
         .try_deserialize::<HiveRouterConfig>()
         .unwrap();
 
-        assert_eq!(config.http.keep_alive, std::time::Duration::from_secs(80));
+        assert_eq!(
+            config.traffic_shaping.router.keep_alive,
+            std::time::Duration::from_secs(80)
+        );
     }
 
     #[test]

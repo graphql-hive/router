@@ -449,6 +449,7 @@ pub struct TrafficShapingRouterConfig {
     #[schemars(with = "String")]
     pub request_timeout: Duration,
 
+    /// TLS configuration for the HTTP server.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tls: Option<ServerTLSConfig>,
 
@@ -458,6 +459,31 @@ pub struct TrafficShapingRouterConfig {
     /// If both WebSockets and Subscriptions are disabled, this setting has no effect.
     #[serde(default = "default_max_long_lived_clients")]
     pub max_long_lived_clients: usize,
+
+    /// How long the HTTP server waits for a follow-up request on an idle
+    /// keep-alive connection before closing it.
+    ///
+    /// Defaults to 5 seconds, which matches ntex's own default.
+    ///
+    /// When the router sits behind a reverse proxy, set this above that proxy's
+    /// idle timeout so the proxy closes first. Closing first from the router
+    /// leaves the proxy holding a socket the server has already dropped, which
+    /// then fails the next reused request.
+    ///
+    /// ```yaml
+    /// traffic_shaping:
+    ///   router:
+    ///     keep_alive: 80s
+    /// ```
+    ///
+    /// Can also be set via the `ROUTER_HTTP_KEEP_ALIVE` environment variable.
+    #[serde(
+        default = "http_server_keep_alive_default",
+        deserialize_with = "humantime_serde::deserialize",
+        serialize_with = "humantime_serde::serialize"
+    )]
+    #[schemars(with = "String")]
+    pub keep_alive: Duration,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -558,8 +584,15 @@ impl Default for TrafficShapingRouterConfig {
             request_timeout: default_router_request_timeout(),
             tls: None,
             max_long_lived_clients: default_max_long_lived_clients(),
+            keep_alive: http_server_keep_alive_default(),
         }
     }
+}
+
+/// Matches ntex's own default HTTP/1 keep-alive, so configurations that omit
+/// `keep_alive` keep their existing behaviour.
+fn http_server_keep_alive_default() -> Duration {
+    Duration::from_secs(5)
 }
 
 fn default_circuit_breaker_config() -> Option<TrafficShapingSubgraphCircuitBreakerConfig> {
@@ -818,4 +851,42 @@ pub struct ClientTLSConfig {
 pub struct ClientAuthConfig {
     pub cert_file: SingleOrMultiple<FilePath>,
     pub key_file: FilePath,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::TrafficShapingRouterConfig;
+
+    #[test]
+    fn keep_alive_defaults_to_five_seconds() {
+        let config: TrafficShapingRouterConfig =
+            serde_json::from_str("{}").expect("empty config should deserialize");
+
+        assert_eq!(config.keep_alive, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn keep_alive_accepts_human_readable_durations() {
+        let config: TrafficShapingRouterConfig = serde_json::from_str(r#"{ "keep_alive": "80s" }"#)
+            .expect("human readable duration should deserialize");
+
+        assert_eq!(config.keep_alive, Duration::from_secs(80));
+    }
+
+    #[test]
+    fn keep_alive_serializes_back_to_a_duration_string() {
+        let config = TrafficShapingRouterConfig {
+            keep_alive: Duration::from_secs(80),
+            ..Default::default()
+        };
+
+        let serialized = serde_json::to_value(&config)
+            .expect("config should serialize")
+            .get("keep_alive")
+            .cloned();
+
+        assert_eq!(serialized, Some(serde_json::json!("1m 20s")));
+    }
 }
