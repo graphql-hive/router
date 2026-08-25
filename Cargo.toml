@@ -62,7 +62,10 @@ ntex-h2 = { version = "=3.13.0" }
 ntex-rt = { version = "=3.17.1" }
 ntex-macros = { version = "=3.5.0" }
 ntex-httparse = { version = "=2.1.0" }
-ntex-server = { version = "=3.11.1" }
+# Stay on 3.10.x until ntex::web::HttpServer can opt into 3.11's
+# graceful_shutdown flag. 3.11 defaults it to false, so SIGTERM force-drops
+# in-flight requests and ignores http.shutdown_timeout.
+ntex-server = { version = "=3.10.4" }
 ntex-service = { version = "=4.6.0" }
 ntex-tls = { version = "=3.8.0" }
 ntex-util = { version = "=3.6.1" }
