@@ -1,4 +1,3 @@
-use async_dropper_simple::{AsyncDrop, AsyncDropper};
 use graphql_tools::parser::schema::Document;
 use rand::prelude::*;
 use recloser::AsyncRecloser;
@@ -125,7 +124,31 @@ pub enum AgentError {
     ExcludeExpressionResultConversionError(#[from] BooleanConversionError),
 }
 
-pub type UsageAgent = Arc<AsyncDropper<UsageAgentInner>>;
+pub struct UsageAgentHandle(Option<UsageAgentInner>);
+
+impl UsageAgentHandle {
+    pub(crate) fn new(inner: UsageAgentInner) -> Self {
+        Self(Some(inner))
+    }
+
+    fn inner(&self) -> &UsageAgentInner {
+        self.0.as_ref().expect("UsageAgentHandle used after drop")
+    }
+}
+
+impl Drop for UsageAgentHandle {
+    fn drop(&mut self) {
+        if let Some(inner) = self.0.take() {
+            tokio::spawn(async move {
+                if let Err(e) = inner.flush().await {
+                    tracing::error!(target: USAGE_REPORTING_TARGET, error = ?e, "Failed to flush usage reports during drop");
+                }
+            });
+        }
+    }
+}
+
+pub type UsageAgent = Arc<UsageAgentHandle>;
 
 #[async_trait::async_trait]
 pub trait UsageAgentExt {
@@ -546,15 +569,6 @@ pub fn get_vrl_value_from_execution_report_and_request(
     VrlValue::Object(map)
 }
 
-#[async_trait::async_trait]
-impl AsyncDrop for UsageAgentInner {
-    async fn async_drop(&mut self) {
-        if let Err(e) = self.flush().await {
-            tracing::error!(target: USAGE_REPORTING_TARGET, error = ?e, "Failed to flush usage reports during drop");
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{sync::Arc, time::Duration};
@@ -571,6 +585,16 @@ mod tests {
         get_vrl_value_from_execution_report_and_request, ExecutionReport, OperationType, Report,
         UsageAgent, UsageAgentExt,
     };
+
+    async fn wait_for_mock(mock: &mockito::Mock) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !mock.matched_async().await {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("mock should be matched after usage agent drop flush");
+    }
 
     /// Helper to extract a nested VRL value from an Object using string keys.
     fn vrl_get<'a>(value: &'a VrlValue, keys: &[&str]) -> &'a VrlValue {
@@ -782,6 +806,7 @@ mod tests {
                 .await?;
         }
 
+        wait_for_mock(&mock).await;
         mock.assert_async().await;
 
         Ok(())
@@ -1054,6 +1079,7 @@ mod tests {
                 .await?;
         }
 
+        wait_for_mock(&mock).await;
         mock.assert_async().await;
         Ok(())
     }
@@ -1220,6 +1246,7 @@ mod tests {
                 .await?;
         }
 
+        wait_for_mock(&mock).await;
         mock.assert_async().await;
         Ok(())
     }
@@ -1287,6 +1314,7 @@ mod tests {
                 .await?;
         }
 
+        wait_for_mock(&mock).await;
         mock.assert_async().await;
         Ok(())
     }
