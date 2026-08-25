@@ -2,14 +2,16 @@ use config_rs::{Map, Value, ValueKind};
 
 const FROM_ENV_KEY: &str = "from_env";
 const DEFAULT_KEY: &str = "default";
+const LIST_DELIMITER: char = ',';
 
 /// Recursively resolves `{ from_env: "VAR" }` (optionally with `default: <value>`) placeholders
 /// anywhere in a parsed config value tree, in place, before it gets deserialized into typed
 /// config structs.
 ///
 /// A placeholder is replaced by the referenced environment variable's value (as a string,
-/// letting the normal field deserialization coerce it into the target type). If the variable is
-/// not set:
+/// letting the normal field deserialization coerce it into the target type) - unless `default`
+/// is itself a list, in which case the value is split on `,` into one string per list item. If
+/// the variable is not set:
 /// - with a `default` given, the placeholder is replaced by that value instead;
 /// - otherwise, the placeholder is dropped entirely, so the field is treated as if it was never
 ///   present in the config file: `#[serde(default = ...)]` kicks in, or deserialization fails
@@ -45,7 +47,7 @@ fn resolve_and_keep(value: &mut Value, label: &str, warnings: &mut Vec<String>) 
     };
 
     if let Ok(resolved) = std::env::var(&marker.var_name) {
-        value.kind = ValueKind::String(resolved);
+        value.kind = resolved_value_kind(resolved, marker.default.as_ref());
         return true;
     }
 
@@ -66,6 +68,21 @@ fn resolve_and_keep(value: &mut Value, label: &str, warnings: &mut Vec<String>) 
             false
         }
     }
+}
+
+fn resolved_value_kind(resolved: String, default: Option<&Value>) -> ValueKind {
+    if !matches!(default.map(|d| &d.kind), Some(ValueKind::Array(_))) {
+        return ValueKind::String(resolved);
+    }
+
+    ValueKind::Array(
+        resolved
+            .split(LIST_DELIMITER)
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(|item| Value::new(None, item.to_string()))
+            .collect(),
+    )
 }
 
 struct FromEnvMarker {
@@ -225,6 +242,31 @@ mod tests {
         .unwrap();
         assert_eq!(sample.greeting, "hello there");
         unsafe { std::env::remove_var("FROM_ENV_TEST_PRESENT_WITH_DEFAULT") };
+    }
+
+    #[test]
+    fn resolves_env_var_as_a_comma_delimited_list_when_default_is_a_list() {
+        unsafe { std::env::set_var("FROM_ENV_TEST_LIST", "c, d ,e") };
+        let sample = build(
+            "required: r\nnested:\n  values:\n    from_env: FROM_ENV_TEST_LIST\n    default:\n      - a\n      - b\n",
+        )
+        .unwrap();
+        assert_eq!(
+            sample.nested.values,
+            vec!["c".to_string(), "d".to_string(), "e".to_string()],
+            "expected the env var to be split on `,` (and trimmed) instead of kept as one literal string"
+        );
+        unsafe { std::env::remove_var("FROM_ENV_TEST_LIST") };
+    }
+
+    #[test]
+    fn missing_env_var_uses_the_list_default_verbatim() {
+        unsafe { std::env::remove_var("FROM_ENV_TEST_MISSING_LIST") };
+        let sample = build(
+            "required: r\nnested:\n  values:\n    from_env: FROM_ENV_TEST_MISSING_LIST\n    default:\n      - a\n      - b\n",
+        )
+        .unwrap();
+        assert_eq!(sample.nested.values, vec!["a".to_string(), "b".to_string()]);
     }
 
     #[test]
