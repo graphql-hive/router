@@ -13,6 +13,7 @@ use tracing::{error, info, warn};
 type PluginFactory = Box<
     dyn Fn(
         &serde_json::Value,
+        &HiveRouterConfig,
         &mut BackgroundTasksManager,
     ) -> Result<Option<RouterPluginBoxed>, PluginRegistryError>,
 >;
@@ -49,8 +50,10 @@ impl PluginRegistry {
             plugin_name,
             Box::new(
                 |plugin_config: &serde_json::Value,
+                 router_config: &HiveRouterConfig,
                  bg_tasks_manager: &mut BackgroundTasksManager| {
-                    let payload = OnPluginInitPayload::new(plugin_config, bg_tasks_manager);
+                    let payload =
+                        OnPluginInitPayload::new(plugin_config, router_config, bg_tasks_manager);
                     let plugin = P::on_plugin_init(payload)
                         .map_err(|err| PluginRegistryError::Initialization(plugin_name, err))?;
                     Ok(Option::map(plugin, |p| Box::new(p) as RouterPluginBoxed))
@@ -59,6 +62,7 @@ impl PluginRegistry {
         ));
         self
     }
+
     pub fn initialize_plugins(
         &self,
         router_config: &HiveRouterConfig,
@@ -75,7 +79,8 @@ impl PluginRegistry {
                 .iter()
                 .find_map(|(name, factory)| (*name == plugin_name).then_some(factory))
             {
-                let plugin_init_result = factory(&plugin_config_value.config, bg_tasks_manager);
+                let plugin_init_result =
+                    factory(&plugin_config_value.config, router_config, bg_tasks_manager);
                 match plugin_init_result {
                     Err(plugin_init_error) => {
                         if plugin_config_value.warn_on_error {
@@ -291,6 +296,49 @@ mod tests {
         assert_eq!(
             plugin_names,
             vec!["TestPlugin1", "TestPlugin2", "TestPlugin3"]
+        );
+    }
+
+    #[ntex::test]
+    async fn exposes_router_config_during_init() {
+        use std::sync::Mutex;
+
+        static SEEN_GRAPHQL_PATH: Mutex<Option<String>> = Mutex::new(None);
+
+        #[derive(Default)]
+        struct TestPlugin;
+        #[async_trait::async_trait]
+        impl RouterPlugin for TestPlugin {
+            type Config = ();
+            fn plugin_name() -> &'static str {
+                "TestPlugin"
+            }
+            fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
+                *SEEN_GRAPHQL_PATH.lock().unwrap() =
+                    Some(payload.router_config().graphql_path().to_string());
+                payload.initialize_plugin_with_defaults()
+            }
+        }
+
+        let registry = PluginRegistry::new().register::<TestPlugin>();
+        let bg_tasks_manager = &mut BackgroundTasksManager::default();
+        let mut router_config = HiveRouterConfig::default();
+        router_config.plugins = HashMap::from_iter(vec![(
+            "TestPlugin".into(),
+            PluginConfig {
+                enabled: true,
+                ..Default::default()
+            },
+        )]);
+
+        registry
+            .initialize_plugins(&router_config, bg_tasks_manager)
+            .expect("Plugins should be initialized successfully")
+            .expect("Plugins should exist");
+
+        assert_eq!(
+            SEEN_GRAPHQL_PATH.lock().unwrap().as_deref(),
+            Some(router_config.graphql_path())
         );
     }
 }

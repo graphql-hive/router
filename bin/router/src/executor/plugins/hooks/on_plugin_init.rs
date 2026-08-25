@@ -1,11 +1,13 @@
 use std::error::Error;
 
 use crate::background_tasks::{BackgroundTask, BackgroundTasksManager};
+use crate::config::HiveRouterConfig;
 use crate::executor::plugin_trait::RouterPlugin;
 use crate::BoxError;
 
 pub struct OnPluginInitPayload<'a, TRouterPlugin: RouterPlugin> {
     config: &'a serde_json::Value,
+    router_config: &'a HiveRouterConfig,
     bg_tasks_manager: &'a mut BackgroundTasksManager,
     phantom: std::marker::PhantomData<TRouterPlugin>,
 }
@@ -18,13 +20,22 @@ where
 {
     pub fn new(
         config: &'a serde_json::Value,
+        router_config: &'a HiveRouterConfig,
         bg_tasks_manager: &'a mut BackgroundTasksManager,
     ) -> Self {
         Self {
             config,
+            router_config,
             bg_tasks_manager,
             phantom: std::marker::PhantomData,
         }
+    }
+
+    /// Read-only access to the fully resolved router configuration.
+    /// Useful for plugins that need to adapt their behavior based on
+    /// router-wide settings (e.g. the configured GraphQL path or telemetry setup).
+    pub fn router_config(&self) -> &HiveRouterConfig {
+        self.router_config
     }
 
     /// Parse the plugin config into the expected config struct for the plugin.
