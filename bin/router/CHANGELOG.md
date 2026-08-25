@@ -116,6 +116,180 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.2.1 (2026-08-25)
+
+### Features
+
+#### Allow overriding the HTTP server keep-alive timeout
+
+Adds a new `traffic_shaping.router.keep_alive` configuration option (and `ROUTER_HTTP_KEEP_ALIVE` environment variable) to control how long the HTTP server waits for a follow-up request on an idle keep-alive connection before closing it.
+
+This was previously fixed at ntex's 5 second default, with no Hive Router setting to change it. Behind a reverse proxy whose idle timeout is longer than 5 seconds, the router would close the socket first. The proxy then reused a connection the server had already dropped.
+
+```yaml
+traffic_shaping:
+  router:
+    keep_alive: 80s
+```
+
+When the router sits behind a reverse proxy, set this above that proxy's idle timeout so the proxy closes first.
+
+#### Allow overriding the HTTP server graceful shutdown timeout
+
+Adds a new `http.shutdown_timeout` configuration option (and `ROUTER_HTTP_SHUTDOWN_TIMEOUT` environment variable) to control how long the HTTP server waits for in-flight requests to complete after receiving `SIGTERM`, before remaining workers are force-dropped.
+
+This was previously fixed at ntex's 30 second default, which is unrelated to `traffic_shaping.router.request_timeout`. A router configured to allow requests longer than 30 seconds would drop those requests mid-flight on every rolling deploy, even when the surrounding platform was willing to wait. The default stays at 30 seconds, so existing behaviour is unchanged.
+
+```yaml
+http:
+  shutdown_timeout: 90s
+
+traffic_shaping:
+  router:
+    request_timeout: 85s
+```
+
+Set it above `traffic_shaping.router.request_timeout` so the longest request the router accepts can still finish during a drain. In orchestrated environments the platform's own grace period (for example Kubernetes' `terminationGracePeriodSeconds`) must in turn exceed `http.shutdown_timeout`, otherwise the process is killed before the drain completes.
+
+#### Expose read-only router config to the plugin system
+
+Plugins can now access the fully resolved router configuration during `on_plugin_init` via `payload.router_config()`, in addition to their own scoped plugin config.
+
+```rust
+fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
+    let graphql_path = payload.router_config().graphql_path();
+    // use router-wide settings to initialize the plugin...
+    payload.initialize_plugin_with_defaults()
+}
+```
+
+This lets plugins adapt their behavior based on router-wide settings.
+
+Closes https://github.com/graphql-hive/router/issues/1437
+
+### Fixes
+
+#### Upgrade `ntex` dependencies
+
+Bumps `ntex` to 3.12.3 (and its `ntex-*` sibling crates to matching versions) to pick up an upstream fix (ntex-rs/ntex#933, released in ntex 3.10.1) for a dispatcher bug where an idle keep-alive connection's timer was shadowed whenever a request-header read timeout was also configured.
+
+#### Fix authorized fields being nulled out when a sibling fragment rejects a field of the same response key.
+
+Given:
+
+```graphql
+union Media = Book | Movie
+
+type Book @requiresScopes(scopes: [["a", "b"]]) {
+  title: String
+}
+
+type Movie @requiresScopes(scopes: [["c", "d"]]) {
+  title: String
+}
+```
+
+A token granted only `a` + `b` (fully satisfying `Book`, not `Movie`) querying:
+
+**Before:** rejected fields were tracked only by their flattened response-key path
+(`media.title`), with no notion of which fragment they came from. `Book.title` and
+`Movie.title` collapsed into the same entry, so rejecting `Movie`'s `title` nulled
+out `Book`'s too, even though it was correctly authorized on its own.
+
+```graphql
+{
+  media {
+    ... on Book { title }    # a + b - granted
+    ... on Movie { title }   # c + d - not granted
+  }
+}
+```
+
+**After:** inline fragments are also tracked as type conditions, so sibling
+fragments selecting the same field name are tracked independently:
+
+```graphql
+{
+  media {
+    ... on Book { title }    # kept
+    ... on Movie { title }   # rejected
+  }
+}
+```
+
+#### Fix `@requiresScopes`/`@authenticated` on union members being combined into a single
+
+all-or-nothing rule for the whole union, instead of being checked independently per member.
+
+Given:
+
+```graphql
+union Media = Book | Movie
+
+type Book @requiresScopes(scopes: [["a", "b"]]) {
+  title: String
+}
+
+type Movie @requiresScopes(scopes: [["c", "d"]]) {
+  title: String
+}
+
+type Query {
+  media: Media!
+}
+```
+
+Before this fix, we required the following scopes for each field in the given query:
+
+```graphql
+{
+  media { # a + b + c +d 
+    __typename # a + b + c +d ((inherited from media's gate))
+    ... on Book { title } # a + b (but it wasn't reachable because "media" validation gated it with a+b+c+d)
+    ... on Movie { title } # c + d (but it wasn't reachable because "media" validation gated it with a+b+c+d)
+  }
+}
+```
+
+And with the fix, now: 
+
+```graphql
+{
+  media { # none
+    __typename # none
+    ... on Book { title } # a + b
+    ... on Movie { title } # c + d
+  }
+}
+```
+
+#### Fix the router process aborting on supergraph hot-reload when `telemetry.hive.usage_reporting` is enabled.
+
+Retiring a supergraph drops the previous generation's Hive usage-reporting agent.
+
+That agent used to flush on drop via a blocking bridge (`block_in_place`) that is only valid on a multi-threaded `tokio` runtime.
+The router runs on ntex's current-thread runtime, so this always panicked, and since the panic happened inside a `Drop` impl, it escalated to a full process abort (`panic in a destructor during cleanup`) instead of just failing the reload.
+
+The agent now uses a non-blocking flush, best-effort operation instead.
+
+Fixes https://github.com/graphql-hive/router/issues/1439
+
+#### `from_env` now supports list/array fields using `,` as the delimiter
+
+A `from_env` placeholder whose `default` is a list is now resolved by splitting the environment
+variable's value on `,` into one item per entry, instead of being kept as a single literal string
+that would then fail to deserialize (or silently become a one-item list).
+
+```yaml
+cors:
+  policies:
+    - origins:
+        from_env: CORS_ALLOWED_ORIGINS
+        default:
+          - http://localhost:3000
+          - http://localhost:4000
+```
+
 ## 0.2.0 (2026-08-19)
 
 ### Breaking Changes
