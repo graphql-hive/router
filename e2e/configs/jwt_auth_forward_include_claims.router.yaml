@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../supergraph.graphql
+jwt:
+  enabled: true
+  require_authentication: true
+  forward_claims_to_upstream_extensions:
+    enabled: true
+    field_name: jwt
+    include_claims:
+      - sub
+      - role
+  jwks_providers:
+    - source: file
+      path: ../jwks.rsa512.json
