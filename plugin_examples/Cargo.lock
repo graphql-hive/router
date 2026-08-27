@@ -342,19 +342,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-dropper-simple"
-version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7c4748dfe8cd3d625ec68fc424fa80c134319881185866f9e173af9e5d8add8"
-dependencies = [
- "async-scoped",
- "async-trait",
- "futures",
- "rustc_version",
- "tokio",
-]
-
-[[package]]
 name = "async-graphql"
 version = "8.0.0-rc.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -464,17 +451,6 @@ dependencies = [
  "event-listener",
  "event-listener-strategy",
  "pin-project-lite",
-]
-
-[[package]]
-name = "async-scoped"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4042078ea593edffc452eef14e99fdb2b120caa4ad9618bcdeabc4a023b98740"
-dependencies = [
- "futures",
- "pin-project",
- "tokio",
 ]
 
 [[package]]
@@ -1617,6 +1593,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7eed2c4702fa172d1ce21078faa7c5203e69f5394d48cc436d25928394a867a2"
 
 [[package]]
+name = "dedupe-partition-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "futures",
+ "hive-router",
+ "http",
+ "jsonwebtoken",
+ "serde",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "defmt"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2683,11 +2672,10 @@ dependencies = [
 
 [[package]]
 name = "hive-console-sdk"
-version = "0.3.20"
+version = "0.3.21"
 dependencies = [
  "ahash",
  "anyhow",
- "async-dropper-simple",
  "async-trait",
  "bytes",
  "futures-util",
@@ -2721,7 +2709,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "ahash",
  "anyhow",
@@ -4282,9 +4270,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-net"
-version = "3.15.0"
+version = "3.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a7f6c9b66b79ea7b81d95bed1de8299343a7d7217ceb2a1488e260b728ba76d"
+checksum = "ace516cc45d412d33165041edcb19048119589498f56fba69baf71ceba920af1"
 dependencies = [
  "bitflags 2.13.0",
  "cfg-if",
@@ -4336,9 +4324,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-rt"
-version = "3.17.1"
+version = "3.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "877696a0cec7fccd0813d1c075e5dbc12e3a3199e492c9bfa3dd2da63d609f35"
+checksum = "3692fad48ebe4431289a51807dc08bd3205369ce9f1ab10d300fe12cccefd5c5"
 dependencies = [
  "async-channel",
  "async-task",
@@ -4351,7 +4339,6 @@ dependencies = [
  "futures-timer",
  "libc",
  "log",
- "nix 0.31.3",
  "ntex-error",
  "ntex-service",
  "oneshot",
@@ -4364,9 +4351,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-server"
-version = "3.11.1"
+version = "3.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3eecf7ebae34a050ab29978eb1fa7bf99590e46e3ab29b5526aff7790d4c9464"
+checksum = "f70eb9db7d9495585b82d8b734037eeeaee2778ab83c6a8ed8118df97b046837"
 dependencies = [
  "async-channel",
  "atomic-waker",

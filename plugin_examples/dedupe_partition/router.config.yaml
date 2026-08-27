@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../../e2e/supergraph.graphql
+traffic_shaping:
+  all:
+    # kept separate from router-level dedupe below so the example isolates the
+    # partition behavior; a real deployment would likely leave this enabled.
+    dedupe_enabled: false
+  router:
+    dedupe:
+      enabled: true
+      # identity comes from the plugin's partition, not raw headers
+      headers: none
+plugins:
+  dedupe_partition:
+    enabled: true
+    config:
+      cookie_name: session
+      secret: ${JWT_SECRET}

@@ -455,6 +455,9 @@ pub async fn graphql_request_handler(
                 .extensions
                 .as_ref()
                 .map_or(0, hash_graphql_extensions);
+            let partition = plugin_req_state
+                .as_ref()
+                .and_then(|state| state.context.inbound_dedupe_partition());
 
             Some(inbound_request_fingerprint(
                 // let chains are only allowed in Rust 2024 or later... so we assert
@@ -463,6 +466,7 @@ pub async fn graphql_request_handler(
                 normalize_payload.normalized_operation_hash,
                 variables_hash,
                 extensions_hash,
+                partition,
             ))
         } else {
             None
@@ -947,12 +951,14 @@ pub fn inbound_request_fingerprint(
     normalized_operation_hash: u64,
     variables_hash: u64,
     extensions_hash: u64,
+    partition: Option<u64>,
 ) -> InboundRequestFingerprint {
     let mut hasher = Xxh3::new();
     connection.hash(&mut hasher);
     normalized_operation_hash.hash(&mut hasher);
     variables_hash.hash(&mut hasher);
     extensions_hash.hash(&mut hasher);
+    partition.hash(&mut hasher);
     InboundRequestFingerprint::from_hash(hasher.finish())
 }
 
@@ -1051,12 +1057,36 @@ mod fingerprint_tests {
             connection_fingerprint(&Method::POST, "/graphql", &second, &policy, 7)
         );
         assert_ne!(
-            inbound_request_fingerprint(connection, 1, 2, 3),
-            inbound_request_fingerprint(connection, 2, 2, 3)
+            inbound_request_fingerprint(connection, 1, 2, 3, None),
+            inbound_request_fingerprint(connection, 2, 2, 3, None)
         );
         assert_eq!(
             connection,
             connection_fingerprint(&Method::POST, "/graphql", &first, &policy, 7)
+        );
+    }
+
+    #[test]
+    fn partition_changes_the_fingerprint() {
+        let policy = RouterRequestDedupeHeaderPolicy::None;
+        let connection =
+            connection_fingerprint(&Method::POST, "/graphql", &HeaderMap::new(), &policy, 7);
+
+        assert_eq!(
+            inbound_request_fingerprint(connection, 1, 2, 3, None),
+            inbound_request_fingerprint(connection, 1, 2, 3, None)
+        );
+        assert_ne!(
+            inbound_request_fingerprint(connection, 1, 2, 3, None),
+            inbound_request_fingerprint(connection, 1, 2, 3, Some(42))
+        );
+        assert_ne!(
+            inbound_request_fingerprint(connection, 1, 2, 3, Some(42)),
+            inbound_request_fingerprint(connection, 1, 2, 3, Some(43))
+        );
+        assert_eq!(
+            inbound_request_fingerprint(connection, 1, 2, 3, Some(42)),
+            inbound_request_fingerprint(connection, 1, 2, 3, Some(42))
         );
     }
 }
