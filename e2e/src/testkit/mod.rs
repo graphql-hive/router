@@ -966,8 +966,8 @@ impl TestRouter<Built> {
                         paths.clone(),
                         prometheus.as_ref().map(|p| p.endpoint.clone()),
                     ))
+                    .middleware(RequestSummaryService::new(&paths.graphql))
                     .middleware(RequestIdentifiersService)
-                    .middleware(RequestSummaryService)
                     .state(shared_state.clone())
                     .state(schema_state)
                     .state(callback_subs)

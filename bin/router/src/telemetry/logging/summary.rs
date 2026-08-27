@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use ntex::http::body::{Body, BodySize, MessageBody, ResponseBody};
 use ntex::util::Bytes;
-use ntex::web::HttpResponse;
+use ntex::web::WebResponse;
 use tokio::task::futures::TaskLocalFuture;
 use tracing::{info, Level};
 
@@ -238,9 +238,10 @@ impl SummaryOnDrop {
         }
     }
 
-    /// Moves the guard into a streamed response body, so the summary is emitted when the stream
-    /// terminates (or the client disconnects) instead of when the response was built.
-    pub fn attach_to_response(self, response: HttpResponse) -> HttpResponse {
+    /// Moves the guard into the response body, so the summary is emitted once the response is
+    /// actually done sending - immediately for a sized body, or on stream end/disconnect for one
+    /// that streams (subscriptions), rather than as soon as this call returns.
+    pub fn attach_to_response(self, response: WebResponse) -> WebResponse {
         response.map_body(|_, body| {
             ResponseBody::Body(Body::from_message(SummaryTrackedBody {
                 body,
