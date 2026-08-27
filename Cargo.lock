@@ -4179,9 +4179,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-rt"
-version = "3.16.1"
+version = "3.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3692fad48ebe4431289a51807dc08bd3205369ce9f1ab10d300fe12cccefd5c5"
+checksum = "877696a0cec7fccd0813d1c075e5dbc12e3a3199e492c9bfa3dd2da63d609f35"
 dependencies = [
  "async-channel",
  "async-task",
@@ -4194,6 +4194,7 @@ dependencies = [
  "futures-timer",
  "libc",
  "log",
+ "nix 0.31.3",
  "ntex-error",
  "ntex-service",
  "oneshot",
