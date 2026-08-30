@@ -114,6 +114,12 @@ pub async fn execute_plan<'exec>(
                         .jwt
                         .forward_claims_to_upstream_extensions
                         .field_name,
+                    app_state
+                        .router_config
+                        .jwt
+                        .forward_claims_to_upstream_extensions
+                        .include_claims
+                        .as_deref(),
                 )?
         } else {
             None

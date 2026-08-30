@@ -81,6 +81,66 @@ mod jwt_e2e_tests {
     }
 
     #[ntex::test]
+    async fn should_forward_only_included_claims_to_subgraph_via_extensions() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .file_config("configs/jwt_auth_forward_include_claims.router.yaml")
+            .build()
+            .start()
+            .await;
+
+        let exp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3600;
+        let claims = json!({
+            "sub": "user1",
+            "role": "admin",
+            "name": "Dotan",
+            "iat": 1516239022,
+            "exp": exp,
+        });
+        let token = generate_jwt(&claims);
+
+        let res = router
+            .send_graphql_request(
+                "{ users { id } }",
+                None,
+                some_header_map! {
+                    http::header::AUTHORIZATION => format!("Bearer {}", token)
+                },
+            )
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let subgraph_requests = subgraphs
+            .get_requests_log("accounts")
+            .expect("expected requests sent to accounts subgraph");
+        assert_eq!(
+            subgraph_requests.len(),
+            1,
+            "expected 1 request to accounts subgraph"
+        );
+
+        let body: Value = sonic_rs::from_slice(
+            subgraph_requests[0]
+                .body
+                .as_ref()
+                .expect("expected request body"),
+        )
+        .expect("expected valid JSON body");
+        let extensions = body.get("extensions").unwrap();
+
+        assert_eq!(
+            extensions.get("jwt").unwrap(),
+            &json!({ "sub": "user1", "role": "admin" })
+        );
+    }
+
+    #[ntex::test]
     async fn should_allow_expressions_to_access_jwt_details() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let router = TestRouter::builder()

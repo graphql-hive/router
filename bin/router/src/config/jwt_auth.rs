@@ -91,12 +91,17 @@ impl Default for JwtAuthConfig {
 pub struct JwtClaimsForwardingConfig {
     pub enabled: bool,
     pub field_name: String,
+    /// Only forward these root-level claim keys, instead of the entire JWT payload.
+    /// If not specified, all claims are forwarded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_claims: Option<Vec<String>>,
 }
 
 fn default_forward_claims_to_upstream_extensions() -> JwtClaimsForwardingConfig {
     JwtClaimsForwardingConfig {
         enabled: false,
         field_name: "jwt".to_string(),
+        include_claims: None,
     }
 }
 
