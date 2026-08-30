@@ -198,63 +198,47 @@ async fn graphql_endpoint_handler(
         .http_server
         .capture_request(&request);
 
-    let started_at = std::time::Instant::now();
-    let (response_mode, mut response, summary_guard) = async {
-        let summary_guard = summary::SummaryOnDrop::new(started_at);
-        debug!(
-            target: targets::HTTP_SERVER,
-            method = request.method().as_str(),
-            path = request.path(),
-            query_string = request.query_string(),
-            content_type = obtain_header_value(request.headers(), &CONTENT_TYPE),
-            accept = obtain_header_value(request.headers(), &ACCEPT),
-            user_agent = obtain_header_value(request.headers(), &USER_AGENT),
-            "http request started",
-        );
+    // logged here rather than in `RequestSummaryMiddleware` because we want custom coorelations to be included as well
+    debug!(
+        target: targets::HTTP_SERVER,
+        method = request.method().as_str(),
+        path = request.path(),
+        query_string = request.query_string(),
+        content_type = obtain_header_value(request.headers(), &CONTENT_TYPE),
+        accept = obtain_header_value(request.headers(), &ACCEPT),
+        user_agent = obtain_header_value(request.headers(), &USER_AGENT),
+        "http request started",
+    );
 
-        let (response_mode, inner_res) = graphql_endpoint_dispatch(
-            &mut request,
-            body_stream,
-            schema_state,
-            app_state.clone(),
-            parent_ctx,
-        )
-        .await;
-
-        let status_code = inner_res.status().as_u16();
-        let payload_bytes = match inner_res.body().size() {
-            BodySize::Empty | BodySize::None => 0,
-            BodySize::Sized(size) => i64::try_from(size).unwrap_or(i64::MAX),
-            BodySize::Stream => -1,
-        };
-
-        debug!(
-            target: targets::HTTP_SERVER,
-            status_code,
-            payload_bytes,
-            "http request completed",
-        );
-
-        summary::record(|s| {
-            s.status_code
-                .store(status_code, std::sync::atomic::Ordering::Relaxed);
-            s.payload_bytes
-                .store(payload_bytes, std::sync::atomic::Ordering::Relaxed);
-        });
-
-        (response_mode, inner_res, summary_guard)
-    }
+    let response = graphql_endpoint_dispatch(
+        &mut request,
+        body_stream,
+        schema_state,
+        app_state.clone(),
+        parent_ctx,
+    )
     .await;
 
-    if response_mode.can_stream() {
-        // Streamed responses must defer printing until the stream ends (or disconnects), not
-        // now - attaching the guard to the response body achieves that.
-        response = summary_guard.attach_to_response(response);
-    } else {
-        // Store the guard in the response's own extensions instead of allowing it to drop now.
-        // This allows us to emit the summary log line only after the response really completes sending
-        response.extensions_mut().insert(summary_guard);
-    }
+    let status_code = response.status().as_u16();
+    let payload_bytes = match response.body().size() {
+        BodySize::Empty | BodySize::None => 0,
+        BodySize::Sized(size) => i64::try_from(size).unwrap_or(i64::MAX),
+        BodySize::Stream => -1,
+    };
+
+    debug!(
+        target: targets::HTTP_SERVER,
+        status_code,
+        payload_bytes,
+        "http request completed",
+    );
+
+    summary::record(|s| {
+        s.status_code
+            .store(status_code, std::sync::atomic::Ordering::Relaxed);
+        s.payload_bytes
+            .store(payload_bytes, std::sync::atomic::Ordering::Relaxed);
+    });
 
     let graphql_operation = read_graphql_operation_metric_identity(&request);
     let graphql_operation_name = graphql_operation
@@ -283,7 +267,7 @@ async fn graphql_endpoint_dispatch(
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
     parent_ctx: opentelemetry::Context,
-) -> (ResponseMode, web::HttpResponse) {
+) -> web::HttpResponse {
     let root_http_request_span = HttpServerRequestSpan::from_request(
         request,
         &app_state
@@ -367,7 +351,7 @@ async fn graphql_endpoint_dispatch(
 
         root_http_request_span.record_response(&response);
 
-        (response_mode, response)
+        response
     }
     .instrument(root_http_request_span.clone())
     .await
@@ -513,8 +497,8 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
                 paths_for_plugin,
                 prometheus.as_ref().map(|p| p.endpoint.clone()),
             ))
+            .middleware(RequestSummaryService::new(&graphql_path))
             .middleware(RequestIdentifiersService)
-            .middleware(RequestSummaryService)
             .state(shared_state.clone())
             .state(schema_state.clone())
             .state(shared_state.telemetry_context.clone())

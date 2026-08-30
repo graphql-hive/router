@@ -15,9 +15,9 @@ use hive_router::{
     plugins::hooks::on_http_request::{OnHttpRequestHookFuture, OnHttpRequestHookPayload},
     plugins::hooks::on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
     plugins::plugin_trait::{EndHookPayload, RouterPlugin, StartHookPayload},
-    set_summary_attribute, set_summary_message,
+    set_summary_attribute, set_summary_message, GraphQLError,
 };
-use http::{HeaderMap, HeaderName, HeaderValue};
+use http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use insta::assert_json_snapshot;
 use serde_json::{Map, Value};
 use sonic_rs::{json, JsonContainerTrait, JsonValueTrait};
@@ -923,5 +923,120 @@ plugins:
     assert!(
         subgraph_calls["products"].is_u64(),
         "expected a recorded duration for products, got: {subgraph_calls:?}"
+    );
+}
+
+#[derive(Default)]
+struct RejectMissingAuthPlugin;
+
+#[async_trait]
+impl RouterPlugin for RejectMissingAuthPlugin {
+    type Config = ();
+
+    fn plugin_name() -> &'static str {
+        "test_reject_missing_auth"
+    }
+
+    fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
+        payload.initialize_plugin_with_defaults()
+    }
+
+    // Mirrors the auth-check shape from the async_auth plugin example, but rejecting from
+    // `on_http_request` itself, before the handler that creates `SummaryOnDrop` ever runs.
+    fn on_http_request<'req>(
+        &self,
+        payload: OnHttpRequestHookPayload<'req>,
+    ) -> OnHttpRequestHookFuture<'req> {
+        Box::pin(async move {
+            let is_graphql_request = payload.router_http_request.path() == "/graphql";
+            if is_graphql_request
+                && payload
+                    .router_http_request
+                    .headers()
+                    .get("authorization")
+                    .is_none()
+            {
+                return payload.end_with_graphql_error(
+                    GraphQLError::from_message_and_code("Unauthorized", "UNAUTHORIZED"),
+                    StatusCode::UNAUTHORIZED,
+                );
+            }
+
+            payload.proceed()
+        })
+    }
+}
+
+// https://github.com/graphql-hive/router/issues/1448
+#[ntex::test]
+async fn summary_is_emitted_for_requests_rejected_by_on_http_request() {
+    let (_subgraphs, router) = setup_router(
+        router_with_telemetry(
+            "\
+log:
+  level: info
+  format: json
+plugins:
+  test_reject_missing_auth:
+    enabled: true
+",
+        )
+        .register_plugin::<RejectMissingAuthPlugin>(),
+    )
+    .await;
+
+    let (stdout_log, status) = async { router.send_graphql_request(TEST_QUERY, None, None).await }
+        .capture_stdout_json_and_result()
+        .await;
+
+    assert_eq!(status.status(), StatusCode::UNAUTHORIZED);
+
+    let req_summary = stdout_log
+        .lines_json
+        .iter()
+        .find(|v| v.get("target").is_some_and(|v| v == targets::SUMMARY));
+
+    assert!(
+        req_summary.is_some(),
+        "expected a summary log line even for a request rejected by on_http_request, got lines: {:#?}",
+        stdout_log.lines_json
+    );
+}
+
+// Regression test for a templated `graphql_endpoint` (e.g. `/{tenant}/graphql`): a naive
+// `req.path() == graphql_path` string comparison never matches a literal request path against
+// a pattern, so the summary/HTTP_SERVER logging would silently never fire.
+#[ntex::test]
+async fn summary_is_emitted_for_templated_graphql_path() {
+    let (_subgraphs, router) = setup_router(router_with_telemetry(
+        "\
+http:
+  graphql_endpoint: /{tenant}/graphql
+log:
+  level: info
+  format: json
+",
+    ))
+    .await;
+
+    let (stdout_log, res) = async {
+        router
+            .send_post_request("/acme/graphql", json!({ "query": TEST_QUERY }), None)
+            .await
+    }
+    .capture_stdout_json_and_result()
+    .await;
+
+    assert!(res.status().is_success(), "Expected 200 OK");
+
+    let req_summary = stdout_log
+        .lines_json
+        .iter()
+        .find(|v| v.get("target").is_some_and(|v| v == targets::SUMMARY));
+
+    assert!(
+        req_summary.is_some(),
+        "expected a summary log line for a templated graphql_endpoint, got lines: {:#?}",
+        stdout_log.lines_json
     );
 }
