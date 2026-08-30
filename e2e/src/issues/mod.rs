@@ -3391,4 +3391,68 @@ mod issues_e2e_tests {
         }
         "#);
     }
+
+    #[ntex::test]
+    /// https://github.com/graphql-hive/router/issues/1455
+    /// __typename inside a @provides fieldset must not fail graph construction,
+    /// and the router must serve the operation from a single subgraph fetch.
+    async fn issue_1455_typename_in_provides_fieldset() {
+        let mut server = mockito::Server::new_async().await;
+        let host = server.host_with_port();
+
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.1455.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      owner:
+                        url: "http://{host}/owner"
+                      provider:
+                        url: "http://{host}/provider"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let provider_mock = server
+            .mock("POST", "/provider")
+            .expect(1)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"holder":{"item":{"__typename":"Item","label":"hello"}}}}"#,
+            )
+            .create();
+        // The whole operation is answerable from the @provides view alone,
+        // so "owner" must never be called.
+        let owner_mock = server.mock("POST", "/owner").expect(0).create();
+
+        let res = router
+            .send_graphql_request(
+                r#"query { holder { item { __typename label } } }"#,
+                None,
+                None,
+            )
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+        provider_mock.assert();
+        owner_mock.assert();
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "holder": {
+              "item": {
+                "__typename": "Item",
+                "label": "hello"
+              }
+            }
+          }
+        }
+        "#);
+    }
 }
