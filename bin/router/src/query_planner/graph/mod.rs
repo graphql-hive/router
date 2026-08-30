@@ -984,6 +984,35 @@ impl Graph {
         for selection in selection_set.items.iter() {
             match selection {
                 Selection::Field(field) => {
+                    // __typename is a meta-field, resolvable from any subgraph that
+                    // resolves the parent, so it carries no declared field definition.
+                    if field.name == "__typename" {
+                        let tail = self.upsert_node(Node::new_specialized_node(
+                            "String",
+                            state.resolve_graph_id(graph_id)?,
+                            false,
+                            SubgraphTypeSpecialization::Provides(view_id),
+                        ));
+
+                        self.upsert_edge(tail, tail, Edge::Selfie("String".to_string()));
+
+                        self.upsert_edge(
+                            head,
+                            tail,
+                            Edge::create_field_move(
+                                field.name.to_string(),
+                                parent_type_def.name().to_string(),
+                                true,
+                                false,
+                                None,
+                                None,
+                                None,
+                            ),
+                        );
+
+                        continue;
+                    }
+
                     let is_leaf = field.selection_set.items.is_empty();
                     let field_in_parent =
                         parent_type_def.fields().get(&field.name).ok_or_else(|| {
