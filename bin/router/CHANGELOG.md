@@ -116,6 +116,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.2.3 (2026-08-30)
+
+### Features
+
+#### Allow plugins to contribute a partition to the inbound (router-level) request dedupe key
+
+Plugins can now call `add_inbound_dedupe_partition(u64)` to add custom partition to the router's inbound
+query/subscription dedupe fingerprint. Requests with different partitions are never deduped
+into the same in-flight response.
+
+The method is only exposed on the `on_http_request` and `on_graphql_params` hook payloads, since
+those are the only hooks that run before the router computes the fingerprint — calling it from a
+later hook would silently have no effect, so it isn't offered there.
+
+```rust
+async fn on_graphql_params<'exec>(
+    &'exec self,
+    payload: OnGraphQLParamsStartHookPayload<'exec>,
+) -> OnGraphQLParamsStartHookResult<'exec> {
+    let partition = compute_partition_from_identity(&payload);
+    payload.add_inbound_dedupe_partition(partition);
+    payload.proceed()
+}
+```
+
+This is useful when the built-in `traffic_shaping.router.dedupe.headers` allowlist is not enough
+— for example, partitioning by an authenticated user extracted from a `Cookie` header without
+hashing the full cookie data.
+
+Closes https://github.com/graphql-hive/router/issues/1443
+
+#### Add `jwt.forward_claims_to_upstream_extensions.include_claims` to forward only specific JWT claims to subgraphs
+
+Previously, enabling `forward_claims_to_upstream_extensions` always forwarded the entire JWT payload under `extensions.<field_name>`. You can now restrict this to a list of root-level claim keys:
+
+```yaml
+jwt:
+  forward_claims_to_upstream_extensions:
+    enabled: true
+    field_name: jwt
+    include_claims:
+      - sub
+      - org_id
+```
+
+If `include_claims` is not set, all claims are forwarded as before.
+
+Closes https://github.com/graphql-hive/router/issues/642
+
+### Fixes
+
+#### Emit a request summary log line for requests rejected early by a plugin's `on_http_request` hook (e.g. a malformed project key or missing authorization), not just requests that reach the GraphQL handler.
+
+Previously, a plugin ending the request from `on_http_request` skipped the handler entirely, and the handler was the only place that emitted the summary log line - so no `router::request` line was ever printed for these requests, making them invisible to access logs.
+
+Fixes https://github.com/graphql-hive/router/issues/1448
+
 ## 0.2.2 (2026-08-26)
 
 ### Fixes
