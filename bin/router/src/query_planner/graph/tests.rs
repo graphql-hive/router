@@ -408,4 +408,24 @@ mod graph_tests {
 
         Ok(())
     }
+
+    // https://github.com/graphql-hive/router/issues/1455
+    // `__typename` is a meta-field, not part of the fields set in the schema, so a `@provides`
+    // fieldset containing it must not fail when constructing the graph.
+    #[test]
+    fn provides_fieldset_with_typename() {
+        let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixture/tests/provides-typename.supergraph.graphql");
+        let schema = parse_schema(
+            &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
+        );
+        let metadata = SupergraphState::new(&schema);
+        let graph = Graph::graph_from_supergraph_state(&metadata);
+
+        assert!(
+            graph.is_ok(),
+            "expected __typename inside a @provides fieldset to plan successfully, got: {:?}",
+            graph.err()
+        );
+    }
 }
