@@ -64,22 +64,19 @@ enum link__Purpose {
   EXECUTION
 }
 
-type Holder
-  @join__type(graph: OWNER)
-  @join__type(graph: PROVIDER) {
-  item: Item @join__field(graph: OWNER) @join__field(graph: PROVIDER, external: true)
+type Holder @join__type(graph: OWNER) @join__type(graph: PROVIDER) {
+  item: Item
+    @join__field(graph: OWNER)
+    @join__field(graph: PROVIDER, external: true)
 }
 
-type Item
-  @join__type(graph: OWNER)
-  @join__type(graph: PROVIDER) {
-  label: String @join__field(graph: OWNER) @join__field(graph: PROVIDER, external: true)
+type Item @join__type(graph: OWNER) @join__type(graph: PROVIDER) {
+  label: String
+    @join__field(graph: OWNER)
+    @join__field(graph: PROVIDER, external: true)
 }
 
-type Query
-  @join__type(graph: OWNER)
-  @join__type(graph: PROVIDER) {
+type Query @join__type(graph: OWNER) @join__type(graph: PROVIDER) {
   status: String @join__field(graph: OWNER)
-  holder: Holder
-    @join__field(graph: PROVIDER, provides: "item { __typename label }")
+  holder: Holder @join__field(graph: PROVIDER, provides: "item { label }")
 }

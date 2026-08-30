@@ -370,7 +370,7 @@ mod graph_tests {
         let (viewed_incoming, viewed_outgoing) = find_node(&graph, &node1.display_name());
         viewed_outgoing.assert_field_edge("id", "String/foo");
         assert_eq!(viewed_incoming.edges.len(), 2); // +1 for Selfie
-        assert_eq!(viewed_outgoing.edges.len(), 3); // +1 for Selfie
+        assert_eq!(viewed_outgoing.edges.len(), 4); // +1 for Selfie, +1 for __typename
 
         let (_, to) = outgoing
             .edges_field("user")

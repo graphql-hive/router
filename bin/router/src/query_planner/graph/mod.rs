@@ -986,22 +986,35 @@ impl Graph {
             );
         }
 
+        let is_interface_object = parent_type_def
+            .extract_join_types_for(graph_id)
+            .iter()
+            .any(|j| j.is_interface_object);
+        let has_resolvable_typename = matches!(
+            parent_type_def,
+            SupergraphDefinition::Object(_)
+                | SupergraphDefinition::Union(_)
+                | SupergraphDefinition::Interface(_)
+        ) && !is_interface_object;
+
+        // __typename is a meta-field, resolvable from any subgraph that
+        // resolves the parent
+        if has_resolvable_typename {
+            let tail = self.upsert_node(Node::new_specialized_node(
+                "String",
+                state.resolve_graph_id(graph_id)?,
+                false,
+                SubgraphTypeSpecialization::Provides(view_id),
+            ));
+
+            self.upsert_edge(tail, tail, Edge::Selfie("String".to_string()));
+            self.upsert_typename_edge(head, tail, parent_type_def.name());
+        }
+
         for selection in selection_set.items.iter() {
             match selection {
                 Selection::Field(field) => {
-                    // __typename is a meta-field, resolvable from any subgraph that
-                    // resolves the parent, so it carries no declared field definition.
                     if field.name == "__typename" {
-                        let tail = self.upsert_node(Node::new_specialized_node(
-                            "String",
-                            state.resolve_graph_id(graph_id)?,
-                            false,
-                            SubgraphTypeSpecialization::Provides(view_id),
-                        ));
-
-                        self.upsert_edge(tail, tail, Edge::Selfie("String".to_string()));
-                        self.upsert_typename_edge(head, tail, parent_type_def.name());
-
                         continue;
                     }
 
