@@ -3423,9 +3423,7 @@ mod issues_e2e_tests {
             .expect(1)
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(
-                r#"{"data":{"holder":{"item":{"__typename":"Item","label":"hello"}}}}"#,
-            )
+            .with_body(r#"{"data":{"holder":{"item":{"__typename":"Item","label":"hello"}}}}"#)
             .create();
         // The whole operation is answerable from the @provides view alone,
         // so "owner" must never be called.
