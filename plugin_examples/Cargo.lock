@@ -1593,6 +1593,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7eed2c4702fa172d1ce21078faa7c5203e69f5394d48cc436d25928394a867a2"
 
 [[package]]
+name = "dedupe-partition-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "futures",
+ "hive-router",
+ "http",
+ "jsonwebtoken",
+ "serde",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "defmt"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

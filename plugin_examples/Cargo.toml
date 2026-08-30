@@ -22,7 +22,8 @@ members = [
   "error_mapping",
   "replace_schema",
   "field_nulling",
-  "custom_logger_correlation"
+  "custom_logger_correlation",
+  "dedupe_partition"
 ]
 
 [workspace.dependencies]

@@ -565,6 +565,9 @@ async fn handle_text_frame(
                           .extensions
                           .as_ref()
                           .map_or(0, hash_graphql_extensions);
+                      let partition = plugin_req_state
+                          .as_ref()
+                          .and_then(|state| state.context.inbound_dedupe_partition());
                       Some(inbound_request_fingerprint(
                           // let chains are only allowed in Rust 2024 or later... so we assert
                           // connection_fingerprint because it will be present when request_dedupe_enabled
@@ -572,6 +575,7 @@ async fn handle_text_frame(
                           normalize_payload.normalized_operation_hash,
                           variables_hash,
                           extensions_hash,
+                          partition,
                       ))
                   } else {
                       None

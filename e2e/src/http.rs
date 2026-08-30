@@ -10,6 +10,53 @@ mod http_tests {
     use crate::testkit::{
         some_header_map, wait_until_mock_matched, ClientResponseExt, TestRouter, TestSubgraphs,
     };
+    use hive_router::{
+        async_trait,
+        plugins::{
+            hooks::{
+                on_graphql_params::{
+                    OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult,
+                },
+                on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
+            },
+            plugin_trait::{RouterPlugin, StartHookPayload},
+        },
+    };
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    #[derive(Default)]
+    struct DedupePartitionTestPlugin;
+
+    #[async_trait]
+    impl RouterPlugin for DedupePartitionTestPlugin {
+        type Config = ();
+
+        fn plugin_name() -> &'static str {
+            "test_dedupe_partition"
+        }
+
+        fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
+            payload.initialize_plugin_with_defaults()
+        }
+
+        async fn on_graphql_params<'exec>(
+            &'exec self,
+            payload: OnGraphQLParamsStartHookPayload<'exec>,
+        ) -> OnGraphQLParamsStartHookResult<'exec> {
+            if let Some(value) = payload
+                .router_http_request
+                .headers
+                .get("x-partition")
+                .and_then(|v| v.to_str().ok())
+            {
+                let mut hasher = DefaultHasher::new();
+                value.hash(&mut hasher);
+                payload.add_inbound_dedupe_partition(hasher.finish());
+            }
+            payload.proceed()
+        }
+    }
 
     #[ntex::test]
     async fn should_allow_to_customize_graphql_endpoint() {
@@ -724,6 +771,129 @@ mod http_tests {
         assert_eq!(
             products_requests, 1,
             "expected exactly one products subgraph request when allowlisted header matches case-insensitively"
+        );
+    }
+
+    #[ntex::test]
+    async fn should_partition_router_dedupe_via_plugin_context() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_delay(Duration::from_millis(100))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        dedupe_enabled: false
+                    router:
+                        dedupe:
+                            enabled: true
+                            headers: none
+                plugins:
+                    test_dedupe_partition:
+                        enabled: true
+                "#,
+            )
+            .register_plugin::<DedupePartitionTestPlugin>()
+            .build()
+            .start()
+            .await;
+
+        let query = r#"
+            {
+                topProducts {
+                    name
+                    price
+                }
+            }
+        "#;
+
+        let (response_a, response_b) = futures::join!(
+            router
+                .send_graphql_request(query, None, some_header_map! { "x-partition" => "alice" },),
+            router.send_graphql_request(query, None, some_header_map! { "x-partition" => "bob" },)
+        );
+
+        assert!(response_a.status().is_success());
+        assert!(response_b.status().is_success());
+
+        let products_requests = subgraphs
+            .get_requests_log("products")
+            .unwrap_or_default()
+            .len();
+
+        assert_eq!(
+            products_requests, 2,
+            "expected requests with different plugin-contributed partitions to never share a dedupe entry"
+        );
+    }
+
+    #[ntex::test]
+    async fn should_share_router_dedupe_partition_via_plugin_context() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_delay(Duration::from_millis(100))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        dedupe_enabled: false
+                    router:
+                        dedupe:
+                            enabled: true
+                            headers: none
+                plugins:
+                    test_dedupe_partition:
+                        enabled: true
+                "#,
+            )
+            .register_plugin::<DedupePartitionTestPlugin>()
+            .build()
+            .start()
+            .await;
+
+        let query = r#"
+            {
+                topProducts {
+                    name
+                    price
+                }
+            }
+        "#;
+
+        let (response_a, response_b) = futures::join!(
+            router
+                .send_graphql_request(query, None, some_header_map! { "x-partition" => "alice" },),
+            router
+                .send_graphql_request(query, None, some_header_map! { "x-partition" => "alice" },)
+        );
+
+        assert!(response_a.status().is_success());
+        assert!(response_b.status().is_success());
+
+        let products_requests = subgraphs
+            .get_requests_log("products")
+            .unwrap_or_default()
+            .len();
+
+        assert_eq!(
+            products_requests, 1,
+            "expected requests with the same plugin-contributed partition to share a dedupe entry"
         );
     }
 }

@@ -44,6 +44,10 @@ pub struct PluginContext {
     inner: DashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
 
+/// Extra partition component contributed by a plugin, mixed into the router's inbound
+/// (query/subscription) dedupe fingerprint. See [`PluginContext::add_inbound_dedupe_partition`].
+struct DedupePartition(u64);
+
 pub struct PluginContextRefEntry<'a, T> {
     pub entry: Ref<'a, TypeId, Box<dyn Any + Send + Sync>>,
     phantom: std::marker::PhantomData<T>,
@@ -196,6 +200,16 @@ impl PluginContext {
                 entry,
                 phantom: std::marker::PhantomData,
             })
+    }
+
+    /// Adds an extra partition component to the router's inbound (query/subscription) dedupe
+    /// fingerprint: requests with different partitions never share an in-flight response.
+    pub(crate) fn add_inbound_dedupe_partition(&self, partition: u64) {
+        self.insert(DedupePartition(partition));
+    }
+
+    pub(crate) fn inbound_dedupe_partition(&self) -> Option<u64> {
+        self.get_ref::<DedupePartition>().map(|p| p.0)
     }
 }
 

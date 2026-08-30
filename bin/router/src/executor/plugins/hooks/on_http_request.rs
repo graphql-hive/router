@@ -102,6 +102,12 @@ impl<'req> OnHttpRequestHookPayload<'req> {
             .extensions_mut()
             .insert(supergraph.snapshot());
     }
+
+    /// Adds an extra partition component to the router's inbound (query/subscription) dedupe
+    /// fingerprint: requests with different partitions never share an in-flight response.
+    pub fn add_inbound_dedupe_partition(&self, partition: u64) {
+        self.context.add_inbound_dedupe_partition(partition);
+    }
 }
 
 impl<'req> StartHookPayload<OnHttpResponseHookPayload<'req>, Response>
