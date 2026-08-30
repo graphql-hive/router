@@ -367,6 +367,163 @@ fn provides_on_interface_1_test() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+// https://github.com/graphql-hive/router/issues/1455
+#[test]
+fn provides_fieldset_with_typename() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          holder {
+            item {
+              __typename
+              label
+            }
+          }
+        }"#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/provides-typename.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "provider") {
+        {
+          holder {
+            item {
+              __typename
+              label
+            }
+          }
+        }
+      },
+    },
+    "#);
+    Ok(())
+}
+
+#[test]
+fn provides_fieldset_with_nested_typename() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          holder {
+            item {
+              __typename
+              nested {
+                __typename
+                label
+              }
+            }
+          }
+        }"#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/provides-typename-nested.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "provider") {
+        {
+          holder {
+            item {
+              __typename
+              nested {
+                __typename
+                label
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+    Ok(())
+}
+
+#[test]
+fn provides_fieldset_with_typename_on_list() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          holder {
+            items {
+              __typename
+              label
+            }
+          }
+        }"#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/provides-typename-list.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "provider") {
+        {
+          holder {
+            items {
+              __typename
+              label
+            }
+          }
+        }
+      },
+    },
+    "#);
+    Ok(())
+}
+
+#[test]
+fn provides_fieldset_with_typename_on_interface() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          book {
+            animals {
+              __typename
+              ... on Dog {
+                __typename
+                name
+              }
+            }
+          }
+        }"#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/provides-typename-interface.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          book {
+            animals {
+              __typename
+              ... on Dog {
+                name
+                __typename
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+    Ok(())
+}
+
 #[test]
 fn provides_on_interface_2_test() -> Result<(), Box<dyn Error>> {
     init_logger();

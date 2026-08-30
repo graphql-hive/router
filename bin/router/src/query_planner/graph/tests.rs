@@ -428,4 +428,106 @@ mod graph_tests {
             graph.err()
         );
     }
+
+    // __typename at two nested levels of the same @provides fieldset.
+    #[test]
+    fn provides_fieldset_with_nested_typename() -> Result<(), Box<dyn std::error::Error>> {
+        let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixture/tests/provides-typename-nested.supergraph.graphql");
+        let graph = init_test(
+            &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
+        );
+
+        find_node(&graph, "Item/provider/1")
+            .1
+            .assert_field_edge("__typename", "String/provider")
+            .assert_field_edge("nested", "Nested/provider");
+
+        find_node(&graph, "Nested/provider/1")
+            .1
+            .assert_field_edge("__typename", "String/provider")
+            .assert_field_edge("label", "String/provider");
+
+        Ok(())
+    }
+
+    // __typename inside a @provides fieldset nested under a list-returning field.
+    #[test]
+    fn provides_fieldset_with_typename_on_list() -> Result<(), Box<dyn std::error::Error>> {
+        let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixture/tests/provides-typename-list.supergraph.graphql");
+        let graph = init_test(
+            &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
+        );
+
+        let (_, outgoing) = find_node(&graph, "Holder/provider/1");
+        let (items_edge, to) = outgoing
+            .edge_field("items")
+            .expect("failed to find edge for field items");
+        match items_edge.weight() {
+            Edge::FieldMove(fm) => assert!(fm.is_list, "expected 'items' field move to be a list"),
+            other => panic!("expected a field move edge, got {:?}", other),
+        }
+
+        let node = graph.node(*to)?;
+        assert!(node.is_using_provides());
+
+        find_node(&graph, &node.display_name())
+            .1
+            .assert_field_edge("__typename", "String/provider")
+            .assert_field_edge("label", "String/provider");
+
+        Ok(())
+    }
+
+    // __typename both at the interface level and inside an inline fragment
+    // branch of the same @provides fieldset.
+    #[test]
+    fn provides_fieldset_with_typename_on_interface() -> Result<(), Box<dyn std::error::Error>> {
+        let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixture/tests/provides-typename-interface.supergraph.graphql");
+        let graph = init_test(
+            &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
+        );
+
+        find_node(&graph, "Animal/a/1")
+            .1
+            .assert_field_edge("__typename", "String/a")
+            .assert_interface_edge("Dog", "Dog/a");
+
+        find_node(&graph, "Dog/a/1")
+            .1
+            .assert_field_edge("__typename", "String/a")
+            .assert_field_edge("name", "String/a");
+
+        Ok(())
+    }
+
+    // __typename inside a @provides fieldset for a field that also carries @requires.
+    #[test]
+    fn provides_fieldset_with_typename_and_requires() -> Result<(), Box<dyn std::error::Error>> {
+        let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixture/tests/provides-requires-typename.supergraph.graphql");
+        let graph = init_test(
+            &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
+        );
+
+        let (_, outgoing) = find_node(&graph, "Review/reviews");
+        let (_, to) = outgoing
+            .edges_field("author")
+            .into_iter()
+            .find(|(edge_ref, _to)| {
+                format!("{:?}", edge_ref.weight()) == "author @requires(secret) @provides"
+            })
+            .expect("failed to find provides edge for field author");
+        let node = graph.node(*to)?;
+        assert!(node.is_using_provides());
+
+        find_node(&graph, &node.display_name())
+            .1
+            .assert_field_edge("username", "String/reviews")
+            .assert_field_edge("__typename", "String/reviews");
+
+        Ok(())
+    }
 }
