@@ -384,7 +384,7 @@ mod graph_tests {
         let (viewed_incoming, viewed_outgoing) = find_node(&graph, &node2.display_name());
         viewed_outgoing.assert_field_edge("name", "String/foo");
         assert_eq!(viewed_incoming.edges.len(), 2); // +1 for Selfie
-        assert_eq!(viewed_outgoing.edges.len(), 4); // +1 for Selfie
+        assert_eq!(viewed_outgoing.edges.len(), 5); // +1 for Selfie, +1 for __typename
 
         let (nested_provides_id, nested_provides_node) = viewed_outgoing
             .edge_field("profile")
@@ -397,7 +397,7 @@ mod graph_tests {
             .starts_with("Profile/foo/"));
 
         let mut nested_edges = graph.edges_from(nested_provides_id);
-        assert_eq!(nested_edges.clone().count(), 2); // +1 for Selfie
+        assert_eq!(nested_edges.clone().count(), 3); // +1 for Selfie, +1 for __typename
         assert_eq!(
             nested_edges.next().unwrap().weight().display_name(),
             String::from("age")
