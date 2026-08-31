@@ -1087,16 +1087,7 @@ mod estimator_tests {
         )
         .await;
     }
-    // @defer fragments must contribute to the total estimated cost. The estimator walks both
-    // the primary node and all deferred fragment nodes (PlanNode::Defer handling).
-    #[ntex::test]
-    #[ignore = "@defer fragment cost accumulation requires @defer multipart protocol support in TestRouter"]
-    async fn deferred_fragment_cost_accumulation() {
-        // The cost estimator already handles PlanNode::Defer by summing primary + all deferred
-        // fragment costs. This E2E test is deferred until the test router can issue @defer
-        // requests and collect the full multipart response stream.
-        todo!()
-    }
+
     // @cost on INPUT_FIELD_DEFINITION adds cost when that input field is provided (non-null)
     // in a query argument, as specified by the IBM GraphQL Cost Directive specification.
     #[ntex::test]
