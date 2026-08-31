@@ -58,10 +58,10 @@ ntex-net = { version = "=3.14.1"}
 ntex-router = { version = "=1.0.0"}
 ntex-bytes = { version = "=1.9.0"}
 ntex-dispatcher = { version = "=3.2.1"}
-ntex-error = { version = "=2.4.0" }
+ntex-error = { version = "=2.5.0" }
 ntex-h2 = { version = "=3.13.0" }
 # Held back with ntex-net and ntex-server, see the note above `ntex-server`.
-ntex-rt = { version = "=3.16.1" }
+ntex-rt = { version = "=3.17.1" }
 ntex-macros = { version = "=3.5.0" }
 ntex-httparse = { version = "=2.1.0" }
 # ntex-server 3.11 made graceful signal handling opt-in and defaults it to
