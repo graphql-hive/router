@@ -32,7 +32,7 @@ retry-policies = { workspace = true }
 recloser = { workspace = true }
 futures-util = { workspace = true }
 typify = "0.7.0"
-regress = "0.11.0"
+regress = "0.12.0"
 lazy_static = { workspace = true }
 vrl = { workspace = true }
 http = { workspace = true }
