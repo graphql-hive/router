@@ -2614,4 +2614,125 @@ mod policy_directive {
                 .is_empty());
         }
     }
+
+    mod abstract_types {
+        use super::*;
+
+        static POLICY_UNION_SCHEMA: &str = r#"
+            type Query {
+              media: Media!
+            }
+
+            union Media = Book | Movie
+
+            type Book @policy(policies: [["read_book"]]) {
+              author: String
+            }
+
+            type Movie @policy(policies: [["read_movie"]]) {
+              director: String
+            }
+        "#;
+
+        #[test]
+        fn union_members_with_policy_are_authorized_independently() {
+            let supergraph_data = build_supergraph_data(POLICY_UNION_SCHEMA);
+            let query = "
+              { media { ... on Book { author } ... on Movie { director } } }
+            ";
+
+            let decision = supergraph_data.decide_with_policies(None, &["read_book"], query);
+            insta::assert_snapshot!(decision, @r#"
+            [Modified]
+            Operation: {media{...on Book{author}}}
+            Errors:    ["Unauthorized field or type @ media"]
+            "#);
+
+            let decision = supergraph_data.decide_with_policies(None, &["read_movie"], query);
+            insta::assert_snapshot!(decision, @r#"
+            [Modified]
+            Operation: {media{...on Movie{director}}}
+            Errors:    ["Unauthorized field or type @ media"]
+            "#);
+
+            let decision =
+                supergraph_data.decide_with_policies(None, &["read_book", "read_movie"], query);
+            insta::assert_snapshot!(decision, @"[NoChange]");
+        }
+
+        /// `Book` and `Movie` both expose `title` under this response key. This is
+        /// the exact scenario that used to collapse both fragments into one
+        /// null-bubbling trie entry and wipe out an already-authorized member.
+        #[test]
+        fn shared_field_name_across_union_members_with_policy_is_authorized_independently() {
+            let supergraph_data = build_supergraph_data(
+                r#"
+                type Query {
+                  media: Media!
+                }
+
+                union Media = Book | Movie
+
+                type Book @policy(policies: [["read_book"]]) {
+                  title: String
+                }
+
+                type Movie @policy(policies: [["read_movie"]]) {
+                  title: String
+                }
+                "#,
+            );
+            let query = "
+              { media { ... on Book { title } ... on Movie { title } } }
+            ";
+
+            let decision = supergraph_data.decide_with_policies(None, &["read_book"], query);
+            insta::assert_snapshot!(decision, @r#"
+            [Modified]
+            Operation: {media{...on Book{title}}}
+            Errors:    ["Unauthorized field or type @ media"]
+            "#);
+        }
+
+        static POLICY_INTERFACE_SCHEMA: &str = r#"
+            type Query {
+              itf: Node!
+            }
+
+            interface Node {
+              id: ID!
+            }
+
+            type Post implements Node @policy(policies: [["read_post"]]) {
+              id: ID!
+              title: String
+            }
+
+            type Comment implements Node @policy(policies: [["read_comment"]]) {
+              id: ID!
+              body: String
+            }
+        "#;
+
+        /// Same independence check, through an interface's concrete-type fragments
+        /// instead of a union's members.
+        #[test]
+        fn interface_implementors_with_policy_are_authorized_independently() {
+            let supergraph_data = build_supergraph_data(POLICY_INTERFACE_SCHEMA);
+            let query = "
+              { itf { ... on Post { title } ... on Comment { body } } }
+            ";
+
+            let decision = supergraph_data.decide_with_policies(None, &["read_post"], query);
+            insta::assert_snapshot!(decision, @r#"
+            [Modified]
+            Operation: {itf{...on Post{title}}}
+            Errors:    ["Unauthorized field or type @ itf"]
+            "#);
+
+            let decision =
+                supergraph_data.decide_with_policies(None, &["read_post", "read_comment"], query);
+            insta::assert_snapshot!(decision, @"[NoChange]");
+        }
+    }
 }
