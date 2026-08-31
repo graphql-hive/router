@@ -311,6 +311,11 @@ impl FieldProjectionPlan {
     /// Needed whenever the operation the query plan is built from is not the one this
     /// projection plan was built from — authorization rebuilds both to drop rejected fields,
     /// and dropping a field shifts every slot after it.
+    ///
+    /// The router calls this in exactly one place, inside `rebuild_nulled_projection_plan`,
+    /// so that a rebuilt plan is correct before anyone can hold it. Keep it that way: when
+    /// this was a separate step the callers made themselves, one of the two forgot it, and a
+    /// plan whose slots were off by one nulled every object whose key field had moved.
     pub fn reassign_slots(plans: &mut [FieldProjectionPlan], operation: &OperationDefinition) {
         let shape = response_shape_for_operation(operation);
         Self::assign_slots(plans, &shape);

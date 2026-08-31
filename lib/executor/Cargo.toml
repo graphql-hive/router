@@ -103,5 +103,9 @@ name = "roundtrip_benches"
 harness = false
 
 [[bench]]
+name = "storage_layouts"
+harness = false
+
+[[bench]]
 name = "alloc_profile"
 harness = false

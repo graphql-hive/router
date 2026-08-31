@@ -119,13 +119,26 @@ fn rebuild_nulled_selection_set(
     SelectionSet { items: kept_items }
 }
 
-/// Rebuilds the projection plan to set nulled fields to null.
+/// Rebuilds the projection plan to set nulled fields to null, against the operation that will
+/// actually be planned.
+///
+/// `new_operation` is not optional and the slots are reassigned here rather than by the caller
+/// on purpose. The query plan is rebuilt from the nulled operation, so the data lands in slots
+/// derived from *that*; the projection plan is cloned from the original and still carries the
+/// original operation's slots, and dropping a rejected field shifts every slot after it. Both
+/// callers used to make that second call themselves, and fixing only one of them nulled every
+/// object whose `id` had moved — six e2e failures from one omitted line. There is no line to
+/// omit now.
 pub(crate) fn rebuild_nulled_projection_plan(
     original_plans: &Vec<FieldProjectionPlan>,
     nulled_field_trie: &Trie,
+    new_operation: &OperationDefinition,
 ) -> Vec<FieldProjectionPlan> {
-    rebuild_nulled_projection_plan_recursive(original_plans, nulled_field_trie, PathIndex::root())
-        .unwrap_or_default()
+    let mut plans =
+        rebuild_nulled_projection_plan_recursive(original_plans, nulled_field_trie, PathIndex::root())
+            .unwrap_or_default();
+    FieldProjectionPlan::reassign_slots(&mut plans, new_operation);
+    plans
 }
 
 /// Recursively filters projection plans. Nulled fields become null.
@@ -249,6 +262,81 @@ fn collect_variables_from_value(value: &Value, used_variables: &mut HashSet<Stri
         | Value::Boolean(_)
         | Value::Enum(_) => {
             // Primitive values don't contain variables
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use graphql_tools::parser::query::Definition;
+    use hive_router_plan_executor::introspection::schema::SchemaWithMetadata;
+    use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
+    use hive_router_query_planner::{
+        ast::normalization::create_normalized_document,
+        consumer_schema::ConsumerSchema,
+        state::supergraph_state::SupergraphState,
+        utils::parsing::{parse_operation, parse_schema},
+    };
+
+    use super::*;
+    use crate::pipeline::trie::Trie;
+
+    /// Dropping a field shifts every slot after it, and the projection plan has to follow the
+    /// operation the query plan is built from. This is the invariant that broke when slot
+    /// reassignment was the caller's job: `rebuild_nulled_projection_plan` owns it now, and
+    /// this pins that it actually happens.
+    #[test]
+    fn a_rebuilt_plan_carries_slots_from_the_rebuilt_operation() {
+        let supergraph = parse_schema(
+            r#"
+            type Query { user: User }
+            type User { id: ID, secret: String, name: String }
+            "#,
+        );
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let metadata = consumer_schema.schema_metadata();
+        let supergraph_state = SupergraphState::new(&supergraph);
+
+        let mut document = parse_operation("{ user { id secret name } }");
+        let operation_ast = document
+            .definitions
+            .iter_mut()
+            .find_map(|def| match def {
+                Definition::Operation(op) => Some(op),
+                _ => None,
+            })
+            .expect("operation");
+        let normalized =
+            create_normalized_document(&supergraph_state, operation_ast.clone(), None);
+
+        let (_, plans) = FieldProjectionPlan::from_operation(&normalized.operation, &metadata);
+        let before: Vec<usize> = children(&plans[0]).iter().map(|p| p.slot).collect();
+        assert_eq!(before, [1, 2, 3], "slot 0 is the injected __typename");
+
+        // Reject the middle field, exactly as authorization would.
+        let trie = Trie::from_paths(&[vec!["user", "secret"]]);
+        let nulled_operation = rebuild_nulled_operation(&normalized.operation, &trie);
+        let rebuilt = rebuild_nulled_projection_plan(&plans, &trie, &nulled_operation);
+
+        // `name` moved down a slot because `secret` is gone. Without reassignment it would
+        // still say 3 and project whatever landed there instead.
+        let name_slot = children(&rebuilt[0])
+            .iter()
+            .find(|p| p.response_key == "name")
+            .map(|p| p.slot);
+        assert_eq!(
+            name_slot,
+            Some(2),
+            "slots were not resolved against the nulled operation"
+        );
+    }
+
+    fn children(plan: &FieldProjectionPlan) -> &[FieldProjectionPlan] {
+        match &plan.value {
+            ProjectionValueSource::ResponseData {
+                selections: Some(selections),
+            } => selections.as_slice(),
+            _ => &[],
         }
     }
 }
