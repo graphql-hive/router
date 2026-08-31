@@ -370,7 +370,7 @@ mod graph_tests {
         let (viewed_incoming, viewed_outgoing) = find_node(&graph, &node1.display_name());
         viewed_outgoing.assert_field_edge("id", "String/foo");
         assert_eq!(viewed_incoming.edges.len(), 2); // +1 for Selfie
-        assert_eq!(viewed_outgoing.edges.len(), 3); // +1 for Selfie
+        assert_eq!(viewed_outgoing.edges.len(), 4); // +1 for Selfie, +1 for __typename
 
         let (_, to) = outgoing
             .edges_field("user")
@@ -384,7 +384,7 @@ mod graph_tests {
         let (viewed_incoming, viewed_outgoing) = find_node(&graph, &node2.display_name());
         viewed_outgoing.assert_field_edge("name", "String/foo");
         assert_eq!(viewed_incoming.edges.len(), 2); // +1 for Selfie
-        assert_eq!(viewed_outgoing.edges.len(), 4); // +1 for Selfie
+        assert_eq!(viewed_outgoing.edges.len(), 5); // +1 for Selfie, +1 for __typename
 
         let (nested_provides_id, nested_provides_node) = viewed_outgoing
             .edge_field("profile")
@@ -397,7 +397,7 @@ mod graph_tests {
             .starts_with("Profile/foo/"));
 
         let mut nested_edges = graph.edges_from(nested_provides_id);
-        assert_eq!(nested_edges.clone().count(), 2); // +1 for Selfie
+        assert_eq!(nested_edges.clone().count(), 3); // +1 for Selfie, +1 for __typename
         assert_eq!(
             nested_edges.next().unwrap().weight().display_name(),
             String::from("age")
@@ -405,6 +405,128 @@ mod graph_tests {
 
         // Two different views should be different nodes
         assert_ne!(node1, node2);
+
+        Ok(())
+    }
+
+    // https://github.com/graphql-hive/router/issues/1455
+    // `__typename` is a meta-field, not part of the fields set in the schema, so a `@provides`
+    // fieldset containing it must not fail when constructing the graph.
+    #[test]
+    fn provides_fieldset_with_typename() {
+        let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixture/tests/provides-typename.supergraph.graphql");
+        let schema = parse_schema(
+            &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
+        );
+        let metadata = SupergraphState::new(&schema);
+        let graph = Graph::graph_from_supergraph_state(&metadata);
+
+        assert!(
+            graph.is_ok(),
+            "expected __typename inside a @provides fieldset to plan successfully, got: {:?}",
+            graph.err()
+        );
+    }
+
+    // __typename at two nested levels of the same @provides fieldset.
+    #[test]
+    fn provides_fieldset_with_nested_typename() -> Result<(), Box<dyn std::error::Error>> {
+        let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixture/tests/provides-typename-nested.supergraph.graphql");
+        let graph = init_test(
+            &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
+        );
+
+        find_node(&graph, "Item/provider/1")
+            .1
+            .assert_field_edge("__typename", "String/provider")
+            .assert_field_edge("nested", "Nested/provider");
+
+        find_node(&graph, "Nested/provider/1")
+            .1
+            .assert_field_edge("__typename", "String/provider")
+            .assert_field_edge("label", "String/provider");
+
+        Ok(())
+    }
+
+    // __typename inside a @provides fieldset nested under a list-returning field.
+    #[test]
+    fn provides_fieldset_with_typename_on_list() -> Result<(), Box<dyn std::error::Error>> {
+        let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixture/tests/provides-typename-list.supergraph.graphql");
+        let graph = init_test(
+            &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
+        );
+
+        let (_, outgoing) = find_node(&graph, "Holder/provider/1");
+        let (items_edge, to) = outgoing
+            .edge_field("items")
+            .expect("failed to find edge for field items");
+        match items_edge.weight() {
+            Edge::FieldMove(fm) => assert!(fm.is_list, "expected 'items' field move to be a list"),
+            other => panic!("expected a field move edge, got {:?}", other),
+        }
+
+        let node = graph.node(*to)?;
+        assert!(node.is_using_provides());
+
+        find_node(&graph, &node.display_name())
+            .1
+            .assert_field_edge("__typename", "String/provider")
+            .assert_field_edge("label", "String/provider");
+
+        Ok(())
+    }
+
+    // __typename both at the interface level and inside an inline fragment
+    // branch of the same @provides fieldset.
+    #[test]
+    fn provides_fieldset_with_typename_on_interface() -> Result<(), Box<dyn std::error::Error>> {
+        let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixture/tests/provides-typename-interface.supergraph.graphql");
+        let graph = init_test(
+            &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
+        );
+
+        find_node(&graph, "Animal/a/1")
+            .1
+            .assert_field_edge("__typename", "String/a")
+            .assert_interface_edge("Dog", "Dog/a");
+
+        find_node(&graph, "Dog/a/1")
+            .1
+            .assert_field_edge("__typename", "String/a")
+            .assert_field_edge("name", "String/a");
+
+        Ok(())
+    }
+
+    // __typename inside a @provides fieldset for a field that also carries @requires.
+    #[test]
+    fn provides_fieldset_with_typename_and_requires() -> Result<(), Box<dyn std::error::Error>> {
+        let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixture/tests/provides-requires-typename.supergraph.graphql");
+        let graph = init_test(
+            &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
+        );
+
+        let (_, outgoing) = find_node(&graph, "Review/reviews");
+        let (_, to) = outgoing
+            .edges_field("author")
+            .into_iter()
+            .find(|(edge_ref, _to)| {
+                format!("{:?}", edge_ref.weight()) == "author @requires(secret) @provides"
+            })
+            .expect("failed to find provides edge for field author");
+        let node = graph.node(*to)?;
+        assert!(node.is_using_provides());
+
+        find_node(&graph, &node.display_name())
+            .1
+            .assert_field_edge("username", "String/reviews")
+            .assert_field_edge("__typename", "String/reviews");
 
         Ok(())
     }

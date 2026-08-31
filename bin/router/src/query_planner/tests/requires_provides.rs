@@ -168,3 +168,74 @@ fn simple_requires_provides() -> Result<(), Box<dyn Error>> {
     "#);
     Ok(())
 }
+
+// https://github.com/graphql-hive/router/issues/1455
+#[test]
+fn provides_fieldset_with_typename_and_requires() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          review {
+            author {
+              username
+              __typename
+            }
+          }
+        }"#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/provides-requires-typename.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "reviews") {
+          {
+            review {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "review") {
+          Fetch(service: "secrets") {
+            {
+              ... on Review {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Review {
+                secret
+              }
+            }
+          },
+        },
+        Flatten(path: "review") {
+          Fetch(service: "reviews") {
+            {
+              ... on Review {
+                __typename
+                secret
+                id
+              }
+            } =>
+            {
+              ... on Review {
+                author {
+                  username
+                  __typename
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
+}

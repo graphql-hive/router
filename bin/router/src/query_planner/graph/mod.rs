@@ -252,6 +252,24 @@ impl Graph {
         }
     }
 
+    // __typename is a meta-field: it carries no declared field definition, so unlike
+    // other fields it always resolves to a plain "String" move, regardless of parent type.
+    fn upsert_typename_edge(&mut self, head: NodeIndex, tail: NodeIndex, parent_type_name: &str) {
+        self.upsert_edge(
+            head,
+            tail,
+            Edge::create_field_move(
+                "__typename".to_string(),
+                parent_type_name.to_string(),
+                true,
+                false,
+                None,
+                None,
+                None,
+            ),
+        );
+    }
+
     #[instrument(level = "trace", skip(self, state))]
     fn build_entity_reference_edges(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
         for (def_name, definition) in state.definitions.iter() {
@@ -585,7 +603,6 @@ impl Graph {
                 ) && !is_interface_object;
 
                 if has_resolvable_typename {
-                    let field_name = "__typename".to_string();
                     trace!(
                         "[x] Creating owned field move edge '{}.__typename/{}' (type: String)",
                         def_name,
@@ -604,19 +621,7 @@ impl Graph {
                         false,
                     ));
 
-                    self.upsert_edge(
-                        head,
-                        tail,
-                        Edge::create_field_move(
-                            field_name,
-                            def_name.clone(),
-                            true,
-                            false,
-                            None,
-                            None,
-                            None,
-                        ),
-                    );
+                    self.upsert_typename_edge(head, tail, def_name);
                 }
 
                 trace!(
@@ -981,9 +986,38 @@ impl Graph {
             );
         }
 
+        let is_interface_object = parent_type_def
+            .extract_join_types_for(graph_id)
+            .iter()
+            .any(|j| j.is_interface_object);
+        let has_resolvable_typename = matches!(
+            parent_type_def,
+            SupergraphDefinition::Object(_)
+                | SupergraphDefinition::Union(_)
+                | SupergraphDefinition::Interface(_)
+        ) && !is_interface_object;
+
+        // __typename is a meta-field, resolvable from any subgraph that
+        // resolves the parent
+        if has_resolvable_typename {
+            let tail = self.upsert_node(Node::new_specialized_node(
+                "String",
+                state.resolve_graph_id(graph_id)?,
+                false,
+                SubgraphTypeSpecialization::Provides(view_id),
+            ));
+
+            self.upsert_edge(tail, tail, Edge::Selfie("String".to_string()));
+            self.upsert_typename_edge(head, tail, parent_type_def.name());
+        }
+
         for selection in selection_set.items.iter() {
             match selection {
                 Selection::Field(field) => {
+                    if field.name == "__typename" {
+                        continue;
+                    }
+
                     let is_leaf = field.selection_set.items.is_empty();
                     let field_in_parent =
                         parent_type_def.fields().get(&field.name).ok_or_else(|| {
