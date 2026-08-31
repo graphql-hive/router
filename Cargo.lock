@@ -2583,7 +2583,7 @@ dependencies = [
  "rand 0.10.2",
  "recloser",
  "regex-automata",
- "regress",
+ "regress 0.12.0",
  "reqwest 0.12.28",
  "reqwest-middleware",
  "reqwest-retry",
@@ -5703,6 +5703,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "regress"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32eef8b209c3c1c15dbad02c1f30f9539f00dc7253e0cbcdaae442a50a09d7c1"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "relative-path"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7634,7 +7643,7 @@ dependencies = [
  "log",
  "proc-macro2",
  "quote",
- "regress",
+ "regress 0.11.1",
  "schemars 0.8.22",
  "semver",
  "serde",
