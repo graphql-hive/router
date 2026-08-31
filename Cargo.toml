@@ -53,29 +53,16 @@ ntex = { version = "=3.12.3", features = ["tokio", "rustls"] }
 ntex-http = { version = "=1.2.0"}
 ntex-codec = { version = "=1.2.1"}
 ntex-io = { version = "=3.13.1"}
-# Held back with ntex-rt and ntex-server, see the note above `ntex-server`.
-ntex-net = { version = "=3.14.1"}
+ntex-net = { version = "=3.15.0"}
 ntex-router = { version = "=1.0.0"}
 ntex-bytes = { version = "=1.9.0"}
 ntex-dispatcher = { version = "=3.2.1"}
-ntex-error = { version = "=2.4.0" }
+ntex-error = { version = "=2.5.0" }
 ntex-h2 = { version = "=3.13.0" }
-# Held back with ntex-net and ntex-server, see the note above `ntex-server`.
-ntex-rt = { version = "=3.16.1" }
+ntex-rt = { version = "=3.17.2" }
 ntex-macros = { version = "=3.5.0" }
 ntex-httparse = { version = "=2.1.0" }
-# ntex-server 3.11 made graceful signal handling opt-in and defaults it to
-# false, and `ntex::web::HttpServer` exposes no way to opt in, so SIGTERM
-# force-drops in-flight requests and ignores `http.shutdown_timeout`.
-#
-# 3.10.4 cannot be pinned on its own: ntex-rt 3.17 added a `Signal::Panic`
-# variant and made `Signal` non-Copy, which 3.10.4 does not compile against,
-# and ntex-net 3.15 requires ntex-rt >=3.17. So ntex-net and ntex-rt are held
-# at the last releases that pair with it. ntex 3.12.3 accepts all three.
-#
-# Drop all three pins once a 3.x ntex exposes `HttpServer::graceful_shutdown`,
-# which ntex added in 4.0.0-beta.0.
-ntex-server = { version = "=3.10.4" }
+ntex-server = { version = "=3.11.2" }
 ntex-service = { version = "=4.6.0" }
 ntex-tls = { version = "=3.8.0" }
 ntex-util = { version = "=3.6.1" }
