@@ -591,6 +591,7 @@ pub struct TestRouterBuilder {
     subgraphs_url: Option<String>,
     port: u16,
     listener: Option<std::net::TcpListener>,
+    real_http_server: bool,
 }
 
 impl TestRouterBuilder {
@@ -603,6 +604,7 @@ impl TestRouterBuilder {
             subgraphs_url: None,
             port: 0,
             listener: None,
+            real_http_server: false,
         }
     }
 
@@ -653,6 +655,18 @@ impl TestRouterBuilder {
 
     pub fn skip_wait_for_ready_on_start(mut self) -> Self {
         self.wait_for_ready_on_start = false;
+        self
+    }
+
+    /// Binds the router with the real `ntex::web::HttpServer` (the same server type
+    /// production uses) instead of the lightweight `ntex::web::test` server used by default.
+    ///
+    /// The `test` server always uses ntex's internal default graceful-shutdown timeout and
+    /// has no way to override it, so it can't be used to verify that the router's configured
+    /// `http.shutdown_timeout` is actually honored. Use [`TestRouter::real_serv`] to interact
+    /// with the router started this way.
+    pub fn with_real_http_server(mut self) -> Self {
+        self.real_http_server = true;
         self
     }
 
@@ -707,6 +721,7 @@ impl TestRouterBuilder {
             listener: self.listener,
             config: Some(config.into_static()),
             plugins: self.plugins,
+            real_http_server: self.real_http_server,
             handle: None,
             _hold_until_drop,
             _state: PhantomData,
@@ -720,10 +735,34 @@ impl Default for TestRouterBuilder {
     }
 }
 
+/// A router bound with the real `ntex::web::HttpServer`, produced by
+/// [`TestRouterBuilder::with_real_http_server`]. Unlike [`test::TestServer`], this actually
+/// honors the router's configured `http.shutdown_timeout` on [`RealHttpServer::stop`].
+pub struct RealHttpServer {
+    addr: SocketAddr,
+    server: ntex::server::Server,
+}
+
+impl RealHttpServer {
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+
+    pub fn url(&self, path: &str) -> String {
+        format!("http://{}{path}", self.addr)
+    }
+
+    /// Gracefully stops the server: in-flight requests are given up to the configured
+    /// `http.shutdown_timeout` to finish before being force-dropped.
+    pub async fn stop(&self) {
+        self.server.stop(true).await;
+    }
+}
+
 struct TestRouterHandle {
     schema_state: Arc<SchemaState>,
     shared_state: Arc<RouterSharedState>,
-    serv: test::TestServer,
+    serv: ntex::util::Either<test::TestServer, RealHttpServer>,
     bg_tasks_manager: BackgroundTasksManager,
     telemetry: Telemetry,
 }
@@ -801,6 +840,7 @@ pub struct TestRouter<State> {
     listener: Option<std::net::TcpListener>,
     config: Option<&'static HiveRouterConfig>,
     plugins: Vec<Box<dyn Fn(PluginRegistry) -> PluginRegistry>>,
+    real_http_server: bool,
     handle: Option<TestRouterHandle>,
     _hold_until_drop: Vec<Box<dyn Any>>,
     _state: PhantomData<State>,
@@ -927,20 +967,7 @@ impl TestRouter<Built> {
             ))
             .build();
 
-        let mut serv_config = test::config().server_cfg(srv_cfg).listener(serv_listener);
-        if let Some(tls_config) = serv_shared_state
-            .router_config
-            .traffic_shaping
-            .router
-            .tls
-            .as_ref()
-        {
-            let rustls_config = hive_router::tls::build_rustls_config(tls_config)
-                .expect("failed to build rustls config for test router");
-            serv_config = serv_config.rustls(rustls_config);
-        }
-
-        let serv = test::server_with(serv_config, move || {
+        let app_factory = move || {
             let shared_state = serv_shared_state.clone();
             let schema_state = serv_schema_state.clone();
             let paths = serv_paths.clone();
@@ -979,8 +1006,44 @@ impl TestRouter<Built> {
                         }
                     })
             }
-        })
-        .await;
+        };
+
+        // the `real_http_server` path binds the same production `web::HttpServer` used by
+        // `bin/router`, so it actually applies `config.shutdown_timeout()`; the `test` server
+        // below always uses ntex's internal default and ignores that config value.
+        let serv = if self.real_http_server {
+            // `.workers(1)` matches the `test` server's default: with the platform's full
+            // worker count, ntex's per-worker connection accounting loses track of the one
+            // in-flight connection during a graceful stop, so the client hangs forever
+            // instead of seeing the connection force-dropped at the shutdown timeout.
+            let server = web::HttpServer::new(app_factory)
+                .config(srv_cfg)
+                .shutdown_timeout(config.shutdown_timeout())
+                .workers(1)
+                .listen(serv_listener)
+                .expect("failed to bind real http server for test router")
+                .run();
+
+            ntex::util::Either::Right(RealHttpServer {
+                addr: serv_local_addr,
+                server,
+            })
+        } else {
+            let mut serv_config = test::config().server_cfg(srv_cfg).listener(serv_listener);
+            if let Some(tls_config) = shared_state
+                .router_config
+                .traffic_shaping
+                .router
+                .tls
+                .as_ref()
+            {
+                let rustls_config = hive_router::tls::build_rustls_config(tls_config)
+                    .expect("failed to build rustls config for test router");
+                serv_config = serv_config.rustls(rustls_config);
+            }
+
+            ntex::util::Either::Left(test::server_with(serv_config, app_factory).await)
+        };
 
         let mut hold_until_drop = self._hold_until_drop;
         hold_until_drop.push(Box::new(subscription_guard));
@@ -1001,6 +1064,7 @@ impl TestRouter<Built> {
             }),
             config: self.config,
             plugins: self.plugins,
+            real_http_server: self.real_http_server,
             _hold_until_drop: hold_until_drop,
             _state: PhantomData,
         }
@@ -1033,7 +1097,24 @@ impl TestRouter<Started> {
     }
 
     pub fn serv(&self) -> &test::TestServer {
-        &self.handle.as_ref().unwrap().serv
+        self.handle
+            .as_ref()
+            .unwrap()
+            .serv
+            .as_ref()
+            .left()
+            .expect("serv() is unavailable when built with TestRouterBuilder::with_real_http_server(); use real_serv() instead")
+    }
+
+    /// Only available when built with [`TestRouterBuilder::with_real_http_server`].
+    pub fn real_serv(&self) -> &RealHttpServer {
+        self.handle
+            .as_ref()
+            .unwrap()
+            .serv
+            .as_ref()
+            .right()
+            .expect("real_serv() requires TestRouterBuilder::with_real_http_server()")
     }
 
     /// Waits for the /health endpoint to return 200 OK, with an optional timeout (defaults to 5 seconds).
@@ -1124,7 +1205,7 @@ impl TestRouter<Started> {
     }
 
     pub async fn ws(&self) -> WsConnection<Sealed> {
-        let url = self.handle.as_ref().unwrap().serv.url(
+        let url = self.serv().url(
             self.websocket_path
                 .as_deref()
                 .expect("Websocket path not set"),
