@@ -39,8 +39,14 @@ jobs:
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
       - uses: ./.github/actions/install-tools
+      - name: build hive_router binary
+        # Needed for the e2e tests that spawn the real compiled binary as a subprocess
+        # (e.g. to send it a real SIGTERM) instead of running it in-process.
+        run: cargo build -p hive-router --bin hive_router --features testing
       - name: test e2e
-        run: cargo test_e2e
+        # --run-ignored all also runs #[ignore]'d tests, e.g. ones that spawn the real
+        # hive_router binary and require it pre-built (skipped by default locally).
+        run: cargo test_e2e --run-ignored all
         timeout-minutes: 10
         env:
           RUST_BACKTRACE: full
