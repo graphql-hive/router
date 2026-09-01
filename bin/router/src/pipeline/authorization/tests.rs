@@ -2629,6 +2629,71 @@ mod policy_directive {
         "#);
     }
 
+    /// a field-level OR-of-ANDs combined with a type-level policy on the field's output type.
+    mod or_and {
+        use super::*;
+
+        static SCHEMA: &str = r#"
+            type Query {
+              customer: User @policy(policies: [["read_user", "internal"], ["admin"]])
+            }
+
+            type User @policy(policies: [["read_user"]]) {
+              id: ID
+            }
+        "#;
+
+        #[test]
+        fn denies_when_nothing_is_granted() {
+            let supergraph_data = build_supergraph_data(SCHEMA);
+            let decision = supergraph_data.decide_with_policies(None, &[], "{ customer { id } }");
+            insta::assert_snapshot!(decision, @r#"
+            [Modified]
+            Operation: <empty>
+            Errors:    ["Unauthorized field or type @ customer"]
+            "#);
+        }
+
+        #[test]
+        fn allows_when_the_first_and_group_plus_the_type_policy_are_granted() {
+            let supergraph_data = build_supergraph_data(SCHEMA);
+            let decision = supergraph_data.decide_with_policies(
+                None,
+                &["read_user", "internal"],
+                "{ customer { id } }",
+            );
+            insta::assert_snapshot!(decision, @"[NoChange]");
+        }
+
+        /// `read_user` alone satisfies the *type*-level policy on `User`, but
+        /// neither of the field's own OR groups (`read_user`+`internal`, or
+        /// `admin` alone) - field-level and type-level checks are independent
+        /// ANDs, so this still denies.
+        #[test]
+        fn denies_when_only_the_type_policy_is_granted() {
+            let supergraph_data = build_supergraph_data(SCHEMA);
+            let decision =
+                supergraph_data.decide_with_policies(None, &["read_user"], "{ customer { id } }");
+            insta::assert_snapshot!(decision, @r#"
+            [Modified]
+            Operation: <empty>
+            Errors:    ["Unauthorized field or type @ customer"]
+            "#);
+        }
+
+        /// The second OR group (`admin` alone) plus the type policy (`read_user`).
+        #[test]
+        fn allows_when_the_second_and_group_plus_the_type_policy_are_granted() {
+            let supergraph_data = build_supergraph_data(SCHEMA);
+            let decision = supergraph_data.decide_with_policies(
+                None,
+                &["admin", "read_user"],
+                "{ customer { id } }",
+            );
+            insta::assert_snapshot!(decision, @"[NoChange]");
+        }
+    }
+
     /// `@policy` is independent of `@authenticated`: both must be satisfied when
     /// they sit on the same field.
     #[test]
