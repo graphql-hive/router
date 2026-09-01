@@ -116,6 +116,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.2.5 (2026-09-01)
+
+### Features
+
+#### Custom authorization rules with the `@policy` directive
+
+Adds support for the federation `@policy` directive, letting a coprocessor decide custom
+authorization rules the router can't evaluate on its own.
+
+`@policy(policies: [[...]])` takes an OR of AND groups, the same shape as `@requiresScopes`, and is
+enforced independently of `@authenticated`/`@requiresScopes` - it stays active even without JWT
+configured, and when several directives sit on a field all of them must be satisfied.
+
+The router publishes every policy the operation depends on to
+`hive::authorization::required_policies` before the `graphql.analysis` coprocessor stage; the coprocessor decides by
+overwriting entries with `true`/`false`. Anything left `null`, or missing from the answer, is
+denied and handled like any other unauthorized field, via
+`authorization.directives.unauthorized.mode`.
+
+
+Example coprocessor answer for the `graphql.analysis` stage:
+
+```json
+{
+  "version": 1,
+  "control": "continue",
+  "context": {
+    "hive::authorization::required_policies": {
+      "read_profile": true
+    }
+  }
+}
+```
+
+Closes https://github.com/graphql-hive/router/issues/1134
+
+#### Add `hive.router.request_dedupe.joined_total` counter metric
+
+Adds observability for the router's inbound request deduplication (`traffic_shaping.router.dedupe`).
+
+| Metric                                      | Labels                   | Unit        | Description                                                                                     |
+| -------------------------------------------- | ------------------------- | ----------- | -------------------------------------------------------------------------------------------------- |
+| `hive.router.request_dedupe.joined_total`   | `graphql.operation.type` | `{request}` | Number of inbound requests that joined an already in-flight deduplicated request instead of executing their own |
+
+The counter increments once per client request (HTTP or WebSocket) that was coalesced into an in-flight leader request, labeled by `graphql.operation.type` (`query` or `subscription`, the only operation kinds eligible for inbound dedupe). It stays at zero when router-level dedupe is disabled, or when every request executes independently.
+
+Closes https://github.com/graphql-hive/router/issues/1469
+
+### Fixes
+
+#### Change `from_env` config fallback log lines from `warn` to `info` level
+
+These logs indicate that a config value fell back to its environment variable, its default, or errored on a missing value — none of which are actually warnings.
+
+Using `info` keeps this visible at the default log level without alarming users.
+
+Fixes https://github.com/graphql-hive/router/issues/1470
+
 ## 0.2.4 (2026-09-01)
 
 ### Fixes
