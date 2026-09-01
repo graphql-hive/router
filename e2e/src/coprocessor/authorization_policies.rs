@@ -475,3 +475,161 @@ async fn requires_authentication_on_top_of_the_granted_policy() {
 
     analysis_stage_mock.assert_async().await;
 }
+
+/// `interface SocialAccount.bio` defined with no policies in the subgraphs.
+/// `type TwitterAccount.bio` is defined with `@policy(policies: [["read_bio"]])`.
+/// `type GitHubAccount.bio` is defined with no policy.
+///
+/// The composed `interface SocialAccount.bio` is defined with a AND combo, so `@policy(policies: [["read_bio"]])`.
+#[ntex::test]
+async fn denies_interface_field_via_its_composed_policy_when_ungranted() {
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+    let mut coprocessor = TestCoprocessor::new().await;
+    let host = coprocessor.host_with_port();
+
+    let analysis_stage_mock = coprocessor
+        .mock_stage("graphql.analysis")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(granting(&[]))
+        .expect(1)
+        .create();
+
+    let router = TestRouter::builder()
+        .with_subgraphs(&subgraphs)
+        .inline_config(policy_router_config_with_jwt(&host))
+        .build()
+        .start()
+        .await;
+
+    let response = router
+        .send_graphql_request(
+            "{ me { socialAccounts { bio } } }",
+            None,
+            Some(authorization_header()),
+        )
+        .await;
+
+    insta::assert_snapshot!(response.json_body_string_pretty_stable().await, @r#"
+    {
+      "data": {
+        "me": null
+      },
+      "errors": [
+        {
+          "extensions": {
+            "affectedPath": "me.socialAccounts.bio",
+            "code": "UNAUTHORIZED_FIELD_OR_TYPE"
+          },
+          "message": "Unauthorized field or type"
+        }
+      ]
+    }
+    "#);
+
+    analysis_stage_mock.assert_async().await;
+}
+
+/// Same bare selection as above, but with `read_bio` granted: the interface
+/// field's composed policy is satisfied, so it comes back for both concrete
+/// types - including `GitHubAccount`, which never required anything itself.
+#[ntex::test]
+async fn allows_interface_field_on_every_implementor_once_the_policy_is_granted() {
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+    let mut coprocessor = TestCoprocessor::new().await;
+    let host = coprocessor.host_with_port();
+
+    let analysis_stage_mock = coprocessor
+        .mock_stage("graphql.analysis")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(granting(&["read_bio"]))
+        .expect(1)
+        .create();
+
+    let router = TestRouter::builder()
+        .with_subgraphs(&subgraphs)
+        .inline_config(policy_router_config_with_jwt(&host))
+        .build()
+        .start()
+        .await;
+
+    let response = router
+        .send_graphql_request(
+            "{ me { socialAccounts { bio } } }",
+            None,
+            Some(authorization_header()),
+        )
+        .await;
+
+    insta::assert_snapshot!(response.json_body_string_pretty_stable().await, @r#"
+    {
+      "data": {
+        "me": {
+          "socialAccounts": [
+            {
+              "bio": "Tweets about GraphQL"
+            },
+            {
+              "bio": "Ships GraphQL routers"
+            }
+          ]
+        }
+      }
+    }
+    "#);
+
+    analysis_stage_mock.assert_async().await;
+}
+
+/// Contrast with the two tests above: once the query discriminates by concrete
+/// type via `... on` fragments, each implementor is authorized against its
+/// *own* field-level policy instead of the interface's composed one.
+#[ntex::test]
+async fn fragment_scoped_interface_selection_only_denies_the_implementor_missing_its_policy() {
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+    let mut coprocessor = TestCoprocessor::new().await;
+    let host = coprocessor.host_with_port();
+
+    let analysis_stage_mock = coprocessor
+        .mock_stage("graphql.analysis")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(granting(&[]))
+        .expect(1)
+        .create();
+
+    let router = TestRouter::builder()
+        .with_subgraphs(&subgraphs)
+        .inline_config(policy_router_config_with_jwt(&host))
+        .build()
+        .start()
+        .await;
+
+    let response = router
+        .send_graphql_request(
+            "{ me { socialAccounts { ... on TwitterAccount { bio } ... on GitHubAccount { bio } } } }",
+            None,
+            Some(authorization_header()),
+        )
+        .await;
+
+    insta::assert_snapshot!(response.json_body_string_pretty_stable().await, @r#"
+    {
+      "data": {
+        "me": null
+      },
+      "errors": [
+        {
+          "extensions": {
+            "affectedPath": "me.socialAccounts.bio",
+            "code": "UNAUTHORIZED_FIELD_OR_TYPE"
+          },
+          "message": "Unauthorized field or type"
+        }
+      ]
+    }
+    "#);
+
+    analysis_stage_mock.assert_async().await;
+}
