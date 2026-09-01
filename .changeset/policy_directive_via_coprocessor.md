@@ -1,5 +1,5 @@
 ---
-hive-router: minor
+hive-router: major
 ---
 
 # Custom authorization rules with the `@policy` directive
