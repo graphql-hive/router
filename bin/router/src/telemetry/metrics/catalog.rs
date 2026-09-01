@@ -193,6 +193,7 @@ pub mod names {
         "hive.router.persisted_documents.storage.failures_total";
     pub const PERSISTED_DOCUMENTS_EXTRACT_MISSING_ID_TOTAL: &str =
         "hive.router.persisted_documents.extract.missing_id_total";
+    pub const REQUEST_DEDUPE_JOINED_TOTAL: &str = "hive.router.request_dedupe.joined_total";
     pub const COPROCESSOR_REQUESTS_TOTAL: &str = "hive.router.coprocessor.requests_total";
     pub const COPROCESSOR_DURATION: &str = "hive.router.coprocessor.duration";
     pub const COPROCESSOR_ERRORS_TOTAL: &str = "hive.router.coprocessor.errors_total";
@@ -466,6 +467,10 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
     ),
     (names::PERSISTED_DOCUMENTS_STORAGE_FAILURES_TOTAL, &[]),
     (names::PERSISTED_DOCUMENTS_EXTRACT_MISSING_ID_TOTAL, &[]),
+    (
+        names::REQUEST_DEDUPE_JOINED_TOTAL,
+        &[labels::GRAPHQL_OPERATION_TYPE],
+    ),
     (
         names::COPROCESSOR_REQUESTS_TOTAL,
         &[labels::COPROCESSOR_STAGE],

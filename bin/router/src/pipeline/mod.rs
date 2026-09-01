@@ -16,6 +16,7 @@ use crate::{
             plan::{CoerceVariablesPayload, PlanExecutionOutput, QueryPlanExecutionResult},
         },
         executors::common::{ConnectionFingerprint, InboundRequestFingerprint},
+        executors::inflight::InFlightRole,
         headers::response::{ResponseHeaderAggregator, ResponseHeaderSink},
         hooks::{
             on_graphql_analysis::{OnGraphqlAnalysisHookPayload, OnGraphqlAnalysisHookResult},
@@ -497,7 +498,7 @@ pub async fn graphql_request_handler(
         };
 
         let shared_response = if let Some(fp) = fingerprint {
-            let (shared_response, _role) = if is_subscription {
+            let (shared_response, role) = if is_subscription {
                 shared_state
                     .in_flight_requests
                     .claim(fp)
@@ -510,6 +511,13 @@ pub async fn graphql_request_handler(
                     .get_or_try_init(|| exec(None))
                     .await?
             };
+            if role == InFlightRole::Joiner {
+                shared_state
+                    .telemetry_context
+                    .metrics
+                    .request_dedupe
+                    .record_joined(normalize_payload.operation_kind.as_str());
+            }
             Arc::unwrap_or_clone(shared_response)
         } else {
             exec(None).await?

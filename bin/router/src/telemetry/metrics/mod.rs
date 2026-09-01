@@ -8,6 +8,7 @@ pub mod graphql_metrics;
 pub mod http_client_metrics;
 pub mod http_server_metrics;
 pub mod persisted_documents_metrics;
+pub mod request_dedupe_metrics;
 pub mod setup;
 pub mod subscription_metrics;
 pub mod supergraph_metrics;
@@ -24,6 +25,7 @@ use crate::telemetry::metrics::graphql_metrics::GraphQLMetrics;
 use crate::telemetry::metrics::http_client_metrics::HttpClientMetrics;
 use crate::telemetry::metrics::http_server_metrics::HttpServerMetrics;
 use crate::telemetry::metrics::persisted_documents_metrics::PersistedDocumentsMetrics;
+use crate::telemetry::metrics::request_dedupe_metrics::RequestDedupeMetrics;
 use crate::telemetry::metrics::subscription_metrics::SubscriptionMetrics;
 use crate::telemetry::metrics::supergraph_metrics::SupergraphMetrics;
 use crate::telemetry::metrics::websocket_pool_metrics::WebSocketPoolMetrics;
@@ -40,6 +42,7 @@ pub struct Metrics {
     pub coprocessor: CoprocessorMetrics,
     pub subscriptions: SubscriptionMetrics,
     pub websocket_pool: WebSocketPoolMetrics,
+    pub request_dedupe: RequestDedupeMetrics,
 }
 
 impl Metrics {
@@ -56,6 +59,7 @@ impl Metrics {
             coprocessor: CoprocessorMetrics::new(meter),
             subscriptions: SubscriptionMetrics::new(meter),
             websocket_pool: WebSocketPoolMetrics::new(meter),
+            request_dedupe: RequestDedupeMetrics::new(meter),
         }
     }
 }
