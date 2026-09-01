@@ -11,6 +11,7 @@ mod tests;
 pub mod metadata;
 pub mod user_auth_context;
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::pipeline::authorization::user_auth_context::UserAuthContext;
@@ -87,6 +88,10 @@ fn unauthorized_error() -> GraphQLError {
 struct AuthorizationChecker<'a, 'op> {
     auth_metadata: &'a AuthorizationMetadata,
     user_context: &'a UserAuthContext,
+    /// When JWT authentication is not configured there is no way for a request to
+    /// authenticate, so `@authenticated`/`@requiresScopes` are not enforced.
+    /// `@policy` is decided outside of the router and stays enforced either way.
+    enforce_jwt_rules: bool,
     cache: HashMap<StrByAddr<'op>, bool>,
 }
 
@@ -134,19 +139,98 @@ impl<'op> AuthorizationChecker<'_, 'op> {
     }
 
     fn is_rule_satisfied(&self, rule: &AuthorizationRule) -> bool {
-        match rule {
-            AuthorizationRule::Authenticated => self.user_context.is_authenticated,
-            AuthorizationRule::RequiresScopes(scopes) => {
-                self.user_context.is_authenticated
-                    && scopes.0.iter().any(|and_group| {
-                        and_group
-                            .0
-                            .iter()
-                            .all(|scope_id| self.user_context.scope_ids.contains(scope_id))
-                    })
+        if self.enforce_jwt_rules {
+            if rule.authenticated && !self.user_context.is_authenticated {
+                return false;
+            }
+
+            if let Some(scopes) = &rule.scopes {
+                let has_scopes = scopes.0.iter().any(|and_group| {
+                    and_group
+                        .0
+                        .iter()
+                        .all(|scope_id| self.user_context.scope_ids.contains(scope_id))
+                });
+
+                if !has_scopes {
+                    return false;
+                }
             }
         }
+
+        if let Some(policies) = &rule.policies {
+            let has_policies = policies.0.iter().any(|and_group| {
+                and_group
+                    .0
+                    .iter()
+                    .all(|policy_id| self.user_context.granted_policy_ids.contains(policy_id))
+            });
+
+            if !has_policies {
+                return false;
+            }
+        }
+
+        true
     }
+}
+
+/// Collects the `@policy` policies the given operation depends on.
+///
+/// The result is handed to coprocessors (through the request context) so they can
+/// decide which of them are granted, before authorization is enforced.
+pub fn collect_required_policies(
+    router_config: &HiveRouterConfig,
+    normalized_payload: &GraphQLNormalizationPayload,
+    auth_metadata: &AuthorizationMetadata,
+    schema_metadata: &SchemaMetadata,
+    variable_payload: &CoerceVariablesPayload,
+) -> Result<HashSet<String>, PipelineError> {
+    if !router_config.authorization.directives.enabled || !auth_metadata.has_policies() {
+        return Ok(HashSet::new());
+    }
+
+    let mut required: HashSet<String> = HashSet::new();
+
+    let mut collect = |rule: Option<&AuthorizationRule>| {
+        let Some(policies) = rule.and_then(|rule| rule.policies.as_ref()) else {
+            return;
+        };
+
+        for and_group in &policies.0 {
+            for policy_id in &and_group.0 {
+                required.insert(auth_metadata.policies.resolve(policy_id).to_string());
+            }
+        }
+    };
+
+    OperationFilter::new(schema_metadata).filter(
+        &normalized_payload.root_type_name,
+        &normalized_payload.operation_for_plan.selection_set,
+        variable_payload,
+        |selection| {
+            match selection {
+                Selection::Field(field) => {
+                    collect(auth_metadata.type_rules.get(field.parent_type_name));
+                    collect(
+                        auth_metadata
+                            .field_rules
+                            .get(field.parent_type_name)
+                            .and_then(|fields| fields.get(field.field_name)),
+                    );
+                    collect(auth_metadata.type_rules.get(field.output_type_name));
+                }
+                Selection::Fragment(fragment) => {
+                    collect(auth_metadata.type_rules.get(fragment.type_condition));
+                }
+            }
+
+            // This pass only observes the operation, it never filters it.
+            selection.keep()
+        },
+    )?;
+
+    Ok(required)
 }
 
 /// Main entry point for authorization enforcement.
@@ -161,12 +245,15 @@ pub fn enforce_operation_authorization(
     schema_metadata: &SchemaMetadata,
     variable_payload: &CoerceVariablesPayload,
     jwt_request_details: &JwtRequestDetails,
+    granted_policies: &HashSet<String>,
 ) -> Result<(Arc<GraphQLNormalizationPayload>, Vec<AuthorizationError>), PipelineError> {
     if !router_config.authorization.directives.enabled {
         return Ok((normalized_payload.clone(), vec![]));
     }
 
-    if !router_config.jwt.enabled {
+    // Without JWT authentication there is nothing to enforce, unless the schema also
+    // carries `@policy` requirements, which are resolved externally.
+    if !router_config.jwt.enabled && !auth_metadata.has_policies() {
         return Ok((normalized_payload.clone(), vec![]));
     }
 
@@ -182,6 +269,8 @@ pub fn enforce_operation_authorization(
         schema_metadata,
         variable_payload,
         jwt_request_details,
+        granted_policies,
+        router_config.jwt.enabled,
         reject_mode,
     )?;
 
@@ -201,22 +290,33 @@ pub fn enforce_operation_authorization(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn apply_authorization_to_operation(
     normalized_payload: &GraphQLNormalizationPayload,
     auth_metadata: &AuthorizationMetadata,
     schema_metadata: &SchemaMetadata,
     variable_payload: &CoerceVariablesPayload,
     jwt_request_details: &JwtRequestDetails,
+    // The `@policy` policies granted for this request by a coprocessor or a plugin.
+    granted_policies: &HashSet<String>,
+    // When JWT authentication is not configured there is no way for a request to
+    // authenticate, so `@authenticated`/`@requiresScopes` are not enforced.
+    // `@policy` is decided outside of the router and stays enforced either way.
+    enforce_jwt_rules: bool,
     reject_mode: bool,
 ) -> Result<AuthorizationDecision, PipelineError> {
     if auth_metadata.is_empty() {
         return Ok(AuthorizationDecision::NoChange);
     }
 
-    let user_context = UserAuthContext::from_jwt(jwt_request_details, auth_metadata);
+    let user_context = UserAuthContext::from_jwt(jwt_request_details, auth_metadata)
+        .with_granted_policies(granted_policies.iter().map(String::as_str), auth_metadata);
 
     // Early exit if authenticated users satisfy all rules
-    if user_context.is_authenticated && auth_metadata.scopes.is_empty() {
+    if user_context.is_authenticated
+        && auth_metadata.scopes.is_empty()
+        && !auth_metadata.has_policies()
+    {
         return Ok(AuthorizationDecision::NoChange);
     }
 
@@ -227,6 +327,7 @@ pub fn apply_authorization_to_operation(
     let mut checker = AuthorizationChecker {
         auth_metadata,
         user_context: &user_context,
+        enforce_jwt_rules,
         cache: HashMap::default(),
     };
 

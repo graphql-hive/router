@@ -1,14 +1,5 @@
-use std::{fmt::Display, sync::Arc};
+use std::{collections::HashSet, fmt::Display, sync::Arc};
 
-use crate::executor::{
-    execution::client_request_details::JwtRequestDetails,
-    introspection::{
-        partition::partition_operation,
-        schema::{SchemaMetadata, SchemaWithMetadata},
-    },
-    projection::plan::FieldProjectionPlan,
-    response::graphql_error::GraphQLError,
-};
 use crate::pipeline::authorization::metadata::AuthorizationMetadata;
 use crate::query_planner::{
     ast::normalization::normalize_operation,
@@ -16,10 +7,25 @@ use crate::query_planner::{
     state::supergraph_state::{OperationKind, SupergraphState},
     utils::parsing::parse_schema,
 };
+use crate::{
+    config::HiveRouterConfig,
+    executor::{
+        execution::client_request_details::JwtRequestDetails,
+        introspection::{
+            partition::partition_operation,
+            schema::{SchemaMetadata, SchemaWithMetadata},
+        },
+        projection::plan::FieldProjectionPlan,
+        response::graphql_error::GraphQLError,
+    },
+};
 use graphql_tools::parser::parse_query;
 
 use crate::pipeline::{
-    authorization::{apply_authorization_to_operation, AuthorizationDecision, AuthorizationError},
+    authorization::{
+        apply_authorization_to_operation, collect_required_policies, AuthorizationDecision,
+        AuthorizationError,
+    },
     normalize::{hash_normalized_operation, GraphQLNormalizationPayload, OperationIdentity},
 };
 
@@ -72,6 +78,65 @@ impl Display for AuthorizationDecision {
 
 impl SupergraphTestData {
     fn decide(&self, scopes: Option<Vec<&str>>, operation: &'static str) -> AuthorizationDecision {
+        self.decide_with_policies(scopes, &[], operation)
+    }
+
+    fn decide_with_policies(
+        &self,
+        scopes: Option<Vec<&str>>,
+        granted_policies: &[&str],
+        operation: &'static str,
+    ) -> AuthorizationDecision {
+        let payload = self.normalize(operation);
+
+        let jwt = if let Some(scopes) = scopes {
+            JwtRequestDetails::Authenticated {
+                token: "asd".into(),
+                prefix: None,
+                claims: Default::default(),
+                scopes: Some(scopes.iter().map(|s| s.to_string()).collect()),
+            }
+        } else {
+            JwtRequestDetails::Unauthenticated
+        };
+
+        // TODO: Fix this
+        let granted_policies: HashSet<String> =
+            granted_policies.iter().map(|s| s.to_string()).collect();
+
+        apply_authorization_to_operation(
+            &payload,
+            &self.auth_metadata,
+            &self.schema_metadata,
+            &Default::default(),
+            &jwt,
+            &granted_policies,
+            true,
+            false,
+        )
+        .expect("test schema/operation should only reference fields declared in the schema")
+    }
+
+    /// Returns the policies the operation requires, sorted for stable assertions.
+    fn required_policies(&self, operation: &'static str) -> Vec<String> {
+        let payload = self.normalize(operation);
+
+        let mut policies: Vec<String> = collect_required_policies(
+            &HiveRouterConfig::default(),
+            &payload,
+            &self.auth_metadata,
+            &self.schema_metadata,
+            &Default::default(),
+        )
+        .expect("test schema/operation should only reference fields declared in the schema")
+        .into_iter()
+        .collect();
+
+        policies.sort();
+        policies
+    }
+
+    fn normalize(&self, operation: &'static str) -> GraphQLNormalizationPayload {
         let parsed_query = parse_query(operation).unwrap();
         let doc = normalize_operation(&self.supergraph_state, &parsed_query, None).unwrap();
         let operation = doc.operation;
@@ -90,7 +155,7 @@ impl SupergraphTestData {
         let hashes =
             hash_normalized_operation(&operation_for_plan, operation_for_introspection.as_deref());
 
-        let payload = GraphQLNormalizationPayload {
+        GraphQLNormalizationPayload {
             root_type_name,
             operation_kind,
             projection_plan: Arc::new(projection_plan),
@@ -104,28 +169,7 @@ impl SupergraphTestData {
                 operation_type: OperationKind::Query,
                 client_document_hash: "".to_string(),
             },
-        };
-
-        let jwt = if let Some(scopes) = scopes {
-            JwtRequestDetails::Authenticated {
-                token: "asd".into(),
-                prefix: None,
-                claims: Default::default(),
-                scopes: Some(scopes.iter().map(|s| s.to_string()).collect()),
-            }
-        } else {
-            JwtRequestDetails::Unauthenticated
-        };
-
-        apply_authorization_to_operation(
-            &payload,
-            &self.auth_metadata,
-            &self.schema_metadata,
-            &Default::default(),
-            &jwt,
-            false,
-        )
-        .expect("test schema/operation should only reference fields declared in the schema")
+        }
     }
 }
 
@@ -149,6 +193,7 @@ static FED: &str = r#"
     @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION)
     @link(url: "https://specs.apollo.dev/requiresScopes/v0.1", for: SECURITY)
     @link(url: "https://specs.apollo.dev/authenticated/v0.1", for: SECURITY)
+    @link(url: "https://specs.apollo.dev/policy/v0.1", for: SECURITY)
   {
       query: Query
       mutation: Mutation
@@ -157,8 +202,10 @@ static FED: &str = r#"
   scalar link__Import
   enum link__Purpose { SECURITY EXECUTION }
   scalar federation__Scope
+  scalar federation__Policy
   directive @requiresScopes(scopes: [[federation__Scope!]!]!) on OBJECT | FIELD_DEFINITION | INTERFACE | SCALAR | ENUM
   directive @authenticated on OBJECT | FIELD_DEFINITION | INTERFACE | SCALAR | ENUM
+  directive @policy(policies: [[federation__Policy!]!]!) on OBJECT | FIELD_DEFINITION | INTERFACE | SCALAR | ENUM
 "#;
 
 fn build_supergraph_sdl(sdl: &str) -> String {
@@ -2343,6 +2390,526 @@ mod authenticated_directive {
             Operation: {publicPosts{id}}
             Errors:    ["Unauthorized field or type @ profile"]
             "#);
+        }
+    }
+}
+
+#[cfg(test)]
+mod policy_directive {
+    use super::*;
+
+    static POLICY_SCHEMA: &str = r#"
+        type Query {
+          publicPosts: [Post!]
+          profile: Profile @policy(policies: [["read_profile"]])
+          billing: Billing
+          audit: AuditLog @policy(policies: [["admin"], ["auditor", "compliance"]])
+          secret: String @authenticated @policy(policies: [["read_secret"]])
+          secretVault: Vault
+        }
+
+        type Mutation @policy(policies: [["admin_mutation"]]) {
+          createPost(title: String!): Post @policy(policies: [["create_post"]])
+          ping: String
+        }
+
+        type Post {
+          id: ID!
+          title: String
+          secretNotes: String @policy(policies: [["read_notes"]])
+        }
+
+        type Profile {
+          name: String
+          email: String @policy(policies: [["read_email"]])
+        }
+
+        type Billing @policy(policies: [["read_billing"]]) {
+          plan: String
+        }
+
+        type AuditLog {
+          entries: [String!]
+        }
+
+        scalar Vault @policy(policies: [["read_vault"]])
+    "#;
+
+    #[test]
+    fn denies_policy_protected_field_when_nothing_is_granted() {
+        let supergraph_data = build_supergraph_data(POLICY_SCHEMA);
+
+        let decision = supergraph_data.decide_with_policies(
+            None,
+            &[],
+            "{ publicPosts { id } profile { name } }",
+        );
+        insta::assert_snapshot!(decision, @r#"
+        [Modified]
+        Operation: {publicPosts{id}}
+        Errors:    ["Unauthorized field or type @ profile"]
+        "#);
+    }
+
+    #[test]
+    fn allows_policy_protected_field_when_policy_is_granted() {
+        let supergraph_data = build_supergraph_data(POLICY_SCHEMA);
+
+        let decision = supergraph_data.decide_with_policies(
+            None,
+            &["read_profile"],
+            "{ publicPosts { id } profile { name } }",
+        );
+        insta::assert_snapshot!(decision, @"[NoChange]");
+    }
+
+    #[test]
+    fn denies_nested_policy_protected_field_while_keeping_its_parent() {
+        let supergraph_data = build_supergraph_data(POLICY_SCHEMA);
+
+        let decision = supergraph_data.decide_with_policies(
+            None,
+            &["read_profile"],
+            "{ profile { name email } }",
+        );
+        insta::assert_snapshot!(decision, @r#"
+        [Modified]
+        Operation: {profile{name}}
+        Errors:    ["Unauthorized field or type @ profile.email"]
+        "#);
+    }
+
+    #[test]
+    fn denies_field_whose_output_type_carries_a_policy() {
+        let supergraph_data = build_supergraph_data(POLICY_SCHEMA);
+
+        let decision = supergraph_data.decide_with_policies(None, &[], "{ billing { plan } }");
+        insta::assert_snapshot!(decision, @r#"
+        [Modified]
+        Operation: <empty>
+        Errors:    ["Unauthorized field or type @ billing"]
+        "#);
+    }
+
+    #[test]
+    fn allows_field_whose_output_type_carries_a_granted_policy() {
+        let supergraph_data = build_supergraph_data(POLICY_SCHEMA);
+
+        let decision =
+            supergraph_data.decide_with_policies(None, &["read_billing"], "{ billing { plan } }");
+        insta::assert_snapshot!(decision, @"[NoChange]");
+    }
+
+    /// `@policy` declared on a custom scalar type itself (not on the field returning it) still gates access
+    #[test]
+    fn denies_field_whose_output_type_is_a_policy_protected_scalar() {
+        let supergraph_data = build_supergraph_data(POLICY_SCHEMA);
+
+        let decision = supergraph_data.decide_with_policies(None, &[], "{ secretVault }");
+        insta::assert_snapshot!(decision, @r#"
+        [Modified]
+        Operation: <empty>
+        Errors:    ["Unauthorized field or type @ secretVault"]
+        "#);
+
+        let decision =
+            supergraph_data.decide_with_policies(None, &["read_vault"], "{ secretVault }");
+        insta::assert_snapshot!(decision, @"[NoChange]");
+    }
+
+    /// `@policy`-protected field nested inside a list (`publicPosts: [Post!]`) is filtered the same way it would
+    /// be for a single object
+    #[test]
+    fn filters_policy_protected_field_through_a_list() {
+        let supergraph_data = build_supergraph_data(POLICY_SCHEMA);
+
+        let decision =
+            supergraph_data.decide_with_policies(None, &[], "{ publicPosts { id secretNotes } }");
+        insta::assert_snapshot!(decision, @r#"
+        [Modified]
+        Operation: {publicPosts{id}}
+        Errors:    ["Unauthorized field or type @ publicPosts.secretNotes"]
+        "#);
+
+        let decision = supergraph_data.decide_with_policies(
+            None,
+            &["read_notes"],
+            "{ publicPosts { id secretNotes } }",
+        );
+        insta::assert_snapshot!(decision, @"[NoChange]");
+    }
+
+    /// the response key used for the error path (and for null-bubbling) is the alias
+    #[test]
+    fn denies_aliased_policy_protected_field_under_its_alias() {
+        let supergraph_data = build_supergraph_data(POLICY_SCHEMA);
+
+        let decision =
+            supergraph_data.decide_with_policies(None, &[], "{ myProfile: profile { name } }");
+        insta::assert_snapshot!(decision, @r#"
+        [Modified]
+        Operation: <empty>
+        Errors:    ["Unauthorized field or type @ myProfile"]
+        "#);
+
+        let decision = supergraph_data.decide_with_policies(
+            None,
+            &["read_profile"],
+            "{ myProfile: profile { name } }",
+        );
+        insta::assert_snapshot!(decision, @"[NoChange]");
+    }
+
+    /// `@policy` on the `Mutation` type itself gates *every* field under it
+    #[test]
+    fn denies_every_mutation_field_when_the_mutation_type_policy_is_unmet() {
+        let supergraph_data = build_supergraph_data(POLICY_SCHEMA);
+
+        let decision = supergraph_data.decide_with_policies(
+            None,
+            &[],
+            "mutation { createPost(title: \"hi\") { id } ping }",
+        );
+        insta::assert_snapshot!(decision, @r#"
+        [Modified]
+        Operation: <empty>
+        Errors:    ["Unauthorized field or type @ createPost", "Unauthorized field or type @ ping"]
+        "#);
+    }
+
+    /// Granting the mutation-type policy alone isn't enough - `createPost`
+    /// still carries its own, separate field-level policy that must also be
+    /// satisfied, while `ping` (no field-level policy of its own) is freed up.
+    #[test]
+    fn requires_both_mutation_type_and_field_policy_for_a_gated_mutation_field() {
+        let supergraph_data = build_supergraph_data(POLICY_SCHEMA);
+
+        let decision = supergraph_data.decide_with_policies(
+            None,
+            &["admin_mutation"],
+            "mutation { createPost(title: \"hi\") { id } ping }",
+        );
+        insta::assert_snapshot!(decision, @r#"
+        [Modified]
+        Operation: mutation{ping}
+        Errors:    ["Unauthorized field or type @ createPost"]
+        "#);
+
+        let decision = supergraph_data.decide_with_policies(
+            None,
+            &["admin_mutation", "create_post"],
+            "mutation { createPost(title: \"hi\") { id } ping }",
+        );
+        insta::assert_snapshot!(decision, @"[NoChange]");
+    }
+
+    /// `[["admin"], ["auditor", "compliance"]]` is an OR of ANDs: either "admin"
+    /// alone, or both "auditor" and "compliance".
+    #[test]
+    fn treats_policy_groups_as_or_of_ands() {
+        let supergraph_data = build_supergraph_data(POLICY_SCHEMA);
+
+        let granted_admin =
+            supergraph_data.decide_with_policies(None, &["admin"], "{ audit { entries } }");
+        insta::assert_snapshot!(granted_admin, @"[NoChange]");
+
+        let granted_both = supergraph_data.decide_with_policies(
+            None,
+            &["auditor", "compliance"],
+            "{ audit { entries } }",
+        );
+        insta::assert_snapshot!(granted_both, @"[NoChange]");
+
+        let granted_partial =
+            supergraph_data.decide_with_policies(None, &["auditor"], "{ audit { entries } }");
+        insta::assert_snapshot!(granted_partial, @r#"
+        [Modified]
+        Operation: <empty>
+        Errors:    ["Unauthorized field or type @ audit"]
+        "#);
+    }
+
+    /// a field-level OR-of-ANDs combined with a type-level policy on the field's output type.
+    mod or_and {
+        use super::*;
+
+        static SCHEMA: &str = r#"
+            type Query {
+              customer: User @policy(policies: [["read_user", "internal"], ["admin"]])
+            }
+
+            type User @policy(policies: [["read_user"]]) {
+              id: ID
+            }
+        "#;
+
+        #[test]
+        fn denies_when_nothing_is_granted() {
+            let supergraph_data = build_supergraph_data(SCHEMA);
+            let decision = supergraph_data.decide_with_policies(None, &[], "{ customer { id } }");
+            insta::assert_snapshot!(decision, @r#"
+            [Modified]
+            Operation: <empty>
+            Errors:    ["Unauthorized field or type @ customer"]
+            "#);
+        }
+
+        #[test]
+        fn allows_when_the_first_and_group_plus_the_type_policy_are_granted() {
+            let supergraph_data = build_supergraph_data(SCHEMA);
+            let decision = supergraph_data.decide_with_policies(
+                None,
+                &["read_user", "internal"],
+                "{ customer { id } }",
+            );
+            insta::assert_snapshot!(decision, @"[NoChange]");
+        }
+
+        /// `read_user` alone satisfies the *type*-level policy on `User`, but
+        /// neither of the field's own OR groups (`read_user`+`internal`, or
+        /// `admin` alone) - field-level and type-level checks are independent
+        /// ANDs, so this still denies.
+        #[test]
+        fn denies_when_only_the_type_policy_is_granted() {
+            let supergraph_data = build_supergraph_data(SCHEMA);
+            let decision =
+                supergraph_data.decide_with_policies(None, &["read_user"], "{ customer { id } }");
+            insta::assert_snapshot!(decision, @r#"
+            [Modified]
+            Operation: <empty>
+            Errors:    ["Unauthorized field or type @ customer"]
+            "#);
+        }
+
+        /// The second OR group (`admin` alone) plus the type policy (`read_user`).
+        #[test]
+        fn allows_when_the_second_and_group_plus_the_type_policy_are_granted() {
+            let supergraph_data = build_supergraph_data(SCHEMA);
+            let decision = supergraph_data.decide_with_policies(
+                None,
+                &["admin", "read_user"],
+                "{ customer { id } }",
+            );
+            insta::assert_snapshot!(decision, @"[NoChange]");
+        }
+    }
+
+    /// `@policy` is independent of `@authenticated`: both must be satisfied when
+    /// they sit on the same field.
+    #[test]
+    fn requires_both_authentication_and_policy_when_combined() {
+        let supergraph_data = build_supergraph_data(POLICY_SCHEMA);
+
+        let policy_only =
+            supergraph_data.decide_with_policies(None, &["read_secret"], "{ secret }");
+        insta::assert_snapshot!(policy_only, @r#"
+        [Modified]
+        Operation: <empty>
+        Errors:    ["Unauthorized field or type @ secret"]
+        "#);
+
+        let authenticated_only =
+            supergraph_data.decide_with_policies(Some(vec![]), &[], "{ secret }");
+        insta::assert_snapshot!(authenticated_only, @r#"
+        [Modified]
+        Operation: <empty>
+        Errors:    ["Unauthorized field or type @ secret"]
+        "#);
+
+        let both =
+            supergraph_data.decide_with_policies(Some(vec![]), &["read_secret"], "{ secret }");
+        insta::assert_snapshot!(both, @"[NoChange]");
+    }
+
+    /// Unknown policies are ignored rather than granting anything.
+    #[test]
+    fn ignores_policies_that_are_not_declared_in_the_schema() {
+        let supergraph_data = build_supergraph_data(POLICY_SCHEMA);
+
+        let decision =
+            supergraph_data.decide_with_policies(None, &["not_a_policy"], "{ profile { name } }");
+        insta::assert_snapshot!(decision, @r#"
+        [Modified]
+        Operation: <empty>
+        Errors:    ["Unauthorized field or type @ profile"]
+        "#);
+    }
+
+    mod required_policies {
+        use super::*;
+
+        #[test]
+        fn collects_nothing_for_an_operation_without_policies() {
+            let supergraph_data = build_supergraph_data(POLICY_SCHEMA);
+
+            assert!(supergraph_data
+                .required_policies("{ publicPosts { id } }")
+                .is_empty());
+        }
+
+        #[test]
+        fn collects_policies_from_fields_and_output_types() {
+            let supergraph_data = build_supergraph_data(POLICY_SCHEMA);
+
+            insta::assert_debug_snapshot!(
+                supergraph_data.required_policies("{ profile { name email } billing { plan } }"),
+                @r#"
+            [
+                "read_billing",
+                "read_email",
+                "read_profile",
+            ]
+            "#
+            );
+        }
+
+        /// Every policy of an OR group is reported, the decision of which
+        /// combination is enough belongs to enforcement.
+        #[test]
+        fn collects_every_policy_of_an_or_group() {
+            let supergraph_data = build_supergraph_data(POLICY_SCHEMA);
+
+            insta::assert_debug_snapshot!(
+                supergraph_data.required_policies("{ audit { entries } }"),
+                @r#"
+            [
+                "admin",
+                "auditor",
+                "compliance",
+            ]
+            "#
+            );
+        }
+
+        /// Fields excluded by `@skip`/`@include` must not drag their policies in.
+        #[test]
+        fn ignores_fields_excluded_by_skip() {
+            let supergraph_data = build_supergraph_data(POLICY_SCHEMA);
+
+            assert!(supergraph_data
+                .required_policies("{ publicPosts { id } profile @skip(if: true) { name } }")
+                .is_empty());
+        }
+    }
+
+    mod abstract_types {
+        use super::*;
+
+        static POLICY_UNION_SCHEMA: &str = r#"
+            type Query {
+              media: Media!
+            }
+
+            union Media = Book | Movie
+
+            type Book @policy(policies: [["read_book"]]) {
+              author: String
+            }
+
+            type Movie @policy(policies: [["read_movie"]]) {
+              director: String
+            }
+        "#;
+
+        #[test]
+        fn union_members_with_policy_are_authorized_independently() {
+            let supergraph_data = build_supergraph_data(POLICY_UNION_SCHEMA);
+            let query = "
+              { media { ... on Book { author } ... on Movie { director } } }
+            ";
+
+            let decision = supergraph_data.decide_with_policies(None, &["read_book"], query);
+            insta::assert_snapshot!(decision, @r#"
+            [Modified]
+            Operation: {media{...on Book{author}}}
+            Errors:    ["Unauthorized field or type @ media"]
+            "#);
+
+            let decision = supergraph_data.decide_with_policies(None, &["read_movie"], query);
+            insta::assert_snapshot!(decision, @r#"
+            [Modified]
+            Operation: {media{...on Movie{director}}}
+            Errors:    ["Unauthorized field or type @ media"]
+            "#);
+
+            let decision =
+                supergraph_data.decide_with_policies(None, &["read_book", "read_movie"], query);
+            insta::assert_snapshot!(decision, @"[NoChange]");
+        }
+
+        /// `Book` and `Movie` both expose `title` under this response key. This is
+        /// the exact scenario that used to collapse both fragments into one
+        /// null-bubbling trie entry and wipe out an already-authorized member.
+        #[test]
+        fn shared_field_name_across_union_members_with_policy_is_authorized_independently() {
+            let supergraph_data = build_supergraph_data(
+                r#"
+                type Query {
+                  media: Media!
+                }
+
+                union Media = Book | Movie
+
+                type Book @policy(policies: [["read_book"]]) {
+                  title: String
+                }
+
+                type Movie @policy(policies: [["read_movie"]]) {
+                  title: String
+                }
+                "#,
+            );
+            let query = "
+              { media { ... on Book { title } ... on Movie { title } } }
+            ";
+
+            let decision = supergraph_data.decide_with_policies(None, &["read_book"], query);
+            insta::assert_snapshot!(decision, @r#"
+            [Modified]
+            Operation: {media{...on Book{title}}}
+            Errors:    ["Unauthorized field or type @ media"]
+            "#);
+        }
+
+        static POLICY_INTERFACE_SCHEMA: &str = r#"
+            type Query {
+              itf: Node!
+            }
+
+            interface Node {
+              id: ID!
+            }
+
+            type Post implements Node @policy(policies: [["read_post"]]) {
+              id: ID!
+              title: String
+            }
+
+            type Comment implements Node @policy(policies: [["read_comment"]]) {
+              id: ID!
+              body: String
+            }
+        "#;
+
+        /// Same independence check, through an interface's concrete-type fragments
+        /// instead of a union's members.
+        #[test]
+        fn interface_implementors_with_policy_are_authorized_independently() {
+            let supergraph_data = build_supergraph_data(POLICY_INTERFACE_SCHEMA);
+            let query = "
+              { itf { ... on Post { title } ... on Comment { body } } }
+            ";
+
+            let decision = supergraph_data.decide_with_policies(None, &["read_post"], query);
+            insta::assert_snapshot!(decision, @r#"
+            [Modified]
+            Operation: {itf{...on Post{title}}}
+            Errors:    ["Unauthorized field or type @ itf"]
+            "#);
+
+            let decision =
+                supergraph_data.decide_with_policies(None, &["read_post", "read_comment"], query);
+            insta::assert_snapshot!(decision, @"[NoChange]");
         }
     }
 }
