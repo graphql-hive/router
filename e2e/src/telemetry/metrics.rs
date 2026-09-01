@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
+use futures::{stream::FuturesUnordered, StreamExt};
+
 use crate::testkit::{
     otel::{CollectedMetrics, OtlpCollector},
     ClientResponseExt, TestRouter, TestSubgraphs,
@@ -1429,5 +1431,175 @@ async fn issue_1389_test_otlp_counter_names_have_single_total_suffix() {
     assert!(
         !metrics.has_counter(&doubled_name, &attrs),
         "OTLP counter names must not double the `_total` suffix, but found {doubled_name}"
+    );
+}
+
+/// Ensures `request_dedupe.joined_total` increments once per inbound request that joined
+/// an already in-flight deduplicated request, instead of executing its own.
+#[ntex::test]
+async fn test_otlp_request_dedupe_joined_total_counter_increments_when_requests_join_inflight() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_metrics_endpoint();
+
+    let subgraphs = TestSubgraphs::builder()
+        .with_delay(Duration::from_millis(100))
+        .build()
+        .start()
+        .await;
+
+    let router = TestRouter::builder()
+        .with_subgraphs(&subgraphs)
+        .inline_config(format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          traffic_shaping:
+            all:
+              dedupe_enabled: false
+            router:
+              dedupe:
+                enabled: true
+
+          telemetry:
+            metrics:
+              exporters:
+                - kind: otlp
+                  endpoint: {}
+                  protocol: http
+                  interval: 30ms
+                  max_export_timeout: 2s
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        ))
+        .build()
+        .start()
+        .await;
+
+    let request_count = 12;
+    let mut requests = FuturesUnordered::new();
+
+    for _ in 0..request_count {
+        requests.push(router.send_graphql_request(
+            r#"
+            {
+                topProducts {
+                    name
+                    price
+                }
+            }
+            "#,
+            None,
+            None,
+        ));
+    }
+
+    while let Some(response) = requests.next().await {
+        assert!(response.status().is_success(), "Expected 200 OK");
+    }
+
+    wait_for_metrics_export().await;
+
+    let metrics = otlp_collector.metrics_view().await;
+    let no_attrs: [(&str, &str); 0] = [];
+
+    assert!(
+        metrics.has_counter(names::REQUEST_DEDUPE_JOINED_TOTAL, &no_attrs),
+        "Expected {} to be recorded when requests join an in-flight request",
+        names::REQUEST_DEDUPE_JOINED_TOTAL
+    );
+
+    let joined_total = metrics.latest_counter(names::REQUEST_DEDUPE_JOINED_TOTAL, &no_attrs);
+    assert!(
+        joined_total > 0.0 && joined_total < request_count as f64,
+        "expected between 1 and {} joined requests, got {joined_total}",
+        request_count - 1
+    );
+}
+
+/// Ensures `request_dedupe.joined_total` is never recorded when inbound dedupe is disabled,
+/// even when identical requests are sent concurrently.
+#[ntex::test]
+async fn test_otlp_request_dedupe_joined_total_absent_when_dedupe_disabled() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_metrics_endpoint();
+
+    let subgraphs = TestSubgraphs::builder()
+        .with_delay(Duration::from_millis(100))
+        .build()
+        .start()
+        .await;
+
+    let router = TestRouter::builder()
+        .with_subgraphs(&subgraphs)
+        .inline_config(format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          traffic_shaping:
+            all:
+              dedupe_enabled: false
+
+          telemetry:
+            metrics:
+              exporters:
+                - kind: otlp
+                  endpoint: {}
+                  protocol: http
+                  interval: 30ms
+                  max_export_timeout: 2s
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        ))
+        .build()
+        .start()
+        .await;
+
+    let request_count = 12;
+    let mut requests = FuturesUnordered::new();
+
+    for _ in 0..request_count {
+        requests.push(router.send_graphql_request(
+            r#"
+            {
+                topProducts {
+                    name
+                    price
+                }
+            }
+            "#,
+            None,
+            None,
+        ));
+    }
+
+    while let Some(response) = requests.next().await {
+        assert!(response.status().is_success(), "Expected 200 OK");
+    }
+
+    wait_for_metrics_export().await;
+
+    let metrics = otlp_collector.metrics_view().await;
+    let no_attrs: [(&str, &str); 0] = [];
+
+    assert!(
+        !metrics.has_counter(names::REQUEST_DEDUPE_JOINED_TOTAL, &no_attrs),
+        "Expected {} to be absent when router-level dedupe is disabled",
+        names::REQUEST_DEDUPE_JOINED_TOTAL
     );
 }

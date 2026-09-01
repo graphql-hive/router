@@ -21,6 +21,7 @@ use tracing::{debug, error, trace, warn, Instrument};
 use crate::executor::executors::graphql_transport_ws::{
     ClientMessage, CloseCode, ConnectionInitPayload, ServerMessage, WS_SUBPROTOCOL,
 };
+use crate::executor::executors::inflight::InFlightRole;
 use crate::executor::executors::websocket_common::{
     handshake_timeout, heartbeat, parse_frame_to_text, FrameNotParsedToText, WsState,
 };
@@ -639,7 +640,7 @@ async fn handle_text_frame(
                               .get_or_try_init(|| exec(None))
                               .await
                       };
-                      let (shared_response, _role) = match result {
+                      let (shared_response, role) = match result {
                           Ok(result) => result,
                           Err(PipelineError::Client(ClientPipelineError::JwtError(err))) => {
                               let _ = sink.send(err.clone().into_server_message(&id, shared_state)).await;
@@ -649,6 +650,9 @@ async fn handle_text_frame(
                           },
                           Err(err) => return Some(err.into_server_message(&id, shared_state)),
                       };
+                      if role == InFlightRole::Joiner {
+                          shared_state.telemetry_context.metrics.request_dedupe.record_joined();
+                      }
                       Arc::unwrap_or_clone(shared_response)
                   } else {
                       match exec(None).await {
