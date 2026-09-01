@@ -408,7 +408,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     let router_config = load_config(config_path)?.into_static();
     let telemetry = telemetry::Telemetry::init_global(router_config)?;
     for warning in router_config.from_env_warnings() {
-        warn!(target: targets::CONFIG, "{warning}");
+        info!(target: targets::CONFIG, "{warning}");
     }
     let prometheus = telemetry
         .prometheus
