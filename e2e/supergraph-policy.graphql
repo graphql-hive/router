@@ -135,6 +135,7 @@ interface SocialAccount @join__type(graph: ACCOUNTS) {
   url: String! @authenticated
   handle: String!
     @requiresScopes(scopes: [["read:twitter_handle", "read:github_handle"]])
+  bio: String! @policy(policies: [["read_bio"]])
 }
 
 type TwitterAccount implements SocialAccount
@@ -143,6 +144,7 @@ type TwitterAccount implements SocialAccount
   url: String! @authenticated
   handle: String! @requiresScopes(scopes: [["read:twitter_handle"]])
   followers: Int!
+  bio: String! @policy(policies: [["read_bio"]])
 }
 
 type GitHubAccount implements SocialAccount
@@ -151,6 +153,7 @@ type GitHubAccount implements SocialAccount
   url: String! @authenticated
   handle: String! @requiresScopes(scopes: [["read:github_handle"]])
   repoCount: Int!
+  bio: String!
 }
 
 type User
