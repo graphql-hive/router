@@ -48,7 +48,8 @@ lazy_static! {
 #[allow(clippy::duplicated_attributes)] // async_graphql needs `ty` "duplicated"
 #[graphql(
     field(name = "url", ty = "String"),
-    field(name = "handle", ty = "String")
+    field(name = "handle", ty = "String"),
+    field(name = "bio", ty = "String")
 )]
 pub enum SocialAccount {
     TwitterAccount(TwitterAccount),
@@ -60,6 +61,7 @@ pub struct TwitterAccount {
     pub(crate) url: String,
     pub(crate) handle: String,
     pub(crate) followers: i32,
+    pub(crate) bio: String,
 }
 
 #[derive(SimpleObject, Clone)]
@@ -67,6 +69,7 @@ pub struct GitHubAccount {
     pub(crate) url: String,
     pub(crate) handle: String,
     pub(crate) repo_count: i32,
+    pub(crate) bio: String,
 }
 
 #[derive(SimpleObject, Clone)]
@@ -92,6 +95,7 @@ impl User {
                     self.username.as_ref().unwrap_or(&"unknown".to_string())
                 ),
                 followers: 1000,
+                bio: "Tweets about GraphQL".to_string(),
             }),
             SocialAccount::GitHubAccount(GitHubAccount {
                 url: format!(
@@ -104,6 +108,7 @@ impl User {
                     .unwrap_or(&"unknown".to_string())
                     .clone(),
                 repo_count: 42,
+                bio: "Ships GraphQL routers".to_string(),
             }),
         ]
     }
