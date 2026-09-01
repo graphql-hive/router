@@ -512,7 +512,11 @@ pub async fn graphql_request_handler(
                     .await?
             };
             if role == InFlightRole::Joiner {
-                shared_state.telemetry_context.metrics.request_dedupe.record_joined();
+                shared_state
+                    .telemetry_context
+                    .metrics
+                    .request_dedupe
+                    .record_joined(normalize_payload.operation_kind.as_str());
             }
             Arc::unwrap_or_clone(shared_response)
         } else {

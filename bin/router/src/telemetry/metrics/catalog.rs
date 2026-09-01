@@ -467,7 +467,10 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
     ),
     (names::PERSISTED_DOCUMENTS_STORAGE_FAILURES_TOTAL, &[]),
     (names::PERSISTED_DOCUMENTS_EXTRACT_MISSING_ID_TOTAL, &[]),
-    (names::REQUEST_DEDUPE_JOINED_TOTAL, &[]),
+    (
+        names::REQUEST_DEDUPE_JOINED_TOTAL,
+        &[labels::GRAPHQL_OPERATION_TYPE],
+    ),
     (
         names::COPROCESSOR_REQUESTS_TOTAL,
         &[labels::COPROCESSOR_STAGE],

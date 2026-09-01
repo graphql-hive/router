@@ -651,7 +651,11 @@ async fn handle_text_frame(
                           Err(err) => return Some(err.into_server_message(&id, shared_state)),
                       };
                       if role == InFlightRole::Joiner {
-                          shared_state.telemetry_context.metrics.request_dedupe.record_joined();
+                          shared_state
+                              .telemetry_context
+                              .metrics
+                              .request_dedupe
+                              .record_joined(normalize_payload.operation_kind.as_str());
                       }
                       Arc::unwrap_or_clone(shared_response)
                   } else {

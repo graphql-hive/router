@@ -1508,15 +1508,15 @@ async fn test_otlp_request_dedupe_joined_total_counter_increments_when_requests_
     wait_for_metrics_export().await;
 
     let metrics = otlp_collector.metrics_view().await;
-    let no_attrs: [(&str, &str); 0] = [];
+    let query_attrs = [(labels::GRAPHQL_OPERATION_TYPE, "query")];
 
     assert!(
-        metrics.has_counter(names::REQUEST_DEDUPE_JOINED_TOTAL, &no_attrs),
-        "Expected {} to be recorded when requests join an in-flight request",
+        metrics.has_counter(names::REQUEST_DEDUPE_JOINED_TOTAL, &query_attrs),
+        "Expected {} with graphql.operation.type=query to be recorded when requests join an in-flight request",
         names::REQUEST_DEDUPE_JOINED_TOTAL
     );
 
-    let joined_total = metrics.latest_counter(names::REQUEST_DEDUPE_JOINED_TOTAL, &no_attrs);
+    let joined_total = metrics.latest_counter(names::REQUEST_DEDUPE_JOINED_TOTAL, &query_attrs);
     assert!(
         joined_total > 0.0 && joined_total < request_count as f64,
         "expected between 1 and {} joined requests, got {joined_total}",
