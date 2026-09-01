@@ -1,5 +1,5 @@
 ---
-hive-router: major
+hive-router: minor
 ---
 
 # Custom authorization rules with the `@policy` directive
@@ -31,3 +31,5 @@ Example coprocessor answer for the `graphql.analysis` stage:
   }
 }
 ```
+
+Closes https://github.com/graphql-hive/router/issues/1134
