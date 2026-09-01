@@ -2405,11 +2405,18 @@ mod policy_directive {
           billing: Billing
           audit: AuditLog @policy(policies: [["admin"], ["auditor", "compliance"]])
           secret: String @authenticated @policy(policies: [["read_secret"]])
+          secretVault: Vault
+        }
+
+        type Mutation @policy(policies: [["admin_mutation"]]) {
+          createPost(title: String!): Post @policy(policies: [["create_post"]])
+          ping: String
         }
 
         type Post {
           id: ID!
           title: String
+          secretNotes: String @policy(policies: [["read_notes"]])
         }
 
         type Profile {
@@ -2424,6 +2431,8 @@ mod policy_directive {
         type AuditLog {
           entries: [String!]
         }
+
+        scalar Vault @policy(policies: [["read_vault"]])
     "#;
 
     #[test]
@@ -2488,6 +2497,109 @@ mod policy_directive {
 
         let decision =
             supergraph_data.decide_with_policies(None, &["read_billing"], "{ billing { plan } }");
+        insta::assert_snapshot!(decision, @"[NoChange]");
+    }
+
+    /// `@policy` declared on a custom scalar type itself (not on the field returning it) still gates access
+    #[test]
+    fn denies_field_whose_output_type_is_a_policy_protected_scalar() {
+        let supergraph_data = build_supergraph_data(POLICY_SCHEMA);
+
+        let decision = supergraph_data.decide_with_policies(None, &[], "{ secretVault }");
+        insta::assert_snapshot!(decision, @r#"
+        [Modified]
+        Operation: <empty>
+        Errors:    ["Unauthorized field or type @ secretVault"]
+        "#);
+
+        let decision =
+            supergraph_data.decide_with_policies(None, &["read_vault"], "{ secretVault }");
+        insta::assert_snapshot!(decision, @"[NoChange]");
+    }
+
+    /// `@policy`-protected field nested inside a list (`publicPosts: [Post!]`) is filtered the same way it would
+    /// be for a single object
+    #[test]
+    fn filters_policy_protected_field_through_a_list() {
+        let supergraph_data = build_supergraph_data(POLICY_SCHEMA);
+
+        let decision =
+            supergraph_data.decide_with_policies(None, &[], "{ publicPosts { id secretNotes } }");
+        insta::assert_snapshot!(decision, @r#"
+        [Modified]
+        Operation: {publicPosts{id}}
+        Errors:    ["Unauthorized field or type @ publicPosts.secretNotes"]
+        "#);
+
+        let decision = supergraph_data.decide_with_policies(
+            None,
+            &["read_notes"],
+            "{ publicPosts { id secretNotes } }",
+        );
+        insta::assert_snapshot!(decision, @"[NoChange]");
+    }
+
+    /// the response key used for the error path (and for null-bubbling) is the alias
+    #[test]
+    fn denies_aliased_policy_protected_field_under_its_alias() {
+        let supergraph_data = build_supergraph_data(POLICY_SCHEMA);
+
+        let decision =
+            supergraph_data.decide_with_policies(None, &[], "{ myProfile: profile { name } }");
+        insta::assert_snapshot!(decision, @r#"
+        [Modified]
+        Operation: <empty>
+        Errors:    ["Unauthorized field or type @ myProfile"]
+        "#);
+
+        let decision = supergraph_data.decide_with_policies(
+            None,
+            &["read_profile"],
+            "{ myProfile: profile { name } }",
+        );
+        insta::assert_snapshot!(decision, @"[NoChange]");
+    }
+
+    /// `@policy` on the `Mutation` type itself gates *every* field under it
+    #[test]
+    fn denies_every_mutation_field_when_the_mutation_type_policy_is_unmet() {
+        let supergraph_data = build_supergraph_data(POLICY_SCHEMA);
+
+        let decision = supergraph_data.decide_with_policies(
+            None,
+            &[],
+            "mutation { createPost(title: \"hi\") { id } ping }",
+        );
+        insta::assert_snapshot!(decision, @r#"
+        [Modified]
+        Operation: <empty>
+        Errors:    ["Unauthorized field or type @ createPost", "Unauthorized field or type @ ping"]
+        "#);
+    }
+
+    /// Granting the mutation-type policy alone isn't enough - `createPost`
+    /// still carries its own, separate field-level policy that must also be
+    /// satisfied, while `ping` (no field-level policy of its own) is freed up.
+    #[test]
+    fn requires_both_mutation_type_and_field_policy_for_a_gated_mutation_field() {
+        let supergraph_data = build_supergraph_data(POLICY_SCHEMA);
+
+        let decision = supergraph_data.decide_with_policies(
+            None,
+            &["admin_mutation"],
+            "mutation { createPost(title: \"hi\") { id } ping }",
+        );
+        insta::assert_snapshot!(decision, @r#"
+        [Modified]
+        Operation: mutation{ping}
+        Errors:    ["Unauthorized field or type @ createPost"]
+        "#);
+
+        let decision = supergraph_data.decide_with_policies(
+            None,
+            &["admin_mutation", "create_post"],
+            "mutation { createPost(title: \"hi\") { id } ping }",
+        );
         insta::assert_snapshot!(decision, @"[NoChange]");
     }
 
