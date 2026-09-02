@@ -1,6 +1,9 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::config::traffic_shaping::{
+    CompressionAlgorithm, TrafficShapingSubgraphRequestCompressionConfig,
+};
 use crate::executor::executors::dedupe::unique_leader_fingerprint;
 use crate::executor::executors::inflight::InFlightRole;
 use crate::executor::executors::map::InflightRequestsMap;
@@ -15,6 +18,7 @@ use crate::executor::plugin_context::PluginRequestState;
 use crate::executor::plugin_trait::{EndControlFlow, StartControlFlow};
 use crate::executor::plugins::hooks;
 use crate::executor::response::subgraph_response::SubgraphResponse;
+use crate::http_utils::compression;
 use crate::query_planner::planner::plan_nodes::CustomScalarPaths;
 use crate::telemetry::logging::targets;
 use crate::telemetry::metrics::catalog::values::GraphQLResponseStatus;
@@ -58,6 +62,7 @@ pub struct HTTPSubgraphExecutor {
     pub in_flight_requests: InflightRequestsMap,
     pub telemetry_context: Arc<TelemetryContext>,
     pub subgraph_buffer_capacity: usize,
+    pub compression: TrafficShapingSubgraphRequestCompressionConfig,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
@@ -167,6 +172,7 @@ impl HTTPSubgraphExecutor {
         in_flight_requests: InflightRequestsMap,
         telemetry_context: Arc<TelemetryContext>,
         subgraph_buffer_capacity: usize,
+        compression: TrafficShapingSubgraphRequestCompressionConfig,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -176,6 +182,13 @@ impl HTTPSubgraphExecutor {
         header_map.insert(
             http::header::CONNECTION,
             HeaderValue::from_static("keep-alive"),
+        );
+
+        // Always send the algorithms we can decompress, regardless of whether outbound
+        // request compression is enabled
+        header_map.insert(
+            http::header::ACCEPT_ENCODING,
+            HeaderValue::from_static("gzip, deflate, br, zstd"),
         );
 
         Self {
@@ -188,6 +201,7 @@ impl HTTPSubgraphExecutor {
             in_flight_requests,
             telemetry_context,
             subgraph_buffer_capacity,
+            compression,
         }
     }
 }
@@ -201,6 +215,7 @@ pub struct SendRequestOpts<'a> {
     pub headers: HeaderMap,
     pub timeout: Option<Duration>,
     pub telemetry_context: &'a Arc<TelemetryContext>,
+    pub compression: TrafficShapingSubgraphRequestCompressionConfig,
 }
 
 async fn send_request<'a>(
@@ -212,10 +227,29 @@ async fn send_request<'a>(
         subgraph_name,
         method,
         body,
-        headers,
+        mut headers,
         timeout,
         telemetry_context,
+        compression,
     } = opts;
+
+    let body = if compression.enabled {
+        match compression::compress(&body, compression.algorithm) {
+            Some(compressed) => {
+                headers.insert(
+                    http::header::CONTENT_ENCODING,
+                    HeaderValue::from_static(compression.algorithm.token()),
+                );
+                compressed
+            }
+            // compression is best-effort: if it fails, send the original body uncompressed
+            // rather than failing the whole subgraph request over it.
+            None => body,
+        }
+    } else {
+        body
+    };
+
     let request_body_size = body.len() as u64;
 
     let mut req = hyper::Request::builder()
@@ -271,6 +305,28 @@ async fn send_request<'a>(
                     parts.headers.into(),
                 ));
             }
+        };
+
+        let body = match parts.headers.get(http::header::CONTENT_ENCODING) {
+            Some(content_encoding) => {
+                let algorithm = content_encoding
+                    .to_str()
+                    .ok()
+                    .and_then(CompressionAlgorithm::from_token);
+                let decompressed =
+                    algorithm.and_then(|algorithm| compression::decompress(&body, algorithm));
+                match decompressed {
+                    Some(decompressed) => Bytes::from(decompressed),
+                    None => {
+                        return Err(SubgraphExecutorError::ResponseDecompressionFailure(
+                            subgraph_name.to_string(),
+                            content_encoding.to_str().unwrap_or("<invalid>").to_string(),
+                            parts.headers.into(),
+                        ));
+                    }
+                }
+            }
+            None => body,
         };
 
         if body.is_empty() {
@@ -392,6 +448,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                     headers: execution_request.headers,
                     timeout,
                     telemetry_context: &self.telemetry_context,
+                    compression: self.compression,
                 };
 
                 if deduplicate_request {

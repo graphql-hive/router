@@ -18,8 +18,8 @@ use tracing::error;
 
 use crate::{
     config::traffic_shaping::{
-        BrotliCompressionConfig, ResponseCompressionAlgorithmConfig,
-        TrafficShapingRouterCompressionConfig, ZstdCompressionConfig,
+        BrotliCompressionConfig, CompressionAlgorithmConfig, TrafficShapingRouterCompressionConfig,
+        ZstdCompressionConfig,
     },
     executor::{execution::plan::FailedExecutionResult, response::graphql_error::GraphQLError},
     http_utils::headers::append_vary,
@@ -101,15 +101,15 @@ where
         }
 
         let response = match algorithm {
-            ResponseCompressionAlgorithmConfig::Gzip => {
+            CompressionAlgorithmConfig::Gzip => {
                 response.map_body(|head, body| Encoder::response(ContentEncoding::Gzip, head, body))
             }
-            ResponseCompressionAlgorithmConfig::Deflate => response
+            CompressionAlgorithmConfig::Deflate => response
                 .map_body(|head, body| Encoder::response(ContentEncoding::Deflate, head, body)),
-            ResponseCompressionAlgorithmConfig::Br(brotli) => {
+            CompressionAlgorithmConfig::Br(brotli) => {
                 compress_full_body(response, "br", brotli_compressor(*brotli)).await
             }
-            ResponseCompressionAlgorithmConfig::Zstd(zstd) => {
+            CompressionAlgorithmConfig::Zstd(zstd) => {
                 compress_full_body(response, "zstd", zstd_compressor(*zstd)).await
             }
         };
@@ -121,8 +121,8 @@ where
 /// Picks the algorithm from `algorithms` that best matches the client's `Accept-Encoding` preference
 fn negotiate<'cfg>(
     accept_encoding: Option<&HeaderValue>,
-    algorithms: &'cfg [ResponseCompressionAlgorithmConfig],
-) -> Option<&'cfg ResponseCompressionAlgorithmConfig> {
+    algorithms: &'cfg [CompressionAlgorithmConfig],
+) -> Option<&'cfg CompressionAlgorithmConfig> {
     let header = accept_encoding?.to_str().ok()?;
 
     // Keep `q=0` entries in here (rather than dropping them) - per RFC 9110 §12.5.3, `*`

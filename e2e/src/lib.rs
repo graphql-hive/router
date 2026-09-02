@@ -81,6 +81,8 @@ mod router_timeout;
 #[cfg(test)]
 mod storage;
 #[cfg(test)]
+mod subgraph_compression;
+#[cfg(test)]
 mod subscriptions;
 #[cfg(test)]
 mod supergraph;
