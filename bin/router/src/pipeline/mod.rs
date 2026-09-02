@@ -846,31 +846,9 @@ pub async fn execute_pipeline<'exec>(
         }
     }
 
-    // Enforcement runs after the analysis stage so that `@policy` decisions taken by a
-    // coprocessor are already available in the request context.
-    let granted_policies = request_context
-        .read_lock()?
-        .authorization
-        .required_policies
-        .clone()
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|(policy, granted)| granted.unwrap_or(false).then_some(policy))
-        .collect();
-
-    let (mut normalize_payload, authorization_errors) = enforce_operation_authorization(
-        shared_state.router_config,
-        &normalize_payload,
-        &supergraph.runtime.authorization,
-        &supergraph.snapshot.metadata,
-        &variable_payload,
-        &client_request_details.jwt,
-        &granted_policies,
-    )?;
-
     let client_request_details = Arc::new(client_request_details.freeze());
 
-    let mut plugin_graphql_errors = Vec::new();
+    let mut plugin_filter_output = None;
     if let Some(plugin_req_state) = &plugin_req_state {
         let mut analysis_payload = OnGraphqlAnalysisHookPayload::new(
             &plugin_req_state.router_http_request,
@@ -894,7 +872,33 @@ pub async fn execute_pipeline<'exec>(
             }
         }
 
-        let filter_output = analysis_payload.run_operation_filters()?;
+        plugin_filter_output = Some(analysis_payload.run_operation_filters()?);
+    }
+
+    // Authorization enforcement runs after the analysis stage so that `@policy` decisions taken by a
+    // coprocessor _or_ a plugin are already available in the request context
+    let granted_policies = request_context
+        .read_lock()?
+        .authorization
+        .required_policies
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|(policy, granted)| granted.unwrap_or(false).then_some(policy))
+        .collect();
+
+    let (mut normalize_payload, authorization_errors) = enforce_operation_authorization(
+        shared_state.router_config,
+        &normalize_payload,
+        &supergraph.runtime.authorization,
+        &supergraph.snapshot.metadata,
+        &variable_payload,
+        &client_request_details.jwt,
+        &granted_policies,
+    )?;
+
+    let mut plugin_graphql_errors = Vec::new();
+    if let Some(filter_output) = plugin_filter_output {
         if filter_output.has_changes() {
             (normalize_payload, plugin_graphql_errors) = filter_output.apply_to(&normalize_payload);
         }

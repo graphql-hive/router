@@ -23,7 +23,8 @@ members = [
   "replace_schema",
   "field_nulling",
   "custom_logger_correlation",
-  "dedupe_partition"
+  "dedupe_partition",
+  "custom_policy"
 ]
 
 [workspace.dependencies]
