@@ -1524,6 +1524,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "custom-policy-plugin-example"
+version = "0.0.1"
+dependencies = [
+ "e2e",
+ "hive-router",
+ "http",
+]
+
+[[package]]
 name = "darling"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2689,7 +2698,7 @@ dependencies = [
  "rand 0.10.2",
  "recloser",
  "regex-automata",
- "regress",
+ "regress 0.12.0",
  "reqwest 0.12.28",
  "reqwest-middleware",
  "reqwest-retry",
@@ -2709,7 +2718,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router"
-version = "0.2.2"
+version = "0.2.5"
 dependencies = [
  "ahash",
  "anyhow",
@@ -4168,9 +4177,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-error"
-version = "2.4.0"
+version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "229806c94be0c192bde46633bd044d11e3d7f3e5c5ee32aa3f430c918e99f746"
+checksum = "37be4fd659180da86ea43a9c167a1e726ee43db154a346eefddea89261b4d4a5"
 dependencies = [
  "backtrace",
  "foldhash 0.2.0",
@@ -4270,9 +4279,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-net"
-version = "3.14.1"
+version = "3.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ace516cc45d412d33165041edcb19048119589498f56fba69baf71ceba920af1"
+checksum = "6a7f6c9b66b79ea7b81d95bed1de8299343a7d7217ceb2a1488e260b728ba76d"
 dependencies = [
  "bitflags 2.13.0",
  "cfg-if",
@@ -4324,9 +4333,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-rt"
-version = "3.16.1"
+version = "3.17.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3692fad48ebe4431289a51807dc08bd3205369ce9f1ab10d300fe12cccefd5c5"
+checksum = "aff50c4365282675402f680bc01d9d3b2f190cc7687947d251a8c31b80d6d11d"
 dependencies = [
  "async-channel",
  "async-task",
@@ -4339,8 +4348,8 @@ dependencies = [
  "futures-timer",
  "libc",
  "log",
+ "nix 0.31.3",
  "ntex-error",
- "ntex-service",
  "oneshot",
  "parking_lot",
  "scoped-tls",
@@ -4351,9 +4360,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-server"
-version = "3.10.4"
+version = "3.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f70eb9db7d9495585b82d8b734037eeeaee2778ab83c6a8ed8118df97b046837"
+checksum = "a0f3a1c0e5cd9c04d158bc954b3ed43ba3a2e1b19174112876e2af7f47851171"
 dependencies = [
  "async-channel",
  "atomic-waker",
@@ -5826,6 +5835,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "158a764437582235e3501f683b93a0a6f8d825d04a789dbe5ed30b8799b8908a"
 dependencies = [
  "hashbrown 0.16.1",
+ "memchr",
+]
+
+[[package]]
+name = "regress"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32eef8b209c3c1c15dbad02c1f30f9539f00dc7253e0cbcdaae442a50a09d7c1"
+dependencies = [
  "memchr",
 ]
 
@@ -7837,7 +7855,7 @@ dependencies = [
  "log",
  "proc-macro2",
  "quote",
- "regress",
+ "regress 0.11.1",
  "schemars 0.8.22",
  "semver",
  "serde",
