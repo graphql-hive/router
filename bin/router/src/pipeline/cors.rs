@@ -1,10 +1,12 @@
-use crate::config::cors::{CORSConfig, CORSPolicyConfig};
+use crate::{
+    config::cors::{CORSConfig, CORSPolicyConfig},
+    http_utils::headers::append_vary,
+};
 use http::{header, StatusCode};
 use ntex::{
     http::{header::HeaderValue, HeaderMap, Method},
     web::{self, HttpRequest},
 };
-// use regex::Regex;
 use regex_automata::{
     meta::{BuildError, Regex},
     util::syntax::Config as SyntaxConfig,
@@ -269,35 +271,6 @@ fn merge_preflight_headers(
     let mut out = global.clone();
     out.extend(overrides.iter().map(|(k, v)| (k.clone(), v.clone())));
     out
-}
-
-fn append_vary(headers: &mut HeaderMap, token: &str) {
-    if let Some(existing) = headers.get(header::VARY).and_then(|v| v.to_str().ok()) {
-        if existing
-            .split(',')
-            .map(|s| s.trim())
-            .any(|t| t.eq_ignore_ascii_case(token))
-        {
-            // already present
-            return;
-        }
-
-        let new_header_value = if existing.is_empty() {
-            HeaderValue::from_str(token)
-        } else {
-            HeaderValue::from_str(&format!("{}, {}", existing, token))
-        };
-
-        if let Ok(v) = new_header_value {
-            headers.insert(header::VARY, v);
-        }
-
-        return;
-    }
-
-    if let Ok(v) = HeaderValue::from_str(token) {
-        headers.insert(header::VARY, v);
-    }
 }
 
 #[cfg(test)]

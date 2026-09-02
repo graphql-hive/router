@@ -13,6 +13,8 @@ mod cache_control;
 #[cfg(test)]
 mod circuit_breaker;
 #[cfg(test)]
+mod compression;
+#[cfg(test)]
 mod conditional_directives;
 #[cfg(test)]
 mod coprocessor;

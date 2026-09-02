@@ -51,6 +51,7 @@ use crate::{
         },
         request_identifiers::RequestIdentifiersService,
         request_summary::RequestSummaryService,
+        response_compression::ResponseCompressionService,
         timeout::handle_timeout,
         usage_reporting::HiveUsageReportingBackgroundTasks,
         validation::{
@@ -485,11 +486,13 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     let graphql_path = graphql_path.to_string();
     let long_lived_client_limit_service =
         LongLivedClientLimitService::new(shared_state.router_config);
+    let response_compression_service = ResponseCompressionService::new(shared_state.router_config);
 
     let mut server = web::HttpServer::new(async move || {
         let landing_page_path = graphql_path.clone();
         let prometheus = prometheus.clone();
         let long_lived_client_limit_service = long_lived_client_limit_service.clone();
+        let response_compression_service = response_compression_service.clone();
         let paths_for_plugin = paths.clone();
         web::App::new()
             .middleware(long_lived_client_limit_service)
@@ -499,6 +502,10 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
             ))
             .middleware(RequestSummaryService::new(&graphql_path))
             .middleware(RequestIdentifiersService)
+            // last: the outermost layer, so it's the final thing touching the response body
+            // before it reaches the socket - everything above still sees the real,
+            // uncompressed size/content (RequestSummaryService's logged size included).
+            .middleware(response_compression_service)
             .state(shared_state.clone())
             .state(schema_state.clone())
             .state(shared_state.telemetry_context.clone())

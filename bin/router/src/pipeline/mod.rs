@@ -1,4 +1,5 @@
 use crate::http_utils::body::read_body_stream;
+use crate::pipeline::request_decompression::negotiate_request_encoding;
 use crate::query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
@@ -105,9 +106,11 @@ pub mod parser;
 pub mod persisted_documents;
 pub mod progressive_override;
 pub mod query_plan;
+pub mod request_decompression;
 pub mod request_extensions;
 pub mod request_identifiers;
 pub mod request_summary;
+pub mod response_compression;
 pub mod sse;
 pub mod timeout;
 pub(crate) mod trie;
@@ -176,6 +179,19 @@ pub async fn graphql_request_handler(
 
         perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
 
+        let content_encoding = match negotiate_request_encoding(
+            req.headers(),
+            &shared_state.router_config.traffic_shaping.router.compression.request,
+        ) {
+            Ok(content_encoding) => content_encoding,
+            Err(err) => {
+                // drain a small amount of the body so the connection can be closed
+                // cleanly instead of being reset (see `read_body_stream`)
+                drain_body_stream(&mut body_stream).await;
+                return Err(err.into());
+            }
+        };
+
         let body_bytes = read_body_stream(
             req,
             body_stream,
@@ -184,6 +200,7 @@ pub async fn graphql_request_handler(
                 .limits
                 .max_request_body_size
                 .to_bytes() as usize,
+            content_encoding,
         )
         .await?;
 

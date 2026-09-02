@@ -51,6 +51,7 @@ pub type PipelineErrorAdditionalHeaders = Vec<(HeaderName, HeaderValue)>;
 /// unsupported transport, etc).
 /// Their `Display` message is safe to return to the client as-is because it's derived only from client-controlled data.
 #[derive(Debug, thiserror::Error, IntoStaticStr)]
+#[non_exhaustive]
 pub enum ClientPipelineError {
     #[error("Unsupported HTTP method: {0}")]
     #[strum(serialize = "METHOD_NOT_ALLOWED")]
@@ -67,6 +68,10 @@ pub enum ClientPipelineError {
     #[error("Content-Type header is not supported")]
     #[strum(serialize = "UNSUPPORTED_CONTENT_TYPE")]
     UnsupportedContentType,
+
+    #[error("Content-Encoding '{0}' is not supported")]
+    #[strum(serialize = "UNSUPPORTED_CONTENT_ENCODING")]
+    UnsupportedContentEncoding(String),
 
     #[error("Request headers exceed the maximum allowed size")]
     #[strum(serialize = "REQUEST_HEADER_FIELDS_TOO_LARGE")]
@@ -174,6 +179,7 @@ pub enum ClientPipelineError {
 /// must never reach the client - only the generic message from `graphql_error_message()`
 /// does. The real message is still logged for debugging purposes.
 #[derive(Debug, thiserror::Error, IntoStaticStr)]
+#[non_exhaustive]
 pub enum InternalPipelineError {
     #[error("Failed to produce a plan: {0}")]
     #[strum(serialize = "QUERY_PLAN_BUILD_FAILED")]
@@ -233,6 +239,10 @@ pub enum InternalPipelineError {
     #[error("Supergraph runtime error")]
     #[strum(serialize = "SUPERGRAPH_RUNTIME_ERROR")]
     RouterSupergraphRuntimeError(RouterSupergraphRuntimeError),
+
+    #[error("Failed to read response body while compressing it: {0}")]
+    #[strum(serialize = "RESPONSE_COMPRESSION_FAILED")]
+    ResponseCompressionFailed(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -399,6 +409,7 @@ impl ClientPipelineError {
             (Self::AuthorizationFailed(_), _) => StatusCode::FORBIDDEN,
             (Self::MissingContentTypeHeader, _) => StatusCode::NOT_ACCEPTABLE,
             (Self::UnsupportedContentType, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            (Self::UnsupportedContentEncoding(_), _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::RequestHeadersTooLarge, _) => StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE,
             (Self::CsrfPreventionFailed, _) => StatusCode::FORBIDDEN,
             (Self::JwtError(err), _) => err.status_code(),

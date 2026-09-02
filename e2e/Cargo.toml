@@ -49,3 +49,8 @@ gag = "1.0.0"
 # Storage testing
 s3s = "0.13"
 s3s-fs = "0.13"
+
+# Compression test fixtures (gzip/deflate/brotli/zstd), versions match bin/router where applicable
+flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] }
+brotli = "8.0.3"
+zstd = "0.13.3"

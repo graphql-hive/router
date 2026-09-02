@@ -20,6 +20,11 @@ pub const HOP_BY_HOP_HEADERS: &[&str] = &[
     "proxy-connection",
     "host",
     "content-length",
+    // The router decompresses client request bodies before subgraph fetches (and, symmetrically,
+    // would decompress subgraph responses before returning them to the client). Forwarding the
+    // original `content-encoding` would describe a body that no longer matches it, causing the
+    // receiving side to fail decompressing already-plaintext bytes.
+    "content-encoding",
 ];
 
 /// Headers that must never be comma-joined. If multiple values exist, they
