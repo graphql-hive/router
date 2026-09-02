@@ -1,4 +1,10 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.44 (2026-09-02)
+
+### Features
+
+- Expose `computeCacheKey` fn
+
 ## 0.0.43 (2026-07-26)
 
 ### Fixes
