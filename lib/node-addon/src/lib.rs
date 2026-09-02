@@ -60,7 +60,7 @@ impl QueryPlanner {
     }
 
     #[napi]
-    pub fn compute_cache_key<'a>(
+    pub fn compute_cache_key(
         &self,
         query: String,
         operation_name: Option<String>,
