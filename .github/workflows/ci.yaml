@@ -97,9 +97,9 @@ jobs:
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
         with:
-          cache-key: release
+          cache-key: debug
       - name: build
-        run: cargo build --release
+        run: cargo build
 
   fmt:
     name: check / fmt
