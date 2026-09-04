@@ -8,7 +8,7 @@
     "start:test-router": "cd .. && SUPERGRAPH_FILE_PATH=audits/graphql-over-http.supergraph.graphql cargo router",
     "test:graphql-over-http": "node --test graphql-over-http.test.ts",
     "test-junit:graphql-over-http": "node --test --test-reporter=junit --test-reporter-destination=\"./reports/graphql-over-http.xml\" graphql-over-http.test.ts",
-    "ci:test:graphql-over-http": "start-server-and-test start:test-router http://localhost:4000 test-junit:graphql-over-http"
+    "ci:test:graphql-over-http": "WAIT_ON_TIMEOUT=600000 start-server-and-test start:test-router http://localhost:4000 test-junit:graphql-over-http"
   },
   "devDependencies": {
     "@graphql-hive/federation-gateway-audit": "0.0.3",
