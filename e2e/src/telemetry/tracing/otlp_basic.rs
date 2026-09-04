@@ -775,7 +775,7 @@ async fn test_otlp_cache_hits() {
 
     // Wait for both traces to have all expected spans
     let all_traces = otlp_collector
-        .wait_for_traces_with_span(2, "graphql.validate")
+        .wait_for_traces_with_span(2, "graphql.plan")
         .await;
     let first_trace = all_traces.first().unwrap();
     let second_trace = all_traces.get(1).unwrap();

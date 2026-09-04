@@ -108,8 +108,10 @@ mod http_callback_e2e_tests {
                 .send_graphql_request(
                     r#"
                     subscription {
-                        reviewAdded(
-                            # emitted messages do not count as heartbeats
+                        reviewAddedLooping(
+                            # emitted messages do not count as heartbeats. looping (rather than the
+                            # finite `reviewAdded`) keeps events coming past the heartbeat deadline,
+                            # so the stream only ends via the timeout, never by running out of data.
                             intervalInMs: 300
                         ) {
                             id
@@ -134,7 +136,7 @@ mod http_callback_e2e_tests {
         // emitted at least one event
         assert!(
             body.contains(
-                r#"data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}"#
+                r#"data: {"data":{"reviewAddedLooping":{"id":"1","product":{"name":"Table"}}}}"#
             ),
             "Expected at least one emitted event, got: {}",
             body
