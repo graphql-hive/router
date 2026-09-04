@@ -132,6 +132,8 @@ impl JwksSource {
                     .send()
                     .await
                     .map_err(JwksSourceError::RemoteJwksNetworkError)?
+                    .error_for_status()
+                    .map_err(JwksSourceError::RemoteJwksNetworkError)?
                     .text()
                     .await
                     .map_err(JwksSourceError::RemoteJwksNetworkError)?;
@@ -269,6 +271,30 @@ mod tests {
             .load_and_store_jwks()
             .await
             .expect("jwks should load");
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn remote_jwks_error_status_is_reported_as_network_error() {
+        crate::init_rustls_crypto_provider();
+        let mut server = mockito::Server::new_async().await;
+
+        let mock = server
+            .mock("GET", "/jwks.json")
+            .expect(1)
+            .with_status(401)
+            .with_body("unauthorized")
+            .create_async()
+            .await;
+
+        let source = remote_source(format!("{}/jwks.json", server.url()), HeaderMap::new());
+        let err = source
+            .load_and_store_jwks()
+            .await
+            .expect_err("401 response should not be parsed as jwks");
+
+        assert!(matches!(err, JwksSourceError::RemoteJwksNetworkError(_)));
 
         mock.assert_async().await;
     }
