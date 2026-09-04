@@ -108,9 +108,14 @@ pub struct CoprocessorHookConfig<I: Default> {
     pub include: I,
 }
 
+impl<I: Default> CoprocessorHookConfig<I> {
+    pub fn new(condition: Option<ValueOrExpression<bool>>, include: I) -> Self {
+        Self { condition, include }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
-#[non_exhaustive]
 pub struct CoprocessorRouterRequestIncludeConfig {
     #[serde(default)]
     /// Include the inbound HTTP request body.
@@ -136,7 +141,6 @@ pub struct CoprocessorRouterRequestIncludeConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
-#[non_exhaustive]
 pub struct CoprocessorRouterResponseIncludeConfig {
     #[serde(default)]
     /// Include outbound HTTP response body.
@@ -159,7 +163,6 @@ pub struct CoprocessorRouterResponseIncludeConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
-#[non_exhaustive]
 pub struct CoprocessorGraphqlRequestIncludeConfig {
     #[serde(default)]
     /// Include GraphQL request body fields.
@@ -190,7 +193,6 @@ pub struct CoprocessorGraphqlRequestIncludeConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
-#[non_exhaustive]
 pub struct CoprocessorGraphqlResponseIncludeConfig {
     #[serde(default)]
     /// Include GraphQL response body.

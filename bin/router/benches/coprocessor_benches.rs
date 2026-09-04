@@ -137,21 +137,21 @@ fn make_graphql_http_response(
 }
 
 fn bench_router_request_stage(c: &mut Criterion) {
-    let minimal_stage = RouterRequestStage::from_config(&CoprocessorHookConfig {
-        condition: None,
-        include: CoprocessorRouterRequestIncludeConfig::default(),
-    })
+    let minimal_stage = RouterRequestStage::from_config(&CoprocessorHookConfig::new(
+        None,
+        CoprocessorRouterRequestIncludeConfig::default(),
+    ))
     .expect("router.request stage should compile");
-    let full_stage = RouterRequestStage::from_config(&CoprocessorHookConfig {
-        condition: None,
-        include: CoprocessorRouterRequestIncludeConfig {
+    let full_stage = RouterRequestStage::from_config(&CoprocessorHookConfig::new(
+        None,
+        CoprocessorRouterRequestIncludeConfig {
             body: true,
             context: ContextSelection::all(),
             headers: true,
             method: true,
             path: true,
         },
-    })
+    ))
     .expect("router.request stage should compile");
 
     let mut group = c.benchmark_group("coprocessor/router.request");
@@ -242,21 +242,19 @@ fn bench_router_request_stage(c: &mut Criterion) {
 }
 
 fn bench_router_response_stage(c: &mut Criterion) {
-    let minimal_stage = RouterResponseStage::from_config(&CoprocessorHookConfig {
-        condition: None,
-        include: Default::default(),
-    })
-    .expect("router.response stage should compile");
+    let minimal_stage =
+        RouterResponseStage::from_config(&CoprocessorHookConfig::new(None, Default::default()))
+            .expect("router.response stage should compile");
 
-    let full_stage = RouterResponseStage::from_config(&CoprocessorHookConfig {
-        condition: None,
-        include: CoprocessorRouterResponseIncludeConfig {
+    let full_stage = RouterResponseStage::from_config(&CoprocessorHookConfig::new(
+        None,
+        CoprocessorRouterResponseIncludeConfig {
             body: true,
             context: ContextSelection::all(),
             headers: true,
             status_code: true,
         },
-    })
+    ))
     .expect("router.response stage should compile");
 
     let mut group = c.benchmark_group("coprocessor/router.response");
@@ -357,14 +355,12 @@ fn bench_router_response_stage(c: &mut Criterion) {
 }
 
 fn bench_graphql_request_stage(c: &mut Criterion) {
-    let minimal_stage = GraphqlRequestStage::from_config(&CoprocessorHookConfig {
-        condition: None,
-        include: Default::default(),
-    })
-    .expect("graphql.request stage should compile");
-    let full_stage = GraphqlRequestStage::from_config(&CoprocessorHookConfig {
-        condition: None,
-        include: CoprocessorGraphqlRequestIncludeConfig {
+    let minimal_stage =
+        GraphqlRequestStage::from_config(&CoprocessorHookConfig::new(None, Default::default()))
+            .expect("graphql.request stage should compile");
+    let full_stage = GraphqlRequestStage::from_config(&CoprocessorHookConfig::new(
+        None,
+        CoprocessorGraphqlRequestIncludeConfig {
             body: GraphqlBodySelection::all(),
             context: ContextSelection::all(),
             headers: true,
@@ -372,7 +368,7 @@ fn bench_graphql_request_stage(c: &mut Criterion) {
             path: true,
             sdl: false,
         },
-    })
+    ))
     .expect("graphql.request stage should compile");
 
     let mut group = c.benchmark_group("coprocessor/graphql.request");
@@ -493,21 +489,19 @@ fn bench_graphql_request_stage(c: &mut Criterion) {
 }
 
 fn bench_graphql_response_stage(c: &mut Criterion) {
-    let minimal_stage = GraphqlResponseStage::from_config(&CoprocessorHookConfig {
-        condition: None,
-        include: Default::default(),
-    })
-    .expect("graphql.response stage should compile");
-    let full_stage = GraphqlResponseStage::from_config(&CoprocessorHookConfig {
-        condition: None,
-        include: CoprocessorGraphqlResponseIncludeConfig {
+    let minimal_stage =
+        GraphqlResponseStage::from_config(&CoprocessorHookConfig::new(None, Default::default()))
+            .expect("graphql.response stage should compile");
+    let full_stage = GraphqlResponseStage::from_config(&CoprocessorHookConfig::new(
+        None,
+        CoprocessorGraphqlResponseIncludeConfig {
             body: true,
             context: ContextSelection::all(),
             headers: true,
             sdl: false,
             status_code: true,
         },
-    })
+    ))
     .expect("graphql.response stage should compile");
 
     let mut group = c.benchmark_group("coprocessor/graphql.response");
