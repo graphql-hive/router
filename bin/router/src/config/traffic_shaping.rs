@@ -84,6 +84,21 @@ impl SupergraphTrafficShapingConfig {
             .unwrap_or(self.all.pool_idle_timeout)
     }
 
+    /// Returns the resolved compression config for a subgraph.
+    ///
+    /// A per-subgraph `compression` block fully replaces `traffic_shaping.all.compression`
+    /// (unlike `websocket`, fields aren't merged - `request.enabled` and `request.algorithm`
+    /// always come from the same level).
+    pub fn subgraph_compression(
+        &self,
+        subgraph_name: &str,
+    ) -> TrafficShapingSubgraphCompressionConfig {
+        self.subgraphs
+            .get(subgraph_name)
+            .and_then(|config| config.compression)
+            .unwrap_or(self.all.compression)
+    }
+
     /// Returns whether any configured traffic-shaping rule can reuse WebSocket connections.
     ///
     /// This is used to avoid connection fingerprinting when pooling is disabled globally and for
@@ -215,6 +230,12 @@ pub struct TrafficShapingExecutorSubgraphConfig {
     /// Omitted fields inherit their values from `traffic_shaping.all.websocket`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub websocket: Option<TrafficShapingWebSocketConfig>,
+
+    /// Overrides compression of request bodies sent to this subgraph.
+    ///
+    /// When omitted, `traffic_shaping.all.compression` is used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compression: Option<TrafficShapingSubgraphCompressionConfig>,
 }
 
 /// Controls which transport queries and mutations use for WebSocket-enabled subgraphs.
@@ -403,6 +424,17 @@ pub struct TrafficShapingExecutorGlobalConfig {
     /// Per-subgraph values under `traffic_shaping.subgraphs.<name>.websocket` take precedence.
     #[serde(default)]
     pub websocket: TrafficShapingWebSocketConfig,
+
+    /// Default compression of request bodies sent to subgraphs.
+    ///
+    /// Per-subgraph values under `traffic_shaping.subgraphs.<name>.compression` take precedence.
+    ///
+    /// This only controls the router -> subgraph direction. Subgraph responses are always
+    /// transparently decompressed when they carry a recognized `Content-Encoding` (`gzip`,
+    /// `deflate`, `br`, `zstd`) - there's no configuration for that direction, matching Apollo
+    /// Router, Cosmo, and Hive Gateway's behavior here.
+    #[serde(default)]
+    pub compression: TrafficShapingSubgraphCompressionConfig,
 }
 
 fn default_request_timeout() -> DurationOrExpression {
@@ -435,8 +467,54 @@ impl Default for TrafficShapingExecutorGlobalConfig {
             allow_only_http2: false,
             forward_operation_name: false,
             websocket: Default::default(),
+            compression: Default::default(),
         }
     }
+}
+
+/// Compression of traffic between the router and a subgraph.
+///
+/// Subgraph responses are always transparently decompressed when they carry a recognized
+/// `Content-Encoding` - `request` is the only configurable direction for now (compressing
+/// outbound requests unconditionally could break a subgraph that doesn't decompress, so it's
+/// opt-in). Nested under its own key so a `response` section (e.g. tuning for the always-on
+/// decompression) can be added later without a breaking shape change.
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+pub struct TrafficShapingSubgraphCompressionConfig {
+    /// Compresses request bodies sent to the subgraph.
+    #[serde(default)]
+    pub request: TrafficShapingSubgraphRequestCompressionConfig,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+pub struct TrafficShapingSubgraphRequestCompressionConfig {
+    /// Enables/disables compressing request bodies sent to the subgraph.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// The algorithm to compress with, and its tuning for `br`/`zstd`. Only relevant when
+    /// `enabled` is `true`.
+    ///
+    /// Unlike the client-facing `traffic_shaping.router.compression.response.algorithms`,
+    /// this is a single choice, not an allow-list: the router doesn't negotiate with the
+    /// subgraph, it unilaterally picks one algorithm and sends it.
+    #[serde(default = "default_subgraph_compression_algorithm")]
+    pub algorithm: CompressionAlgorithmConfig,
+}
+
+impl Default for TrafficShapingSubgraphRequestCompressionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            algorithm: default_subgraph_compression_algorithm(),
+        }
+    }
+}
+
+fn default_subgraph_compression_algorithm() -> CompressionAlgorithmConfig {
+    CompressionAlgorithmConfig::Gzip
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -640,7 +718,7 @@ pub struct TrafficShapingRouterResponseCompressionConfig {
     /// gets an uncompressed response instead. The list's order only matters as a
     /// tie-breaker when the client's preferences don't disambiguate.
     #[serde(default = "default_response_compression_algorithms")]
-    pub algorithms: Vec<ResponseCompressionAlgorithmConfig>,
+    pub algorithms: Vec<CompressionAlgorithmConfig>,
 
     /// Responses smaller than this are sent uncompressed, since compressing small
     /// payloads costs more CPU than it saves in bytes transferred.
@@ -689,7 +767,7 @@ impl Default for TrafficShapingRouterRequestCompressionConfig {
 /// A content-coding algorithm identified by its `Accept-Encoding`/`Content-Encoding` token.
 ///
 /// Used for `compression.request.algorithms`: decompression has no per-algorithm tuning,
-/// so a plain allow-list is all that's needed there. See [`ResponseCompressionAlgorithmConfig`]
+/// so a plain allow-list is all that's needed there. See [`CompressionAlgorithmConfig`]
 /// for the response side, where `br`/`zstd` carry inline tuning.
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -730,14 +808,14 @@ impl CompressionAlgorithm {
 /// configuring it happen in the same place instead of a separate lookup table.
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ResponseCompressionAlgorithmConfig {
+pub enum CompressionAlgorithmConfig {
     Gzip,
     Deflate,
     Br(BrotliCompressionConfig),
     Zstd(ZstdCompressionConfig),
 }
 
-impl ResponseCompressionAlgorithmConfig {
+impl CompressionAlgorithmConfig {
     /// The `Accept-Encoding`/`Content-Encoding` token this entry matches/produces.
     pub fn token(&self) -> &'static str {
         match self {
@@ -826,12 +904,12 @@ fn default_compression_enabled() -> bool {
     true
 }
 
-fn default_response_compression_algorithms() -> Vec<ResponseCompressionAlgorithmConfig> {
+fn default_response_compression_algorithms() -> Vec<CompressionAlgorithmConfig> {
     vec![
-        ResponseCompressionAlgorithmConfig::Gzip,
-        ResponseCompressionAlgorithmConfig::Zstd(ZstdCompressionConfig::default()),
-        ResponseCompressionAlgorithmConfig::Br(BrotliCompressionConfig::default()),
-        ResponseCompressionAlgorithmConfig::Deflate,
+        CompressionAlgorithmConfig::Gzip,
+        CompressionAlgorithmConfig::Zstd(ZstdCompressionConfig::default()),
+        CompressionAlgorithmConfig::Br(BrotliCompressionConfig::default()),
+        CompressionAlgorithmConfig::Deflate,
     ]
 }
 
@@ -1133,7 +1211,7 @@ pub struct ClientAuthConfig {
 mod tests {
     use std::time::Duration;
 
-    use super::TrafficShapingRouterConfig;
+    use super::{SupergraphTrafficShapingConfig, TrafficShapingConfig, TrafficShapingRouterConfig};
 
     #[test]
     fn keep_alive_defaults_to_five_seconds() {
@@ -1175,14 +1253,12 @@ mod tests {
         assert_eq!(
             config.compression.response.algorithms,
             vec![
-                super::ResponseCompressionAlgorithmConfig::Gzip,
-                super::ResponseCompressionAlgorithmConfig::Zstd(super::ZstdCompressionConfig {
-                    level: 3
-                }),
-                super::ResponseCompressionAlgorithmConfig::Br(super::BrotliCompressionConfig {
+                super::CompressionAlgorithmConfig::Gzip,
+                super::CompressionAlgorithmConfig::Zstd(super::ZstdCompressionConfig { level: 3 }),
+                super::CompressionAlgorithmConfig::Br(super::BrotliCompressionConfig {
                     quality: 5
                 }),
-                super::ResponseCompressionAlgorithmConfig::Deflate,
+                super::CompressionAlgorithmConfig::Deflate,
             ]
         );
 
@@ -1250,14 +1326,12 @@ mod tests {
         assert_eq!(
             config.compression.response.algorithms,
             vec![
-                super::ResponseCompressionAlgorithmConfig::Gzip,
-                super::ResponseCompressionAlgorithmConfig::Br(super::BrotliCompressionConfig {
+                super::CompressionAlgorithmConfig::Gzip,
+                super::CompressionAlgorithmConfig::Br(super::BrotliCompressionConfig {
                     quality: 9
                 }),
-                super::ResponseCompressionAlgorithmConfig::Zstd(super::ZstdCompressionConfig {
-                    level: 10
-                }),
-                super::ResponseCompressionAlgorithmConfig::Deflate,
+                super::CompressionAlgorithmConfig::Zstd(super::ZstdCompressionConfig { level: 10 }),
+                super::CompressionAlgorithmConfig::Deflate,
             ]
         );
     }
@@ -1271,7 +1345,7 @@ mod tests {
 
         assert_eq!(
             config.compression.response.algorithms,
-            vec![super::ResponseCompressionAlgorithmConfig::Br(
+            vec![super::CompressionAlgorithmConfig::Br(
                 super::BrotliCompressionConfig { quality: 5 }
             )]
         );
@@ -1299,7 +1373,7 @@ mod tests {
 
             assert_eq!(
                 config.compression.response.algorithms,
-                vec![super::ResponseCompressionAlgorithmConfig::Br(
+                vec![super::CompressionAlgorithmConfig::Br(
                     super::BrotliCompressionConfig { quality }
                 )]
             );
@@ -1330,7 +1404,7 @@ mod tests {
 
             assert_eq!(
                 config.compression.response.algorithms,
-                vec![super::ResponseCompressionAlgorithmConfig::Zstd(
+                vec![super::CompressionAlgorithmConfig::Zstd(
                     super::ZstdCompressionConfig { level }
                 )]
             );
@@ -1346,5 +1420,57 @@ mod tests {
             result.is_err(),
             "unknown fields under compression.response should be rejected"
         );
+    }
+
+    #[test]
+    fn subgraph_compression_defaults_to_disabled_gzip() {
+        let config: TrafficShapingConfig =
+            serde_json::from_str("{}").expect("empty config should deserialize");
+        let resolved = SupergraphTrafficShapingConfig::from(&config);
+
+        let compression = resolved.subgraph_compression("accounts");
+        assert!(!compression.request.enabled);
+        assert_eq!(
+            compression.request.algorithm,
+            super::CompressionAlgorithmConfig::Gzip
+        );
+    }
+
+    #[test]
+    fn subgraph_compression_inherits_from_all_when_not_overridden() {
+        let config: TrafficShapingConfig = serde_json::from_str(
+            r#"{ "all": { "compression": { "request": { "enabled": true, "algorithm": { "kind": "zstd", "level": 5 } } } } }"#,
+        )
+        .expect("config should deserialize");
+        let resolved = SupergraphTrafficShapingConfig::from(&config);
+
+        let compression = resolved.subgraph_compression("accounts");
+        assert!(compression.request.enabled);
+        assert_eq!(
+            compression.request.algorithm,
+            super::CompressionAlgorithmConfig::Zstd(super::ZstdCompressionConfig { level: 5 })
+        );
+    }
+
+    #[test]
+    fn subgraph_compression_override_replaces_all_entirely_rather_than_merging() {
+        let config: TrafficShapingConfig = serde_json::from_str(
+            r#"{
+                "all": { "compression": { "request": { "enabled": true, "algorithm": { "kind": "gzip" } } } },
+                "subgraphs": { "accounts": { "compression": { "request": { "enabled": false } } } }
+            }"#,
+        )
+        .expect("config should deserialize");
+        let resolved = SupergraphTrafficShapingConfig::from(&config);
+
+        let accounts = resolved.subgraph_compression("accounts");
+        assert!(
+            !accounts.request.enabled,
+            "subgraph override should replace, not merge with, `all`"
+        );
+
+        // an unrelated subgraph without its own override still inherits from `all`
+        let products = resolved.subgraph_compression("products");
+        assert!(products.request.enabled);
     }
 }

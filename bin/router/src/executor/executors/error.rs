@@ -67,6 +67,9 @@ pub enum SubgraphExecutorError {
     #[error("Invalid content type returned from subgraph '{0}': '{1}'")]
     #[strum(serialize = "SUBREQUEST_MALFORMED_RESPONSE")]
     InvalidContentType(String, String, Arc<HeaderMap>),
+    #[error("Failed to decompress response from subgraph \"{0}\" (Content-Encoding: {1})")]
+    #[strum(serialize = "SUBGRAPH_RESPONSE_DECOMPRESSION_FAILURE")]
+    ResponseDecompressionFailure(String, String, Arc<HeaderMap>),
     #[error(transparent)]
     #[strum(serialize = "SUBGRAPH_HTTPS_CERTS_FAILURE")]
     TlsCertificatesError(#[from] TlsCertificatesError),
@@ -138,6 +141,7 @@ impl SubgraphExecutorError {
             Self::ResponseDeserializationFailure(_, headers) => headers.as_deref(),
             Self::MalformedResponse(headers) => headers.as_deref(),
             Self::InvalidContentType(_, _, headers) => Some(headers.as_ref()),
+            Self::ResponseDecompressionFailure(_, _, headers) => Some(headers.as_ref()),
             _ => None,
         }
     }

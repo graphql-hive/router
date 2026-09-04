@@ -10,7 +10,7 @@ use crate::config::{
     subscriptions::{SubscriptionProtocol, SupergraphSubscriptionsConfig},
     traffic_shaping::{
         DurationOrExpression, StatusCodeMatcher, SupergraphTrafficShapingConfig,
-        WebSocketExecuteMode,
+        TrafficShapingSubgraphRequestCompressionConfig, WebSocketExecuteMode,
     },
 };
 use crate::executor::executors::inflight::InFlightMap;
@@ -134,6 +134,7 @@ struct ResolvedSubgraphConfig<'a> {
     client: Arc<HttpClient>,
     timeout_config: &'a DurationOrExpression,
     dedupe_enabled: bool,
+    compression: TrafficShapingSubgraphRequestCompressionConfig,
 }
 
 pub type InflightRequestsMap = InFlightMap<u64, (SubgraphHttpResponse, u64)>;
@@ -865,6 +866,7 @@ impl SubgraphExecutorMap {
                     self.in_flight_requests.clone(),
                     self.telemetry_context.clone(),
                     self.config.subscriptions.subgraph_buffer_capacity,
+                    subgraph_config.compression,
                 )
                 .to_boxed_arc();
 
@@ -961,6 +963,11 @@ impl SubgraphExecutorMap {
             client: self.client.clone(),
             timeout_config: &self.config.traffic_shaping.all.request_timeout,
             dedupe_enabled: self.config.traffic_shaping.all.dedupe_enabled,
+            compression: self
+                .config
+                .traffic_shaping
+                .subgraph_compression(subgraph_name)
+                .request,
         };
 
         let Some(subgraph_config) = self.config.traffic_shaping.subgraphs.get(subgraph_name) else {
