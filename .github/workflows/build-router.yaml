@@ -40,6 +40,8 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          cache-key: debug
       - name: generate config schema
         run: cargo router-config
       - name: Upload config to release
