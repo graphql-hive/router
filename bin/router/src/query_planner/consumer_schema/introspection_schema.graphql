@@ -12,7 +12,7 @@ directive @deprecated(
   reason: String = "No longer supported"
 ) on FIELD_DEFINITION | ENUM_VALUE | INPUT_FIELD_DEFINITION
 directive @specifiedBy(url: String!) on SCALAR
-directive @oneOf on OBJECT | INTERFACE | UNION
+directive @oneOf on INPUT_OBJECT
 
 "The `Boolean` scalar type represents `true` or `false` values."
 scalar Boolean
