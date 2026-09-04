@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct ErrorMaskingConfig {
     /// A switch for enabling or disabling error masking feature completely.
     ///
@@ -45,6 +46,7 @@ impl Default for ErrorMaskingConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct AllErrorMaskingConfig {
     /// Whether to redact the error message in subgraph errors. The default is `true`.
     #[serde(default = "default_redact_error_message")]
@@ -72,6 +74,7 @@ impl Default for AllErrorMaskingConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct SubgraphErrorMaskingConfig {
     /// Whether to redact the `error_message` in errors, for that specific subgraph.
     ///
@@ -89,6 +92,7 @@ pub struct SubgraphErrorMaskingConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields, tag = "mode")]
+#[non_exhaustive]
 pub enum ExtensionsMaskingConfig {
     /// Redact extensions based on the allowlist.
     #[serde(rename = "allow")]

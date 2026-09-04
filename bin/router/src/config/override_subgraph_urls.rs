@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 #[schemars(example = override_subgraph_urls_example_1())]
+#[non_exhaustive]
 pub struct OverrideSubgraphUrlsConfig {
     /// URL overrides for specific subgraphs.
     ///
@@ -60,24 +61,28 @@ impl OverrideSubgraphUrlsConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct OverrideUrlConfig {
     pub url: UrlOrExpression,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct OverrideAllUrlConfig {
     pub url: OverrideExpressionConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct OverrideExpressionConfig {
     pub expression: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum UrlOrExpression {
     /// A static URL string.
     Url(String),

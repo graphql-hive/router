@@ -5,6 +5,7 @@ use crate::config::primitives::absolute_path::AbsolutePath;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct WebSocketConfig {
     /// Enables/disables WebSocket connections.
     ///
@@ -30,6 +31,7 @@ pub struct WebSocketConfig {
 
 #[derive(Default, Deserialize, Serialize, JsonSchema, Debug)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum WebSocketHeadersSource {
     /// Do not accept headers from any source inside WebSocket connections.
     None,
@@ -81,6 +83,7 @@ pub enum WebSocketHeadersSource {
 
 #[derive(Default, Deserialize, Serialize, JsonSchema, Debug)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct WebSocketHeadersConfig {
     /// The source(s) from which to accept headers for WebSocket connections.
     pub source: WebSocketHeadersSource,

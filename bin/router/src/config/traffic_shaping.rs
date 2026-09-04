@@ -11,6 +11,7 @@ use crate::config::primitives::{
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct TrafficShapingConfig {
     /// The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.
     #[serde(default)]
@@ -40,6 +41,7 @@ impl Default for TrafficShapingConfig {
 
 /// Traffic shaping that belongs to one supergraph's subgraph executors.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct SupergraphTrafficShapingConfig {
     pub all: TrafficShapingExecutorGlobalConfig,
     pub subgraphs: HashMap<String, TrafficShapingExecutorSubgraphConfig>,
@@ -139,6 +141,7 @@ fn default_router_dedupe_enabled() -> bool {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct TrafficShapingExecutorSubgraphConfig {
     /// Overrides how long idle pooled connections for this subgraph remain available for reuse.
     ///
@@ -220,6 +223,7 @@ pub struct TrafficShapingExecutorSubgraphConfig {
 /// mutation fetches may use those declared WebSocket endpoints.
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum WebSocketExecuteMode {
     /// Always executes queries and mutations over HTTP.
     ///
@@ -246,6 +250,7 @@ pub enum WebSocketExecuteMode {
 /// `traffic_shaping.all.websocket`. Fields omitted from `all` use their documented defaults.
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct TrafficShapingWebSocketConfig {
     /// Enables multiplexing operations over matching initialized WebSocket connections.
     ///
@@ -322,6 +327,7 @@ pub struct TrafficShapingWebSocketConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct TrafficShapingExecutorGlobalConfig {
     /// Controls how long idle pooled connections remain available for reuse by default.
     ///
@@ -404,6 +410,7 @@ fn default_request_timeout() -> DurationOrExpression {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum DurationOrExpression {
     /// A fixed duration, e.g., "5s" or "100ms".
     #[serde(
@@ -433,6 +440,7 @@ impl Default for TrafficShapingExecutorGlobalConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct TrafficShapingRouterConfig {
     #[serde(default)]
     pub dedupe: TrafficShapingRouterDedupeConfig,
@@ -488,6 +496,7 @@ pub struct TrafficShapingRouterConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct TrafficShapingRouterDedupeConfig {
     /// Enables/disables in-flight request and active subscriptions deduplication at the router level.
     ///
@@ -541,6 +550,7 @@ pub struct TrafficShapingRouterDedupeConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum TrafficShapingRouterDedupeHeadersKeyword {
     #[default]
     All,
@@ -549,6 +559,7 @@ pub enum TrafficShapingRouterDedupeHeadersKeyword {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum TrafficShapingRouterDedupeHeadersConfig {
     Keyword(TrafficShapingRouterDedupeHeadersKeyword),
     Include { include: Vec<HttpHeaderName> },
@@ -601,6 +612,7 @@ fn default_circuit_breaker_config() -> Option<TrafficShapingSubgraphCircuitBreak
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct ServerTLSConfig {
     pub cert_file: SingleOrMultiple<FilePath>,
     pub key_file: FilePath,
@@ -609,6 +621,7 @@ pub struct ServerTLSConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct TrafficShapingSubgraphCircuitBreakerConfig {
     /// Enable or disable the circuit breaker for the subgraph.
     /// Default: false (circuit breaker is disabled)
@@ -688,6 +701,7 @@ pub struct TrafficShapingSubgraphCircuitBreakerConfig {
 /// See [`TrafficShapingSubgraphCircuitBreakerConfig::error_status_codes`] for
 /// the accepted syntax.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum StatusCodeMatcher {
     /// A single exact HTTP status code, e.g. `503`.
     Exact(StatusCode),
@@ -831,6 +845,7 @@ impl JsonSchema for StatusCodeMatcher {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct ServerClientAuthConfig {
     pub cert_file: SingleOrMultiple<FilePath>,
     #[serde(default)]
@@ -839,6 +854,7 @@ pub struct ServerClientAuthConfig {
 
 #[derive(Default, Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct ClientTLSConfig {
     pub cert_file: Option<SingleOrMultiple<FilePath>>,
     pub client_auth: Option<ClientAuthConfig>,
@@ -848,6 +864,7 @@ pub struct ClientTLSConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct ClientAuthConfig {
     pub cert_file: SingleOrMultiple<FilePath>,
     pub key_file: FilePath,

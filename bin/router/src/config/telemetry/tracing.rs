@@ -10,6 +10,7 @@ use crate::config::primitives::value_or_expression::ValueOrExpression;
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 #[derive(Default)]
+#[non_exhaustive]
 pub struct TracingConfig {
     #[serde(default)]
     pub collect: TracingCollectConfig,
@@ -32,6 +33,7 @@ impl TracingConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct TracingInstrumentationConfig {
     #[serde(default)]
     pub spans: TracingSpansInstrumentationConfig,
@@ -39,6 +41,7 @@ pub struct TracingInstrumentationConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct TracingSpansInstrumentationConfig {
     /// Controls which semantic conventions are emitted on spans.
     /// Default: SpecCompliant (only stable attributes).
@@ -60,6 +63,7 @@ fn default_spans_mode() -> SpansSemanticConventionsMode {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum SpansSemanticConventionsMode {
     /// Only spec-compliant attributes (http.request.*, http.response.*, url.*, etc).
     SpecCompliant,
@@ -71,6 +75,7 @@ pub enum SpansSemanticConventionsMode {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct TracingCollectConfig {
     #[serde(default = "default_max_events_per_span")]
     pub max_events_per_span: u32,
@@ -121,6 +126,7 @@ impl Default for TracingCollectConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct TracingOtlpConfig {
     #[serde(default = "default_otlp_config_enabled")]
     pub enabled: bool,
@@ -141,6 +147,7 @@ fn default_otlp_config_enabled() -> bool {
 
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct OtlpHttpConfig {
     #[serde(default)]
     pub headers: std::collections::HashMap<String, ValueOrExpression<String>>,
@@ -148,6 +155,7 @@ pub struct OtlpHttpConfig {
 
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct OtlpGrpcConfig {
     #[serde(default)]
     pub metadata: std::collections::HashMap<String, ValueOrExpression<String>>,
@@ -157,6 +165,7 @@ pub struct OtlpGrpcConfig {
 
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct OtlpGrpcTlsConfig {
     /// The domain name used to verify the server's TLS certificate.
     pub domain_name: Option<String>,
@@ -203,6 +212,7 @@ impl TryFrom<&OtlpGrpcTlsConfig> for tonic::transport::ClientTlsConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields, tag = "kind")]
+#[non_exhaustive]
 pub enum TracingExporterConfig {
     #[serde(rename = "otlp")]
     Otlp(Box<TracingOtlpConfig>),
@@ -212,6 +222,7 @@ pub enum TracingExporterConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct StdoutExporterConfig {
     #[serde(default = "default_stdout_config_enabled")]
     pub enabled: bool,
@@ -234,6 +245,7 @@ impl TracingExporterConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct BatchProcessorConfig {
     #[serde(default = "default_batch_max_concurrent_exports")]
     pub max_concurrent_exports: u32,
@@ -291,6 +303,7 @@ fn default_batch_scheduled_delay() -> Duration {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct TracingPropagationConfig {
     #[serde(default = "default_propagation_trace_context")]
     pub trace_context: bool,
@@ -328,6 +341,7 @@ fn default_propagation_jaeger() -> bool {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub enum OtlpProtocol {
     #[serde(rename = "grpc")]
     Grpc,

@@ -43,6 +43,7 @@ pub static NEVER_JOIN_HEADERS: &[&str] = &["set-cookie", "www-authenticate"];
 /// are never comma-joined. Multiple values are preserved as separate fields.
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
 #[schemars(example = headers_example_1())]
+#[non_exhaustive]
 pub struct HeadersConfig {
     /// Rules applied to all subgraphs (global defaults).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -105,6 +106,7 @@ fn headers_example_1() -> HeadersConfig {
 /// You can specify independent rule lists for **request** (to subgraphs)
 /// and **response** (to clients). Within each list, rules are applied in order.
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
+#[non_exhaustive]
 pub struct HeaderRules {
     /// Rules that shape the **request** sent from the router to subgraphs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -118,6 +120,7 @@ pub struct HeaderRules {
 /// Request-header rules (applied before sending to a subgraph).
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum RequestHeaderRule {
     /// Forward headers from the client request into the subgraph request.
     ///
@@ -145,6 +148,7 @@ pub enum RequestHeaderRule {
 /// Response-header rules (applied before sending back to the client).
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ResponseHeaderRule {
     /// Forward headers from subgraph responses into the final client response.
     ///
@@ -168,6 +172,7 @@ pub enum ResponseHeaderRule {
 
 /// Remove headers matched by the specification.
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[non_exhaustive]
 pub struct RemoveRule {
     #[serde(flatten)]
     pub spec: MatchSpec,
@@ -189,6 +194,7 @@ pub struct RemoveRule {
 /// # If another Set-Cookie exists, this creates another header line (never joined)
 /// ```
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[non_exhaustive]
 pub struct RequestInsertRule {
     /// Header name to insert or overwrite (case-insensitive).
     pub name: HeaderName,
@@ -213,6 +219,7 @@ pub struct RequestInsertRule {
 /// # If another Set-Cookie exists, this creates another header line (never joined)
 /// ```
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[non_exhaustive]
 pub struct ResponseInsertRule {
     /// Header name to insert or overwrite (case-insensitive).
     pub name: HeaderName,
@@ -228,6 +235,7 @@ pub struct ResponseInsertRule {
 /// Source for an inserted header value.
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum InsertSource {
     /// Static value provided in the config.
     Value { value: String },
@@ -261,6 +269,7 @@ pub enum InsertSource {
 /// ```
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum OneOrMany<T> {
     One(T),
     Many(Vec<T>),
@@ -288,6 +297,7 @@ pub enum OneOrMany<T> {
 /// exclude: ["^x-legacy-.*"]
 /// ```
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
+#[non_exhaustive]
 pub struct MatchSpec {
     /// Match headers by exact name (OR).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -327,6 +337,7 @@ pub struct MatchSpec {
 ///   default: "Bearer test-token"
 /// ```
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
+#[non_exhaustive]
 pub struct RequestPropagateRule {
     #[serde(flatten)]
     pub spec: MatchSpec,
@@ -350,6 +361,7 @@ pub struct RequestPropagateRule {
 /// See [`AggregationAlgo::Append`] for the cache-control merge semantics.
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum AggregationAlgo {
     /// Take the first value encountered and ignore later ones.
     First,
@@ -411,6 +423,7 @@ pub enum AggregationAlgo {
 ///   algorithm: append
 /// ```
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[non_exhaustive]
 pub struct ResponsePropagateRule {
     #[serde(flatten)]
     pub spec: MatchSpec,

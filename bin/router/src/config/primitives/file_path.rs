@@ -11,6 +11,7 @@ use serde::{
 };
 
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct FilePath {
     #[serde(flatten)]
     pub relative: String,

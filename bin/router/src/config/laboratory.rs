@@ -7,6 +7,7 @@ use crate::config::primitives::http_header::HttpHeaderName;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct LaboratoryConfig {
     /// Enables/disables the Hive Laboratory interface. By default, the Hive Laboratory interface is enabled.
     ///
@@ -88,6 +89,7 @@ pub struct LaboratoryConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct LaboratoryOperationConfig {
     /// The name of the operation. Used as the tab title, and must be unique across all seeded
     /// operations.
@@ -117,6 +119,7 @@ pub struct LaboratoryOperationConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct LaboratoryCollectionConfig {
     /// The name of the collection. Used as the sidebar label, and must be unique across all seeded
     /// collections.

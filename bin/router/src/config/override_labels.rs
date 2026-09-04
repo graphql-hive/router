@@ -11,6 +11,7 @@ pub type OverrideLabelsConfig = HashMap<String, LabelOverrideValue>;
 /// or an object containing the expression that evaluates to a boolean.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum LabelOverrideValue {
     /// A static boolean value to enable or disable the label.
     Boolean(bool),

@@ -14,6 +14,7 @@ use crate::config::telemetry::{
 /// Configures metrics collection, processing, and export.
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct MetricsConfig {
     /// List of metrics exporters.
     ///
@@ -42,6 +43,7 @@ fn default_metrics_max_export_timeout() -> Duration {
 /// Defines how metric values accumulate across collection cycles.
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum MetricsTemporality {
     /// A measurement interval that continues to expand forward in time from a
     /// starting point.
@@ -58,6 +60,7 @@ pub enum MetricsTemporality {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct MetricsInstrumentationConfig {
     #[serde(default)]
     pub common: MetricsCommonConfig,
@@ -67,6 +70,7 @@ pub struct MetricsInstrumentationConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct MetricsCommonConfig {
     #[serde(default)]
     pub histogram: MetricsHistogramConfig,
@@ -74,6 +78,7 @@ pub struct MetricsCommonConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields, tag = "aggregation", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum MetricsHistogramConfig {
     Explicit {
         #[serde(default = "default_explicit_histogram_seconds")]
@@ -100,6 +105,7 @@ impl Default for MetricsHistogramConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct MetricsExplicitHistogramUnitConfig {
     pub buckets: MetricsHistogramBuckets,
     #[serde(default)]
@@ -108,6 +114,7 @@ pub struct MetricsExplicitHistogramUnitConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum MetricsHistogramBuckets {
     Numeric(Vec<f64>),
     HumanReadable(Vec<String>),
@@ -178,12 +185,14 @@ fn default_explicit_histogram_bytes() -> MetricsExplicitHistogramUnitConfig {
 pub type MetricsInstrumentsConfig = HashMap<String, ToggleWith<InstrumentConfig>>;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default, PartialEq)]
+#[non_exhaustive]
 pub struct InstrumentConfig {
     pub attributes: HashMap<String, bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields, tag = "kind")]
+#[non_exhaustive]
 pub enum MetricsExporterConfig {
     #[serde(rename = "otlp")]
     Otlp(Box<MetricsOtlpConfig>),
@@ -202,6 +211,7 @@ impl MetricsExporterConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct MetricsOtlpConfig {
     /// Enables or disables this OTLP metrics exporter.
     ///
@@ -254,6 +264,7 @@ fn default_otlp_config_enabled() -> bool {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct MetricsPrometheusConfig {
     #[serde(default = "default_prometheus_enabled")]
     pub enabled: bool,

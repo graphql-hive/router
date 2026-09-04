@@ -8,6 +8,7 @@ use crate::config::primitives::{file_path::FilePath, http_header::HttpHeaderName
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct JwtAuthConfig {
     #[serde(default = "default_enabled")]
     pub enabled: bool,
@@ -88,6 +89,7 @@ impl Default for JwtAuthConfig {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[non_exhaustive]
 pub struct JwtClaimsForwardingConfig {
     pub enabled: bool,
     pub field_name: String,
@@ -107,6 +109,7 @@ fn default_forward_claims_to_upstream_extensions() -> JwtClaimsForwardingConfig 
 
 #[derive(Deserialize, Serialize, Debug, Clone, JsonSchema)]
 #[serde(tag = "source")]
+#[non_exhaustive]
 pub enum JwksProviderSourceConfig {
     /// A local file on the file-system. This file will be read once on startup and cached.
     #[serde(rename = "file")]
@@ -169,6 +172,7 @@ pub fn default_allowed_algorithms() -> Option<Vec<Algorithm>> {
 
 #[derive(Deserialize, Serialize, Debug, Clone, JsonSchema)]
 #[serde(tag = "source")]
+#[non_exhaustive]
 pub enum JwtAuthPluginLookupLocation {
     #[serde(rename = "header")]
     #[schemars(title = "header")]

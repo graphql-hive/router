@@ -7,6 +7,7 @@ use crate::config::primitives::http_header::HttpHeaderName;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct DemandControlConfig {
     /// Enable demand control processing. Must be `true` for any cost estimation,
     /// enforcement or telemetry to take effect.
@@ -49,6 +50,7 @@ const DEFAULT_ESTIMATED_HEADER_NAME: &str = "X-Cost-Estimated";
 const DEFAULT_ACTUAL_HEADER_NAME: &str = "X-Cost-Actual";
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct OperationCostConfig {
     /// The maximum cost allowed for a single operation, based on the estimated value.
     ///
@@ -75,6 +77,7 @@ pub struct OperationCostConfig {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 #[derive(Default)]
+#[non_exhaustive]
 pub struct DemandControlExposeHeadersConfig {
     #[serde(default, deserialize_with = "deserialize_max_header")]
     pub max: Option<HttpHeaderName>,
@@ -139,6 +142,7 @@ where
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum DemandControlMode {
     Enforce,
     Measure,
@@ -146,6 +150,7 @@ pub enum DemandControlMode {
 
 #[derive(Default, Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum DemandControlActualCostMode {
     /// Computes the cost of each subgraph response and sums them to get the
     /// total query cost. This is the default and preferred mode.
@@ -159,6 +164,7 @@ pub enum DemandControlActualCostMode {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct SubgraphsBudgetConfig {
     /// The mode to use for subgraph budget enforcement.
     ///
@@ -182,6 +188,7 @@ pub struct SubgraphsBudgetConfig {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 #[derive(Default)]
+#[non_exhaustive]
 pub struct DefaultListSizeConfig {
     /// Default list size for fields in the supergraph that have no `@listSize` directive.
     pub all: Option<usize>,

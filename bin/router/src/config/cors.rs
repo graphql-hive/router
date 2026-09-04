@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
 #[schemars(example = cors_example_1())]
 #[schemars(example = cors_example_2())]
+#[non_exhaustive]
 pub struct CORSConfig {
     #[serde(default = "default_cors_enabled")]
     pub enabled: bool,
@@ -117,6 +118,7 @@ pub struct CORSConfig {
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
+#[non_exhaustive]
 pub struct CORSPolicyConfig {
     /// List of allowed origins. If `allow_any_origin` is true, this field is ignored.
     /// If both `origins` and `match_origin` are set, the request origin must match one of the values in either list to be allowed.

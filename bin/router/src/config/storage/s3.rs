@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::primitives::value_or_expression::ValueOrExpression;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[non_exhaustive]
 pub struct S3StorageConfig {
     /// Name of the S3 bucket to read from.
     pub bucket: ValueOrExpression<String>,
@@ -111,6 +112,7 @@ pub struct S3StorageConfig {
 ///    default when `credentials` is omitted entirely)
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum S3Credentials {
     /// Long-lived or temporary static credentials.
     ///

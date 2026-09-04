@@ -11,6 +11,7 @@ use crate::config::{
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 #[derive(Default)]
+#[non_exhaustive]
 pub struct HiveTelemetryConfig {
     /// Your [Registry Access Token](https://the-guild.dev/graphql/hive/docs/management/targets#registry-access-tokens) with write permission.
     #[serde(default)]
@@ -61,6 +62,7 @@ impl Default for TracingConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct TracingConfig {
     #[serde(default = "default_tracing_enabled")]
     pub enabled: bool,
@@ -76,6 +78,7 @@ fn default_tracing_enabled() -> bool {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct TraceBatchProcessorConfig {
     /// Maximum number of unique traces to keep in memory simultaneously.
     ///

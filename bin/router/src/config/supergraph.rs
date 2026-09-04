@@ -10,6 +10,7 @@ use crate::config::primitives::{
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, tag = "source")]
+#[non_exhaustive]
 pub enum SupergraphSource {
     /// Loads a supergraph from the filesystem.
     /// The path can be either absolute or relative to the router's working directory.
