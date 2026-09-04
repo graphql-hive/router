@@ -9,6 +9,7 @@ use crate::config::primitives::value_or_expression::ValueOrExpression;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Default, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct SubscriptionsConfig {
     /// Enables/disables subscriptions. By default, the subscriptions are disabled.
     ///
@@ -61,6 +62,7 @@ pub struct SubscriptionsConfig {
 /// Configuration for the HTTP Callback subscription mode.
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct CallbackConfig {
     /// The public URL that subgraphs will use to send callback messages to this router.
     ///
@@ -122,6 +124,7 @@ fn default_heartbeat_interval() -> Duration {
 /// Configuration for the WebSocket subscription mode.
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct WebSocketConfig {
     /// The default configuration that will be applied to all subgraphs using
     /// WebSocket protocol, unless overridden by a specific subgraph configuration.
@@ -137,6 +140,7 @@ pub struct WebSocketConfig {
 /// WebSocket configuration for a specific subgraph or the default for all subgraphs.
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct WebSocketSubgraphConfig {
     /// Determines the URL path to use for the subscription endpoint:
     ///
@@ -154,6 +158,7 @@ pub struct WebSocketSubgraphConfig {
 
 /// Subscription settings used by subgraph executors for one supergraph.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct SupergraphSubscriptionsConfig {
     pub callback_subgraphs: HashSet<String>,
     pub websocket: Option<WebSocketConfig>,
@@ -251,6 +256,7 @@ mod tests {
 
 /// The selected protocol for the subscriptions towards subgraphs.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SubscriptionProtocol {
     /// Uses any HTTP streaming protocol that the subgraph accepts. Supported protocols are:
     /// - Server-Sent Events (SSE). Respecting only the "distinct connection mode" of the GraphQL over SSE specification. See: https://github.com/graphql/graphql-over-http/blob/main/rfcs/GraphQLOverSSE.md#distinct-connections-mode.

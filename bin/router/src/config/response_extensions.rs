@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Configuration for propagating `extensions` from subgraph responses to the
 /// client response.
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
+#[non_exhaustive]
 pub struct ResponseExtensionsConfig {
     /// Rules for propagating subgraph response `extensions` to the client.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -12,6 +13,7 @@ pub struct ResponseExtensionsConfig {
 
 /// Configuration for propagating subgraph extensions to the client response.
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[non_exhaustive]
 pub struct ExtensionsPropagateConfig {
     /// How to merge an extension key seen across multiple subgraph responses.
     /// Default: `last`.
@@ -30,6 +32,7 @@ pub struct ExtensionsPropagateConfig {
 /// How to merge an extension key seen across multiple subgraph responses.
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ExtensionsMergeAlgo {
     /// Keep the first value encountered for a key, ignore later ones.
     /// Note that the subgraph response order is not guaranteed, so this may be non-deterministic.

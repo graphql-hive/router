@@ -3,6 +3,7 @@ use std::{fmt::Display, str::FromStr};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct Percentage {
     value: f64,
 }

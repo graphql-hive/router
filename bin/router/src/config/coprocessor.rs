@@ -10,6 +10,7 @@ use crate::config::primitives::value_or_expression::ValueOrExpression;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct CoprocessorConfig {
     /// Endpoint for the external coprocessor service.
     ///
@@ -44,6 +45,7 @@ fn default_coprocessor_timeout() -> Duration {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CoprocessorProtocol {
     /// HTTP/1.1 over TCP.
     Http1,
@@ -55,6 +57,7 @@ pub enum CoprocessorProtocol {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct CoprocessorStagesConfig {
     #[serde(default)]
     /// Hooks around the router HTTP boundary
@@ -66,6 +69,7 @@ pub struct CoprocessorStagesConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct CoprocessorRouterStageConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Configuration for `router.request` hook.
@@ -77,6 +81,7 @@ pub struct CoprocessorRouterStageConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct CoprocessorGraphqlStageConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Configuration for `graphql.request` hook.
@@ -91,6 +96,7 @@ pub struct CoprocessorGraphqlStageConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct CoprocessorHookConfig<I: Default> {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Optional condition expression.
@@ -104,6 +110,7 @@ pub struct CoprocessorHookConfig<I: Default> {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct CoprocessorRouterRequestIncludeConfig {
     #[serde(default)]
     /// Include the inbound HTTP request body.
@@ -129,6 +136,7 @@ pub struct CoprocessorRouterRequestIncludeConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct CoprocessorRouterResponseIncludeConfig {
     #[serde(default)]
     /// Include outbound HTTP response body.
@@ -151,6 +159,7 @@ pub struct CoprocessorRouterResponseIncludeConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct CoprocessorGraphqlRequestIncludeConfig {
     #[serde(default)]
     /// Include GraphQL request body fields.
@@ -181,6 +190,7 @@ pub struct CoprocessorGraphqlRequestIncludeConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct CoprocessorGraphqlResponseIncludeConfig {
     #[serde(default)]
     /// Include GraphQL response body.
@@ -206,6 +216,7 @@ pub struct CoprocessorGraphqlResponseIncludeConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct CoprocessorGraphqlAnalysisIncludeConfig {
     #[serde(default)]
     /// Include GraphQL request body fields.
@@ -236,6 +247,7 @@ pub struct CoprocessorGraphqlAnalysisIncludeConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub enum GraphqlBodyField {
     /// Include the GraphQL query string.
     Query,
@@ -254,6 +266,7 @@ pub enum GraphqlBodyField {
 /// - `true` => all body fields
 /// - `false` => no body fields
 /// - list => selected body fields
+#[non_exhaustive]
 pub struct GraphqlBodySelection {
     /// Include `query`.
     pub query: bool,
@@ -378,6 +391,7 @@ impl JsonSchema for GraphqlBodySelection {
 /// - `true` => include full context
 /// - `false` => include no context
 /// - list => include only selected context keys
+#[non_exhaustive]
 pub struct ContextSelection {
     all: bool,
     keys: HashSet<String>,
@@ -477,6 +491,7 @@ impl JsonSchema for ContextSelection {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Target endpoint for coprocessor communication.
+#[non_exhaustive]
 pub enum CoprocessorEndpoint {
     Http {
         /// HTTP endpoint URL in `http://host[:port][/path]` form.

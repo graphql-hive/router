@@ -2,6 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ToggleWith<T: Default> {
     Disabled,
     Enabled(T),

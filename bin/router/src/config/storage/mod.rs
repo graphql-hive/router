@@ -9,6 +9,7 @@ pub mod s3;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, tag = "type")]
+#[non_exhaustive]
 pub enum StorageSourceConfig {
     /// Configuration for an Amazon S3 (or S3-compatible) object storage backend.
     ///

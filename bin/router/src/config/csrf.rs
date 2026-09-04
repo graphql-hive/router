@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 /// Cross-site request forgery (CSRF) is an attack that forces an end user to execute unwanted actions on a web application in which they're currently authenticated.
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
 #[schemars(example = csrf_prevention_example_1())]
+#[non_exhaustive]
 pub struct CSRFPreventionConfig {
     /// Enables CSRF prevention.
     ///

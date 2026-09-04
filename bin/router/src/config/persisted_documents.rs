@@ -10,6 +10,7 @@ use crate::config::primitives::toggle::ToggleWith;
 use crate::config::primitives::value_or_expression::ValueOrExpression;
 
 #[derive(Debug, Serialize, JsonSchema, Clone, Default)]
+#[non_exhaustive]
 pub struct PersistedDocumentsConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -81,6 +82,7 @@ impl<'de> Deserialize<'de> for PersistedDocumentsConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum PersistedDocumentsStorageConfig {
     File {
         #[serde(flatten)]
@@ -98,6 +100,7 @@ pub enum PersistedDocumentsStorageConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct PersistedDocumentsFileStorageConfig {
     pub path: FilePath,
     #[serde(default = "default_watch")]
@@ -106,6 +109,7 @@ pub struct PersistedDocumentsFileStorageConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct PersistedDocumentsStorageRefConfig {
     pub storage_id: String,
     pub location: String,
@@ -124,6 +128,7 @@ fn default_storage_poll_interval() -> Option<Duration> {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct PersistedDocumentsHiveStorageConfig {
     /// The CDN endpoint from Hive Console target.
     /// Can also be set using the `HIVE_CDN_ENDPOINT` environment variable.
@@ -159,6 +164,7 @@ pub struct PersistedDocumentsHiveStorageConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct PersistedDocumentsHiveNegativeCacheConfig {
     #[serde(
         deserialize_with = "humantime_serde::deserialize",
@@ -178,6 +184,7 @@ impl Default for PersistedDocumentsHiveNegativeCacheConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct PersistedDocumentsHiveCircuitBreakerConfig {
     #[serde(default = "default_circuit_breaker_error_threshold")]
     pub error_threshold: f32,
@@ -244,6 +251,7 @@ const fn default_watch() -> bool {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, PartialEq, Eq, Hash)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum PersistedDocumentExtractorConfig {
     JsonPath {
         path: PersistedDocumentJsonPath,

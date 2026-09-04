@@ -5,6 +5,7 @@ use tracing::debug;
 use crate::config::log::{LogFormat, LogLevel};
 
 #[derive(Default, Envconfig)]
+#[non_exhaustive]
 pub struct EnvVarOverrides {
     // Logger overrides
     #[envconfig(from = "LOG_LEVEL")]
@@ -78,6 +79,7 @@ pub struct EnvVarOverrides {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum EnvVarOverridesError {
     #[error("Failed to override configuration: {0}")]
     FailedToOverrideConfig(#[from] ConfigError),

@@ -17,6 +17,7 @@ pub mod tracing;
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 #[derive(Default)]
+#[non_exhaustive]
 pub struct TelemetryConfig {
     #[serde(default)]
     pub hive: Option<HiveTelemetryConfig>,
@@ -42,6 +43,7 @@ impl TelemetryConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct ResourceConfig {
     #[serde(default)]
     pub attributes: HashMap<String, ValueOrExpression<String>>,
@@ -49,6 +51,7 @@ pub struct ResourceConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct ClientIdentificationConfig {
     #[serde(default = "default_client_name_header")]
     pub name_header: HttpHeaderName,
@@ -92,6 +95,7 @@ impl Default for ClientIdentificationConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum ClientIpHeaderConfig {
     HeaderName(HttpHeaderName),
     TrustedProxies(ClientIpHeaderTrustedProxiesConfig),
@@ -99,6 +103,7 @@ pub enum ClientIpHeaderConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct ClientIpHeaderTrustedProxiesConfig {
     /// Header name containing client and proxy chain values.
     pub name: HttpHeaderName,

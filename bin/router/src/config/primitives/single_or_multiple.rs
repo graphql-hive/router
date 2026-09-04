@@ -7,6 +7,7 @@ use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum SingleOrMultiple<T> {
     Single(T),
     Multiple(Vec<T>),

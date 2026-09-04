@@ -8,6 +8,7 @@ use crate::config::primitives::percentage::Percentage;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum UsageReportingExclude {
     Expression { expression: String },
     OperationNames(Vec<String>),
@@ -15,6 +16,7 @@ pub enum UsageReportingExclude {
 
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum UsageReportingSamplingKeyKind {
     #[default]
     OperationName,
@@ -26,6 +28,7 @@ pub type UsageReportingSamplingKey = OneOrMany<UsageReportingSamplingKeyKind>;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct AtLeastOnceSamplingConfig {
     /// The key used for at-least-once sampling, to determine unique operations.
     ///
@@ -53,6 +56,7 @@ pub struct AtLeastOnceSamplingConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct UsageReportingSamplingConfig {
     #[serde(default = "default_sample_rate")]
     #[schemars(with = "String")]
@@ -82,6 +86,7 @@ impl Default for UsageReportingSamplingConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct UsageReportingConfig {
     #[serde(default = "default_enabled")]
     pub enabled: bool,

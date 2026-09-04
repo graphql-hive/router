@@ -54,6 +54,7 @@ use crate::config::{
 
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct HiveRouterConfig {
     #[serde(skip)]
     root_directory: PathBuf,
@@ -183,6 +184,7 @@ pub struct HiveRouterConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct PluginConfig {
     #[serde(default = "default_plugin_enabled")]
     pub enabled: bool,
@@ -274,6 +276,7 @@ impl HiveRouterConfig {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum RouterConfigError {
     #[error("Failed to load configuration: {0}")]
     ConfigLoadError(#[from] config_rs::ConfigError),

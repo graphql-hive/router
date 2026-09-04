@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct HttpServerConfig {
     /// The endpoint to serve GraphQL requests. By default, `/graphql` is used.
     #[serde(default = "graphql_endpoint_default")]

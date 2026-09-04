@@ -9,6 +9,7 @@ use crate::config::primitives::http_header::HttpHeaderName;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct LoggingConfig {
     /// The level of logging to use.
     ///
@@ -53,6 +54,7 @@ impl LoggingConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum LogLevel {
     #[cfg(debug_assertions)]
     Trace,
@@ -117,6 +119,7 @@ impl From<&LogLevel> for LevelFilter {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[non_exhaustive]
 pub enum LogFormat {
     #[serde(rename = "text")]
     Text,
@@ -159,6 +162,7 @@ impl Default for LogFormat {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct CorrelationConfig {
     #[serde(default = "default_correlation_id_header")]
     pub id_header: HttpHeaderName,

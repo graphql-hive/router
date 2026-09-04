@@ -3,6 +3,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[non_exhaustive]
 pub struct LimitsConfig {
     /// Configuration of limiting the depth of the incoming GraphQL operations.
     /// If not specified, depth limiting is disabled.
@@ -60,6 +61,7 @@ impl Default for LimitsConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[non_exhaustive]
 pub struct MaxDepthRuleConfig {
     /// Depth threshold
     pub n: usize,
@@ -82,18 +84,21 @@ fn default_flatten_fragments() -> bool {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[non_exhaustive]
 pub struct MaxDirectivesRuleConfig {
     /// Directives threshold
     pub n: usize,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[non_exhaustive]
 pub struct MaxTokensRuleConfig {
     /// Tokens threshold
     pub n: usize,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[non_exhaustive]
 pub struct MaxAliasesRuleConfig {
     /// Aliases threshold
     pub n: usize,
