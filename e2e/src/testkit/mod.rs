@@ -46,8 +46,10 @@ use hive_router::{
     configure_ntex_app, init_rustls_crypto_provider, invoke_shutdown_hooks,
     pipeline::long_lived_client_limit::LongLivedClientLimitService,
     pipeline::request_identifiers::RequestIdentifiersService,
-    pipeline::request_summary::RequestSummaryService, plugins::plugins_service::PluginService,
-    telemetry::Telemetry, PluginRegistry, RouterPaths, RouterSharedState, SchemaState,
+    pipeline::request_summary::RequestSummaryService,
+    pipeline::response_compression::ResponseCompressionService,
+    plugins::plugins_service::PluginService, telemetry::Telemetry, PluginRegistry, RouterPaths,
+    RouterSharedState, SchemaState,
 };
 use subgraphs::{subgraphs_app, HTTPStreamingSubscriptionProtocol};
 
@@ -949,6 +951,7 @@ impl TestRouter<Built> {
         let serv_paths = paths.clone();
         let serv_prometheus = prometheus.clone();
         let long_lived_limit = LongLivedClientLimitService::new(shared_state.router_config);
+        let response_compression = ResponseCompressionService::new(shared_state.router_config);
 
         let secure = serv_shared_state
             .router_config
@@ -975,6 +978,7 @@ impl TestRouter<Built> {
             let serv_callback_path = serv_callback_path.clone();
             let callback_subs = serv_callback_subs.clone();
             let long_lived_limit = long_lived_limit.clone();
+            let response_compression = response_compression.clone();
 
             // set the tracing dispatch on the server thread. the guard is
             // intentionally leaked: dropping it would restore the no-op default
@@ -995,6 +999,7 @@ impl TestRouter<Built> {
                     ))
                     .middleware(RequestSummaryService::new(&paths.graphql))
                     .middleware(RequestIdentifiersService)
+                    .middleware(response_compression)
                     .state(shared_state.clone())
                     .state(schema_state)
                     .state(callback_subs)

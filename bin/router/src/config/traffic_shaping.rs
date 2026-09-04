@@ -1,6 +1,7 @@
 use std::{borrow::Cow, collections::HashMap, fmt, time::Duration};
 
 use http::StatusCode;
+use human_size::Size;
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{de, Deserialize, Serialize};
 
@@ -492,6 +493,14 @@ pub struct TrafficShapingRouterConfig {
     )]
     #[schemars(with = "String")]
     pub keep_alive: Duration,
+
+    /// HTTP compression between the client and the router: compressing responses sent to the
+    /// client, and decompressing requests received from the client.
+    ///
+    /// This is unrelated to `traffic_shaping.all`/`traffic_shaping.subgraphs`, which control
+    /// compression between the router and subgraphs.
+    #[serde(default)]
+    pub compression: TrafficShapingRouterCompressionConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -596,8 +605,258 @@ impl Default for TrafficShapingRouterConfig {
             tls: None,
             max_long_lived_clients: default_max_long_lived_clients(),
             keep_alive: http_server_keep_alive_default(),
+            compression: Default::default(),
         }
     }
+}
+
+/// HTTP compression settings for traffic between the client and the router.
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+#[derive(Default)]
+pub struct TrafficShapingRouterCompressionConfig {
+    /// Compression of responses sent from the router to the client, negotiated via the
+    /// client's `Accept-Encoding` header.
+    #[serde(default)]
+    pub response: TrafficShapingRouterResponseCompressionConfig,
+
+    /// Decompression of requests sent from the client to the router, based on the
+    /// client's `Content-Encoding` header.
+    #[serde(default)]
+    pub request: TrafficShapingRouterRequestCompressionConfig,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TrafficShapingRouterResponseCompressionConfig {
+    /// Enables/disables compressing responses sent to the client.
+    #[serde(default = "default_compression_enabled")]
+    pub enabled: bool,
+
+    /// Algorithms the router is allowed to compress responses with, and their tuning.
+    ///
+    /// The router picks the entry from this list whose `kind` best matches the client's
+    /// `Accept-Encoding` preference; a client asking for an algorithm not listed here
+    /// gets an uncompressed response instead. The list's order only matters as a
+    /// tie-breaker when the client's preferences don't disambiguate.
+    #[serde(default = "default_response_compression_algorithms")]
+    pub algorithms: Vec<ResponseCompressionAlgorithmConfig>,
+
+    /// Responses smaller than this are sent uncompressed, since compressing small
+    /// payloads costs more CPU than it saves in bytes transferred.
+    #[serde(default = "default_compression_min_size")]
+    #[schemars(with = "String")]
+    pub min_size: Size,
+}
+
+impl Default for TrafficShapingRouterResponseCompressionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_compression_enabled(),
+            algorithms: default_response_compression_algorithms(),
+            min_size: default_compression_min_size(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TrafficShapingRouterRequestCompressionConfig {
+    /// Enables/disables decompressing requests received from the client.
+    ///
+    /// When disabled, a request carrying a `Content-Encoding` header is rejected with
+    /// `415 Unsupported Media Type` instead of being decompressed.
+    #[serde(default = "default_compression_enabled")]
+    pub enabled: bool,
+
+    /// Algorithms the router accepts in a client's `Content-Encoding` header.
+    ///
+    /// A request encoded with an algorithm not listed here is rejected with
+    /// `415 Unsupported Media Type`.
+    #[serde(default = "default_request_compression_algorithms")]
+    pub algorithms: Vec<CompressionAlgorithm>,
+}
+
+impl Default for TrafficShapingRouterRequestCompressionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_compression_enabled(),
+            algorithms: default_request_compression_algorithms(),
+        }
+    }
+}
+
+/// A content-coding algorithm identified by its `Accept-Encoding`/`Content-Encoding` token.
+///
+/// Used for `compression.request.algorithms`: decompression has no per-algorithm tuning,
+/// so a plain allow-list is all that's needed there. See [`ResponseCompressionAlgorithmConfig`]
+/// for the response side, where `br`/`zstd` carry inline tuning.
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CompressionAlgorithm {
+    Gzip,
+    Deflate,
+    Br,
+    Zstd,
+}
+
+impl CompressionAlgorithm {
+    /// The `Accept-Encoding`/`Content-Encoding` token this variant matches.
+    pub fn token(&self) -> &'static str {
+        match self {
+            Self::Gzip => "gzip",
+            Self::Deflate => "deflate",
+            Self::Br => "br",
+            Self::Zstd => "zstd",
+        }
+    }
+
+    /// Parses a single `Content-Encoding` token (case-insensitive). Returns `None` for
+    /// anything that isn't one of the four known tokens - callers decide what that means
+    /// (identity, unsupported, or a stacked/malformed value).
+    pub fn from_token(token: &str) -> Option<Self> {
+        match token {
+            t if t.eq_ignore_ascii_case("gzip") => Some(Self::Gzip),
+            t if t.eq_ignore_ascii_case("deflate") => Some(Self::Deflate),
+            t if t.eq_ignore_ascii_case("br") => Some(Self::Br),
+            t if t.eq_ignore_ascii_case("zstd") => Some(Self::Zstd),
+            _ => None,
+        }
+    }
+}
+
+/// One entry of `compression.response.algorithms`: an allowed algorithm plus, for
+/// algorithms that have one, its tuning - co-located so enabling an algorithm and
+/// configuring it happen in the same place instead of a separate lookup table.
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ResponseCompressionAlgorithmConfig {
+    Gzip,
+    Deflate,
+    Br(BrotliCompressionConfig),
+    Zstd(ZstdCompressionConfig),
+}
+
+impl ResponseCompressionAlgorithmConfig {
+    /// The `Accept-Encoding`/`Content-Encoding` token this entry matches/produces.
+    pub fn token(&self) -> &'static str {
+        match self {
+            Self::Gzip => "gzip",
+            Self::Deflate => "deflate",
+            Self::Br(_) => "br",
+            Self::Zstd(_) => "zstd",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct BrotliCompressionConfig {
+    /// Brotli quality level, from `0` (fastest, worst ratio) to `11` (slowest, best ratio).
+    ///
+    /// Defaults well below the maximum: quality `11` is slow enough to become a bottleneck
+    /// for dynamically generated GraphQL responses, where CPU time usually matters more
+    /// than squeezing out the last few percent of size.
+    #[serde(
+        default = "default_brotli_quality",
+        deserialize_with = "deserialize_brotli_quality"
+    )]
+    #[schemars(range(min = 0, max = 11))]
+    pub quality: u8,
+}
+
+fn deserialize_brotli_quality<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = u8::deserialize(deserializer)?;
+    if value > 11 {
+        return Err(de::Error::custom(format!(
+            "brotli quality must be between 0 and 11, got: {value}"
+        )));
+    }
+    Ok(value)
+}
+
+impl Default for BrotliCompressionConfig {
+    fn default() -> Self {
+        Self {
+            quality: default_brotli_quality(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ZstdCompressionConfig {
+    /// Zstandard compression level, from `1` (fastest, worst ratio) to `22` (slowest, best ratio).
+    ///
+    /// Defaults to zstd's own standard default, which already gives a good balance of
+    /// speed and ratio for dynamically generated GraphQL responses.
+    #[serde(
+        default = "default_zstd_level",
+        deserialize_with = "deserialize_zstd_level"
+    )]
+    #[schemars(range(min = 1, max = 22))]
+    pub level: i32,
+}
+
+fn deserialize_zstd_level<'de, D>(deserializer: D) -> Result<i32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = i32::deserialize(deserializer)?;
+    if !(1..=22).contains(&value) {
+        return Err(de::Error::custom(format!(
+            "zstd level must be between 1 and 22, got: {value}"
+        )));
+    }
+    Ok(value)
+}
+
+impl Default for ZstdCompressionConfig {
+    fn default() -> Self {
+        Self {
+            level: default_zstd_level(),
+        }
+    }
+}
+
+fn default_compression_enabled() -> bool {
+    true
+}
+
+fn default_response_compression_algorithms() -> Vec<ResponseCompressionAlgorithmConfig> {
+    vec![
+        ResponseCompressionAlgorithmConfig::Gzip,
+        ResponseCompressionAlgorithmConfig::Zstd(ZstdCompressionConfig::default()),
+        ResponseCompressionAlgorithmConfig::Br(BrotliCompressionConfig::default()),
+        ResponseCompressionAlgorithmConfig::Deflate,
+    ]
+}
+
+fn default_request_compression_algorithms() -> Vec<CompressionAlgorithm> {
+    vec![
+        CompressionAlgorithm::Gzip,
+        CompressionAlgorithm::Zstd,
+        CompressionAlgorithm::Br,
+        CompressionAlgorithm::Deflate,
+    ]
+}
+
+fn default_compression_min_size() -> Size {
+    "1KiB"
+        .parse()
+        .expect("Default value for 'traffic_shaping.router.compression.response.min_size' should be a valid human-readable size")
+}
+
+fn default_brotli_quality() -> u8 {
+    5
+}
+
+fn default_zstd_level() -> i32 {
+    // matches zstd's own `ZSTD_CLEVEL_DEFAULT`
+    3
 }
 
 /// Matches ntex's own default HTTP/1 keep-alive, so configurations that omit
@@ -905,5 +1164,187 @@ mod tests {
             .cloned();
 
         assert_eq!(serialized, Some(serde_json::json!("1m 20s")));
+    }
+
+    #[test]
+    fn compression_defaults_are_enabled_with_gzip_br_deflate() {
+        let config: TrafficShapingRouterConfig =
+            serde_json::from_str("{}").expect("empty config should deserialize");
+
+        assert!(config.compression.response.enabled);
+        assert_eq!(
+            config.compression.response.algorithms,
+            vec![
+                super::ResponseCompressionAlgorithmConfig::Gzip,
+                super::ResponseCompressionAlgorithmConfig::Zstd(super::ZstdCompressionConfig {
+                    level: 3
+                }),
+                super::ResponseCompressionAlgorithmConfig::Br(super::BrotliCompressionConfig {
+                    quality: 5
+                }),
+                super::ResponseCompressionAlgorithmConfig::Deflate,
+            ]
+        );
+
+        assert!(config.compression.request.enabled);
+        assert_eq!(
+            config.compression.request.algorithms,
+            vec![
+                super::CompressionAlgorithm::Gzip,
+                super::CompressionAlgorithm::Zstd,
+                super::CompressionAlgorithm::Br,
+                super::CompressionAlgorithm::Deflate,
+            ]
+        );
+    }
+
+    #[test]
+    fn compression_min_size_defaults_to_one_kibibyte() {
+        let config: TrafficShapingRouterConfig =
+            serde_json::from_str("{}").expect("empty config should deserialize");
+
+        assert_eq!(
+            config.compression.response.min_size.to_bytes(),
+            1024,
+            "default min_size should be 1KiB"
+        );
+    }
+
+    #[test]
+    fn compression_algorithm_tokens_match_http_header_casing() {
+        // `gzip`/`deflate`/`br` are parsed directly from `Accept-Encoding`/`Content-Encoding`
+        // values, so the config's on-the-wire spelling must match those tokens exactly.
+        let algorithms: Vec<super::CompressionAlgorithm> =
+            serde_json::from_str(r#"["gzip", "deflate", "br", "zstd"]"#)
+                .expect("lowercase algorithm tokens should deserialize");
+
+        assert_eq!(
+            algorithms,
+            vec![
+                super::CompressionAlgorithm::Gzip,
+                super::CompressionAlgorithm::Deflate,
+                super::CompressionAlgorithm::Br,
+                super::CompressionAlgorithm::Zstd,
+            ]
+        );
+    }
+
+    #[test]
+    fn compression_response_algorithms_co_locate_tuning_with_kind() {
+        let config: TrafficShapingRouterConfig = serde_json::from_str(
+            r#"{
+                "compression": {
+                    "response": {
+                        "algorithms": [
+                            { "kind": "gzip" },
+                            { "kind": "br", "quality": 9 },
+                            { "kind": "zstd", "level": 10 },
+                            { "kind": "deflate" }
+                        ]
+                    }
+                }
+            }"#,
+        )
+        .expect("kind-tagged algorithms list should deserialize");
+
+        assert_eq!(
+            config.compression.response.algorithms,
+            vec![
+                super::ResponseCompressionAlgorithmConfig::Gzip,
+                super::ResponseCompressionAlgorithmConfig::Br(super::BrotliCompressionConfig {
+                    quality: 9
+                }),
+                super::ResponseCompressionAlgorithmConfig::Zstd(super::ZstdCompressionConfig {
+                    level: 10
+                }),
+                super::ResponseCompressionAlgorithmConfig::Deflate,
+            ]
+        );
+    }
+
+    #[test]
+    fn compression_response_algorithm_tuning_defaults_when_omitted() {
+        let config: TrafficShapingRouterConfig = serde_json::from_str(
+            r#"{ "compression": { "response": { "algorithms": [{ "kind": "br" }] } } }"#,
+        )
+        .expect("kind without tuning fields should deserialize using defaults");
+
+        assert_eq!(
+            config.compression.response.algorithms,
+            vec![super::ResponseCompressionAlgorithmConfig::Br(
+                super::BrotliCompressionConfig { quality: 5 }
+            )]
+        );
+    }
+
+    #[test]
+    fn compression_rejects_brotli_quality_above_eleven() {
+        let result: Result<TrafficShapingRouterConfig, _> = serde_json::from_str(
+            r#"{ "compression": { "response": { "algorithms": [{ "kind": "br", "quality": 12 }] } } }"#,
+        );
+
+        assert!(
+            result.is_err(),
+            "brotli quality above 11 should be rejected at config load time"
+        );
+    }
+
+    #[test]
+    fn compression_accepts_brotli_quality_at_the_boundaries() {
+        for quality in [0, 11] {
+            let config: TrafficShapingRouterConfig = serde_json::from_str(&format!(
+                r#"{{ "compression": {{ "response": {{ "algorithms": [{{ "kind": "br", "quality": {quality} }}] }} }} }}"#
+            ))
+            .unwrap_or_else(|err| panic!("quality {quality} should be valid: {err}"));
+
+            assert_eq!(
+                config.compression.response.algorithms,
+                vec![super::ResponseCompressionAlgorithmConfig::Br(
+                    super::BrotliCompressionConfig { quality }
+                )]
+            );
+        }
+    }
+
+    #[test]
+    fn compression_rejects_zstd_level_outside_one_to_twenty_two() {
+        for level in [0, 23, -1] {
+            let result: Result<TrafficShapingRouterConfig, _> = serde_json::from_str(&format!(
+                r#"{{ "compression": {{ "response": {{ "algorithms": [{{ "kind": "zstd", "level": {level} }}] }} }} }}"#
+            ));
+
+            assert!(
+                result.is_err(),
+                "zstd level {level} is outside 1-22 and should be rejected at config load time"
+            );
+        }
+    }
+
+    #[test]
+    fn compression_accepts_zstd_level_at_the_boundaries() {
+        for level in [1, 22] {
+            let config: TrafficShapingRouterConfig = serde_json::from_str(&format!(
+                r#"{{ "compression": {{ "response": {{ "algorithms": [{{ "kind": "zstd", "level": {level} }}] }} }} }}"#
+            ))
+            .unwrap_or_else(|err| panic!("level {level} should be valid: {err}"));
+
+            assert_eq!(
+                config.compression.response.algorithms,
+                vec![super::ResponseCompressionAlgorithmConfig::Zstd(
+                    super::ZstdCompressionConfig { level }
+                )]
+            );
+        }
+    }
+
+    #[test]
+    fn compression_rejects_unknown_fields() {
+        let result: Result<TrafficShapingRouterConfig, _> =
+            serde_json::from_str(r#"{ "compression": { "response": { "unknown_field": true } } }"#);
+
+        assert!(
+            result.is_err(),
+            "unknown fields under compression.response should be rejected"
+        );
     }
 }

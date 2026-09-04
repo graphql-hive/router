@@ -266,7 +266,9 @@ impl CoprocessorRuntime {
         // We read the request body only when this stage needs to include body
         let request_body = if stage.stage.include_body() {
             let body_stream = web::types::Payload(req.take_payload());
-            let new_body = match read_body_stream(&req, body_stream, self.body_size_limit).await {
+            let new_body = match read_body_stream(&req, body_stream, self.body_size_limit, None)
+                .await
+            {
                 Ok(body) => body,
                 // We deliberately do not map to CoprocessorError here,
                 // to follow the same logic for status codes
