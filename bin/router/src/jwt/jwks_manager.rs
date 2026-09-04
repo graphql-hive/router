@@ -77,12 +77,13 @@ impl BackgroundTask for JwksSourceTask {
     async fn run(&self, token: CancellationToken) {
         if let JwksProviderSourceConfig::Remote {
             polling_interval: Some(interval),
+            url,
             ..
         } = &self.0.config
         {
             info!(
                 target: targets::JWT,
-                source = ?self.0.config,
+                url = ?url,
                 "starting remote jwks polling for source",
             );
             let mut tokio_interval = tokio::time::interval(*interval);
@@ -92,7 +93,7 @@ impl BackgroundTask for JwksSourceTask {
                     _ = tokio_interval.tick() => { match self.0.load_and_store_jwks().await {
                         Ok(_) => {}
                         Err(err) => {
-                            error!(target: targets::JWT, error = ?err, source = ?self.0.config, "failed to load remote jwks");
+                            error!(target: targets::JWT, error = ?err, url = ?url, "failed to load remote jwks");
                         }
                     } }
                     _ = token.cancelled() => { info!(target: targets::JWT, "jwks source shutting down."); return; }
@@ -117,14 +118,22 @@ pub enum JwksSourceError {
 impl JwksSource {
     async fn load_and_store_jwks(&self) -> Result<&Self, JwksSourceError> {
         let jwks_str = match &self.config {
-            JwksProviderSourceConfig::Remote { url, .. } => {
+            JwksProviderSourceConfig::Remote { url, headers, .. } => {
                 let client = reqwest::Client::new();
                 debug!(target: targets::JWT, url = ?url, "loading jwks from a remote source");
 
+                // `headers()` carries `Host` through as an override of the
+                // authority derived from `url`, without changing which address
+                // the request is sent to. That is what makes an internal URL
+                // usable against a virtual-host-routed issuer. An empty map is
+                // a no-op, so this is unconditional.
                 let response_text = client
                     .get(url)
+                    .headers(headers.clone())
                     .send()
                     .await
+                    .map_err(JwksSourceError::RemoteJwksNetworkError)?
+                    .error_for_status()
                     .map_err(JwksSourceError::RemoteJwksNetworkError)?
                     .text()
                     .await
@@ -186,5 +195,108 @@ impl JwksSource {
         }
 
         Err(JwksSourceError::FailedToAcquireJwk)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http::{HeaderMap, HeaderName, HeaderValue};
+
+    const JWKS_BODY: &str = r#"{"keys":[]}"#;
+
+    fn remote_source(url: String, headers: HeaderMap) -> JwksSource {
+        JwksSource {
+            config: JwksProviderSourceConfig::Remote {
+                url,
+                polling_interval: None,
+                prefetch: Some(false),
+                headers,
+            },
+            jwk: RwLock::new(None),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn remote_jwks_sends_configured_headers() {
+        crate::init_rustls_crypto_provider();
+        let mut server = mockito::Server::new_async().await;
+
+        // `Host` is the reason this feature exists: it must reach the server as
+        // an override of the authority derived from the URL, while the request
+        // still goes to the URL's address.
+        let mock = server
+            .mock("GET", "/jwks.json")
+            .match_header("host", "auth.example.com")
+            .match_header("x-api-key", "secret")
+            .expect(1)
+            .with_status(200)
+            .with_body(JWKS_BODY)
+            .create_async()
+            .await;
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("host"),
+            HeaderValue::from_static("auth.example.com"),
+        );
+        headers.insert(
+            HeaderName::from_static("x-api-key"),
+            HeaderValue::from_static("secret"),
+        );
+
+        let source = remote_source(format!("{}/jwks.json", server.url()), headers);
+        source
+            .load_and_store_jwks()
+            .await
+            .expect("jwks should load");
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn remote_jwks_without_headers_is_unchanged() {
+        crate::init_rustls_crypto_provider();
+        let mut server = mockito::Server::new_async().await;
+
+        let mock = server
+            .mock("GET", "/jwks.json")
+            .expect(1)
+            .with_status(200)
+            .with_body(JWKS_BODY)
+            .create_async()
+            .await;
+
+        let source = remote_source(format!("{}/jwks.json", server.url()), HeaderMap::new());
+        source
+            .load_and_store_jwks()
+            .await
+            .expect("jwks should load");
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn remote_jwks_error_status_is_reported_as_network_error() {
+        crate::init_rustls_crypto_provider();
+        let mut server = mockito::Server::new_async().await;
+
+        let mock = server
+            .mock("GET", "/jwks.json")
+            .expect(1)
+            .with_status(401)
+            .with_body("unauthorized")
+            .create_async()
+            .await;
+
+        let source = remote_source(format!("{}/jwks.json", server.url()), HeaderMap::new());
+        let err = source
+            .load_and_store_jwks()
+            .await
+            .expect_err("401 response should not be parsed as jwks");
+
+        assert!(matches!(err, JwksSourceError::RemoteJwksNetworkError(_)));
+
+        mock.assert_async().await;
     }
 }

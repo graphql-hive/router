@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
+use http::HeaderMap;
 use jsonwebtoken::Algorithm;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -136,6 +138,32 @@ pub enum JwksProviderSourceConfig {
         /// If set to `true`, the JWKS will be fetched on startup and cached. In case of invalid JWKS, the error will be ignored and the plugin will try to fetch again when server receives the first request.
         /// If set to `false`, the JWKS will be fetched on-demand, when the first request comes in.
         prefetch: Option<bool>,
+        /// Additional HTTP headers to send with the JWKS request.
+        ///
+        /// Useful when the JWKS endpoint is not reachable as a plain public URL:
+        /// an identity provider that selects its tenant from the `Host` header
+        /// while being addressed internally, or a JWKS endpoint behind a gateway
+        /// that expects an API key.
+        ///
+        /// Keys must be valid HTTP header names (RFC 7230) and values must be
+        /// valid HTTP header values.
+        ///
+        /// `Host` is honored: it is applied to the request and overrides the
+        /// authority derived from `url`, without changing where the request is
+        /// sent.
+        ///
+        /// Example:
+        /// ```yaml
+        /// headers:
+        ///   Host: "auth.example.com"
+        /// ```
+        #[serde(
+            default,
+            with = "http_serde::header_map",
+            skip_serializing_if = "HeaderMap::is_empty"
+        )]
+        #[schemars(with = "HashMap<String, String>")]
+        headers: HeaderMap,
     },
 }
 
@@ -187,7 +215,7 @@ pub enum JwtAuthPluginLookupLocation {
 
 #[cfg(test)]
 mod tests {
-    use super::JwtAuthConfig;
+    use super::{JwksProviderSourceConfig, JwtAuthConfig};
 
     #[test]
     fn scopes_claim_defaults_to_none() {
@@ -209,5 +237,43 @@ mod tests {
         )
         .expect("config should parse");
         assert_eq!(config.scopes_claim, Some("roles".to_string()));
+    }
+
+    #[test]
+    fn remote_jwks_headers_default_to_empty() {
+        let config = serde_json::from_str::<JwtAuthConfig>(
+            r#"{"jwks_providers":[{"source":"remote","url":"https://example.com/jwks.json"}]}"#,
+        )
+        .expect("config should parse");
+
+        match &config.jwks_providers[0] {
+            JwksProviderSourceConfig::Remote { headers, .. } => assert!(headers.is_empty()),
+            other => panic!("expected a remote provider, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn remote_jwks_headers_are_parsed() {
+        let config = serde_json::from_str::<JwtAuthConfig>(
+            r#"{"jwks_providers":[{"source":"remote","url":"http://idp.internal/jwks.json","headers":{"Host":"auth.example.com","X-Api-Key":"secret"}}]}"#,
+        )
+        .expect("config should parse");
+
+        match &config.jwks_providers[0] {
+            JwksProviderSourceConfig::Remote { headers, .. } => {
+                assert_eq!(headers.len(), 2);
+                assert_eq!(headers.get("host").unwrap(), "auth.example.com");
+                assert_eq!(headers.get("x-api-key").unwrap(), "secret");
+            }
+            other => panic!("expected a remote provider, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn remote_jwks_rejects_invalid_header_name() {
+        let result = serde_json::from_str::<JwtAuthConfig>(
+            r#"{"jwks_providers":[{"source":"remote","url":"https://example.com/jwks.json","headers":{"Invalid Header":"value"}}]}"#,
+        );
+        assert!(result.is_err(), "a header name with a space must not parse");
     }
 }
