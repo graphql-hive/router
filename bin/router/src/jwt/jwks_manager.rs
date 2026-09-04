@@ -77,12 +77,13 @@ impl BackgroundTask for JwksSourceTask {
     async fn run(&self, token: CancellationToken) {
         if let JwksProviderSourceConfig::Remote {
             polling_interval: Some(interval),
+            url,
             ..
         } = &self.0.config
         {
             info!(
                 target: targets::JWT,
-                source = ?self.0.config,
+                url = ?url,
                 "starting remote jwks polling for source",
             );
             let mut tokio_interval = tokio::time::interval(*interval);
@@ -92,7 +93,7 @@ impl BackgroundTask for JwksSourceTask {
                     _ = tokio_interval.tick() => { match self.0.load_and_store_jwks().await {
                         Ok(_) => {}
                         Err(err) => {
-                            error!(target: targets::JWT, error = ?err, source = ?self.0.config, "failed to load remote jwks");
+                            error!(target: targets::JWT, error = ?err, url = ?url, "failed to load remote jwks");
                         }
                     } }
                     _ = token.cancelled() => { info!(target: targets::JWT, "jwks source shutting down."); return; }
