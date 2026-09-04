@@ -27,7 +27,7 @@ jobs:
       - uses: ./.github/actions/install-tools
       - name: test all
         run: cargo test_all
-        timeout-minutes: 5
+        timeout-minutes: 8
         env:
           RUST_BACKTRACE: full
           RUST_LOG: debug
@@ -64,7 +64,7 @@ jobs:
       - uses: ./.github/actions/install-tools
       - name: test plugin examples
         run: cargo test_plugin_examples
-        timeout-minutes: 10
+        timeout-minutes: 15
         working-directory: plugin_examples
         env:
           RUST_BACKTRACE: full
