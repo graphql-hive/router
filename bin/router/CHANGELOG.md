@@ -116,6 +116,106 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.2.7 (2026-09-04)
+
+### Features
+
+#### HTTP compression between the client and the router
+
+Adds `traffic_shaping.router.compression`, controlling response compression (router → client)
+and request decompression (client → router). 
+
+`gzip`, `deflate`, `br` (Brotli), and `zstd` are all supported in both directions.
+
+The following defaults are set: 
+
+```yaml
+traffic_shaping:
+  router:
+    compression:
+      response:
+        enabled: true
+        algorithms:
+          - kind: gzip
+          - kind: zstd
+            level: 3
+          - kind: br
+            quality: 5
+          - kind: deflate
+        min_size: 1KiB
+      request:
+        enabled: true
+        algorithms: [gzip, zstd, br, deflate]
+```
+
+Response compression is negotiated against the client's `Accept-Encoding`.
+
+Request decompression is applied based on the client's `Content-Encoding`.
+
+Both directions default to enabled, with `gzip`, `zstd`, `br`, and `deflate` all allowed.
+
+Closes https://github.com/graphql-hive/router/issues/315
+
+#### Add `headers` to remote JWKS providers
+
+`jwt.jwks_providers` with `source: remote` now accepts a `headers` map, applied to the JWKS fetch.
+
+```yaml
+jwt:
+  jwks_providers:
+    - source: remote
+      url: http://idp.identity.svc.cluster.local/oauth/v2/keys
+      headers: # new 
+        Host: auth.example.com
+      polling_interval: "15m"
+```
+
+A JWKS endpoint behind a gateway that expects an API key or a custom auth header is now also reachable, without a proxy in front of the router.
+
+Closes https://github.com/graphql-hive/router/issues/1475
+
+#### HTTP compression between the router and subgraphs
+
+Implements HTTP compression for router ↔ subgraph calls. `gzip`, `deflate`, `br` (Brotli), and `zstd` are supported.
+
+```yaml
+traffic_shaping:
+  all:
+    compression:
+      request:
+        enabled: false
+        algorithm:
+          kind: gzip
+  subgraphs:
+    accounts:
+      compression:
+        request:
+          enabled: true
+          algorithm:
+            kind: zstd
+            level: 5
+```
+
+Compressing outbound requests to a subgraph is opt-in and off by default, since compressing
+unconditionally could break a subgraph that doesn't decompress. 
+
+A per-subgraph override fully replaces the `all` default rather than merging field-by-field.
+
+Decompressing subgraph responses is always on and unconfigured, so the router transparently decompresses any subgraph response carrying a
+recognized `Content-Encoding` regardless of the outbound setting.
+
+The router now also always advertises `Accept-Encoding: gzip, deflate, br, zstd` to every subgraph, independent of whether outbound compression is enabled.
+
+Closes https://github.com/graphql-hive/router/issues/315
+
+### Fixes
+
+#### Fix: `@oneOf` built-in directive declared with non-spec locations in introspection
+
+The router's introspection response declared `@oneOf` as `on OBJECT | INTERFACE | UNION` instead of the spec-correct `on INPUT_OBJECT`.
+
+Closes https://github.com/graphql-hive/router/issues/1479
+
 ## 0.2.6 (2026-09-02)
 
 ### Fixes
