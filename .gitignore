@@ -11,3 +11,6 @@ node_modules
 plugin_examples/target
 failed-tests
 .idea
+
+coverage.xml
+lcov.info

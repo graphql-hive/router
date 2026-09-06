@@ -24,13 +24,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          components: llvm-tools-preview
       - uses: ./.github/actions/install-tools
-      - name: test all
-        run: cargo test_all
+      - name: test all with coverage
+        run: cargo llvm-cov nextest --workspace --exclude e2e --cobertura --output-path coverage.xml
         timeout-minutes: 15
         env:
           RUST_BACKTRACE: full
           RUST_LOG: debug
+      - name: Upload coverage artifact
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: coverage-report-rust
+          path: coverage.xml
   e2e:
     name: test / e2e
     runs-on: ubuntu-latest
@@ -406,3 +414,21 @@ jobs:
           QUERY_PLANNER_EXPERIMENTAL_ABSTRACT_TYPE_FOLDING: true
         working-directory: audits
         continue-on-error: true # continue even if the test fails
+
+  upload-coverage-rust:
+    needs: unit
+    if: ${{ !cancelled() && needs.unit.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      code-quality: write
+    steps:
+      - name: Download coverage artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: coverage-report-rust
+      - uses: actions/upload-code-coverage@v1
+        with:
+          file: coverage.xml
+          language: Rust
+          label: code-coverage-agent
