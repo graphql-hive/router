@@ -95,8 +95,8 @@ impl SupergraphTrafficShapingConfig {
     ) -> TrafficShapingSubgraphCompressionConfig {
         self.subgraphs
             .get(subgraph_name)
-            .and_then(|config| config.compression)
-            .unwrap_or(self.all.compression)
+            .and_then(|config| config.compression.clone())
+            .unwrap_or_else(|| self.all.compression.clone())
     }
 
     /// Returns whether any configured traffic-shaping rule can reuse WebSocket connections.
@@ -475,16 +475,95 @@ impl Default for TrafficShapingExecutorGlobalConfig {
 /// Compression of traffic between the router and a subgraph.
 ///
 /// Subgraph responses are always transparently decompressed when they carry a recognized
-/// `Content-Encoding` - `request` is the only configurable direction for now (compressing
-/// outbound requests unconditionally could break a subgraph that doesn't decompress, so it's
-/// opt-in). Nested under its own key so a `response` section (e.g. tuning for the always-on
-/// decompression) can be added later without a breaking shape change.
-#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone, Copy)]
+/// `Content-Encoding` - `request` controls compressing outbound requests (opt-in, since
+/// compressing unconditionally could break a subgraph that doesn't decompress) and `response`
+/// controls the `Accept-Encoding` header the router advertises for that always-on response decompression.
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TrafficShapingSubgraphCompressionConfig {
     /// Compresses request bodies sent to the subgraph.
     #[serde(default)]
     pub request: TrafficShapingSubgraphRequestCompressionConfig,
+
+    /// Compression controls for the subgraph response.
+    #[serde(default)]
+    pub response: TrafficShapingSubgraphResponseCompressionConfig,
+}
+
+/// Response-direction compression settings for traffic between the router and a subgraph.
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TrafficShapingSubgraphResponseCompressionConfig {
+    /// Controls the `Accept-Encoding` header sent to the subgraph.
+    #[serde(default)]
+    pub accept_encoding: AcceptEncodingConfig,
+}
+
+/// Controls the `Accept-Encoding` header the router sends to a subgraph.
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct AcceptEncodingConfig {
+    /// Enables/disables sending the `Accept-Encoding` header to the subgraph.
+    ///
+    /// When disabled, the router sends no `Accept-Encoding` header at all, leaving it up to the
+    /// subgraph whether to compress its response. This has no effect on decompression: the
+    /// router still transparently decompresses any recognized `Content-Encoding` it receives.
+    #[serde(default = "default_accept_encoding_publish")]
+    pub publish: bool,
+
+    /// Algorithms advertised in the `Accept-Encoding` header sent to the subgraph, in
+    /// preference order.
+    ///
+    /// The order matters: some subgraphs pick the first algorithm from this list that they
+    /// support, rather than their own preferred algorithm, so this is a preference list rather
+    /// than an unordered allow-list. It only controls what the router asks for - regardless of
+    /// this setting, the router always transparently decompresses any of `gzip`, `deflate`,
+    /// `br`, or `zstd` it receives back.
+    ///
+    /// An empty list is equivalent to `publish: false`: no `Accept-Encoding` header is sent.
+    #[serde(default = "default_accept_encoding_algorithms")]
+    pub algorithms: Vec<CompressionAlgorithm>,
+}
+
+impl Default for AcceptEncodingConfig {
+    fn default() -> Self {
+        Self {
+            publish: default_accept_encoding_publish(),
+            algorithms: default_accept_encoding_algorithms(),
+        }
+    }
+}
+
+impl AcceptEncodingConfig {
+    /// The `Accept-Encoding` header value to send to the subgraph, or `None` when publishing is
+    /// disabled or there are no algorithms to advertise.
+    pub fn header_value(&self) -> Option<String> {
+        if !self.publish || self.algorithms.is_empty() {
+            return None;
+        }
+
+        Some(
+            self.algorithms
+                .iter()
+                .map(|algorithm| algorithm.token())
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+    }
+}
+
+fn default_accept_encoding_publish() -> bool {
+    true
+}
+
+fn default_accept_encoding_algorithms() -> Vec<CompressionAlgorithm> {
+    // Matches the router's hard-coded `Accept-Encoding` value before this became configurable.
+    vec![
+        CompressionAlgorithm::Gzip,
+        CompressionAlgorithm::Deflate,
+        CompressionAlgorithm::Br,
+        CompressionAlgorithm::Zstd,
+    ]
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy)]
@@ -1434,6 +1513,78 @@ mod tests {
             compression.request.algorithm,
             super::CompressionAlgorithmConfig::Gzip
         );
+    }
+
+    #[test]
+    fn accept_encoding_defaults_to_publishing_gzip_deflate_br_zstd_in_order() {
+        let config: TrafficShapingConfig =
+            serde_json::from_str("{}").expect("empty config should deserialize");
+        let resolved = SupergraphTrafficShapingConfig::from(&config);
+
+        let compression = resolved.subgraph_compression("accounts");
+        assert!(compression.response.accept_encoding.publish);
+        assert_eq!(
+            compression.response.accept_encoding.algorithms,
+            vec![
+                super::CompressionAlgorithm::Gzip,
+                super::CompressionAlgorithm::Deflate,
+                super::CompressionAlgorithm::Br,
+                super::CompressionAlgorithm::Zstd,
+            ]
+        );
+        assert_eq!(
+            compression
+                .response
+                .accept_encoding
+                .header_value()
+                .as_deref(),
+            Some("gzip, deflate, br, zstd"),
+            "default Accept-Encoding value must match the router's pre-existing hard-coded value"
+        );
+    }
+
+    #[test]
+    fn accept_encoding_header_value_respects_configured_order() {
+        let config: TrafficShapingConfig = serde_json::from_str(
+            r#"{ "all": { "compression": { "response": { "accept_encoding": { "algorithms": ["zstd", "gzip"] } } } } }"#,
+        )
+        .expect("config should deserialize");
+        let resolved = SupergraphTrafficShapingConfig::from(&config);
+
+        let compression = resolved.subgraph_compression("accounts");
+        assert_eq!(
+            compression
+                .response
+                .accept_encoding
+                .header_value()
+                .as_deref(),
+            Some("zstd, gzip"),
+            "Accept-Encoding value must preserve the configured algorithm order"
+        );
+    }
+
+    #[test]
+    fn accept_encoding_header_value_is_none_when_publish_is_disabled() {
+        let config: TrafficShapingConfig = serde_json::from_str(
+            r#"{ "all": { "compression": { "response": { "accept_encoding": { "publish": false } } } } }"#,
+        )
+        .expect("config should deserialize");
+        let resolved = SupergraphTrafficShapingConfig::from(&config);
+
+        let compression = resolved.subgraph_compression("accounts");
+        assert_eq!(compression.response.accept_encoding.header_value(), None);
+    }
+
+    #[test]
+    fn accept_encoding_header_value_is_none_when_algorithms_list_is_empty() {
+        let config: TrafficShapingConfig = serde_json::from_str(
+            r#"{ "all": { "compression": { "response": { "accept_encoding": { "algorithms": [] } } } } }"#,
+        )
+        .expect("config should deserialize");
+        let resolved = SupergraphTrafficShapingConfig::from(&config);
+
+        let compression = resolved.subgraph_compression("accounts");
+        assert_eq!(compression.response.accept_encoding.header_value(), None);
     }
 
     #[test]

@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::config::traffic_shaping::{
-    CompressionAlgorithm, TrafficShapingSubgraphRequestCompressionConfig,
+    AcceptEncodingConfig, CompressionAlgorithm, TrafficShapingSubgraphRequestCompressionConfig,
 };
 use crate::executor::executors::dedupe::unique_leader_fingerprint;
 use crate::executor::executors::inflight::InFlightRole;
@@ -173,6 +173,7 @@ impl HTTPSubgraphExecutor {
         telemetry_context: Arc<TelemetryContext>,
         subgraph_buffer_capacity: usize,
         compression: TrafficShapingSubgraphRequestCompressionConfig,
+        accept_encoding: AcceptEncodingConfig,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -184,12 +185,13 @@ impl HTTPSubgraphExecutor {
             HeaderValue::from_static("keep-alive"),
         );
 
-        // Always send the algorithms we can decompress, regardless of whether outbound
-        // request compression is enabled
-        header_map.insert(
-            http::header::ACCEPT_ENCODING,
-            HeaderValue::from_static("gzip, deflate, br, zstd"),
-        );
+        // Advertise the algorithms we can decompress, regardless of whether outbound request
+        // compression is enabled - unless the user disabled or emptied out the list.
+        if let Some(value) = accept_encoding.header_value() {
+            if let Ok(value) = HeaderValue::from_str(&value) {
+                header_map.insert(http::header::ACCEPT_ENCODING, value);
+            }
+        }
 
         Self {
             subgraph_name,
