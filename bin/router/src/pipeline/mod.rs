@@ -695,6 +695,10 @@ pub async fn execute_planned_request<'exec>(
                                 None => break,
                             }
                         }
+                        _ = producer_handle.sender().closed() => {
+                            debug!(target: targets::SUBSCRIPTIONS, "all downstream clients disconnected, closing upstream subscription");
+                            break;
+                        }
                         _ = supergraph.snapshot.retired() => {
                             // the supergraph this subscription was selected from has been
                             // retired (configured reload, or the owning plugin dropped/replaced
