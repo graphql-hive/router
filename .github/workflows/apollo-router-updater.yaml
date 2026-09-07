@@ -37,7 +37,7 @@ jobs:
         id: check
         if: ${{ github.event_name != 'workflow_dispatch' }}
         run: |
-          LATEST_VERSION=$(curl -H "User-Agent: Apollo-Router-Updater" -s -X GET https://crates.io/api/v1/crates/apollo-router | jq -r '.crate.max_version')
+          LATEST_VERSION=$(curl -H "User-Agent: Apollo-Router-Updater" -s -X GET https://crates.io/api/v1/crates/apollo-router | jq -r '.crate.max_stable_version')
           echo "latest_version=$LATEST_VERSION"
           echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
 
