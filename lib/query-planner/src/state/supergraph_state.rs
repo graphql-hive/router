@@ -1,5 +1,10 @@
+/// Schema-derived keys only (type/field/subgraph names), never attacker-controlled,
+/// so SipHash's DoS resistance buys nothing here.
+pub type HashMap<K, V> = std::collections::HashMap<K, V, rustc_hash::FxBuildHasher>;
+pub type HashSet<K> = std::collections::HashSet<K, rustc_hash::FxBuildHasher>;
+
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::BTreeSet,
     fmt::{Debug, Display},
 };
 
@@ -210,7 +215,7 @@ impl SupergraphState {
             known_subgraphs,
             subgraph_endpoint_map,
             known_scalars: Self::extract_known_scalars(schema),
-            subgraphs_state: HashMap::new(),
+            subgraphs_state: HashMap::default(),
             query_type: schema.query_type().name.to_string(),
             mutation_type: schema.mutation_type().map(|t| t.name.to_string()),
             subscription_type: schema.subscription_type().map(|t| t.name.to_string()),
@@ -292,7 +297,7 @@ impl SupergraphState {
     fn create_interface_object_in_subgraph(
         definitions: &DefinitionMap,
     ) -> InterfaceObjectToSubgraphsMap {
-        let mut interface_object_types_in_subgraphs = InterfaceObjectToSubgraphsMap::new();
+        let mut interface_object_types_in_subgraphs = InterfaceObjectToSubgraphsMap::default();
 
         for (name, definition) in definitions
             .iter()
@@ -316,7 +321,7 @@ impl SupergraphState {
     }
 
     fn create_interface_to_object_types(definitions: &DefinitionMap) -> InterfaceToObjectTypesMap {
-        let mut interface_to_object_types = InterfaceToObjectTypesMap::new();
+        let mut interface_to_object_types = InterfaceToObjectTypesMap::default();
 
         for definition in definitions.values() {
             let SupergraphDefinition::Object(object_type) = definition else {
@@ -357,7 +362,7 @@ impl SupergraphState {
     }
 
     fn extract_known_scalars(schema: &SchemaDocument) -> HashSet<String> {
-        let mut set = HashSet::new();
+        let mut set = HashSet::default();
 
         for def in schema.definitions.iter() {
             if let input::Definition::TypeDefinition(input::TypeDefinition::Scalar(scalar_type)) =
@@ -377,8 +382,8 @@ impl SupergraphState {
     fn extract_subgraph_names_and_endpoints(
         schema: &SchemaDocument,
     ) -> (HashMap<String, String>, HashMap<String, String>) {
-        let mut subgraph_names_map = HashMap::new();
-        let mut subgraph_endpoints_map = HashMap::new();
+        let mut subgraph_names_map = HashMap::default();
+        let mut subgraph_endpoints_map = HashMap::default();
         let join_graph_enum = schema.definitions.iter().find_map(|d| match d {
             input::Definition::TypeDefinition(input::TypeDefinition::Enum(e)) => {
                 if e.name == "join__Graph" {
@@ -681,7 +686,7 @@ impl SupergraphState {
     fn build_subgraph_usage_from_fields(
         fields: &HashMap<String, SupergraphField>,
     ) -> HashSet<String> {
-        let mut subgraphs = HashSet::new();
+        let mut subgraphs = HashSet::default();
 
         // Add subgraphs from join_field directives
         for (_field_name, field) in fields.iter() {
@@ -994,7 +999,7 @@ impl SupergraphDefinition {
 
     pub fn fields(&self) -> &HashMap<String, SupergraphField> {
         static EMPTY: std::sync::LazyLock<HashMap<String, SupergraphField>> =
-            std::sync::LazyLock::new(HashMap::<String, SupergraphField>::new);
+            std::sync::LazyLock::new(HashMap::<String, SupergraphField>::default);
 
         match self {
             SupergraphDefinition::Object(object_type) => &object_type.fields,
@@ -1068,28 +1073,38 @@ pub struct SupergraphField {
 }
 
 impl SupergraphField {
-    pub fn resolvable_in_graphs(&self, type_def: &SupergraphDefinition) -> HashSet<String> {
-        // A field is resolvable in all defining subgraph when it has no @join__field
-        if self.join_field.is_empty() {
-            return type_def
-                .join_types()
-                .iter()
-                .map(|j| j.graph_id.to_string())
-                .collect::<HashSet<_>>();
-        }
+    /// Yields the graph ids this field is resolvable in, borrowed from the schema.
+    ///
+    /// The ids are **not deduplicated**: a type carries one `@join__type` per key, so
+    /// the same graph id can repeat. Callers that need distinct ids must dedupe
+    /// themselves -- see [`Self::resolvable_in_multiple_graphs`].
+    pub fn resolvable_in_graphs<'a>(
+        &'a self,
+        type_def: &'a SupergraphDefinition,
+    ) -> impl Iterator<Item = &'a str> + 'a {
+        // A field is resolvable in all defining subgraphs when it has no @join__field
+        let from_join_types = self.join_field.is_empty();
 
-        // A field is resolvable when it has @join__field and it's not external or overriden
-        self.join_field
+        type_def
+            .join_types()
             .iter()
-            .filter_map(|jf| {
-                if let Some(graph_id) = &jf.graph_id {
-                    if !jf.external && !jf.used_overridden && jf.override_label.is_none() {
-                        return Some(graph_id.to_string());
-                    }
-                }
-                None
-            })
-            .collect::<HashSet<_>>()
+            .filter(move |_| from_join_types)
+            .map(|j| j.graph_id.as_str())
+            // A field is resolvable when it has @join__field and it's not external or overriden
+            .chain(self.join_field.iter().filter_map(|jf| {
+                let graph_id = jf.graph_id.as_deref()?;
+                (!jf.external && !jf.used_overridden && jf.override_label.is_none())
+                    .then_some(graph_id)
+            }))
+    }
+
+    /// Whether the field is resolvable in more than one *distinct* graph.
+    pub fn resolvable_in_multiple_graphs(&self, type_def: &SupergraphDefinition) -> bool {
+        let mut ids = self.resolvable_in_graphs(type_def);
+        match ids.next() {
+            Some(first) => ids.any(|id| id != first),
+            None => false,
+        }
     }
 }
 

@@ -668,7 +668,7 @@ fn process_field<'graph, 'op: 'graph>(
                 .ok_or_else(|| WalkOperationError::TypeNotFound(tail.name_str().to_string()))?;
 
             if output_type.is_interface_type()
-                && field_def.resolvable_in_graphs(parent_def).len() > 1
+                && field_def.resolvable_in_multiple_graphs(parent_def)
                 // if there's one fragment, the query planner can decide which subgraph to use, based on the fragment's type condition
                 && field
                     .selections
@@ -779,7 +779,7 @@ fn field_target_subgraph_ids<'graph>(
         };
 
         for graph_id in field_def.resolvable_in_graphs(parent_def) {
-            if let Ok(subgraph_id) = supergraph.resolve_graph_id(&graph_id) {
+            if let Ok(subgraph_id) = supergraph.resolve_graph_id(graph_id) {
                 target_subgraph_ids.insert(subgraph_id.0.to_string());
             }
         }

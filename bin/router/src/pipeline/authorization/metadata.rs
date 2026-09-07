@@ -72,8 +72,8 @@ where
     fn is_empty(&self) -> bool;
 
     /// Computes whether each type has auth rules in its subtree.
-    fn compute_type_auth_metadata(
-        definitions: &std::collections::HashMap<String, SupergraphDefinition>,
+    fn compute_type_auth_metadata<S: std::hash::BuildHasher>(
+        definitions: &std::collections::HashMap<String, SupergraphDefinition, S>,
         schema_metadata: &SchemaMetadata,
         type_rules: &TypeRulesMap,
         field_rules: &TypeFieldRulesMap,
@@ -173,8 +173,8 @@ impl AuthorizationMetadataExt for AuthorizationMetadata {
     }
 
     /// Computes whether each type has auth rules in its subtree.
-    fn compute_type_auth_metadata(
-        definitions: &std::collections::HashMap<String, SupergraphDefinition>,
+    fn compute_type_auth_metadata<S: std::hash::BuildHasher>(
+        definitions: &std::collections::HashMap<String, SupergraphDefinition, S>,
         schema_metadata: &SchemaMetadata,
         type_rules: &TypeRulesMap,
         field_rules: &TypeFieldRulesMap,

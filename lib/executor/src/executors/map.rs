@@ -229,8 +229,8 @@ impl SubgraphExecutorMap {
         })
     }
 
-    pub fn from_http_endpoint_map(
-        subgraph_endpoint_map: &HashMap<SubgraphName, String>,
+    pub fn from_http_endpoint_map<S: std::hash::BuildHasher>(
+        subgraph_endpoint_map: &HashMap<SubgraphName, String, S>,
         traffic_shaping: SupergraphTrafficShapingConfig,
         override_subgraph_urls: OverrideSubgraphUrlsConfig,
         subscriptions: SupergraphSubscriptionsConfig,

@@ -311,7 +311,7 @@ pub async fn graphql_request_handler(
                 &supergraph.snapshot.planner.supergraph.progressive_overrides;
             if !progressive_overrides.flags.is_empty() {
                 ctx.progressive_override.unresolved_labels =
-                    Some(progressive_overrides.flags.clone());
+                    Some(progressive_overrides.flags.iter().cloned().collect());
             }
         })?;
 
