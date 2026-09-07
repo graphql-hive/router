@@ -1,6 +1,5 @@
 ---
 hive-router: patch
-node-addon: patch
 ---
 
 # Close quiet upstream subscriptions after client disconnects
