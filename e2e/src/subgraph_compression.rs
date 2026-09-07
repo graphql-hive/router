@@ -190,10 +190,11 @@ mod subgraph_compression_e2e_tests {
         );
     }
 
-    // regardless of whether request compression is enabled, the router should always tell
-    // subgraphs which encodings it can decompress in their responses.
+    // regardless of whether request compression is enabled, the router should by default tell
+    // subgraphs which encodings it can decompress in their responses, using the pre-existing
+    // hard-coded order (gzip, deflate, br, zstd) now that this is configurable.
     #[ntex::test]
-    async fn should_always_advertise_accept_encoding_to_subgraphs() {
+    async fn should_advertise_accept_encoding_to_subgraphs_by_default() {
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
@@ -218,13 +219,148 @@ mod subgraph_compression_e2e_tests {
             .expect("expected requests sent to accounts subgraph");
         let subgraph_request = &subgraph_requests[0];
 
+        assert_eq!(
+            subgraph_request
+                .headers
+                .get(http::header::ACCEPT_ENCODING.as_str())
+                .map(|v| v.as_bytes()),
+            Some("gzip, deflate, br, zstd".as_bytes()),
+            "the router should advertise its default Accept-Encoding value to subgraphs"
+        );
+    }
+
+    #[ntex::test]
+    async fn should_not_advertise_accept_encoding_when_publish_is_disabled() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        compression:
+                            response:
+                                accept_encoding:
+                                    publish: false
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+        assert_eq!(res.status(), 200);
+
+        let subgraph_requests = subgraphs
+            .get_requests_log("accounts")
+            .expect("expected requests sent to accounts subgraph");
+        let subgraph_request = &subgraph_requests[0];
+
         assert!(
             subgraph_request
                 .headers
                 .get(http::header::ACCEPT_ENCODING.as_str())
-                .is_some(),
-            "the router should always advertise Accept-Encoding to subgraphs"
+                .is_none(),
+            "Accept-Encoding must not be sent when publish is disabled"
         );
+    }
+
+    #[ntex::test]
+    async fn should_advertise_accept_encoding_in_the_configured_order() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        compression:
+                            response:
+                                accept_encoding:
+                                    algorithms: [zstd, gzip]
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+        assert_eq!(res.status(), 200);
+
+        let subgraph_requests = subgraphs
+            .get_requests_log("accounts")
+            .expect("expected requests sent to accounts subgraph");
+        let subgraph_request = &subgraph_requests[0];
+
+        assert_eq!(
+            subgraph_request
+                .headers
+                .get(http::header::ACCEPT_ENCODING.as_str())
+                .map(|v| v.as_bytes()),
+            Some("zstd, gzip".as_bytes()),
+            "Accept-Encoding must reflect the configured algorithm subset and order"
+        );
+    }
+
+    #[ntex::test]
+    async fn should_apply_per_subgraph_accept_encoding_override() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    subgraphs:
+                        accounts:
+                            compression:
+                                response:
+                                    accept_encoding:
+                                        publish: false
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ users { id } topProducts { upc } }", None, None)
+            .await;
+        assert_eq!(res.status(), 200);
+
+        let accounts_requests = subgraphs
+            .get_requests_log("accounts")
+            .expect("expected requests to accounts");
+        assert!(
+            accounts_requests[0]
+                .headers
+                .get(http::header::ACCEPT_ENCODING.as_str())
+                .is_none(),
+            "accounts has publish disabled and should not advertise Accept-Encoding"
+        );
+
+        if let Some(products_requests) = subgraphs.get_requests_log("products") {
+            assert_eq!(
+                products_requests[0]
+                    .headers
+                    .get(http::header::ACCEPT_ENCODING.as_str())
+                    .map(|v| v.as_bytes()),
+                Some("gzip, deflate, br, zstd".as_bytes()),
+                "products has no override and should keep the default Accept-Encoding"
+            );
+        }
     }
 
     #[ntex::test]
