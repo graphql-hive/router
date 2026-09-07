@@ -1174,6 +1174,57 @@ mod subscriptions_e2e_tests {
     }
 
     #[ntex::test]
+    async fn quiet_subscription_closes_upstream_when_client_disconnects() {
+        use futures::StreamExt;
+
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                subscriptions:
+                    enabled: true
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let mut res = router
+            .send_graphql_request(
+                r#"
+                subscription {
+                    reviewAddedLooping(intervalInMs: 60000) {
+                        id
+                    }
+                }
+                "#,
+                None,
+                some_header_map! {
+                    http::header::ACCEPT => "text/event-stream"
+                },
+            )
+            .await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+        let _ = res.next().await.expect("expected at least one chunk");
+        assert_eq!(subgraphs.active_subscriptions(), 1);
+
+        drop(res);
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while subgraphs.active_subscriptions() != 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("upstream subscription remained active after the client disconnected");
+    }
+
+    #[ntex::test]
     async fn subscription_stream_client_cancelled() {
         use futures::StreamExt;
 
