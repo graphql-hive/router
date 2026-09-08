@@ -479,6 +479,74 @@ mod subgraph_compression_e2e_tests {
     }
 
     #[ntex::test]
+    async fn should_treat_identity_content_encoding_as_uncompressed() {
+        let body = sonic_rs::to_vec(&sonic_rs::json!({
+            "data": { "users": [{ "id": "identity-user-1" }] }
+        }))
+        .unwrap();
+
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(move |req| {
+                if req.path.contains("accounts") {
+                    Some(ResponseLike {
+                        status: StatusCode::OK,
+                        headers: {
+                            let mut h = http::HeaderMap::new();
+                            h.insert(
+                                http::header::CONTENT_TYPE,
+                                "application/json".parse().unwrap(),
+                            );
+                            // the subgraph explicitly declares the "no encoding" token, and
+                            // sends the body uncompressed.
+                            h.insert(CONTENT_ENCODING, "identity".parse().unwrap());
+                            h
+                        },
+                        body: Some(Bytes::from(body.clone())),
+                    })
+                } else {
+                    None
+                }
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ users { id } }", None, None)
+            .await;
+
+        assert_eq!(
+            res.status(),
+            200,
+            "expected a successful response for an `identity`-encoded subgraph response"
+        );
+        let response_body = res.json_body().await;
+        assert!(
+            response_body["errors"].is_null(),
+            "`identity` Content-Encoding must not produce an error, got: {response_body:?}"
+        );
+        assert_eq!(
+            response_body["data"]["users"][0]["id"].as_str(),
+            Some("identity-user-1"),
+            "expected the router to pass through an `identity`-encoded subgraph response \
+             unchanged, got: {response_body:?}"
+        );
+    }
+
+    #[ntex::test]
     async fn should_return_a_clean_error_for_malformed_compressed_subgraph_response() {
         for algorithm in ["gzip", "deflate", "br", "zstd"] {
             let garbage = b"this is not compressed data of any kind: 1234567890".to_vec();

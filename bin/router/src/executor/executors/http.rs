@@ -310,7 +310,8 @@ async fn send_request<'a>(
         };
 
         let body = match parts.headers.get(http::header::CONTENT_ENCODING) {
-            Some(content_encoding) => {
+            // `identity` (RFC 9110 §8.4.1) and an empty token both mean "no encoding"
+            Some(content_encoding) if !is_identity_or_empty_encoding(content_encoding) => {
                 let algorithm = content_encoding
                     .to_str()
                     .ok()
@@ -328,7 +329,7 @@ async fn send_request<'a>(
                     }
                 }
             }
-            None => body,
+            _ => body,
         };
 
         if body.is_empty() {
@@ -813,6 +814,20 @@ pub struct SubgraphHttpResponse {
 
 const VALID_GRAPHQL_CONTENT_TYPES: [&str; 2] =
     ["application/json", "application/graphql-response+json"];
+
+/// Whether a `Content-Encoding` value means "no encoding" - either the explicit `identity`
+/// token (RFC 9110 §8.4.1) or an empty value - so the body can be used as-is without
+/// decompression
+#[inline]
+fn is_identity_or_empty_encoding(value: &HeaderValue) -> bool {
+    match value.to_str() {
+        Ok(token) => {
+            let token = token.trim();
+            token.is_empty() || token.eq_ignore_ascii_case("identity")
+        }
+        Err(_) => false,
+    }
+}
 
 #[inline]
 fn is_valid_graphql_content_type(header_value: &str) -> bool {
