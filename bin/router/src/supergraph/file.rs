@@ -1,3 +1,4 @@
+use std::io::ErrorKind;
 use std::time::Duration;
 
 use crate::config::primitives::file_path::FilePath;
@@ -7,6 +8,16 @@ use tokio::{fs, sync::RwLock};
 use tracing::{debug, trace};
 
 use crate::supergraph::base::{LoadSupergraphError, ReloadSupergraphResult, SupergraphLoader};
+
+/// Maximum number of retry attempts for a transient read failure.
+const MAX_TRANSIENT_RETRIES: usize = 3;
+
+/// A read of ConfigMap (K8s) that lands in that tiny window can fail with not found error
+/// or stale error on linux.
+fn is_transient_read_error(err: &std::io::Error) -> bool {
+    // ESTALE has no dedicated `ErrorKind` variant, so match its raw errno (116 on Linux).
+    matches!(err.kind(), ErrorKind::NotFound) || err.raw_os_error() == Some(116)
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum FileSupergraphError {
@@ -24,11 +35,38 @@ pub struct SupergraphFileLoader {
 
 impl SupergraphFileLoader {
     async fn load_with_polling(&self) -> Result<ReloadSupergraphResult, FileSupergraphError> {
+        // Retry transient failures caused by a ConfigMap atomic swap racing with our
+        // read (see `is_transient_read_error`). Retries settle well within one poll
+        // interval, so a genuine `NotFound` still surfaces as an error after a few tries.
+        let mut attempt: usize = 0;
+        loop {
+            match self.try_load_with_polling().await {
+                Err(FileSupergraphError::ReadFileError(err))
+                    if is_transient_read_error(&err) && attempt < MAX_TRANSIENT_RETRIES =>
+                {
+                    attempt += 1;
+
+                    debug!(
+                        target: targets::SUPERGRAPH,
+                        path = ?self.file_path.absolute,
+                        attempt,
+                        error = ?err,
+                        "transient read during supergraph reload, retrying",
+                    );
+
+                    tokio::time::sleep(Duration::from_millis(50 * attempt as u64)).await;
+                }
+                other => return other,
+            }
+        }
+    }
+
+    async fn try_load_with_polling(&self) -> Result<ReloadSupergraphResult, FileSupergraphError> {
         let file_metadata = fs::metadata(&self.file_path.absolute).await?;
         let current_time = file_metadata.modified()?;
         let mut modified_time = self.modified_time.write().await;
 
-        if modified_time.is_none() || current_time > modified_time.unwrap() {
+        if modified_time.is_none_or(|previous| current_time != previous) {
             let content = fs::read_to_string(&self.file_path.absolute).await?;
             *modified_time = Some(current_time);
 

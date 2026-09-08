@@ -20,7 +20,7 @@ mod tls_tests {
 
     #[ntex::test]
     #[should_panic(
-        expected = "failed to parse inline YAML config: ConfigLoadError(Failed to canonicalize path: No such file or directory (os error 2) for key `traffic_shaping.router.tls.key_file`)"
+        expected = "failed to parse inline YAML config: ConfigLoadError(Failed to resolve path: No such file or directory (os error 2) for key `traffic_shaping.router.tls.key_file`)"
     )]
     async fn config_validation_fails_due_to_missing_key_file() {
         let generated_key_pair = generate_keypair().await;
@@ -45,7 +45,7 @@ mod tls_tests {
 
     #[ntex::test]
     #[should_panic(
-        expected = "failed to parse inline YAML config: ConfigLoadError(expected single value or array, but parsing both failed with error: Failed to canonicalize path: No such file or directory (os error 2) for key `traffic_shaping.router.tls.cert_file"
+        expected = "failed to parse inline YAML config: ConfigLoadError(expected single value or array, but parsing both failed with error: Failed to resolve path: No such file or directory (os error 2) for key `traffic_shaping.router.tls.cert_file"
     )]
     async fn config_validation_fails_due_to_missing_cert_file() {
         let generated_key_pair = generate_keypair().await;
