@@ -24,10 +24,14 @@ pub struct TracingConfig {
 
 impl TracingConfig {
     pub fn is_enabled(&self) -> bool {
-        // sampling is set to 0? no nead to enable tracing
-        self.collect.sampling > 0.0 &&
-        // at least one exporter is enabled
-        self.exporters.iter().any(|exporter| exporter.is_enabled())
+        let has_enabled_exporter = self.exporters.iter().any(TracingExporterConfig::is_enabled);
+        let has_enabled_datadog = self.exporters.iter().any(|exporter| {
+            matches!(exporter, TracingExporterConfig::Datadog(config) if config.enabled)
+        });
+
+        // datadog still records zero-sampled spans so its all-request
+        // statistics stay complete
+        has_enabled_exporter && (self.collect.sampling > 0.0 || has_enabled_datadog)
     }
 }
 
@@ -218,6 +222,24 @@ pub enum TracingExporterConfig {
     Otlp(Box<TracingOtlpConfig>),
     #[serde(rename = "stdout")]
     Stdout(Box<StdoutExporterConfig>),
+    #[serde(rename = "datadog")]
+    Datadog(Box<DatadogExporterConfig>),
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+#[non_exhaustive]
+pub struct DatadogExporterConfig {
+    #[serde(default = "default_datadog_config_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub endpoint: Option<ValueOrExpression<String>>,
+    #[serde(default)]
+    pub include_graphql_document: bool,
+}
+
+fn default_datadog_config_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -239,6 +261,7 @@ impl TracingExporterConfig {
         match self {
             TracingExporterConfig::Otlp(otlp_config) => otlp_config.enabled,
             TracingExporterConfig::Stdout(stdout_config) => stdout_config.enabled,
+            TracingExporterConfig::Datadog(datadog_config) => datadog_config.enabled,
         }
     }
 }
