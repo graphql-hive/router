@@ -315,10 +315,11 @@ async fn json_log_req_summary() {
 }
 
 /// The request summary records which algorithm the client-facing response was compressed
-/// with. This exercises both response-compression code paths, which emit the summary at
-/// different times: `gzip` streams through an encoder (summary emitted on body drop), while
-/// `br` drains the whole body up front (summary emitted mid-drain), so both must record the
-/// encoding *before* the body is consumed.
+/// with, plus the compressed wire size (`response_bytes`) alongside the uncompressed size
+/// (`payload_bytes`). This exercises both response-compression code paths, which emit the
+/// summary at different times: `gzip` streams through an encoder (summary emitted on body
+/// drop), while `br` buffers the whole body up front (summary emitted after compression), so
+/// both must record the encoding and compressed size *before* the summary is emitted.
 #[ntex::test]
 async fn json_log_req_summary_records_response_compression() {
     // `min_size: 1B` so even the tiny test response gets compressed.
@@ -351,6 +352,23 @@ traffic_shaping:
             find_attr(req_summary, "response_compression").as_deref(),
             Some(algorithm),
             "summary should record the `{algorithm}` encoding the response was compressed with"
+        );
+
+        let response_bytes = req_summary
+            .get("response_bytes")
+            .and_then(Value::as_i64)
+            .unwrap_or_else(|| panic!("`{algorithm}` summary should record `response_bytes`"));
+        assert!(
+            response_bytes > 0,
+            "`{algorithm}` compressed size should be positive, got {response_bytes}"
+        );
+        // The uncompressed size is still reported, and separately from the compressed one.
+        assert!(
+            req_summary
+                .get("payload_bytes")
+                .and_then(Value::as_i64)
+                .is_some_and(|payload_bytes| payload_bytes > 0),
+            "`{algorithm}` summary should still report the uncompressed `payload_bytes`"
         );
     }
 }

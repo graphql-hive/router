@@ -1,4 +1,11 @@
-use std::{cmp::Ordering, io::Write, rc::Rc, sync::Arc};
+use std::{
+    cmp::Ordering,
+    error::Error,
+    io::Write,
+    rc::Rc,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 use http::header::{ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_TYPE};
 use ntex::{
@@ -100,26 +107,37 @@ where
             return Ok(response);
         }
 
-        // Record the negotiated encoding on the request summary *before* applying it: the
-        // `br`/`zstd` paths drain the body inside `compress_full_body`, and draining emits
-        // the summary, so recording afterwards would be too late. The summary handle is put
-        // on the request extensions by `RequestSummaryMiddleware` (which runs inside this
-        // outermost middleware), and rides along with the response.
-        if let Some(summary) = response.request().extensions().get::<Arc<RequestSummary>>() {
-            summary.set_response_compression(algorithm.token());
+        let summary = response
+            .request()
+            .extensions()
+            .get::<Arc<RequestSummary>>()
+            .cloned();
+        let token = algorithm.token();
+
+        if let Some(summary) = &summary {
+            summary.set_response_compression(token);
         }
 
         let response = match algorithm {
-            CompressionAlgorithmConfig::Gzip => {
-                response.map_body(|head, body| Encoder::response(ContentEncoding::Gzip, head, body))
-            }
-            CompressionAlgorithmConfig::Deflate => response
-                .map_body(|head, body| Encoder::response(ContentEncoding::Deflate, head, body)),
+            CompressionAlgorithmConfig::Gzip => response.map_body(move |head, body| {
+                track_response_bytes(
+                    Encoder::response(ContentEncoding::Gzip, head, body),
+                    summary,
+                )
+            }),
+            CompressionAlgorithmConfig::Deflate => response.map_body(move |head, body| {
+                track_response_bytes(
+                    Encoder::response(ContentEncoding::Deflate, head, body),
+                    summary,
+                )
+            }),
+            // br/zstd buffer the whole body; `compress_full_body` records the compressed size once
+            // compression succeeds.
             CompressionAlgorithmConfig::Br(brotli) => {
-                compress_full_body(response, "br", brotli_compressor(*brotli)).await
+                compress_full_body(response, token, brotli_compressor(*brotli)).await
             }
             CompressionAlgorithmConfig::Zstd(zstd) => {
-                compress_full_body(response, "zstd", zstd_compressor(*zstd)).await
+                compress_full_body(response, token, zstd_compressor(*zstd)).await
             }
         };
 
@@ -207,9 +225,9 @@ async fn compress_full_body(
     compress: impl FnOnce(&[u8]) -> Option<Vec<u8>> + Send + 'static,
 ) -> web::WebResponse {
     let (http_response, request) = response.into_parts();
-    let (mut head, body) = http_response.into_parts();
+    let (mut head, mut body) = http_response.into_parts();
 
-    let original = match drain_body(body).await {
+    let original = match drain_body(&mut body).await {
         Ok(bytes) => bytes,
         Err(err) => {
             let pipeline_err: PipelineError =
@@ -239,22 +257,70 @@ async fn compress_full_body(
     };
 
     let fallback = original.clone();
-    let body = match ntex::rt::spawn_blocking(move || compress(&original)).await {
+    let compressed_body = match ntex::rt::spawn_blocking(move || compress(&original)).await {
         Ok(Some(compressed)) => {
             head.headers_mut()
                 .insert(CONTENT_ENCODING, HeaderValue::from_static(token));
+
+            if let Some(summary) = request.extensions().get::<Arc<RequestSummary>>() {
+                summary.set_response_bytes(compressed.len() as i64);
+            }
+
             Body::Bytes(Bytes::from(compressed))
         }
         _ => Body::Bytes(fallback),
     };
 
-    web::WebResponse::new(head.set_body(body), request)
+    web::WebResponse::new(head.set_body(compressed_body), request)
 }
 
-async fn drain_body(mut body: ResponseBody<Body>) -> Result<Bytes, Rc<dyn std::error::Error>> {
+async fn drain_body(body: &mut ResponseBody<Body>) -> Result<Bytes, Rc<dyn std::error::Error>> {
     let mut buf = BytesMut::new();
     while let Some(chunk) = body.try_next().await? {
         buf.extend_from_slice(&chunk);
     }
     Ok(buf.freeze())
+}
+
+fn track_response_bytes(
+    body: ResponseBody<Body>,
+    summary: Option<Arc<RequestSummary>>,
+) -> ResponseBody<Body> {
+    match summary {
+        Some(summary) => ResponseBody::Body(Body::from_message(ResponseBytesTrackedBody {
+            body,
+            summary,
+            response_bytes: 0,
+        })),
+        None => body,
+    }
+}
+
+struct ResponseBytesTrackedBody {
+    body: ResponseBody<Body>,
+    summary: Arc<RequestSummary>,
+    response_bytes: i64,
+}
+
+impl MessageBody for ResponseBytesTrackedBody {
+    fn size(&self) -> BodySize {
+        self.body.size()
+    }
+
+    fn poll_next_chunk(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Bytes, Rc<dyn Error>>>> {
+        let poll = self.body.poll_next_chunk(cx);
+        if let Poll::Ready(Some(Ok(chunk))) = &poll {
+            self.response_bytes = self.response_bytes.saturating_add(chunk.len() as i64);
+        }
+        poll
+    }
+}
+
+impl Drop for ResponseBytesTrackedBody {
+    fn drop(&mut self) {
+        self.summary.set_response_bytes(self.response_bytes);
+    }
 }

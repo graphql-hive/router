@@ -39,6 +39,7 @@ pub struct RequestSummary {
     pub response_compression: OnceLock<&'static str>,
     pub status_code: AtomicU16,
     pub payload_bytes: AtomicI64,
+    pub response_bytes: AtomicI64,
     pub duration_ms: AtomicU64,
     pub supergraph_identifier: AtomicU64,
     pub custom: Mutex<BTreeMap<String, sonic_rs::Value>>,
@@ -88,6 +89,10 @@ impl RequestSummary {
     /// wins; the response is only ever compressed with a single algorithm per request.
     pub fn set_response_compression(&self, algorithm: &'static str) {
         let _ = self.response_compression.set(algorithm);
+    }
+
+    pub fn set_response_bytes(&self, bytes: i64) {
+        self.response_bytes.store(bytes, Relaxed);
     }
 
     pub fn set_duration(&self, duration: Duration) {
@@ -140,6 +145,9 @@ impl RequestSummary {
             })
             .unwrap_or_default();
 
+        let response_bytes = self.response_bytes.load(Relaxed);
+        let response_bytes = (response_bytes > 0).then_some(response_bytes);
+
         info!(
             target: targets::SUMMARY,
             message = self.message.get().map(Cow::as_ref),
@@ -158,6 +166,7 @@ impl RequestSummary {
             response_compression = self.response_compression.get().copied(),
             status_code = self.status_code.load(Relaxed),
             payload_bytes = self.payload_bytes.load(Relaxed),
+            response_bytes = response_bytes,
             supergraph_identifier = self.supergraph_identifier.load(Relaxed),
             duration_ms = self.duration_ms.load(Relaxed),
         );
