@@ -4,7 +4,7 @@ use tracing::{Level, Span};
 // Atomic representation of the max enabled tracing level.
 // 0: Off, 1: Error, 2: Warn, 3: Info, 4: Debug, 5: Trace
 static MAX_LEVEL: AtomicU8 = AtomicU8::new(3); // Default to Info
-static GRAPHQL_DOCUMENT_ENABLED: AtomicBool = AtomicBool::new(true);
+static GRAPHQL_DOCUMENT_RECORDING_ENABLED: AtomicBool = AtomicBool::new(true);
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
@@ -48,14 +48,14 @@ pub fn is_level_enabled(level: Level) -> bool {
 }
 
 #[inline]
-pub fn set_graphql_document_enabled(enabled: bool) {
-    // this provider-wide gate keeps query text out of datadog's private processor by default.
-    GRAPHQL_DOCUMENT_ENABLED.store(enabled, Ordering::Relaxed);
+pub fn set_graphql_document_recording_enabled(enabled: bool) {
+    // this gate acts before datadog's private processor, where exporter redaction can't reach.
+    GRAPHQL_DOCUMENT_RECORDING_ENABLED.store(enabled, Ordering::Relaxed);
 }
 
 #[inline]
-pub fn is_graphql_document_enabled() -> bool {
-    GRAPHQL_DOCUMENT_ENABLED.load(Ordering::Relaxed)
+pub fn is_graphql_document_recording_enabled() -> bool {
+    GRAPHQL_DOCUMENT_RECORDING_ENABLED.load(Ordering::Relaxed)
 }
 
 #[inline]

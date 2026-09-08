@@ -44,9 +44,9 @@ use crate::telemetry::{
     utils::{build_metadata, build_tls_config, resolve_string_map, resolve_value_or_expression},
 };
 
-use control::set_graphql_document_enabled;
+use control::set_graphql_document_recording_enabled;
 pub use control::{
-    disabled_span, is_graphql_document_enabled, is_level_enabled, set_tracing_enabled,
+    disabled_span, is_graphql_document_recording_enabled, is_level_enabled, set_tracing_enabled,
 };
 
 pub mod compatibility;
@@ -125,6 +125,8 @@ where
             });
     let datadog_config = datadog_configs.next();
     if datadog_configs.next().is_some() {
+        // one shared provider can install only one native datadog
+        // processor and agent target
         return Err(TelemetryError::TracesExporterSetup(
             "only one enabled Datadog exporter may be configured".to_string(),
         ));
@@ -143,14 +145,17 @@ where
         datadog_config.set_trace_sample_rate(config.tracing.collect.sampling);
         // suppression stops full graphql queries and sensitive literals entering
         // datadog's direct processor; mixed exporters share this gate
-        set_graphql_document_enabled(datadog.include_graphql_document);
+        set_graphql_document_recording_enabled(datadog.include_graphql_document);
         TraceProviderBuilder::Datadog(
             datadog_opentelemetry::tracing()
                 .with_config(datadog_config.build())
                 .with_resource(resource.clone()),
         )
     } else {
-        set_graphql_document_enabled(true);
+        // generic providers still record documents as before; standard otlp/stdout
+        // exporters redact them later, and this reset restores recording after a
+        // datadog config reload (because the recording is globally set)
+        set_graphql_document_recording_enabled(true);
         let base_sampler = Sampler::TraceIdRatioBased(config.tracing.collect.sampling);
         let mut builder = TracerProviderBuilder::default()
             .with_id_generator(id_generator)

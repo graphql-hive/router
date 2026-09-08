@@ -89,9 +89,27 @@ pub struct TracingCollectConfig {
     pub max_attributes_per_event: u32,
     #[serde(default = "default_max_attributes_per_link")]
     pub max_attributes_per_link: u32,
-    /// Can also be set via the `TELEMETRY_TRACING_SAMPLING_RATE` environment variable.
+    /// Fraction of traces to retain, from `0.0` to `1.0`.
+    ///
+    /// This can also be set with `TELEMETRY_TRACING_SAMPLING_RATE`.
+    ///
+    /// When an enabled Datadog exporter is present, the resolved Router value
+    /// becomes Datadog's provider-wide catch-all sample rate and overrides
+    /// `DD_TRACE_SAMPLE_RATE`. More specific `DD_TRACE_SAMPLING_RULES`, remote
+    /// configuration, and the `DD_TRACE_RATE_LIMIT` retained-trace ceiling still
+    /// apply. The ceiling defaults to 100 retained traces per second when
+    /// explicit sampling is active, so high traffic can retain a lower percentage
+    /// than this value.
+    ///
+    /// Datadog keeps instrumentation active at `0.0` so it can
+    /// compute all-request counts, error rates, and latency statistics without
+    /// retaining detailed traces.
     #[serde(default = "default_sampling")]
     pub sampling: f64,
+    /// Makes the generic OpenTelemetry sampler respect its parent span's decision.
+    ///
+    /// This does not configure Datadog. Datadog uses its own native parent-aware
+    /// sampler whenever an enabled Datadog exporter owns the shared provider.
     #[serde(default = "default_parent_based_sampler")]
     pub parent_based_sampler: bool,
 }
@@ -222,18 +240,69 @@ pub enum TracingExporterConfig {
     Otlp(Box<TracingOtlpConfig>),
     #[serde(rename = "stdout")]
     Stdout(Box<StdoutExporterConfig>),
+    /// Exports traces through Datadog's native Rust tracer and a Datadog Agent.
+    ///
+    /// Enabling this exporter makes Datadog own sampling for the single shared
+    /// tracer provider. OTLP, stdout, and Hive exporters can coexist on that
+    /// provider, but only one Datadog exporter can be enabled because the native
+    /// provider installs one Datadog processor with one Agent configuration.
     #[serde(rename = "datadog")]
     Datadog(Box<DatadogExporterConfig>),
 }
 
+/// Configures native Datadog tracing through a Datadog Agent.
+///
+/// This is different from sending generic OTLP data to Datadog. Native tracing
+/// records all requests for Datadog APM request, error, and latency statistics
+/// and applies Datadog sampling, rules, rate limiting, remote configuration, and
+/// service identity conventions inside the Router process.
+///
+/// Router resource attributes are passed to Datadog, which applies its native
+/// precedence rules for equivalent `DD_SERVICE`, `DD_ENV`, and `DD_VERSION`
+/// values.
+///
+/// The Router keeps its configured OpenTelemetry propagation, including
+/// W3C Trace Context; enabling this exporter does not install Datadog propagation.
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 #[non_exhaustive]
 pub struct DatadogExporterConfig {
+    /// Enables this Datadog exporter.
+    ///
+    /// Default: `true`.
+    ///
+    /// Set this to `false` to disable only Datadog export. Do not use
+    /// `DD_TRACE_ENABLED=false` for that purpose: Datadog owns sampling on the
+    /// shared provider, so that environment variable disables tracing for every
+    /// OTLP, stdout, and Hive processor attached to it.
     #[serde(default = "default_datadog_config_enabled")]
     pub enabled: bool,
+    /// Datadog Agent trace endpoint.
+    ///
+    /// This can be a static value or an expression. It normally uses port
+    /// `8126`, not the OTLP gRPC port `4317`. A configured value overrides
+    /// `DD_TRACE_AGENT_URL`, `DD_AGENT_HOST`, and `DD_TRACE_AGENT_PORT`.
+    ///
+    /// When omitted, Datadog resolves the Agent from those native environment
+    /// variables and its defaults. The Router validates configured URLs during
+    /// startup but does not probe Agent reachability, so an Agent outage does not
+    /// prevent the Router from starting.
     #[serde(default)]
     pub endpoint: Option<ValueOrExpression<String>>,
+    /// Records and exports the full GraphQL document to Datadog.
+    ///
+    /// Default: `false`.
+    ///
+    /// GraphQL documents can contain sensitive literals, so enable this only
+    /// after reviewing the data exposure.
+    ///
+    /// Suppression happens at the shared instrumentation boundary because
+    /// Datadog's native processor cannot be wrapped. Consequently, when Datadog
+    /// is enabled, the default suppression also removes `graphql.document` from
+    /// coexisting OTLP, stdout, and Hive exporters.
+    ///
+    /// Setting this to `true` restores recording for the shared provider, although
+    /// each exporter can still apply its own redaction.
     #[serde(default)]
     pub include_graphql_document: bool,
 }
