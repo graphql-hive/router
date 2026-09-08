@@ -577,12 +577,5 @@ mod metrics_tests {
             operation_span.attributes.get("cost.result").is_none(),
             "operation span should not include cost.result when demand control is disabled"
         );
-        assert!(
-            operation_span
-                .attributes
-                .get("cost.formula_cache_hit")
-                .is_none(),
-            "operation span should not include cost.formula_cache_hit when demand control is disabled"
-        );
     }
 }

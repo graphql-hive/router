@@ -189,6 +189,12 @@ pub enum InternalPipelineError {
     #[strum(serialize = "GRAPHQL_PARSE_MINIFY_FAILED")]
     FailedToMinifyParsedOperation(String),
 
+    #[error(
+        "Could not rebuild a subgraph operation to cost a query plan changed by a plugin: {0}"
+    )]
+    #[strum(serialize = "PLAN_COST_OPERATION_REBUILD_FAILED")]
+    FailedToRebuildOperationForCosting(String),
+
     #[error("No supergraph available yet, unable to process request")]
     #[strum(serialize = "NO_SUPERGRAPH_AVAILABLE")]
     NoSupergraphAvailable {

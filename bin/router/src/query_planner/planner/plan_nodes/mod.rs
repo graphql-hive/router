@@ -1,8 +1,9 @@
+use crate::query_planner::ast::requires::RequiresSelectionSet;
 use crate::query_planner::{
     ast::{
-        merge_path::{Condition, MergePath, Segment},
+        merge_path::Condition,
         minification::minify_operation,
-        operation::{OperationDefinition, SubgraphFetchOperation, VariableDefinition},
+        operation::{OperationDefinition, PlanningFetchOperation, VariableDefinition},
         selection_item::SelectionItem,
         selection_set::{FieldSelection, SelectionSet},
         value::Value,
@@ -14,6 +15,30 @@ use crate::query_planner::{
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
 use serde::{Deserialize, Serialize};
+
+mod state;
+pub use state::{Executable, PlanState, Planning};
+mod prepare;
+
+/// The planner works with these types; the default types below are executable.
+pub mod planning {
+    pub use super::*;
+    pub type QueryPlan = super::QueryPlan<Planning>;
+    pub type PlanNode = super::PlanNode<Planning>;
+    pub type FetchNode = super::FetchNode<Planning>;
+    pub type BatchFetchNode = super::BatchFetchNode<Planning>;
+    pub type FlattenNode = super::FlattenNode<Planning>;
+    pub type SequenceNode = super::SequenceNode<Planning>;
+    pub type ParallelNode = super::ParallelNode<Planning>;
+    pub type ConditionNode = super::ConditionNode<Planning>;
+    pub type SubscriptionNode = super::SubscriptionNode<Planning>;
+    pub type DeferNode = super::DeferNode<Planning>;
+    pub type DeferPrimary = super::DeferPrimary<Planning>;
+    pub type DeferredNode = super::DeferredNode<Planning>;
+}
+
+mod path;
+pub use path::{FlattenNodePath, MergePaths, PathSegment, ResponsePathRef, TypeCondition};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::{Display, Formatter as FmtFormatter, Result as FmtResult},
@@ -23,79 +48,81 @@ use xxhash_rust::xxh3::Xxh3;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct QueryPlan {
+#[serde(bound = "")]
+pub struct QueryPlan<S: PlanState = Executable> {
     pub kind: &'static str, // "QueryPlan"
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub node: Option<PlanNode>,
+    pub node: Option<PlanNode<S>>,
 }
 
-#[allow(clippy::large_enum_variant)]
+/// Put large variants in boxes so entries in sequence and parallel lists stay small.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "kind")]
-pub enum PlanNode {
-    Fetch(FetchNode),
-    BatchFetch(BatchFetchNode),
-    Sequence(SequenceNode),
-    Parallel(ParallelNode),
-    Flatten(FlattenNode),
-    Condition(ConditionNode),
-    Subscription(SubscriptionNode),
-    Defer(DeferNode),
+#[serde(bound = "")]
+pub enum PlanNode<S: PlanState = Executable> {
+    Fetch(Box<FetchNode<S>>),
+    BatchFetch(Box<BatchFetchNode<S>>),
+    Sequence(SequenceNode<S>),
+    Parallel(ParallelNode<S>),
+    Flatten(FlattenNode<S>),
+    Condition(ConditionNode<S>),
+    Subscription(Box<SubscriptionNode<S>>),
+    Defer(Box<DeferNode<S>>),
 }
 
-impl PlanNode {
-    pub fn as_fetch(&self) -> Option<&FetchNode> {
+impl<S: PlanState> PlanNode<S> {
+    pub fn as_fetch(&self) -> Option<&FetchNode<S>> {
         match self {
-            PlanNode::Fetch(node) => Some(node),
+            PlanNode::Fetch(node) => Some(node.as_ref()),
             _ => None,
         }
     }
 
-    pub fn as_batch_fetch(&self) -> Option<&BatchFetchNode> {
+    pub fn as_batch_fetch(&self) -> Option<&BatchFetchNode<S>> {
         match self {
-            PlanNode::BatchFetch(node) => Some(node),
+            PlanNode::BatchFetch(node) => Some(node.as_ref()),
             _ => None,
         }
     }
 
-    pub fn as_sequence(&self) -> Option<&SequenceNode> {
+    pub fn as_sequence(&self) -> Option<&SequenceNode<S>> {
         match self {
             PlanNode::Sequence(node) => Some(node),
             _ => None,
         }
     }
 
-    pub fn as_parallel(&self) -> Option<&ParallelNode> {
+    pub fn as_parallel(&self) -> Option<&ParallelNode<S>> {
         match self {
             PlanNode::Parallel(node) => Some(node),
             _ => None,
         }
     }
 
-    pub fn as_flatten(&self) -> Option<&FlattenNode> {
+    pub fn as_flatten(&self) -> Option<&FlattenNode<S>> {
         match self {
             PlanNode::Flatten(node) => Some(node),
             _ => None,
         }
     }
 
-    pub fn as_condition(&self) -> Option<&ConditionNode> {
+    pub fn as_condition(&self) -> Option<&ConditionNode<S>> {
         match self {
             PlanNode::Condition(node) => Some(node),
             _ => None,
         }
     }
 
-    pub fn as_subscription(&self) -> Option<&SubscriptionNode> {
+    pub fn as_subscription(&self) -> Option<&SubscriptionNode<S>> {
         match self {
-            PlanNode::Subscription(node) => Some(node),
+            PlanNode::Subscription(node) => Some(node.as_ref()),
             _ => None,
         }
     }
 
-    pub fn as_defer(&self) -> Option<&DeferNode> {
+    pub fn as_defer(&self) -> Option<&DeferNode<S>> {
         match self {
-            PlanNode::Defer(node) => Some(node),
+            PlanNode::Defer(node) => Some(node.as_ref()),
             _ => None,
         }
     }
@@ -103,7 +130,8 @@ impl PlanNode {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FetchNode {
+#[serde(bound = "")]
+pub struct FetchNode<S: PlanState = Executable> {
     #[serde(skip_serializing)]
     pub id: i64,
     pub service_name: String,
@@ -111,11 +139,15 @@ pub struct FetchNode {
     pub variable_usages: Option<BTreeSet<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_kind: Option<OperationKind>,
-    pub operation: SubgraphFetchOperation,
+    pub operation: S::Operation,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_scalar_paths: Option<CustomScalarPaths>,
+    /// The entity key selection used by execution. Its JSON must match [`SelectionSet`].
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub requires: Option<SelectionSet>,
+    pub requires: Option<RequiresSelectionSet>,
+    /// Parsed entity requirements exist only during planning.
+    #[serde(skip)]
+    pub planner_requires: S::Requires,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -124,7 +156,8 @@ pub struct FetchNode {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BatchFetchNode {
+#[serde(bound = "")]
+pub struct BatchFetchNode<S: PlanState = Executable> {
     #[serde(skip_serializing)]
     pub id: i64,
     pub service_name: String,
@@ -132,7 +165,7 @@ pub struct BatchFetchNode {
     pub variable_usages: Option<BTreeSet<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_kind: Option<OperationKind>,
-    pub operation: SubgraphFetchOperation,
+    pub operation: S::Operation,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_scalar_paths: Option<CustomScalarPaths>,
     pub entity_batch: EntityBatch,
@@ -302,15 +335,14 @@ fn custom_scalar_paths_from_fetch_output(
     state.into_custom_scalar_paths()
 }
 
-/// A dedicated function to produce custom scalar paths based on a `_entities` selection set.
+/// Builds custom scalar paths from a `_entities` selection set.
 ///
-/// Why? The regular `custom_scalar_paths_for_type_selection` requires a starting type name,
-/// which is not available for `_entities` selections.
+/// The regular `custom_scalar_paths_for_type_selection` needs a starting type name, but `_entities`
+/// selections do not have one.
 ///
-/// The entity calls are always built from top-level `... on Type` fragments,
-/// so the starting type name is not needed.
+/// Entity calls always start with `... on Type` fragments, so each fragment gives us its type name.
 ///
-/// Each fragment is visited using its own type condition.
+/// Visit each fragment using its own type condition.
 pub fn custom_scalar_paths_for_entities_selection(
     selection_set: &SelectionSet,
     supergraph: &SupergraphState,
@@ -346,8 +378,8 @@ pub struct EntityBatchAlias {
     pub alias: String,
     pub representations_variable_name: String,
     #[serde(rename = "paths")]
-    pub merge_paths: Vec<FlattenNodePath>,
-    pub requires: SelectionSet,
+    pub merge_paths: MergePaths,
+    pub requires: RequiresSelectionSet,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -356,31 +388,34 @@ pub struct EntityBatchAlias {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FlattenNode {
+#[serde(bound = "")]
+pub struct FlattenNode<S: PlanState = Executable> {
     pub path: FlattenNodePath,
-    pub node: Box<PlanNode>,
+    pub node: Box<PlanNode<S>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SequenceNode {
-    pub nodes: Vec<PlanNode>,
+#[serde(bound = "")]
+pub struct SequenceNode<S: PlanState = Executable> {
+    pub nodes: Vec<PlanNode<S>>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParallelNode {
-    pub nodes: Vec<PlanNode>,
+#[serde(bound = "")]
+pub struct ParallelNode<S: PlanState = Executable> {
+    pub nodes: Vec<PlanNode<S>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ConditionNode {
+#[serde(bound = "")]
+pub struct ConditionNode<S: PlanState = Executable> {
     pub condition: String, // The variable name acting as the condition
-    pub if_clause: Option<Box<PlanNode>>,
+    pub if_clause: Option<Box<PlanNode<S>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub else_clause: Option<Box<PlanNode>>,
+    pub else_clause: Option<Box<PlanNode<S>>>,
 }
 
-impl ConditionNode {
-    /// Checks if this condition node can be merged with another.
+impl<S: PlanState> ConditionNode<S> {
     pub fn can_merge_with(&self, other: &Self) -> bool {
         if self.condition != other.condition {
             return false;
@@ -392,7 +427,6 @@ impl ConditionNode {
         both_if || both_else
     }
 
-    /// Merges another compatible condition node into this one.
     pub fn merge(&mut self, mut other: Self) {
         let merge_into_if_clause = self.if_clause.is_some();
         let mut nodes = self.take_inner_nodes();
@@ -407,7 +441,7 @@ impl ConditionNode {
         }
     }
 
-    fn take_inner_nodes(&mut self) -> Vec<PlanNode> {
+    fn take_inner_nodes(&mut self) -> Vec<PlanNode<S>> {
         self.if_clause
             .take()
             .or_else(|| self.else_clause.take())
@@ -442,110 +476,6 @@ pub enum FetchRewrite {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
-pub enum FlattenNodePathSegment {
-    Field(String),
-    TypeCondition(BTreeSet<String>),
-    #[serde(rename = "@")]
-    List,
-}
-
-impl From<&MergePath> for Vec<FetchNodePathSegment> {
-    fn from(value: &MergePath) -> Self {
-        value
-            .inner
-            .iter()
-            .filter_map(|path_segment| match path_segment {
-                Segment::TypeCondition(type_names, _) => {
-                    Some(FetchNodePathSegment::TypenameEquals(type_names.clone()))
-                }
-                Segment::Field(field_seg, _args_hash, _) => Some(FetchNodePathSegment::Key(
-                    field_seg.response_key().to_string(),
-                )),
-                Segment::List => None,
-            })
-            .collect()
-    }
-}
-
-impl FlattenNodePathSegment {
-    pub fn to_field(&self) -> Option<&String> {
-        match self {
-            FlattenNodePathSegment::Field(field_name) => Some(field_name),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct FlattenNodePath(Vec<FlattenNodePathSegment>);
-
-impl FlattenNodePath {
-    pub fn as_slice(&self) -> &[FlattenNodePathSegment] {
-        &self.0
-    }
-}
-
-impl Display for FlattenNodePathSegment {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FlattenNodePathSegment::Field(field_name) => write!(f, "{}", field_name),
-            FlattenNodePathSegment::TypeCondition(type_names) => {
-                write!(
-                    f,
-                    "|[{}]",
-                    type_names.iter().cloned().collect::<Vec<_>>().join("|")
-                )
-            }
-            FlattenNodePathSegment::List => write!(f, "@"),
-        }
-    }
-}
-
-impl Display for FlattenNodePath {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut segments_iter = self.0.iter().peekable();
-
-        while let Some(segment) = segments_iter.next() {
-            write!(f, "{}", segment)?;
-            if let Some(peeked) = segments_iter.peek() {
-                match peeked {
-                    FlattenNodePathSegment::TypeCondition(_) => {
-                        // Don't add a dot before TypeCondition
-                    }
-                    _ => write!(f, ".")?,
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-impl From<&MergePath> for FlattenNodePath {
-    fn from(path: &MergePath) -> Self {
-        FlattenNodePath(
-            path.inner
-                .iter()
-                .map(|seg| match seg {
-                    Segment::TypeCondition(type_names, _) => {
-                        FlattenNodePathSegment::TypeCondition(type_names.clone())
-                    }
-                    Segment::Field(field_seg, _args_hash, _) => {
-                        FlattenNodePathSegment::Field(field_seg.response_key().to_string())
-                    }
-                    Segment::List => FlattenNodePathSegment::List,
-                })
-                .collect(),
-        )
-    }
-}
-
-impl From<MergePath> for FlattenNodePath {
-    fn from(path: MergePath) -> Self {
-        (&path).into()
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub struct ValueSetter {
     pub path: Vec<FetchNodePathSegment>,
@@ -554,27 +484,30 @@ pub struct ValueSetter {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct SubscriptionNode {
-    // A subscription node can only really have a primary fetch node.
-    pub primary: FetchNode,
+#[serde(bound = "")]
+pub struct SubscriptionNode<S: PlanState = Executable> {
+    pub primary: FetchNode<S>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct DeferNode {
-    pub primary: DeferPrimary,
-    pub deferred: Vec<DeferredNode>,
+#[serde(bound = "")]
+pub struct DeferNode<S: PlanState = Executable> {
+    pub primary: DeferPrimary<S>,
+    pub deferred: Vec<DeferredNode<S>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct DeferPrimary {
+#[serde(bound = "")]
+pub struct DeferPrimary<S: PlanState = Executable> {
     pub subselection: Option<String>,
-    pub node: Option<Box<PlanNode>>,
+    pub node: Option<Box<PlanNode<S>>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct DeferredNode {
+#[serde(bound = "")]
+pub struct DeferredNode<S: PlanState = Executable> {
     pub depends: Vec<DeferDependency>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
@@ -582,7 +515,7 @@ pub struct DeferredNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subselection: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub node: Option<Box<PlanNode>>,
+    pub node: Option<Box<PlanNode<S>>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -593,8 +526,8 @@ pub struct DeferDependency {
     pub defer_label: Option<String>,
 }
 
-impl PlanNode {
-    pub fn into_nodes(self) -> Vec<PlanNode> {
+impl<S: PlanState> PlanNode<S> {
+    pub fn into_nodes(self) -> Vec<PlanNode<S>> {
         match self {
             PlanNode::Sequence(node) => node.nodes,
             PlanNode::Parallel(node) => node.nodes,
@@ -602,17 +535,14 @@ impl PlanNode {
         }
     }
 
-    /// If the node is a Sequence, returns its children. Otherwise, returns the node itself in a Vec.
-    /// This is used to "splice" nodes into a parent Sequence without creating nested Sequences.
-    pub fn flatten_sequence(self) -> Vec<PlanNode> {
+    pub fn flatten_sequence(self) -> Vec<PlanNode<S>> {
         match self {
             PlanNode::Sequence(node) => node.nodes,
             other => vec![other],
         }
     }
 
-    /// Flattens nested Parallel nodes into a single list of nodes.
-    pub fn flatten_parallel(nodes: Vec<PlanNode>) -> Vec<PlanNode> {
+    pub fn flatten_parallel(nodes: Vec<PlanNode<S>>) -> Vec<PlanNode<S>> {
         let mut flattened = Vec::with_capacity(nodes.len());
         for node in nodes {
             match node {
@@ -623,7 +553,7 @@ impl PlanNode {
         flattened
     }
 
-    pub fn sequence(mut nodes: Vec<PlanNode>) -> PlanNode {
+    pub fn sequence(mut nodes: Vec<PlanNode<S>>) -> PlanNode<S> {
         if nodes.len() == 1 {
             nodes.remove(0)
         } else {
@@ -631,7 +561,7 @@ impl PlanNode {
         }
     }
 
-    pub fn parallel(mut nodes: Vec<PlanNode>) -> PlanNode {
+    pub fn parallel(mut nodes: Vec<PlanNode<S>>) -> PlanNode<S> {
         if nodes.len() == 1 {
             nodes.remove(0)
         } else {
@@ -661,7 +591,7 @@ fn create_input_selection_set(
 fn create_output_operation(
     step: &FetchStepData<MultiTypeFetchStep>,
     supergraph: &SupergraphState,
-) -> SubgraphFetchOperation {
+) -> PlanningFetchOperation {
     let mut variables = vec![VariableDefinition {
         name: "representations".to_string(),
         variable_type: TypeNode::NonNull(Box::new(TypeNode::List(Box::new(TypeNode::NonNull(
@@ -699,30 +629,34 @@ fn create_output_operation(
 
     let document = minify_operation(operation_def, supergraph).expect("Failed to minify");
 
-    SubgraphFetchOperation::from_anonymous_operation(document)
+    PlanningFetchOperation::from_anonymous_operation(document)
 }
 
-impl FetchNode {
+impl FetchNode<Planning> {
     pub fn from_fetch_step(
         step: &FetchStepData<MultiTypeFetchStep>,
         supergraph: &SupergraphState,
     ) -> Self {
         match step.is_entity_call() {
-            true => FetchNode {
-                id: step.id,
-                service_name: step.service_name.0.clone(),
-                variable_usages: step.variable_usages.clone(),
-                operation_kind: Some(OperationKind::Query),
-                operation: create_output_operation(step, supergraph),
-                custom_scalar_paths: custom_scalar_paths_from_fetch_output(
-                    &step.output,
-                    supergraph,
-                    Some("_entities"),
-                ),
-                requires: Some(create_input_selection_set(&step.input)),
-                input_rewrites: step.input_rewrites.clone(),
-                output_rewrites: step.output_rewrites.clone(),
-            },
+            true => {
+                let planner_requires = create_input_selection_set(&step.input);
+                FetchNode {
+                    id: step.id,
+                    service_name: step.service_name.0.clone(),
+                    variable_usages: step.variable_usages.clone(),
+                    operation_kind: Some(OperationKind::Query),
+                    operation: create_output_operation(step, supergraph),
+                    custom_scalar_paths: custom_scalar_paths_from_fetch_output(
+                        &step.output,
+                        supergraph,
+                        Some("_entities"),
+                    ),
+                    requires: Some(RequiresSelectionSet::from(&planner_requires)),
+                    planner_requires: Some(Box::new(planner_requires)),
+                    input_rewrites: step.input_rewrites.clone(),
+                    output_rewrites: step.output_rewrites.clone(),
+                }
+            }
             false => {
                 let root_type_name = supergraph.expect_root_type_name(Some(&step.operation_kind));
                 let operation_def = OperationDefinition {
@@ -739,7 +673,8 @@ impl FetchNode {
                     service_name: step.service_name.0.clone(),
                     variable_usages: step.variable_usages.clone(),
                     operation_kind: Some(step.operation_kind.clone()),
-                    operation: SubgraphFetchOperation::from_anonymous_operation(document),
+                    planner_requires: None,
+                    operation: PlanningFetchOperation::from_anonymous_operation(document),
                     custom_scalar_paths: custom_scalar_paths_from_fetch_output(
                         &step.output,
                         supergraph,
@@ -754,7 +689,7 @@ impl FetchNode {
     }
 }
 
-impl PlanNode {
+impl PlanNode<Planning> {
     pub fn from_fetch_step(
         step: &FetchStepData<MultiTypeFetchStep>,
         supergraph: &SupergraphState,
@@ -764,12 +699,12 @@ impl PlanNode {
         let node = if !step.response_path.is_empty() {
             PlanNode::Flatten(FlattenNode {
                 path: step.response_path.clone().into(),
-                node: Box::new(PlanNode::Fetch(fetch)),
+                node: Box::new(PlanNode::Fetch(Box::new(fetch))),
             })
         } else if matches!(fetch.operation_kind, Some(OperationKind::Subscription)) {
-            PlanNode::Subscription(SubscriptionNode { primary: fetch })
+            PlanNode::Subscription(Box::new(SubscriptionNode { primary: fetch }))
         } else {
-            PlanNode::Fetch(fetch)
+            PlanNode::Fetch(Box::new(fetch))
         };
 
         match step.condition.as_ref() {
@@ -802,43 +737,43 @@ impl PlanNode {
     }
 }
 
-impl Display for QueryPlan {
+impl<S: PlanState> Display for QueryPlan<S> {
     fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
         self.pretty_fmt(f, 0)
     }
 }
 
-impl Display for PlanNode {
+impl<S: PlanState> Display for PlanNode<S> {
     fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
         self.pretty_fmt(f, 0)
     }
 }
 
-impl Display for FetchNode {
+impl<S: PlanState> Display for FetchNode<S> {
     fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
         self.pretty_fmt(f, 0)
     }
 }
 
-impl Display for BatchFetchNode {
+impl<S: PlanState> Display for BatchFetchNode<S> {
     fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
         self.pretty_fmt(f, 0)
     }
 }
 
-impl Display for FlattenNode {
+impl<S: PlanState> Display for FlattenNode<S> {
     fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
         self.pretty_fmt(f, 0)
     }
 }
 
-impl Display for SubscriptionNode {
+impl<S: PlanState> Display for SubscriptionNode<S> {
     fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
         self.pretty_fmt(f, 0)
     }
 }
 
-impl PrettyDisplay for QueryPlan {
+impl<S: PlanState> PrettyDisplay for QueryPlan<S> {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
         writeln!(f, "{indent}QueryPlan {{",)?;
@@ -852,7 +787,7 @@ impl PrettyDisplay for QueryPlan {
     }
 }
 
-impl PrettyDisplay for FetchNode {
+impl<S: PlanState> PrettyDisplay for FetchNode<S> {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
         writeln!(f, "{indent}Fetch(service: \"{}\") {{", self.service_name)?;
@@ -868,7 +803,7 @@ impl PrettyDisplay for FetchNode {
     }
 }
 
-impl PrettyDisplay for BatchFetchNode {
+impl<S: PlanState> PrettyDisplay for BatchFetchNode<S> {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
         writeln!(
@@ -880,7 +815,7 @@ impl PrettyDisplay for BatchFetchNode {
         for alias in &self.entity_batch.aliases {
             writeln!(f, "{indent}    {} {{", alias.alias)?;
             writeln!(f, "{indent}      paths: [")?;
-            for merge_path in &alias.merge_paths {
+            for merge_path in alias.merge_paths.iter() {
                 writeln!(f, "{indent}        \"{}\"", merge_path)?;
             }
             writeln!(f, "{indent}      ]")?;
@@ -897,7 +832,7 @@ impl PrettyDisplay for BatchFetchNode {
     }
 }
 
-impl PrettyDisplay for FlattenNode {
+impl<S: PlanState> PrettyDisplay for FlattenNode<S> {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
 
@@ -909,7 +844,7 @@ impl PrettyDisplay for FlattenNode {
     }
 }
 
-impl PrettyDisplay for SequenceNode {
+impl<S: PlanState> PrettyDisplay for SequenceNode<S> {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
         writeln!(f, "{indent}Sequence {{")?;
@@ -921,7 +856,7 @@ impl PrettyDisplay for SequenceNode {
     }
 }
 
-impl PrettyDisplay for ParallelNode {
+impl<S: PlanState> PrettyDisplay for ParallelNode<S> {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
         writeln!(f, "{indent}Parallel {{")?;
@@ -933,7 +868,7 @@ impl PrettyDisplay for ParallelNode {
     }
 }
 
-impl PrettyDisplay for ConditionNode {
+impl<S: PlanState> PrettyDisplay for ConditionNode<S> {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
 
@@ -957,7 +892,7 @@ impl PrettyDisplay for ConditionNode {
     }
 }
 
-impl PrettyDisplay for SubscriptionNode {
+impl<S: PlanState> PrettyDisplay for SubscriptionNode<S> {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
         writeln!(f, "{indent}Subscription {{")?;
@@ -967,7 +902,7 @@ impl PrettyDisplay for SubscriptionNode {
     }
 }
 
-impl PrettyDisplay for PlanNode {
+impl<S: PlanState> PrettyDisplay for PlanNode<S> {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         match self {
             PlanNode::Fetch(node) => node.pretty_fmt(f, depth),
@@ -990,6 +925,7 @@ pub fn hash_minified_query(minified_query: &str) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use super::{FlattenNodePath, MergePaths, PathSegment, TypeCondition};
     use crate::query_planner::{
         planner::fetch::{selections::FetchStepSelections, state::SingleTypeFetchStep},
         state::supergraph_state::SupergraphState,
@@ -1048,5 +984,105 @@ mod tests {
             paths.is_none(),
             "custom-scalar vs built-in-scalar collision must not emit a terminal custom scalar path"
         );
+    }
+
+    /// Keep the public plan JSON: tagged path steps and a plain "@" for lists.
+    #[test]
+    fn paths_round_trip_through_their_wire_form() {
+        fn path_of(steps: &[&str]) -> FlattenNodePath {
+            steps
+                .iter()
+                .map(|step| match *step {
+                    "@" => PathSegment::List,
+                    s if s.starts_with('|') => PathSegment::TypeCondition(Box::new(
+                        TypeCondition::from_names(s.trim_start_matches('|').split('|')),
+                    )),
+                    field => PathSegment::Field(field.into()),
+                })
+                .collect::<Vec<_>>()
+                .into()
+        }
+
+        let cases: &[(&[&str], &str)] = &[
+            (&["topProducts", "@"], r#"[{"Field":"topProducts"},"@"]"#),
+            (
+                &["a", "b", "c"],
+                r#"[{"Field":"a"},{"Field":"b"},{"Field":"c"}]"#,
+            ),
+            (&["|Book|User"], r#"[{"TypeCondition":["Book","User"]}]"#),
+            (
+                &["items", "@", "|Product", "upc"],
+                r#"[{"Field":"items"},"@",{"TypeCondition":["Product"]},{"Field":"upc"}]"#,
+            ),
+        ];
+
+        for (steps, expected_json) in cases {
+            let path = path_of(steps);
+            let json = serde_json::to_string(&path).expect("serializes");
+            assert_eq!(&json, expected_json, "wire form changed for {steps:?}");
+
+            let back: FlattenNodePath = serde_json::from_str(&json).expect("deserializes");
+            assert_eq!(back, path, "round trip lost information for {steps:?}");
+        }
+    }
+
+    /// A path must have the same JSON alone or in a batch, and still work after reading it back.
+    #[test]
+    fn merge_paths_keep_the_standalone_wire_form() {
+        let path = |leaf: &str| -> FlattenNodePath {
+            vec![
+                PathSegment::Field("orders".into()),
+                PathSegment::List,
+                PathSegment::Field(leaf.into()),
+            ]
+            .into()
+        };
+        let standalone = vec![path("product"), path("customer")];
+        let expected = serde_json::to_string(&standalone).expect("serializes");
+
+        let merged: MergePaths = standalone.clone().into();
+        assert_eq!(
+            serde_json::to_string(&merged).expect("serializes"),
+            expected,
+            "grouping paths must not change the JSON"
+        );
+
+        assert_eq!(merged.len(), 2);
+        let round_tripped: MergePaths = serde_json::from_str(&expected).expect("deserializes");
+        assert_eq!(round_tripped.len(), 2);
+        for (i, (merged_path, standalone_path)) in merged.iter().zip(standalone.iter()).enumerate()
+        {
+            assert_eq!(merged_path, standalone_path.as_ref(), "path {i} changed");
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg(target_pointer_width = "64")]
+mod stored_size_tests {
+    use super::*;
+    use std::mem::size_of;
+
+    /// Checks stored type sizes, not total memory kept or allocation counts.
+    /// The changeset has an older measurement from real plans; this test cannot repeat it.
+    /// Measure memory again before changing these sizes. Path size is checked in `path.rs`.
+    #[test]
+    fn stored_sizes_stay_small() {
+        for (name, actual, expected) in [
+            ("PlanNode", size_of::<PlanNode>(), 40),
+            ("FetchNode", size_of::<FetchNode>(), 224),
+            ("BatchFetchNode", size_of::<BatchFetchNode>(), 160),
+            (
+                "SubgraphFetchOperation",
+                size_of::<crate::query_planner::ast::operation::SubgraphFetchOperation>(),
+                32,
+            ),
+        ] {
+            assert_eq!(
+                actual, expected,
+                "{name} is {actual} B, expected {expected} B - cached plans hold one of these per \
+                 node or per fetch, so this changes the plan cache's memory use"
+            );
+        }
     }
 }

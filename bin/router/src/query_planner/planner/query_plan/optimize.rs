@@ -58,17 +58,18 @@ use std::{
 
 use xxhash_rust::xxh3::Xxh3;
 
+use crate::query_planner::ast::requires::RequiresSelectionSet;
 use crate::query_planner::{
     ast::{
         hash::{ASTHash, SemanticShapeHashContext},
         minification::minify_operation,
-        operation::{OperationDefinition, SubgraphFetchOperation, VariableDefinition},
+        operation::{OperationDefinition, PlanningFetchOperation, VariableDefinition},
         selection_item::SelectionItem,
         selection_set::{FieldSelection, SelectionSet},
         value::Value,
     },
     planner::error::QueryPlanError,
-    planner::plan_nodes::{
+    planner::plan_nodes::planning::{
         custom_scalar_paths_for_entities_selection, BatchFetchNode, CustomScalarPaths, EntityBatch,
         EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
     },
@@ -182,8 +183,8 @@ impl<'a> BatchFetchBuilder<'a> {
         self.batched_aliases.push(EntityBatchAlias {
             alias,
             representations_variable_name,
-            merge_paths,
-            requires: representative.requires.clone(),
+            merge_paths: merge_paths.into(),
+            requires: RequiresSelectionSet::from(&representative.requires),
             input_rewrites: representative.input_rewrites.clone(),
             output_rewrites: representative.output_rewrites.clone(),
         });
@@ -283,7 +284,7 @@ impl<'a> BatchFetchBuilder<'a> {
                 Some(self.variable_usages)
             },
             operation_kind: Some(OperationKind::Query),
-            operation: SubgraphFetchOperation::from_anonymous_operation(document),
+            operation: PlanningFetchOperation::from_anonymous_operation(document),
             custom_scalar_paths: (!self.custom_scalar_paths.is_empty())
                 .then_some(self.custom_scalar_paths),
             entity_batch: EntityBatch {
@@ -342,13 +343,9 @@ impl EntityFetch {
             return Ok(None);
         };
 
-        let Some(entities_field) = fetch_node
-            .operation
-            .document
-            .operation
-            .selection_set
-            .entities_field()
-        else {
+        let document = &fetch_node.operation.document;
+
+        let Some(entities_field) = document.operation.selection_set.entities_field() else {
             return Ok(None);
         };
 
@@ -356,20 +353,17 @@ impl EntityFetch {
             return Ok(None);
         };
 
-        let Some(requires) = fetch_node.requires.clone() else {
+        let Some(requires) = fetch_node.planner_requires.clone() else {
             return Ok(None);
         };
 
-        let requires =
-            requires.inline_fragment_spreads(&fetch_node.operation.document.fragments)?;
+        let requires = requires.inline_fragment_spreads(&document.fragments)?;
         let entities_selection = entities_field
             .selections
-            .inline_fragment_spreads(&fetch_node.operation.document.fragments)?;
+            .inline_fragment_spreads(&document.fragments)?;
         let input_rewrites = fetch_node.input_rewrites.clone();
         let output_rewrites = fetch_node.output_rewrites.clone();
-        let non_representations_variable_definitions = fetch_node
-            .operation
-            .document
+        let non_representations_variable_definitions = document
             .operation
             .variable_definitions
             .clone()
@@ -378,7 +372,7 @@ impl EntityFetch {
             .filter(|var| var.name != representations_var)
             .collect::<Vec<_>>();
 
-        let fragments = &fetch_node.operation.document.fragments;
+        let fragments = &document.fragments;
 
         // Compute the order-independent hash for `requires`
         let mut hasher = Xxh3::new();
@@ -562,7 +556,10 @@ fn optimize_parallel_node(
             let batch_fetch_node =
                 build_batched_fetch_node(&shape_groups, &variable_group.variables, supergraph)?;
 
-            batch_node_replacements.insert(first_index, PlanNode::BatchFetch(batch_fetch_node));
+            batch_node_replacements.insert(
+                first_index,
+                PlanNode::BatchFetch(Box::new(batch_fetch_node)),
+            );
 
             for group in &shape_groups {
                 for candidate in group {
@@ -870,9 +867,9 @@ mod tests {
         ast::{
             document::Document,
             merge_path::{FieldPathSegment, MergePath, Segment},
-            operation::SubgraphFetchOperation,
+            operation::PlanningFetchOperation,
         },
-        planner::plan_nodes::{
+        planner::plan_nodes::planning::{
             FetchNode, FetchNodePathSegment, FetchRewrite, FlattenNode, FlattenNodePath, PlanNode,
             QueryPlan, ValueSetter,
         },
@@ -908,7 +905,7 @@ mod tests {
           }
         ";
 
-        let passthrough = PlanNode::Fetch(non_entity_fetch_node(100, "products"));
+        let passthrough = PlanNode::Fetch(Box::new(non_entity_fetch_node(100, "products")));
         let candidate_a =
             flatten_entity_fetch_node(1, "inventory", "products", requires_query, &entities_query);
         let candidate_b =
@@ -1489,7 +1486,7 @@ mod tests {
         ";
 
         let base =
-            flatten_entity_fetch_node(1, "inventory", "products", requires_query, entities_query);
+            flatten_entity_fetch_node(1, "inventory", "products", requires_query, &entities_query);
         let with_rewrite = with_input_rewrite(flatten_entity_fetch_node(
             2,
             "inventory",
@@ -1639,7 +1636,7 @@ mod tests {
         ";
 
         let base =
-            flatten_entity_fetch_node(1, "inventory", "products", requires_query, entities_query);
+            flatten_entity_fetch_node(1, "inventory", "products", requires_query, &entities_query);
         let with_rewrite = with_input_rewrite(flatten_entity_fetch_node(
             2,
             "inventory",
@@ -1741,7 +1738,7 @@ mod tests {
         ";
 
         let base =
-            flatten_entity_fetch_node(1, "inventory", "products", requires_query, entities_query);
+            flatten_entity_fetch_node(1, "inventory", "products", requires_query, &entities_query);
         let with_rewrite = with_output_rewrite(flatten_entity_fetch_node(
             2,
             "inventory",
@@ -1819,7 +1816,7 @@ mod tests {
         ";
 
         let base =
-            flatten_entity_fetch_node(1, "inventory", "products", requires_query, entities_query);
+            flatten_entity_fetch_node(1, "inventory", "products", requires_query, &entities_query);
         let with_output_rewrite = with_output_rewrite(flatten_entity_fetch_node(
             2,
             "inventory",
@@ -1991,8 +1988,13 @@ mod tests {
           fragment B on Product { shippingEstimate }
         ";
 
-        let with_fragment_a =
-            flatten_entity_fetch_node(1, "inventory", "products", requires_query, entities_query_a);
+        let with_fragment_a = flatten_entity_fetch_node(
+            1,
+            "inventory",
+            "products",
+            requires_query,
+            &entities_query_a,
+        );
         let with_fragment_b = flatten_entity_fetch_node(
             2,
             "inventory",
@@ -2046,8 +2048,8 @@ mod tests {
     fn optimize_parallel_node_returns_original_when_no_entity_candidates() {
         let supergraph = test_supergraph_state();
 
-        let first = PlanNode::Fetch(non_entity_fetch_node(1, "products"));
-        let second = PlanNode::Fetch(non_entity_fetch_node(2, "inventory"));
+        let first = PlanNode::Fetch(Box::new(non_entity_fetch_node(1, "products")));
+        let second = PlanNode::Fetch(Box::new(non_entity_fetch_node(2, "inventory")));
 
         let nodes = vec![first, second];
 
@@ -2095,7 +2097,7 @@ mod tests {
         ";
 
         let candidate =
-            flatten_entity_fetch_node(1, "inventory", "products", requires_query, entities_query);
+            flatten_entity_fetch_node(1, "inventory", "products", requires_query, &entities_query);
 
         let nodes = vec![candidate];
 
@@ -2141,7 +2143,7 @@ mod tests {
         ";
 
         let inventory_a =
-            flatten_entity_fetch_node(1, "inventory", "products", requires_query, entities_query);
+            flatten_entity_fetch_node(1, "inventory", "products", requires_query, &entities_query);
         let inventory_b = flatten_entity_fetch_node(
             2,
             "inventory",
@@ -2150,9 +2152,14 @@ mod tests {
             entities_query,
         );
         let products_a =
-            flatten_entity_fetch_node(3, "products", "products", requires_query, entities_query);
-        let products_b =
-            flatten_entity_fetch_node(4, "products", "topProducts", requires_query, entities_query);
+            flatten_entity_fetch_node(3, "products", "products", requires_query, &entities_query);
+        let products_b = flatten_entity_fetch_node(
+            4,
+            "products",
+            "topProducts",
+            requires_query,
+            &entities_query,
+        );
 
         let nodes = vec![inventory_a, inventory_b, products_a, products_b];
 
@@ -2258,7 +2265,7 @@ mod tests {
             }
         };
 
-        let operation = SubgraphFetchOperation::from_anonymous_operation(entities_document);
+        let operation = PlanningFetchOperation::from_anonymous_operation(entities_document);
 
         let fetch_node = FetchNode {
             id,
@@ -2267,7 +2274,10 @@ mod tests {
             operation_kind: Some(OperationKind::Query),
             operation,
             custom_scalar_paths: None,
-            requires: Some(requires),
+            requires: Some(
+                crate::query_planner::ast::requires::RequiresSelectionSet::from(&requires),
+            ),
+            planner_requires: Some(Box::new(requires)),
             input_rewrites: None,
             output_rewrites: None,
         };
@@ -2283,7 +2293,7 @@ mod tests {
 
         PlanNode::Flatten(FlattenNode {
             path,
-            node: Box::new(PlanNode::Fetch(fetch_node)),
+            node: Box::new(PlanNode::Fetch(Box::new(fetch_node))),
         })
     }
 
@@ -2323,7 +2333,7 @@ mod tests {
     }
 
     fn non_entity_fetch_node(id: i64, service_name: &str) -> FetchNode {
-        let operation = SubgraphFetchOperation::from_anonymous_operation(parse_document(
+        let operation = PlanningFetchOperation::from_anonymous_operation(parse_document(
             "query { products { upc } }",
         ));
 
@@ -2332,6 +2342,7 @@ mod tests {
             service_name: service_name.to_string(),
             variable_usages: None,
             operation_kind: Some(OperationKind::Query),
+            planner_requires: None,
             operation,
             custom_scalar_paths: None,
             requires: None,

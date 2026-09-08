@@ -9,7 +9,7 @@ use hive_router::{
     query_planner::{
         ast::normalization::{error::NormalizationError, normalize_operation},
         graph::{PlannerOverrideContext, PERCENTAGE_SCALE_FACTOR},
-        planner::{plan_nodes::QueryPlan, Planner, PlannerError},
+        planner::{plan_nodes::planning::QueryPlan, Planner, PlannerError},
         utils::{cancellation::CancellationToken, parsing::safe_parse_operation},
     },
 };

@@ -354,7 +354,6 @@ impl GraphQLOperationSpan {
             "hive.client.name" = Empty,
             "hive.client.version" = Empty,
             "hive.target" = Empty,
-            "cost.formula_cache_hit" = Empty,
         );
         GraphQLOperationSpan { span }
     }

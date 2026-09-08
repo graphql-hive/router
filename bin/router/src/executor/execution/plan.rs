@@ -4,7 +4,9 @@ use std::sync::Arc;
 use std::vec;
 
 use crate::query_planner::ast::operation::SubgraphFetchOperation;
-use crate::query_planner::planner::plan_nodes::{CustomScalarPaths, FetchNode, FlattenNode};
+use crate::query_planner::planner::plan_nodes::{
+    CustomScalarPaths, FetchNode, FlattenNode, ResponsePathRef,
+};
 use crate::query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use crate::query_planner::{
     ast::operation::OperationDefinition,
@@ -240,7 +242,6 @@ pub async fn execute_query_plan<'exec>(
         Some(PlanNode::Sequence(seq)) => match seq.nodes.first() {
             Some(PlanNode::Subscription(sub)) => {
                 let remaining = if seq.nodes.len() > 1 {
-                    // TODO: why to_vec()? is it wasteful? it's actually a slice, we dont need it as Vec
                     Some(seq.nodes[1..].to_vec())
                 } else {
                     None
@@ -293,7 +294,7 @@ pub async fn execute_query_plan<'exec>(
         );
 
         let mut subgraph_request = SubgraphExecutionRequest {
-            query: fetch_node.operation.document_str.as_str(),
+            query: &fetch_node.operation.document_str,
             document_name_write_pos: fetch_node.operation.name_write_position,
             dedupe: false,
             operation_name: opts
@@ -720,7 +721,7 @@ pub enum ExecutionJob<'exec> {
         output_rewrites: Option<&'exec [FetchRewrite]>,
         // By default, this job is merged at the root. When this is set, we merge at
         // a specific path instead of the root (used for root re-entry fetches)
-        merge_path: Option<&'exec FlattenNodePath>,
+        merge_path: Option<ResponsePathRef<'exec>>,
     },
     FlattenFetch {
         subgraph_name: &'exec str,
@@ -746,7 +747,7 @@ pub struct AliasBatchState<'exec> {
 }
 
 struct AliasPathState<'exec> {
-    merge_path: &'exec FlattenNodePath,
+    merge_path: ResponsePathRef<'exec>,
     representation_hashes: Arc<Vec<Option<u64>>>,
 }
 
@@ -792,12 +793,12 @@ impl<'exec> ExecutionJob<'exec> {
         }
     }
 
-    fn affected_path(&self) -> Option<&'exec FlattenNodePath> {
+    fn affected_path(&self) -> Option<ResponsePathRef<'exec>> {
         match self {
             ExecutionJob::Fetch { merge_path, .. } => *merge_path,
             ExecutionJob::FlattenFetch {
                 flatten_node_path, ..
-            } => Some(flatten_node_path),
+            } => Some(flatten_node_path.as_ref()),
             ExecutionJob::BatchFetch { .. } => None,
         }
     }
@@ -821,7 +822,7 @@ struct PrepareExecutionJobOpts<'exec> {
     // If the fetch job is for a flatten node, we pass the filtered representations,
     raw_variable_values: Option<Vec<(&'exec str, Vec<u8>)>>,
     // and the path to the representations in the original response for error handling and normalization
-    affected_path: Option<&'exec FlattenNodePath>,
+    affected_path: Option<ResponsePathRef<'exec>>,
 }
 
 impl<'exec> Executor<'exec> {
@@ -883,7 +884,7 @@ impl<'exec> Executor<'exec> {
             output_rewrites: fetch_node.output_rewrites.as_deref(),
             custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
             raw_variable_values: None,
-            affected_path: Some(&flatten_node.path),
+            affected_path: Some(flatten_node.path.as_ref()),
         })
         .boxed()
     }
@@ -982,6 +983,10 @@ impl<'exec> Executor<'exec> {
                 let mut representation_hash_to_index: AHashMap<u64, usize> = AHashMap::new();
                 let arena = bumpalo::Bump::new();
 
+                // These are the `requires` items to walk for each entity. Get them once, rather
+                // than once per entity; they are a view of the plan, not new work.
+                let required_selections = requires_nodes.root_selections();
+
                 traverse_and_callback(
                     data,
                     normalized_path,
@@ -992,7 +997,7 @@ impl<'exec> Executor<'exec> {
                             return;
                         }
 
-                        let hash = entity.to_hash(&requires_nodes.items, possible_types);
+                        let hash = entity.to_hash(required_selections, possible_types);
                         representation_hashes.push(Some(hash));
                         let is_first_representation = representation_hash_to_index.is_empty();
                         let vacant_entry = match representation_hash_to_index.entry(hash) {
@@ -1013,7 +1018,7 @@ impl<'exec> Executor<'exec> {
 
                         let is_projected = project_requires(
                             possible_types,
-                            &requires_nodes.items,
+                            required_selections,
                             entity,
                             &mut filtered_representations,
                             is_first_representation,
@@ -1049,7 +1054,7 @@ impl<'exec> Executor<'exec> {
                             "representations",
                             filtered_representations,
                         )]),
-                        affected_path: Some(&flatten_node.path),
+                        affected_path: Some(flatten_node.path.as_ref()),
                     })
                     .map_ok(|fetch_job| ExecutionJob::FlattenFetch {
                         operation: fetch_job.operation(),
@@ -1128,7 +1133,7 @@ impl<'exec> Executor<'exec> {
                     )
                     .with_plan_context(LazyPlanContext {
                         subgraph_name: || Some(subgraph_name.to_string()),
-                        affected_path: || affected_path.map(|p| p.to_string()),
+                        affected_path: || affected_path.map(|path| path.to_string()),
                     }) {
                         self.log_error(err);
                         ctx.errors.push(err.into());
@@ -1438,7 +1443,7 @@ impl<'exec> Executor<'exec> {
         // We walk each merge path
         for path_state in &alias_state.paths {
             let mut index = 0;
-            let normalized_path = path_state.merge_path.as_slice();
+            let normalized_path = path_state.merge_path;
             let initial_error_path = has_alias_errors
                 // Small extra capacity for path segments that will be appended later.
                 .then(|| GraphQLErrorPath::with_capacity(normalized_path.len() + 2));
@@ -1446,7 +1451,7 @@ impl<'exec> Executor<'exec> {
             // For each visited target:
             traverse_and_callback_mut(
                 &mut ctx.data,
-                normalized_path,
+                normalized_path.as_slice(),
                 self.schema_metadata,
                 initial_error_path,
                 &mut |target_data, error_path| {
@@ -1509,7 +1514,8 @@ impl<'exec> Executor<'exec> {
             let mut path_hashes_by_index: Vec<Option<Arc<Vec<Option<u64>>>>> =
                 vec![None; alias_spec.merge_paths.len()];
 
-            let mut path_groups: Vec<(&FlattenNodePath, Vec<usize>)> =
+            // Group equal paths so they can share the walk and representation hashes.
+            let mut path_groups: Vec<(ResponsePathRef<'_>, Vec<usize>)> =
                 Vec::with_capacity(alias_spec.merge_paths.len());
             for (path_index, merge_path) in alias_spec.merge_paths.iter().enumerate() {
                 if let Some((_, target_indices)) =
@@ -1524,13 +1530,15 @@ impl<'exec> Executor<'exec> {
             for (merge_path, grouped_target_indices) in path_groups {
                 let mut representation_hashes: Vec<Option<u64>> = Vec::new();
 
+                let required_selections = alias_spec.requires.root_selections();
+
                 traverse_and_callback(data, merge_path.as_slice(), possible_types, &mut |entity| {
                     if entity.is_null() {
                         representation_hashes.push(None);
                         return;
                     }
 
-                    let hash = entity.to_hash(&alias_spec.requires.items, possible_types);
+                    let hash = entity.to_hash(required_selections, possible_types);
                     representation_hashes.push(Some(hash));
                     let is_first_representation = representation_hash_to_index.is_empty();
                     let vacant_entry = match representation_hash_to_index.entry(hash) {
@@ -1550,7 +1558,7 @@ impl<'exec> Executor<'exec> {
 
                     let is_projected = project_requires(
                         possible_types,
-                        &alias_spec.requires.items,
+                        required_selections,
                         entity,
                         &mut filtered_representations,
                         is_first_representation,
@@ -1609,7 +1617,7 @@ impl<'exec> Executor<'exec> {
             // TODO: We could optimize header map creation by caching them per service name
             let mut headers_map = HeaderMap::new();
             let subgraph_name_factory = || Some(opts.subgraph_name.to_string());
-            let affected_path_factory = || opts.affected_path.map(|p| p.to_string());
+            let affected_path_factory = || opts.affected_path.map(|path| path.to_string());
             modify_subgraph_request_headers(
                 self.headers_plan,
                 opts.subgraph_name,
@@ -1635,7 +1643,10 @@ impl<'exec> Executor<'exec> {
                 connection_fingerprint: self.connection_fingerprint,
             };
 
-            let client_document_hash_str = opts.operation.hash.to_string();
+            // Format into a stack buffer to avoid one allocation per fetch, even with tracing off.
+            // This avoids a `String` allocation for each subgraph fetch in each request.
+            let mut client_document_hash_buf = itoa::Buffer::new();
+            let client_document_hash_str = client_document_hash_buf.format(opts.operation.hash);
             subgraph_operation_span.record_operation_identity(GraphQLSpanOperationIdentity {
                 name: subgraph_request.operation_name.as_deref(),
                 operation_type: match opts.operation_kind {
@@ -1643,7 +1654,7 @@ impl<'exec> Executor<'exec> {
                     Some(OperationKind::Mutation) => "mutation",
                     Some(OperationKind::Subscription) => "subscription",
                 },
-                client_document_hash: &client_document_hash_str,
+                client_document_hash: client_document_hash_str,
             });
 
             if let Some(jwt_forwarding_plan) = &self.jwt_forwarding_plan {
@@ -1757,7 +1768,7 @@ mod tests {
 
     use super::select_fetch_variables;
     use crate::query_planner::{
-        ast::{document::Document, operation::SubgraphFetchOperation},
+        ast::{document::Document, operation::PlanningFetchOperation},
         planner::plan_nodes::{EntityBatch, EntityBatchAlias, FetchNode, ParallelNode, PlanNode},
         utils::parsing::parse_operation,
     };
@@ -1970,6 +1981,13 @@ mod tests {
         )
         .unwrap();
 
+        fn requires_from(
+            selection: query::SelectionSet<'_, String>,
+        ) -> crate::query_planner::ast::requires::RequiresSelectionSet {
+            let set: crate::query_planner::ast::selection_set::SelectionSet = selection.into();
+            crate::query_planner::ast::requires::RequiresSelectionSet::from(&set)
+        }
+
         fn document_into_selection<'a>(
             doc: query::Document<'a, String>,
         ) -> query::SelectionSet<'a, String> {
@@ -1999,16 +2017,16 @@ mod tests {
                 EntityBatchAlias {
                     alias: "_e0".to_string(),
                     representations_variable_name: shared_var.clone(),
-                    merge_paths: vec![],
-                    requires: requires_selection.clone().into(),
+                    merge_paths: Default::default(),
+                    requires: requires_from(requires_selection.clone()),
                     input_rewrites: None,
                     output_rewrites: None,
                 },
                 EntityBatchAlias {
                     alias: "_e1".to_string(),
                     representations_variable_name: shared_var,
-                    merge_paths: vec![],
-                    requires: requires_selection.into(),
+                    merge_paths: Default::default(),
+                    requires: requires_from(requires_selection),
                     input_rewrites: None,
                     output_rewrites: None,
                 },
@@ -2129,32 +2147,36 @@ mod tests {
                 &mut exec_ctx,
                 &PlanNode::Parallel(ParallelNode {
                     nodes: vec![
-                        PlanNode::Fetch(FetchNode {
+                        PlanNode::Fetch(Box::new(FetchNode {
+                            planner_requires: (),
                             id: 1,
                             service_name: "subgraph_a".to_string(),
-                            operation: SubgraphFetchOperation::from_anonymous_operation(
+                            operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_a }"),
-                            ),
+                            )
+                            .operation,
                             custom_scalar_paths: None,
                             requires: None,
                             input_rewrites: None,
                             output_rewrites: None,
                             variable_usages: None,
                             operation_kind: None,
-                        }),
-                        PlanNode::Fetch(FetchNode {
+                        })),
+                        PlanNode::Fetch(Box::new(FetchNode {
+                            planner_requires: (),
                             id: 2,
                             service_name: "subgraph_b".to_string(),
-                            operation: SubgraphFetchOperation::from_anonymous_operation(
+                            operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_b }"),
-                            ),
+                            )
+                            .operation,
                             custom_scalar_paths: None,
                             requires: None,
                             input_rewrites: None,
                             output_rewrites: None,
                             variable_usages: None,
                             operation_kind: None,
-                        }),
+                        })),
                     ],
                 }),
             )

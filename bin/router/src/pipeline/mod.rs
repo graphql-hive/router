@@ -935,33 +935,29 @@ pub async fn execute_pipeline<'exec>(
     )
     .await?;
 
-    let query_plan_payload = match query_plan_result {
-        QueryPlanResult::QueryPlan(plan) => plan,
+    let prepared_query_plan = match query_plan_result {
+        QueryPlanResult::QueryPlan(prepared) => prepared,
         QueryPlanResult::EarlyResponse(response) => {
             return Ok(QueryPlanExecutionResult::Single(response));
         }
     };
+    let query_plan_payload = prepared_query_plan.plan;
 
     let variable_payload = Arc::new(variable_payload);
 
-    let demand_control_execution_context = match supergraph.runtime.demand_control_runtime.as_ref()
-    {
-        Some(demand_control_runtime) => match demand_control_runtime
-            .evaluate(
+    let demand_control_execution_context = match (
+        supergraph.runtime.demand_control_runtime.as_ref(),
+        prepared_query_plan.demand_control.as_ref(),
+    ) {
+        (Some(demand_control_runtime), Some(compiled_plan)) => {
+            Some(demand_control_runtime.evaluate(
                 &supergraph.snapshot,
                 &variable_payload,
-                &query_plan_payload,
-                normalize_payload.operation_for_plan.as_ref(),
-                normalize_payload.root_type_name.as_str(),
-                normalize_payload.normalized_operation_hash,
+                compiled_plan,
                 (&normalize_payload.operation_identity).into(),
-            )
-            .await
-        {
-            Ok(context) => Some(context),
-            Err(err) => return Err(err),
-        },
-        None => None,
+            )?)
+        }
+        _ => None,
     };
 
     let planned_request = PlannedRequest {
