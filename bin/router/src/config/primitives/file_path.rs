@@ -70,12 +70,12 @@ impl<'de> Visitor<'de> for FilePathVisitor {
     {
         let path = Path::new(v);
         if path.is_absolute() {
-            let canonical_path = fs::canonicalize(path)
-                .map_err(|err| E::custom(format!("Failed to canonicalize path: {}", err)))?;
+            let absolute_path = validate_existing_path(path.to_path_buf())
+                .map_err(|err| E::custom(format!("Failed to resolve path: {}", err)))?;
 
             return Ok(FilePath {
                 relative: v.to_string(),
-                absolute: canonical_path.to_string_lossy().to_string(),
+                absolute: absolute_path.to_string_lossy().to_string(),
             });
         }
 
@@ -83,7 +83,7 @@ impl<'de> Visitor<'de> for FilePathVisitor {
             if let Some(start_path) = ctx.borrow().as_ref() {
                 match FilePath::resolve_relative(start_path, v, true) {
                     Ok(file_path) => Ok(file_path),
-                    Err(err) => Err(E::custom(format!("Failed to canonicalize path: {}", err))),
+                    Err(err) => Err(E::custom(format!("Failed to resolve path: {}", err))),
                 }
             } else {
                 Err(E::custom(
@@ -111,18 +111,25 @@ impl FilePath {
     fn resolve_relative<RootPath: AsRef<Path>>(
         base_path: &RootPath,
         relative_path: &str,
-        canonicalize: bool,
+        validate_exists: bool,
     ) -> io::Result<FilePath> {
         let absolute_path = base_path.as_ref().join(relative_path);
-        let canonical_path = if canonicalize {
-            fs::canonicalize(absolute_path)?
+        let absolute_path = if validate_exists {
+            validate_existing_path(absolute_path)?
         } else {
             absolute_path
         };
 
         Ok(FilePath {
             relative: relative_path.to_string(),
-            absolute: canonical_path.to_string_lossy().to_string(),
+            absolute: absolute_path.to_string_lossy().to_string(),
         })
     }
+}
+
+/// Resolve a configured file path to an absolute path **without** following symlinks.
+fn validate_existing_path(path: PathBuf) -> io::Result<PathBuf> {
+    // Follows symlinks, confirming the file is currently readable through the stable path.
+    fs::metadata(&path)?;
+    Ok(path)
 }
