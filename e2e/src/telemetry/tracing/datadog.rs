@@ -109,13 +109,14 @@ fn supergraph_path() -> String {
 
 #[ntex::test]
 async fn test_datadog_sampled_trace_has_router_context() {
-    // remote config polling and tracer telemetry use unrelated agent endpoints
+    let agent = MockDatadogAgent::start();
+    // cover native agent discovery while keeping unrelated remote config and telemetry traffic out of the mock
     let _env = EnvVarsGuard::new()
+        .set("DD_TRACE_AGENT_URL", &agent.address)
         .set("DD_REMOTE_CONFIGURATION_ENABLED", "false")
         .set("DD_INSTRUMENTATION_TELEMETRY_ENABLED", "false")
         .apply()
         .await;
-    let agent = MockDatadogAgent::start();
     let subgraphs = TestSubgraphs::builder().build().start().await;
     let router = TestRouter::builder()
         .inline_config(format!(
@@ -132,10 +133,8 @@ async fn test_datadog_sampled_trace_has_router_context() {
                 sampling: 1.0
               exporters:
                 - kind: datadog
-                  endpoint: {}
         "#,
             supergraph_path(),
-            agent.address,
         ))
         .with_subgraphs(&subgraphs)
         .build()
