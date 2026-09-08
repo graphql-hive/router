@@ -80,6 +80,13 @@ where
         let (response, guard) = async {
             let response = ctx.call(&self.service, req).await?;
 
+            // This ensures that response summary is available for middlewares that runs after this one (like compression)
+            if summary::is_enabled() {
+                if let Some(summary) = summary::current_summary() {
+                    response.request().extensions_mut().insert(summary);
+                }
+            }
+
             // Re-records over whatever the handler already set (e.g. before a plugin's `on_end`
             // callback ran and read it) with the truly final response
             let status_code = response.status().as_u16();
