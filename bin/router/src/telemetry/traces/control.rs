@@ -1,10 +1,9 @@
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use tracing::{Level, Span};
 
 // Atomic representation of the max enabled tracing level.
 // 0: Off, 1: Error, 2: Warn, 3: Info, 4: Debug, 5: Trace
 static MAX_LEVEL: AtomicU8 = AtomicU8::new(3); // Default to Info
-static GRAPHQL_DOCUMENT_RECORDING_ENABLED: AtomicBool = AtomicBool::new(true);
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
@@ -45,17 +44,6 @@ fn level_to_u8(level: Level) -> u8 {
 #[inline]
 pub fn is_level_enabled(level: Level) -> bool {
     MAX_LEVEL.load(Ordering::Relaxed) >= level_to_u8(level)
-}
-
-#[inline]
-pub fn set_graphql_document_recording_enabled(enabled: bool) {
-    // this gate acts before datadog's private processor, where exporter redaction can't reach.
-    GRAPHQL_DOCUMENT_RECORDING_ENABLED.store(enabled, Ordering::Relaxed);
-}
-
-#[inline]
-pub fn is_graphql_document_recording_enabled() -> bool {
-    GRAPHQL_DOCUMENT_RECORDING_ENABLED.load(Ordering::Relaxed)
 }
 
 #[inline]

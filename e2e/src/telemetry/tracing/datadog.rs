@@ -204,10 +204,8 @@ async fn test_datadog_sampled_trace_has_router_context() {
         Some("query")
     );
     assert!(operation.meta.get("graphql.document.hash").is_some());
-    assert!(
-        operation.meta.get("graphql.document").is_none(),
-        "graphql documents must stay out of datadog unless explicitly enabled"
-    );
+    // datadog follows the router's existing document recording behavior without its own toggle
+    assert!(operation.meta.get("graphql.document").is_some());
 }
 
 #[ntex::test]

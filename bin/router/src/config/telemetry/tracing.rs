@@ -292,22 +292,6 @@ pub struct DatadogExporterConfig {
     /// prevent the Router from starting.
     #[serde(default)]
     pub endpoint: Option<ValueOrExpression<String>>,
-    /// Records and exports the full GraphQL document to Datadog.
-    ///
-    /// Default: `false`.
-    ///
-    /// GraphQL documents can contain sensitive literals, so enable this only
-    /// after reviewing the data exposure.
-    ///
-    /// Suppression happens at the shared instrumentation boundary because
-    /// Datadog's native processor cannot be wrapped. Consequently, when Datadog
-    /// is enabled, the default suppression also removes `graphql.document` from
-    /// coexisting OTLP, stdout, and Hive exporters.
-    ///
-    /// Setting this to `true` restores recording for the shared provider, although
-    /// each exporter can still apply its own redaction.
-    #[serde(default)]
-    pub include_graphql_document: bool,
 }
 
 fn default_datadog_config_enabled() -> bool {

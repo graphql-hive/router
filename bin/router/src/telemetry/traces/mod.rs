@@ -44,10 +44,7 @@ use crate::telemetry::{
     utils::{build_metadata, build_tls_config, resolve_string_map, resolve_value_or_expression},
 };
 
-use control::set_graphql_document_recording_enabled;
-pub use control::{
-    disabled_span, is_graphql_document_recording_enabled, is_level_enabled, set_tracing_enabled,
-};
+pub use control::{disabled_span, is_level_enabled, set_tracing_enabled};
 
 pub mod compatibility;
 pub mod control;
@@ -146,19 +143,14 @@ where
         // DD_TRACE_RATE_LIMIT changes that ceiling without reducing all-request
         // statistics
         datadog_config.set_trace_sample_rate(config.tracing.collect.sampling);
-        // suppression stops full graphql queries and sensitive literals entering
-        // datadog's direct processor; mixed exporters share this gate
-        set_graphql_document_recording_enabled(datadog.include_graphql_document);
+        // datadog's private processor gets the same recorded document attributes
+        // as the main pipeline
         TraceProviderBuilder::Datadog(Box::new(
             datadog_opentelemetry::tracing()
                 .with_config(datadog_config.build())
                 .with_resource(resource.clone()),
         ))
     } else {
-        // generic providers still record documents as before; standard otlp/stdout
-        // exporters redact them later, and this reset restores recording after a
-        // datadog config reload (because the recording is globally set)
-        set_graphql_document_recording_enabled(true);
         let base_sampler = Sampler::TraceIdRatioBased(config.tracing.collect.sampling);
         let mut builder = TracerProviderBuilder::default()
             .with_id_generator(id_generator)
