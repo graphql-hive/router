@@ -161,6 +161,7 @@ sonic-simd = "0.1.2"
 
 # internal
 lasso2 = "0.8.2"
+datadog-opentelemetry.workspace = true
 chrono = "0.4.45"
 opentelemetry = { workspace = true, features = ["trace"] }
 opentelemetry-appender-tracing = { workspace = true }
