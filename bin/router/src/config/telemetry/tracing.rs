@@ -25,9 +25,9 @@ pub struct TracingConfig {
 impl TracingConfig {
     pub fn is_enabled(&self) -> bool {
         let has_enabled_exporter = self.exporters.iter().any(TracingExporterConfig::is_enabled);
-        let has_enabled_datadog = self.exporters.iter().any(|exporter| {
-            matches!(exporter, TracingExporterConfig::Datadog(config) if config.enabled)
-        });
+        let has_enabled_datadog = self.exporters.iter().any(
+            |exporter| matches!(exporter, TracingExporterConfig::Datadog(config) if config.enabled),
+        );
 
         // datadog still records zero-sampled spans so its all-request
         // statistics stay complete
