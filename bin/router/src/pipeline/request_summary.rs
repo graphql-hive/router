@@ -80,6 +80,17 @@ where
         let (response, guard) = async {
             let response = ctx.call(&self.service, req).await?;
 
+            // Bridge the summary out to the response-compression middleware, which sits
+            // *outside* this task-local scope (it's the outermost layer) and so can't reach
+            // the summary via `summary::record`. Stashing the shared handle on the request's
+            // extensions - which travel with the response - lets it record the negotiated
+            // `Content-Encoding` back onto the very same summary before it's emitted.
+            if summary::is_enabled() {
+                if let Some(summary) = summary::current_summary() {
+                    response.request().extensions_mut().insert(summary);
+                }
+            }
+
             // Re-records over whatever the handler already set (e.g. before a plugin's `on_end`
             // callback ran and read it) with the truly final response
             let status_code = response.status().as_u16();

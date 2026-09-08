@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, io::Write, rc::Rc};
+use std::{cmp::Ordering, io::Write, rc::Rc, sync::Arc};
 
 use http::header::{ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_TYPE};
 use ntex::{
@@ -24,7 +24,7 @@ use crate::{
     executor::{execution::plan::FailedExecutionResult, response::graphql_error::GraphQLError},
     http_utils::headers::append_vary,
     pipeline::error::{InternalPipelineError, PipelineError},
-    telemetry::logging::targets,
+    telemetry::logging::{summary::RequestSummary, targets},
 };
 
 #[derive(Clone)]
@@ -98,6 +98,15 @@ where
 
         if !should_compress {
             return Ok(response);
+        }
+
+        // Record the negotiated encoding on the request summary *before* applying it: the
+        // `br`/`zstd` paths drain the body inside `compress_full_body`, and draining emits
+        // the summary, so recording afterwards would be too late. The summary handle is put
+        // on the request extensions by `RequestSummaryMiddleware` (which runs inside this
+        // outermost middleware), and rides along with the response.
+        if let Some(summary) = response.request().extensions().get::<Arc<RequestSummary>>() {
+            summary.set_response_compression(algorithm.token());
         }
 
         let response = match algorithm {

@@ -314,6 +314,47 @@ async fn json_log_req_summary() {
     "#);
 }
 
+/// The request summary records which algorithm the client-facing response was compressed
+/// with. This exercises both response-compression code paths, which emit the summary at
+/// different times: `gzip` streams through an encoder (summary emitted on body drop), while
+/// `br` drains the whole body up front (summary emitted mid-drain), so both must record the
+/// encoding *before* the body is consumed.
+#[ntex::test]
+async fn json_log_req_summary_records_response_compression() {
+    // `min_size: 1B` so even the tiny test response gets compressed.
+    let builder = router_with_telemetry(
+        "\
+log:
+  level: info
+  format: json
+traffic_shaping:
+  router:
+    compression:
+      response:
+        min_size: 1B
+",
+    );
+    let (_subgraphs, router) = setup_router(builder).await;
+
+    for algorithm in ["gzip", "br"] {
+        let stdout_log = router
+            .send_graphql_request(
+                TEST_QUERY,
+                None,
+                Some(single_header("accept-encoding", algorithm)),
+            )
+            .capture_stdout_json()
+            .await;
+
+        let req_summary = log_line_by_target(&stdout_log, targets::SUMMARY);
+        assert_eq!(
+            find_attr(req_summary, "response_compression").as_deref(),
+            Some(algorithm),
+            "summary should record the `{algorithm}` encoding the response was compressed with"
+        );
+    }
+}
+
 #[ntex::test]
 async fn test_logging_of_subscriptions() {
     let subgraphs = TestSubgraphs::builder()

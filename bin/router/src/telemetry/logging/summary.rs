@@ -34,6 +34,9 @@ pub struct RequestSummary {
     pub partial_response: AtomicBool,
     pub response_code: OnceLock<&'static str>,
     pub response_mode: OnceLock<&'static str>,
+    /// The `Content-Encoding` the router compressed the client-facing response with
+    /// (e.g. `gzip`, `br`), or unset when the response was sent uncompressed.
+    pub response_compression: OnceLock<&'static str>,
     pub status_code: AtomicU16,
     pub payload_bytes: AtomicI64,
     pub duration_ms: AtomicU64,
@@ -79,6 +82,12 @@ impl RequestSummary {
 
     pub fn set_response_mode(&self, mode: &'static str) {
         let _ = self.response_mode.set(mode);
+    }
+
+    /// Records the algorithm the client-facing response was compressed with. First call
+    /// wins; the response is only ever compressed with a single algorithm per request.
+    pub fn set_response_compression(&self, algorithm: &'static str) {
+        let _ = self.response_compression.set(algorithm);
     }
 
     pub fn set_duration(&self, duration: Duration) {
@@ -146,6 +155,7 @@ impl RequestSummary {
             partial_response = self.partial_response.load(Relaxed),
             error_code = self.response_code.get().copied(),
             response_mode = self.response_mode.get().copied(),
+            response_compression = self.response_compression.get().copied(),
             status_code = self.status_code.load(Relaxed),
             payload_bytes = self.payload_bytes.load(Relaxed),
             supergraph_identifier = self.supergraph_identifier.load(Relaxed),
