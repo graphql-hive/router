@@ -116,6 +116,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.2.9 (2026-09-08)
+
+### Features
+
+#### Log response compression details in the request summary
+
+The request access log / summary log line (`router::request`) now reports how the client-facing response was compressed:
+
+- `response_compression` - the algorithm the response was compressed with (`gzip`, `deflate`, `br`, or `zstd`).
+- `response_bytes` - the compressed size, in bytes, actually sent over the wire. This sits next to the existing `payload_bytes`, which remains the uncompressed size, so the two make the achieved compression ratio visible.
+
+```json
+{
+  "target": "router::request",
+  "operation_type": "query",
+  "status_code": 200,
+  "payload_bytes": 4096,
+  "response_compression": "gzip",
+  "response_bytes": 512
+}
+```
+
+Both fields are omitted when the response is sent uncompressed (compression disabled, the
+client didn't advertise a supported `Accept-Encoding`, or the payload was below
+`traffic_shaping.router.compression.response.min_size`).
+
+Closes https://github.com/graphql-hive/router/issues/1513
+
+### Fixes
+
+#### Reliably reload a supergraph file mounted from a Kubernetes `ConfigMap`
+
+Fixes intermittent `Failed to read supergraph file: No such file or directory` errors (and stale schemas) when the supergraph is loaded from a file mounted from a Kubernetes `ConfigMap` with polling enabled.
+
+The file supergraph poller additionally retries transient `NotFound`/`ESTALE` errors that can occur if a read races with the atomic swap, and detects content changes by any modification-time difference (not only newer timestamps), so a rolled-back revision is still picked up.
+
+Closes https://github.com/graphql-hive/router/issues/1516
+
+#### Treat `identity` subgraph `Content-Encoding` as uncompressed
+
+When a subgraph responds with `Content-Encoding: identity` (the RFC 9110 token for "no encoding") or an empty `Content-Encoding` value, the router now passes the body through unchanged instead of failing the fetch with a `SUBGRAPH_RESPONSE_DECOMPRESSION_FAILURE` error. This matches how a missing `Content-Encoding` header is handled. Unrecognized compression algorithms still surface a clean decompression error.
+
+Closes https://github.com/graphql-hive/router/issues/1511
+
 ## 0.2.8 (2026-09-07)
 
 ### Features
