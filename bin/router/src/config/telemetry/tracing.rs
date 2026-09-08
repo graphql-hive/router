@@ -265,9 +265,7 @@ pub enum TracingExporterConfig {
 /// the propagators configured under `telemetry.tracing.propagation`, including
 /// W3C Trace Context. Datadog supports W3C `traceparent` and `tracestate` headers,
 /// so Datadog-specific headers are not required when connected services also
-/// support W3C propagation. The Router does not currently emit or read
-/// `x-datadog-*` propagation headers; those are only needed for interoperability
-/// with services configured to accept Datadog headers instead of W3C headers.
+/// support W3C propagation.
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 #[non_exhaustive]
