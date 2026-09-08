@@ -85,8 +85,6 @@ impl RequestSummary {
         let _ = self.response_mode.set(mode);
     }
 
-    /// Records the algorithm the client-facing response was compressed with. First call
-    /// wins; the response is only ever compressed with a single algorithm per request.
     pub fn set_response_compression(&self, algorithm: &'static str) {
         let _ = self.response_compression.set(algorithm);
     }

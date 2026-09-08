@@ -24,4 +24,4 @@ Both fields are omitted when the response is sent uncompressed (compression disa
 client didn't advertise a supported `Accept-Encoding`, or the payload was below
 `traffic_shaping.router.compression.response.min_size`).
 
-Related https://github.com/graphql-hive/router/issues/1513
+Closes https://github.com/graphql-hive/router/issues/1513

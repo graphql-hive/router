@@ -80,11 +80,7 @@ where
         let (response, guard) = async {
             let response = ctx.call(&self.service, req).await?;
 
-            // Bridge the summary out to the response-compression middleware, which sits
-            // *outside* this task-local scope (it's the outermost layer) and so can't reach
-            // the summary via `summary::record`. Stashing the shared handle on the request's
-            // extensions - which travel with the response - lets it record the negotiated
-            // `Content-Encoding` back onto the very same summary before it's emitted.
+            // This ensures that response summary is available for middlewares that runs after this one (like compression)
             if summary::is_enabled() {
                 if let Some(summary) = summary::current_summary() {
                     response.request().extensions_mut().insert(summary);
