@@ -61,7 +61,8 @@ use crate::telemetry::traces::trace_batch_span_processor::TraceBatchSpanProcesso
 
 enum TraceProviderBuilder {
     OpenTelemetry(TracerProviderBuilder),
-    Datadog(DatadogTracingBuilder),
+    // datadog's builder is much larger, so box it to keep this adapter cheap to move
+    Datadog(Box<DatadogTracingBuilder>),
 }
 
 impl TraceProviderBuilder {
@@ -70,7 +71,9 @@ impl TraceProviderBuilder {
             Self::OpenTelemetry(builder) => {
                 Self::OpenTelemetry(builder.with_span_processor(processor))
             }
-            Self::Datadog(builder) => Self::Datadog(builder.with_span_processor(processor)),
+            Self::Datadog(builder) => {
+                Self::Datadog(Box::new((*builder).with_span_processor(processor)))
+            }
         }
     }
 
@@ -86,13 +89,13 @@ impl TraceProviderBuilder {
                     .with_max_attributes_per_event(config.max_attributes_per_event)
                     .with_max_attributes_per_link(config.max_attributes_per_link),
             ),
-            Self::Datadog(builder) => Self::Datadog(
-                builder
+            Self::Datadog(builder) => Self::Datadog(Box::new(
+                (*builder)
                     .with_max_events_per_span(config.max_events_per_span)
                     .with_max_attributes_per_span(config.max_attributes_per_span)
                     .with_max_attributes_per_event(config.max_attributes_per_event)
                     .with_max_attributes_per_link(config.max_attributes_per_link),
-            ),
+            )),
         }
     }
 
@@ -101,7 +104,7 @@ impl TraceProviderBuilder {
             Self::OpenTelemetry(builder) => builder.build(),
             // the router keeps its configured propagators, so datadog's
             // returned propagator is ignored
-            Self::Datadog(builder) => builder.init_local().0,
+            Self::Datadog(builder) => (*builder).init_local().0,
         }
     }
 }
@@ -146,11 +149,11 @@ where
         // suppression stops full graphql queries and sensitive literals entering
         // datadog's direct processor; mixed exporters share this gate
         set_graphql_document_recording_enabled(datadog.include_graphql_document);
-        TraceProviderBuilder::Datadog(
+        TraceProviderBuilder::Datadog(Box::new(
             datadog_opentelemetry::tracing()
                 .with_config(datadog_config.build())
                 .with_resource(resource.clone()),
-        )
+        ))
     } else {
         // generic providers still record documents as before; standard otlp/stdout
         // exporters redact them later, and this reset restores recording after a
