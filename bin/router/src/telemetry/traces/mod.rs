@@ -18,6 +18,7 @@ use crate::config::telemetry::{
     tracing::{BatchProcessorConfig, OtlpProtocol, TracingExporterConfig},
     TelemetryConfig,
 };
+use datadog_opentelemetry::{configuration::Config as DatadogConfig, DatadogTracingBuilder};
 use opentelemetry_otlp::{
     Protocol, SpanExporter, WithExportConfig, WithHttpConfig, WithTonicConfig,
 };
@@ -43,7 +44,10 @@ use crate::telemetry::{
     utils::{build_metadata, build_tls_config, resolve_string_map, resolve_value_or_expression},
 };
 
-pub use control::{disabled_span, is_level_enabled, set_tracing_enabled};
+use control::set_graphql_document_enabled;
+pub use control::{
+    disabled_span, is_graphql_document_enabled, is_level_enabled, set_tracing_enabled,
+};
 
 pub mod compatibility;
 pub mod control;
@@ -55,6 +59,53 @@ pub mod trace_batch_span_processor;
 
 use crate::telemetry::traces::trace_batch_span_processor::TraceBatchSpanProcessor;
 
+enum TraceProviderBuilder {
+    OpenTelemetry(TracerProviderBuilder),
+    Datadog(DatadogTracingBuilder),
+}
+
+impl TraceProviderBuilder {
+    fn with_span_processor(self, processor: impl SpanProcessor + 'static) -> Self {
+        match self {
+            Self::OpenTelemetry(builder) => {
+                Self::OpenTelemetry(builder.with_span_processor(processor))
+            }
+            Self::Datadog(builder) => Self::Datadog(builder.with_span_processor(processor)),
+        }
+    }
+
+    fn with_span_limits(
+        self,
+        config: &crate::config::telemetry::tracing::TracingCollectConfig,
+    ) -> Self {
+        match self {
+            Self::OpenTelemetry(builder) => Self::OpenTelemetry(
+                builder
+                    .with_max_events_per_span(config.max_events_per_span)
+                    .with_max_attributes_per_span(config.max_attributes_per_span)
+                    .with_max_attributes_per_event(config.max_attributes_per_event)
+                    .with_max_attributes_per_link(config.max_attributes_per_link),
+            ),
+            Self::Datadog(builder) => Self::Datadog(
+                builder
+                    .with_max_events_per_span(config.max_events_per_span)
+                    .with_max_attributes_per_span(config.max_attributes_per_span)
+                    .with_max_attributes_per_event(config.max_attributes_per_event)
+                    .with_max_attributes_per_link(config.max_attributes_per_link),
+            ),
+        }
+    }
+
+    fn finish(self) -> SdkTracerProvider {
+        match self {
+            Self::OpenTelemetry(builder) => builder.build(),
+            // the router keeps its configured propagators, so datadog's
+            // returned propagator is ignored
+            Self::Datadog(builder) => builder.init_local().0,
+        }
+    }
+}
+
 pub(super) fn build_trace_provider<I>(
     config: &TelemetryConfig,
     id_generator: I,
@@ -63,31 +114,64 @@ pub(super) fn build_trace_provider<I>(
 where
     I: IdGenerator + 'static,
 {
-    let base_sampler = Sampler::TraceIdRatioBased(config.tracing.collect.sampling);
-    let mut builder = TracerProviderBuilder::default()
-        .with_id_generator(id_generator)
-        .with_resource(resource.clone());
-
-    if config.tracing.collect.parent_based_sampler {
-        builder = builder.with_sampler(Sampler::ParentBased(Box::new(base_sampler)));
-    } else {
-        builder = builder.with_sampler(base_sampler);
+    let mut datadog_configs =
+        config
+            .tracing
+            .exporters
+            .iter()
+            .filter_map(|exporter| match exporter {
+                TracingExporterConfig::Datadog(config) if config.enabled => Some(config.as_ref()),
+                _ => None,
+            });
+    let datadog_config = datadog_configs.next();
+    if datadog_configs.next().is_some() {
+        return Err(TelemetryError::TracesExporterSetup(
+            "only one enabled Datadog exporter may be configured".to_string(),
+        ));
     }
 
-    builder = builder
-        .with_max_events_per_span(config.tracing.collect.max_events_per_span)
-        .with_max_attributes_per_span(config.tracing.collect.max_attributes_per_span)
-        .with_max_attributes_per_event(config.tracing.collect.max_attributes_per_event)
-        .with_max_attributes_per_link(config.tracing.collect.max_attributes_per_link);
+    let builder = if let Some(datadog) = datadog_config {
+        let mut datadog_config = DatadogConfig::builder();
+        if let Some(endpoint) = &datadog.endpoint {
+            let endpoint = resolve_value_or_expression(endpoint, "Datadog Agent endpoint")?;
+            datadog_config.set_trace_agent_url(endpoint);
+        }
+        // datadog defaults to 100 retained traces per second when explicit
+        // sampling is active, so high traffic can retain less than collect. sampling;
+        // DD_TRACE_RATE_LIMIT changes that ceiling without reducing all-request
+        // statistics
+        datadog_config.set_trace_sample_rate(config.tracing.collect.sampling);
+        // suppression stops full graphql queries and sensitive literals entering
+        // datadog's direct processor; mixed exporters share this gate
+        set_graphql_document_enabled(datadog.include_graphql_document);
+        TraceProviderBuilder::Datadog(
+            datadog_opentelemetry::tracing()
+                .with_config(datadog_config.build())
+                .with_resource(resource.clone()),
+        )
+    } else {
+        set_graphql_document_enabled(true);
+        let base_sampler = Sampler::TraceIdRatioBased(config.tracing.collect.sampling);
+        let mut builder = TracerProviderBuilder::default()
+            .with_id_generator(id_generator)
+            .with_resource(resource.clone());
+        builder = if config.tracing.collect.parent_based_sampler {
+            builder.with_sampler(Sampler::ParentBased(Box::new(base_sampler)))
+        } else {
+            builder.with_sampler(base_sampler)
+        };
+        TraceProviderBuilder::OpenTelemetry(builder)
+    }
+    .with_span_limits(&config.tracing.collect);
 
-    Ok(setup_exporters(config, resource, builder)?.build())
+    Ok(setup_exporters(config, resource, builder)?.finish())
 }
 
 fn setup_exporters(
     config: &TelemetryConfig,
     resource: Resource,
-    mut tracer_provider_builder: TracerProviderBuilder,
-) -> Result<TracerProviderBuilder, TelemetryError> {
+    mut tracer_provider_builder: TraceProviderBuilder,
+) -> Result<TraceProviderBuilder, TelemetryError> {
     let sem_conv_mode = &config.tracing.instrumentation.spans.mode;
     for exporter_config in &config.tracing.exporters {
         match exporter_config {
@@ -174,6 +258,8 @@ fn setup_exporters(
                         ),
                     ));
             }
+            // datadog installs its native processor while finishing the shared provider
+            TracingExporterConfig::Datadog(_) => {}
         }
     }
 
@@ -305,8 +391,8 @@ impl trace::SpanExporter for TargetedHiveExporter {
 fn setup_hive_exporter(
     config: &HiveTelemetryConfig,
     resource: &Resource,
-    tracer_provider_builder: TracerProviderBuilder,
-) -> Result<TracerProviderBuilder, TelemetryError> {
+    tracer_provider_builder: TraceProviderBuilder,
+) -> Result<TraceProviderBuilder, TelemetryError> {
     let endpoint = resolve_value_or_expression(&config.tracing.endpoint, "Hive Tracing endpoint")?;
     let token = match &config.token {
         Some(t) => resolve_value_or_expression(t, "Hive Telemetry token")?,
