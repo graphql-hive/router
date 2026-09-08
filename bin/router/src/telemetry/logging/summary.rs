@@ -20,6 +20,7 @@ use crate::telemetry::logging::request_id::{RequestIdentifiers, REQUEST_IDENTIFI
 use crate::telemetry::logging::targets;
 
 #[derive(Default)]
+#[non_exhaustive]
 pub struct RequestSummary {
     pub client_name: OnceLock<String>,
     pub client_version: OnceLock<String>,
