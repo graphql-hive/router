@@ -44,7 +44,6 @@ use crate::telemetry::{
     utils::{build_metadata, build_tls_config, resolve_string_map, resolve_value_or_expression},
 };
 
-use control::set_graphql_document_recording_enabled;
 pub use control::{
     disabled_span, is_graphql_document_recording_enabled, is_level_enabled, set_tracing_enabled,
 };
@@ -147,16 +146,12 @@ where
         // statistics
         datadog_config.set_trace_sample_rate(config.tracing.collect.sampling);
         // the native processor cannot use StandardPipelineExporter redaction,
-        // so stop sensitive documents before they enter the shared provider
-        set_graphql_document_recording_enabled(false);
         TraceProviderBuilder::Datadog(Box::new(
             datadog_opentelemetry::tracing()
                 .with_config(datadog_config.build())
                 .with_resource(resource.clone()),
         ))
     } else {
-        // config reloads can replace datadog, so restore the normal exporter path
-        set_graphql_document_recording_enabled(true);
         let base_sampler = Sampler::TraceIdRatioBased(config.tracing.collect.sampling);
         let mut builder = TracerProviderBuilder::default()
             .with_id_generator(id_generator)

@@ -1,13 +1,17 @@
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use tracing::{Level, Span};
+use std::sync::atomic::{AtomicU8, Ordering};
+use tracing::{Level, Span, Subscriber};
+use tracing_subscriber::Layer;
 
 // Atomic representation of the max enabled tracing level.
 // 0: Off, 1: Error, 2: Warn, 3: Info, 4: Debug, 5: Trace
 static MAX_LEVEL: AtomicU8 = AtomicU8::new(3); // Default to Info
-                                               // datadog's private processor bypasses exporter wrappers, so this shared gate
-                                               // keeps graphql documents and their potentially sensitive literals out before
-                                               // spans reach any processor; provider rebuilds update it during config reloads
-static GRAPHQL_DOCUMENT_RECORDING_ENABLED: AtomicBool = AtomicBool::new(true);
+
+// datadog's private processor bypasses exproter wrappers, so its subscriber gets
+// this marker to keep graphql documents and their potentially sensitive literals
+// out before spans reach any processor
+pub(crate) struct DisableGraphqlDocumentRecording;
+
+impl<S: Subscriber> Layer<S> for DisableGraphqlDocumentRecording {}
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
@@ -51,13 +55,12 @@ pub fn is_level_enabled(level: Level) -> bool {
 }
 
 #[inline]
-pub fn set_graphql_document_recording_enabled(enabled: bool) {
-    GRAPHQL_DOCUMENT_RECORDING_ENABLED.store(enabled, Ordering::Relaxed);
-}
-
-#[inline]
 pub fn is_graphql_document_recording_enabled() -> bool {
-    GRAPHQL_DOCUMENT_RECORDING_ENABLED.load(Ordering::Relaxed)
+    tracing::dispatcher::get_default(|dispatch| {
+        dispatch
+            .downcast_ref::<DisableGraphqlDocumentRecording>()
+            .is_none()
+    })
 }
 
 #[inline]
