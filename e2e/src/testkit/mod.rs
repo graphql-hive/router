@@ -1271,7 +1271,7 @@ impl ClientResponseExt for ClientResponse {
 
 // serde_json's Map is insertion-ordered when any crate enables `preserve_order`
 // (datadog-opentelemetry does). sort so snapshots don't depend on that.
-fn sort_json_keys(value: serde_json::Value) -> serde_json::Value {
+pub(crate) fn sort_json_keys(value: serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Array(items) => {
             serde_json::Value::Array(items.into_iter().map(sort_json_keys).collect())

@@ -3,6 +3,8 @@ use std::{future::Future, io::Read, time::Duration};
 use gag::BufferRedirect;
 use serde_json::{Map, Value};
 
+use super::sort_json_keys;
+
 pub struct StdoutLogCapture {
     buf: BufferRedirect,
 }
@@ -75,7 +77,14 @@ impl StdOutCaptureBridge {
         Self {
             lines_json: lines
                 .iter()
-                .map(|s| serde_json::from_str(s).expect("failed to parse log line as json"))
+                .map(|s| {
+                    // datadog-opentelemetry turns on serde_json preserve_order; sort so insta stays alphabetical
+                    let value = serde_json::from_str(s).expect("failed to parse log line as json");
+                    match sort_json_keys(value) {
+                        Value::Object(map) => map,
+                        other => panic!("expected log line to be a json object, got {other}"),
+                    }
+                })
                 .collect(),
             lines,
         }
