@@ -17,6 +17,9 @@ mod http_tests {
                 on_graphql_params::{
                     OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult,
                 },
+                on_graphql_validation::{
+                    OnGraphQLValidationStartHookPayload, OnGraphQLValidationStartHookResult,
+                },
                 on_plugin_init::{OnPluginInitPayload, OnPluginInitResult},
             },
             plugin_trait::{RouterPlugin, StartHookPayload},
@@ -54,6 +57,56 @@ mod http_tests {
                 value.hash(&mut hasher);
                 payload.add_inbound_dedupe_partition(hasher.finish());
             }
+            payload.proceed()
+        }
+    }
+
+    /// Contributes a dedupe partition from the `on_graphql_validation` hook, deriving it from the
+    /// number of root fields in the parsed operation. This exercises the validation-hook setter,
+    /// which runs after the query is parsed but before the dedupe fingerprint is computed.
+    #[derive(Default)]
+    struct ValidationDedupePartitionTestPlugin;
+
+    #[async_trait]
+    impl RouterPlugin for ValidationDedupePartitionTestPlugin {
+        type Config = ();
+
+        fn plugin_name() -> &'static str {
+            "test_validation_dedupe_partition"
+        }
+
+        fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
+            payload.initialize_plugin_with_defaults()
+        }
+
+        async fn on_graphql_validation<'exec>(
+            &'exec self,
+            payload: OnGraphQLValidationStartHookPayload<'exec>,
+        ) -> OnGraphQLValidationStartHookResult<'exec> {
+            let root_fields: usize = payload
+                .document
+                .definitions
+                .iter()
+                .map(|def| match def {
+                    graphql_tools::static_graphql::query::Definition::Operation(op) => match op {
+                        graphql_tools::static_graphql::query::OperationDefinition::Query(q) => {
+                            q.selection_set.items.len()
+                        }
+                        graphql_tools::static_graphql::query::OperationDefinition::SelectionSet(
+                            s,
+                        ) => s.items.len(),
+                        graphql_tools::static_graphql::query::OperationDefinition::Mutation(m) => {
+                            m.selection_set.items.len()
+                        }
+                        graphql_tools::static_graphql::query::OperationDefinition::Subscription(
+                            s,
+                        ) => s.selection_set.items.len(),
+                    },
+                    _ => 0,
+                })
+                .sum();
+
+            payload.add_inbound_dedupe_partition(root_fields as u64);
             payload.proceed()
         }
     }
@@ -894,6 +947,137 @@ mod http_tests {
         assert_eq!(
             products_requests, 1,
             "expected requests with the same plugin-contributed partition to share a dedupe entry"
+        );
+    }
+
+    #[ntex::test]
+    async fn should_partition_router_dedupe_via_validation_hook() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_delay(Duration::from_millis(100))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        dedupe_enabled: false
+                    router:
+                        dedupe:
+                            enabled: true
+                            headers: none
+                plugins:
+                    test_validation_dedupe_partition:
+                        enabled: true
+                "#,
+            )
+            .register_plugin::<ValidationDedupePartitionTestPlugin>()
+            .build()
+            .start()
+            .await;
+
+        // Two distinct operations that normalize to a request against the same subgraph field,
+        // but differ in root-field count so the validation hook contributes different partitions.
+        let query_single = r#"
+            {
+                topProducts {
+                    name
+                }
+            }
+        "#;
+        let query_double = r#"
+            {
+                topProducts {
+                    name
+                }
+                topProducts {
+                    price
+                }
+            }
+        "#;
+
+        let (response_a, response_b) = futures::join!(
+            router.send_graphql_request(query_single, None, None),
+            router.send_graphql_request(query_double, None, None)
+        );
+
+        assert!(response_a.status().is_success());
+        assert!(response_b.status().is_success());
+
+        let products_requests = subgraphs
+            .get_requests_log("products")
+            .unwrap_or_default()
+            .len();
+
+        assert_eq!(
+            products_requests, 2,
+            "expected requests with different validation-hook partitions to never share a dedupe entry"
+        );
+    }
+
+    #[ntex::test]
+    async fn should_share_router_dedupe_partition_via_validation_hook() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_delay(Duration::from_millis(100))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    all:
+                        dedupe_enabled: false
+                    router:
+                        dedupe:
+                            enabled: true
+                            headers: none
+                plugins:
+                    test_validation_dedupe_partition:
+                        enabled: true
+                "#,
+            )
+            .register_plugin::<ValidationDedupePartitionTestPlugin>()
+            .build()
+            .start()
+            .await;
+
+        let query = r#"
+            {
+                topProducts {
+                    name
+                    price
+                }
+            }
+        "#;
+
+        let (response_a, response_b) = futures::join!(
+            router.send_graphql_request(query, None, None),
+            router.send_graphql_request(query, None, None)
+        );
+
+        assert!(response_a.status().is_success());
+        assert!(response_b.status().is_success());
+
+        let products_requests = subgraphs
+            .get_requests_log("products")
+            .unwrap_or_default()
+            .len();
+
+        assert_eq!(
+            products_requests, 1,
+            "expected requests with the same validation-hook partition to share a dedupe entry"
         );
     }
 }
