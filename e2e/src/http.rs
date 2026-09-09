@@ -88,22 +88,20 @@ mod http_tests {
                 .definitions
                 .iter()
                 .map(|def| match def {
-                    graphql_tools::static_graphql::query::Definition::Operation(op) => {
-                        match op {
-                            graphql_tools::static_graphql::query::OperationDefinition::Query(q) => {
-                                q.selection_set.items.len()
-                            }
-                            graphql_tools::static_graphql::query::OperationDefinition::SelectionSet(
-                                s,
-                            ) => s.items.len(),
-                            graphql_tools::static_graphql::query::OperationDefinition::Mutation(m) => {
-                                m.selection_set.items.len()
-                            }
-                            graphql_tools::static_graphql::query::OperationDefinition::Subscription(
-                                s,
-                            ) => s.selection_set.items.len(),
+                    graphql_tools::static_graphql::query::Definition::Operation(op) => match op {
+                        graphql_tools::static_graphql::query::OperationDefinition::Query(q) => {
+                            q.selection_set.items.len()
                         }
-                    }
+                        graphql_tools::static_graphql::query::OperationDefinition::SelectionSet(
+                            s,
+                        ) => s.items.len(),
+                        graphql_tools::static_graphql::query::OperationDefinition::Mutation(m) => {
+                            m.selection_set.items.len()
+                        }
+                        graphql_tools::static_graphql::query::OperationDefinition::Subscription(
+                            s,
+                        ) => s.selection_set.items.len(),
+                    },
                     _ => 0,
                 })
                 .sum();
