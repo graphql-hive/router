@@ -596,7 +596,7 @@ mod tests {
         );
         let mut operation = operation.operation;
         operation.document_str = "{ invalid".into();
-        let invalid = PlanNode::Fetch(FetchNode {
+        let invalid = PlanNode::Fetch(Box::new(FetchNode {
             id: -1,
             service_name: "books".into(),
             variable_usages: None,
@@ -606,7 +606,7 @@ mod tests {
             requires: None,
             input_rewrites: None,
             output_rewrites: None,
-        });
+        }));
         let replacement = QueryPlan {
             kind: plan.kind,
             node: Some(PlanNode::Sequence(SequenceNode {

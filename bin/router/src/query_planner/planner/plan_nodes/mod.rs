@@ -52,18 +52,20 @@ pub struct QueryPlan<S: PlanState = Executable> {
 }
 
 #[allow(clippy::large_enum_variant)]
+/// The fetch-carrying variants are boxed: this enum sizes every slot of every `Sequence` and
+/// `Parallel` list, and those four variants are an order of magnitude larger than the rest.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "kind")]
 #[serde(bound = "")]
 pub enum PlanNode<S: PlanState = Executable> {
-    Fetch(FetchNode<S>),
-    BatchFetch(BatchFetchNode<S>),
+    Fetch(Box<FetchNode<S>>),
+    BatchFetch(Box<BatchFetchNode<S>>),
     Sequence(SequenceNode<S>),
     Parallel(ParallelNode<S>),
     Flatten(FlattenNode<S>),
     Condition(ConditionNode<S>),
-    Subscription(SubscriptionNode<S>),
-    Defer(DeferNode<S>),
+    Subscription(Box<SubscriptionNode<S>>),
+    Defer(Box<DeferNode<S>>),
 }
 
 impl<S: PlanState> PlanNode<S> {
@@ -797,12 +799,12 @@ impl PlanNode<Planning> {
         let node = if !step.response_path.is_empty() {
             PlanNode::Flatten(FlattenNode {
                 path: step.response_path.clone().into(),
-                node: Box::new(PlanNode::Fetch(fetch)),
+                node: Box::new(PlanNode::Fetch(Box::new(fetch))),
             })
         } else if matches!(fetch.operation_kind, Some(OperationKind::Subscription)) {
-            PlanNode::Subscription(SubscriptionNode { primary: fetch })
+            PlanNode::Subscription(Box::new(SubscriptionNode { primary: fetch }))
         } else {
-            PlanNode::Fetch(fetch)
+            PlanNode::Fetch(Box::new(fetch))
         };
 
         match step.condition.as_ref() {
@@ -1093,12 +1095,14 @@ mod stored_size_tests {
     /// Checks stored type sizes, not total memory kept or allocation counts. A cached plan holds
     /// one of these per node or per fetch, so these numbers are the plan cache's memory use.
     ///
-    /// Each is 104 B smaller than before the parsed document left `SubgraphFetchOperation` - the
-    /// inline `Document`, which every fetch carried and nothing on the execution path read.
+    /// `PlanNode` is the one that compounds: it sizes every slot of every `Sequence` and
+    /// `Parallel` list, whether or not that slot is a fetch. With the fetch-carrying variants
+    /// boxed, the ceiling is `ConditionNode` - pinned here so it stays visible if it grows.
     #[test]
     fn stored_sizes_stay_small() {
         for (name, actual, expected) in [
-            ("PlanNode", size_of::<PlanNode>(), 224),
+            ("PlanNode", size_of::<PlanNode>(), 40),
+            ("ConditionNode", size_of::<ConditionNode>(), 40),
             ("FetchNode", size_of::<FetchNode>(), 216),
             ("BatchFetchNode", size_of::<BatchFetchNode>(), 168),
             (
