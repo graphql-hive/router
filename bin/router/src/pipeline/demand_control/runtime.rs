@@ -22,7 +22,6 @@ use crate::telemetry::metrics::Metrics;
 use crate::telemetry::traces::spans::graphql::GraphQLSpanOperationIdentity;
 use ahash::{HashMap as AHashMap, HashMapExt};
 use http::{HeaderName, HeaderValue};
-use moka::future::Cache;
 use tracing::{debug, info, warn};
 
 use crate::pipeline::error::{ClientPipelineError, PipelineError};
@@ -36,7 +35,6 @@ pub struct DemandControlRuntime {
     config: DemandControlConfig,
     expose_headers_flags: Arc<DemandControlExposeHeadersConfig>,
     metrics: Arc<Metrics>,
-    formula_cache: Cache<u64, Arc<DemandControlFormulaPlan>>,
 }
 
 impl DemandControlRuntime {
@@ -84,44 +82,22 @@ impl DemandControlRuntime {
             expose_headers_flags: Arc::new(config.operation_cost.expose_headers.clone()),
             config: config.clone(),
             metrics,
-            formula_cache: Cache::new(1000),
         })
-    }
-
-    pub fn formula_cache(&self) -> &Cache<u64, Arc<DemandControlFormulaPlan>> {
-        &self.formula_cache
     }
 }
 
 impl DemandControlRuntime {
-    #[allow(clippy::too_many_arguments)]
-    pub async fn evaluate<'exec>(
+    pub fn evaluate<'exec>(
         &self,
         supergraph: &'exec SupergraphSnapshot,
         variable_payload: &'exec CoerceVariablesPayload,
-        query_plan: &'exec QueryPlan,
-        operation_for_plan: &'exec OperationDefinition,
-        root_type_name: &'exec str,
-        normalized_operation_hash: u64,
+        compiled_plan: &'exec DemandControlFormulaPlan,
         operation_identity: GraphQLSpanOperationIdentity<'exec>,
     ) -> Result<DemandControlExecutionContext, PipelineError> {
         let operation_name = operation_identity.name;
-        let compiled_plan = self
-            .formula_cache
-            .entry(normalized_operation_hash)
-            .or_insert_with(async {
-                Arc::new(self.compile_demand_control_plan(
-                    query_plan,
-                    operation_for_plan,
-                    root_type_name,
-                    &supergraph.planner.supergraph,
-                ))
-            })
-            .await
-            .into_value();
 
         let evaluation = evaluate_formula_plan(
-            compiled_plan.as_ref(),
+            compiled_plan,
             &supergraph.planner.supergraph,
             variable_payload,
         )?;
@@ -251,7 +227,9 @@ impl DemandControlRuntime {
         over_limit
     }
 
-    fn compile_demand_control_plan(
+    /// Compiled once per plan-cache entry, while the plan is being built. The result is stored
+    /// with the plan, so it is keyed exactly like the plan it describes.
+    pub(crate) fn compile_plan(
         &self,
         query_plan: &QueryPlan,
         operation_for_plan: &OperationDefinition,
@@ -429,5 +407,104 @@ impl DemandControlRuntime {
                 FormulaPlanNode::Aggregate(aggregate)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::query_planner::ast::normalization::normalize_operation;
+    use crate::query_planner::graph::PlannerOverrideContext;
+    use crate::query_planner::planner::{Planner, QueryPlannerOptions};
+    use crate::query_planner::utils::cancellation::CancellationToken;
+    use crate::query_planner::utils::parsing::{parse_operation, parse_schema};
+
+    fn runtime() -> DemandControlRuntime {
+        let config: DemandControlConfig = serde_json::from_value(serde_json::json!({
+            "enabled": true,
+            "operation_cost": { "max": 1_000_000u64, "mode": "measure" },
+            "subgraphs_budget": { "mode": "measure", "all": null },
+            "actual_cost_mode": "by_subgraph",
+        }))
+        .expect("valid demand control config");
+
+        DemandControlRuntime::from_config(Some(&config), Arc::new(Metrics::new(None)))
+            .expect("demand control is enabled")
+    }
+
+    fn attributed_subgraphs(node: &FormulaPlanNode, out: &mut Vec<String>) {
+        match node {
+            FormulaPlanNode::Fetch(fetch) => out.push(fetch.service_name.clone()),
+            FormulaPlanNode::Aggregate(children) => {
+                children.iter().for_each(|c| attributed_subgraphs(c, out))
+            }
+            FormulaPlanNode::Condition {
+                if_clause,
+                else_clause,
+                ..
+            } => {
+                if let Some(if_clause) = if_clause {
+                    attributed_subgraphs(if_clause, out);
+                }
+                if let Some(else_clause) = else_clause {
+                    attributed_subgraphs(else_clause, out);
+                }
+            }
+        }
+    }
+
+    /// The formula used to be cached on the normalized operation hash alone, while the plan it
+    /// describes is cached on that hash plus the override context. Two override buckets therefore
+    /// shared whichever formula compiled first, including its per-subgraph attribution.
+    #[test]
+    fn override_context_changes_the_compiled_cost_plan() {
+        let sdl = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("fixture/tests/simple-progressive-overrides.supergraph.graphql"),
+        )
+        .expect("fixture is readable");
+        let schema = parse_schema(&sdl);
+        let planner = Planner::new_from_supergraph(&schema, QueryPlannerOptions::default())
+            .expect("planner builds");
+
+        let document = parse_operation("{ aFeed { createdAt } bFeed { createdAt } }");
+        let normalized = normalize_operation(&planner.supergraph, &document, None)
+            .expect("operation normalizes");
+        let root_type_name = planner
+            .supergraph
+            .expect_root_type_name(Some(&OperationKind::Query));
+
+        let runtime = runtime();
+        let compile = |percentage: f64| {
+            let plan = planner
+                .plan_from_normalized_operation(
+                    &normalized.operation,
+                    PlannerOverrideContext::from_percentage(percentage),
+                    &CancellationToken::new(),
+                )
+                .expect("plans");
+            let compiled = runtime.compile_plan(
+                &plan,
+                &normalized.operation,
+                root_type_name,
+                &planner.supergraph,
+            );
+            let mut subgraphs = Vec::new();
+            attributed_subgraphs(&compiled.root, &mut subgraphs);
+            subgraphs
+        };
+
+        let below = compile(50.0);
+        let above = compile(90.0);
+
+        assert!(
+            !below.is_empty() && !above.is_empty(),
+            "both override contexts should produce cost formulas"
+        );
+        assert_ne!(
+            below, above,
+            "cost attribution must follow the plan the override context produced; sharing one \
+             formula across override buckets is the bug this guards"
+        );
     }
 }

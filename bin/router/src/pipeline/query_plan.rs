@@ -9,6 +9,7 @@ use crate::executor::hooks::on_query_plan::{
 use crate::executor::plugin_context::PluginRequestState;
 use crate::executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow};
 use crate::executor::plugins::hooks;
+use crate::pipeline::demand_control::formula::DemandControlFormulaPlan;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
@@ -16,13 +17,23 @@ use crate::query_planner::planner::plan_nodes::QueryPlan;
 use crate::query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use crate::query_planner::utils::cancellation::CancellationToken;
 use crate::schema_state::{SchemaState, SelectedSupergraph};
+use crate::telemetry::logging::targets;
 use crate::telemetry::traces::spans::graphql::GraphQLPlanSpan;
-use tracing::Instrument;
+use tracing::{debug, Instrument};
 use xxhash_rust::xxh3::Xxh3;
 
 pub enum QueryPlanResult {
-    QueryPlan(Arc<QueryPlan>),
+    QueryPlan(PreparedQueryPlan),
     EarlyResponse(PlanExecutionOutput),
+}
+
+/// A plan and the demand-control cost formula compiled from it. The formula describes this exact
+/// plan, so it shares the plan's cache entry and key - which includes the override context and any
+/// plugin operation filtering, not just the operation hash.
+#[derive(Clone)]
+pub struct PreparedQueryPlan {
+    pub plan: Arc<QueryPlan>,
+    pub demand_control: Option<Arc<DemandControlFormulaPlan>>,
 }
 static EMPTY_QUERY_PLAN: LazyLock<Arc<QueryPlan>> = LazyLock::new(|| {
     Arc::new(QueryPlan {
@@ -97,15 +108,33 @@ pub async fn plan_operation_with_cache(
         let contains_introspection = normalized_operation.operation_for_introspection.is_some();
         let is_pure_introspection = is_plan_operation_empty && contains_introspection;
 
+        let compile_demand_control = |plan: &QueryPlan| {
+            supergraph
+                .runtime
+                .demand_control_runtime
+                .as_ref()
+                .map(|runtime| {
+                    Arc::new(runtime.compile_plan(
+                        plan,
+                        filtered_operation_for_plan,
+                        &normalized_operation.root_type_name,
+                        &supergraph.snapshot.planner.supergraph,
+                    ))
+                })
+        };
+
         let mut cache_hint = CacheHint::Hit;
         plan_span.record_cache_hit(true);
-        let mut plan = supergraph
+        let mut prepared = supergraph
             .runtime
             .plan_cache
             .entry(plan_cache_key)
             .or_try_insert_with(async {
                 if is_pure_introspection {
-                    return Ok(EMPTY_QUERY_PLAN.clone());
+                    return Ok(PreparedQueryPlan {
+                        plan: EMPTY_QUERY_PLAN.clone(),
+                        demand_control: compile_demand_control(&EMPTY_QUERY_PLAN),
+                    });
                 }
 
                 // If the operation is empty, but the projection plan is not,,
@@ -121,7 +150,10 @@ pub async fn plan_operation_with_cache(
                 // That's why we return an empty plan,
                 // and allow for response projection to happen later.
                 if is_plan_operation_empty && !is_projection_plan_empty {
-                    return Ok(EMPTY_QUERY_PLAN.clone());
+                    return Ok(PreparedQueryPlan {
+                        plan: EMPTY_QUERY_PLAN.clone(),
+                        demand_control: compile_demand_control(&EMPTY_QUERY_PLAN),
+                    });
                 }
 
                 supergraph
@@ -132,7 +164,10 @@ pub async fn plan_operation_with_cache(
                         (&request_override_context.clone()).into(),
                         cancellation_token,
                     )
-                    .map(Arc::new)
+                    .map(|plan| PreparedQueryPlan {
+                        demand_control: compile_demand_control(&plan),
+                        plan: Arc::new(plan),
+                    })
             })
             .await
             .map_err(PipelineError::from)
@@ -150,8 +185,9 @@ pub async fn plan_operation_with_cache(
             })?;
 
         if !on_end_callbacks.is_empty() {
+            let cached_plan = prepared.plan.clone();
             let mut end_payload = OnQueryPlanEndHookPayload {
-                query_plan: plan,
+                query_plan: prepared.plan,
                 cache_hint,
                 request_context: plugin_req_state
                     .as_ref()
@@ -171,10 +207,21 @@ pub async fn plan_operation_with_cache(
                 }
             }
             // Give the ownership back to variables
-            plan = end_payload.query_plan;
+            prepared.plan = end_payload.query_plan;
+
+            // A replaced plan is not the plan the cached formula was compiled from, so the cached
+            // formula would apply the wrong budget. Recompile for this request only; the cache
+            // entry keeps the formula that matches the plan it still holds.
+            if !Arc::ptr_eq(&prepared.plan, &cached_plan) && prepared.demand_control.is_some() {
+                debug!(
+                    target: targets::DEMAND_CONTROL,
+                    "query plan was replaced by a plugin; recompiling the demand control cost plan"
+                );
+                prepared.demand_control = compile_demand_control(&prepared.plan);
+            }
         }
 
-        Ok(QueryPlanResult::QueryPlan(plan))
+        Ok(QueryPlanResult::QueryPlan(prepared))
     }
     .instrument(plan_span.clone())
     .await
