@@ -17,7 +17,8 @@ use crate::executor::{
 };
 use crate::pipeline::active_subscriptions::ActiveSubscriptions;
 use crate::pipeline::authorization::metadata::AuthorizationMetadata;
-use crate::query_planner::{planner::plan_nodes::QueryPlan, utils::parsing::safe_parse_schema};
+use crate::pipeline::query_plan::PlannedQuery;
+use crate::query_planner::utils::parsing::safe_parse_schema;
 use crate::storage::StorageManager;
 use crate::telemetry::logging::targets;
 use crate::telemetry::utils::resolve_value_or_expression;
@@ -109,7 +110,7 @@ pub struct RouterSupergraphRuntime {
     pub authorization: AuthorizationMetadata,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
-    pub plan_cache: Cache<u64, Arc<QueryPlan>>,
+    pub plan_cache: Cache<u64, PlannedQuery>,
     pub demand_control_runtime: Option<DemandControlRuntime>,
     /// Controls background work belonging to this selected supergraph runtime.
     ///

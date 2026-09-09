@@ -22,7 +22,6 @@ use crate::telemetry::metrics::Metrics;
 use crate::telemetry::traces::spans::graphql::GraphQLSpanOperationIdentity;
 use ahash::{HashMap as AHashMap, HashMapExt};
 use http::{HeaderName, HeaderValue};
-use moka::future::Cache;
 use tracing::{debug, info, warn};
 
 use crate::pipeline::error::{ClientPipelineError, PipelineError};
@@ -36,7 +35,6 @@ pub struct DemandControlRuntime {
     config: DemandControlConfig,
     expose_headers_flags: Arc<DemandControlExposeHeadersConfig>,
     metrics: Arc<Metrics>,
-    formula_cache: Cache<u64, Arc<DemandControlFormulaPlan>>,
 }
 
 impl DemandControlRuntime {
@@ -84,44 +82,22 @@ impl DemandControlRuntime {
             expose_headers_flags: Arc::new(config.operation_cost.expose_headers.clone()),
             config: config.clone(),
             metrics,
-            formula_cache: Cache::new(1000),
         })
-    }
-
-    pub fn formula_cache(&self) -> &Cache<u64, Arc<DemandControlFormulaPlan>> {
-        &self.formula_cache
     }
 }
 
 impl DemandControlRuntime {
-    #[allow(clippy::too_many_arguments)]
-    pub async fn evaluate<'exec>(
+    pub fn evaluate<'exec>(
         &self,
         supergraph: &'exec SupergraphSnapshot,
         variable_payload: &'exec CoerceVariablesPayload,
-        query_plan: &'exec QueryPlan,
-        operation_for_plan: &'exec OperationDefinition,
-        root_type_name: &'exec str,
-        normalized_operation_hash: u64,
+        compiled_plan: &'exec DemandControlFormulaPlan,
         operation_identity: GraphQLSpanOperationIdentity<'exec>,
     ) -> Result<DemandControlExecutionContext, PipelineError> {
         let operation_name = operation_identity.name;
-        let compiled_plan = self
-            .formula_cache
-            .entry(normalized_operation_hash)
-            .or_insert_with(async {
-                Arc::new(self.compile_demand_control_plan(
-                    query_plan,
-                    operation_for_plan,
-                    root_type_name,
-                    &supergraph.planner.supergraph,
-                ))
-            })
-            .await
-            .into_value();
 
         let evaluation = evaluate_formula_plan(
-            compiled_plan.as_ref(),
+            compiled_plan,
             &supergraph.planner.supergraph,
             variable_payload,
         )?;
@@ -251,7 +227,9 @@ impl DemandControlRuntime {
         over_limit
     }
 
-    fn compile_demand_control_plan(
+    /// Compiled once per plan-cache entry, while the plan is being built. The result is stored
+    /// with the plan, so it is keyed exactly like the plan it describes.
+    pub(crate) fn compile_plan(
         &self,
         query_plan: &QueryPlan,
         operation_for_plan: &OperationDefinition,
