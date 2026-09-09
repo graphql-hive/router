@@ -1103,12 +1103,12 @@ mod stored_size_tests {
         for (name, actual, expected) in [
             ("PlanNode", size_of::<PlanNode>(), 40),
             ("ConditionNode", size_of::<ConditionNode>(), 40),
-            ("FetchNode", size_of::<FetchNode>(), 216),
-            ("BatchFetchNode", size_of::<BatchFetchNode>(), 168),
+            ("FetchNode", size_of::<FetchNode>(), 208),
+            ("BatchFetchNode", size_of::<BatchFetchNode>(), 160),
             (
                 "SubgraphFetchOperation",
                 size_of::<crate::query_planner::ast::operation::SubgraphFetchOperation>(),
-                40,
+                32,
             ),
         ] {
             assert_eq!(

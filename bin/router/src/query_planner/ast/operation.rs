@@ -48,7 +48,9 @@ impl OperationDefinition {
 /// ```
 #[derive(Debug, Clone, Deserialize)]
 pub struct SubgraphFetchOperation {
-    pub document_str: String,
+    /// Rendered once when the plan is built and never appended to. A `String` would keep whatever
+    /// capacity its doubling growth last landed on; a box keeps exactly the bytes.
+    pub document_str: Box<str>,
     pub hash: u64,
     /// All operations produced by the query planner are anonymous.
     /// The input query may contain name operation, but it's not used.
@@ -124,7 +126,7 @@ impl PlanningFetchOperation {
         Self {
             document: Box::new(document),
             operation: SubgraphFetchOperation {
-                document_str,
+                document_str: document_str.into_boxed_str(),
                 hash,
                 name_write_position,
             },

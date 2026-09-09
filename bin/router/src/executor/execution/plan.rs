@@ -293,7 +293,7 @@ pub async fn execute_query_plan<'exec>(
         );
 
         let mut subgraph_request = SubgraphExecutionRequest {
-            query: fetch_node.operation.document_str.as_str(),
+            query: &fetch_node.operation.document_str,
             document_name_write_pos: fetch_node.operation.name_write_position,
             dedupe: false,
             operation_name: opts
