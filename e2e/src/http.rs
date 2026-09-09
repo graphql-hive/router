@@ -299,7 +299,8 @@ mod http_tests {
 
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        let json_body = res.json_body().await;
+        let body = res.json_body_string_pretty_stable().await;
+        let json_body: sonic_rs::Value = sonic_rs::from_str(&body).expect("valid JSON");
 
         assert!(json_body["data"].is_null());
         assert!(json_body["errors"].is_null());
@@ -310,6 +311,96 @@ mod http_tests {
             subgraphs.get_requests_log("products").is_none(),
             "expected no requests to products subgraph"
         );
+
+        insta::assert_snapshot!(body, @r###"
+        {
+          "extensions": {
+            "queryPlan": {
+              "kind": "QueryPlan",
+              "node": {
+                "kind": "Sequence",
+                "nodes": [
+                  {
+                    "kind": "Fetch",
+                    "operation": "{topProducts{__typename name price upc}}",
+                    "operationKind": "query",
+                    "serviceName": "products"
+                  },
+                  {
+                    "kind": "Flatten",
+                    "node": {
+                      "kind": "Fetch",
+                      "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{reviews{author{__typename id}}}}}",
+                      "operationKind": "query",
+                      "requires": [
+                        {
+                          "kind": "InlineFragment",
+                          "selections": [
+                            {
+                              "kind": "Field",
+                              "name": "__typename"
+                            },
+                            {
+                              "kind": "Field",
+                              "name": "upc"
+                            }
+                          ],
+                          "typeCondition": "Product"
+                        }
+                      ],
+                      "serviceName": "reviews"
+                    },
+                    "path": [
+                      {
+                        "Field": "topProducts"
+                      },
+                      "@"
+                    ]
+                  },
+                  {
+                    "kind": "Flatten",
+                    "node": {
+                      "kind": "Fetch",
+                      "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{name}}}",
+                      "operationKind": "query",
+                      "requires": [
+                        {
+                          "kind": "InlineFragment",
+                          "selections": [
+                            {
+                              "kind": "Field",
+                              "name": "__typename"
+                            },
+                            {
+                              "kind": "Field",
+                              "name": "id"
+                            }
+                          ],
+                          "typeCondition": "User"
+                        }
+                      ],
+                      "serviceName": "accounts"
+                    },
+                    "path": [
+                      {
+                        "Field": "topProducts"
+                      },
+                      "@",
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "author"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+        "###);
     }
 
     #[ntex::test]
