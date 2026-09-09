@@ -3,6 +3,10 @@ use std::{
     time::Duration,
 };
 
+use futures::StreamExt;
+use hive_router::executor::executors::{
+    graphql_transport_ws::SubscribePayload, websocket_client::WsClient,
+};
 use libdd_trace_protobuf::pb::{ClientStatsPayload, Trilean};
 use libdd_trace_utils::msgpack_decoder::v04;
 
@@ -464,6 +468,104 @@ async fn test_datadog_and_hive_keep_exporter_specific_graphql_documents() {
         .collect::<Vec<_>>();
     assert!(!datadog_graphql_spans.is_empty());
     assert!(datadog_graphql_spans
+        .iter()
+        .all(|span| span.meta.get("graphql.document").is_none()));
+}
+
+#[ntex::test]
+async fn test_datadog_and_hive_keep_websocket_graphql_documents_exporter_specific() {
+    let _env = EnvVarsGuard::new()
+        .set("DD_REMOTE_CONFIGURATION_ENABLED", "false")
+        .set("DD_INSTRUMENTATION_TELEMETRY_ENABLED", "false")
+        .apply()
+        .await;
+    let agent = MockDatadogAgent::start();
+    let hive_collector = OtlpCollector::start()
+        .await
+        .expect("failed to start Hive collector");
+    let hive_endpoint = hive_collector.http_traces_endpoint();
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+          websocket:
+            enabled: true
+          telemetry:
+            tracing:
+              collect:
+                sampling: 1.0
+              exporters:
+                - kind: datadog
+                  endpoint: {}
+            hive:
+              token: test-token
+              target: test-org/test-project/test-target
+              tracing:
+                endpoint: {hive_endpoint}
+                enabled: true
+                batch_processor:
+                  scheduled_delay: 50ms
+                  max_export_timeout: 2s
+              usage_reporting:
+                enabled: false
+        "#,
+            supergraph_path(),
+            agent.address,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    agent.wait_for_path("/info").await;
+    let mut client = WsClient::new(router.ws().await)
+        .init(None)
+        .await
+        .expect("failed to initialize WebSocket client");
+    let mut stream = client
+        .subscribe(
+            SubscribePayload {
+                query: "query MixedHiveWebSocket { users { id } }".into(),
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .expect("failed to execute WebSocket query");
+    let response = stream
+        .next()
+        .await
+        .expect("expected WebSocket response")
+        .expect("WebSocket response failed");
+    assert!(response.errors.is_none());
+    assert!(stream.next().await.is_none());
+
+    let hive_operation = hive_collector
+        .wait_for_span_by_hive_kind_one("graphql.operation")
+        .await;
+    assert_eq!(
+        hive_operation
+            .attributes
+            .get("graphql.document")
+            .map(String::as_str),
+        Some("query MixedHiveWebSocket{users{id}}")
+    );
+
+    drop(router);
+
+    let requests = agent.wait_for_path("/v0.4/traces").await;
+    let datadog_operation_spans = requests
+        .iter()
+        .filter_map(|request| v04::from_slice(&request.body).ok())
+        .flat_map(|(traces, _)| traces)
+        .flatten()
+        .filter(|span| span.meta.get("hive.kind").copied() == Some("graphql.operation"))
+        .collect::<Vec<_>>();
+    assert!(!datadog_operation_spans.is_empty());
+    assert!(datadog_operation_spans
         .iter()
         .all(|span| span.meta.get("graphql.document").is_none()));
 }
