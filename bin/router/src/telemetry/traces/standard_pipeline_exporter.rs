@@ -56,11 +56,8 @@ impl<E: SpanExporter> StandardPipelineExporter<E> {
 
 impl<E: SpanExporter> SpanExporter for StandardPipelineExporter<E> {
     async fn export(&self, batch: Vec<SpanData>) -> OTelSdkResult {
-        // datadog uses record-only spans for statistics, but standard
-        // exporters only get retained traces
         let processed_batch = batch
             .into_iter()
-            .filter(|span| span.span_context.is_sampled())
             .map(|mut span| {
                 self.process_span(&mut span);
                 span
