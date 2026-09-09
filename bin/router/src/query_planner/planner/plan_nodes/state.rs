@@ -1,5 +1,8 @@
 use crate::query_planner::{
-    ast::operation::{PlanningFetchOperation, SubgraphFetchOperation},
+    ast::{
+        operation::{PlanningFetchOperation, SubgraphFetchOperation},
+        selection_set::SelectionSet,
+    },
     utils::pretty_display::PrettyDisplay,
 };
 use serde::{de::DeserializeOwned, Serialize};
@@ -14,6 +17,8 @@ pub trait PlanState: private::Sealed + Debug + Clone {
         + DeserializeOwned
         + PrettyDisplay
         + AsRef<SubgraphFetchOperation>;
+    /// The parsed entity requirements, which only the planner needs.
+    type Requires: Debug + Clone + Default;
 }
 
 /// The planner's own state: fetches still carry their parsed documents.
@@ -26,10 +31,12 @@ pub struct Executable;
 
 impl PlanState for Planning {
     type Operation = PlanningFetchOperation;
+    type Requires = Option<Box<SelectionSet>>;
 }
 
 impl PlanState for Executable {
     type Operation = SubgraphFetchOperation;
+    type Requires = ();
 }
 
 mod private {

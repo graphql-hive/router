@@ -604,6 +604,7 @@ mod tests {
             operation,
             custom_scalar_paths: None,
             requires: None,
+            planner_requires: (),
             input_rewrites: None,
             output_rewrites: None,
         }));

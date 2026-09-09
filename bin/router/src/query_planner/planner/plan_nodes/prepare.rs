@@ -38,6 +38,7 @@ impl FetchNode<Planning> {
             operation: self.operation.operation,
             custom_scalar_paths: self.custom_scalar_paths,
             requires: self.requires,
+            planner_requires: (),
             input_rewrites: self.input_rewrites,
             output_rewrites: self.output_rewrites,
         }
@@ -112,7 +113,7 @@ impl PlanNode<Planning> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query_planner::ast::document::Document;
+    use crate::query_planner::ast::{document::Document, requires::RequiresSelectionSet};
 
     fn fetch() -> FetchNode<Planning> {
         let document = Document::parse_executable("{ id }").unwrap();
@@ -124,7 +125,8 @@ mod tests {
             operation_kind: Some(OperationKind::Query),
             operation: PlanningFetchOperation::from_anonymous_operation(document),
             custom_scalar_paths: Some(CustomScalarPaths::default()),
-            requires: Some(requires),
+            requires: Some(RequiresSelectionSet::from(&requires)),
+            planner_requires: Some(Box::new(requires)),
             input_rewrites: Some(vec![]),
             output_rewrites: Some(vec![]),
         }
