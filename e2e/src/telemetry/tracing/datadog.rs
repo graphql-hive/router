@@ -6,7 +6,7 @@ use std::{
 use libdd_trace_protobuf::pb::{ClientStatsPayload, Trilean};
 use libdd_trace_utils::msgpack_decoder::v04;
 
-use crate::testkit::{EnvVarsGuard, TestRouter, TestSubgraphs};
+use crate::testkit::{otel::OtlpCollector, EnvVarsGuard, TestRouter, TestSubgraphs};
 
 #[derive(Clone)]
 struct AgentRequest {
@@ -278,6 +278,179 @@ async fn test_datadog_zero_sampling_reports_every_root_in_stats_only() {
             .map(|(traces, _)| traces.is_empty())
             .unwrap_or(false)
     }));
+}
+
+#[ntex::test]
+async fn test_datadog_and_otlp_export_sampled_spans_independently() {
+    let _env = EnvVarsGuard::new()
+        .set("DD_REMOTE_CONFIGURATION_ENABLED", "false")
+        .set("DD_INSTRUMENTATION_TELEMETRY_ENABLED", "false")
+        .apply()
+        .await;
+    let agent = MockDatadogAgent::start();
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_traces_endpoint();
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+          telemetry:
+            tracing:
+              collect:
+                sampling: 1.0
+              exporters:
+                - kind: datadog
+                  endpoint: {}
+                - kind: otlp
+                  endpoint: {otlp_endpoint}
+                  protocol: http
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 2s
+        "#,
+            supergraph_path(),
+            agent.address,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    agent.wait_for_path("/info").await;
+    let response = router
+        .send_graphql_request("query MixedExporters { users { id } }", None, None)
+        .await;
+    assert!(response.status().is_success());
+
+    let otlp_operation = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.operation")
+        .await;
+    assert_eq!(otlp_operation.name, "graphql.operation");
+    assert_eq!(
+        otlp_operation
+            .attributes
+            .get("graphql.operation.name")
+            .map(String::as_str),
+        Some("MixedExporters")
+    );
+    assert_eq!(
+        otlp_operation
+            .attributes
+            .get("graphql.operation.type")
+            .map(String::as_str),
+        Some("query")
+    );
+    assert!(otlp_operation
+        .attributes
+        .contains_key("graphql.document.hash"));
+    assert!(!otlp_operation.attributes.contains_key("graphql.document"));
+
+    drop(router);
+
+    let requests = agent.wait_for_path("/v0.4/traces").await;
+    let operation = requests
+        .iter()
+        .filter_map(|request| v04::from_slice(&request.body).ok())
+        .flat_map(|(traces, _)| traces)
+        .flatten()
+        .find(|span| span.meta.get("hive.kind").copied() == Some("graphql.operation"))
+        .expect("datadog did not receive the graphql trace");
+    assert_eq!(operation.name, "graphql.server.request");
+    assert_eq!(operation.resource, "query MixedExporters");
+    assert_eq!(
+        operation.meta.get("graphql.operation.name").copied(),
+        Some("MixedExporters")
+    );
+    assert_eq!(
+        operation.meta.get("graphql.operation.type").copied(),
+        Some("query")
+    );
+    assert!(operation.meta.get("graphql.document.hash").is_some());
+    assert!(operation.meta.get("graphql.document").is_none());
+}
+
+#[ntex::test]
+async fn test_datadog_record_only_spans_do_not_reach_otlp() {
+    let _env = EnvVarsGuard::new()
+        .set("DD_REMOTE_CONFIGURATION_ENABLED", "false")
+        .set("DD_INSTRUMENTATION_TELEMETRY_ENABLED", "false")
+        .apply()
+        .await;
+    let agent = MockDatadogAgent::start();
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_traces_endpoint();
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+          telemetry:
+            tracing:
+              collect:
+                sampling: 0.0
+              exporters:
+                - kind: datadog
+                  endpoint: {}
+                - kind: otlp
+                  endpoint: {otlp_endpoint}
+                  protocol: http
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 2s
+        "#,
+            supergraph_path(),
+            agent.address,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    agent.wait_for_path("/info").await;
+    for _ in 0..2 {
+        let response = router
+            .send_graphql_request("query MixedExporters { users { id } }", None, None)
+            .await;
+        assert!(response.status().is_success());
+    }
+    drop(router);
+
+    // datadog got root spans
+    let stats_requests = agent.wait_for_path("/v0.6/stats").await;
+    let root_hits = stats_requests
+        .iter()
+        .map(|request| {
+            rmp_serde::from_slice::<ClientStatsPayload>(&request.body)
+                .expect("invalid datadog stats payload")
+        })
+        .flat_map(|payload| payload.stats)
+        .flat_map(|bucket| bucket.stats)
+        .filter(|stats| {
+            stats.name == "http.server.request"
+                && stats.resource == "POST /graphql"
+                && stats.span_kind == "server"
+                && stats.is_trace_root == Trilean::True as i32
+        })
+        .map(|stats| stats.hits)
+        .sum::<u64>();
+    assert_eq!(root_hits, 2);
+    assert!(agent.requests_for("/v0.4/traces").iter().all(|request| {
+        v04::from_slice(&request.body)
+            .map(|(traces, _)| traces.is_empty())
+            .unwrap_or(false)
+    }));
+
+    // otlp has no such concept for root spans, it got nothing
+    assert!(otlp_collector.is_empty().await);
 }
 
 #[ntex::test]
