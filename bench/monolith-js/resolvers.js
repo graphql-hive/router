@@ -16,6 +16,24 @@ export const resolvers = {
   },
 
   User: {
+    socialAccounts: (user) => {
+      const username = user.username || "unknown";
+      return [
+        {
+          __typename: "TwitterAccount",
+          url: `https://twitter.com/${username}`,
+          handle: `@${username}`,
+          followers: 1000,
+        },
+        {
+          __typename: "GitHubAccount",
+          url: `https://github.com/${username}`,
+          handle: username,
+          repoCount: 42,
+        },
+      ];
+    },
+
     reviews: (user) => {
       // Mirror the reviews subgraph entity resolver exactly.
       return REVIEWS.slice(0, 2);

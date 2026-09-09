@@ -3,6 +3,23 @@ schema {
   subscription: Subscription
 }
 
+interface SocialAccount {
+  url: String!
+  handle: String!
+}
+
+type TwitterAccount implements SocialAccount {
+  url: String!
+  handle: String!
+  followers: Int!
+}
+
+type GitHubAccount implements SocialAccount {
+  url: String!
+  handle: String!
+  repoCount: Int!
+}
+
 type Query {
   me: User
   user(id: ID!): User
@@ -39,5 +56,6 @@ type User {
   name: String
   username: String
   birthday: Int
+  socialAccounts: [SocialAccount!]!
   reviews: [Review]
 }
