@@ -4,7 +4,7 @@ use error::QueryPlanError;
 use fetch::{error::FetchGraphError, fetch_graph::build_fetch_graph_from_query_tree};
 use graphql_tools::parser::schema;
 use petgraph::graph::NodeIndex;
-use plan_nodes::QueryPlan;
+use plan_nodes::{Planning, QueryPlan};
 use query_plan::build_query_plan_from_fetch_graph;
 use walker::{error::WalkOperationError, walk_operation};
 
@@ -87,7 +87,7 @@ impl Planner {
         normalized_operation: &OperationDefinition,
         override_context: PlannerOverrideContext,
         cancellation_token: &CancellationToken,
-    ) -> Result<QueryPlan, PlannerError> {
+    ) -> Result<QueryPlan<Planning>, PlannerError> {
         let best_paths_per_leaf = walk_operation(
             &self.graph,
             &self.supergraph,

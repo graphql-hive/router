@@ -5,7 +5,7 @@ use petgraph::{graph::NodeIndex, visit::EdgeRef};
 use crate::query_planner::{
     planner::{
         fetch::state::MultiTypeFetchStep,
-        plan_nodes::PlanNode,
+        plan_nodes::planning::PlanNode,
         query_plan::optimize::{optimize_root_node, optimize_top_level_sequence},
     },
     state::supergraph_state::SupergraphState,
@@ -15,7 +15,7 @@ use crate::query_planner::{
 use super::{
     error::QueryPlanError,
     fetch::fetch_graph::FetchGraph,
-    plan_nodes::{ParallelNode, QueryPlan, SequenceNode},
+    plan_nodes::planning::{ParallelNode, QueryPlan, SequenceNode},
 };
 
 mod optimize;
