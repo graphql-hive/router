@@ -116,6 +116,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.2.10 (2026-09-09)
+
+### Features
+
+#### Contribute inbound dedupe partitions from the validation hook
+
+The `add_inbound_dedupe_partition` setter is now also available on the
+`on_graphql_validation` hook's payload, alongside the existing setters on
+`on_http_request` and `on_graphql_params`.
+
+Closes https://github.com/graphql-hive/router/issues/1507
+
+### Fixes
+
+#### Faster response and entity projection with fewer allocations
+
+Projecting subgraph responses into client responses, and projecting representations, is now faster and allocates less.
+
+- Type-name resolution during projection is lazy and shared across sibling fields and list items instead of being cloned per node
+- `__typename` lookups in `requires` projection and hashing happen at most once per object
+- Repeated field lookups across list items reuse saved positions through a small stack-backed cache (heap-backed only for selections wider than 16 fields)
+
+The `projection_lists`, `projection_nested_lists`, and `requires_loops` benchmarks show list projection running ~25-45% faster on typical selections, with no heap allocation for common short lists.
+
 ## 0.2.9 (2026-09-08)
 
 ### Features
