@@ -13,7 +13,7 @@ use crate::query_planner::graph::edge::PlannerOverrideContext;
 use crate::query_planner::graph::Graph;
 use crate::query_planner::planner::best::find_best_combination;
 use crate::query_planner::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
-use crate::query_planner::planner::plan_nodes::QueryPlan;
+use crate::query_planner::planner::plan_nodes::planning::QueryPlan;
 use crate::query_planner::planner::query_plan::build_query_plan_from_fetch_graph;
 use crate::query_planner::planner::walker::walk_operation;
 use crate::query_planner::planner::{add_variables_to_fetch_steps, QueryPlannerOptions};
