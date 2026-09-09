@@ -257,18 +257,17 @@ impl GraphQLErrorPath {
             segments: Vec::with_capacity(capacity),
         }
     }
-    pub fn concat(&self, segment: GraphQLErrorPathSegment) -> Self {
-        let mut new_path = self.segments.clone();
-        new_path.push(segment);
-        GraphQLErrorPath { segments: new_path }
+    pub fn push_index(&mut self, index: usize) {
+        self.segments.push(GraphQLErrorPathSegment::Index(index));
     }
 
-    pub fn concat_index(&self, index: usize) -> Self {
-        self.concat(GraphQLErrorPathSegment::Index(index))
+    pub fn push_field(&mut self, field: &str) {
+        self.segments
+            .push(GraphQLErrorPathSegment::String(field.to_string()));
     }
 
-    pub fn concat_str(&self, field: String) -> Self {
-        self.concat(GraphQLErrorPathSegment::String(field))
+    pub fn pop(&mut self) -> Option<GraphQLErrorPathSegment> {
+        self.segments.pop()
     }
 
     pub fn extend_from_slice(&mut self, other: &[GraphQLErrorPathSegment]) {
