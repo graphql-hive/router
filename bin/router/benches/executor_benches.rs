@@ -7,6 +7,7 @@ use hive_router::executor::response::value::Value;
 use hive_router::query_planner::ast::normalization::normalize_operation;
 use hive_router::query_planner::utils::parsing::{parse_operation, parse_schema};
 use std::hint::black_box;
+mod projection;
 pub mod raw_result;
 
 fn project_data_by_operation_test(c: &mut Criterion) {
@@ -62,6 +63,7 @@ fn project_data_by_operation_test(c: &mut Criterion) {
 
 fn all_benchmarks(c: &mut Criterion) {
     project_data_by_operation_test(c);
+    projection::benchmarks(c);
 }
 
 criterion_group!(benches, all_benchmarks);

@@ -111,6 +111,10 @@ impl<'a> Value<'a> {
         selection_items: &[SelectionItem],
         possible_types: &PossibleTypes,
     ) {
+        // Read __typename at most once per object, and only when a fragment
+        // needs it. Also remember when it is missing: each fragment then
+        // falls back to its own type instead.
+        let mut type_name = None;
         for item in selection_items {
             match item {
                 SelectionItem::Field(field_selection) => {
@@ -127,10 +131,12 @@ impl<'a> Value<'a> {
                 }
                 SelectionItem::InlineFragment(inline_fragment) => {
                     let type_condition = &inline_fragment.type_condition;
-                    let type_name = obj
-                        .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
-                        .ok()
-                        .and_then(|idx| obj[idx].1.as_str())
+                    let type_name = type_name
+                        .get_or_insert_with(|| {
+                            obj.binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
+                                .ok()
+                                .and_then(|idx| obj[idx].1.as_str())
+                        })
                         .unwrap_or(type_condition);
 
                     if possible_types.entity_satisfies_type_condition(type_name, type_condition) {

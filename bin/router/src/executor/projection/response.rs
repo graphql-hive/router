@@ -10,7 +10,6 @@ use bytes::BufMut;
 use sonic_rs::JsonValueTrait;
 use std::cell::OnceCell;
 use std::collections::HashMap;
-use std::rc::Rc;
 
 use crate::executor::introspection::schema::{FieldNullability, SchemaMetadata};
 use crate::executor::json_writer::{write_and_escape_string, write_f64, write_i64, write_u64};
@@ -36,22 +35,21 @@ impl NullPropagationDecision {
 /// Represents a type's name that can be either already resolved or lazily computed.
 /// This avoids computing the type name when it's not needed, which is important for performance.
 ///
-/// The enum is recursive - a Deferred variant can contain another TypeName as its parent,
-/// creating a lazy chain that only resolves when actually needed.
-#[derive(Clone)]
-enum TypeName<'a> {
+/// Deferred contexts borrow their parent on the traversal stack, sharing its lazy
+/// resolution across sibling fields and list items without allocation or cloning.
+enum TypeName<'a, 'ctx> {
     Resolved(&'a str),
     Deferred {
         selection: &'a FieldProjectionPlan,
         data: Option<&'a Value<'a>>,
-        parent: Rc<TypeName<'a>>,
+        parent: &'ctx TypeName<'a, 'ctx>,
         schema: &'a SchemaMetadata,
         /// Cache for the resolved type name to avoid recomputation
         cached: OnceCell<Result<&'a str, ProjectionError>>,
     },
 }
 
-impl<'a> TypeName<'a> {
+impl<'a, 'ctx> TypeName<'a, 'ctx> {
     #[inline]
     fn resolved(type_name: &'a str) -> Self {
         TypeName::Resolved(type_name)
@@ -61,13 +59,13 @@ impl<'a> TypeName<'a> {
     fn deferred(
         selection: &'a FieldProjectionPlan,
         data: Option<&'a Value>,
-        parent: TypeName<'a>,
+        parent: &'ctx TypeName<'a, 'ctx>,
         schema: &'a SchemaMetadata,
     ) -> Self {
         TypeName::Deferred {
             selection,
             data,
-            parent: Rc::new(parent),
+            parent,
             schema,
             cached: OnceCell::new(),
         }
@@ -120,10 +118,11 @@ pub fn project_by_operation(
             &mut errors,
             selections,
             variable_values,
-            TypeName::resolved(operation_type_name),
+            &TypeName::resolved(operation_type_name),
             &mut buffer,
             &mut first,
             schema_metadata,
+            &mut [],
         )?;
 
         if null_propagation_decision.should_propagate() {
@@ -205,6 +204,9 @@ pub fn serialize_value_to_buffer(data: &Value, buffer: &mut Vec<u8>) {
     };
 }
 
+/// How many field positions fit in the per-list stack cache.
+const STACK_CACHE_SIZE: usize = 16;
+
 #[allow(clippy::too_many_arguments)]
 fn project_selection_set<'a>(
     data: &'a Value,
@@ -212,12 +214,43 @@ fn project_selection_set<'a>(
     selection: &'a FieldProjectionPlan,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     buffer: &mut Vec<u8>,
-    parent_type_name: TypeName<'a>,
+    parent_type_name: &TypeName<'a, '_>,
     schema_metadata: &'a SchemaMetadata,
     nullability: &'a FieldNullability,
+    indexes: &mut [usize],
 ) -> Result<NullPropagationDecision, ProjectionError> {
     match data {
         Value::Array(arr) => {
+            // Remember field positions so later objects in the same list can
+            // skip searching. Lists inside lists share the saved positions,
+            // fields inside objects start fresh. Small selections keep the
+            // positions on the stack, so common short lists (2-3 objects
+            // with a few fields) never touch the heap. Only unusually wide
+            // selections use the heap, which still pays off because one
+            // allocation replaces dozens of searches.
+            let cache_size = if indexes.is_empty() && arr.len() > 1 {
+                if let ProjectionValueSource::ResponseData {
+                    selections: Some(plans),
+                } = &selection.value
+                {
+                    Some(plans.len())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            // `vec![..; 0]` never allocates.
+            let mut heap_cache = match cache_size {
+                Some(len) if len > STACK_CACHE_SIZE => vec![usize::MAX; len],
+                _ => Vec::new(),
+            };
+            let mut stack_cache = [usize::MAX; STACK_CACHE_SIZE];
+            let indexes = match cache_size {
+                Some(len) if len <= STACK_CACHE_SIZE => &mut stack_cache[..len],
+                Some(_) if !heap_cache.is_empty() => heap_cache.as_mut_slice(),
+                _ => indexes,
+            };
             let null_propagation_checkpoint = buffer.len();
             let list_item_nullability = nullability.list_item();
             let item_non_null = list_item_nullability.is_some_and(FieldNullability::is_non_null);
@@ -233,9 +266,10 @@ fn project_selection_set<'a>(
                     selection,
                     variable_values,
                     buffer,
-                    parent_type_name.clone(),
+                    parent_type_name,
                     schema_metadata,
                     list_item_nullability.unwrap_or(nullability),
+                    indexes,
                 )?;
 
                 // A `null` at a Non-Null element of this list propagates to the list itself.
@@ -269,10 +303,11 @@ fn project_selection_set<'a>(
                         errors,
                         selections,
                         variable_values,
-                        type_name,
+                        &type_name,
                         buffer,
                         &mut first,
                         schema_metadata,
+                        indexes,
                     )?;
 
                     if null_propagation_decision.should_propagate() {
@@ -320,12 +355,13 @@ fn project_selection_set_with_map<'a>(
     errors: &mut Vec<GraphQLError>,
     plans: &'a [FieldProjectionPlan],
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
-    parent_type_name: TypeName<'a>,
+    parent_type_name: &TypeName<'a, '_>,
     buffer: &mut Vec<u8>,
     first: &mut bool,
     schema_metadata: &'a SchemaMetadata,
+    indexes: &mut [usize],
 ) -> Result<NullPropagationDecision, ProjectionError> {
-    for plan in plans {
+    for (plan_index, plan) in plans.iter().enumerate() {
         if let Some(guard) = &plan.parent_type_guard {
             let name = parent_type_name.get()?;
             if !guard.matches(name) {
@@ -334,17 +370,14 @@ fn project_selection_set_with_map<'a>(
             }
         }
 
-        let field_val = obj
-            .binary_search_by_key(&plan.response_key.as_str(), |(k, _)| *k)
-            .ok()
-            .map(|idx| &obj[idx].1);
+        let field_val = find_field(obj, &plan.response_key, indexes.get_mut(plan_index));
 
         let res = if let Some(conditions) = &plan.conditions {
             let field_type_name_cell = OnceCell::new();
             let field_type_name_fn = || {
                 field_type_name_cell
                     .get_or_init(|| {
-                        resolve_type_name(plan, field_val, &parent_type_name, schema_metadata)
+                        resolve_type_name(plan, field_val, parent_type_name, schema_metadata)
                     })
                     .clone()
             };
@@ -393,9 +426,10 @@ fn project_selection_set_with_map<'a>(
                                 plan,
                                 variable_values,
                                 buffer,
-                                parent_type_name.clone(),
+                                parent_type_name,
                                 schema_metadata,
                                 &plan.nullability,
+                                &mut [],
                             )?
                         } else {
                             // If the field is not found in the object, set it to Null
@@ -461,6 +495,30 @@ fn project_selection_set_with_map<'a>(
     }
 
     Ok(NullPropagationDecision::KeepNullValue)
+}
+
+#[inline]
+fn find_field<'a>(
+    obj: &'a [(&str, Value)],
+    response_key: &str,
+    hint: Option<&mut usize>,
+) -> Option<&'a Value<'a>> {
+    // The saved position is only a hint: check that the key still matches.
+    if let Some((key, value)) = hint.as_ref().and_then(|hint| obj.get(**hint)) {
+        if *key == response_key {
+            return Some(value);
+        }
+    }
+
+    // A previous object may have left the field out or kept it in a different
+    // spot, so always search the current object and save what is found.
+    let found = obj
+        .binary_search_by_key(&response_key, |(key, _)| *key)
+        .ok();
+    if let Some(hint) = hint {
+        *hint = found.unwrap_or(usize::MAX);
+    }
+    found.map(|index| &obj[index].1)
 }
 
 #[inline]
@@ -569,7 +627,7 @@ where
 fn resolve_type_name<'a>(
     plan: &'a FieldProjectionPlan,
     field_val: Option<&'a Value>,
-    parent_type_name: &TypeName<'a>,
+    parent_type_name: &TypeName<'a, '_>,
     schema_metadata: &'a SchemaMetadata,
 ) -> Result<&'a str, ProjectionError> {
     if plan.is_typename {

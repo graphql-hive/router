@@ -225,14 +225,7 @@ fn project_requires_map_mut(
             SelectionItem::InlineFragment(requires_selection) => {
                 let type_condition = &requires_selection.type_condition;
 
-                let type_name = match entity_obj
-                    .iter()
-                    .find(|(key, _)| key == &TYPENAME_FIELD_NAME)
-                    .and_then(|(_, val)| val.as_str())
-                {
-                    Some(type_name) => type_name,
-                    _ => type_condition,
-                };
+                let type_name = type_name.unwrap_or(type_condition);
                 // For projection, both sides of the condition are valid
                 if possible_types.entity_satisfies_type_condition(type_name, type_condition)
                     || possible_types.entity_satisfies_type_condition(type_condition, type_name)
