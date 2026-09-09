@@ -1,3 +1,4 @@
+use crate::query_planner::ast::requires::RequiresSelectionSet;
 use crate::query_planner::{
     ast::{
         merge_path::{Condition, MergePath, Segment},
@@ -140,8 +141,13 @@ pub struct FetchNode<S: PlanState = Executable> {
     pub operation: S::Operation,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_scalar_paths: Option<CustomScalarPaths>,
+    /// The entity key selection used by execution. Its JSON must match [`SelectionSet`].
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub requires: Option<SelectionSet>,
+    pub requires: Option<RequiresSelectionSet>,
+    /// The same selection, parsed, kept only while planning: batching expands fragment spreads
+    /// against it. A box keeps the field small in the state that has one.
+    #[serde(skip)]
+    pub planner_requires: S::Requires,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -374,7 +380,7 @@ pub struct EntityBatchAlias {
     pub representations_variable_name: String,
     #[serde(rename = "paths")]
     pub merge_paths: Vec<FlattenNodePath>,
-    pub requires: SelectionSet,
+    pub requires: RequiresSelectionSet,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -743,21 +749,25 @@ impl FetchNode<Planning> {
         supergraph: &SupergraphState,
     ) -> Self {
         match step.is_entity_call() {
-            true => FetchNode {
-                id: step.id,
-                service_name: step.service_name.0.clone(),
-                variable_usages: step.variable_usages.clone(),
-                operation_kind: Some(OperationKind::Query),
-                operation: create_output_operation(step, supergraph),
-                custom_scalar_paths: custom_scalar_paths_from_fetch_output(
-                    &step.output,
-                    supergraph,
-                    Some("_entities"),
-                ),
-                requires: Some(create_input_selection_set(&step.input)),
-                input_rewrites: step.input_rewrites.clone(),
-                output_rewrites: step.output_rewrites.clone(),
-            },
+            true => {
+                let planner_requires = create_input_selection_set(&step.input);
+                FetchNode {
+                    id: step.id,
+                    service_name: step.service_name.0.clone(),
+                    variable_usages: step.variable_usages.clone(),
+                    operation_kind: Some(OperationKind::Query),
+                    operation: create_output_operation(step, supergraph),
+                    custom_scalar_paths: custom_scalar_paths_from_fetch_output(
+                        &step.output,
+                        supergraph,
+                        Some("_entities"),
+                    ),
+                    requires: Some(RequiresSelectionSet::from(&planner_requires)),
+                    planner_requires: Some(Box::new(planner_requires)),
+                    input_rewrites: step.input_rewrites.clone(),
+                    output_rewrites: step.output_rewrites.clone(),
+                }
+            }
             false => {
                 let root_type_name = supergraph.expect_root_type_name(Some(&step.operation_kind));
                 let operation_def = OperationDefinition {
@@ -774,6 +784,7 @@ impl FetchNode<Planning> {
                     service_name: step.service_name.0.clone(),
                     variable_usages: step.variable_usages.clone(),
                     operation_kind: Some(step.operation_kind.clone()),
+                    planner_requires: None,
                     operation: PlanningFetchOperation::from_anonymous_operation(document),
                     custom_scalar_paths: custom_scalar_paths_from_fetch_output(
                         &step.output,
@@ -1097,7 +1108,7 @@ mod stored_size_tests {
         for (name, actual, expected) in [
             ("PlanNode", size_of::<PlanNode>(), 40),
             ("ConditionNode", size_of::<ConditionNode>(), 40),
-            ("FetchNode", size_of::<FetchNode>(), 208),
+            ("FetchNode", size_of::<FetchNode>(), 224),
             ("BatchFetchNode", size_of::<BatchFetchNode>(), 160),
             (
                 "SubgraphFetchOperation",

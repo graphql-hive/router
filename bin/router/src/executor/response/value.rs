@@ -1,4 +1,4 @@
-use crate::query_planner::ast::selection_item::SelectionItem;
+use crate::query_planner::ast::requires::{RequiresSelection, RequiresSelectionSetRef};
 use core::fmt;
 use serde::{
     de::{self, Deserializer, MapAccess, SeqAccess, Visitor},
@@ -71,32 +71,32 @@ impl<'a> Value<'a> {
 
     pub fn to_hash(
         &self,
-        selection_items: &[SelectionItem],
+        selections: RequiresSelectionSetRef<'_>,
         possible_types: &PossibleTypes,
     ) -> u64 {
         let mut hasher = Xxh3::new();
-        self.hash_with_requires(&mut hasher, selection_items, possible_types);
+        self.hash_with_requires(&mut hasher, selections, possible_types);
         hasher.finish()
     }
 
     fn hash_with_requires<H: Hasher>(
         &self,
         state: &mut H,
-        selection_items: &[SelectionItem],
+        selections: RequiresSelectionSetRef<'_>,
         possible_types: &PossibleTypes,
     ) {
-        if selection_items.is_empty() {
+        if selections.is_empty() {
             self.hash(state);
             return;
         }
 
         match self {
             Value::Object(obj) => {
-                Value::hash_object_with_requires(state, obj, selection_items, possible_types);
+                Value::hash_object_with_requires(state, obj, selections, possible_types);
             }
             Value::Array(arr) => {
                 for item in arr {
-                    item.hash_with_requires(state, selection_items, possible_types);
+                    item.hash_with_requires(state, selections, possible_types);
                 }
             }
             _ => {
@@ -108,29 +108,29 @@ impl<'a> Value<'a> {
     fn hash_object_with_requires<H: Hasher>(
         state: &mut H,
         obj: &[(&'a str, Value<'a>)],
-        selection_items: &[SelectionItem],
+        selections: RequiresSelectionSetRef<'_>,
         possible_types: &PossibleTypes,
     ) {
         // Read __typename at most once per object, and only when a fragment
         // needs it. Also remember when it is missing: each fragment then
         // falls back to its own type instead.
         let mut type_name = None;
-        for item in selection_items {
+        for item in selections.iter() {
             match item {
-                SelectionItem::Field(field_selection) => {
-                    let field_name = &field_selection.name;
-                    if let Ok(idx) = obj.binary_search_by_key(&field_name.as_str(), |(k, _)| k) {
+                RequiresSelection::Field {
+                    name, selections, ..
+                } => {
+                    if let Ok(idx) = obj.binary_search_by_key(&name, |(k, _)| k) {
                         let (key, value) = &obj[idx];
                         key.hash(state);
-                        value.hash_with_requires(
-                            state,
-                            &field_selection.selections.items,
-                            possible_types,
-                        );
+                        value.hash_with_requires(state, selections, possible_types);
                     }
                 }
-                SelectionItem::InlineFragment(inline_fragment) => {
-                    let type_condition = &inline_fragment.type_condition;
+                RequiresSelection::InlineFragment {
+                    type_condition,
+                    selections,
+                    ..
+                } => {
                     let type_name = type_name
                         .get_or_insert_with(|| {
                             obj.binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
@@ -140,15 +140,10 @@ impl<'a> Value<'a> {
                         .unwrap_or(type_condition);
 
                     if possible_types.entity_satisfies_type_condition(type_name, type_condition) {
-                        Value::hash_object_with_requires(
-                            state,
-                            obj,
-                            &inline_fragment.selections.items,
-                            possible_types,
-                        );
+                        Value::hash_object_with_requires(state, obj, selections, possible_types);
                     }
                 }
-                SelectionItem::FragmentSpread(_) => {
+                RequiresSelection::FragmentSpread(_) => {
                     unreachable!("Fragment spreads should not exist in FetchNode::requires.")
                 }
             }

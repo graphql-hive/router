@@ -982,6 +982,10 @@ impl<'exec> Executor<'exec> {
                 let mut representation_hash_to_index: AHashMap<u64, usize> = AHashMap::new();
                 let arena = bumpalo::Bump::new();
 
+                // The `requires` selections to walk for each entity. Take the view once rather
+                // than per entity; it borrows the plan, so this is not new work.
+                let required_selections = requires_nodes.root_selections();
+
                 traverse_and_callback(
                     data,
                     normalized_path,
@@ -992,7 +996,7 @@ impl<'exec> Executor<'exec> {
                             return;
                         }
 
-                        let hash = entity.to_hash(&requires_nodes.items, possible_types);
+                        let hash = entity.to_hash(required_selections, possible_types);
                         representation_hashes.push(Some(hash));
                         let is_first_representation = representation_hash_to_index.is_empty();
                         let vacant_entry = match representation_hash_to_index.entry(hash) {
@@ -1013,7 +1017,7 @@ impl<'exec> Executor<'exec> {
 
                         let is_projected = project_requires(
                             possible_types,
-                            &requires_nodes.items,
+                            required_selections,
                             entity,
                             &mut filtered_representations,
                             is_first_representation,
@@ -1524,13 +1528,15 @@ impl<'exec> Executor<'exec> {
             for (merge_path, grouped_target_indices) in path_groups {
                 let mut representation_hashes: Vec<Option<u64>> = Vec::new();
 
+                let required_selections = alias_spec.requires.root_selections();
+
                 traverse_and_callback(data, merge_path.as_slice(), possible_types, &mut |entity| {
                     if entity.is_null() {
                         representation_hashes.push(None);
                         return;
                     }
 
-                    let hash = entity.to_hash(&alias_spec.requires.items, possible_types);
+                    let hash = entity.to_hash(required_selections, possible_types);
                     representation_hashes.push(Some(hash));
                     let is_first_representation = representation_hash_to_index.is_empty();
                     let vacant_entry = match representation_hash_to_index.entry(hash) {
@@ -1550,7 +1556,7 @@ impl<'exec> Executor<'exec> {
 
                     let is_projected = project_requires(
                         possible_types,
-                        &alias_spec.requires.items,
+                        required_selections,
                         entity,
                         &mut filtered_representations,
                         is_first_representation,
@@ -1757,7 +1763,9 @@ mod tests {
 
     use super::select_fetch_variables;
     use crate::query_planner::{
-        ast::{document::Document, operation::PlanningFetchOperation},
+        ast::{
+            document::Document, operation::PlanningFetchOperation, requires::RequiresSelectionSet,
+        },
         planner::plan_nodes::{EntityBatch, EntityBatchAlias, FetchNode, ParallelNode, PlanNode},
         utils::parsing::parse_operation,
     };
@@ -1990,6 +1998,12 @@ mod tests {
                 .clone()
         }
 
+        /// The parser's selection set, lowered the way the planner lowers it.
+        fn requires_from(selection: query::SelectionSet<'_, String>) -> RequiresSelectionSet {
+            let set: crate::query_planner::ast::selection_set::SelectionSet = selection.into();
+            RequiresSelectionSet::from(&set)
+        }
+
         let requires_query = parse_operation("{ ... on Product { upc } }");
         let requires_selection = document_into_selection(requires_query);
 
@@ -2000,7 +2014,7 @@ mod tests {
                     alias: "_e0".to_string(),
                     representations_variable_name: shared_var.clone(),
                     merge_paths: vec![],
-                    requires: requires_selection.clone().into(),
+                    requires: requires_from(requires_selection.clone()),
                     input_rewrites: None,
                     output_rewrites: None,
                 },
@@ -2008,7 +2022,7 @@ mod tests {
                     alias: "_e1".to_string(),
                     representations_variable_name: shared_var,
                     merge_paths: vec![],
-                    requires: requires_selection.into(),
+                    requires: requires_from(requires_selection),
                     input_rewrites: None,
                     output_rewrites: None,
                 },
@@ -2131,6 +2145,7 @@ mod tests {
                     nodes: vec![
                         PlanNode::Fetch(Box::new(FetchNode {
                             id: 1,
+                            planner_requires: (),
                             service_name: "subgraph_a".to_string(),
                             operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_a }"),
@@ -2145,6 +2160,7 @@ mod tests {
                         })),
                         PlanNode::Fetch(Box::new(FetchNode {
                             id: 2,
+                            planner_requires: (),
                             service_name: "subgraph_b".to_string(),
                             operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_b }"),
