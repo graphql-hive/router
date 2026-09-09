@@ -27,19 +27,58 @@ pub fn traverse_and_callback_mut<'a, Callback>(
 ) where
     Callback: FnMut(&mut Value<'a>, Option<GraphQLErrorPath>),
 {
+    let mut error_path = current_error_path;
+    walk_mut(
+        current_data,
+        remaining_path,
+        schema_metadata,
+        &mut error_path,
+        callback,
+    );
+}
+
+fn push_index(error_path: &mut Option<GraphQLErrorPath>, index: usize) {
+    if let Some(error_path) = error_path.as_mut() {
+        error_path.push_index(index);
+    }
+}
+
+fn push_field(error_path: &mut Option<GraphQLErrorPath>, field: &str) {
+    if let Some(error_path) = error_path.as_mut() {
+        error_path.push_field(field);
+    }
+}
+
+fn pop(error_path: &mut Option<GraphQLErrorPath>) {
+    if let Some(error_path) = error_path.as_mut() {
+        error_path.pop();
+    }
+}
+
+/// Walks `remaining_path` carrying one error path that is pushed and popped as it descends,
+/// rather than cloning the path built so far at every step. Only the callback needs an owned
+/// path, so only the callback pays for one.
+fn walk_mut<'a, Callback>(
+    current_data: &mut Value<'a>,
+    remaining_path: &[FlattenNodePathSegment],
+    schema_metadata: &SchemaMetadata,
+    error_path: &mut Option<GraphQLErrorPath>,
+    callback: &mut Callback,
+) where
+    Callback: FnMut(&mut Value<'a>, Option<GraphQLErrorPath>),
+{
     if remaining_path.is_empty() {
         if let Value::Array(arr) = current_data {
             // If the path is empty, we call the callback on each item in the array
             // We iterate because we want the entity objects directly
             for (index, item) in arr.iter_mut().enumerate() {
-                let current_error_path_for_index = current_error_path
-                    .as_ref()
-                    .map(|current_error_path| current_error_path.concat_index(index));
-                callback(item, current_error_path_for_index);
+                push_index(error_path, index);
+                callback(item, error_path.clone());
+                pop(error_path);
             }
         } else {
             // If the path is empty and current_data is not an array, just call the callback
-            callback(current_data, current_error_path);
+            callback(current_data, error_path.clone());
         }
         return;
     }
@@ -50,16 +89,9 @@ pub fn traverse_and_callback_mut<'a, Callback>(
             if let Value::Array(arr) = current_data {
                 let rest_of_path = &remaining_path[1..];
                 for (index, item) in arr.iter_mut().enumerate() {
-                    let current_error_path_for_index = current_error_path
-                        .as_ref()
-                        .map(|current_error_path| current_error_path.concat_index(index));
-                    traverse_and_callback_mut(
-                        item,
-                        rest_of_path,
-                        schema_metadata,
-                        current_error_path_for_index,
-                        callback,
-                    );
+                    push_index(error_path, index);
+                    walk_mut(item, rest_of_path, schema_metadata, error_path, callback);
+                    pop(error_path);
                 }
             }
         }
@@ -69,17 +101,15 @@ pub fn traverse_and_callback_mut<'a, Callback>(
                 if let Ok(idx) = map.binary_search_by_key(&field_name.as_str(), |(k, _)| k) {
                     let (_, next_data) = map.get_mut(idx).unwrap();
                     let rest_of_path = &remaining_path[1..];
-                    let current_error_path_for_field =
-                        current_error_path.map(|current_error_path| {
-                            current_error_path.concat_str(field_name.clone())
-                        });
-                    traverse_and_callback_mut(
+                    push_field(error_path, field_name);
+                    walk_mut(
                         next_data,
                         rest_of_path,
                         schema_metadata,
-                        current_error_path_for_field,
+                        error_path,
                         callback,
                     );
+                    pop(error_path);
                 }
             }
         }
@@ -99,27 +129,23 @@ pub fn traverse_and_callback_mut<'a, Callback>(
                     )
                 }) {
                     let rest_of_path = &remaining_path[1..];
-                    traverse_and_callback_mut(
+                    // A type condition does not add a path step.
+                    walk_mut(
                         current_data,
                         rest_of_path,
                         schema_metadata,
-                        current_error_path,
+                        error_path,
                         callback,
                     );
                 }
             } else if let Value::Array(arr) = current_data {
                 // If the current data is an array, we need to check each item
                 for (index, item) in arr.iter_mut().enumerate() {
-                    let current_error_path_for_index = current_error_path
-                        .as_ref()
-                        .map(|current_error_path| current_error_path.concat_index(index));
-                    traverse_and_callback_mut(
-                        item,
-                        remaining_path,
-                        schema_metadata,
-                        current_error_path_for_index,
-                        callback,
-                    );
+                    push_index(error_path, index);
+                    // Use `remaining_path`, not the rest, so the type condition is checked again
+                    // for each item.
+                    walk_mut(item, remaining_path, schema_metadata, error_path, callback);
+                    pop(error_path);
                 }
             }
         }
@@ -314,6 +340,70 @@ mod tests {
                 GraphQLErrorPathSegment::String("posts".into()),
                 GraphQLErrorPathSegment::Index(0),
             ]
+        );
+    }
+
+    /// The walker now shares one mutable error path across siblings instead of giving each
+    /// recursion its own clone, so a missing `pop` would leak steps from one entity into the
+    /// next. Type conditions are the delicate case: they descend without adding a step.
+    #[test]
+    fn error_paths_survive_type_conditions_and_sibling_branches() {
+        let mut data = Value::Object(vec![(
+            "media",
+            Value::Array(vec![
+                Value::Object(vec![
+                    ("__typename", Value::String("Book".into())),
+                    (
+                        "pages",
+                        Value::Array(vec![Value::Object(vec![("id", Value::String("a".into()))])]),
+                    ),
+                ]),
+                Value::Object(vec![
+                    ("__typename", Value::String("Book".into())),
+                    (
+                        "pages",
+                        Value::Array(vec![Value::Object(vec![("id", Value::String("b".into()))])]),
+                    ),
+                ]),
+            ]),
+        )]);
+
+        let path = vec![
+            FlattenNodePathSegment::Field("media".into()),
+            FlattenNodePathSegment::List,
+            FlattenNodePathSegment::TypeCondition(["Book".to_string()].into_iter().collect()),
+            FlattenNodePathSegment::Field("pages".into()),
+            FlattenNodePathSegment::List,
+        ];
+        let mut collected = vec![];
+        super::traverse_and_callback_mut(
+            &mut data,
+            &path,
+            &SchemaMetadata::default(),
+            Some(GraphQLErrorPath::default()),
+            &mut |_item, error_path| {
+                collected.push(error_path.expect("error path is tracked").segments);
+            },
+        );
+
+        use crate::executor::response::graphql_error::GraphQLErrorPathSegment::{Index, String};
+        assert_eq!(
+            collected,
+            vec![
+                vec![
+                    String("media".into()),
+                    Index(0),
+                    String("pages".into()),
+                    Index(0)
+                ],
+                vec![
+                    String("media".into()),
+                    Index(1),
+                    String("pages".into()),
+                    Index(0)
+                ],
+            ],
+            "the second entity's path must not inherit steps from the first"
         );
     }
 
