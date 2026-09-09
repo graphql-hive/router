@@ -138,6 +138,7 @@ where
         let mut datadog_config = DatadogConfig::builder();
         if let Some(endpoint) = &datadog.endpoint {
             let endpoint = resolve_value_or_expression(endpoint, "Datadog Agent endpoint")?;
+            validate_datadog_agent_url(&endpoint)?;
             datadog_config.set_trace_agent_url(endpoint);
         }
         // datadog defaults to 100 retained traces per second when explicit
@@ -166,6 +167,45 @@ where
     .with_span_limits(&config.tracing.collect);
 
     Ok(setup_exporters(config, resource, builder)?.finish())
+}
+
+fn validate_datadog_agent_url(endpoint: &str) -> Result<(), TelemetryError> {
+    if let Some(path) = endpoint.strip_prefix("unix://") {
+        return if path.is_empty() {
+            Err(TelemetryError::TracesExporterSetup(
+                "Datadog Agent endpoint must include a Unix socket path".to_string(),
+            ))
+        } else {
+            Ok(())
+        };
+    }
+    if let Some(path) = endpoint.strip_prefix("windows:") {
+        return if path.is_empty() {
+            Err(TelemetryError::TracesExporterSetup(
+                "Datadog Agent endpoint must include a Windows named pipe path".to_string(),
+            ))
+        } else {
+            Ok(())
+        };
+    }
+
+    let uri = endpoint.parse::<http::Uri>().map_err(|error| {
+        TelemetryError::TracesExporterSetup(format!(
+            "invalid Datadog Agent endpoint '{endpoint}': {error}"
+        ))
+    })?;
+    match uri.scheme_str() {
+        Some("http" | "https") if uri.authority().is_some() => Ok(()),
+        Some("http" | "https") => Err(TelemetryError::TracesExporterSetup(format!(
+            "Datadog Agent endpoint must be absolute: '{endpoint}'"
+        ))),
+        Some(scheme) => Err(TelemetryError::TracesExporterSetup(format!(
+            "unsupported Datadog Agent endpoint scheme '{scheme}'; expected http, https, unix, or windows"
+        ))),
+        None => Err(TelemetryError::TracesExporterSetup(format!(
+            "Datadog Agent endpoint must include a supported scheme: '{endpoint}'"
+        ))),
+    }
 }
 
 fn setup_exporters(
@@ -415,6 +455,32 @@ fn setup_hive_exporter(
     trace_batching_processor.set_resource(resource);
 
     Ok(tracer_provider_builder.with_span_processor(trace_batching_processor))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_datadog_agent_url;
+
+    #[test]
+    fn validates_datadog_agent_urls() {
+        for endpoint in [
+            "http://localhost:8126",
+            "https://agent.example.com",
+            "unix:///var/run/datadog/apm.socket",
+            r"windows:\\.\pipe\datadog-apm",
+        ] {
+            assert!(validate_datadog_agent_url(endpoint).is_ok(), "{endpoint}");
+        }
+        for endpoint in [
+            "not a URL",
+            "http://bad host",
+            "unix://",
+            "windows:",
+            "ftp://localhost:8126",
+        ] {
+            assert!(validate_datadog_agent_url(endpoint).is_err(), "{endpoint}");
+        }
+    }
 }
 
 fn ensure_single_protocol_config(
