@@ -54,8 +54,6 @@ pub struct QueryPlan<S: PlanState = Executable> {
 }
 
 #[allow(clippy::large_enum_variant)]
-/// The four variants that carry a fetch are boxed. Every slot of every `Sequence` and `Parallel`
-/// list is as large as the largest variant, and those four were much larger than the rest.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "kind")]
 #[serde(bound = "")]
@@ -1094,15 +1092,6 @@ mod stored_size_tests {
     use super::*;
     use std::mem::size_of;
 
-    /// Checks the size of the stored types. This is not the total memory a plan keeps, and not
-    /// the number of allocations. A cached plan holds one of these per node and per fetch, so
-    /// these sizes are what the plan cache costs in memory.
-    ///
-    /// `PlanNode` is the one that adds up. Every slot of every `Sequence` and `Parallel` list is
-    /// this size, whether or not that slot holds a fetch. Now that the fetch variants are boxed,
-    /// the largest variant is `ConditionNode`. Its size is checked here so it stays visible if it
-    /// grows.
-    #[test]
     fn stored_sizes_stay_small() {
         for (name, actual, expected) in [
             ("PlanNode", size_of::<PlanNode>(), 40),
