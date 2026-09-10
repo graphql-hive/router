@@ -19,8 +19,6 @@ mod state;
 pub use state::{Executable, PlanState, Planning};
 mod prepare;
 
-/// Aliases for plans in the `Planning` state. The planner builds plans in this state. The types
-/// without a suffix are the executable ones.
 pub mod planning {
     pub use super::*;
     pub type QueryPlan = super::QueryPlan<Planning>;
@@ -45,6 +43,9 @@ use xxhash_rust::xxh3::Xxh3;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
+// Why `[serde(bound = "")]` ?
+// `S` only tracks the plan state. Only `S::Operation` is serialized.
+// Do not require the marker types themselves to implement Serialize or Deserialize.
 #[serde(bound = "")]
 pub struct QueryPlan<S: PlanState = Executable> {
     pub kind: &'static str, // "QueryPlan"

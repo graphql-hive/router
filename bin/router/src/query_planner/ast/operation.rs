@@ -40,13 +40,6 @@ impl OperationDefinition {
     }
 }
 
-/// Everything execution needs: the rendered operation text, and the position where an operation
-/// name is written into it. There is no parsed document here on purpose. See
-/// [`PlanningFetchOperation`] for the form that has one.
-/// ```compile_fail,E0609
-/// use hive_router::query_planner::ast::operation::SubgraphFetchOperation;
-/// fn parsed(operation: &SubgraphFetchOperation) { let _ = &operation.document; }
-/// ```
 #[derive(Debug, Clone, Deserialize)]
 pub struct SubgraphFetchOperation {
     pub document_str: String,
@@ -60,9 +53,6 @@ pub struct SubgraphFetchOperation {
     pub name_write_position: usize,
 }
 
-/// A fetch operation that still has its parsed document. The planner needs the parsed form for
-/// two things: expanding fragments while batching, and compiling demand control costs. It is
-/// converted to [`SubgraphFetchOperation`] before the plan is cached.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlanningFetchOperation {
     pub document: Box<Document>,
