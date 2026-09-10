@@ -54,8 +54,8 @@ pub struct QueryPlan<S: PlanState = Executable> {
 }
 
 #[allow(clippy::large_enum_variant)]
-/// The fetch-carrying variants are boxed: this enum sizes every slot of every `Sequence` and
-/// `Parallel` list, and those four variants are an order of magnitude larger than the rest.
+/// The four variants that carry a fetch are boxed. Every slot of every `Sequence` and `Parallel`
+/// list is as large as the largest variant, and those four were much larger than the rest.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "kind")]
 #[serde(bound = "")]
