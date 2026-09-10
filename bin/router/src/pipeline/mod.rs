@@ -4,7 +4,8 @@ use crate::query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
 use crate::telemetry::{
-    logging::{scope::RequestLogScope, summary, targets},
+    logging::{summary, targets},
+    request_scope::RequestTaskScope,
     traces::spans::{graphql::GraphQLOperationSpan, http_request::HttpServerRequestSpan},
 };
 use crate::{
@@ -680,8 +681,8 @@ pub async fn execute_planned_request<'exec>(
             let supergraph = supergraph.clone();
             // the pump drives per-event execution (entity resolution), so it keeps the logging
             // context of the request that created the subscription
-            let log_scope = RequestLogScope::capture();
-            rt::spawn(log_scope.scope(async move {
+            let request_scope = RequestTaskScope::capture();
+            rt::spawn(request_scope.scope(async move {
                 loop {
                     tokio::select! {
                         chunk = body_stream.next() => {

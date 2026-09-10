@@ -375,6 +375,100 @@ async fn test_datadog_and_otlp_export_sampled_spans_independently() {
 }
 
 #[ntex::test]
+async fn test_datadog_and_hive_keep_exporter_specific_graphql_documents() {
+    let _env = EnvVarsGuard::new()
+        .set("DD_REMOTE_CONFIGURATION_ENABLED", "false")
+        .set("DD_INSTRUMENTATION_TELEMETRY_ENABLED", "false")
+        .apply()
+        .await;
+    let agent = MockDatadogAgent::start();
+    let hive_collector = OtlpCollector::start()
+        .await
+        .expect("failed to start Hive collector");
+    let hive_endpoint = hive_collector.http_traces_endpoint();
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+          telemetry:
+            tracing:
+              collect:
+                sampling: 1.0
+              exporters:
+                - kind: datadog
+                  endpoint: {}
+            hive:
+              token: test-token
+              target: test-org/test-project/test-target
+              tracing:
+                endpoint: {hive_endpoint}
+                enabled: true
+                batch_processor:
+                  scheduled_delay: 50ms
+                  max_export_timeout: 2s
+              usage_reporting:
+                enabled: false
+        "#,
+            supergraph_path(),
+            agent.address,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    agent.wait_for_path("/info").await;
+    let response = router
+        .send_graphql_request("query MixedHive { users { id } }", None, None)
+        .await;
+    assert!(response.status().is_success());
+
+    let hive_operation = hive_collector
+        .wait_for_span_by_hive_kind_one("graphql.operation")
+        .await;
+    assert_eq!(
+        hive_operation
+            .attributes
+            .get("graphql.document")
+            .map(String::as_str),
+        Some("query MixedHive{users{id}}")
+    );
+    let hive_subgraph_operation = hive_collector
+        .wait_for_span_by_hive_kind_one("graphql.subgraph.operation")
+        .await;
+    assert_eq!(
+        hive_subgraph_operation
+            .attributes
+            .get("graphql.document")
+            .map(String::as_str),
+        Some("{users{id}}")
+    );
+
+    drop(router);
+
+    let requests = agent.wait_for_path("/v0.4/traces").await;
+    let datadog_graphql_spans = requests
+        .iter()
+        .filter_map(|request| v04::from_slice(&request.body).ok())
+        .flat_map(|(traces, _)| traces)
+        .flatten()
+        .filter(|span| {
+            matches!(
+                span.meta.get("hive.kind").copied(),
+                Some("graphql.operation" | "graphql.subgraph.operation")
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(!datadog_graphql_spans.is_empty());
+    assert!(datadog_graphql_spans
+        .iter()
+        .all(|span| span.meta.get("graphql.document").is_none()));
+}
+
+#[ntex::test]
 async fn test_datadog_record_only_spans_do_not_reach_otlp() {
     let _env = EnvVarsGuard::new()
         .set("DD_REMOTE_CONFIGURATION_ENABLED", "false")

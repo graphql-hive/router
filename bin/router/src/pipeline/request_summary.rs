@@ -1,7 +1,10 @@
 use std::sync::atomic::Ordering::Relaxed;
 use std::time::Instant;
 
-use crate::telemetry::logging::summary::{self, SummaryOnDrop, WithRequestSummary};
+use crate::telemetry::{
+    logging::summary::{self, SummaryOnDrop, WithRequestSummary},
+    traces::hive_trace_context::HiveTraceScope,
+};
 use ntex::{
     http::body::{BodySize, MessageBody},
     router::{Path, Router},
@@ -75,36 +78,40 @@ where
         }
 
         let started_at = Instant::now();
+        let hive_trace_scope = HiveTraceScope::new();
 
         // The guard is created while the task-local summary scope below is still active
-        let (response, guard) = async {
-            let response = ctx.call(&self.service, req).await?;
+        let (response, guard) = hive_trace_scope
+            .scope(
+                async {
+                    let response = ctx.call(&self.service, req).await?;
 
-            // This ensures that response summary is available for middlewares that runs after this one (like compression)
-            if summary::is_enabled() {
-                if let Some(summary) = summary::current_summary() {
-                    response.request().extensions_mut().insert(summary);
+                    // This ensures that response summary is available for middlewares that runs after this one (like compression)
+                    if summary::is_enabled() {
+                        if let Some(summary) = summary::current_summary() {
+                            response.request().extensions_mut().insert(summary);
+                        }
+                    }
+
+                    // Re-records over whatever the handler already set (e.g. before a plugin's `on_end`
+                    // callback ran and read it) with the truly final response
+                    let status_code = response.status().as_u16();
+                    let payload_bytes = match response.response().body().size() {
+                        BodySize::Empty | BodySize::None => 0,
+                        BodySize::Sized(size) => i64::try_from(size).unwrap_or(i64::MAX),
+                        BodySize::Stream => -1,
+                    };
+                    summary::record(|s| {
+                        s.status_code.store(status_code, Relaxed);
+                        s.payload_bytes.store(payload_bytes, Relaxed);
+                    });
+
+                    Ok::<_, S::Error>((response, SummaryOnDrop::new(started_at)))
                 }
-            }
+                .with_request_summary(),
+            )
+            .await?;
 
-            // Re-records over whatever the handler already set (e.g. before a plugin's `on_end`
-            // callback ran and read it) with the truly final response
-            let status_code = response.status().as_u16();
-            let payload_bytes = match response.response().body().size() {
-                BodySize::Empty | BodySize::None => 0,
-                BodySize::Sized(size) => i64::try_from(size).unwrap_or(i64::MAX),
-                BodySize::Stream => -1,
-            };
-            summary::record(|s| {
-                s.status_code.store(status_code, Relaxed);
-                s.payload_bytes.store(payload_bytes, Relaxed);
-            });
-
-            Ok::<_, S::Error>((response, SummaryOnDrop::new(started_at)))
-        }
-        .with_request_summary()
-        .await?;
-
-        Ok(guard.attach_to_response(response))
+        Ok(guard.attach_to_response(hive_trace_scope.attach_to_response(response)))
     }
 }

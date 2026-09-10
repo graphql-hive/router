@@ -1,17 +1,9 @@
 use std::sync::atomic::{AtomicU8, Ordering};
-use tracing::{Level, Span, Subscriber};
-use tracing_subscriber::Layer;
+use tracing::{Level, Span};
 
 // Atomic representation of the max enabled tracing level.
 // 0: Off, 1: Error, 2: Warn, 3: Info, 4: Debug, 5: Trace
 static MAX_LEVEL: AtomicU8 = AtomicU8::new(3); // Default to Info
-
-// datadog's private processor bypasses exproter wrappers, so its subscriber gets
-// this marker to keep graphql documents and their potentially sensitive literals
-// out before spans reach any processor
-pub(crate) struct DisableGraphqlDocumentRecording;
-
-impl<S: Subscriber> Layer<S> for DisableGraphqlDocumentRecording {}
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
@@ -52,15 +44,6 @@ fn level_to_u8(level: Level) -> u8 {
 #[inline]
 pub fn is_level_enabled(level: Level) -> bool {
     MAX_LEVEL.load(Ordering::Relaxed) >= level_to_u8(level)
-}
-
-#[inline]
-pub fn is_graphql_document_recording_enabled() -> bool {
-    tracing::dispatcher::get_default(|dispatch| {
-        dispatch
-            .downcast_ref::<DisableGraphqlDocumentRecording>()
-            .is_none()
-    })
 }
 
 #[inline]
