@@ -42,9 +42,6 @@ impl OperationDefinition {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SubgraphFetchOperation {
-    /// This text is built once when the plan is built, and never added to. A `String` can hold
-    /// more memory than it needs, because it grows by doubling. A boxed string holds exactly the
-    /// bytes of the text.
     pub document_str: Box<str>,
     pub hash: u64,
     /// All operations produced by the query planner are anonymous.
