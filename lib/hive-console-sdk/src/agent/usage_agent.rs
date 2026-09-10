@@ -14,7 +14,7 @@ use tracing::debug;
 
 use crate::expressions::lib::FromVrlValue;
 use crate::{
-    agent::{buffer::AddStatus, utils::OperationProcessor},
+    agent::{buffer::AddStatus, utils::OperationProcessor, variables_plan::VariablesPayload},
     expressions::ExecutableProgram,
     helpers::SharedFifoSet,
 };
@@ -48,6 +48,12 @@ pub struct ExecutionReport {
     pub operation_name: Option<String>,
     pub operation_type: Option<OperationType>,
     pub persisted_document_hash: Option<String>,
+    /// Schema coordinates extracted from this request's runtime variables when
+    /// `processVariables` is enabled (see
+    /// [`crate::agent::variables_plan::VariablesExtractionPlan::extract`]). These
+    /// are merged into the operation's reported `fields`. Empty when the feature
+    /// is disabled or the operation has no extractable variables.
+    pub input_variable_coordinates: Vec<String>,
 }
 
 typify::import_types!(schema = "./usage-report-v2.schema.json");
@@ -80,6 +86,21 @@ pub enum SamplingKey {
 pub struct AtLeastOnceSampling {
     pub(crate) key: Vec<SamplingKey>,
     pub(crate) seen_hashes: SharedFifoSet,
+}
+
+fn merge_coordinates(fields: &mut Vec<String>, additional: Vec<String>) {
+    if additional.is_empty() {
+        return;
+    }
+    let existing: std::collections::HashSet<&str> = fields.iter().map(String::as_str).collect();
+    let mut to_add: Vec<String> = additional
+        .into_iter()
+        .filter(|coordinate| !existing.contains(coordinate.as_str()))
+        .collect();
+
+    to_add.sort_unstable();
+    to_add.dedup();
+    fields.extend(to_add);
 }
 
 pub fn non_empty_string(value: Option<String>) -> Option<String> {
@@ -167,6 +188,27 @@ pub trait UsageAgentExt {
         execution_report: ExecutionReport,
         request: Option<RequestDetails>,
     ) -> Result<(), AgentError>;
+
+    /// Whether granular `processVariables` reporting is enabled for this agent.
+    fn process_variables_enabled(&self) -> bool;
+
+    /// Extracts the schema coordinates contributed by a request's runtime
+    /// `variables` payload, to be placed on
+    /// [`ExecutionReport::input_variable_coordinates`].
+    ///
+    /// `variables` is the consumer's native variables map (see
+    /// [`VariablesPayload`]); no conversion is performed. Returns an empty vector
+    /// when `processVariables` is disabled, when the operation cannot be
+    /// processed, or when it has no extractable variables — so callers can invoke
+    /// it unconditionally. The operation plan is compiled once and cached (shared
+    /// with report processing); only the bounded walk of the variables payload
+    /// runs per request. No variable content is retained.
+    fn extract_variable_coordinates<P: VariablesPayload>(
+        &self,
+        operation_body: &str,
+        schema: &Document<'static, String>,
+        variables: Option<&P>,
+    ) -> Vec<String>;
 }
 
 impl UsageAgentInner {
@@ -268,12 +310,29 @@ impl UsageAgentInner {
                                 .map(PersistedDocumentHash),
                             metadata,
                         });
-                        if let Entry::Vacant(e) = report.map.entry(ReportMapKey(hash)) {
-                            e.insert(OperationMapRecord {
-                                operation: operation.operation,
-                                operation_name: non_empty_string(op.operation_name),
-                                fields: operation.coordinates,
-                            });
+                        match report.map.entry(ReportMapKey(hash)) {
+                            Entry::Vacant(e) => {
+                                let mut fields = operation.coordinates;
+                                // Merge this request's variable-derived coordinates
+                                // (empty unless `processVariables` is enabled).
+                                merge_coordinates(&mut fields, op.input_variable_coordinates);
+                                e.insert(OperationMapRecord {
+                                    operation: operation.operation,
+                                    operation_name: non_empty_string(op.operation_name),
+                                    fields,
+                                });
+                            }
+                            Entry::Occupied(mut e) => {
+                                // The static coordinates already match this hash;
+                                // accumulate variable-derived coordinates seen in
+                                // this request so no used input field is lost.
+                                if !op.input_variable_coordinates.is_empty() {
+                                    merge_coordinates(
+                                        &mut e.get_mut().fields,
+                                        op.input_variable_coordinates,
+                                    );
+                                }
+                            }
                         }
                         report.size += 1;
                     }
@@ -372,6 +431,26 @@ pub struct RequestDetails {
 impl UsageAgentExt for UsageAgent {
     async fn flush(&self) -> Result<(), AgentError> {
         self.inner().flush().await
+    }
+
+    fn process_variables_enabled(&self) -> bool {
+        self.inner().processor.process_variables()
+    }
+
+    fn extract_variable_coordinates<P: VariablesPayload>(
+        &self,
+        operation_body: &str,
+        schema: &Document<'static, String>,
+        variables: Option<&P>,
+    ) -> Vec<String> {
+        let inner = self.inner();
+        if !inner.processor.process_variables() {
+            return Vec::new();
+        }
+        match inner.processor.process(operation_body, schema) {
+            Ok(Some(processed)) => processed.variables_plan.extract(variables, schema),
+            _ => Vec::new(),
+        }
     }
 
     async fn start_flush_interval(&self, token: &CancellationToken) {
@@ -800,6 +879,7 @@ mod tests {
                         ok: true,
                         errors: 0,
                         persisted_document_hash: None,
+                        input_variable_coordinates: Vec::new(),
                     },
                     Some((&request).into()),
                 )
@@ -832,6 +912,7 @@ mod tests {
             ok: true,
             errors: 0,
             persisted_document_hash: None,
+            input_variable_coordinates: Vec::new(),
         }
     }
 
@@ -1337,5 +1418,94 @@ mod tests {
             .build();
 
         assert!(result.is_ok());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn process_variables_extracts_and_merges_input_coordinates() {
+        use crate::agent::builder::UsageAgentBuilder;
+
+        let schema: graphql_tools::static_graphql::schema::Document = parse_schema(
+            "type Query { random(a: A): String }
+             input A { b: B } input B { c: C } input C { d: String }",
+        )
+        .unwrap();
+        let schema = Arc::new(schema);
+
+        let agent = UsageAgentBuilder::default()
+            .token("Token".into())
+            .endpoint("http://localhost/usage".into())
+            .process_variables(true)
+            .build()
+            .expect("agent builds");
+
+        assert!(agent.process_variables_enabled());
+
+        let operation = "query Random($a: A) { random(a: $a) }";
+        let variables = serde_json::json!({ "a": { "b": { "c": { "d": "D" } } } });
+
+        let input_variable_coordinates =
+            agent.extract_variable_coordinates(operation, &schema, Some(&variables));
+
+        // The granular walk yields the used input fields and their `!` markers.
+        let extracted: std::collections::HashSet<&str> = input_variable_coordinates
+            .iter()
+            .map(String::as_str)
+            .collect();
+        for expected in [
+            "Query.random.a!",
+            "A.b",
+            "A.b!",
+            "B.c",
+            "B.c!",
+            "C.d",
+            "C.d!",
+            "String",
+        ] {
+            assert!(
+                extracted.contains(expected),
+                "missing {expected} in {extracted:?}"
+            );
+        }
+
+        let report = ExecutionReport {
+            schema: schema.clone(),
+            operation_body: operation.to_string(),
+            operation_name: Some("Random".to_string()),
+            operation_type: Some(OperationType::Query),
+            client_name: None,
+            client_version: None,
+            timestamp: 1,
+            duration: Duration::from_millis(1),
+            ok: true,
+            errors: 0,
+            persisted_document_hash: None,
+            input_variable_coordinates,
+        };
+
+        let produced = agent
+            .inner()
+            .produce_report(vec![report])
+            .expect("produce_report");
+        let record = produced.map.values().next().expect("one operation record");
+        let fields: std::collections::HashSet<&str> =
+            record.fields.iter().map(String::as_str).collect();
+
+        // Static base coordinates (no coarse input expansion in granular mode)
+        // unioned with the variable-derived coordinates, deduplicated.
+        let expected: std::collections::HashSet<&str> = [
+            "Query.random",
+            "Query.random.a",
+            "Query.random.a!",
+            "A.b",
+            "A.b!",
+            "B.c",
+            "B.c!",
+            "C.d",
+            "C.d!",
+            "String",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(fields, expected);
     }
 }

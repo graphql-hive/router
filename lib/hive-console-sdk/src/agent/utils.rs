@@ -18,12 +18,20 @@ use graphql_tools::parser::query::{
 };
 use graphql_tools::parser::schema::{Document as SchemaDocument, TypeDefinition};
 
+use crate::agent::variables_plan::{
+    VariablePlanEntry, VariableUsageMarker, VariablesExtractionPlan,
+};
+
 struct SchemaCoordinatesContext<'a> {
     pub schema_coordinates: HashSet<String>,
     pub used_input_fields: HashSet<&'a str>,
     pub input_values_provided: HashMap<String, usize>,
     pub used_variables: HashSet<&'a str>,
     pub variables_with_defaults: HashSet<&'a str>,
+    /// When `process_variables` is enabled, the compiled plan accumulated during
+    /// the visit: extractable variables and the coordinates where they are used.
+    pub plan_entries: Vec<VariablePlanEntry>,
+    pub plan_markers: Vec<VariableUsageMarker>,
     error: Option<Error>,
 }
 
@@ -33,21 +41,36 @@ impl SchemaCoordinatesContext<'_> {
     }
 }
 
+/// Collects the static schema coordinates of an operation (the conservative,
+/// `process_variables = false` behavior). Runtime variables are not consulted.
 pub fn collect_schema_coordinates(
     document: &Document<'static, String>,
     schema: &SchemaDocument<'static, String>,
 ) -> Result<HashSet<String>, Error> {
+    collect_schema_coordinates_with_plan(document, schema, false)
+        .map(|(coordinates, _plan)| coordinates)
+}
+
+/// Collects the static schema coordinates of an operation based on a static plan.
+pub fn collect_schema_coordinates_with_plan(
+    document: &Document<'static, String>,
+    schema: &SchemaDocument<'static, String>,
+    process_variables: bool,
+) -> Result<(HashSet<String>, VariablesExtractionPlan), Error> {
     let mut ctx = SchemaCoordinatesContext {
         schema_coordinates: HashSet::new(),
         used_input_fields: HashSet::new(),
         input_values_provided: HashMap::new(),
         used_variables: HashSet::new(),
         variables_with_defaults: HashSet::new(),
+        plan_entries: Vec::new(),
+        plan_markers: Vec::new(),
         error: None,
     };
     let mut visit_context = OperationVisitorContext::new(document, schema);
     let mut visitor = SchemaCoordinatesVisitor {
         visited_input_object_types: HashSet::new(),
+        process_variables,
     };
 
     visit_document(&mut visitor, document, &mut visit_context, &mut ctx);
@@ -59,7 +82,12 @@ pub fn collect_schema_coordinates(
             visitor.collect_nested_input_type(schema, type_name, &mut ctx.schema_coordinates);
         }
 
-        Ok(ctx.schema_coordinates)
+        let plan = VariablesExtractionPlan {
+            entries: ctx.plan_entries,
+            markers: ctx.plan_markers,
+        };
+
+        Ok((ctx.schema_coordinates, plan))
     }
 }
 
@@ -88,6 +116,7 @@ fn value_exists(v: &Value<String>) -> bool {
 
 struct SchemaCoordinatesVisitor<'a> {
     visited_input_object_types: HashSet<&'a str>,
+    process_variables: bool,
 }
 
 impl<'a> SchemaCoordinatesVisitor<'a> {
@@ -112,7 +141,6 @@ impl<'a> SchemaCoordinatesVisitor<'a> {
                             ctx.schema_coordinates.insert(format!("{}!", coordinate));
                             ctx.schema_coordinates.insert(coordinate);
 
-                            // Recursively process nested objects
                             let field_type_name = Self::resolve_type_name(&field_def.value_type);
                             Self::process_default_value(info, ctx, field_type_name, field_value);
                         }
@@ -290,6 +318,15 @@ impl<'a> OperationVisitor<'a, SchemaCoordinatesContext<'a>> for SchemaCoordinate
 
         let type_name = Self::resolve_type_name(&var.var_type);
 
+        if self.process_variables {
+            ctx.plan_entries.push(VariablePlanEntry {
+                var_name: var.name.clone(),
+                type_name: type_name.to_string(),
+            });
+
+            return;
+        }
+
         if let Some(inner_types) = self.resolve_references(info.schema, type_name) {
             for inner_type in inner_types {
                 ctx.used_input_fields.insert(inner_type);
@@ -334,7 +371,15 @@ impl<'a> OperationVisitor<'a, SchemaCoordinatesContext<'a>> for SchemaCoordinate
             let has_value = match arg_value {
                 Value::Null => false,
                 Value::Variable(var_name) => {
-                    ctx.variables_with_defaults.contains(var_name.as_str())
+                    ctx.plan_markers.push(VariableUsageMarker {
+                        var_name: var_name.clone(),
+                        coordinate: coordinate.clone(),
+                    });
+                    if self.process_variables {
+                        false
+                    } else {
+                        ctx.variables_with_defaults.contains(var_name.as_str())
+                    }
                 }
                 _ => true,
             };
@@ -446,7 +491,15 @@ impl<'a> OperationVisitor<'a, SchemaCoordinatesContext<'a>> for SchemaCoordinate
 
                     let has_value = match value {
                         Value::Variable(var_name) => {
-                            ctx.variables_with_defaults.contains(var_name.as_str())
+                            ctx.plan_markers.push(VariableUsageMarker {
+                                var_name: var_name.clone(),
+                                coordinate: coordinate.clone(),
+                            });
+                            if self.process_variables {
+                                false
+                            } else {
+                                ctx.variables_with_defaults.contains(var_name.as_str())
+                            }
                         }
                         _ => value_exists(value),
                     };
@@ -792,23 +845,31 @@ pub struct ProcessedOperation {
     pub operation: String,
     pub hash: String,
     pub coordinates: Vec<String>,
+    pub variables_plan: VariablesExtractionPlan,
 }
 
 pub struct OperationProcessor {
     cache: Cache<String, Option<ProcessedOperation>>,
+    process_variables: bool,
 }
 
 impl Default for OperationProcessor {
     fn default() -> Self {
-        Self::new()
+        Self::new(false)
     }
 }
 
 impl OperationProcessor {
-    pub fn new() -> OperationProcessor {
+    pub fn new(process_variables: bool) -> OperationProcessor {
         OperationProcessor {
             cache: Cache::new(1000),
+            process_variables,
         }
+    }
+
+    /// Whether this processor runs in granular `processVariables` mode.
+    pub fn process_variables(&self) -> bool {
+        self.process_variables
     }
 
     pub fn process(
@@ -854,8 +915,9 @@ impl OperationProcessor {
             return Ok(None);
         }
 
-        let schema_coordinates_result =
-            collect_schema_coordinates(&parsed, schema).map_err(|e| e.to_string())?;
+        let (schema_coordinates_result, variables_plan) =
+            collect_schema_coordinates_with_plan(&parsed, schema, self.process_variables)
+                .map_err(|e| e.to_string())?;
 
         let schema_coordinates: Vec<String> = Vec::from_iter(schema_coordinates_result);
 
@@ -868,6 +930,7 @@ impl OperationProcessor {
             operation: printed,
             hash,
             coordinates: schema_coordinates,
+            variables_plan,
         }))
     }
 }
@@ -2441,5 +2504,565 @@ mod tests {
 
         assert_eq!(extra.len(), 0, "Extra: {:?}", extra);
         assert_eq!(missing.len(), 0, "Missing: {:?}", missing);
+    }
+}
+
+#[cfg(test)]
+mod js_parity_tests {
+    use std::collections::HashSet;
+
+    use graphql_tools::parser::{parse_query, parse_schema};
+    use serde_json::json;
+
+    use super::collect_schema_coordinates_with_plan;
+
+    fn collect(
+        schema_sdl: &'static str,
+        query: &'static str,
+        process_variables: bool,
+        variables: serde_json::Value,
+    ) -> HashSet<String> {
+        let schema = parse_schema::<String>(schema_sdl).unwrap();
+        let document = parse_query::<String>(query).unwrap();
+
+        let (base, plan) =
+            collect_schema_coordinates_with_plan(&document, &schema, process_variables).unwrap();
+
+        let variables = if variables.is_null() {
+            None
+        } else {
+            Some(variables)
+        };
+        let extra = plan.extract(variables.as_ref(), &schema);
+
+        base.into_iter().chain(extra).collect()
+    }
+
+    #[track_caller]
+    fn assert_coordinates(actual: HashSet<String>, expected: &[&str]) {
+        let expected: HashSet<String> = expected.iter().map(|s| s.to_string()).collect();
+        let missing: Vec<&String> = expected.difference(&actual).collect();
+        let extra: Vec<&String> = actual.difference(&expected).collect();
+        assert!(
+            missing.is_empty() && extra.is_empty(),
+            "missing={missing:?} extra={extra:?}"
+        );
+    }
+
+    #[test]
+    fn single_primitive_field_schema_coordinate() {
+        let result = collect(
+            "type Query { hello: String }",
+            "query { hello }",
+            false,
+            json!(null),
+        );
+        assert_coordinates(result, &["Query.hello"]);
+    }
+
+    #[test]
+    fn two_primitive_field_schema_coordinates() {
+        let result = collect(
+            "type Query { hello: String hi: String }",
+            "query { hello hi }",
+            false,
+            json!(null),
+        );
+        assert_coordinates(result, &["Query.hello", "Query.hi"]);
+    }
+
+    #[test]
+    fn primitive_field_with_arguments_schema_coordinates() {
+        let result = collect(
+            "type Query { hello(message: String): String }",
+            r#"query { hello(message: "world") }"#,
+            false,
+            json!(null),
+        );
+        assert_coordinates(
+            result,
+            &[
+                "Query.hello",
+                "Query.hello.message!",
+                "Query.hello.message",
+                "String",
+            ],
+        );
+    }
+
+    #[test]
+    fn leaf_field_enum() {
+        let result = collect(
+            "type Query { hello: Option } enum Option { World You }",
+            "query { hello }",
+            false,
+            json!(null),
+        );
+        assert_coordinates(result, &["Query.hello", "Option.World", "Option.You"]);
+    }
+
+    #[test]
+    fn interface_selection_set_no_exact_resolutions() {
+        let schema = "
+            type Query { node: Node }
+            interface Node { id: ID! }
+            type User implements Node { id: ID! }
+            type Animal implements Node { id: ID! }
+        ";
+        let result = collect(schema, "query { node { id } }", false, json!(null));
+        assert_coordinates(result, &["Query.node", "Node.id"]);
+    }
+
+    #[test]
+    fn inline_fragment_spread_contains_exact_resolutions() {
+        let schema = "
+            type Query { node: Node }
+            interface Node { id: ID! }
+            type User implements Node { id: ID! }
+            type Animal implements Node { id: ID! }
+        ";
+        let result = collect(
+            schema,
+            "query { node { id ... on User { id } } }",
+            false,
+            json!(null),
+        );
+        assert_coordinates(result, &["Query.node", "Node.id", "User.id"]);
+    }
+
+    #[test]
+    fn custom_scalar_as_argument() {
+        let result = collect(
+            "type Query { random(json: JSON): String } scalar JSON",
+            r#"query { random(json: { key: { value: "value" } }) }"#,
+            false,
+            json!(null),
+        );
+        assert_coordinates(
+            result,
+            &[
+                "Query.random",
+                "Query.random.json",
+                "Query.random.json!",
+                "JSON",
+            ],
+        );
+    }
+
+    #[test]
+    fn custom_scalar_in_input_object_field() {
+        let schema = "
+            type Query { random(input: I): String }
+            input I { json: JSON }
+            scalar JSON
+        ";
+        let result = collect(
+            schema,
+            r#"query { random(input: { json: { key: { value: "value" } } }) }"#,
+            false,
+            json!(null),
+        );
+        assert_coordinates(
+            result,
+            &[
+                "Query.random",
+                "Query.random.input",
+                "Query.random.input!",
+                "I.json",
+                "I.json!",
+                "JSON",
+            ],
+        );
+    }
+
+    #[test]
+    fn deeply_nested_inputs() {
+        let schema = "
+            type Query { random(a: A): String }
+            input A { b: B }
+            input B { c: C }
+            input C { d: String }
+        ";
+        let result = collect(
+            schema,
+            r#"query { random(a: { b: { c: { d: "D" } } }) }"#,
+            false,
+            json!(null),
+        );
+        assert_coordinates(
+            result,
+            &[
+                "Query.random",
+                "Query.random.a",
+                "Query.random.a!",
+                "A.b",
+                "A.b!",
+                "B.c",
+                "B.c!",
+                "C.d",
+                "C.d!",
+                "String",
+            ],
+        );
+    }
+
+    #[test]
+    fn required_variable_as_argument() {
+        let result = collect(
+            "type Query { random(a: String): String }",
+            "query Foo($a: String!) { random(a: $a) }",
+            true,
+            json!({ "a": "B" }),
+        );
+        assert_coordinates(
+            result,
+            &[
+                "Query.random",
+                "Query.random.a",
+                "Query.random.a!",
+                "String",
+            ],
+        );
+    }
+
+    #[test]
+    fn unused_variable_as_nullable_argument() {
+        let result = collect(
+            "type Query { random(a: String): String }",
+            "query Foo($a: String) { random(a: $a) }",
+            true,
+            json!({}),
+        );
+        assert_coordinates(result, &["Query.random", "Query.random.a", "String"]);
+    }
+
+    #[test]
+    fn unused_nullable_argument() {
+        let result = collect(
+            "type Query { random(a: String): String }",
+            "query Foo { random }",
+            true,
+            json!(null),
+        );
+        assert_coordinates(result, &["Query.random"]);
+    }
+
+    #[test]
+    fn unused_nullable_input_field() {
+        let schema = "
+            type Query { random(a: A): String }
+            input A { b: B }
+            input B { c: C }
+            input C { d: String }
+        ";
+        let result = collect(
+            schema,
+            "query Foo { random(a: { b: null }) }",
+            true,
+            json!(null),
+        );
+        assert_coordinates(
+            result,
+            &[
+                "Query.random",
+                "Query.random.a",
+                "Query.random.a!",
+                "A.b",
+                "B.c",
+                "C.d",
+                "String",
+            ],
+        );
+    }
+
+    #[test]
+    fn required_variable_as_input_field() {
+        let schema = "
+            type Query { random(a: A): String }
+            input A { b: String }
+        ";
+        let result = collect(
+            schema,
+            "query Foo($b: String!) { random(a: { b: $b }) }",
+            true,
+            json!({ "b": "B" }),
+        );
+        assert_coordinates(
+            result,
+            &[
+                "Query.random",
+                "Query.random.a",
+                "Query.random.a!",
+                "A.b",
+                "A.b!",
+                "String",
+            ],
+        );
+    }
+
+    #[test]
+    fn undefined_variable_as_input_field() {
+        let schema = "
+            type Query { random(a: A): String }
+            input A { b: String }
+        ";
+        let result = collect(
+            schema,
+            "query Foo($b: String!) { random(a: { b: $b }) }",
+            true,
+            json!(null),
+        );
+        assert_coordinates(
+            result,
+            &[
+                "Query.random",
+                "Query.random.a",
+                "Query.random.a!",
+                "A.b",
+                "String",
+            ],
+        );
+    }
+
+    #[test]
+    fn deeply_nested_variables_process_variables_true() {
+        let schema = "
+            type Query { random(a: A): String }
+            input A { b: B }
+            input B { c: C }
+            input C { d: String }
+        ";
+        let result = collect(
+            schema,
+            "query Random($a: A) { random(a: $a) }",
+            true,
+            json!({ "a": { "b": { "c": { "d": "D" } } } }),
+        );
+        assert_coordinates(
+            result,
+            &[
+                "Query.random",
+                "Query.random.a",
+                "Query.random.a!",
+                "A.b",
+                "A.b!",
+                "B.c",
+                "B.c!",
+                "C.d",
+                "C.d!",
+                "String",
+            ],
+        );
+    }
+
+    #[test]
+    fn deeply_nested_variables_process_variables_false() {
+        let schema = "
+            type Query { random(a: A): String }
+            input A { b: B }
+            input B { c: C }
+            input C { d: String }
+        ";
+        let result = collect(
+            schema,
+            "query Random($a: A) { random(a: $a) }",
+            false,
+            json!({ "a": { "b": { "c": { "d": "D" } } } }),
+        );
+        assert_coordinates(
+            result,
+            &[
+                "Query.random",
+                "Query.random.a",
+                "Query.random.a!",
+                "A.b",
+                "B.c",
+                "C.d",
+                "String",
+            ],
+        );
+    }
+
+    #[test]
+    fn aliased_field() {
+        let schema = "
+            type Query { random(a: String): String }
+            input C { d: String }
+        ";
+        let result = collect(
+            schema,
+            "query Random($a: String) { foo: random(a: $a) }",
+            true,
+            json!({ "a": "B" }),
+        );
+        assert_coordinates(
+            result,
+            &[
+                "Query.random",
+                "Query.random.a",
+                "Query.random.a!",
+                "String",
+            ],
+        );
+    }
+
+    #[test]
+    fn multiple_fields_with_mixed_nullability() {
+        let schema = "
+            type Query { random(a: String): String }
+            input C { d: String }
+        ";
+        let result = collect(
+            schema,
+            r#"query Random($a: String) { nullable: random(a: $a) nonnullable: random(a: "B") }"#,
+            false,
+            json!({ "a": null }),
+        );
+        assert_coordinates(
+            result,
+            &[
+                "Query.random",
+                "Query.random.a",
+                "Query.random.a!",
+                "String",
+            ],
+        );
+    }
+
+    #[test]
+    fn nested_fragment_with_client_side_directive() {
+        let schema = "
+            type Query {
+                project(selector: ProjectSelectorInput!): Project
+                projectsByType(type: ProjectType!): [Project!]!
+                projectsByTypes(types: [ProjectType!]!): [Project!]!
+                projects(filter: FilterInput, and: [FilterInput!]): [Project!]!
+                projectsByMetadata(metadata: JSON): [Project!]!
+            }
+            type Mutation {
+                deleteProject(selector: ProjectSelectorInput!): DeleteProjectPayload!
+            }
+            input ProjectSelectorInput { organization: ID! project: ID! }
+            input FilterInput {
+                type: ProjectType
+                pagination: PaginationInput
+                order: [ProjectOrderByInput!]
+                metadata: JSON
+            }
+            input PaginationInput { limit: Int offset: Int }
+            input ProjectOrderByInput { field: String! direction: OrderDirection }
+            enum OrderDirection { ASC DESC }
+            type ProjectSelector { organization: ID! project: ID! }
+            type DeleteProjectPayload { selector: ProjectSelector! deletedProject: Project! }
+            type Project {
+                id: ID!
+                cleanId: ID!
+                name: String!
+                type: ProjectType!
+                buildUrl: String
+                validationUrl: String
+            }
+            enum ProjectType { FEDERATION STITCHING SINGLE }
+            scalar JSON
+        ";
+        let query = "
+            query getProjects($limit: Int!, $type: ProjectType!, $includeName: Boolean!) {
+                projects(filter: { pagination: { limit: $limit }, type: $type }) {
+                    id
+                    ...NestedFragment
+                }
+            }
+            fragment NestedFragment on Project {
+                ...IncludeNameFragment @include(if: $includeName)
+            }
+            fragment IncludeNameFragment on Project {
+                name
+            }
+        ";
+        let result = collect(schema, query, false, json!({ "includeName": true }));
+        assert_coordinates(
+            result,
+            &[
+                "Boolean",
+                "FilterInput.pagination",
+                "FilterInput.pagination!",
+                "FilterInput.type",
+                "Int",
+                "PaginationInput.limit",
+                "Project.id",
+                "Project.name",
+                "ProjectType.FEDERATION",
+                "ProjectType.SINGLE",
+                "ProjectType.STITCHING",
+                "Query.projects",
+                "Query.projects.filter",
+                "Query.projects.filter!",
+            ],
+        );
+    }
+
+    // Extra coverage beyond the JS spec suite, for behaviors the spec defines but
+    // the JS tests do not exercise directly: list normalization (§2.1) and
+    // whole-enum expansion for an enum arriving via a variable (§2.4).
+
+    #[test]
+    fn list_of_input_objects_variable() {
+        let schema = "
+            type Query { search(filters: [Filter!]): String }
+            input Filter { field: String }
+        ";
+        let result = collect(
+            schema,
+            "query Q($f: [Filter!]) { search(filters: $f) }",
+            true,
+            json!({ "f": [{ "field": "a" }, { "field": "b" }] }),
+        );
+        assert_coordinates(
+            result,
+            &[
+                "Query.search",
+                "Query.search.filters",
+                "Query.search.filters!",
+                "Filter.field",
+                "Filter.field!",
+                "String",
+            ],
+        );
+    }
+
+    #[test]
+    fn enum_via_variable_expands_whole_enum() {
+        let schema = "
+            type Query { items(status: Status): String }
+            enum Status { ACTIVE INACTIVE }
+        ";
+        let result = collect(
+            schema,
+            "query Q($s: Status) { items(status: $s) }",
+            true,
+            json!({ "s": "ACTIVE" }),
+        );
+        assert_coordinates(
+            result,
+            &[
+                "Query.items",
+                "Query.items.status",
+                "Query.items.status!",
+                "Status.ACTIVE",
+                "Status.INACTIVE",
+            ],
+        );
+    }
+
+    #[test]
+    fn input_object_variable_absent_marks_bare_type() {
+        // A present variables object where the input-object variable's key is
+        // absent yields only the bare type name (§2.2 falsy branch), no fields.
+        let schema = "
+            type Query { random(a: A): String }
+            input A { b: String }
+        ";
+        let result = collect(schema, "query Q($a: A) { random(a: $a) }", true, json!({}));
+        assert_coordinates(result, &["Query.random", "Query.random.a", "A"]);
     }
 }

@@ -9,6 +9,7 @@ use futures::StreamExt;
 use hive_console_sdk::agent::usage_agent::RequestDetails;
 use hive_console_sdk::agent::usage_agent::UsageAgentExt;
 use hive_console_sdk::agent::usage_agent::{ExecutionReport, UsageAgent};
+use hive_console_sdk::agent::variables_plan::{JsonView, VariablesPayload};
 use hive_console_sdk::graphql_tools::parser::parse_schema;
 use hive_console_sdk::graphql_tools::parser::schema::Document;
 use http::HeaderValue;
@@ -115,6 +116,13 @@ pub struct Config {
     /// Frequency of flushing the buffer to the server
     /// Default: 5 seconds
     flush_interval: Option<u64>,
+    /// Process operation variables to report input-object and enum usage based on
+    /// the fields actually present in each request's variables, instead of
+    /// conservatively marking every field of the declared type. The content of
+    /// the variables is never sent — only the schema coordinates it touches.
+    ///
+    /// Default: false
+    process_variables: Option<bool>,
 }
 
 impl UsagePlugin {
@@ -179,6 +187,75 @@ impl UsagePlugin {
             },
         );
     }
+
+    /// Extracts the schema coordinates contributed by a request's runtime
+    /// variables for `processVariables` usage reporting.
+    ///
+    /// Returns an empty vector when `processVariables` is disabled
+    fn collect_input_variable_coordinates(
+        agent: &UsageAgent,
+        schema: &Document<'static, String>,
+        req: &supergraph::Request,
+    ) -> Vec<String> {
+        if !agent.process_variables_enabled() {
+            return Vec::new();
+        }
+        let body = req.supergraph_request.body();
+        let Some(operation_body) = body.query.as_deref() else {
+            return Vec::new();
+        };
+        agent.extract_variable_coordinates(
+            operation_body,
+            schema,
+            Some(&NativeVariables(&body.variables)),
+        )
+    }
+}
+
+struct NativeVariables<'a>(&'a serde_json_bytes::Map<serde_json_bytes::ByteString, serde_json_bytes::Value>);
+
+impl VariablesPayload for NativeVariables<'_> {
+    type Value<'a>
+        = NativeJsonView<'a>
+    where
+        Self: 'a;
+
+    fn get(&self, key: &str) -> Option<Self::Value<'_>> {
+        self.0.get(key).map(NativeJsonView)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct NativeJsonView<'a>(&'a serde_json_bytes::Value);
+
+impl JsonView for NativeJsonView<'_> {
+    fn is_null(self) -> bool {
+        self.0.is_null()
+    }
+
+    fn is_object(self) -> bool {
+        self.0.is_object()
+    }
+
+    fn is_array(self) -> bool {
+        self.0.is_array()
+    }
+
+    fn visit_entries(self, visit: &mut dyn FnMut(&str, Self)) {
+        if let Some(map) = self.0.as_object() {
+            for (key, value) in map.iter() {
+                visit(key.as_str(), NativeJsonView(value));
+            }
+        }
+    }
+
+    fn visit_items(self, visit: &mut dyn FnMut(Self)) {
+        if let Some(items) = self.0.as_array() {
+            for value in items {
+                visit(NativeJsonView(value));
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -242,6 +319,10 @@ impl Plugin for UsagePlugin {
                 agent = agent.exclude_expression(expression.clone());
             }
 
+            if let Some(process_variables) = user_config.process_variables {
+                agent = agent.process_variables(process_variables);
+            }
+
             let agent = agent.build().map_err(Box::new)?;
 
             let cancellation_token_for_interval = cancellation_token.clone();
@@ -290,26 +371,38 @@ impl Plugin for UsagePlugin {
             Some(agent) => {
                 ServiceBuilder::new()
                     .map_future_with_request_data(
-                        move |req: &supergraph::Request| {
-                            Self::populate_context(config.clone(), req);
+                        {
+                            let agent = agent.clone();
+                            let schema = schema.clone();
+                            move |req: &supergraph::Request| {
+                                Self::populate_context(config.clone(), req);
 
-                            let request_details = RequestDetails {
-                                method: req.supergraph_request.method().clone(),
-                                url: req.supergraph_request.uri().clone(),
-                                headers: req
-                                    .supergraph_request
-                                    .headers()
-                                    .iter()
-                                    .filter_map(|(k, v)| {
-                                        v.to_str()
-                                            .ok()
-                                            .map(|value| (k.to_string(), value.to_string()))
-                                    })
-                                    .collect(),
-                            };
-                            (request_details, req.context.clone())
+                                let request_details = RequestDetails {
+                                    method: req.supergraph_request.method().clone(),
+                                    url: req.supergraph_request.uri().clone(),
+                                    headers: req
+                                        .supergraph_request
+                                        .headers()
+                                        .iter()
+                                        .filter_map(|(k, v)| {
+                                            v.to_str()
+                                                .ok()
+                                                .map(|value| (k.to_string(), value.to_string()))
+                                        })
+                                        .collect(),
+                                };
+
+                                let input_variable_coordinates =
+                                    Self::collect_input_variable_coordinates(&agent, &schema, req);
+                                (request_details, req.context.clone(), input_variable_coordinates)
+                            }
                         },
-                        move |(request_details, ctx): (RequestDetails, Context), fut| {
+                        move |(request_details, ctx, input_variable_coordinates): (
+                            RequestDetails,
+                            Context,
+                            Vec<String>,
+                        ),
+                              fut| {
                             let agent = agent.clone();
                             let schema = schema.clone();
                             async move {
@@ -367,6 +460,7 @@ impl Plugin for UsagePlugin {
                                                     operation_body,
                                                     operation_name,
                                                     persisted_document_hash,
+                                                    input_variable_coordinates,
                                                     ..Default::default()
                                                 }, Some(request_details))
                                                 .await;
@@ -397,6 +491,7 @@ impl Plugin for UsagePlugin {
                                                         operation_body: operation_body.clone(),
                                                         operation_name: operation_name.clone(),
                                                         persisted_document_hash: persisted_document_hash.clone(),
+                                                        input_variable_coordinates: input_variable_coordinates.clone(),
                                                         ..Default::default()
                                                     };
                                                     let request_details = request_details.clone();

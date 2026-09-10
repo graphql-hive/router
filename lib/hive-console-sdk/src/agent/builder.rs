@@ -32,6 +32,7 @@ pub struct UsageAgentBuilder {
     exclude: Option<BuilderExclude>,
     sample_rate: f64,
     at_least_once: Option<AtLeastOnceSamplingConfig>,
+    process_variables: bool,
 }
 
 #[derive(Clone)]
@@ -67,6 +68,7 @@ impl Default for UsageAgentBuilder {
             exclude: None,
             sample_rate: 1.0,
             at_least_once: None,
+            process_variables: false,
         }
     }
 }
@@ -150,6 +152,20 @@ impl UsageAgentBuilder {
         self.sample_rate = sample_rate.clamp(0.0, 1.0);
         self
     }
+
+    /// Enables granular processing of operation variables (`processVariables`).
+    ///
+    /// When enabled, input-object and enum variables are reported based on the
+    /// fields actually present in each request's variables payload, instead of
+    /// conservatively marking every field of the declared type. The content of
+    /// the variables is never sent — only the schema coordinates it touches.
+    ///
+    /// Defaults to `false`.
+    pub fn process_variables(mut self, process_variables: bool) -> Self {
+        self.process_variables = process_variables;
+        self
+    }
+
     pub fn exclude_operation_names(mut self, operation_names: Vec<String>) -> Self {
         if !operation_names.is_empty() {
             self.exclude = Some(BuilderExclude::OperationNames(operation_names));
@@ -250,7 +266,7 @@ impl UsageAgentBuilder {
         Ok(UsageAgentInner {
             endpoint,
             buffer,
-            processor: OperationProcessor::new(),
+            processor: OperationProcessor::new(self.process_variables),
             client,
             flush_interval: self.flush_interval,
             circuit_breaker,
