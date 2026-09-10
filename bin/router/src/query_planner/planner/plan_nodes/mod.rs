@@ -141,11 +141,11 @@ pub struct FetchNode<S: PlanState = Executable> {
     pub operation: S::Operation,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_scalar_paths: Option<CustomScalarPaths>,
-    /// The entity key selection used by execution. Its JSON must match [`SelectionSet`].
+    /// The entity key selection that execution uses. Its JSON must match [`SelectionSet`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requires: Option<RequiresSelectionSet>,
-    /// The same selection, parsed, kept only while planning: batching expands fragment spreads
-    /// against it. A box keeps the field small in the state that has one.
+    /// The same selection in parsed form, kept only while planning. Batching needs it to expand
+    /// fragment spreads. It is boxed so the field stays small in the state that has one.
     #[serde(skip)]
     pub planner_requires: S::Requires,
     #[serde(skip_serializing_if = "Option::is_none")]

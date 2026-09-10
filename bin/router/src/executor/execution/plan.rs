@@ -982,8 +982,8 @@ impl<'exec> Executor<'exec> {
                 let mut representation_hash_to_index: AHashMap<u64, usize> = AHashMap::new();
                 let arena = bumpalo::Bump::new();
 
-                // The `requires` selections to walk for each entity. Take the view once rather
-                // than per entity; it borrows the plan, so this is not new work.
+                // The `requires` selections to walk for each entity. Take the view once here
+                // instead of once per entity. It only borrows the plan, so this costs nothing.
                 let required_selections = requires_nodes.root_selections();
 
                 traverse_and_callback(
@@ -1998,7 +1998,7 @@ mod tests {
                 .clone()
         }
 
-        /// The parser's selection set, lowered the way the planner lowers it.
+        /// The selection set from the parser, converted the same way the planner converts it.
         fn requires_from(selection: query::SelectionSet<'_, String>) -> RequiresSelectionSet {
             let set: crate::query_planner::ast::selection_set::SelectionSet = selection.into();
             RequiresSelectionSet::from(&set)

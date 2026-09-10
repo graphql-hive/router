@@ -419,8 +419,8 @@ mod tests {
         selection_set.into()
     }
 
-    /// Raw JSON, including key order. The output must match `SelectionSet`, so these tests compare
-    /// the actual text instead of sorting keys first.
+    /// Compares the raw JSON text, including the order of the keys. The output has to match
+    /// `SelectionSet` exactly, so these tests do not sort the keys before comparing.
     fn json<T: Serialize>(value: &T) -> String {
         serde_json::to_string(value).expect("serializes")
     }
@@ -449,8 +449,9 @@ mod tests {
         }
     }
 
-    /// The optimizer expands spreads before caching, so cached plans should not contain one. If a
-    /// spread reaches serialization, it must fail instead of producing invalid `SelectionSet` JSON.
+    /// The optimizer expands fragment spreads before a plan is cached, so a cached plan should
+    /// never contain one. If a spread does reach serialization, it must fail rather than write
+    /// invalid `SelectionSet` JSON.
     #[test]
     fn serializing_a_fragment_spread_fails_the_way_the_selection_set_does() {
         let set = selection_set_from_str("id ...Foo");
