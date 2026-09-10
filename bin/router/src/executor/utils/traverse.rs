@@ -218,7 +218,7 @@ pub fn traverse_and_callback<'a, Callback>(
 mod tests {
     use crate::query_planner::planner::plan_nodes::{FlattenNodePath, PathSegment, TypeCondition};
 
-    /// `@` is a list step, `|A|B` a type condition, anything else a field.
+    /// `@` means a list step, `|A|B` means a type condition, and anything else is a field.
     fn path(steps: &[&str]) -> FlattenNodePath {
         steps
             .iter()

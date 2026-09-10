@@ -7,18 +7,18 @@ use crate::query_planner::ast::merge_path::{MergePath, Segment};
 
 use super::FetchNodePathSegment;
 
-/// Uses the tagged format expected by `lib/node-addon` and `hive-expose-query-plan`:
+/// Uses the tagged format that `lib/node-addon` and `hive-expose-query-plan` expect:
 /// `{"Field": name}`, `{"TypeCondition": [..]}`, and a plain `"@"` for a list step.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PathSegment {
     Field(Box<str>),
-    /// A box keeps every path step small.
+    /// Boxing this keeps every path step small.
     TypeCondition(Box<TypeCondition>),
     #[serde(rename = "@")]
     List,
 }
 
-/// Type names that an entity may match, sorted with duplicates removed.
+/// The type names an entity may match. Sorted, with duplicates removed.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct TypeCondition {
@@ -26,7 +26,8 @@ pub struct TypeCondition {
 }
 
 impl TypeCondition {
-    /// Sort names and remove duplicates so equal sets compare, hash, and serialize the same way.
+    /// Sorts the names and removes duplicates, so that two sets holding the same names
+    /// compare, hash, and serialize the same way.
     pub fn from_names<'a>(names: impl IntoIterator<Item = &'a str>) -> Self {
         let unique: BTreeSet<&str> = names.into_iter().collect();
         Self {
@@ -139,7 +140,7 @@ impl Display for ResponsePathRef<'_> {
         let mut steps = self.0.iter().peekable();
         while let Some(step) = steps.next() {
             write!(f, "{step}")?;
-            // A type condition belongs to the step before it, so do not add a separator.
+            // A type condition belongs to the step before it, so no separator is added.
             if let Some(peeked) = steps.peek() {
                 if !matches!(peeked, PathSegment::TypeCondition(_)) {
                     write!(f, ".")?;
