@@ -100,6 +100,10 @@ pub fn record_graphql_document(span: &Span, document: &str) {
         let context = span.context();
         let context_span = context.span();
         let span_context = context_span.span_context();
+        // only record the document if the span is sampled
+        if !span_context.is_sampled() {
+            return;
+        }
         let _ = HIVE_TRACE_DOCUMENTS.try_with(|documents| {
             documents.0.lock().unwrap().insert(
                 (span_context.trace_id(), span_context.span_id()),
