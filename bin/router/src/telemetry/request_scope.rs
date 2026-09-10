@@ -8,7 +8,7 @@ use crate::telemetry::{
 };
 
 /// Captures per-request task-locals for work that outlives the request future, such as subscriptions.
-pub struct RequestTaskScope {
+pub(crate) struct RequestTaskScope {
     identifiers: Option<Arc<RequestIdentifiers>>,
     summary: Option<Arc<RequestSummary>>,
     hive_trace_documents: Option<Arc<HiveTraceDocuments>>,
