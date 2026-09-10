@@ -55,9 +55,9 @@ fn pop(error_path: &mut Option<GraphQLErrorPath>) {
     }
 }
 
-/// Walks `remaining_path` carrying one error path that is pushed and popped as it descends,
-/// rather than cloning the path built so far at every step. Only the callback needs an owned
-/// path, so only the callback pays for one.
+/// Walks `remaining_path` while carrying a single error path. Steps are added as the walk goes
+/// deeper and removed as it comes back, instead of copying the path built so far at every step.
+/// Only the callback needs to own a path, so only the callback allocates one.
 fn walk_mut<'a, Callback>(
     current_data: &mut Value<'a>,
     remaining_path: &[FlattenNodePathSegment],
@@ -142,8 +142,8 @@ fn walk_mut<'a, Callback>(
                 // If the current data is an array, we need to check each item
                 for (index, item) in arr.iter_mut().enumerate() {
                     push_index(error_path, index);
-                    // Use `remaining_path`, not the rest, so the type condition is checked again
-                    // for each item.
+                    // Pass `remaining_path` rather than the rest of it, so the type condition
+                    // is checked again for each item.
                     walk_mut(item, remaining_path, schema_metadata, error_path, callback);
                     pop(error_path);
                 }
@@ -343,9 +343,9 @@ mod tests {
         );
     }
 
-    /// The walker now shares one mutable error path across siblings instead of giving each
-    /// recursion its own clone, so a missing `pop` would leak steps from one entity into the
-    /// next. Type conditions are the delicate case: they descend without adding a step.
+    /// The walker shares one error path across siblings instead of giving each level its own
+    /// copy. If a step is added and not removed again, it would leak from one entity into the
+    /// next. Type conditions are the tricky case, because they go deeper without adding a step.
     #[test]
     fn error_paths_survive_type_conditions_and_sibling_branches() {
         let mut data = Value::Object(vec![(

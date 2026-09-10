@@ -4,13 +4,18 @@ hive-router: patch
 
 # Error paths in a subgraph response are no longer rebuilt at every step
 
-When a subgraph response carries errors, the router walks the response data building a GraphQL error
-path for each entity it visits. It built that path by cloning: the whole path accumulated so far was
-copied, and one segment appended, once per level per visited item. The path is now carried through
-the walk and pushed and popped as it descends, so only the leaf - the one place that needs to own a
-path - pays for one.
+When a subgraph response contains errors, the router walks the response data and builds a GraphQL
+error path for each entity it visits.
 
-A transcription of the two walks over the same data, counting allocations, puts the saving at around
-a third for the shallow two-level paths that dominate, and at half to three fifths for deeper ones.
-This only runs when a subgraph returns an error; responses without errors build no path in either
-form.
+It used to build that path by copying. At every level, for every item it visited, it copied the
+whole path built so far and added one segment.
+
+The path is now carried through the walk. A segment is added when the walk goes deeper, and
+removed when it comes back. Only the leaf needs to own a path, so only the leaf allocates one.
+
+Counting the allocations both versions make over the same data, the saving is around a third for
+the shallow two-level paths that are most common, and between a half and three fifths for deeper
+ones.
+
+This only runs when a subgraph returns an error. Responses without errors build no path in either
+version.
