@@ -381,6 +381,7 @@ pub enum AggregationAlgo {
     /// - `no-store` or `no-cache` from any subgraph poisons the result.
     /// - `private` is preserved if any subgraph sets it and overrides `public`.
     /// - `max-age` and `s-maxage` use the minimum effective freshness lifetime.
+    /// - `stale-while-revalidate` and `stale-if-error` use their minimum durations.
     /// - `public` and `immutable` are only kept if every provided value carries them.
     /// - Revalidation and transformation restrictions are kept if any value carries them.
     /// - A malformed or unmodeled directive poisons the result to `no-store, no-cache`,

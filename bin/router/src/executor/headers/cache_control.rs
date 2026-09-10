@@ -41,6 +41,7 @@ fn parse_u32(token: &str, value: Option<&str>) -> Result<u32, ()> {
     match value {
         Some(v) => v.parse::<u32>().map_err(|_| {
             warn!(
+                target: targets::CACHE_CONTROL,
                 directive = token,
                 value = v,
                 "cache-control directive has non-numeric value"
@@ -48,6 +49,7 @@ fn parse_u32(token: &str, value: Option<&str>) -> Result<u32, ()> {
         }),
         None => {
             warn!(
+                target: targets::CACHE_CONTROL,
                 directive = token,
                 "cache-control directive is missing a value"
             );
