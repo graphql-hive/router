@@ -4,14 +4,17 @@ hive-router: patch
 
 # Subgraph request text is stored compactly and no longer re-rendered
 
-A subgraph request is rendered once when the plan is built and never appended to, but it was stored
-in a `String`, which keeps whatever capacity its growth last landed on. Across the fetches in this
-repository's benchmark plan that was 1484 bytes held for 897 bytes of text - 39.6% of the storage
-was slack. It is now stored as a boxed string, which keeps exactly the bytes. The stored subgraph
-operation goes from 40 to 32 bytes, a stored fetch from 216 to 208.
+The text of a subgraph request is built once when the plan is built, and never added to after
+that. It was stored in a `String`, which can hold more memory than the text needs.
+
+Across the fetches in this repository's benchmark plan, 1484 bytes were held for 897 bytes of
+text. That means 39.6% of the memory was unused.
+
+The text is now stored as a boxed string, which holds exactly the bytes it needs. A stored
+subgraph operation goes from 40 to 32 bytes, and a stored fetch from 216 to 208.
 
 ## Fixes
 
-- **Returning a query plan re-rendered every subgraph request from its parsed form** instead of
-  serializing the text already stored. This happened on every `hive-expose-query-plan` response and
-  every `node-addon` `plan()` call. The output is unchanged.
+- **Returning a query plan rebuilt the text of every subgraph request from its parsed form**
+  instead of using the text that was already stored. This happened on every
+  `hive-expose-query-plan` response and every `node-addon` `plan()` call. The output is unchanged.
