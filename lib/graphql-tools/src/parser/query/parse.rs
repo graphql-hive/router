@@ -92,7 +92,7 @@ fn value<'a, const ALLOW_VARIABLES: bool, S: Text<'a>>(
                 Ok(Value::Null)
             }
             _ => {
-                let _ = c.next();
+                c.next()?;
                 Ok(Value::Enum(S::Value::from(tok.value)))
             }
         },
@@ -165,7 +165,7 @@ fn value<'a, const ALLOW_VARIABLES: bool, S: Text<'a>>(
             }
             _ => {
                 let pos = c.pos();
-                let _ = c.next();
+                c.next()?;
                 Err(unexpected_err(pos, tok))
             }
         },
@@ -255,15 +255,16 @@ fn selection_set<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, SelectionSe
         return Err(unexpected_with_expected(pos, tok, "Name or ..."));
     }
     let mut items = Vec::new();
+    let end;
     loop {
         let next = c.peek()?;
         if next.kind == Kind::Punctuator && next.value == "}" {
+            end = c.pos();
             c.next()?;
             break;
         }
         items.push(selection::<S>(c)?);
     }
-    let end = c.pos();
     Ok(SelectionSet {
         span: (start, end),
         items,
@@ -634,6 +635,20 @@ mod tests {
             5,
         )
         .is_err());
+    }
+
+    #[test]
+    fn selection_span_ends_at_closing_brace() {
+        let document = parse_query::<String>("{ field } # trailing\n").unwrap();
+        let Definition::Operation(OperationDefinition::SelectionSet(selection_set)) =
+            &document.definitions[0]
+        else {
+            panic!("expected a selection set");
+        };
+        assert_eq!(
+            selection_set.span.1,
+            crate::parser::Pos { line: 1, column: 9 }
+        );
     }
 }
 
