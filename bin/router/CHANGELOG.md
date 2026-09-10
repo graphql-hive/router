@@ -116,6 +116,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.2.11 (2026-09-10)
+
+### Features
+
+#### Add native Datadog tracing
+
+Adds native Datadog tracing through the Datadog Agent while preserving the Router's existing OpenTelemetry instrumentation, propagation, and lifecycle handling. The Datadog-backed provider supports Router resources and span limits, native sampling rules and rate limits, all-request APM statistics, and mixed OTLP, stdout, and Hive exporters.
+
+Configure the integration with the new `datadog` tracing exporter.
+
+```yaml
+telemetry:
+  tracing:
+    collect:
+      # detailed traces are sampled, but request, error, and latency
+      # statistics still cover all recorded requests
+      sampling: 0.01
+    exporters:
+      - kind: datadog
+        endpoint: http://datadog-agent:8126
+```
+
+#### BREAKING: Make query plans read-only in plugins
+
+Plugins can still inspect generated query plans in `on_query_plan`, but can no longer replace the plan that the router executes.
+
+### Fixes
+
+#### Improve restrictive `Cache-Control` merging
+
+The router now preserves and safely merges standard `Cache-Control` directives instead of discarding an entire subgraph value when it contains a directive that was not previously modeled. This prevents restrictions such as `no-store` or `private` from being lost when they appear alongside another standard directive.
+
+The merge now supports `s-maxage`, `stale-while-revalidate`, and `stale-if-error` by selecting the minimum applicable duration. `s-maxage` is merged with awareness that shared caches prefer it over `max-age`, so mixed directives cannot extend the effective shared-cache lifetime.
+
+`private` now overrides `public` without being escalated to `no-store, no-cache`. Other directives are retained, allowing results such as `private, max-age=50` to remain available to private caches while still preventing shared-cache storage.
+
+The router also preserves `proxy-revalidate`, `must-understand`, and `no-transform` when any subgraph sets them. `immutable` is preserved only when every subgraph sets it, like `public`. Qualified `no-cache="field"` and `private="field"` forms are treated as their more restrictive unqualified forms.
+
+Unknown directives, missing or non-numeric duration values, and other malformed directives now conservatively produce `no-store, no-cache` instead of allowing the affected subgraph value to be ignored.
+
+Closes https://github.com/graphql-hive/router/issues/1373
+
+#### Query costs could use the wrong plan with progressive `@override`
+
+The demand control cost formula was cached using only the operation hash. The query plan uses a larger cache key. It also includes the override context and any operation changes made by plugins.
+Because of this, two requests could use different query plans but still share the same cost formula. Whichever formula was created first was reused, including how the cost was split between subgraphs.
+
+The cost formula is now stored together with the query plan it was created from. This makes sure a formula is only used with the correct plan. The separate formula cache has been removed.
+
+Queries that differ only by introspection fields still share the same formula because they also share the same query plan.
+
+### Removed
+
+The `cost.formula_cache_hit` attribute has been removed from operation spans. It was never recorded, and the separate formula cache no longer exists. The existing plan cache hit attribute already provides this information.
+
 ## 0.2.10 (2026-09-09)
 
 ### Features
