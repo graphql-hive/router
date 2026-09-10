@@ -493,6 +493,22 @@ pub async fn graphql_request_handler(
         let request_context = req.read_request_context()?;
         let path_params = req.match_info().into();
 
+        // For `processVariables` usage reporting, extract the input coordinates
+        // from the request variables now
+        let input_variable_coordinates = supergraph
+            .runtime
+            .hive_usage_agent
+            .as_ref()
+            .map(|hive_usage_agent| {
+                usage_reporting::collect_input_variable_coordinates(
+                    hive_usage_agent,
+                    &parser_payload.minified_document,
+                    &supergraph.snapshot.supergraph_schema,
+                    &graphql_params.variables,
+                )
+            })
+            .unwrap_or_default();
+
         let exec = |guard| {
             execute_planned_request(
                 req.method(),
@@ -553,6 +569,7 @@ pub async fn graphql_request_handler(
                 shared_response.error_count(),
                 Some(usage_reporting::request_details_from_ntex_request(req)),
                 prepared_operation.resolved_document_id.as_deref(),
+                input_variable_coordinates,
             )
             .await;
         }

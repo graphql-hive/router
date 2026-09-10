@@ -159,6 +159,14 @@ pub struct UsageReportingConfig {
     )]
     #[schemars(with = "String")]
     pub flush_interval: Duration,
+
+    /// Process operation variables to report input-object and enum usage based on
+    /// the fields actually present in each request's variables, instead of
+    /// conservatively marking every field of the declared type. The content of
+    /// the variables is never sent — only the schema coordinates it touches.
+    /// Default: false
+    #[serde(default = "default_process_variables")]
+    pub process_variables: bool,
 }
 
 #[cfg(test)]
@@ -241,11 +249,16 @@ impl Default for UsageReportingConfig {
             connect_timeout: default_connect_timeout(),
             request_timeout: default_request_timeout(),
             flush_interval: default_flush_interval(),
+            process_variables: default_process_variables(),
         }
     }
 }
 
 fn default_enabled() -> bool {
+    false
+}
+
+fn default_process_variables() -> bool {
     false
 }
 

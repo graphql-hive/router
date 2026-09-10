@@ -60,7 +60,8 @@ pub fn init_hive_usage_agent(
         .connect_timeout(usage_config.connect_timeout)
         .request_timeout(usage_config.request_timeout)
         .accept_invalid_certs(usage_config.accept_invalid_certs)
-        .flush_interval(usage_config.flush_interval);
+        .flush_interval(usage_config.flush_interval)
+        .process_variables(usage_config.process_variables);
 
     if let Some(target_id) = target {
         agent_builder = agent_builder.target_id(target_id.to_string());
@@ -105,6 +106,7 @@ pub async fn collect_usage_report<'a>(
     error_count: usize,
     request_details: Option<RequestDetails>,
     persisted_document_hash: Option<&str>,
+    input_variable_coordinates: Vec<String>,
 ) {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -126,6 +128,7 @@ pub async fn collect_usage_report<'a>(
         }),
         operation_name: operation_name.map(|s| s.to_owned()),
         persisted_document_hash: persisted_document_hash.map(|hash| hash.to_owned()),
+        input_variable_coordinates,
     };
 
     if let Err(err) = hive_usage_agent
@@ -134,6 +137,15 @@ pub async fn collect_usage_report<'a>(
     {
         error!(target: targets::HIVE_USAGE_REPORTING, error = ?err, "failed to send usage report to hive");
     }
+}
+
+pub fn collect_input_variable_coordinates(
+    hive_usage_agent: &UsageAgent,
+    operation_body: &str,
+    schema: &Document<'static, String>,
+    variables: &std::collections::HashMap<String, sonic_rs::Value>,
+) -> Vec<String> {
+    hive_usage_agent.extract_variable_coordinates(operation_body, schema, Some(variables))
 }
 
 fn map_sampling_key_to_sdk(kind: &UsageReportingSamplingKeyKind) -> SamplingKey {
@@ -308,6 +320,7 @@ mod tests {
                     operation_type: Some(OperationType::Query),
                     operation_name: None,
                     persisted_document_hash: None,
+                    input_variable_coordinates: Vec::new(),
                 },
                 None,
             )

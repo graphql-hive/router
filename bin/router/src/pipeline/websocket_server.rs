@@ -606,6 +606,20 @@ async fn handle_text_frame(
                       s.set_response_mode(response_mode.as_str());
                   });
 
+                  let input_variable_coordinates = supergraph
+                      .runtime
+                      .hive_usage_agent
+                      .as_ref()
+                      .map(|hive_usage_agent| {
+                          usage_reporting::collect_input_variable_coordinates(
+                              hive_usage_agent,
+                              &parser_payload.minified_document,
+                              &supergraph.snapshot.supergraph_schema,
+                              &payload.variables,
+                          )
+                      })
+                      .unwrap_or_default();
+
                   let exec = |guard| execute_planned_request(
                       &method,
                       ws_uri,
@@ -698,6 +712,7 @@ async fn handle_text_frame(
                           // The graphql-transport-ws Subscribe payload carries no document id
                           // and this path never invokes the document id resolver.
                           None,
+                          input_variable_coordinates,
                       )
                       .await;
                   }
