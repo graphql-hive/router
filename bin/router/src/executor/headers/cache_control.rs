@@ -117,13 +117,7 @@ fn merge_into(acc: &mut Option<CacheControl>, incoming: CacheControl) {
         return;
     };
 
-    if existing.no_store
-        || existing.no_cache
-        || existing.is_private
-        || incoming.no_store
-        || incoming.no_cache
-        || incoming.is_private
-    {
+    if existing.no_store || existing.no_cache || incoming.no_store || incoming.no_cache {
         *existing = CacheControl {
             no_store: true,
             no_cache: true,
@@ -135,14 +129,24 @@ fn merge_into(acc: &mut Option<CacheControl>, incoming: CacheControl) {
     // grants (public, immutable) hold only if every side grants them: AND.
     // restrictions (must-revalidate & friends, no-transform) hold if any side asks: OR.
     // durations (max-age & friends) take the shortest present value: min.
-    existing.is_public = existing.is_public && incoming.is_public;
+    existing.is_private = existing.is_private || incoming.is_private;
+    existing.is_public = existing.is_public && incoming.is_public && !existing.is_private;
     existing.immutable = existing.immutable && incoming.immutable;
     existing.must_revalidate = existing.must_revalidate || incoming.must_revalidate;
     existing.proxy_revalidate = existing.proxy_revalidate || incoming.proxy_revalidate;
     existing.must_understand = existing.must_understand || incoming.must_understand;
     existing.no_transform = existing.no_transform || incoming.no_transform;
+
+    let shared_max_age = min_opt(
+        existing.s_maxage.or(existing.max_age),
+        incoming.s_maxage.or(incoming.max_age),
+    );
+    let all_have_s_maxage = existing.s_maxage.is_some() && incoming.s_maxage.is_some();
     existing.max_age = min_opt(existing.max_age, incoming.max_age);
-    existing.s_maxage = min_opt(existing.s_maxage, incoming.s_maxage);
+    existing.s_maxage = all_have_s_maxage.then_some(shared_max_age).flatten();
+    if !all_have_s_maxage {
+        existing.max_age = min_opt(existing.max_age, shared_max_age);
+    }
     existing.stale_while_revalidate = min_opt(
         existing.stale_while_revalidate,
         incoming.stale_while_revalidate,
@@ -160,13 +164,15 @@ fn min_opt(a: Option<u32>, b: Option<u32>) -> Option<u32> {
 }
 
 fn to_header_value(p: &CacheControl) -> String {
-    if p.no_store || p.no_cache || p.is_private {
+    if p.no_store || p.no_cache {
         return "no-store, no-cache".to_string();
     }
 
     let mut parts: Vec<String> = Vec::new();
 
-    if p.is_public {
+    if p.is_private {
+        parts.push("private".to_string());
+    } else if p.is_public {
         parts.push("public".to_string());
     }
 
@@ -234,21 +240,22 @@ fn to_header_value(p: &CacheControl) -> String {
 /// When `force_no_store` is `false` the raw string values stored in the aggregator are
 /// parsed and folded left-to-right with the following policy:
 ///
-/// 1. Poison check - if any value contains `no-store`, `no-cache`, or `private`, the
-///    accumulated result is immediately locked to `no-store, no-cache` and all remaining
-///    directives are discarded. Further incoming values cannot "un-poison" this state.
-/// 2. Durations (`max-age`, `s-maxage`, `stale-while-revalidate`, `stale-if-error`) -
-///    the minimum of all present values is kept, per directive. A subgraph that omits
-///    a duration entirely does not pull the min down; it is simply ignored for that
-///    field, letting a shorter value set by another subgraph win.
-/// 3. Grants (`public`, `immutable`) - preserved only when every subgraph that
+/// 1. Poison check - if any value contains `no-store` or `no-cache`, the accumulated
+///    result is immediately locked to `no-store, no-cache` and all remaining directives
+///    are discarded. Further incoming values cannot "un-poison" this state.
+/// 2. `private` - preserved if any subgraph sets it and overrides `public`. Other
+///    directives, including freshness lifetimes, are retained.
+/// 3. Durations (`max-age`, `s-maxage`, `stale-while-revalidate`, `stale-if-error`) -
+///    the minimum of all present values is kept. Because shared caches prefer `s-maxage`
+///    over `max-age`, mixed inputs are capped by their minimum effective shared lifetime.
+/// 4. Grants (`public`, `immutable`) - preserved only when every subgraph that
 ///    returned a response also sent them. A subgraph that returned bytes but omitted
 ///    `Cache-Control` entirely is counted through `total_responses` (the number of
 ///    all subgraphs whose response counts) and is enough to strip the grant from the
 ///    result, because silence is not consent.
-/// 4. Restrictions (`must-revalidate`, `proxy-revalidate`, `must-understand`,
+/// 5. Restrictions (`must-revalidate`, `proxy-revalidate`, `must-understand`,
 ///    `no-transform`) - set if any subgraph sets them (logical OR). Cleared on poison.
-/// 5. A value with a malformed directive, or a directive the router does not model,
+/// 6. A value with a malformed directive, or a directive the router does not model,
 ///    is treated like poison (rule 1), since it may have been restrictive.
 ///
 /// The merged result is serialised back to a `HeaderValue` and re-inserted into the
@@ -380,9 +387,9 @@ mod tests {
         assert!(!result.is_public);
     }
 
-    // incoming private poisons the result
+    // incoming private overrides public without preventing private caches from storing
     #[test]
-    fn incoming_private_poisons() {
+    fn incoming_private_is_preserved() {
         let result = merge(
             Some(CacheControl {
                 is_public: true,
@@ -391,13 +398,15 @@ mod tests {
             }),
             CacheControl {
                 is_private: true,
+                max_age: Some(50),
                 ..Default::default()
             },
         );
-        assert!(result.no_store);
-        assert!(result.no_cache);
+        assert!(!result.no_store);
+        assert!(!result.no_cache);
         assert!(!result.is_public);
-        assert!(!result.is_private); // private is cleared, only no-store/no-cache remain
+        assert!(result.is_private);
+        assert_eq!(result.max_age, Some(50));
     }
 
     // existing no_store poisons even with a clean incoming
@@ -419,9 +428,9 @@ mod tests {
         assert!(!result.is_public);
     }
 
-    // existing private poisons even with a clean incoming
+    // existing private remains private when merged with a public response
     #[test]
-    fn existing_private_poisons() {
+    fn existing_private_is_preserved() {
         let result = merge(
             Some(CacheControl {
                 is_private: true,
@@ -433,8 +442,10 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert!(result.no_store);
-        assert!(result.no_cache);
+        assert!(!result.no_store);
+        assert!(!result.no_cache);
+        assert!(result.is_private);
+        assert!(!result.is_public);
     }
 
     // both no_store: result is no_store, no_cache
@@ -791,10 +802,17 @@ mod tests {
     }
 
     #[test]
-    fn finalize_private_collapses_to_no_store() {
+    fn finalize_private_is_preserved() {
         let mut agg = make_aggregator(&["private"]);
         finalize(&mut agg, false, 1);
-        assert_eq!(cc_value(&agg).as_deref(), Some("no-store, no-cache"));
+        assert_eq!(cc_value(&agg).as_deref(), Some("private"));
+    }
+
+    #[test]
+    fn finalize_user_requirement_private_overrides_public_and_keeps_min_age() {
+        let mut agg = make_aggregator(&["public, max-age=100", "private, max-age=50"]);
+        finalize(&mut agg, false, 2);
+        assert_eq!(cc_value(&agg).as_deref(), Some("private, max-age=50"));
     }
 
     #[test]
@@ -869,6 +887,13 @@ mod tests {
         );
     }
 
+    #[test]
+    fn finalize_user_requirement_s_maxage_takes_min() {
+        let mut agg = make_aggregator(&["public, s-maxage=100", "public, s-maxage=20"]);
+        finalize(&mut agg, false, 2);
+        assert_eq!(cc_value(&agg).as_deref(), Some("public, s-maxage=20"));
+    }
+
     // durations take the min across subgraphs, independently per directive
     #[test]
     fn finalize_durations_take_min() {
@@ -883,12 +908,12 @@ mod tests {
         );
     }
 
-    // a subgraph without a duration abstains instead of pulling the min down
+    // shared caches prefer s-maxage, so mixed inputs use the lower effective lifetime
     #[test]
-    fn finalize_missing_duration_abstains() {
+    fn finalize_mixed_max_age_and_s_maxage_take_shared_min() {
         let mut agg = make_aggregator(&["s-maxage=600", "max-age=100"]);
         finalize(&mut agg, false, 2);
-        assert_eq!(cc_value(&agg).as_deref(), Some("max-age=100, s-maxage=600"));
+        assert_eq!(cc_value(&agg).as_deref(), Some("max-age=100"));
     }
 
     // restrictions are OR: one subgraph asking is enough
@@ -930,7 +955,7 @@ mod tests {
     fn finalize_poison_clears_new_fields() {
         let mut agg = make_aggregator(&[
             "s-maxage=600, stale-while-revalidate=30, no-transform, immutable",
-            "private",
+            "no-store",
         ]);
         finalize(&mut agg, false, 2);
         assert_eq!(cc_value(&agg).as_deref(), Some("no-store, no-cache"));
