@@ -171,7 +171,7 @@ where
         .into_result()
 }
 
-fn unquote_block_string(src: &str) -> Result<String, Error<Token<'_>, Token<'_>>> {
+pub(crate) fn unquote_block_string(src: &str) -> Result<String, Error<Token<'_>, Token<'_>>> {
     debug_assert!(src.starts_with("\"\"\"") && src.ends_with("\"\"\""));
     let lines = src[3..src.len() - 3].lines();
 
@@ -226,7 +226,7 @@ fn unquote_block_string(src: &str) -> Result<String, Error<Token<'_>, Token<'_>>
     Ok(result)
 }
 
-fn unquote_string<'a>(s: &'a str) -> Result<String, Error<Token<'a>, Token<'a>>> {
+pub(crate) fn unquote_string<'a>(s: &'a str) -> Result<String, Error<Token<'a>, Token<'a>>> {
     let mut res = String::with_capacity(s.len());
     debug_assert!(s.starts_with('"') && s.ends_with('"'));
     let mut chars = s[1..s.len() - 1].chars();
@@ -236,7 +236,7 @@ fn unquote_string<'a>(s: &'a str) -> Result<String, Error<Token<'a>, Token<'a>>>
             '\\' => {
                 match chars.next().expect("slash cant be at the end") {
                     c @ '"' | c @ '\\' | c @ '/' => res.push(c),
-                    'b' => res.push('\u{0010}'),
+                    'b' => res.push('\u{0008}'),
                     'f' => res.push('\u{000C}'),
                     'n' => res.push('\n'),
                     'r' => res.push('\r'),

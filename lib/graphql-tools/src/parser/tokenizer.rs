@@ -91,43 +91,147 @@ impl<'a> ResetStream for TokenStream<'a> {
     }
 }
 
-// NOTE: we expect that first character is always digit or minus, as returned
-// by tokenizer
-fn check_int(value: &str) -> bool {
-    value == "0"
-        || value == "-0"
-        || (!value.starts_with('0')
-            && value != "-"
-            && !value.starts_with("-0")
-            && value[1..].chars().all(|x| x.is_ascii_digit()))
+#[inline(always)]
+fn is_name_byte(b: u8) -> bool {
+    matches!(b, b'_' | b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9')
 }
 
-fn check_dec(value: &str) -> bool {
-    !value.is_empty() && value.chars().all(|x| x.is_ascii_digit())
+#[inline(always)]
+fn is_name_start_byte(b: u8) -> bool {
+    matches!(b, b'_' | b'a'..=b'z' | b'A'..=b'Z')
 }
 
-fn check_exp(value: &str) -> bool {
-    if value.is_empty() {
-        return false;
+#[inline(always)]
+fn is_digit_byte(b: u8) -> bool {
+    b.is_ascii_digit()
+}
+
+#[inline(always)]
+fn digit_end(bytes: &[u8], mut index: usize) -> usize {
+    while bytes.get(index).copied().is_some_and(is_digit_byte) {
+        index += 1;
     }
-    let first = value.chars().next().unwrap();
-    if first != '-' && first != '+' && (first <= '0' || first >= '9') {
-        return false;
-    }
-
-    value[1..].chars().all(|x| x.is_ascii_digit())
+    index
 }
 
-fn check_float(value: &str, exponent: Option<usize>, real: Option<usize>) -> bool {
-    match (exponent, real) {
-        (Some(e), Some(r)) if e < r => false,
-        (Some(e), Some(r)) => {
-            check_int(&value[..r]) && check_dec(&value[r + 1..e]) && check_exp(&value[e + 1..])
+#[inline]
+fn line_break_len(bytes: &[u8], index: usize) -> Option<usize> {
+    match bytes.get(index) {
+        Some(b'\r') => Some(if bytes.get(index + 1) == Some(&b'\n') {
+            2
+        } else {
+            1
+        }),
+        Some(b'\n') => Some(1),
+        _ => None,
+    }
+}
+
+fn scan_number(bytes: &[u8], start: usize) -> Option<(usize, bool)> {
+    let mut index = start;
+    if bytes.get(index) == Some(&b'-') {
+        index += 1;
+    }
+
+    match *bytes.get(index)? {
+        b'0' => {
+            index += 1;
+            if bytes.get(index).copied().is_some_and(is_digit_byte) {
+                return None;
+            }
         }
-        (Some(e), None) => check_int(&value[..e]) && check_exp(&value[e + 1..]),
-        (None, Some(r)) => check_int(&value[..r]) && check_dec(&value[r + 1..]),
-        (None, None) => unreachable!(),
+        byte if (b'1'..=b'9').contains(&byte) => {
+            index += 1;
+            index = digit_end(bytes, index);
+        }
+        _ => return None,
     }
+
+    let mut is_float = false;
+    if bytes.get(index) == Some(&b'.') {
+        if !bytes.get(index + 1).copied().is_some_and(is_digit_byte) {
+            return None;
+        }
+        is_float = true;
+        index += 2;
+        index = digit_end(bytes, index);
+    }
+
+    if bytes
+        .get(index)
+        .is_some_and(|byte| *byte == b'e' || *byte == b'E')
+    {
+        let mut exponent = index + 1;
+        exponent += matches!(bytes.get(exponent), Some(b'+' | b'-')) as usize;
+        if !bytes.get(exponent).copied().is_some_and(is_digit_byte) {
+            return None;
+        }
+        is_float = true;
+        index = exponent + 1;
+        index = digit_end(bytes, index);
+    }
+
+    if bytes
+        .get(index)
+        .copied()
+        .is_some_and(|byte| is_name_start_byte(byte) || byte == b'.')
+    {
+        return None;
+    }
+
+    Some((index - start, is_float))
+}
+
+#[inline]
+fn is_hex_digit(byte: u8) -> bool {
+    byte.is_ascii_hexdigit()
+}
+
+fn valid_string_literal(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() < 2 || bytes[0] != b'"' || bytes[bytes.len() - 1] != b'"' {
+        return false;
+    }
+
+    let mut index = 1;
+    let end = bytes.len() - 1;
+    while index < end {
+        match bytes[index] {
+            b'\n' | b'\r' | b'"' => return false,
+            b'\\' => {
+                index += 1;
+                match bytes.get(index).copied() {
+                    Some(b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't') => {
+                        index += 1;
+                    }
+                    Some(b'u') => {
+                        let Some(digits) = bytes.get(index + 1..index + 5) else {
+                            return false;
+                        };
+                        if !digits.iter().copied().all(is_hex_digit) {
+                            return false;
+                        }
+                        let code_point = digits.iter().fold(0u32, |value, digit| {
+                            (value << 4)
+                                | match digit {
+                                    b'0'..=b'9' => (digit - b'0') as u32,
+                                    b'a'..=b'f' => (digit - b'a' + 10) as u32,
+                                    b'A'..=b'F' => (digit - b'A' + 10) as u32,
+                                    _ => unreachable!(),
+                                }
+                        });
+                        if char::from_u32(code_point).is_none() {
+                            return false;
+                        }
+                        index += 5;
+                    }
+                    _ => return false,
+                }
+            }
+            _ => index += 1,
+        }
+    }
+    index == end
 }
 
 impl<'a> TokenStream<'a> {
@@ -173,6 +277,11 @@ impl<'a> TokenStream<'a> {
         Ok((kind, size))
     }
 
+    #[inline]
+    fn bytes(&self) -> &'a [u8] {
+        self.buf.as_bytes()
+    }
+
     fn take_token(&mut self) -> Result<(Kind, usize), Error<Token<'a>, Token<'a>>> {
         if let Some(limit) = self.token_limit {
             if self.token_count >= limit {
@@ -180,201 +289,214 @@ impl<'a> TokenStream<'a> {
             }
         }
         use self::Kind::*;
-        let mut iter = self.buf[self.off..].char_indices();
-        let cur_char = match iter.next() {
-            Some((_, x)) => x,
+        let bytes = self.bytes();
+        let end = bytes.len();
+        let first = match bytes.get(self.off).copied() {
+            Some(b) => b,
             None => return Err(Error::end_of_input()),
         };
 
-        match cur_char {
-            '(' | '[' | '{' => {
-                // Check for recursion limit
+        match first {
+            b'(' | b'[' | b'{' => {
                 self.recursion_limit = self
                     .recursion_limit
                     .checked_sub(1)
                     .ok_or_else(|| Error::message_static_message("Recursion limit exceeded"))?;
-
                 self.advance_token(Punctuator, 1)
             }
-            ')' | ']' | '}' => {
-                // Notes on exceptional cases:
-                // recursion_limit may exceed the original value specified
-                // when constructing the Tokenizer. It may at first
-                // seem like this would be a good place to handle that,
-                // but instead this code allows this token to propagate up
-                // to the parser which is better equipped to make specific
-                // error messages about unmatched pairs.
-                // The case where recursion limit would overflow but instead
-                // saturates is just a specific case of the more general
-                // occurrence above.
+            b')' | b']' | b'}' => {
                 self.recursion_limit = self.recursion_limit.saturating_add(1);
                 self.advance_token(Punctuator, 1)
             }
-            '!' | '$' | ':' | '=' | '@' | '|' | '&' => self.advance_token(Punctuator, 1),
-            '.' => {
-                if iter.as_str().starts_with("..") {
+            b'!' | b'$' | b':' | b'=' | b'@' | b'|' | b'&' => self.advance_token(Punctuator, 1),
+            b'.' => {
+                if self.buf[self.off..].starts_with("...") {
                     self.advance_token(Punctuator, 3)
                 } else {
+                    let c = self.buf[self.off..].chars().next().unwrap();
                     Err(Error::Unexpected(Info::Owned(
                         format_args!(
                             "bare dot {:?} is not supported, \
                             only \"...\"",
-                            cur_char
+                            c
                         )
                         .to_string(),
                     )))
                 }
             }
-            '_' | 'a'..='z' | 'A'..='Z' => {
-                for (idx, cur_char) in iter.by_ref() {
-                    match cur_char {
-                        '_' | 'a'..='z' | 'A'..='Z' | '0'..='9' => continue,
-                        _ => return self.advance_token(Name, idx),
-                    }
+            b'_' | b'a'..=b'z' | b'A'..=b'Z' => {
+                let mut i = self.off + 1;
+                while i < end && is_name_byte(bytes[i]) {
+                    i += 1;
                 }
-                let len = self.buf.len() - self.off;
-                self.position.column += len;
-                self.off += len;
-
-                Ok((Name, len))
+                let len = i - self.off;
+                self.advance_token(Name, len)
             }
-            '-' | '0'..='9' => {
-                let mut exponent = None;
-                let mut real = None;
-                let len = loop {
-                    let (idx, cur_char) = match iter.next() {
-                        Some(pair) => pair,
-                        None => break self.buf.len() - self.off,
-                    };
-                    match cur_char {
-                        // just scan for now, will validate later on
-                        ' ' | '\n' | '\r' | '\t' | ',' | '#' | '!' | '$' | ':' | '=' | '@'
-                        | '|' | '&' | '(' | ')' | '[' | ']' | '{' | '}' => break idx,
-                        '.' => real = Some(idx),
-                        'e' | 'E' => exponent = Some(idx),
-                        _ => {}
-                    }
-                };
-
-                if exponent.is_some() || real.is_some() {
-                    let value = &self.buf[self.off..][..len];
-                    if !check_float(value, exponent, real) {
-                        return Err(Error::Unexpected(Info::Owned(
-                            format_args!("unsupported float {:?}", value).to_string(),
-                        )));
-                    }
-                    self.position.column += len;
-                    self.off += len;
-
-                    Ok((FloatValue, len))
+            b'-' | b'0'..=b'9' => {
+                let (len, is_float) = scan_number(bytes, self.off).ok_or_else(|| {
+                    Error::Unexpected(Info::Owned(
+                        format_args!("unsupported number {:?}", &self.buf[self.off..]).to_string(),
+                    ))
+                })?;
+                if is_float {
+                    self.advance_token(FloatValue, len)
                 } else {
-                    let value = &self.buf[self.off..][..len];
-                    if !check_int(value) {
-                        return Err(Error::Unexpected(Info::Owned(
-                            format_args!("unsupported integer {:?}", value).to_string(),
-                        )));
-                    }
                     self.advance_token(IntValue, len)
                 }
             }
-            '"' => {
-                if iter.as_str().starts_with("\"\"") {
-                    let tail = &iter.as_str()[2..];
+            b'"' => {
+                let remaining = &self.buf[self.off..];
+                if let Some(tail) = remaining.strip_prefix("\"\"\"") {
                     for (end_idx, _) in tail.match_indices("\"\"\"") {
                         if !tail[..end_idx].ends_with('\\') {
                             self.update_position(end_idx + 6);
                             return Ok((BlockString, end_idx + 6));
                         }
                     }
-
                     Err(Error::Unexpected(Info::Owned(
                         "unterminated block string value".to_string(),
                     )))
                 } else {
                     let mut nchars = 1;
                     let mut escaped = false;
-                    for (idx, cur_char) in iter {
-                        nchars += 1;
-                        match cur_char {
-                            '"' if escaped => {}
-                            '"' => {
-                                self.position.column += nchars;
-                                self.off += idx + 1;
-                                return Ok((StringValue, idx + 1));
-                            }
-                            '\n' => {
-                                return Err(Error::Unexpected(Info::Owned(
-                                    "unterminated string value".to_string(),
-                                )));
-                            }
-
-                            _ => {}
+                    let mut has_escape = false;
+                    let mut i = self.off + 1;
+                    while i < end {
+                        let b = bytes[i];
+                        if b == b'\\' {
+                            has_escape = true;
+                            escaped = !escaped;
+                            i += 1;
+                            nchars += 1;
+                            continue;
                         }
-
-                        // if we aren't escaped and the current char is a \, we are now escaped
-                        escaped = !escaped && cur_char == '\\';
+                        if b > 0x7f {
+                            i += utf8_char_len(bytes[i]);
+                            nchars += 1;
+                            escaped = false;
+                            continue;
+                        }
+                        if b == b'"' {
+                            nchars += 1;
+                            if escaped {
+                                escaped = false;
+                            } else {
+                                let len = i + 1 - self.off;
+                                let value = &self.buf[self.off..][..len];
+                                if has_escape && !valid_string_literal(value) {
+                                    return Err(Error::Unexpected(Info::Owned(
+                                        "invalid string value".to_string(),
+                                    )));
+                                }
+                                self.position.column += nchars;
+                                self.off += len;
+                                return Ok((StringValue, len));
+                            }
+                        } else if b == b'\n' || b == b'\r' {
+                            return Err(Error::Unexpected(Info::Owned(
+                                "unterminated string value".to_string(),
+                            )));
+                        } else {
+                            nchars += 1;
+                            escaped = false;
+                        }
+                        i += 1;
                     }
                     Err(Error::Unexpected(Info::Owned(
                         "unterminated string value".to_string(),
                     )))
                 }
             }
-            _ => Err(Error::Unexpected(Info::Owned(
-                format_args!("unexpected character {:?}", cur_char).to_string(),
-            ))),
+            _ => {
+                let c = self.buf[self.off..].chars().next().unwrap();
+                Err(Error::Unexpected(Info::Owned(
+                    format_args!("unexpected character {:?}", c).to_string(),
+                )))
+            }
         }
     }
 
     fn skip_whitespace(&mut self) {
-        let mut iter = self.buf[self.off..].char_indices();
-        let idx = loop {
-            let (idx, cur_char) = match iter.next() {
-                Some(pair) => pair,
-                None => break self.buf.len() - self.off,
-            };
-            match cur_char {
-                '\u{feff}' | '\r' => continue,
-                '\t' => self.position.column += 8,
-                '\n' => {
-                    self.position.column = 1;
-                    self.position.line += 1;
-                }
-                // comma is also entirely ignored in spec
-                ' ' | ',' => {
+        let bytes = self.bytes();
+        let end = bytes.len();
+        let mut i = self.off;
+        loop {
+            if i >= end {
+                self.off = i;
+                return;
+            }
+            if let Some(len) = line_break_len(bytes, i) {
+                self.position.column = 1;
+                self.position.line += 1;
+                i += len;
+                continue;
+            }
+            match bytes[i] {
+                b' ' | b',' => {
                     self.position.column += 1;
-                    continue;
+                    i += 1;
                 }
-                //comment
-                '#' => {
-                    for (_, cur_char) in iter.by_ref() {
-                        // TODO(tailhook) ensure SourceCharacter
-                        if cur_char == '\r' || cur_char == '\n' {
+                b'\t' => {
+                    self.position.column += 8;
+                    i += 1;
+                }
+                0xef if i + 2 < end && bytes[i + 1] == 0xbb && bytes[i + 2] == 0xbf => {
+                    i += 3;
+                }
+                b'#' => {
+                    i += 1;
+                    while i < end {
+                        if let Some(len) = line_break_len(bytes, i) {
                             self.position.column = 1;
                             self.position.line += 1;
+                            i += len;
                             break;
                         }
+                        i += 1;
                     }
-                    continue;
                 }
-                _ => break idx,
+                _ => break,
             }
-        };
-        self.off += idx;
+        }
+        self.off = i;
     }
 
     fn update_position(&mut self, len: usize) {
         let val = &self.buf[self.off..][..len];
         self.off += len;
-        let lines = val.as_bytes().iter().filter(|&&x| x == b'\n').count();
+        let bytes = val.as_bytes();
+        let mut lines = 0;
+        let mut line_offset = 0;
+        let mut index = 0;
+        while index < bytes.len() {
+            if let Some(len) = line_break_len(bytes, index) {
+                lines += 1;
+                index += len;
+                line_offset = index;
+            } else {
+                index += 1;
+            }
+        }
         self.position.line += lines;
         if lines > 0 {
-            let line_offset = val.rfind('\n').unwrap() + 1;
             let num = val[line_offset..].chars().count();
             self.position.column = num + 1;
         } else {
             let num = val.chars().count();
             self.position.column += num;
         }
+    }
+}
+
+fn utf8_char_len(first: u8) -> usize {
+    if first < 0x80 {
+        1
+    } else if first < 0xe0 {
+        2
+    } else if first < 0xf0 {
+        3
+    } else {
+        4
     }
 }
 
@@ -388,6 +510,7 @@ impl<'a> fmt::Display for Token<'a> {
 mod test {
     use super::Kind::*;
     use super::{Kind, TokenStream};
+    use crate::parser::Pos;
     use combine::easy::Error;
 
     use combine::{Positioned, StreamOnce};
@@ -545,6 +668,8 @@ mod test {
         );
         assert_eq!(tok_str("1.23e4"), ["1.23e4"]);
         assert_eq!(tok_typ("1.23e4"), [FloatValue]);
+        assert_eq!(tok_str("1e9"), ["1e9"]);
+        assert_eq!(tok_typ("1e9"), [FloatValue]);
     }
 
     // TODO(tailhook) fix errors in parser and check error message
@@ -599,9 +724,9 @@ mod test {
         tok_str("0.bbce0");
     }
     #[test]
-    #[should_panic]
-    fn no_exp_sign_float() {
-        tok_str("0e0");
+    fn exp_without_sign_float() {
+        assert_eq!(tok_str("0e0"), ["0e0"]);
+        assert_eq!(tok_typ("0e0"), [FloatValue]);
     }
     #[test]
     #[should_panic]
@@ -625,6 +750,26 @@ mod test {
         assert_eq!(tok_typ(r#""hello""#), [StringValue]);
         assert_eq!(tok_str(r#""my\"quote""#), [r#""my\"quote""#]);
         assert_eq!(tok_typ(r#""my\"quote""#), [StringValue]);
+    }
+
+    #[test]
+    fn escaped_string_characters() {
+        assert_eq!(tok_str(r#""line\n\b""#), [r#""line\n\b""#]);
+        assert!(TokenStream::new(r#""bad\q""#).uncons().is_err());
+        assert!(TokenStream::new(r#""bad\u12zz""#).uncons().is_err());
+
+        let mut stream = TokenStream::new("\"line\r\"");
+        assert!(stream.uncons().is_err());
+    }
+
+    #[test]
+    fn line_terminators_preserve_positions() {
+        let stream = TokenStream::new("# comment\r\nfield");
+        assert_eq!(stream.position(), Pos { line: 2, column: 1 });
+
+        let mut stream = TokenStream::new("\"\"\"one\r\n two\"\"\"");
+        assert_eq!(stream.uncons().unwrap().kind, BlockString);
+        assert_eq!(stream.position(), Pos { line: 2, column: 8 });
     }
 
     #[test]
