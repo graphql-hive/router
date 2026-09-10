@@ -36,7 +36,6 @@ pub const COST_ESTIMATED: &str = "cost.estimated";
 pub const COST_ACTUAL: &str = "cost.actual";
 pub const COST_DELTA: &str = "cost.delta";
 pub const COST_RESULT: &str = "cost.result";
-pub const COST_FORMULA_CACHE_HIT: &str = "cost.formula_cache_hit";
 
 /// Hive-specific attributes
 pub const HIVE_KIND: &str = "hive.kind";

@@ -827,7 +827,6 @@ fn test_graphql_operation_span() {
                 attributes::COST_ACTUAL,
                 attributes::COST_DELTA,
                 attributes::COST_RESULT,
-                attributes::COST_FORMULA_CACHE_HIT,
                 attributes::HIVE_GRAPHQL_ERROR_COUNT,
                 attributes::HIVE_GRAPHQL_ERROR_CODES,
                 attributes::HIVE_CLIENT_NAME,
