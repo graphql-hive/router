@@ -5,8 +5,8 @@ use crate::query_planner::{
 use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::Debug;
 
-/// Which data a plan is allowed to hold. A plan is either still being built, or ready to execute
-/// and to cache; there is no third state, so the trait is sealed.
+/// Which data a plan is allowed to hold. A plan is either still being built, or ready to be
+/// executed and cached. There is no third state, so this trait is sealed.
 pub trait PlanState: private::Sealed + Debug + Clone {
     type Operation: Debug
         + Clone
@@ -16,11 +16,12 @@ pub trait PlanState: private::Sealed + Debug + Clone {
         + AsRef<SubgraphFetchOperation>;
 }
 
-/// The planner's own state: fetches still carry their parsed documents.
+/// The state the planner works in. Fetches still carry their parsed documents.
 #[derive(Debug, Clone)]
 pub struct Planning;
 
-/// What execution reads and the cache stores: operation text, no parsed documents.
+/// The state execution reads and the cache stores. Fetches carry only operation text, with no
+/// parsed documents.
 #[derive(Debug, Clone)]
 pub struct Executable;
 

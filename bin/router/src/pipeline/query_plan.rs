@@ -31,8 +31,8 @@ pub struct PlannedQuery {
     pub plan: Arc<QueryPlan>,
     pub demand_control: Option<Arc<DemandControlFormulaPlan>>,
 }
-/// An empty plan has no fetches, so its cost formula is trivial - but it still has to be built in
-/// the planning state to be costed.
+/// An empty plan has no fetches, so its cost formula is trivial. It still has to be built in the
+/// planning state, because that is the only state costs can be compiled from.
 fn empty_planning_plan() -> QueryPlan<Planning> {
     QueryPlan {
         kind: QUERY_PLAN_KIND,
@@ -170,9 +170,9 @@ pub async fn plan_operation_with_cache(
                         cancellation_token,
                     )
                     .map(|plan| {
-                        // Costs must be compiled while the plan still carries its parsed
-                        // documents; `compile_plan` only accepts `Planning`, so that order is
-                        // enforced by the type system rather than by this comment.
+                        // Costs have to be compiled while the plan still has its parsed
+                        // documents. `compile_plan` only accepts a plan in the `Planning` state,
+                        // so the compiler enforces this order.
                         let demand_control = compile_demand_control(&plan);
                         PlannedQuery {
                             plan: Arc::new(plan.into_executable()),

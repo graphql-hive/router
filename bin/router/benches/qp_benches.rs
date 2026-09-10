@@ -186,7 +186,7 @@ fn cache_preparation(c: &mut Criterion) {
                 &CancellationToken::new(),
             )
             .unwrap();
-        // Planning and cloning are setup; only consuming the plan is timed.
+        // Planning and cloning are setup. Only consuming the plan is measured.
         group.bench_function(name, |b| {
             b.iter_batched(
                 || plan.clone(),

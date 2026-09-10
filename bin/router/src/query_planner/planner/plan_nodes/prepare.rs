@@ -1,19 +1,21 @@
 use super::*;
 
 impl QueryPlan<Planning> {
-    /// Drops the planner's parsed documents, keeping the operation text execution sends.
+    /// Drops the parsed documents the planner used, and keeps the operation text that execution
+    /// sends.
     ///
-    /// Call after demand control has compiled its costs and before caching: the documents are the
-    /// bulk of a cached plan, and nothing on the execution path reads them.
+    /// Call this after demand control has compiled its costs, and before the plan is cached. The
+    /// parsed documents are most of the size of a cached plan, and nothing on the execution path
+    /// reads them.
     ///
-    /// Executable plans cannot be passed back to planning code.
+    /// An executable plan cannot be passed back to planning code.
     /// ```compile_fail,E0308
     /// use hive_router::query_planner::planner::plan_nodes::{QueryPlan, Planning};
     /// fn optimize(_: QueryPlan<Planning>) {}
     /// let planning = QueryPlan::<Planning> { kind: "QueryPlan", node: None };
     /// optimize(planning.into_executable());
     /// ```
-    /// The transition also consumes the original plan.
+    /// Converting a plan also consumes the original, so it cannot be used again.
     /// ```compile_fail,E0382
     /// use hive_router::query_planner::planner::plan_nodes::{QueryPlan, Planning};
     /// let planning = QueryPlan::<Planning> { kind: "QueryPlan", node: None };
@@ -132,8 +134,9 @@ mod tests {
         PlanNode::Fetch(fetch())
     }
 
-    /// Identity of each fetch after lowering: its id, the *address* of its operation text (the
-    /// `Box<str>` must move, not be re-rendered), its hash and its name insertion point.
+    /// Collects what identifies each fetch after conversion: its id, the memory address of its
+    /// operation text, its hash, and the position where its name is written. The address is
+    /// checked because the text must be moved, not rendered again.
     fn operation_metadata<S: PlanState>(
         node: &PlanNode<S>,
         out: &mut Vec<(i64, usize, u64, usize)>,

@@ -50,8 +50,7 @@ pub enum DocumentParseError {
 }
 
 impl Document {
-    /// Rebuilds a parsed document from operation text. Used where only the text survived - a
-    /// cached plan's fetch, or one a plugin replaced.
+    /// Parses operation text back into a document, for cases where only the text was kept.
     pub fn parse_executable(text: &str) -> Result<Self, DocumentParseError> {
         let parsed = safe_parse_operation(text)?;
         let mut operation = None;

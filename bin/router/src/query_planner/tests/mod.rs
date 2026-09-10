@@ -234,8 +234,8 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// The bench plan, lowered. Serialization is the external contract, so it must survive the
-/// planning data being dropped.
+/// Converts the benchmark plan to its executable form. The serialized output is what other tools
+/// depend on, so it must stay the same after the planning data is dropped.
 #[test]
 fn preparing_a_plan_preserves_its_wire_form() -> Result<(), Box<dyn std::error::Error>> {
     init_logger();

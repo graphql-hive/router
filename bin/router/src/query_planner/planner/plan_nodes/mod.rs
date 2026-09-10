@@ -19,7 +19,8 @@ mod state;
 pub use state::{Executable, PlanState, Planning};
 mod prepare;
 
-/// The planner builds plans in the `Planning` state; the unsuffixed types are executable.
+/// Aliases for plans in the `Planning` state. The planner builds plans in this state. The types
+/// without a suffix are the executable ones.
 pub mod planning {
     pub use super::*;
     pub type QueryPlan = super::QueryPlan<Planning>;
@@ -1090,11 +1091,13 @@ mod stored_size_tests {
     use super::*;
     use std::mem::size_of;
 
-    /// Checks stored type sizes, not total memory kept or allocation counts. A cached plan holds
-    /// one of these per node or per fetch, so these numbers are the plan cache's memory use.
+    /// Checks the size of the stored types. This is not the total memory a plan keeps, and not
+    /// the number of allocations. A cached plan holds one of these per node and per fetch, so
+    /// these sizes are what the plan cache costs in memory.
     ///
-    /// Each is 104 B smaller than before the parsed document left `SubgraphFetchOperation` - the
-    /// inline `Document`, which every fetch carried and nothing on the execution path read.
+    /// Each type is 104 bytes smaller than before. That is the parsed `Document` that used to sit
+    /// inside `SubgraphFetchOperation`. Every fetch carried one, and nothing on the execution path
+    /// read it.
     #[test]
     fn stored_sizes_stay_small() {
         for (name, actual, expected) in [

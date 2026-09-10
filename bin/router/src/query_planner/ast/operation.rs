@@ -40,8 +40,9 @@ impl OperationDefinition {
     }
 }
 
-/// What execution needs: the rendered operation text and where to write an operation name into
-/// it. The parsed document is deliberately absent - see [`PlanningFetchOperation`].
+/// Everything execution needs: the rendered operation text, and the position where an operation
+/// name is written into it. There is no parsed document here on purpose. See
+/// [`PlanningFetchOperation`] for the form that has one.
 /// ```compile_fail,E0609
 /// use hive_router::query_planner::ast::operation::SubgraphFetchOperation;
 /// fn parsed(operation: &SubgraphFetchOperation) { let _ = &operation.document; }
@@ -59,9 +60,9 @@ pub struct SubgraphFetchOperation {
     pub name_write_position: usize,
 }
 
-/// A fetch operation while the planner still needs its parsed document: fragment expansion during
-/// batching, and demand control's cost compilation. Lowered to [`SubgraphFetchOperation`] before
-/// the plan is cached.
+/// A fetch operation that still has its parsed document. The planner needs the parsed form for
+/// two things: expanding fragments while batching, and compiling demand control costs. It is
+/// converted to [`SubgraphFetchOperation`] before the plan is cached.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlanningFetchOperation {
     pub document: Box<Document>,
@@ -81,7 +82,7 @@ impl AsRef<SubgraphFetchOperation> for PlanningFetchOperation {
     }
 }
 
-/// Leaves out the `_entities` wrapper when printing a selection sent to a subgraph.
+/// Skips the `_entities` wrapper when printing a selection that is sent to a subgraph.
 pub(crate) fn inner_selection_set(document: &Document) -> &SelectionSet {
     if document.operation.selection_set.items.len() == 1 {
         if let SelectionItem::Field(field) = &document.operation.selection_set.items[0] {
