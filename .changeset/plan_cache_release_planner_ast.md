@@ -19,10 +19,9 @@ parsed documents themselves, which are no longer retained at all.
 
 ## Fixes
 
-- **A plugin that replaced a query plan could get the wrong cost limit.** An `OnQueryPlanEnd` hook
-  returning a new plan kept the cost compiled for the old one. Replacement plans are now costed
-  from their own contents, parsing each fetch back from its text. If that text cannot be parsed the
-  request fails with `PLAN_COST_OPERATION_REBUILD_FAILED` rather than being treated as free.
+- **Cached plans no longer retain parsed subgraph documents.** Demand-control formulas are compiled
+  while the plan is still being built, before it is converted into executable form, so cached plans
+  retain the compiled formula without retaining the parsed documents.
 
 Query plans returned by `hive-expose-query-plan` and sent to Hive Gateway are unchanged, byte for
 byte. The rules for query costs are unchanged. There is nothing to configure.
