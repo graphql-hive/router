@@ -881,7 +881,7 @@ fn test_graphql_operation_span() {
             Some("1.0.0"),
             "op-hash",
         );
-        layer.assert_not_recorded(&span, attributes::GRAPHQL_DOCUMENT); // recorded in a task_local for hive tracingo nly
+        layer.assert_not_recorded(&span, attributes::GRAPHQL_DOCUMENT); // recorded in a task_local for hive tracing only
         layer.assert_recorded_value(&span, attributes::GRAPHQL_OPERATION_NAME, "GetMe");
         layer.assert_recorded_value(&span, attributes::GRAPHQL_OPERATION_TYPE, "query");
         layer.assert_recorded_value(&span, attributes::GRAPHQL_DOCUMENT_HASH, "doc-hash");
