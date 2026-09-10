@@ -44,13 +44,13 @@ use crate::telemetry::{
     utils::{build_metadata, build_tls_config, resolve_string_map, resolve_value_or_expression},
 };
 
-pub use control::{
-    disabled_span, is_graphql_document_recording_enabled, is_level_enabled, set_tracing_enabled,
-};
+pub use control::{disabled_span, is_level_enabled, set_tracing_enabled};
+pub use hive_trace_context::record_graphql_document;
 
 pub mod compatibility;
 pub mod control;
 pub mod hive_console_exporter;
+pub(crate) mod hive_trace_context;
 mod noop_exporter;
 pub mod spans;
 pub mod standard_pipeline_exporter;

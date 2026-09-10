@@ -5,7 +5,7 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 use crate::telemetry::{
     metrics::demand_control_metrics::DemandControlResultCode,
     traces::{
-        disabled_span, is_graphql_document_recording_enabled, is_level_enabled,
+        disabled_span, is_level_enabled, record_graphql_document,
         spans::{
             attributes::{
                 self, ERROR_MESSAGE, ERROR_TYPE, HIVE_ERROR_AFFECTED_PATH, HIVE_ERROR_PATH,
@@ -390,10 +390,7 @@ impl GraphQLOperationSpan {
         if self.span.is_disabled() {
             return;
         }
-        // this avoids recording sensitive documents when an exporter cannot redact them
-        if is_graphql_document_recording_enabled() {
-            self.span.record(attributes::GRAPHQL_DOCUMENT, document);
-        }
+        record_graphql_document(&self.span, document);
         record_all!(
             self.span,
             "graphql.operation.name" = identity.name,
@@ -466,10 +463,7 @@ impl GraphQLSubgraphOperationSpan {
             // Hive Console Attributes
             "hive.graphql.subgraph.name" = subgraph_name,
         );
-        // subgraph documents use the same pre-processor redaction as operation documents
-        if is_graphql_document_recording_enabled() {
-            span.record(attributes::GRAPHQL_DOCUMENT, document);
-        }
+        record_graphql_document(&span, document);
         GraphQLSubgraphOperationSpan { span }
     }
 

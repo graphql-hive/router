@@ -50,10 +50,10 @@ use crate::pipeline::{
 use crate::schema_state::SchemaState;
 use crate::shared_state::{RouterSharedState, SharedRouterResponse};
 use crate::telemetry::logging::request_id::WithRequestIdentifiers;
-use crate::telemetry::logging::scope::RequestLogScope;
 use crate::telemetry::logging::summary::{self, WithRequestSummary};
 use crate::telemetry::logging::targets;
-use crate::telemetry::HeaderExtractor;
+use crate::telemetry::request_scope::RequestTaskScope;
+use crate::telemetry::{traces::hive_trace_context::HiveTraceScope, HeaderExtractor};
 
 type WsStateRef = Rc<RefCell<WsState<tokio::sync::mpsc::Sender<()>>>>;
 
@@ -307,8 +307,10 @@ async fn handle_text_frame(
                 supergraph.and_then(|selected| selected.snapshot.options.hive_target.as_deref()),
             );
             let span_clone = operation_span.clone();
+            let hive_trace_scope = HiveTraceScope::new();
 
-            let result = async {
+            let result = hive_trace_scope.scope(async {
+                async {
                 let config = &shared_state.router_config.websocket;
 
                 let connection_init_headers = if config.headers.accepts_connection_headers() {
@@ -738,8 +740,8 @@ async fn handle_text_frame(
                           // must be spawned - blocking the frame handler would prevent
                           // ClientMessage::Complete from being received and processed,
                           // making cancellation impossible
-                          let log_scope = RequestLogScope::capture();
-                          rt::spawn(log_scope.scope(async move {
+                          let request_scope = RequestTaskScope::capture();
+                          rt::spawn(request_scope.scope(async move {
                               let _guard = guard;
                               let mut client_op_guard = client_op_guard;
                               let mut cancelled = false;
@@ -794,7 +796,8 @@ async fn handle_text_frame(
                 inner_res
             }
             .instrument(span_clone)
-            .await;
+            .await
+            }).await;
 
             result
         }
