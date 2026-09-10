@@ -16,7 +16,6 @@ pub trait PlanState: private::Sealed + Debug + Clone {
         + DeserializeOwned
         + PrettyDisplay
         + AsRef<SubgraphFetchOperation>;
-    /// The parsed entity requirements, which only the planner needs.
     type Requires: Debug + Clone + Default;
 }
 

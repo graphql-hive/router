@@ -1,35 +1,13 @@
-//! Entity key selections used to build and hash subgraph representations.
+//! Selections are stored in one flat array. Child selections are stored next to each other and
+//! referenced by a range.
 //!
-//! A fetch's `requires` lists the fields a subgraph needs to resolve an entity.
-//! Execution reads it twice per entity: once to hash the entity and remove duplicates
-//! (`Value::to_hash`) and once to write the representation that is sent
-//! (`project_requires`).
+//! Field names, aliases, and type names are stored separately and referenced by small IDs.
 //!
-//! # Shape
+//! `RequiresSelection` provides a view over this stored data and is shared by execution,
+//! serialization, and printing.
 //!
-//! For `{ id ... on Product { upc } }`, the *root selections* are `id` and the inline fragment.
-//! `upc` is inside the fragment. Execution starts at the roots and follows the children:
-//!
-//! ```text
-//! root_selections() -> [ Field(id), InlineFragment(on Product) ]
-//!                                     |
-//!                                     +-- [ Field(upc) ]
-//! ```
-//!
-//! # Storage
-//!
-//! Nodes live in one flat array. Each node's children are next to each other, and nodes use a
-//! separate name table. Walking starts with [`RequiresSelectionSet::root_selections`] and uses
-//! [`RequiresSelection`] to read each node. The indexes and name table stay inside this module.
-//!
-//! Execution, serialization, and printing share [`RequiresSelection`], a view of the stored data.
-//!
-//! The name table belongs to one `requires` value. Response keys and aliases come from the client,
-//! so a shared table could grow forever if a client sent many names. These strings go away with the
-//! plan-cache entry.
-//!
-//! The JSON must match `SelectionSet` byte for byte. This is the format sent by `lib/node-addon` to
-//! Hive Gateway and returned by `hive-expose-query-plan`.
+//! The serialized JSON stays identical to `SelectionSet`, because it is part of the query-plan
+//! format exposed to Hive Gateway.
 
 use std::{fmt, num::NonZeroU32};
 
@@ -419,8 +397,6 @@ mod tests {
         selection_set.into()
     }
 
-    /// Compares the raw JSON text, including the order of the keys. The output has to match
-    /// `SelectionSet` exactly, so these tests do not sort the keys before comparing.
     fn json<T: Serialize>(value: &T) -> String {
         serde_json::to_string(value).expect("serializes")
     }
@@ -449,9 +425,8 @@ mod tests {
         }
     }
 
-    /// The optimizer expands fragment spreads before a plan is cached, so a cached plan should
-    /// never contain one. If a spread does reach serialization, it must fail rather than write
-    /// invalid `SelectionSet` JSON.
+    /// Fragment spreads should be removed before a plan is cached.
+    /// If one remains, serialization must fail instead of producing invalid JSON.
     #[test]
     fn serializing_a_fragment_spread_fails_the_way_the_selection_set_does() {
         let set = selection_set_from_str("id ...Foo");
@@ -618,7 +593,7 @@ mod tests {
         assert_eq!(std::mem::size_of::<Option<NameId>>(), 4);
         assert!(
             std::mem::size_of::<StoredSelection>() <= 24,
-            "arena node grew to {} B; the point of this type is that it stays small",
+            "stored selection grew to {} B; this type should stay small",
             std::mem::size_of::<StoredSelection>()
         );
     }

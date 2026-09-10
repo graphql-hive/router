@@ -357,8 +357,6 @@ impl EntityFetch {
             return Ok(None);
         };
 
-        // Batching expands fragment spreads. The compact `requires` form cannot represent
-        // those, which is why the planner keeps the parsed copy.
         let Some(requires) = fetch_node.planner_requires.clone() else {
             return Ok(None);
         };
