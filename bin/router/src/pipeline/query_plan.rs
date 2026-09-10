@@ -26,9 +26,6 @@ pub enum QueryPlanResult {
     EarlyResponse(PlanExecutionOutput),
 }
 
-/// A plan and the demand-control cost formula compiled from it. The formula describes this exact
-/// plan, so it shares the plan's cache entry and key - which includes the override context and any
-/// plugin operation filtering, not just the operation hash.
 #[derive(Clone)]
 pub struct PlannedQuery {
     pub plan: Arc<QueryPlan>,

@@ -227,8 +227,6 @@ impl DemandControlRuntime {
         over_limit
     }
 
-    /// Compiled once per plan-cache entry, while the plan is being built. The result is stored
-    /// with the plan, so it is keyed exactly like the plan it describes.
     pub(crate) fn compile_plan(
         &self,
         query_plan: &QueryPlan,
