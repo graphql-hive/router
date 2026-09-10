@@ -13,3 +13,5 @@ The merge now supports `s-maxage`, `stale-while-revalidate`, and `stale-if-error
 The router also preserves `proxy-revalidate`, `must-understand`, and `no-transform` when any subgraph sets them. `immutable` is preserved only when every subgraph sets it, like `public`. Qualified `no-cache="field"` and `private="field"` forms are treated as their more restrictive unqualified forms.
 
 Unknown directives, missing or non-numeric duration values, and other malformed directives now conservatively produce `no-store, no-cache` instead of allowing the affected subgraph value to be ignored.
+
+Closes https://github.com/graphql-hive/router/issues/1373
