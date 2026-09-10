@@ -113,9 +113,28 @@ impl PlanNode<Planning> {
 mod tests {
     use super::*;
     use crate::query_planner::ast::document::Document;
+    use crate::query_planner::ast::selection_set::FieldSelection;
+
+    /// A minimal `{ id }` document, enough to give a fetch an operation and a `requires`.
+    fn document() -> Document {
+        Document {
+            operation: OperationDefinition {
+                name: None,
+                operation_kind: Some(OperationKind::Query),
+                selection_set: SelectionSet {
+                    items: vec![SelectionItem::Field(FieldSelection {
+                        name: "id".into(),
+                        ..Default::default()
+                    })],
+                },
+                variable_definitions: None,
+            },
+            fragments: Vec::new(),
+        }
+    }
 
     fn fetch() -> FetchNode<Planning> {
-        let document = Document::parse_executable("{ id }").unwrap();
+        let document = document();
         let requires = document.operation.selection_set.clone();
         FetchNode {
             id: 17,
