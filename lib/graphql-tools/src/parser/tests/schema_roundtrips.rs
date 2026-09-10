@@ -1,16 +1,15 @@
-extern crate graphql_parser;
-#[cfg(test)]
-#[macro_use]
-extern crate pretty_assertions;
-
 use std::fs::File;
 use std::io::Read;
 
-use graphql_tools::parser::parse_schema;
+use crate::parser::parse_schema;
 
 fn roundtrip(filename: &str) {
     let mut buf = String::with_capacity(1024);
-    let path = format!("tests/schemas/{}.graphql", filename);
+    let path = format!(
+        "{}/src/parser/tests/schemas/{}.graphql",
+        env!("CARGO_MANIFEST_DIR"),
+        filename
+    );
     let mut f = File::open(path).unwrap();
     f.read_to_string(&mut buf).unwrap();
     let ast = parse_schema::<String>(&buf).unwrap().to_owned();
@@ -19,8 +18,16 @@ fn roundtrip(filename: &str) {
 
 fn roundtrip2(filename: &str) {
     let mut buf = String::with_capacity(1024);
-    let source = format!("tests/schemas/{}.graphql", filename);
-    let target = format!("tests/schemas/{}_canonical.graphql", filename);
+    let source = format!(
+        "{}/src/parser/tests/schemas/{}.graphql",
+        env!("CARGO_MANIFEST_DIR"),
+        filename
+    );
+    let target = format!(
+        "{}/src/parser/tests/schemas/{}_canonical.graphql",
+        env!("CARGO_MANIFEST_DIR"),
+        filename
+    );
     let mut f = File::open(source).unwrap();
     f.read_to_string(&mut buf).unwrap();
     let ast = parse_schema::<String>(&buf).unwrap();
