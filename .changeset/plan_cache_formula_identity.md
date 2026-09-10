@@ -2,18 +2,15 @@
 hive-router: patch
 ---
 
-# Query costs could come from the wrong plan when progressive `@override` was used
+# Query costs could use the wrong plan with progressive `@override`
 
-The demand control cost formula was cached under the operation hash alone. The query plan it
-describes is cached under more than that: the override context and any plugin operation filtering
-are part of the plan cache key too. Two requests that produced different plans could therefore share
-one cost formula, and the first one compiled won - including its split of the cost across subgraphs.
+The demand control cost formula was cached using only the operation hash. The query plan uses a larger cache key. It also includes the override context and any operation changes made by plugins.
+Because of this, two requests could use different query plans but still share the same cost formula. Whichever formula was created first was reused, including how the cost was split between subgraphs.
 
-The formula is now stored with the plan it was compiled from, in the same cache entry, so it can
-only ever be used with that plan. The separate formula cache is gone. Queries that differ only in
-introspection fields still share one formula, because they still share one plan.
+The cost formula is now stored together with the query plan it was created from. This makes sure a formula is only used with the correct plan. The separate formula cache has been removed.
+
+Queries that differ only by introspection fields still share the same formula because they also share the same query plan.
 
 ## Removed
 
-The `cost.formula_cache_hit` attribute is gone from operation spans. It was never recorded, and the
-cache it described no longer exists; the plan cache hit already on the span covers it.
+The `cost.formula_cache_hit` attribute has been removed from operation spans. It was never recorded, and the separate formula cache no longer exists. The existing plan cache hit attribute already provides this information.
