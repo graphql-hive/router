@@ -1262,9 +1262,31 @@ impl ClientResponseExt for ClientResponse {
 
     async fn json_body_string_pretty_stable(&self) -> String {
         let body = self.body().await.expect("failed to read request body");
-        let stable_json: serde_json::Value =
+        let value: serde_json::Value =
             sonic_rs::from_slice(&body).expect("failed to parse request body to JSON");
-        serde_json::to_string_pretty(&stable_json).expect("failed to pretty print canonical JSON")
+        serde_json::to_string_pretty(&sort_json_keys(value))
+            .expect("failed to pretty print canonical JSON")
+    }
+}
+
+// serde_json's Map is insertion-ordered when any crate enables `preserve_order`
+// (datadog-opentelemetry does). sort so snapshots don't depend on that.
+pub(crate) fn sort_json_keys(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.into_iter().map(sort_json_keys).collect())
+        }
+        serde_json::Value::Object(map) => {
+            let mut items: Vec<_> = map.into_iter().collect();
+            items.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
+            serde_json::Value::Object(
+                items
+                    .into_iter()
+                    .map(|(k, v)| (k, sort_json_keys(v)))
+                    .collect(),
+            )
+        }
+        other => other,
     }
 }
 

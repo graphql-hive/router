@@ -92,6 +92,7 @@ ulid = "3.0.0"
 uuid = { version = "1.24.0" }
 
 # Telemetry
+datadog-opentelemetry = { version = "0.5.2", default-features = false }
 opentelemetry = "0.32.0"
 opentelemetry_sdk = "0.32.1"
 opentelemetry-prometheus = "0.32.0"

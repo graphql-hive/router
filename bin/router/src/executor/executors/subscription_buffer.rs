@@ -1,4 +1,4 @@
-use crate::telemetry::logging::{scope::RequestLogScope, targets};
+use crate::telemetry::{logging::targets, request_scope::RequestTaskScope};
 use futures::stream::{BoxStream, Stream};
 use futures_util::StreamExt;
 use ntex::rt;
@@ -132,8 +132,8 @@ where
     // ntex::rt::spawn keeps the drainer on the local ntex runtime, matching the rest of the
     // subscription pipeline. the logging context is carried over so logs / access log stay correlated
     // with the request that opened the subscription.
-    let log_scope = RequestLogScope::capture();
-    drop(rt::spawn(log_scope.scope(async move {
+    let request_scope = RequestTaskScope::capture();
+    drop(rt::spawn(request_scope.scope(async move {
         drain_into(
             source,
             tx,

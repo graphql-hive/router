@@ -8,6 +8,7 @@ pub mod error;
 pub mod logging;
 pub mod metrics;
 pub mod propagation;
+pub mod request_scope;
 pub mod traces;
 pub mod utils;
 
@@ -43,7 +44,9 @@ use tracing_subscriber::registry::LookupSpan;
 use crate::telemetry::logging::request_id::RequestIdentifierExtractor;
 use crate::telemetry::metrics::Metrics;
 use crate::telemetry::propagation::HeaderMapInjector;
-use crate::telemetry::traces::build_trace_provider;
+use crate::telemetry::traces::{
+    build_trace_provider, hive_trace_context::RouteGraphqlDocumentsToHive,
+};
 
 use ntex::web::{self};
 use ntex::web::{App, HttpResponse, HttpServer};
@@ -597,6 +600,12 @@ where
 
     let traces_provider = build_trace_provider(config, id_generator, resource.clone())?;
     let tracer = traces_provider.tracer_with_scope(scope);
+    let route_graphql_documents_to_hive = RouteGraphqlDocumentsToHive {
+        enabled: config
+            .hive
+            .as_ref()
+            .is_some_and(|config| config.tracing.enabled),
+    };
     let traces_layer = tracing_opentelemetry::layer()
         .with_tracer(tracer)
         .with_tracked_inactivity(false)
@@ -606,7 +615,8 @@ where
         // but accept those from span.add_event()
         .with_filter(filter_fn(|metadata| {
             metadata.is_span() && *metadata.level() <= tracing::Level::INFO
-        }));
+        }))
+        .and_then(route_graphql_documents_to_hive);
 
     Ok(Some((traces_layer, traces_provider)))
 }

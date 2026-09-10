@@ -4,19 +4,22 @@ mod operation_name_e2e_tests {
     use serde_json::Value;
     use sonic_rs::{json, to_string_pretty};
 
-    use crate::testkit::{ClientResponseExt, RequestLike, Started, TestRouter, TestSubgraphs};
+    use crate::testkit::{
+        sort_json_keys, ClientResponseExt, RequestLike, Started, TestRouter, TestSubgraphs,
+    };
 
     fn request_body_json(request: &RequestLike) -> Value {
         let body = request
             .body
             .as_ref()
             .expect("expected subgraph request body to be present");
-        serde_json::from_slice(body).unwrap_or_else(|err| {
+        // datadog-opentelemetry turns on serde_json preserve_order; sort so insta stays alphabetical
+        sort_json_keys(serde_json::from_slice(body).unwrap_or_else(|err| {
             panic!(
                 "expected subgraph request body to be valid JSON: {err}; body={}",
                 String::from_utf8_lossy(body)
             )
-        })
+        }))
     }
 
     fn first_request_from(subgraphs: &TestSubgraphs<Started>, subgraph: &str) -> Value {

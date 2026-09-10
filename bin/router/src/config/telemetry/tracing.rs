@@ -24,10 +24,14 @@ pub struct TracingConfig {
 
 impl TracingConfig {
     pub fn is_enabled(&self) -> bool {
-        // sampling is set to 0? no nead to enable tracing
-        self.collect.sampling > 0.0 &&
-        // at least one exporter is enabled
-        self.exporters.iter().any(|exporter| exporter.is_enabled())
+        let has_enabled_exporter = self.exporters.iter().any(TracingExporterConfig::is_enabled);
+        let has_enabled_datadog = self.exporters.iter().any(
+            |exporter| matches!(exporter, TracingExporterConfig::Datadog(config) if config.enabled),
+        );
+
+        // datadog still records zero-sampled spans so its all-request
+        // statistics stay complete
+        has_enabled_exporter && (self.collect.sampling > 0.0 || has_enabled_datadog)
     }
 }
 
@@ -85,9 +89,18 @@ pub struct TracingCollectConfig {
     pub max_attributes_per_event: u32,
     #[serde(default = "default_max_attributes_per_link")]
     pub max_attributes_per_link: u32,
-    /// Can also be set via the `TELEMETRY_TRACING_SAMPLING_RATE` environment variable.
+    /// Fraction of traces to keep, from `0.0` to `1.0`.
+    ///
+    /// This can also be set with `TELEMETRY_TRACING_SAMPLING_RATE`.
+    ///
+    /// For Datadog, this overrides `DD_TRACE_SAMPLE_RATE`. Datadog's sampling
+    /// rules and rate limits still apply. At `0.0`, Datadog keeps request metrics
+    /// but does not keep detailed traces.
     #[serde(default = "default_sampling")]
     pub sampling: f64,
+    /// Makes OpenTelemetry follow the parent span's sampling decision.
+    ///
+    /// Datadog handles parent-based sampling itself.
     #[serde(default = "default_parent_based_sampler")]
     pub parent_based_sampler: bool,
 }
@@ -218,6 +231,41 @@ pub enum TracingExporterConfig {
     Otlp(Box<TracingOtlpConfig>),
     #[serde(rename = "stdout")]
     Stdout(Box<StdoutExporterConfig>),
+    /// Sends traces to a Datadog Agent using Datadog's native tracer.
+    ///
+    /// Only one Datadog exporter can be enabled. OTLP, stdout, and Hive exporters
+    /// can still be used alongside it.
+    #[serde(rename = "datadog")]
+    Datadog(Box<DatadogExporterConfig>),
+}
+
+/// Configures native tracing through a Datadog Agent.
+///
+/// Unlike OTLP export, this uses Datadog's sampling and collects request, error,
+/// and latency metrics for all requests. Existing trace propagation settings are
+/// unchanged.
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+#[non_exhaustive]
+pub struct DatadogExporterConfig {
+    /// Enables this Datadog exporter. Defaults to `true`.
+    ///
+    /// Set this to `false` to disable only Datadog. When this exporter is enabled,
+    /// `DD_TRACE_ENABLED=false` disables all tracing exporters.
+    #[serde(default = "default_datadog_config_enabled")]
+    pub enabled: bool,
+    /// Datadog Agent endpoint. This is usually port `8126`.
+    ///
+    /// A configured value overrides `DD_TRACE_AGENT_URL`, `DD_AGENT_HOST`, and
+    /// `DD_TRACE_AGENT_PORT`. When omitted, Datadog uses those variables or its
+    /// defaults. The Router validates the URL but does not contact the Agent at
+    /// startup.
+    #[serde(default)]
+    pub endpoint: Option<ValueOrExpression<String>>,
+}
+
+fn default_datadog_config_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -239,6 +287,7 @@ impl TracingExporterConfig {
         match self {
             TracingExporterConfig::Otlp(otlp_config) => otlp_config.enabled,
             TracingExporterConfig::Stdout(stdout_config) => stdout_config.enabled,
+            TracingExporterConfig::Datadog(datadog_config) => datadog_config.enabled,
         }
     }
 }

@@ -1,3 +1,4 @@
+mod datadog;
 mod hive;
 mod otlp_attributes;
 mod otlp_basic;

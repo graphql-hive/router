@@ -45,6 +45,7 @@ use std::time::{Duration, Instant};
 
 use crate::telemetry::error::TelemetryError;
 use crate::telemetry::logging::targets;
+use crate::telemetry::traces::{hive_trace_context::take_graphql_document, spans::attributes};
 
 /// Messages sent between Router threads and batch span processor's work thread
 #[allow(clippy::large_enum_variant)]
@@ -177,7 +178,13 @@ impl SpanProcessor for TraceBatchSpanProcessor {
         // no-op
     }
 
-    fn on_end(&self, span: SpanData) {
+    fn on_end(&self, mut span: SpanData) {
+        if let Some(document) = take_graphql_document(&span.span_context) {
+            span.attributes.push(opentelemetry::KeyValue::new(
+                attributes::GRAPHQL_DOCUMENT,
+                document,
+            ));
+        }
         if !span.span_context.is_sampled() {
             return;
         }
