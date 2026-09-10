@@ -278,13 +278,14 @@ fn selection<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, Selection<'a, S
         Kind::Punctuator if tok.value == "..." => {
             c.next()?;
             let next = c.peek()?;
+            let pos = c.pos();
             match next.kind {
                 Kind::Punctuator if next.value == "@" || next.value == "{" => {
-                    inline_fragment_after_ellipsis::<S>(c, c.pos())
+                    inline_fragment_after_ellipsis::<S>(c, pos)
                 }
-                Kind::Name if next.value == "on" => inline_fragment_after_ellipsis::<S>(c, c.pos()),
-                Kind::Name => fragment_spread_after_ellipsis::<S>(c, c.pos()),
-                _ => fragment_spread_after_ellipsis::<S>(c, c.pos()),
+                Kind::Name if next.value == "on" => inline_fragment_after_ellipsis::<S>(c, pos),
+                Kind::Name => fragment_spread_after_ellipsis::<S>(c, pos),
+                _ => fragment_spread_after_ellipsis::<S>(c, pos),
             }
         }
         _ => {
