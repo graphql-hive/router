@@ -171,7 +171,7 @@ pub async fn plan_operation_with_cache(
                 }
             }
             // Give the ownership back to variables
-            plan = end_payload.query_plan;
+            plan = end_payload.into_query_plan();
         }
 
         Ok(QueryPlanResult::QueryPlan(plan))

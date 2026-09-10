@@ -54,12 +54,23 @@ pub type OnQueryPlanStartHookResult<'exec> = StartHookResult<
 
 pub struct OnQueryPlanEndHookPayload {
     /// The generated query plan for the incoming GraphQL request.
-    pub query_plan: Arc<QueryPlan>,
+    pub(crate) query_plan: Arc<QueryPlan>,
     /// The cache hint for the generated query plan.
     /// - If this is `CacheHint::Hit`, it means the query planning process didn't happen because the result was retrieved from the cache.
     /// - If this is `CacheHint::Miss`, it means the query planning process happened and the result was not retrieved from the cache.
     pub cache_hint: CacheHint,
     pub request_context: RequestContextApi,
+}
+
+impl OnQueryPlanEndHookPayload {
+    /// Returns the generated query plan for the incoming GraphQL request.
+    pub fn query_plan(&self) -> &QueryPlan {
+        &self.query_plan
+    }
+
+    pub(crate) fn into_query_plan(self) -> Arc<QueryPlan> {
+        self.query_plan
+    }
 }
 
 impl EndHookPayload<PlanExecutionOutput> for OnQueryPlanEndHookPayload {}
