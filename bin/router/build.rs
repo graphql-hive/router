@@ -325,8 +325,8 @@ fn base64_encode(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
 
-    let mut chunks = bytes.chunks_exact(3);
-    for chunk in &mut chunks {
+    let (chunks, remainder) = bytes.as_chunks::<3>();
+    for chunk in &mut chunks.iter() {
         let n = ((chunk[0] as u32) << 16) | ((chunk[1] as u32) << 8) | chunk[2] as u32;
         output.push(TABLE[((n >> 18) & 0x3f) as usize] as char);
         output.push(TABLE[((n >> 12) & 0x3f) as usize] as char);
@@ -334,7 +334,6 @@ fn base64_encode(bytes: &[u8]) -> String {
         output.push(TABLE[(n & 0x3f) as usize] as char);
     }
 
-    let remainder = chunks.remainder();
     if !remainder.is_empty() {
         let first = remainder[0] as u32;
         let second = remainder.get(1).copied().unwrap_or_default() as u32;
