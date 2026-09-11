@@ -10,7 +10,8 @@ use crate::config::demand_control::{
 };
 use crate::query_planner::{
     ast::{
-        operation::{OperationDefinition, SubgraphFetchOperation},
+        document::Document,
+        operation::OperationDefinition,
         selection_item::SelectionItem,
         selection_set::{FieldSelection, SelectionSet},
         value::Value as AstValue,
@@ -274,10 +275,10 @@ struct CompiledInlineFragmentActualCostPlan {
 }
 
 pub fn compile_actual_subgraph_cost_plan(
-    operation: &SubgraphFetchOperation,
+    document: &Document,
     supergraph_state: &SupergraphState,
 ) -> CompiledSubgraphActualCostPlan {
-    let operation_def = &operation.document.operation;
+    let operation_def = &document.operation;
     let root_type_name =
         supergraph_state.expect_root_type_name(operation_def.operation_kind.as_ref());
 

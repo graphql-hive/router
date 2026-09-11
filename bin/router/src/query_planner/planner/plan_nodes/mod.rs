@@ -2,7 +2,7 @@ use crate::query_planner::{
     ast::{
         merge_path::{Condition, MergePath, Segment},
         minification::minify_operation,
-        operation::{OperationDefinition, SubgraphFetchOperation, VariableDefinition},
+        operation::{OperationDefinition, PlanningFetchOperation, VariableDefinition},
         selection_item::SelectionItem,
         selection_set::{FieldSelection, SelectionSet},
         value::Value,
@@ -14,6 +14,26 @@ use crate::query_planner::{
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
 use serde::{Deserialize, Serialize};
+
+mod state;
+pub use state::{Executable, PlanState, Planning};
+mod prepare;
+
+pub mod planning {
+    pub use super::*;
+    pub type QueryPlan = super::QueryPlan<Planning>;
+    pub type PlanNode = super::PlanNode<Planning>;
+    pub type FetchNode = super::FetchNode<Planning>;
+    pub type BatchFetchNode = super::BatchFetchNode<Planning>;
+    pub type FlattenNode = super::FlattenNode<Planning>;
+    pub type SequenceNode = super::SequenceNode<Planning>;
+    pub type ParallelNode = super::ParallelNode<Planning>;
+    pub type ConditionNode = super::ConditionNode<Planning>;
+    pub type SubscriptionNode = super::SubscriptionNode<Planning>;
+    pub type DeferNode = super::DeferNode<Planning>;
+    pub type DeferPrimary = super::DeferPrimary<Planning>;
+    pub type DeferredNode = super::DeferredNode<Planning>;
+}
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::{Display, Formatter as FmtFormatter, Result as FmtResult},
@@ -23,77 +43,82 @@ use xxhash_rust::xxh3::Xxh3;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct QueryPlan {
+// Why `[serde(bound = "")]` ?
+// `S` only tracks the plan state. Only `S::Operation` is serialized.
+// Do not require the marker types themselves to implement Serialize or Deserialize.
+#[serde(bound = "")]
+pub struct QueryPlan<S: PlanState = Executable> {
     pub kind: &'static str, // "QueryPlan"
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub node: Option<PlanNode>,
+    pub node: Option<PlanNode<S>>,
 }
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "kind")]
-pub enum PlanNode {
-    Fetch(FetchNode),
-    BatchFetch(BatchFetchNode),
-    Sequence(SequenceNode),
-    Parallel(ParallelNode),
-    Flatten(FlattenNode),
-    Condition(ConditionNode),
-    Subscription(SubscriptionNode),
-    Defer(DeferNode),
+#[serde(bound = "")]
+pub enum PlanNode<S: PlanState = Executable> {
+    Fetch(FetchNode<S>),
+    BatchFetch(BatchFetchNode<S>),
+    Sequence(SequenceNode<S>),
+    Parallel(ParallelNode<S>),
+    Flatten(FlattenNode<S>),
+    Condition(ConditionNode<S>),
+    Subscription(SubscriptionNode<S>),
+    Defer(DeferNode<S>),
 }
 
-impl PlanNode {
-    pub fn as_fetch(&self) -> Option<&FetchNode> {
+impl<S: PlanState> PlanNode<S> {
+    pub fn as_fetch(&self) -> Option<&FetchNode<S>> {
         match self {
             PlanNode::Fetch(node) => Some(node),
             _ => None,
         }
     }
 
-    pub fn as_batch_fetch(&self) -> Option<&BatchFetchNode> {
+    pub fn as_batch_fetch(&self) -> Option<&BatchFetchNode<S>> {
         match self {
             PlanNode::BatchFetch(node) => Some(node),
             _ => None,
         }
     }
 
-    pub fn as_sequence(&self) -> Option<&SequenceNode> {
+    pub fn as_sequence(&self) -> Option<&SequenceNode<S>> {
         match self {
             PlanNode::Sequence(node) => Some(node),
             _ => None,
         }
     }
 
-    pub fn as_parallel(&self) -> Option<&ParallelNode> {
+    pub fn as_parallel(&self) -> Option<&ParallelNode<S>> {
         match self {
             PlanNode::Parallel(node) => Some(node),
             _ => None,
         }
     }
 
-    pub fn as_flatten(&self) -> Option<&FlattenNode> {
+    pub fn as_flatten(&self) -> Option<&FlattenNode<S>> {
         match self {
             PlanNode::Flatten(node) => Some(node),
             _ => None,
         }
     }
 
-    pub fn as_condition(&self) -> Option<&ConditionNode> {
+    pub fn as_condition(&self) -> Option<&ConditionNode<S>> {
         match self {
             PlanNode::Condition(node) => Some(node),
             _ => None,
         }
     }
 
-    pub fn as_subscription(&self) -> Option<&SubscriptionNode> {
+    pub fn as_subscription(&self) -> Option<&SubscriptionNode<S>> {
         match self {
             PlanNode::Subscription(node) => Some(node),
             _ => None,
         }
     }
 
-    pub fn as_defer(&self) -> Option<&DeferNode> {
+    pub fn as_defer(&self) -> Option<&DeferNode<S>> {
         match self {
             PlanNode::Defer(node) => Some(node),
             _ => None,
@@ -103,7 +128,8 @@ impl PlanNode {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FetchNode {
+#[serde(bound = "")]
+pub struct FetchNode<S: PlanState = Executable> {
     #[serde(skip_serializing)]
     pub id: i64,
     pub service_name: String,
@@ -111,7 +137,7 @@ pub struct FetchNode {
     pub variable_usages: Option<BTreeSet<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_kind: Option<OperationKind>,
-    pub operation: SubgraphFetchOperation,
+    pub operation: S::Operation,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_scalar_paths: Option<CustomScalarPaths>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -124,7 +150,8 @@ pub struct FetchNode {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BatchFetchNode {
+#[serde(bound = "")]
+pub struct BatchFetchNode<S: PlanState = Executable> {
     #[serde(skip_serializing)]
     pub id: i64,
     pub service_name: String,
@@ -132,7 +159,7 @@ pub struct BatchFetchNode {
     pub variable_usages: Option<BTreeSet<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_kind: Option<OperationKind>,
-    pub operation: SubgraphFetchOperation,
+    pub operation: S::Operation,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_scalar_paths: Option<CustomScalarPaths>,
     pub entity_batch: EntityBatch,
@@ -356,30 +383,34 @@ pub struct EntityBatchAlias {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FlattenNode {
+#[serde(bound = "")]
+pub struct FlattenNode<S: PlanState = Executable> {
     pub path: FlattenNodePath,
-    pub node: Box<PlanNode>,
+    pub node: Box<PlanNode<S>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SequenceNode {
-    pub nodes: Vec<PlanNode>,
+#[serde(bound = "")]
+pub struct SequenceNode<S: PlanState = Executable> {
+    pub nodes: Vec<PlanNode<S>>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParallelNode {
-    pub nodes: Vec<PlanNode>,
+#[serde(bound = "")]
+pub struct ParallelNode<S: PlanState = Executable> {
+    pub nodes: Vec<PlanNode<S>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ConditionNode {
+#[serde(bound = "")]
+pub struct ConditionNode<S: PlanState = Executable> {
     pub condition: String, // The variable name acting as the condition
-    pub if_clause: Option<Box<PlanNode>>,
+    pub if_clause: Option<Box<PlanNode<S>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub else_clause: Option<Box<PlanNode>>,
+    pub else_clause: Option<Box<PlanNode<S>>>,
 }
 
-impl ConditionNode {
+impl<S: PlanState> ConditionNode<S> {
     /// Checks if this condition node can be merged with another.
     pub fn can_merge_with(&self, other: &Self) -> bool {
         if self.condition != other.condition {
@@ -407,7 +438,7 @@ impl ConditionNode {
         }
     }
 
-    fn take_inner_nodes(&mut self) -> Vec<PlanNode> {
+    fn take_inner_nodes(&mut self) -> Vec<PlanNode<S>> {
         self.if_clause
             .take()
             .or_else(|| self.else_clause.take())
@@ -554,27 +585,31 @@ pub struct ValueSetter {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct SubscriptionNode {
+#[serde(bound = "")]
+pub struct SubscriptionNode<S: PlanState = Executable> {
     // A subscription node can only really have a primary fetch node.
-    pub primary: FetchNode,
+    pub primary: FetchNode<S>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct DeferNode {
-    pub primary: DeferPrimary,
-    pub deferred: Vec<DeferredNode>,
+#[serde(bound = "")]
+pub struct DeferNode<S: PlanState = Executable> {
+    pub primary: DeferPrimary<S>,
+    pub deferred: Vec<DeferredNode<S>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct DeferPrimary {
+#[serde(bound = "")]
+pub struct DeferPrimary<S: PlanState = Executable> {
     pub subselection: Option<String>,
-    pub node: Option<Box<PlanNode>>,
+    pub node: Option<Box<PlanNode<S>>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct DeferredNode {
+#[serde(bound = "")]
+pub struct DeferredNode<S: PlanState = Executable> {
     pub depends: Vec<DeferDependency>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
@@ -582,7 +617,7 @@ pub struct DeferredNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subselection: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub node: Option<Box<PlanNode>>,
+    pub node: Option<Box<PlanNode<S>>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -593,8 +628,8 @@ pub struct DeferDependency {
     pub defer_label: Option<String>,
 }
 
-impl PlanNode {
-    pub fn into_nodes(self) -> Vec<PlanNode> {
+impl<S: PlanState> PlanNode<S> {
+    pub fn into_nodes(self) -> Vec<PlanNode<S>> {
         match self {
             PlanNode::Sequence(node) => node.nodes,
             PlanNode::Parallel(node) => node.nodes,
@@ -604,7 +639,7 @@ impl PlanNode {
 
     /// If the node is a Sequence, returns its children. Otherwise, returns the node itself in a Vec.
     /// This is used to "splice" nodes into a parent Sequence without creating nested Sequences.
-    pub fn flatten_sequence(self) -> Vec<PlanNode> {
+    pub fn flatten_sequence(self) -> Vec<PlanNode<S>> {
         match self {
             PlanNode::Sequence(node) => node.nodes,
             other => vec![other],
@@ -612,7 +647,7 @@ impl PlanNode {
     }
 
     /// Flattens nested Parallel nodes into a single list of nodes.
-    pub fn flatten_parallel(nodes: Vec<PlanNode>) -> Vec<PlanNode> {
+    pub fn flatten_parallel(nodes: Vec<PlanNode<S>>) -> Vec<PlanNode<S>> {
         let mut flattened = Vec::with_capacity(nodes.len());
         for node in nodes {
             match node {
@@ -623,7 +658,7 @@ impl PlanNode {
         flattened
     }
 
-    pub fn sequence(mut nodes: Vec<PlanNode>) -> PlanNode {
+    pub fn sequence(mut nodes: Vec<PlanNode<S>>) -> PlanNode<S> {
         if nodes.len() == 1 {
             nodes.remove(0)
         } else {
@@ -631,7 +666,7 @@ impl PlanNode {
         }
     }
 
-    pub fn parallel(mut nodes: Vec<PlanNode>) -> PlanNode {
+    pub fn parallel(mut nodes: Vec<PlanNode<S>>) -> PlanNode<S> {
         if nodes.len() == 1 {
             nodes.remove(0)
         } else {
@@ -661,7 +696,7 @@ fn create_input_selection_set(
 fn create_output_operation(
     step: &FetchStepData<MultiTypeFetchStep>,
     supergraph: &SupergraphState,
-) -> SubgraphFetchOperation {
+) -> PlanningFetchOperation {
     let mut variables = vec![VariableDefinition {
         name: "representations".to_string(),
         variable_type: TypeNode::NonNull(Box::new(TypeNode::List(Box::new(TypeNode::NonNull(
@@ -699,10 +734,10 @@ fn create_output_operation(
 
     let document = minify_operation(operation_def, supergraph).expect("Failed to minify");
 
-    SubgraphFetchOperation::from_anonymous_operation(document)
+    PlanningFetchOperation::from_anonymous_operation(document)
 }
 
-impl FetchNode {
+impl FetchNode<Planning> {
     pub fn from_fetch_step(
         step: &FetchStepData<MultiTypeFetchStep>,
         supergraph: &SupergraphState,
@@ -739,7 +774,7 @@ impl FetchNode {
                     service_name: step.service_name.0.clone(),
                     variable_usages: step.variable_usages.clone(),
                     operation_kind: Some(step.operation_kind.clone()),
-                    operation: SubgraphFetchOperation::from_anonymous_operation(document),
+                    operation: PlanningFetchOperation::from_anonymous_operation(document),
                     custom_scalar_paths: custom_scalar_paths_from_fetch_output(
                         &step.output,
                         supergraph,
@@ -754,7 +789,7 @@ impl FetchNode {
     }
 }
 
-impl PlanNode {
+impl PlanNode<Planning> {
     pub fn from_fetch_step(
         step: &FetchStepData<MultiTypeFetchStep>,
         supergraph: &SupergraphState,
@@ -802,43 +837,43 @@ impl PlanNode {
     }
 }
 
-impl Display for QueryPlan {
+impl<S: PlanState> Display for QueryPlan<S> {
     fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
         self.pretty_fmt(f, 0)
     }
 }
 
-impl Display for PlanNode {
+impl<S: PlanState> Display for PlanNode<S> {
     fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
         self.pretty_fmt(f, 0)
     }
 }
 
-impl Display for FetchNode {
+impl<S: PlanState> Display for FetchNode<S> {
     fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
         self.pretty_fmt(f, 0)
     }
 }
 
-impl Display for BatchFetchNode {
+impl<S: PlanState> Display for BatchFetchNode<S> {
     fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
         self.pretty_fmt(f, 0)
     }
 }
 
-impl Display for FlattenNode {
+impl<S: PlanState> Display for FlattenNode<S> {
     fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
         self.pretty_fmt(f, 0)
     }
 }
 
-impl Display for SubscriptionNode {
+impl<S: PlanState> Display for SubscriptionNode<S> {
     fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
         self.pretty_fmt(f, 0)
     }
 }
 
-impl PrettyDisplay for QueryPlan {
+impl<S: PlanState> PrettyDisplay for QueryPlan<S> {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
         writeln!(f, "{indent}QueryPlan {{",)?;
@@ -852,7 +887,7 @@ impl PrettyDisplay for QueryPlan {
     }
 }
 
-impl PrettyDisplay for FetchNode {
+impl<S: PlanState> PrettyDisplay for FetchNode<S> {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
         writeln!(f, "{indent}Fetch(service: \"{}\") {{", self.service_name)?;
@@ -868,7 +903,7 @@ impl PrettyDisplay for FetchNode {
     }
 }
 
-impl PrettyDisplay for BatchFetchNode {
+impl<S: PlanState> PrettyDisplay for BatchFetchNode<S> {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
         writeln!(
@@ -897,7 +932,7 @@ impl PrettyDisplay for BatchFetchNode {
     }
 }
 
-impl PrettyDisplay for FlattenNode {
+impl<S: PlanState> PrettyDisplay for FlattenNode<S> {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
 
@@ -909,7 +944,7 @@ impl PrettyDisplay for FlattenNode {
     }
 }
 
-impl PrettyDisplay for SequenceNode {
+impl<S: PlanState> PrettyDisplay for SequenceNode<S> {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
         writeln!(f, "{indent}Sequence {{")?;
@@ -921,7 +956,7 @@ impl PrettyDisplay for SequenceNode {
     }
 }
 
-impl PrettyDisplay for ParallelNode {
+impl<S: PlanState> PrettyDisplay for ParallelNode<S> {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
         writeln!(f, "{indent}Parallel {{")?;
@@ -933,7 +968,7 @@ impl PrettyDisplay for ParallelNode {
     }
 }
 
-impl PrettyDisplay for ConditionNode {
+impl<S: PlanState> PrettyDisplay for ConditionNode<S> {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
 
@@ -957,7 +992,7 @@ impl PrettyDisplay for ConditionNode {
     }
 }
 
-impl PrettyDisplay for SubscriptionNode {
+impl<S: PlanState> PrettyDisplay for SubscriptionNode<S> {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
         writeln!(f, "{indent}Subscription {{")?;
@@ -967,7 +1002,7 @@ impl PrettyDisplay for SubscriptionNode {
     }
 }
 
-impl PrettyDisplay for PlanNode {
+impl<S: PlanState> PrettyDisplay for PlanNode<S> {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         match self {
             PlanNode::Fetch(node) => node.pretty_fmt(f, depth),
@@ -1048,5 +1083,39 @@ mod tests {
             paths.is_none(),
             "custom-scalar vs built-in-scalar collision must not emit a terminal custom scalar path"
         );
+    }
+}
+
+#[cfg(test)]
+#[cfg(target_pointer_width = "64")]
+mod stored_size_tests {
+    use super::*;
+    use std::mem::size_of;
+
+    /// Checks the size of the stored types. This is not the total memory a plan keeps, and not
+    /// the number of allocations. A cached plan holds one of these per node and per fetch, so
+    /// these sizes are what the plan cache costs in memory.
+    ///
+    /// Each type is 104 bytes smaller than before. That is the parsed `Document` that used to sit
+    /// inside `SubgraphFetchOperation`. Every fetch carried one, and nothing on the execution path
+    /// read it.
+    #[test]
+    fn stored_sizes_stay_small() {
+        for (name, actual, expected) in [
+            ("PlanNode", size_of::<PlanNode>(), 224),
+            ("FetchNode", size_of::<FetchNode>(), 216),
+            ("BatchFetchNode", size_of::<BatchFetchNode>(), 168),
+            (
+                "SubgraphFetchOperation",
+                size_of::<crate::query_planner::ast::operation::SubgraphFetchOperation>(),
+                40,
+            ),
+        ] {
+            assert_eq!(
+                actual, expected,
+                "{name} is {actual} B, expected {expected} B - cached plans hold one of these per \
+                 node or per fetch, so this changes the plan cache's memory use"
+            );
+        }
     }
 }

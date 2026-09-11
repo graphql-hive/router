@@ -159,8 +159,48 @@ fn query_plan_pipeline(c: &mut Criterion) {
     });
 }
 
+fn cache_preparation(c: &mut Criterion) {
+    use hive_router::query_planner::planner::Planner;
+    let mut group = c.benchmark_group("cache_preparation");
+    for (name, schema_path, operation_path) in [
+        (
+            "bench",
+            "../../bench/supergraph.graphql",
+            "../../bench/operation.graphql",
+        ),
+        (
+            "many_plans",
+            "./fixture/grafbase-many-plans/supergraph.graphql",
+            "./fixture/grafbase-many-plans/operation.graphql",
+        ),
+    ] {
+        let schema = parse_schema(&std::fs::read_to_string(schema_path).unwrap());
+        let planner =
+            Planner::new_from_supergraph(&schema, QueryPlannerOptions::default()).unwrap();
+        let document = get_operation(operation_path);
+        let operation = get_executable_operation(&document, &planner.supergraph, None);
+        let plan = planner
+            .plan_from_normalized_operation(
+                &operation,
+                PlannerOverrideContext::default(),
+                &CancellationToken::new(),
+            )
+            .unwrap();
+        // Planning and cloning are setup. Only consuming the plan is measured.
+        group.bench_function(name, |b| {
+            b.iter_batched(
+                || plan.clone(),
+                |plan| black_box(plan.into_executable()),
+                criterion::BatchSize::SmallInput,
+            )
+        });
+    }
+    group.finish();
+}
+
 fn all_benchmarks(c: &mut Criterion) {
     query_plan_pipeline(c);
+    cache_preparation(c);
 }
 
 criterion_group!(benches, all_benchmarks);

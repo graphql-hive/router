@@ -42,7 +42,6 @@ impl OperationDefinition {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SubgraphFetchOperation {
-    pub document: Document,
     pub document_str: String,
     pub hash: u64,
     /// All operations produced by the query planner are anonymous.
@@ -54,19 +53,39 @@ pub struct SubgraphFetchOperation {
     pub name_write_position: usize,
 }
 
-impl SubgraphFetchOperation {
-    pub(crate) fn get_inner_selection_set(&self) -> &SelectionSet {
-        if self.document.operation.selection_set.items.len() == 1 {
-            if let SelectionItem::Field(field) = &self.document.operation.selection_set.items[0] {
-                if field.name == "_entities" && field.alias.is_none() {
-                    return &field.selections;
-                }
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlanningFetchOperation {
+    pub document: Box<Document>,
+    #[serde(flatten)]
+    pub operation: SubgraphFetchOperation,
+}
+
+impl AsRef<SubgraphFetchOperation> for SubgraphFetchOperation {
+    fn as_ref(&self) -> &SubgraphFetchOperation {
+        self
+    }
+}
+
+impl AsRef<SubgraphFetchOperation> for PlanningFetchOperation {
+    fn as_ref(&self) -> &SubgraphFetchOperation {
+        &self.operation
+    }
+}
+
+/// Skips the `_entities` wrapper when printing a selection that is sent to a subgraph.
+pub(crate) fn inner_selection_set(document: &Document) -> &SelectionSet {
+    if document.operation.selection_set.items.len() == 1 {
+        if let SelectionItem::Field(field) = &document.operation.selection_set.items[0] {
+            if field.name == "_entities" && field.alias.is_none() {
+                return &field.selections;
             }
         }
-
-        &self.document.operation.selection_set
     }
 
+    &document.operation.selection_set
+}
+
+impl PlanningFetchOperation {
     pub fn from_anonymous_operation(document: Document) -> Self {
         let document_str = document.to_string();
         let hash = hash_minified_query(&document_str);
@@ -94,10 +113,12 @@ impl SubgraphFetchOperation {
             .unwrap_or(0);
 
         Self {
-            document,
-            document_str,
-            hash,
-            name_write_position,
+            document: Box::new(document),
+            operation: SubgraphFetchOperation {
+                document_str,
+                hash,
+                name_write_position,
+            },
         }
     }
 }
@@ -107,23 +128,35 @@ impl Serialize for SubgraphFetchOperation {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.document.to_string())
+        serializer.serialize_str(&self.document_str)
+    }
+}
+
+impl Serialize for PlanningFetchOperation {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.operation.serialize(serializer)
     }
 }
 
 impl PrettyDisplay for SubgraphFetchOperation {
     fn pretty_fmt(&self, f: &mut std::fmt::Formatter<'_>, depth: usize) -> std::fmt::Result {
+        writeln!(f, "{}  {}", get_indent(depth), self.document_str)
+    }
+}
+
+impl PrettyDisplay for PlanningFetchOperation {
+    fn pretty_fmt(&self, f: &mut std::fmt::Formatter<'_>, depth: usize) -> std::fmt::Result {
         let indent = get_indent(depth);
+        let document = &self.document;
         // TODO: improve
-        let has_variables = self
-            .document
+        let has_variables = document
             .operation
             .variable_definitions
             .as_ref()
             .is_some_and(|defs| {
                 !defs.is_empty() && defs.iter().all(|v| v.variable_type.inner_type() != "_Any")
             });
-        let kind: &str = match &self.document.operation.operation_kind {
+        let kind: &str = match &document.operation.operation_kind {
             Some(kind) => match kind {
                 OperationKind::Query => match has_variables {
                     true => "query ",
@@ -134,34 +167,33 @@ impl PrettyDisplay for SubgraphFetchOperation {
             },
             None => "",
         };
-        let variables =
-            if let Some(variables) = self.document.operation.variable_definitions.as_ref() {
-                let representationless = variables
-                    .iter()
-                    .filter(|v| v.variable_type.inner_type() != "_Any")
-                    .collect::<Vec<_>>();
+        let variables = if let Some(variables) = document.operation.variable_definitions.as_ref() {
+            let representationless = variables
+                .iter()
+                .filter(|v| v.variable_type.inner_type() != "_Any")
+                .collect::<Vec<_>>();
 
-                if representationless.is_empty() {
-                    "".to_string()
-                } else {
-                    format!(
-                        "({}) ",
-                        representationless
-                            .iter()
-                            .map(|v| v.to_string())
-                            .collect::<Vec<String>>()
-                            .join(",")
-                    )
-                }
-            } else {
+            if representationless.is_empty() {
                 "".to_string()
-            };
+            } else {
+                format!(
+                    "({}) ",
+                    representationless
+                        .iter()
+                        .map(|v| v.to_string())
+                        .collect::<Vec<String>>()
+                        .join(",")
+                )
+            }
+        } else {
+            "".to_string()
+        };
         writeln!(f, "{indent}  {kind}{variables}{{")?;
-        self.get_inner_selection_set().pretty_fmt(f, depth + 2)?;
+        inner_selection_set(document).pretty_fmt(f, depth + 2)?;
         writeln!(f, "{indent}  }}")?;
 
-        if !self.document.fragments.is_empty() {
-            for fragment in &self.document.fragments {
+        if !document.fragments.is_empty() {
+            for fragment in &document.fragments {
                 fragment.pretty_fmt(f, depth)?;
             }
         }
@@ -317,7 +349,7 @@ impl<'a, T: parser::Text<'a>> From<parser::VariableDefinition<'a, T>> for Variab
 
 #[cfg(test)]
 mod tests {
-    use super::SubgraphFetchOperation;
+    use super::PlanningFetchOperation;
     use crate::query_planner::{ast::document::Document, utils::parsing::parse_operation};
     use graphql_tools::parser::query::Definition;
     use std::fmt;
@@ -344,8 +376,8 @@ mod tests {
         }
     }
 
-    fn parse_subgraph_fetch_operation(query: &str) -> SubgraphFetchOperation {
-        SubgraphFetchOperation::from_anonymous_operation(parse_document(query))
+    fn parse_subgraph_fetch_operation(query: &str) -> PlanningFetchOperation {
+        PlanningFetchOperation::from_anonymous_operation(parse_document(query))
     }
 
     struct InsertPosition<'a> {
@@ -354,7 +386,8 @@ mod tests {
     }
 
     impl<'a> InsertPosition<'a> {
-        fn new(operation: &'a SubgraphFetchOperation) -> Self {
+        fn new(operation: &'a PlanningFetchOperation) -> Self {
+            let operation = operation.as_ref();
             Self {
                 document: &operation.document_str,
                 start: operation.name_write_position,
