@@ -1092,6 +1092,7 @@ mod stored_size_tests {
     use super::*;
     use std::mem::size_of;
 
+    #[test]
     fn stored_sizes_stay_small() {
         for (name, actual, expected) in [
             ("PlanNode", size_of::<PlanNode>(), 40),
