@@ -2129,7 +2129,7 @@ mod tests {
                 &mut exec_ctx,
                 &PlanNode::Parallel(ParallelNode {
                     nodes: vec![
-                        PlanNode::Fetch(FetchNode {
+                        PlanNode::Fetch(Box::new(FetchNode {
                             id: 1,
                             service_name: "subgraph_a".to_string(),
                             operation: PlanningFetchOperation::from_anonymous_operation(
@@ -2142,8 +2142,8 @@ mod tests {
                             output_rewrites: None,
                             variable_usages: None,
                             operation_kind: None,
-                        }),
-                        PlanNode::Fetch(FetchNode {
+                        })),
+                        PlanNode::Fetch(Box::new(FetchNode {
                             id: 2,
                             service_name: "subgraph_b".to_string(),
                             operation: PlanningFetchOperation::from_anonymous_operation(
@@ -2156,7 +2156,7 @@ mod tests {
                             output_rewrites: None,
                             variable_usages: None,
                             operation_kind: None,
-                        }),
+                        })),
                     ],
                 }),
             )

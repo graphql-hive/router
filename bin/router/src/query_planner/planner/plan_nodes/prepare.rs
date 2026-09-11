@@ -33,8 +33,8 @@ impl PlanNode<Planning> {
             Box::new(node.into_executable())
         }
         match self {
-            Self::Fetch(fetch) => PlanNode::Fetch(fetch.into_executable()),
-            Self::BatchFetch(batch) => PlanNode::BatchFetch(BatchFetchNode {
+            Self::Fetch(fetch) => PlanNode::Fetch(Box::new(fetch.into_executable())),
+            Self::BatchFetch(batch) => PlanNode::BatchFetch(Box::new(BatchFetchNode {
                 id: batch.id,
                 service_name: batch.service_name,
                 variable_usages: batch.variable_usages,
@@ -42,7 +42,7 @@ impl PlanNode<Planning> {
                 operation: batch.operation.operation,
                 custom_scalar_paths: batch.custom_scalar_paths,
                 entity_batch: batch.entity_batch,
-            }),
+            })),
             Self::Flatten(flatten) => PlanNode::Flatten(FlattenNode {
                 path: flatten.path,
                 node: boxed(*flatten.node),
@@ -66,10 +66,12 @@ impl PlanNode<Planning> {
                 if_clause: condition.if_clause.map(|node| boxed(*node)),
                 else_clause: condition.else_clause.map(|node| boxed(*node)),
             }),
-            Self::Subscription(subscription) => PlanNode::Subscription(SubscriptionNode {
-                primary: subscription.primary.into_executable(),
-            }),
-            Self::Defer(defer) => PlanNode::Defer(DeferNode {
+            Self::Subscription(subscription) => {
+                PlanNode::Subscription(Box::new(SubscriptionNode {
+                    primary: subscription.primary.into_executable(),
+                }))
+            }
+            Self::Defer(defer) => PlanNode::Defer(Box::new(DeferNode {
                 primary: DeferPrimary {
                     subselection: defer.primary.subselection,
                     node: defer.primary.node.map(|node| boxed(*node)),
@@ -85,7 +87,7 @@ impl PlanNode<Planning> {
                         node: node.node.map(|node| boxed(*node)),
                     })
                     .collect(),
-            }),
+            })),
         }
     }
 }
