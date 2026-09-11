@@ -70,9 +70,7 @@ use crate::executor::{
     plugin_context::PluginRequestState,
     plugin_trait::{EarlyHTTPResponse, EndControlFlow, StartControlFlow},
     plugins::hooks,
-    projection::{
-        plan::FieldProjectionPlan, request::project_requires, response::project_by_operation,
-    },
+    projection::{plan::ProjectionPlan, request::project_requires, response::project_by_operation},
     response::{
         graphql_error::{GraphQLError, GraphQLErrorPath, GraphQLErrorPathSegment},
         merge::deep_merge,
@@ -121,7 +119,7 @@ impl CoerceVariablesPayload {
 pub struct QueryPlanExecutionOpts<'exec> {
     pub query_plan: &'exec QueryPlan,
     pub operation_for_plan: Arc<OperationDefinition>,
-    pub projection_plan: Arc<Vec<FieldProjectionPlan>>,
+    pub projection_plan: Arc<ProjectionPlan>,
     pub headers_plan: Arc<HeaderRulesPlan>,
     pub extensions_plan: Arc<ExtensionsPlan>,
     pub variable_values: Arc<CoerceVariablesPayload>,

@@ -1,8 +1,7 @@
 use crate::executor::execution::plan::ExecutionResultExtensions;
 use crate::executor::projection::error::ProjectionError;
 use crate::executor::projection::plan::{
-    FieldProjectionCondition, FieldProjectionConditionError, FieldProjectionPlan,
-    ProjectionValueSource,
+    Condition, ConditionId, FieldRecord, ProjectionPlan, ShapeFlags,
 };
 use crate::executor::response::graphql_error::GraphQLError;
 use crate::executor::response::value::Value;
@@ -11,7 +10,7 @@ use sonic_rs::JsonValueTrait;
 use std::cell::OnceCell;
 use std::collections::HashMap;
 
-use crate::executor::introspection::schema::{FieldNullability, SchemaMetadata};
+use crate::executor::introspection::schema::SchemaMetadata;
 use crate::executor::json_writer::{write_and_escape_string, write_f64, write_i64, write_u64};
 use crate::executor::utils::consts::{
     CLOSE_BRACE, CLOSE_BRACKET, COLON, COMMA, EMPTY_OBJECT, FALSE, NULL, OPEN_BRACE, OPEN_BRACKET,
@@ -19,9 +18,9 @@ use crate::executor::utils::consts::{
 };
 
 enum NullPropagationDecision {
-    /// An indicator that the `null` value should be propagated, since the field is non-null
+    /// The value is `null` and may need to bubble up.
     PropagateNullValue,
-    /// An indicator that the `null` value should be kept as-is, since the field is nullable.
+    /// The value can stay as-is.
     KeepNullValue,
 }
 
@@ -32,19 +31,57 @@ impl NullPropagationDecision {
     }
 }
 
-/// Represents a type's name that can be either already resolved or lazily computed.
-/// This avoids computing the type name when it's not needed, which is important for performance.
-///
-/// Deferred contexts borrow their parent on the traversal stack, sharing its lazy
-/// resolution across sibling fields and list items without allocation or cloning.
+#[derive(Debug)]
+enum ConditionFailure {
+    InvalidParentType,
+    InvalidFieldType,
+    Skip,
+    InvalidEnumValue,
+    Fatal(ProjectionError),
+}
+
+impl From<ProjectionError> for ConditionFailure {
+    fn from(err: ProjectionError) -> Self {
+        ConditionFailure::Fatal(err)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ShapeCursor<'a>(&'a [u8]);
+
+impl<'a> ShapeCursor<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self(bytes)
+    }
+
+    fn is_non_null(self) -> bool {
+        self.0.first().is_some_and(|marker| {
+            ShapeFlags::from_bits_retain(*marker).contains(ShapeFlags::NON_NULL)
+        })
+    }
+
+    fn list_item(self) -> Option<Self> {
+        match self.0.split_first() {
+            Some((marker, rest))
+                if ShapeFlags::from_bits_retain(*marker).contains(ShapeFlags::LIST) =>
+            {
+                Some(Self(rest))
+            }
+            _ => None,
+        }
+    }
+}
+
+/// A type name that is either known or resolved when needed.
 enum TypeName<'a, 'ctx> {
     Resolved(&'a str),
     Deferred {
-        selection: &'a FieldProjectionPlan,
+        selection: &'a FieldRecord,
+        plan: &'a ProjectionPlan,
         data: Option<&'a Value<'a>>,
         parent: &'ctx TypeName<'a, 'ctx>,
         schema: &'a SchemaMetadata,
-        /// Cache for the resolved type name to avoid recomputation
+        /// Cache the resolved name.
         cached: OnceCell<Result<&'a str, ProjectionError>>,
     },
 }
@@ -57,13 +94,15 @@ impl<'a, 'ctx> TypeName<'a, 'ctx> {
 
     #[inline]
     fn deferred(
-        selection: &'a FieldProjectionPlan,
+        selection: &'a FieldRecord,
+        plan: &'a ProjectionPlan,
         data: Option<&'a Value>,
         parent: &'ctx TypeName<'a, 'ctx>,
         schema: &'a SchemaMetadata,
     ) -> Self {
         TypeName::Deferred {
             selection,
+            plan,
             data,
             parent,
             schema,
@@ -77,92 +116,92 @@ impl<'a, 'ctx> TypeName<'a, 'ctx> {
             TypeName::Resolved(name) => Ok(name),
             TypeName::Deferred {
                 selection,
+                plan,
                 data,
                 parent,
                 schema,
                 cached,
             } => cached
-                .get_or_init(|| resolve_type_name(selection, *data, parent, schema))
+                .get_or_init(|| resolve_type_name(selection, *data, parent, plan, schema))
                 .clone(),
         }
     }
 }
 
-// TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
 pub fn project_by_operation(
     data: &Value,
     errors: Vec<GraphQLError>,
     extensions: &ExecutionResultExtensions<'_>,
     operation_type_name: &str,
-    selections: &[FieldProjectionPlan],
+    plan: &ProjectionPlan,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     response_size_estimate: usize,
     schema_metadata: &SchemaMetadata,
 ) -> Result<Vec<u8>, ProjectionError> {
-    let mut buffer = Vec::with_capacity(response_size_estimate);
-    buffer.put(OPEN_BRACE);
-    buffer.put(QUOTE);
-    buffer.put("data".as_bytes());
-    buffer.put(QUOTE);
-    buffer.put(COLON);
-
-    let mut errors = errors;
+    let mut out = Projector {
+        plan,
+        schema: schema_metadata,
+        variables: variable_values,
+        errors,
+        buffer: Vec::with_capacity(response_size_estimate),
+    };
+    out.buffer.put(OPEN_BRACE);
+    out.buffer.put(QUOTE);
+    out.buffer.put("data".as_bytes());
+    out.buffer.put(QUOTE);
+    out.buffer.put(COLON);
 
     if let Some(data_map) = data.as_object() {
-        let null_propagation_checkpoint = buffer.len();
+        let null_propagation_checkpoint = out.buffer.len();
         // Start with first as true to add the opening brace
         let mut first = true;
-        let null_propagation_decision = project_selection_set_with_map(
+        let root_fields = plan.root_fields();
+        let null_propagation_decision = out.project_object_fields(
             data_map,
-            &mut errors,
-            selections,
-            variable_values,
+            root_fields,
             &TypeName::resolved(operation_type_name),
-            &mut buffer,
             &mut first,
-            schema_metadata,
             &mut [],
         )?;
 
         if null_propagation_decision.should_propagate() {
-            buffer.truncate(null_propagation_checkpoint);
-            buffer.put(NULL);
+            out.buffer.truncate(null_propagation_checkpoint);
+            out.buffer.put(NULL);
         } else if !first {
-            buffer.put(CLOSE_BRACE);
+            out.buffer.put(CLOSE_BRACE);
         } else {
             // If no selections were made, we should return an empty object
-            buffer.put(EMPTY_OBJECT);
+            out.buffer.put(EMPTY_OBJECT);
         }
     } else {
-        buffer.put(NULL);
+        out.buffer.put(NULL);
     }
 
-    if !errors.is_empty() {
-        buffer.put(COMMA);
-        buffer.put(QUOTE);
-        buffer.put("errors".as_bytes());
-        buffer.put(QUOTE);
-        buffer.put(COLON);
-        buffer.put_slice(
-            &sonic_rs::to_vec(&errors)
-                .map_err(|e| ProjectionError::ErrorsSerializationFailure(e.to_string()))?,
-        );
+    if !out.errors.is_empty() {
+        let serialized = sonic_rs::to_vec(&out.errors)
+            .map_err(|e| ProjectionError::ErrorsSerializationFailure(e.to_string()))?;
+        out.buffer.put(COMMA);
+        out.buffer.put(QUOTE);
+        out.buffer.put("errors".as_bytes());
+        out.buffer.put(QUOTE);
+        out.buffer.put(COLON);
+        out.buffer.put_slice(&serialized);
     }
 
     if !extensions.is_empty() {
         let serialized_extensions = sonic_rs::to_vec(extensions)
             .map_err(|e| ProjectionError::ExtensionsSerializationFailure(e.to_string()))?;
-        buffer.put(COMMA);
-        buffer.put(QUOTE);
-        buffer.put("extensions".as_bytes());
-        buffer.put(QUOTE);
-        buffer.put(COLON);
-        buffer.put_slice(&serialized_extensions);
+        out.buffer.put(COMMA);
+        out.buffer.put(QUOTE);
+        out.buffer.put("extensions".as_bytes());
+        out.buffer.put(QUOTE);
+        out.buffer.put(COLON);
+        out.buffer.put_slice(&serialized_extensions);
     }
 
-    buffer.put(CLOSE_BRACE);
-    Ok(buffer)
+    out.buffer.put(CLOSE_BRACE);
+    Ok(out.buffer)
 }
 
 pub fn serialize_value_to_buffer(data: &Value, buffer: &mut Vec<u8>) {
@@ -204,297 +243,215 @@ pub fn serialize_value_to_buffer(data: &Value, buffer: &mut Vec<u8>) {
     };
 }
 
-/// How many field positions fit in the per-list stack cache.
-const STACK_CACHE_SIZE: usize = 16;
+/// Cached field positions kept on the stack before falling back to the heap.
+const STACK_CACHE_FIELD_LIMIT: usize = 16;
+/// Marks a field that was not found.
+const MISSING_FIELD_INDEX: usize = usize::MAX;
 
-#[allow(clippy::too_many_arguments)]
-fn project_selection_set<'a>(
-    data: &'a Value,
-    errors: &mut Vec<GraphQLError>,
-    selection: &'a FieldProjectionPlan,
-    variable_values: &Option<HashMap<String, sonic_rs::Value>>,
-    buffer: &mut Vec<u8>,
-    parent_type_name: &TypeName<'a, '_>,
-    schema_metadata: &'a SchemaMetadata,
-    nullability: &'a FieldNullability,
-    indexes: &mut [usize],
-) -> Result<NullPropagationDecision, ProjectionError> {
+struct Projector<'a, 'v> {
+    plan: &'a ProjectionPlan,
+    schema: &'a SchemaMetadata,
+    variables: &'v Option<HashMap<String, sonic_rs::Value>>,
+    errors: Vec<GraphQLError>,
+    buffer: Vec<u8>,
+}
+
+impl<'a> Projector<'a, '_> {
+    fn project_value(
+        &mut self,
+        data: &'a Value<'a>,
+        selection: &'a FieldRecord,
+        parent_type_name: &TypeName<'a, '_>,
+        nullability: Option<ShapeCursor<'_>>,
+        indexes: &mut [usize],
+    ) -> Result<NullPropagationDecision, ProjectionError> {
     match data {
         Value::Array(arr) => {
-            // Remember field positions so later objects in the same list can
-            // skip searching. Lists inside lists share the saved positions,
-            // fields inside objects start fresh. Small selections keep the
-            // positions on the stack, so common short lists (2-3 objects
-            // with a few fields) never touch the heap. Only unusually wide
-            // selections use the heap, which still pays off because one
-            // allocation replaces dozens of searches.
-            let cache_size = if indexes.is_empty() && arr.len() > 1 {
-                if let ProjectionValueSource::ResponseData {
-                    selections: Some(plans),
-                } = &selection.value
-                {
-                    Some(plans.len())
-                } else {
-                    None
-                }
+            // Reuse field positions across objects in the same list.
+            let cache_size = if indexes.is_empty() && arr.len() > 1 && selection.has_children() {
+                Some(selection.children.len as usize)
             } else {
                 None
             };
-            // `vec![..; 0]` never allocates.
             let mut heap_cache = match cache_size {
-                Some(len) if len > STACK_CACHE_SIZE => vec![usize::MAX; len],
+                Some(len) if len > STACK_CACHE_FIELD_LIMIT => vec![MISSING_FIELD_INDEX; len],
                 _ => Vec::new(),
             };
-            let mut stack_cache = [usize::MAX; STACK_CACHE_SIZE];
+            let mut stack_cache = [MISSING_FIELD_INDEX; STACK_CACHE_FIELD_LIMIT];
             let indexes = match cache_size {
-                Some(len) if len <= STACK_CACHE_SIZE => &mut stack_cache[..len],
-                Some(_) if !heap_cache.is_empty() => heap_cache.as_mut_slice(),
+                Some(len) if len <= STACK_CACHE_FIELD_LIMIT => &mut stack_cache[..len],
+                Some(_) => heap_cache.as_mut_slice(),
                 _ => indexes,
             };
-            let null_propagation_checkpoint = buffer.len();
-            let list_item_nullability = nullability.list_item();
-            let item_non_null = list_item_nullability.is_some_and(FieldNullability::is_non_null);
-            buffer.put(OPEN_BRACKET);
+            let null_propagation_checkpoint = self.buffer.len();
+            let item_shape = nullability.and_then(ShapeCursor::list_item);
+            let item_non_null = item_shape.is_some_and(ShapeCursor::is_non_null);
+            self.buffer.put(OPEN_BRACKET);
             let mut first = true;
             for item in arr.iter() {
                 if !first {
-                    buffer.put(COMMA);
+                    self.buffer.put(COMMA);
                 }
-                let needs_null_propagation = project_selection_set(
+                let needs_null_propagation = self.project_value(
                     item,
-                    errors,
                     selection,
-                    variable_values,
-                    buffer,
                     parent_type_name,
-                    schema_metadata,
-                    list_item_nullability.unwrap_or(nullability),
+                    item_shape.or(nullability),
                     indexes,
                 )?;
 
-                // A `null` at a Non-Null element of this list propagates to the list itself.
                 if needs_null_propagation.should_propagate() && item_non_null {
-                    buffer.truncate(null_propagation_checkpoint);
-                    buffer.put(NULL);
+                    self.buffer.truncate(null_propagation_checkpoint);
+                    self.buffer.put(NULL);
                     return Ok(NullPropagationDecision::PropagateNullValue);
                 }
 
                 first = false;
             }
 
-            buffer.put(CLOSE_BRACKET);
+            self.buffer.put(CLOSE_BRACKET);
             Ok(NullPropagationDecision::KeepNullValue)
         }
-        Value::Object(obj) => {
-            match &selection.value {
-                ProjectionValueSource::ResponseData {
-                    selections: Some(selections),
-                } => {
-                    let null_propagation_checkpoint = buffer.len();
-                    let mut first = true;
-                    let type_name = TypeName::deferred(
-                        selection,
-                        Some(data),
-                        parent_type_name,
-                        schema_metadata,
-                    );
-                    let null_propagation_decision = project_selection_set_with_map(
-                        obj,
-                        errors,
-                        selections,
-                        variable_values,
-                        &type_name,
-                        buffer,
-                        &mut first,
-                        schema_metadata,
-                        indexes,
-                    )?;
+        Value::Object(obj) if selection.has_children() => {
+            let null_propagation_checkpoint = self.buffer.len();
+            let mut first = true;
+            let type_name = TypeName::deferred(
+                selection,
+                self.plan,
+                Some(data),
+                parent_type_name,
+                self.schema,
+            );
+            let fields = self.plan.fields(selection.children);
+            let null_propagation_decision =
+                self.project_object_fields(obj, fields, &type_name, &mut first, indexes)?;
 
-                    if null_propagation_decision.should_propagate() {
-                        buffer.truncate(null_propagation_checkpoint);
-                        buffer.put(NULL);
-                        return Ok(NullPropagationDecision::PropagateNullValue);
-                    }
-
-                    if !first {
-                        buffer.put(CLOSE_BRACE);
-                    } else {
-                        // If no selections were made, we should return an empty object
-                        buffer.put(EMPTY_OBJECT);
-                    }
-                    Ok(NullPropagationDecision::KeepNullValue)
-                }
-                ProjectionValueSource::ResponseData { selections: None } => {
-                    // If the selection has no sub-selections, we serialize the whole object
-                    serialize_value_to_buffer(data, buffer);
-                    Ok(NullPropagationDecision::KeepNullValue)
-                }
-                ProjectionValueSource::Null => {
-                    // This should not happen as we are in an object case, but just in case
-                    buffer.put(NULL);
-                    Ok(NullPropagationDecision::PropagateNullValue)
-                }
+            if null_propagation_decision.should_propagate() {
+                self.buffer.truncate(null_propagation_checkpoint);
+                self.buffer.put(NULL);
+                return Ok(NullPropagationDecision::PropagateNullValue);
             }
+
+            if !first {
+                self.buffer.put(CLOSE_BRACE);
+            } else {
+                self.buffer.put(EMPTY_OBJECT);
+            }
+            Ok(NullPropagationDecision::KeepNullValue)
         }
         Value::Null => {
-            buffer.put(NULL);
+            self.buffer.put(NULL);
             Ok(NullPropagationDecision::PropagateNullValue)
         }
         _ => {
-            // If the data is not an object or array, we serialize it directly
-            serialize_value_to_buffer(data, buffer);
+            serialize_value_to_buffer(data, &mut self.buffer);
             Ok(NullPropagationDecision::KeepNullValue)
         }
     }
 }
 
-// TODO: simplfy args
-#[allow(clippy::too_many_arguments)]
-fn project_selection_set_with_map<'a>(
-    obj: &'a [(&str, Value)],
-    errors: &mut Vec<GraphQLError>,
-    plans: &'a [FieldProjectionPlan],
-    variable_values: &Option<HashMap<String, sonic_rs::Value>>,
-    parent_type_name: &TypeName<'a, '_>,
-    buffer: &mut Vec<u8>,
-    first: &mut bool,
-    schema_metadata: &'a SchemaMetadata,
-    indexes: &mut [usize],
-) -> Result<NullPropagationDecision, ProjectionError> {
-    for (plan_index, plan) in plans.iter().enumerate() {
-        if let Some(guard) = &plan.parent_type_guard {
-            let name = parent_type_name.get()?;
-            if !guard.matches(name) {
-                // Seems like the field projection plan applies to other types, so move to the next one
+    fn project_object_fields(
+        &mut self,
+        obj: &'a [(&str, Value<'a>)],
+        fields: &'a [FieldRecord],
+        parent_type_name: &TypeName<'a, '_>,
+        first: &mut bool,
+        indexes: &mut [usize],
+    ) -> Result<NullPropagationDecision, ProjectionError> {
+    for (offset, field) in fields.iter().enumerate() {
+        let response_key = self.plan.response_key(field);
+        if let Some(guard) = field.parent_guard {
+            if !self.plan.guard_matches(guard, parent_type_name.get()?) {
                 continue;
             }
         }
 
-        let field_val = find_field(obj, &plan.response_key, indexes.get_mut(plan_index));
+        let field_val = find_field(obj, response_key, indexes.get_mut(offset));
 
-        let res = if let Some(conditions) = &plan.conditions {
+        let res = if let Some(condition) = field.condition {
             let field_type_name_cell = OnceCell::new();
             let field_type_name_fn = || {
                 field_type_name_cell
                     .get_or_init(|| {
-                        resolve_type_name(plan, field_val, parent_type_name, schema_metadata)
+                        resolve_type_name(field, field_val, parent_type_name, self.plan, self.schema)
                     })
                     .clone()
             };
             let parent_type_name_fn = || parent_type_name.get();
-            check(
-                conditions,
+            evaluate(
+                condition,
+                self.plan,
                 &parent_type_name_fn,
                 &field_type_name_fn,
                 field_val,
-                variable_values,
+                self.variables,
             )
         } else {
             Ok(())
         };
 
         match res {
-            Ok(_) => {
-                if *first {
-                    buffer.put(OPEN_BRACE);
+            Ok(()) => {
+                let non_null = field.is_non_null();
+                write_key(&mut self.buffer, first, response_key);
+
+                let null_propagation_decision = if field.is_null_value() {
+                    self.buffer.put(NULL);
+                    NullPropagationDecision::PropagateNullValue
+                } else if field.is_typename() {
+                    self.buffer.put(QUOTE);
+                    self.buffer.put(parent_type_name.get()?.as_bytes());
+                    self.buffer.put(QUOTE);
+                    NullPropagationDecision::KeepNullValue
+                } else if let Some(field_val) = field_val {
+                    let nullability = matches!(field_val, Value::Array(_))
+                        .then(|| ShapeCursor::new(self.plan.shape(field.nullability())));
+                    self.project_value(field_val, field, parent_type_name, nullability, &mut [])?
                 } else {
-                    buffer.put(COMMA);
-                }
-                *first = false;
-
-                buffer.put(QUOTE);
-                buffer.put(plan.response_key.as_bytes());
-                buffer.put(QUOTE);
-                buffer.put(COLON);
-
-                let null_propagation_decision = match &plan.value {
-                    ProjectionValueSource::Null => {
-                        buffer.put(NULL);
-                        NullPropagationDecision::PropagateNullValue
-                    }
-                    ProjectionValueSource::ResponseData { .. } => {
-                        if plan.is_typename {
-                            // If the field is TYPENAME_FIELD, we should set it to the parent type name
-                            buffer.put(QUOTE);
-                            buffer.put(parent_type_name.get()?.as_bytes());
-                            buffer.put(QUOTE);
-                            NullPropagationDecision::KeepNullValue
-                        } else if let Some(field_val) = field_val {
-                            project_selection_set(
-                                field_val,
-                                errors,
-                                plan,
-                                variable_values,
-                                buffer,
-                                parent_type_name,
-                                schema_metadata,
-                                &plan.nullability,
-                                &mut [],
-                            )?
-                        } else {
-                            // If the field is not found in the object, set it to Null
-                            buffer.put(NULL);
-                            NullPropagationDecision::PropagateNullValue
-                        }
-                    }
+                    self.buffer.put(NULL);
+                    NullPropagationDecision::PropagateNullValue
                 };
 
                 // A `null` value in a non-null position bubbles up
-                if null_propagation_decision.should_propagate() && plan.nullability.is_non_null() {
+                if null_propagation_decision.should_propagate() && non_null {
                     return Ok(NullPropagationDecision::PropagateNullValue);
                 }
             }
-            Err(FieldProjectionConditionError::Fatal(err)) => {
-                return Err(err);
+            Err(ConditionFailure::Fatal(error)) => {
+                return Err(error);
             }
-            Err(FieldProjectionConditionError::Skip) => {
-                // Skip this field
-                continue;
-            }
-            Err(FieldProjectionConditionError::InvalidParentType) => {
-                // Skip this field as the parent type does not match
-                continue;
-            }
-            Err(FieldProjectionConditionError::InvalidEnumValue) => {
-                if *first {
-                    buffer.put(OPEN_BRACE);
-                } else {
-                    buffer.put(COMMA);
+            Err(ConditionFailure::Skip | ConditionFailure::InvalidParentType) => continue,
+            Err(
+                failure @ (ConditionFailure::InvalidEnumValue | ConditionFailure::InvalidFieldType),
+            ) => {
+                let non_null = field.is_non_null();
+                write_key(&mut self.buffer, first, response_key);
+                self.buffer.put(NULL);
+                if matches!(failure, ConditionFailure::InvalidEnumValue) {
+                    self.errors.push(GraphQLError::from("Value is not a valid enum value"));
                 }
-                *first = false;
-
-                buffer.put(QUOTE);
-                buffer.put(plan.response_key.as_bytes());
-                buffer.put(QUOTE);
-                buffer.put(COLON);
-                buffer.put(NULL);
-                errors.push(GraphQLError::from("Value is not a valid enum value"));
-                if plan.nullability.is_non_null() {
-                    return Ok(NullPropagationDecision::PropagateNullValue);
-                }
-            }
-            Err(FieldProjectionConditionError::InvalidFieldType) => {
-                if *first {
-                    buffer.put(OPEN_BRACE);
-                } else {
-                    buffer.put(COMMA);
-                }
-                *first = false;
-
-                // Skip this field as the field type does not match
-                buffer.put(QUOTE);
-                buffer.put(plan.response_key.as_bytes());
-                buffer.put(QUOTE);
-                buffer.put(COLON);
-                buffer.put(NULL);
-                if plan.nullability.is_non_null() {
+                if non_null {
                     return Ok(NullPropagationDecision::PropagateNullValue);
                 }
             }
         }
     }
-
     Ok(NullPropagationDecision::KeepNullValue)
+}
+}
+
+/// Finds `__typename` in a sorted object.
+#[inline]
+fn find_typename<'a>(object: &'a [(&str, Value)]) -> Option<&'a str> {
+    if let Some((key, value)) = object.first() {
+        if *key == TYPENAME_FIELD_NAME {
+            return value.as_str();
+        }
+    }
+    object
+        .binary_search_by_key(&TYPENAME_FIELD_NAME, |(key, _)| *key)
+        .ok()
+        .and_then(|index| object[index].1.as_str())
 }
 
 #[inline]
@@ -516,379 +473,330 @@ fn find_field<'a>(
         .binary_search_by_key(&response_key, |(key, _)| *key)
         .ok();
     if let Some(hint) = hint {
-        *hint = found.unwrap_or(usize::MAX);
+        *hint = found.unwrap_or(MISSING_FIELD_INDEX);
     }
     found.map(|index| &obj[index].1)
 }
 
+#[inline(always)]
+fn write_key(buffer: &mut Vec<u8>, first: &mut bool, key: &str) {
+    if *first {
+        buffer.put(OPEN_BRACE);
+    } else {
+        buffer.put(COMMA);
+    }
+    *first = false;
+    buffer.put(QUOTE);
+    // GraphQL field names and aliases are valid JSON-safe name tokens.
+    buffer.put(key.as_bytes());
+    buffer.put(QUOTE);
+    buffer.put(COLON);
+}
+
 #[inline]
-fn check<'a, F, T>(
-    cond: &FieldProjectionCondition,
+/// Resolves a field type from response data or schema metadata.
+fn resolve_type_name<'a>(
+    field: &'a FieldRecord,
+    field_value: Option<&'a Value>,
+    parent_type_name: &TypeName<'a, '_>,
+    plan: &'a ProjectionPlan,
+    schema_metadata: &'a SchemaMetadata,
+) -> Result<&'a str, ProjectionError> {
+    if field.is_typename() {
+        return Ok("String");
+    }
+    if let Some(typename) = field_value
+        .and_then(|value| value.as_object())
+        .and_then(|object| find_typename(object))
+    {
+        return Ok(typename);
+    }
+    let parent = parent_type_name.get()?;
+    let fields = schema_metadata
+        .get_type_fields(parent)
+        .ok_or_else(|| ProjectionError::MissingType(parent.to_string()))?;
+    fields
+        .get(plan.field_name(field))
+        .map(|field| field.output_type_name.as_str())
+        .ok_or_else(|| ProjectionError::MissingField {
+            field_name: plan.field_name(field).to_string(),
+            type_name: parent.to_string(),
+        })
+}
+
+#[inline]
+fn evaluate<'a, F, T>(
+    id: ConditionId,
+    plan: &ProjectionPlan,
     parent_type_name: &T,
     field_type_name: &F,
     field_value: Option<&Value>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
-) -> Result<(), FieldProjectionConditionError>
+) -> Result<(), ConditionFailure>
 where
     F: Fn() -> Result<&'a str, ProjectionError>,
     T: Fn() -> Result<&'a str, ProjectionError>,
 {
-    match cond {
-        FieldProjectionCondition::And(condition_a, condition_b) => check(
-            condition_a,
+    let condition = plan.condition(id);
+    match condition {
+        Condition::Include(variable) => variable_values
+            .as_ref()
+            .and_then(|values| values.get(plan.text(variable)))
+            .and_then(|value| value.as_bool())
+            .filter(|value| *value)
+            .map(|_| ())
+            .ok_or(ConditionFailure::Skip),
+        Condition::Skip(variable) => {
+            if variable_values
+                .as_ref()
+                .and_then(|values| values.get(plan.text(variable)))
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+            {
+                Err(ConditionFailure::Skip)
+            } else {
+                Ok(())
+            }
+        }
+        Condition::ParentType(guard) => {
+            if plan.guard_matches(guard, parent_type_name()?) {
+                Ok(())
+            } else {
+                Err(ConditionFailure::InvalidParentType)
+            }
+        }
+        Condition::FieldType(guard) => {
+            if plan.guard_matches(guard, field_type_name()?) {
+                Ok(())
+            } else {
+                Err(ConditionFailure::InvalidFieldType)
+            }
+        }
+        Condition::EnumValues(set) => {
+            if let Some(Value::String(value)) = field_value {
+                if plan.set_matches(set, value) {
+                    Ok(())
+                } else {
+                    Err(ConditionFailure::InvalidEnumValue)
+                }
+            } else {
+                Ok(())
+            }
+        }
+        Condition::And(left, right) => evaluate(
+            left,
+            plan,
             parent_type_name,
             field_type_name,
             field_value,
             variable_values,
         )
         .and_then(|_| {
-            check(
-                condition_b,
+            evaluate(
+                right,
+                plan,
                 parent_type_name,
                 field_type_name,
                 field_value,
                 variable_values,
             )
         }),
-        FieldProjectionCondition::Or(condition_a, condition_b) => check(
-            condition_a,
+        Condition::Or(left, right) => evaluate(
+            left,
+            plan,
             parent_type_name,
             field_type_name,
             field_value,
             variable_values,
         )
         .or_else(|_| {
-            check(
-                condition_b,
+            evaluate(
+                right,
+                plan,
                 parent_type_name,
                 field_type_name,
                 field_value,
                 variable_values,
             )
         }),
-        FieldProjectionCondition::IncludeIfVariable(variable_name) => {
-            if let Some(values) = variable_values {
-                if values
-                    .get(variable_name)
-                    .is_some_and(|v| v.as_bool().unwrap_or(false))
-                {
-                    Ok(())
-                } else {
-                    Err(FieldProjectionConditionError::Skip)
-                }
-            } else {
-                Err(FieldProjectionConditionError::Skip)
-            }
-        }
-        FieldProjectionCondition::SkipIfVariable(variable_name) => {
-            if let Some(values) = variable_values {
-                if values
-                    .get(variable_name)
-                    .is_some_and(|v| v.as_bool().unwrap_or(false))
-                {
-                    return Err(FieldProjectionConditionError::Skip);
-                }
-            }
-            Ok(())
-        }
-        FieldProjectionCondition::ParentTypeCondition(type_condition) => {
-            if type_condition.matches(parent_type_name()?) {
-                Ok(())
-            } else {
-                Err(FieldProjectionConditionError::InvalidParentType)
-            }
-        }
-        FieldProjectionCondition::FieldTypeCondition(type_condition) => {
-            if type_condition.matches(field_type_name()?) {
-                Ok(())
-            } else {
-                Err(FieldProjectionConditionError::InvalidFieldType)
-            }
-        }
-        FieldProjectionCondition::EnumValuesCondition(enum_values) => {
-            if let Some(Value::String(string_value)) = field_value {
-                if enum_values.contains(string_value.as_ref()) {
-                    Ok(())
-                } else {
-                    Err(FieldProjectionConditionError::InvalidEnumValue)
-                }
-            } else {
-                Ok(())
-            }
-        }
     }
-}
-
-#[inline]
-/// When an error is returned, it means a broken logic or state.
-/// A scenario when a type is missing or a type is missing a field,
-/// can only happen when field's projection rule lack a proper type guard,
-/// or the type guard was not correctly enforced, resulting in applying a plan for a different parent type.
-fn resolve_type_name<'a>(
-    plan: &'a FieldProjectionPlan,
-    field_val: Option<&'a Value>,
-    parent_type_name: &TypeName<'a, '_>,
-    schema_metadata: &'a SchemaMetadata,
-) -> Result<&'a str, ProjectionError> {
-    if plan.is_typename {
-        return Ok("String");
-    }
-
-    let typename_field = field_val
-        .and_then(|value| value.as_object())
-        .and_then(|obj| {
-            obj.binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| *k)
-                .ok()
-                .and_then(|idx| obj[idx].1.as_str())
-        });
-
-    if let Some(typename) = typename_field {
-        return Ok(typename);
-    }
-
-    let parent_type_name = parent_type_name.get()?;
-
-    let fields = schema_metadata
-        .get_type_fields(parent_type_name)
-        .ok_or_else(|| ProjectionError::MissingType(parent_type_name.to_string()))?;
-
-    fields
-        .get(&plan.field_name)
-        .map(|field_info| field_info.output_type_name.as_str())
-        .ok_or_else(|| ProjectionError::MissingField {
-            field_name: plan.field_name.to_string(),
-            type_name: parent_type_name.to_string(),
-        })
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::query_planner::{
-        ast::{document::NormalizedDocument, normalization::create_normalized_document},
-        consumer_schema::ConsumerSchema,
-        state::supergraph_state::SupergraphState,
-        utils::parsing::parse_operation,
-    };
-    use graphql_tools::parser::query::Definition;
-    use sonic_rs::json;
-
-    use crate::executor::{
-        introspection::schema::SchemaWithMetadata,
-        projection::{plan::FieldProjectionPlan, response::project_by_operation},
-        response::value::Value,
-    };
+    use super::*;
+    use crate::executor::introspection::schema::SchemaWithMetadata;
+    use crate::query_planner::ast::normalization::normalize_operation;
+    use crate::query_planner::consumer_schema::ConsumerSchema;
+    use crate::query_planner::utils::parsing::{parse_operation, parse_schema};
+    use crate::query_planner::{planner::Planner, state::supergraph_state::SupergraphState};
 
     #[test]
     fn project_scalars_with_object_value() {
-        let supergraph = crate::query_planner::utils::parsing::parse_schema(
+        let supergraph = parse_schema(
             r#"
-            type Query {
-                metadatas: Metadata!
-            }
-
+            type Query { metadatas: [Metadata!]! }
             scalar JSON
-
-            type Metadata {
-                id: ID!
-                timestamp: String!
-                data: JSON
-            }
-        "#,
+            type Metadata { id: ID!, timestamp: String!, data: JSON }
+            "#,
         );
         let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
         let schema_metadata = consumer_schema.schema_metadata();
-        let mut operation = parse_operation(
+        let supergraph_state = SupergraphState::new(&supergraph);
+        let operation = parse_operation(
             r#"
-            query GetMetadata {
-                metadatas {
-                    id
-                    data
-                }
-            }
+            query GetMetadata { metadatas { id data } }
             "#,
         );
-        let operation_ast = operation
-            .definitions
-            .iter_mut()
-            .find_map(|def| match def {
-                Definition::Operation(op) => Some(op),
-                _ => None,
-            })
-            .unwrap();
-        let supergraph_state = SupergraphState::new(&supergraph);
-        let normalized_operation: NormalizedDocument = create_normalized_document(
-            &supergraph_state,
-            operation_ast.clone(),
-            Some("GetMetadata".into()),
-        );
-        let (operation_type_name, selections) =
-            FieldProjectionPlan::from_operation(&normalized_operation.operation, &schema_metadata);
-        let data_json = json!({
+        let normalized = normalize_operation(&supergraph_state, &operation, None).unwrap();
+        let (root_type_name, plan) =
+            ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+
+        let data_json = sonic_rs::json!({
             "__typename": "Query",
             "metadatas": [
                 {
                     "__typename": "Metadata",
                     "id": "meta1",
                     "timestamp": "2024-01-01T00:00:00Z",
-                    "data": {
-                        "float": 41.5,
-                        "int": -42,
-                        "str": "value1",
-                        "unsigned": 123,
-                    }
+                    "data": { "float": 41.5, "int": -42, "str": "value1", "unsigned": 123 }
                 },
-                {
-                    "__typename": "Metadata",
-                    "id": "meta2",
-                    "data": null
-                }
+                { "__typename": "Metadata", "id": "meta2", "data": null }
             ]
         });
         let data = Value::from(data_json.as_ref());
-        let projection = project_by_operation(
+        let output = project_by_operation(
             &data,
             vec![],
             &Default::default(),
-            operation_type_name,
-            &selections,
+            root_type_name,
+            &plan,
             &None,
             1000,
             &schema_metadata,
+        )
+        .unwrap();
+
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            r#"{"data":{"metadatas":[{"id":"meta1","data":{"float":41.5,"int":-42,"str":"value1","unsigned":123}},{"id":"meta2","data":null}]}}"#
         );
-        let projected_bytes = projection.unwrap();
-        let projected_str = String::from_utf8(projected_bytes).unwrap();
-        let expected_response = r#"{"data":{"metadatas":[{"id":"meta1","data":{"float":41.5,"int":-42,"str":"value1","unsigned":123}},{"id":"meta2","data":null}]}}"#;
-        assert_eq!(projected_str, expected_response);
     }
 
+    /// Two fragments select the same response key on different concrete types,
+    /// with different child types. Merging has to keep them apart, or the same
+    /// key gets written twice and the JSON comes out malformed.
     #[test]
-    fn test_duplicate_selections_in_merged_plans() {
-        let supergraph = crate::query_planner::utils::parsing::parse_schema(
+    fn duplicate_selections_in_merged_plans() {
+        let supergraph = parse_schema(
             r#"
-              interface Node {
-                id: ID!
-              }
-
-              type A implements Node {
-                id: ID
-                children: [AChild]
-              }
-              type B implements Node {
-                id: ID!
-                children: [BChild]
-              }
-
-              type AChild {
-                id: ID
-              }
-              type BChild {
-                id: ID
-              }
-
-              type Container {
-                node: Node
-              }
-              type Query {
-                nodes: [Container]
-              }
-        "#,
+            interface Node { id: ID! }
+            type A implements Node { id: ID, children: [AChild] }
+            type B implements Node { id: ID!, children: [BChild] }
+            type AChild { id: ID }
+            type BChild { id: ID }
+            type Container { node: Node }
+            type Query { nodes: [Container] }
+            "#,
         );
         let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
         let schema_metadata = consumer_schema.schema_metadata();
-
-        let mut operation = parse_operation(
+        let supergraph_state = SupergraphState::new(&supergraph);
+        let operation = parse_operation(
             r#"
-              query {
-                nodes {
-                  node {
-                    ... on A {
-                      children {
-                        id
-                      }
-                    }
-                    ...on B {
-                      children {
-                        id
-                      }
-                    }
-                  }
+            query {
+              nodes {
+                node {
+                  ... on A { children { id } }
+                  ... on B { children { id } }
                 }
               }
+            }
             "#,
         );
+        let normalized = normalize_operation(&supergraph_state, &operation, None).unwrap();
+        let (root_type_name, plan) =
+            ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
 
-        let operation_ast = operation
-            .definitions
-            .iter_mut()
-            .find_map(|def| match def {
-                Definition::Operation(op) => Some(op),
-                _ => None,
-            })
-            .unwrap();
-
-        let supergraph_state = SupergraphState::new(&supergraph);
-        let normalized_operation: NormalizedDocument = create_normalized_document(
-            &supergraph_state,
-            operation_ast.clone(),
-            Some("SearchQuery".into()),
-        );
-        let (operation_type_name, selections) =
-            FieldProjectionPlan::from_operation(&normalized_operation.operation, &schema_metadata);
-
-        let data_json = json!({
+        // One empty list and one populated, so the list index cache is reused
+        // across items that do not agree on which fields are present.
+        let data_json = sonic_rs::json!({
             "__typename": "Query",
             "nodes": [
-                {
-                    "node": {
-                        "__typename": "A",
-                        "children": []
-                    }
-                },
-                {
-                    "node": {
-                        "__typename": "B",
-                        "children": [
-                            { "id": "b_child_1" }
-                        ]
-                    }
-                }
+                { "node": { "__typename": "A", "children": [] } },
+                { "node": { "__typename": "B", "children": [{ "id": "b_child_1" }] } }
             ]
         });
         let data = Value::from(data_json.as_ref());
-        let projection = project_by_operation(
+        let output = project_by_operation(
             &data,
             vec![],
             &Default::default(),
-            operation_type_name,
-            &selections,
+            root_type_name,
+            &plan,
             &None,
             1000,
             &schema_metadata,
+        )
+        .unwrap();
+
+        // Compared as raw bytes, which is what the client actually gets, and
+        // what the other tests here do.
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            r#"{"data":{"nodes":[{"node":{"children":[]}},{"node":{"children":[{"id":"b_child_1"}]}}]}}"#
         );
-        let projected_bytes = projection.unwrap();
-        let projected_value: sonic_rs::Value = sonic_rs::from_slice(&projected_bytes).unwrap();
-        let projected_str = sonic_rs::to_string_pretty(&projected_value).unwrap();
-        insta::assert_snapshot!(projected_str, @r#"
-        {
-          "data": {
-            "nodes": [
-              {
-                "node": {
-                  "children": []
+    }
+
+    #[test]
+    fn unconditional_overlap_survives_false_directive_at_execution() {
+        let schema = parse_schema(
+            r#"
+                interface Node { id: ID! }
+                type User implements Node { id: ID!, name: String }
+                type Query { node: Node }
+                "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+        let planner = Planner::new_from_supergraph(&schema, Default::default()).unwrap();
+        let operation = parse_operation(
+            r#"
+                query Example($show: Boolean!) {
+                  node {
+                    ... on User { label: name @include(if: $show) }
+                    ... on User { label: name }
+                  }
                 }
-              },
-              {
-                "node": {
-                  "children": [
-                    {
-                      "id": "b_child_1"
-                    }
-                  ]
-                }
-              }
-            ]
-          }
-        }
-        "#);
+                "#,
+        );
+        let normalized = normalize_operation(&supergraph, &operation, None).unwrap();
+        let (_, plan) = ProjectionPlan::from_operation(
+            normalized.executable_operation(),
+            &planner.consumer_schema.schema_metadata(),
+        );
+        let data = Value::Object(vec![(
+            "node",
+            Value::Object(vec![
+                ("__typename", Value::String("User".into())),
+                ("label", Value::String("Ada".into())),
+            ]),
+        )]);
+        let mut variables = HashMap::new();
+        variables.insert("show".into(), sonic_rs::Value::from(false));
+        let output = project_by_operation(
+            &data,
+            vec![],
+            &Default::default(),
+            "Query",
+            &plan,
+            &Some(variables),
+            128,
+            &planner.consumer_schema.schema_metadata(),
+        )
+        .unwrap();
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            r#"{"data":{"node":{"label":"Ada"}}}"#
+        );
     }
 }

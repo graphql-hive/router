@@ -1,9 +1,4 @@
-use std::sync::Arc;
-
 use crate::executor::operation_filter::PathSegment;
-use crate::executor::projection::plan::{
-    FieldProjectionPlan, ProjectionValueSource, TypeCondition,
-};
 use crate::pipeline::trie::{PathIndex, Trie};
 use crate::query_planner::ast::{
     operation::OperationDefinition,
@@ -132,76 +127,6 @@ fn rebuild_nulled_selection_set(
 
     kept_items.shrink_to_fit();
     SelectionSet { items: kept_items }
-}
-
-/// Rebuilds the projection plan to set nulled fields to null.
-pub(crate) fn rebuild_nulled_projection_plan(
-    original_plans: &Vec<FieldProjectionPlan>,
-    nulled_field_trie: &Trie,
-) -> Vec<FieldProjectionPlan> {
-    rebuild_nulled_projection_plan_recursive(original_plans, nulled_field_trie, PathIndex::root())
-        .unwrap_or_default()
-}
-
-/// Recursively filters projection plans. Nulled fields become null.
-fn rebuild_nulled_projection_plan_recursive(
-    original_plans: &Vec<FieldProjectionPlan>,
-    nulled_field_trie: &Trie,
-    path_position: PathIndex,
-) -> Option<Vec<FieldProjectionPlan>> {
-    let mut kept_plans = Vec::with_capacity(original_plans.len());
-
-    for plan in original_plans {
-        let scoped_position = match &plan.parent_type_guard {
-            Some(TypeCondition::Exact(type_name)) => {
-                match nulled_field_trie
-                    .find_segment_at_position(path_position, PathSegment::Fragment(type_name))
-                {
-                    Some((child_position, _)) => child_position,
-                    None => {
-                        kept_plans.push(plan.clone());
-                        continue;
-                    }
-                }
-            }
-            _ => path_position,
-        };
-
-        let path_segment = PathSegment::Field(&plan.response_key);
-        let Some((child_path_position, is_nulled)) =
-            nulled_field_trie.find_segment_at_position(scoped_position, path_segment)
-        else {
-            kept_plans.push(plan.clone());
-            continue;
-        };
-
-        if is_nulled {
-            kept_plans.push(plan.with_new_value(ProjectionValueSource::Null));
-            continue;
-        }
-
-        let new_value = match &plan.value {
-            ProjectionValueSource::ResponseData {
-                selections: Some(selections),
-            } => ProjectionValueSource::ResponseData {
-                selections: rebuild_nulled_projection_plan_recursive(
-                    selections,
-                    nulled_field_trie,
-                    child_path_position,
-                )
-                .map(Arc::new),
-            },
-            other => other.clone(),
-        };
-        kept_plans.push(plan.with_new_value(new_value));
-    }
-
-    if kept_plans.is_empty() {
-        None
-    } else {
-        kept_plans.shrink_to_fit();
-        Some(kept_plans)
-    }
 }
 
 /// Recursively collects variables from an entire (unfiltered) selection set.

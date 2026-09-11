@@ -1,182 +1,178 @@
 use criterion::{BenchmarkId, Criterion, Throughput};
 use hive_router::executor::{
-    introspection::schema::{FieldNullability, SchemaMetadata},
-    projection::{
-        plan::{FieldProjectionPlan, ProjectionValueSource},
-        request::project_requires,
-        response::project_by_operation,
-    },
+    introspection::schema::SchemaWithMetadata,
+    projection::{plan::ProjectionPlan, request::project_requires, response::project_by_operation},
     response::value::Value,
 };
+use hive_router::query_planner::ast::normalization::normalize_operation;
 use hive_router::query_planner::ast::requires::RequiresSelectionSet;
-use std::{hint::black_box, sync::Arc};
+use hive_router::query_planner::planner::Planner;
+use hive_router::query_planner::utils::parsing::{parse_operation, parse_schema};
+use std::hint::black_box;
 
-fn field(name: &str, selections: Option<Vec<FieldProjectionPlan>>) -> FieldProjectionPlan {
-    FieldProjectionPlan {
-        field_name: name.into(),
-        response_key: name.into(),
-        is_typename: name == "__typename",
-        nullability: FieldNullability::Leaf { non_null: false },
-        parent_type_guard: None,
-        conditions: None,
-        value: ProjectionValueSource::ResponseData {
-            selections: selections.map(Arc::new),
-        },
-    }
-}
+const LIST_LENGTH: usize = 64;
+const NARROW_FIELDS: usize = 16;
+const WIDE_FIELDS: usize = 32;
+/// Used only to pre-size the output buffer.
+const BYTES_PER_FIELD: usize = 16;
 
 pub fn benchmarks(c: &mut Criterion) {
     requires_benchmarks(c);
-    // Build the Value and plan outside the timed loop, so this measures projection
-    // (including its output allocation), rather than parsing or planning.
-    let schema = SchemaMetadata::default();
-    let mut group = c.benchmark_group("projection_lists");
-    for field_count in [5, 15, 20, 50] {
-        let keys: Vec<_> = (0..field_count).map(|i| format!("field_{i:02}")).collect();
-        let selected_count = field_count.min(10);
-        let plans = vec![field(
-            "items",
-            Some(
-                // Reverse the selection order to ensure response order is preserved.
-                (0..selected_count)
-                    .rev()
-                    .map(|i| field(&keys[i * field_count / selected_count], None))
-                    .collect(),
-            ),
-        )];
-        for count in [1, 2, 4, 8, 10, 100, 1_000, 10_000] {
-            for mixed in [false, true] {
-                let objects = (0..count)
-                    .map(|row| {
-                        Value::Object(
-                            keys.iter()
-                                .enumerate()
-                                .filter(|(i, _)| !mixed || (row + i) % 7 != 0)
-                                .map(|(i, key)| (key.as_str(), Value::U64(i as u64)))
-                                .collect(),
-                        )
-                    })
-                    .collect();
-                let data = Value::Object(vec![("items", Value::Array(objects))]);
-                let shape = if mixed { "mixed" } else { "uniform" };
-                group.throughput(Throughput::Elements(count as u64));
-                group.bench_with_input(
-                    BenchmarkId::new(format!("{shape}_{field_count}_fields"), count),
-                    &data,
-                    |b, data| {
-                        b.iter(|| {
-                            black_box(
-                                project_by_operation(
-                                    black_box(data),
-                                    vec![],
-                                    &Default::default(),
-                                    "Query",
-                                    black_box(&plans),
-                                    &None,
-                                    count * selected_count * 16,
-                                    &schema,
-                                )
-                                .unwrap(),
-                            )
-                        });
-                    },
-                );
-            }
+    list_benchmarks(c);
+    abstract_type_benchmarks(c);
+}
+
+/// Projects lists with runtime type guards and field conditions.
+fn abstract_type_benchmarks(c: &mut Criterion) {
+    let schema = parse_schema(
+        r#"
+        type Query { nodes: [Node] }
+        interface Node { id: ID! }
+        type User implements Node { id: ID!, name: String, status: Status }
+        type Admin implements Node { id: ID!, name: String, level: Int }
+        type Guest implements Node { id: ID!, nickname: String }
+        enum Status { ACTIVE PENDING BLOCKED ARCHIVED }
+        "#,
+    );
+    let planner = Planner::new_from_supergraph(&schema, Default::default())
+        .expect("Failed to create planner from supergraph");
+    let schema_metadata = planner.consumer_schema.schema_metadata();
+    let document = parse_operation(
+        r#"
+        {
+          nodes {
+            __typename
+            id
+            ... on User { name status }
+            ... on Admin { name level }
+            ... on Guest { nickname }
+          }
         }
-    }
-    // Wide shape: 32 selected fields is more than the stack cache holds,
-    // so this exercises the heap path with few and many elements.
-    // Small matrix on purpose.
-    let wide_keys: Vec<_> = (0..32).map(|i| format!("wide_{i:02}")).collect();
-    let wide_plans = vec![field(
-        "items",
-        Some((0..32).rev().map(|i| field(&wide_keys[i], None)).collect()),
-    )];
-    for count in [2, 8, 100] {
-        for mixed in [false, true] {
-            let objects = (0..count)
-                .map(|row| {
-                    Value::Object(
-                        wide_keys
-                            .iter()
-                            .enumerate()
-                            .filter(|(i, _)| !mixed || (row + i) % 7 != 0)
-                            .map(|(i, key)| (key.as_str(), Value::U64(i as u64)))
-                            .collect(),
-                    )
+        "#,
+    );
+    let normalized = normalize_operation(&planner.supergraph, &document, None)
+        .expect("Failed to normalize operation");
+    let (root_type_name, plan) =
+        ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+
+    // Object keys must stay sorted for binary search.
+    let user = |row: usize| {
+        Value::Object(vec![
+            ("__typename", Value::String("User".into())),
+            ("id", Value::U64(row as u64)),
+            ("name", Value::String("ada".into())),
+            ("status", Value::String("ACTIVE".into())),
+        ])
+    };
+    let admin = |row: usize| {
+        Value::Object(vec![
+            ("__typename", Value::String("Admin".into())),
+            ("id", Value::U64(row as u64)),
+            ("level", Value::U64(3)),
+            ("name", Value::String("grace".into())),
+        ])
+    };
+    let guest = |row: usize| {
+        Value::Object(vec![
+            ("__typename", Value::String("Guest".into())),
+            ("id", Value::U64(row as u64)),
+            ("nickname", Value::String("anon".into())),
+        ])
+    };
+
+    let mut group = c.benchmark_group("projection_abstract");
+    group.throughput(Throughput::Elements(LIST_LENGTH as u64));
+    for (case, rows) in [
+        (
+            "mixed",
+            (0..LIST_LENGTH)
+                .map(|row| match row % 3 {
+                    0 => user(row),
+                    1 => admin(row),
+                    _ => guest(row),
                 })
-                .collect();
-            let data = Value::Object(vec![("items", Value::Array(objects))]);
-            let shape = if mixed { "mixed" } else { "uniform" };
-            group.throughput(Throughput::Elements(count as u64));
-            group.bench_with_input(
-                BenchmarkId::new(format!("{shape}_wide_32_fields"), count),
-                &data,
-                |b, data| {
-                    b.iter(|| {
-                        black_box(
-                            project_by_operation(
-                                black_box(data),
-                                vec![],
-                                &Default::default(),
-                                "Query",
-                                black_box(&wide_plans),
-                                &None,
-                                count * 32 * 16,
-                                &schema,
-                            )
-                            .unwrap(),
-                        )
-                    });
-                },
-            );
-        }
+                .collect::<Vec<_>>(),
+        ),
+        ("uniform", (0..LIST_LENGTH).map(user).collect::<Vec<_>>()),
+    ] {
+        let data = Value::Object(vec![("nodes", Value::Array(rows))]);
+        group.bench_function(case, |b| {
+            b.iter(|| {
+                black_box(
+                    project_by_operation(
+                        black_box(&data),
+                        vec![],
+                        &Default::default(),
+                        root_type_name,
+                        black_box(&plan),
+                        &None,
+                        LIST_LENGTH * 4 * BYTES_PER_FIELD,
+                        &schema_metadata,
+                    )
+                    .unwrap(),
+                )
+            });
+        });
     }
     group.finish();
+}
 
-    // Each level creates deferred type context. With typename unselected, the
-    // context stays unresolved; selecting it also exercises lazy resolution.
-    let mut group = c.benchmark_group("projection_nested_lists");
-    for with_typename in [false, true] {
-        let mut plans = vec![field("value", None)];
-        let mut data = Value::Object(vec![
-            ("__typename", Value::String("Node".into())),
-            ("value", Value::U64(42)),
-        ]);
-        for _ in 0..4 {
-            if with_typename {
-                plans.push(field("__typename", None));
-            }
-            plans = vec![field("children", Some(plans))];
-            data = Value::Object(vec![
-                ("__typename", Value::String("Node".into())),
-                ("children", Value::Array(vec![data; 8])),
-            ]);
-        }
-        group.bench_function(
-            if with_typename {
-                "resolved"
-            } else {
-                "deferred"
-            },
-            |b| {
-                b.iter(|| {
-                    black_box(
-                        project_by_operation(
-                            black_box(&data),
-                            vec![],
-                            &Default::default(),
-                            "Query",
-                            black_box(&plans),
-                            &None,
-                            200_000,
-                            &schema,
-                        )
-                        .unwrap(),
+/// Covers both sides of the per-list-position cache threshold.
+fn list_benchmarks(c: &mut Criterion) {
+    let mut group = c.benchmark_group("projection_lists");
+    for field_count in [NARROW_FIELDS, WIDE_FIELDS] {
+        let keys: Vec<String> = (0..field_count).map(|i| format!("field_{i:02}")).collect();
+        let schema = parse_schema(&format!(
+            "type Query {{ items: [Item] }} type Item {{ {} }}",
+            keys.iter()
+                .map(|key| format!("{key}: Int"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ));
+        let planner = Planner::new_from_supergraph(&schema, Default::default())
+            .expect("Failed to create planner from supergraph");
+        let schema_metadata = planner.consumer_schema.schema_metadata();
+        // Reverse the selection order to check response order.
+        let document = parse_operation(&format!(
+            "{{ items {{ {} }} }}",
+            keys.iter().rev().cloned().collect::<Vec<_>>().join(" ")
+        ));
+        let normalized = normalize_operation(&planner.supergraph, &document, None)
+            .expect("Failed to normalize operation");
+        let (root_type_name, plan) =
+            ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+
+        // Object keys must stay sorted for binary search.
+        let objects = (0..LIST_LENGTH)
+            .map(|row| {
+                Value::Object(
+                    keys.iter()
+                        .enumerate()
+                        .map(|(i, key)| (key.as_str(), Value::U64((row + i) as u64)))
+                        .collect(),
+                )
+            })
+            .collect();
+        let data = Value::Object(vec![("items", Value::Array(objects))]);
+
+        group.throughput(Throughput::Elements(LIST_LENGTH as u64));
+        group.bench_function(format!("fields_{field_count}"), |b| {
+            b.iter(|| {
+                black_box(
+                    project_by_operation(
+                        black_box(&data),
+                        vec![],
+                        &Default::default(),
+                        root_type_name,
+                        black_box(&plan),
+                        &None,
+                        LIST_LENGTH * field_count * BYTES_PER_FIELD,
+                        &schema_metadata,
                     )
-                });
-            },
-        );
+                    .unwrap(),
+                )
+            });
+        });
     }
     group.finish();
 }
