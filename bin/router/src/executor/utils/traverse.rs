@@ -1,6 +1,4 @@
-use std::collections::BTreeSet;
-
-use crate::query_planner::planner::plan_nodes::FlattenNodePathSegment;
+use crate::query_planner::planner::plan_nodes::{PathSegment, TypeCondition};
 
 use crate::executor::{
     introspection::schema::{PossibleTypes, SchemaMetadata},
@@ -11,16 +9,17 @@ use crate::executor::{
 fn entity_satisfies_any_type_condition(
     possible_types: &PossibleTypes,
     type_name: &str,
-    type_conditions: &BTreeSet<String>,
+    condition: &TypeCondition,
 ) -> bool {
-    type_conditions
+    condition
+        .names()
         .iter()
-        .any(|condition| possible_types.entity_satisfies_type_condition(type_name, condition))
+        .any(|name| possible_types.entity_satisfies_type_condition(type_name, name))
 }
 
 pub fn traverse_and_callback_mut<'a, Callback>(
     current_data: &mut Value<'a>,
-    remaining_path: &[FlattenNodePathSegment],
+    remaining_path: &[PathSegment],
     schema_metadata: &SchemaMetadata,
     current_error_path: Option<GraphQLErrorPath>,
     callback: &mut Callback,
@@ -60,7 +59,7 @@ fn pop(error_path: &mut Option<GraphQLErrorPath>) {
 /// Only the callback needs to own a path, so only the callback allocates one.
 fn walk_mut<'a, Callback>(
     current_data: &mut Value<'a>,
-    remaining_path: &[FlattenNodePathSegment],
+    remaining_path: &[PathSegment],
     schema_metadata: &SchemaMetadata,
     error_path: &mut Option<GraphQLErrorPath>,
     callback: &mut Callback,
@@ -83,11 +82,14 @@ fn walk_mut<'a, Callback>(
         return;
     }
 
-    match &remaining_path[0] {
-        FlattenNodePathSegment::List => {
+    let Some((first, rest_of_path)) = remaining_path.split_first() else {
+        return;
+    };
+
+    match first {
+        PathSegment::List => {
             // If the key is List, we expect current_data to be an array
             if let Value::Array(arr) = current_data {
-                let rest_of_path = &remaining_path[1..];
                 for (index, item) in arr.iter_mut().enumerate() {
                     push_index(error_path, index);
                     walk_mut(item, rest_of_path, schema_metadata, error_path, callback);
@@ -95,12 +97,12 @@ fn walk_mut<'a, Callback>(
                 }
             }
         }
-        FlattenNodePathSegment::Field(field_name) => {
+        PathSegment::Field(field_name) => {
             // If the key is Field, we expect current_data to be an object
             if let Value::Object(map) = current_data {
-                if let Ok(idx) = map.binary_search_by_key(&field_name.as_str(), |(k, _)| k) {
+                let field_name: &str = field_name.as_ref();
+                if let Ok(idx) = map.binary_search_by_key(&field_name, |(key, _)| key) {
                     let (_, next_data) = map.get_mut(idx).unwrap();
-                    let rest_of_path = &remaining_path[1..];
                     push_field(error_path, field_name);
                     walk_mut(
                         next_data,
@@ -113,7 +115,7 @@ fn walk_mut<'a, Callback>(
                 }
             }
         }
-        FlattenNodePathSegment::TypeCondition(type_condition) => {
+        PathSegment::TypeCondition(type_condition) => {
             // If the key is Cast, we expect current_data to be an object or an array
             if let Value::Object(obj) = current_data {
                 let maybe_type_name = obj
@@ -128,7 +130,6 @@ fn walk_mut<'a, Callback>(
                         type_condition,
                     )
                 }) {
-                    let rest_of_path = &remaining_path[1..];
                     // A type condition does not add a path step.
                     walk_mut(
                         current_data,
@@ -142,7 +143,7 @@ fn walk_mut<'a, Callback>(
                 // If the current data is an array, we need to check each item
                 for (index, item) in arr.iter_mut().enumerate() {
                     push_index(error_path, index);
-                    // Pass `remaining_path` rather than the rest of it, so the type condition
+                    // Pass `remaining_path` rather than `rest_of_path`, so the type condition
                     // is checked again for each item.
                     walk_mut(item, remaining_path, schema_metadata, error_path, callback);
                     pop(error_path);
@@ -154,7 +155,7 @@ fn walk_mut<'a, Callback>(
 
 pub fn traverse_and_callback<'a, Callback>(
     current_data: &'a Value<'a>,
-    remaining_path: &'a [FlattenNodePathSegment],
+    remaining_path: &'a [PathSegment],
     possible_types: &'a PossibleTypes,
     callback: &mut Callback,
 ) where
@@ -171,25 +172,28 @@ pub fn traverse_and_callback<'a, Callback>(
         return;
     }
 
-    match &remaining_path[0] {
-        FlattenNodePathSegment::List => {
+    let Some((first, rest_of_path)) = remaining_path.split_first() else {
+        return;
+    };
+
+    match first {
+        PathSegment::List => {
             if let Value::Array(arr) = current_data {
-                let rest_of_path = &remaining_path[1..];
                 for item in arr.iter() {
                     traverse_and_callback(item, rest_of_path, possible_types, callback);
                 }
             }
         }
-        FlattenNodePathSegment::Field(field_name) => {
+        PathSegment::Field(field_name) => {
             if let Value::Object(map) = current_data {
-                if let Ok(idx) = map.binary_search_by_key(&field_name.as_str(), |(k, _)| k) {
+                let field_name: &str = field_name.as_ref();
+                if let Ok(idx) = map.binary_search_by_key(&field_name, |(key, _)| key) {
                     let (_, next_data) = &map[idx];
-                    let rest_of_path = &remaining_path[1..];
                     traverse_and_callback(next_data, rest_of_path, possible_types, callback);
                 }
             }
         }
-        FlattenNodePathSegment::TypeCondition(type_condition) => {
+        PathSegment::TypeCondition(type_condition) => {
             if let Value::Object(obj) = current_data {
                 let maybe_type_name = obj
                     .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
@@ -199,7 +203,6 @@ pub fn traverse_and_callback<'a, Callback>(
                 if maybe_type_name.is_none_or(|type_name| {
                     entity_satisfies_any_type_condition(possible_types, type_name, type_condition)
                 }) {
-                    let rest_of_path = &remaining_path[1..];
                     traverse_and_callback(current_data, rest_of_path, possible_types, callback);
                 }
             } else if let Value::Array(arr) = current_data {
@@ -213,7 +216,22 @@ pub fn traverse_and_callback<'a, Callback>(
 
 #[cfg(test)]
 mod tests {
-    use crate::query_planner::planner::plan_nodes::FlattenNodePathSegment;
+    use crate::query_planner::planner::plan_nodes::{FlattenNodePath, PathSegment, TypeCondition};
+
+    /// `@` means a list step, `|A|B` means a type condition, and anything else is a field.
+    fn path(steps: &[&str]) -> FlattenNodePath {
+        steps
+            .iter()
+            .map(|step| match *step {
+                "@" => PathSegment::List,
+                s if s.starts_with('|') => PathSegment::TypeCondition(Box::new(
+                    TypeCondition::from_names(s.trim_start_matches('|').split('|')),
+                )),
+                field => PathSegment::Field(field.into()),
+            })
+            .collect::<Vec<_>>()
+            .into()
+    }
 
     use crate::executor::{
         introspection::schema::SchemaMetadata,
@@ -237,14 +255,11 @@ mod tests {
                 Value::Object(vec![("id", Value::String("2".into()))]),
             ]),
         )]);
-        let path = vec![
-            FlattenNodePathSegment::Field("items".into()),
-            FlattenNodePathSegment::List,
-        ];
+        let path = path(&["items", "@"]);
         let mut collected = vec![];
         super::traverse_and_callback_mut(
             &mut data,
-            &path,
+            path.as_slice(),
             &SchemaMetadata::default(),
             Some(GraphQLErrorPath::default()),
             &mut |_item, error_path| {
@@ -297,16 +312,11 @@ mod tests {
                 ]),
             ]),
         )]);
-        let path = vec![
-            FlattenNodePathSegment::Field("users".into()),
-            FlattenNodePathSegment::List,
-            FlattenNodePathSegment::Field("posts".into()),
-            FlattenNodePathSegment::List,
-        ];
+        let path = path(&["users", "@", "posts", "@"]);
         let mut collected = vec![];
         super::traverse_and_callback_mut(
             &mut data,
-            &path,
+            path.as_slice(),
             &SchemaMetadata::default(),
             Some(GraphQLErrorPath::default()),
             &mut |_item, error_path| {
@@ -368,17 +378,11 @@ mod tests {
             ]),
         )]);
 
-        let path = vec![
-            FlattenNodePathSegment::Field("media".into()),
-            FlattenNodePathSegment::List,
-            FlattenNodePathSegment::TypeCondition(["Book".to_string()].into_iter().collect()),
-            FlattenNodePathSegment::Field("pages".into()),
-            FlattenNodePathSegment::List,
-        ];
+        let path = path(&["media", "@", "|Book", "pages", "@"]);
         let mut collected = vec![];
         super::traverse_and_callback_mut(
             &mut data,
-            &path,
+            path.as_slice(),
             &SchemaMetadata::default(),
             Some(GraphQLErrorPath::default()),
             &mut |_item, error_path| {
@@ -410,14 +414,10 @@ mod tests {
     #[test]
     fn traverse_matches_multi_type_cast() {
         let data = Value::Object(vec![("__typename", Value::String("Book".into()))]);
-        let path = vec![FlattenNodePathSegment::TypeCondition(
-            ["Book".to_string(), "User".to_string()]
-                .into_iter()
-                .collect(),
-        )];
+        let path = path(&["|Book|User"]);
         let mut matched = false;
 
-        super::traverse_and_callback(&data, &path, &Default::default(), &mut |_value| {
+        super::traverse_and_callback(&data, path.as_slice(), &Default::default(), &mut |_value| {
             matched = true;
         });
 
@@ -427,14 +427,10 @@ mod tests {
     #[test]
     fn traverse_rejects_non_matching_multi_type_cast() {
         let data = Value::Object(vec![("__typename", Value::String("Magazine".into()))]);
-        let path = vec![FlattenNodePathSegment::TypeCondition(
-            ["Book".to_string(), "User".to_string()]
-                .into_iter()
-                .collect(),
-        )];
+        let path = path(&["|Book|User"]);
         let mut matched = false;
 
-        super::traverse_and_callback(&data, &path, &Default::default(), &mut |_value| {
+        super::traverse_and_callback(&data, path.as_slice(), &Default::default(), &mut |_value| {
             matched = true;
         });
 

@@ -4,7 +4,9 @@ use std::sync::Arc;
 use std::vec;
 
 use crate::query_planner::ast::operation::SubgraphFetchOperation;
-use crate::query_planner::planner::plan_nodes::{CustomScalarPaths, FetchNode, FlattenNode};
+use crate::query_planner::planner::plan_nodes::{
+    CustomScalarPaths, FetchNode, FlattenNode, ResponsePathRef,
+};
 use crate::query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use crate::query_planner::{
     ast::operation::OperationDefinition,
@@ -720,7 +722,7 @@ pub enum ExecutionJob<'exec> {
         output_rewrites: Option<&'exec [FetchRewrite]>,
         // By default, this job is merged at the root. When this is set, we merge at
         // a specific path instead of the root (used for root re-entry fetches)
-        merge_path: Option<&'exec FlattenNodePath>,
+        merge_path: Option<ResponsePathRef<'exec>>,
     },
     FlattenFetch {
         subgraph_name: &'exec str,
@@ -746,7 +748,7 @@ pub struct AliasBatchState<'exec> {
 }
 
 struct AliasPathState<'exec> {
-    merge_path: &'exec FlattenNodePath,
+    merge_path: ResponsePathRef<'exec>,
     representation_hashes: Arc<Vec<Option<u64>>>,
 }
 
@@ -792,12 +794,12 @@ impl<'exec> ExecutionJob<'exec> {
         }
     }
 
-    fn affected_path(&self) -> Option<&'exec FlattenNodePath> {
+    fn affected_path(&self) -> Option<ResponsePathRef<'exec>> {
         match self {
             ExecutionJob::Fetch { merge_path, .. } => *merge_path,
             ExecutionJob::FlattenFetch {
                 flatten_node_path, ..
-            } => Some(flatten_node_path),
+            } => Some(flatten_node_path.as_ref()),
             ExecutionJob::BatchFetch { .. } => None,
         }
     }
@@ -821,7 +823,7 @@ struct PrepareExecutionJobOpts<'exec> {
     // If the fetch job is for a flatten node, we pass the filtered representations,
     raw_variable_values: Option<Vec<(&'exec str, Vec<u8>)>>,
     // and the path to the representations in the original response for error handling and normalization
-    affected_path: Option<&'exec FlattenNodePath>,
+    affected_path: Option<ResponsePathRef<'exec>>,
 }
 
 impl<'exec> Executor<'exec> {
@@ -883,7 +885,7 @@ impl<'exec> Executor<'exec> {
             output_rewrites: fetch_node.output_rewrites.as_deref(),
             custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
             raw_variable_values: None,
-            affected_path: Some(&flatten_node.path),
+            affected_path: Some(flatten_node.path.as_ref()),
         })
         .boxed()
     }
@@ -1053,7 +1055,7 @@ impl<'exec> Executor<'exec> {
                             "representations",
                             filtered_representations,
                         )]),
-                        affected_path: Some(&flatten_node.path),
+                        affected_path: Some(flatten_node.path.as_ref()),
                     })
                     .map_ok(|fetch_job| ExecutionJob::FlattenFetch {
                         operation: fetch_job.operation(),
@@ -1442,7 +1444,7 @@ impl<'exec> Executor<'exec> {
         // We walk each merge path
         for path_state in &alias_state.paths {
             let mut index = 0;
-            let normalized_path = path_state.merge_path.as_slice();
+            let normalized_path = path_state.merge_path;
             let initial_error_path = has_alias_errors
                 // Small extra capacity for path segments that will be appended later.
                 .then(|| GraphQLErrorPath::with_capacity(normalized_path.len() + 2));
@@ -1450,7 +1452,7 @@ impl<'exec> Executor<'exec> {
             // For each visited target:
             traverse_and_callback_mut(
                 &mut ctx.data,
-                normalized_path,
+                normalized_path.as_slice(),
                 self.schema_metadata,
                 initial_error_path,
                 &mut |target_data, error_path| {
@@ -1513,7 +1515,7 @@ impl<'exec> Executor<'exec> {
             let mut path_hashes_by_index: Vec<Option<Arc<Vec<Option<u64>>>>> =
                 vec![None; alias_spec.merge_paths.len()];
 
-            let mut path_groups: Vec<(&FlattenNodePath, Vec<usize>)> =
+            let mut path_groups: Vec<(ResponsePathRef<'_>, Vec<usize>)> =
                 Vec::with_capacity(alias_spec.merge_paths.len());
             for (path_index, merge_path) in alias_spec.merge_paths.iter().enumerate() {
                 if let Some((_, target_indices)) =
@@ -2013,7 +2015,7 @@ mod tests {
                 EntityBatchAlias {
                     alias: "_e0".to_string(),
                     representations_variable_name: shared_var.clone(),
-                    merge_paths: vec![],
+                    merge_paths: Default::default(),
                     requires: requires_from(requires_selection.clone()),
                     input_rewrites: None,
                     output_rewrites: None,
@@ -2021,7 +2023,7 @@ mod tests {
                 EntityBatchAlias {
                     alias: "_e1".to_string(),
                     representations_variable_name: shared_var,
-                    merge_paths: vec![],
+                    merge_paths: Default::default(),
                     requires: requires_from(requires_selection),
                     input_rewrites: None,
                     output_rewrites: None,
