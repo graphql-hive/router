@@ -1,5 +1,8 @@
 use crate::query_planner::{
-    ast::operation::{PlanningFetchOperation, SubgraphFetchOperation},
+    ast::{
+        operation::{PlanningFetchOperation, SubgraphFetchOperation},
+        selection_set::SelectionSet,
+    },
     utils::pretty_display::PrettyDisplay,
 };
 use serde::{de::DeserializeOwned, Serialize};
@@ -13,6 +16,7 @@ pub trait PlanState: private::Sealed + Debug + Clone {
         + DeserializeOwned
         + PrettyDisplay
         + AsRef<SubgraphFetchOperation>;
+    type Requires: Debug + Clone + Default;
 }
 
 /// A query plan that is still being built
@@ -25,10 +29,12 @@ pub struct Executable;
 
 impl PlanState for Planning {
     type Operation = PlanningFetchOperation;
+    type Requires = Option<Box<SelectionSet>>;
 }
 
 impl PlanState for Executable {
     type Operation = SubgraphFetchOperation;
+    type Requires = ();
 }
 
 mod private {

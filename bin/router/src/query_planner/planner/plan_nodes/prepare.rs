@@ -21,6 +21,7 @@ impl FetchNode<Planning> {
             operation: self.operation.operation,
             custom_scalar_paths: self.custom_scalar_paths,
             requires: self.requires,
+            planner_requires: (),
             input_rewrites: self.input_rewrites,
             output_rewrites: self.output_rewrites,
         }
