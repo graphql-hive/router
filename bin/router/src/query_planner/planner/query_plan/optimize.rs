@@ -183,7 +183,7 @@ impl<'a> BatchFetchBuilder<'a> {
         self.batched_aliases.push(EntityBatchAlias {
             alias,
             representations_variable_name,
-            merge_paths,
+            merge_paths: merge_paths.into(),
             requires: RequiresSelectionSet::from(&representative.requires),
             input_rewrites: representative.input_rewrites.clone(),
             output_rewrites: representative.output_rewrites.clone(),

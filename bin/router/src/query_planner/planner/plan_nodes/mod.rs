@@ -1,7 +1,7 @@
 use crate::query_planner::ast::requires::RequiresSelectionSet;
 use crate::query_planner::{
     ast::{
-        merge_path::{Condition, MergePath, Segment},
+        merge_path::Condition,
         minification::minify_operation,
         operation::{OperationDefinition, PlanningFetchOperation, VariableDefinition},
         selection_item::SelectionItem,
@@ -35,6 +35,9 @@ pub mod planning {
     pub type DeferPrimary = super::DeferPrimary<Planning>;
     pub type DeferredNode = super::DeferredNode<Planning>;
 }
+
+mod path;
+pub use path::{FlattenNodePath, MergePaths, PathSegment, ResponsePathRef, TypeCondition};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::{Display, Formatter as FmtFormatter, Result as FmtResult},
@@ -376,7 +379,7 @@ pub struct EntityBatchAlias {
     pub alias: String,
     pub representations_variable_name: String,
     #[serde(rename = "paths")]
-    pub merge_paths: Vec<FlattenNodePath>,
+    pub merge_paths: MergePaths,
     pub requires: RequiresSelectionSet,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_rewrites: Option<Vec<FetchRewrite>>,
@@ -473,110 +476,6 @@ impl FetchNodePathSegment {
 pub enum FetchRewrite {
     ValueSetter(ValueSetter),
     KeyRenamer(KeyRenamer),
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
-pub enum FlattenNodePathSegment {
-    Field(String),
-    TypeCondition(BTreeSet<String>),
-    #[serde(rename = "@")]
-    List,
-}
-
-impl From<&MergePath> for Vec<FetchNodePathSegment> {
-    fn from(value: &MergePath) -> Self {
-        value
-            .inner
-            .iter()
-            .filter_map(|path_segment| match path_segment {
-                Segment::TypeCondition(type_names, _) => {
-                    Some(FetchNodePathSegment::TypenameEquals(type_names.clone()))
-                }
-                Segment::Field(field_seg, _args_hash, _) => Some(FetchNodePathSegment::Key(
-                    field_seg.response_key().to_string(),
-                )),
-                Segment::List => None,
-            })
-            .collect()
-    }
-}
-
-impl FlattenNodePathSegment {
-    pub fn to_field(&self) -> Option<&String> {
-        match self {
-            FlattenNodePathSegment::Field(field_name) => Some(field_name),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct FlattenNodePath(Vec<FlattenNodePathSegment>);
-
-impl FlattenNodePath {
-    pub fn as_slice(&self) -> &[FlattenNodePathSegment] {
-        &self.0
-    }
-}
-
-impl Display for FlattenNodePathSegment {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FlattenNodePathSegment::Field(field_name) => write!(f, "{}", field_name),
-            FlattenNodePathSegment::TypeCondition(type_names) => {
-                write!(
-                    f,
-                    "|[{}]",
-                    type_names.iter().cloned().collect::<Vec<_>>().join("|")
-                )
-            }
-            FlattenNodePathSegment::List => write!(f, "@"),
-        }
-    }
-}
-
-impl Display for FlattenNodePath {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut segments_iter = self.0.iter().peekable();
-
-        while let Some(segment) = segments_iter.next() {
-            write!(f, "{}", segment)?;
-            if let Some(peeked) = segments_iter.peek() {
-                match peeked {
-                    FlattenNodePathSegment::TypeCondition(_) => {
-                        // Don't add a dot before TypeCondition
-                    }
-                    _ => write!(f, ".")?,
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-impl From<&MergePath> for FlattenNodePath {
-    fn from(path: &MergePath) -> Self {
-        FlattenNodePath(
-            path.inner
-                .iter()
-                .map(|seg| match seg {
-                    Segment::TypeCondition(type_names, _) => {
-                        FlattenNodePathSegment::TypeCondition(type_names.clone())
-                    }
-                    Segment::Field(field_seg, _args_hash, _) => {
-                        FlattenNodePathSegment::Field(field_seg.response_key().to_string())
-                    }
-                    Segment::List => FlattenNodePathSegment::List,
-                })
-                .collect(),
-        )
-    }
-}
-
-impl From<MergePath> for FlattenNodePath {
-    fn from(path: MergePath) -> Self {
-        (&path).into()
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
@@ -923,7 +822,7 @@ impl<S: PlanState> PrettyDisplay for BatchFetchNode<S> {
         for alias in &self.entity_batch.aliases {
             writeln!(f, "{indent}    {} {{", alias.alias)?;
             writeln!(f, "{indent}      paths: [")?;
-            for merge_path in &alias.merge_paths {
+            for merge_path in alias.merge_paths.iter() {
                 writeln!(f, "{indent}        \"{}\"", merge_path)?;
             }
             writeln!(f, "{indent}      ]")?;
