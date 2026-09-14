@@ -6,7 +6,10 @@ use std::{
 use libdd_trace_protobuf::pb::{ClientStatsPayload, Trilean};
 use libdd_trace_utils::msgpack_decoder::v04;
 
-use crate::testkit::{otel::OtlpCollector, EnvVarsGuard, TestRouter, TestSubgraphs};
+use crate::{
+    some_header_map,
+    testkit::{otel::OtlpCollector, EnvVarsGuard, TestRouter, TestSubgraphs},
+};
 
 #[derive(Clone)]
 struct AgentRequest {
@@ -278,6 +281,100 @@ async fn test_datadog_zero_sampling_reports_every_root_in_stats_only() {
             .map(|(traces, _)| traces.is_empty())
             .unwrap_or(false)
     }));
+}
+
+async fn assert_datadog_parent_based_sampler(parent_based_sampler: bool) {
+    const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
+    const PARENT_SPAN_ID: &str = "00f067aa0ba902b7";
+
+    let _env = EnvVarsGuard::new()
+        .set("DD_REMOTE_CONFIGURATION_ENABLED", "false")
+        .set("DD_INSTRUMENTATION_TELEMETRY_ENABLED", "false")
+        .apply()
+        .await;
+    let agent = MockDatadogAgent::start();
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+          telemetry:
+            tracing:
+              collect:
+                sampling: 0.0
+                parent_based_sampler: {parent_based_sampler}
+              exporters:
+                - kind: datadog
+                  endpoint: {}
+        "#,
+            supergraph_path(),
+            agent.address,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    agent.wait_for_path("/info").await;
+    let response = router
+        .send_graphql_request(
+            "query DatadogParentSampling { users { id } }",
+            None,
+            some_header_map!(
+                "traceparent" => format!("00-{TRACE_ID}-{PARENT_SPAN_ID}-01")
+            ),
+        )
+        .await;
+    assert!(response.status().is_success());
+    drop(router);
+
+    if parent_based_sampler {
+        let requests = agent.wait_for_path("/v0.4/traces").await;
+        let trace = requests
+            .iter()
+            .filter_map(|request| v04::from_slice(&request.body).ok())
+            .flat_map(|(traces, _)| traces)
+            .find(|trace| {
+                trace
+                    .iter()
+                    .any(|span| span.meta.get("hive.kind").copied() == Some("graphql.operation"))
+            })
+            .expect("sampled parent was not honored");
+        let root = trace
+            .iter()
+            .find(|span| span.name == "http.server.request")
+            .expect("http server span missing");
+        assert_eq!(
+            root.trace_id,
+            u64::from_str_radix(&TRACE_ID[16..], 16).unwrap() as u128
+        );
+        assert_eq!(
+            root.parent_id,
+            u64::from_str_radix(PARENT_SPAN_ID, 16).unwrap()
+        );
+    } else {
+        agent.wait_for_path("/v0.6/stats").await;
+        assert!(agent.requests_for("/v0.4/traces").iter().all(|request| {
+            v04::from_slice(&request.body).is_ok_and(|(traces, _)| {
+                traces
+                    .iter()
+                    .flatten()
+                    .all(|span| span.meta.get("hive.kind").copied() != Some("graphql.operation"))
+            })
+        }));
+    }
+}
+
+#[ntex::test]
+async fn test_datadog_ignores_sampled_parent_when_parent_based_sampler_is_false() {
+    assert_datadog_parent_based_sampler(false).await;
+}
+
+#[ntex::test]
+async fn test_datadog_honors_sampled_parent_when_parent_based_sampler_is_true() {
+    assert_datadog_parent_based_sampler(true).await;
 }
 
 #[ntex::test]
