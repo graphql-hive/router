@@ -89,7 +89,7 @@ fn operation(index: usize) -> String {
 #[ntex::main]
 async fn main() {
     let router = TestRouter::builder()
-        .inline_config(&format!(
+        .inline_config(format!(
             r#"supergraph:
   source: file
   path: "{SUPERGRAPH_PATH}"
