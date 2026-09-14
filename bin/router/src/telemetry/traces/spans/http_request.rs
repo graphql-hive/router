@@ -176,17 +176,34 @@ impl HttpServerRequestSpan {
             self.span,
             "http.response.status_code" = response.status().as_str(),
             "http.response.body.size" = body_size,
-            "otel.status_code" = if response.status().is_server_error() {
-                "Error"
-            } else {
-                "Ok"
-            },
-            "error.type" = if response.status().is_server_error() {
-                Some(response.status().to_string())
-            } else {
-                None
-            },
         );
+
+        // a non-5xx response can still be erroneous (like accepting application/json),
+        // the graphql body may still contain errors. so keep otel status unset for
+        // those responses so an error recorded elsewhere is not replaced with "Ok".
+        // graphql_endpoint_dispatch separately marks this span as error when
+        // graphql errors exist.
+        //
+        // a 5xx response is an http server failure, so it marks the span as an
+        // error here
+        //
+        // if neither condition applies, unset is the otel success state and apm
+        // does not count an error as per otel conventions:
+        // > Span Status MUST be left unset if HTTP status code was in the 1xx, 2xx or 3xx ranges, unless there was another error.
+        // https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
+        if response.status().is_server_error() {
+            record_all!(
+                self.span,
+                "otel.status_code" = "Error",
+                "error.type" = response.status().to_string(),
+            );
+        }
+    }
+
+    pub fn record_error(&self) {
+        // aggregate graphql errors may have several types, so only
+        // record the status here
+        self.span.record(attributes::OTEL_STATUS_CODE, "Error");
     }
 
     pub fn record_internal_server_error(&self) {
