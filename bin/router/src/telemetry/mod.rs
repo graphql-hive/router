@@ -32,7 +32,7 @@ use crate::telemetry::{
 };
 use opentelemetry::metrics::Meter;
 use opentelemetry::propagation::{Injector, TextMapCompositePropagator, TextMapPropagator};
-use opentelemetry::trace::TracerProvider;
+use opentelemetry::trace::{SpanContext, TraceContextExt, TraceFlags, TracerProvider};
 use opentelemetry::{InstrumentationScope, KeyValue};
 use opentelemetry_sdk::{trace::IdGenerator, Resource};
 use std::env;
@@ -177,6 +177,8 @@ impl Telemetry {
             metrics_provider
                 .as_ref()
                 .map(|provider| provider.meter_with_scope(scope)),
+            config.telemetry.tracing.has_enabled_datadog()
+                && !config.telemetry.tracing.collect.parent_based_sampler,
         );
 
         let prometheus = create_prometheus_runtime(config, prometheus_config.as_ref())?;
@@ -239,6 +241,8 @@ impl Telemetry {
             &config.telemetry.tracing.propagation,
             &config.log,
             meter,
+            config.telemetry.tracing.has_enabled_datadog()
+                && !config.telemetry.tracing.collect.parent_based_sampler,
         );
 
         let (logging_layer, logging_writer_guard) = init_logging::<Registry>(&config.log)?;
@@ -478,6 +482,7 @@ where
 #[derive(Clone)]
 pub struct TelemetryContext {
     propagator: Option<Arc<TextMapCompositePropagator>>,
+    defer_parent_sampling_decision: bool,
     pub metrics: Arc<Metrics>,
     meter: Option<Meter>,
     pub logging_correlation_extractor: RequestIdentifierExtractor,
@@ -489,13 +494,14 @@ impl TelemetryContext {
         telemetry_config: &TracingPropagationConfig,
         log_config: &LoggingConfig,
     ) -> Self {
-        Self::from_propagation_config_with_meter(telemetry_config, log_config, None)
+        Self::from_propagation_config_with_meter(telemetry_config, log_config, None, false)
     }
 
     pub fn from_propagation_config_with_meter(
         telemetry_config: &TracingPropagationConfig,
         log_config: &LoggingConfig,
         meter: Option<Meter>,
+        defer_parent_sampling_decision: bool,
     ) -> Self {
         #[allow(deprecated)]
         use opentelemetry_jaeger_propagator::Propagator as JaegerPropagator;
@@ -533,6 +539,7 @@ impl TelemetryContext {
         if propagators.is_empty() {
             return Self {
                 propagator: None,
+                defer_parent_sampling_decision,
                 metrics,
                 meter,
                 logging_correlation_extractor,
@@ -541,6 +548,7 @@ impl TelemetryContext {
 
         Self {
             propagator: Some(Arc::new(TextMapCompositePropagator::new(propagators))),
+            defer_parent_sampling_decision,
             metrics,
             meter,
             logging_correlation_extractor,
@@ -568,7 +576,20 @@ impl TelemetryContext {
         E: opentelemetry::propagation::Extractor,
     {
         if let Some(propagator) = &self.propagator {
-            propagator.extract(extractor)
+            let context = propagator.extract(extractor);
+            let span = context.span();
+            let parent = span.span_context();
+            if self.defer_parent_sampling_decision && parent.is_remote() && parent.is_valid() {
+                // datadog treats 0x02 as deferred and runs its own sampler
+                return context.with_remote_span_context(SpanContext::new(
+                    parent.trace_id(),
+                    parent.span_id(),
+                    TraceFlags::new(0x02),
+                    true,
+                    parent.trace_state().clone(),
+                ));
+            }
+            context
         } else {
             opentelemetry::Context::new()
         }
