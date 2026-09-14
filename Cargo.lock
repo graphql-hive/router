@@ -1919,7 +1919,7 @@ dependencies = [
  "insta",
  "jsonwebtoken",
  "lazy_static",
- "libdd-trace-protobuf",
+ "libdd-trace-protobuf 5.0.0",
  "libdd-trace-utils",
  "mockito",
  "ntex",
@@ -3708,7 +3708,7 @@ dependencies = [
  "libdd-tinybytes",
  "libdd-trace-normalization",
  "libdd-trace-obfuscation",
- "libdd-trace-protobuf",
+ "libdd-trace-protobuf 4.0.1",
  "libdd-trace-stats",
  "libdd-trace-utils",
  "rmp-serde",
@@ -3756,7 +3756,7 @@ checksum = "ab46ec324c1b916ca06c4a369da171a08eb9f112620e6f6f004860e589892715"
 dependencies = [
  "anyhow",
  "libc",
- "libdd-trace-protobuf",
+ "libdd-trace-protobuf 4.0.1",
  "memfd",
  "prost 0.14.4",
  "rand 0.8.6",
@@ -3779,7 +3779,7 @@ dependencies = [
  "http",
  "http-body-util",
  "libdd-common",
- "libdd-trace-protobuf",
+ "libdd-trace-protobuf 4.0.1",
  "manual_future",
  "serde",
  "serde_json",
@@ -3873,7 +3873,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a643220a54228ef837631b5036f34fc13fc8ee2e307a74ac011232c062393fc5"
 dependencies = [
  "anyhow",
- "libdd-trace-protobuf",
+ "libdd-trace-protobuf 4.0.1",
 ]
 
 [[package]]
@@ -3885,7 +3885,7 @@ dependencies = [
  "anyhow",
  "fluent-uri",
  "libdd-common",
- "libdd-trace-protobuf",
+ "libdd-trace-protobuf 4.0.1",
  "libdd-trace-utils",
  "log",
  "percent-encoding",
@@ -3898,6 +3898,17 @@ name = "libdd-trace-protobuf"
 version = "4.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b1bc3bd67115bec00669d84a29b7b52ef1d61f36dfb49b273b2fee3346bf18f"
+dependencies = [
+ "prost 0.14.4",
+ "serde",
+ "serde_bytes",
+]
+
+[[package]]
+name = "libdd-trace-protobuf"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1bb1383be9dd27a21cebf0bdb4dfbbc8722ed77c695311ee363ad73b463eef8"
 dependencies = [
  "prost 0.14.4",
  "serde",
@@ -3924,7 +3935,7 @@ dependencies = [
  "libdd-shared-runtime",
  "libdd-telemetry",
  "libdd-trace-obfuscation",
- "libdd-trace-protobuf",
+ "libdd-trace-protobuf 4.0.1",
  "libdd-trace-utils",
  "rmp-serde",
  "serde",
@@ -3956,7 +3967,7 @@ dependencies = [
  "libdd-common",
  "libdd-tinybytes",
  "libdd-trace-normalization",
- "libdd-trace-protobuf",
+ "libdd-trace-protobuf 4.0.1",
  "prost 0.14.4",
  "rand 0.8.6",
  "rmp",
