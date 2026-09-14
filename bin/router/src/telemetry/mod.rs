@@ -171,6 +171,8 @@ impl Telemetry {
 
         registry.init();
 
+        // datadog replaces the sdk sampler, so defer its parent decision during extraction
+        // when parent-based sampling is disabled
         let context = TelemetryContext::from_propagation_config_with_meter(
             &config.telemetry.tracing.propagation,
             &config.log,
@@ -237,6 +239,7 @@ impl Telemetry {
         let meter = metrics_result
             .as_ref()
             .map(|setup| setup.provider.meter_with_scope(scope));
+        // match the datadog extraction behavior used by global initialization
         let context = TelemetryContext::from_propagation_config_with_meter(
             &config.telemetry.tracing.propagation,
             &config.log,
@@ -482,6 +485,8 @@ where
 #[derive(Clone)]
 pub struct TelemetryContext {
     propagator: Option<Arc<TextMapCompositePropagator>>,
+    // datadog owns its sampler and normally inherits remote decisions before applying its policy
+    // this switches remote decisions to deferred when parent_based_sampler is false
     defer_parent_sampling_decision: bool,
     pub metrics: Arc<Metrics>,
     meter: Option<Meter>,
@@ -579,8 +584,11 @@ impl TelemetryContext {
             let context = propagator.extract(extractor);
             let span = context.span();
             let parent = span.span_context();
+
+            // datadog normally inherits this decision before applying collect.sampling and its
+            // own rules. 0x02 defers that decision to the datadog sampler instead.
             if self.defer_parent_sampling_decision && parent.is_remote() && parent.is_valid() {
-                // datadog treats 0x02 as deferred and runs its own sampler
+                // replace only the flags; trace identity, remote status, and trace state stay intact
                 return context.with_remote_span_context(SpanContext::new(
                     parent.trace_id(),
                     parent.span_id(),
