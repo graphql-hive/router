@@ -346,6 +346,7 @@ async fn assert_datadog_parent_based_sampler(parent_based_sampler: bool) {
             .iter()
             .find(|span| span.name == "http.server.request")
             .expect("http server span missing");
+        // honoring the sampling bit must not break the inherited trace relationship
         assert_eq!(
             root.trace_id,
             u64::from_str_radix(&TRACE_ID[16..], 16).unwrap() as u128
@@ -355,6 +356,8 @@ async fn assert_datadog_parent_based_sampler(parent_based_sampler: bool) {
             u64::from_str_radix(PARENT_SPAN_ID, 16).unwrap()
         );
     } else {
+        // stats prove datadog processed the rejected trace and give the exporter time to flush;
+        // only the detailed trace should be absent
         agent.wait_for_path("/v0.6/stats").await;
         assert!(agent.requests_for("/v0.4/traces").iter().all(|request| {
             v04::from_slice(&request.body).is_ok_and(|(traces, _)| {
