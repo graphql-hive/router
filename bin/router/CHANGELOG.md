@@ -116,6 +116,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.2.12 (2026-09-14)
+
+### Fixes
+
+#### Error paths in subgraph responses use fewer allocations
+
+When a subgraph returns errors, the router builds a GraphQL error path while walking the response.
+
+Previously, each step cloned the whole path built so far and then added one more segment. That meant repeated allocations as the path got deeper.
+
+The router now reuses one path while walking the response. It pushes a segment when going deeper and pops it when going back. 
+The path is only cloned when an error actually needs to keep it.
+
+#### Cached query plans no longer keep parsed subgraph operations
+
+Cached query plans used to keep both the string and its parsed document for every subgraph fetch. Execution only needs the string
+
+#### Smaller query plan nodes in the plan cache
+
+PlanNode is an enum, so every variant takes as much space as its largest variant. 
+Some of the variants have a subgraph fetch, and those were much larger than the rest. 
+They are now boxed.
+
+#### Entity `requires` selections use less memory
+
+A fetch stores the fields it needs to build an entity representation. These selections used to be
+stored as a tree, where each item was 160 bytes and had its own vectors and strings.
+
+They are now stored as a flat array of 24-byte nodes. Nodes refer to each other by index and share
+one table of names. This works well because the selection is built once and only read after that.
+
+A stored fetch itself grows from 208 to 224 bytes. The new format needs two boxed slices and a
+length instead of one vector.
+
+#### Response paths in query plans use a simpler stored form
+
+Response paths are built once with the query plan and only read after that, so they now use boxed
+slices and boxed strings instead of `Vec`, `String`, and `BTreeSet<String>`.
+
+This makes the stored path types smaller and gives them a simpler owned representation. Type
+conditions are still sorted and deduplicated so equivalent paths compare, hash, and serialize the
+same way.
+
+#### Subgraph request text is stored as a boxed string
+
+The text of a subgraph request is built once when the plan is built, and never added to after that. It was stored in a `String`, which can hold more memory than the text needs.
+
+The text is now stored as a boxed string, which holds exactly the bytes it needs.
+
 ## 0.2.11 (2026-09-10)
 
 ### Features
