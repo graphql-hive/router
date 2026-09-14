@@ -52,6 +52,12 @@ jobs:
           RUST_BACKTRACE: full
           RUST_LOG: debug
 
+      - name: memory baseline
+        run: cargo run -p e2e --bin memory_baseline
+        timeout-minutes: 10
+        env:
+          RUST_BACKTRACE: full
+
   plugin_examples:
     name: test / plugin examples
     runs-on: ubuntu-latest
