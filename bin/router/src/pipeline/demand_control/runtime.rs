@@ -13,8 +13,8 @@ use crate::executor::execution::demand_control::{
 };
 use crate::executor::execution::plan::CoerceVariablesPayload;
 use crate::executor::hooks::on_supergraph_load::SupergraphSnapshot;
-use crate::query_planner::ast::operation::{OperationDefinition, SubgraphFetchOperation};
-use crate::query_planner::planner::plan_nodes::{PlanNode, QueryPlan};
+use crate::query_planner::ast::operation::{OperationDefinition, PlanningFetchOperation};
+use crate::query_planner::planner::plan_nodes::{PlanNode, Planning, QueryPlan};
 use crate::query_planner::state::supergraph_state::{OperationKind, SupergraphState};
 use crate::telemetry::logging::targets;
 use crate::telemetry::metrics::demand_control_metrics::DemandControlResultCode;
@@ -229,7 +229,7 @@ impl DemandControlRuntime {
 
     pub(crate) fn compile_plan(
         &self,
-        query_plan: &QueryPlan,
+        query_plan: &QueryPlan<Planning>,
         operation_for_plan: &OperationDefinition,
         root_type_name: &str,
         supergraph_state: &SupergraphState,
@@ -277,22 +277,23 @@ impl DemandControlRuntime {
         &self,
         service_name: &str,
         operation_kind: Option<&OperationKind>,
-        operation: &SubgraphFetchOperation,
+        operation: &PlanningFetchOperation,
         supergraph_state: &SupergraphState,
         actual_plans_by_fetch_hash: &mut Option<AHashMap<u64, CompiledSubgraphActualCostPlan>>,
     ) -> FormulaFetchNode {
         let default_list_size = self.default_list_size_for_subgraph(service_name);
         let root_type = supergraph_state.expect_root_type_name(operation_kind);
+        let document = operation.document.as_ref();
         if let Some(actual_plans_by_fetch_hash) = actual_plans_by_fetch_hash {
             actual_plans_by_fetch_hash
-                .entry(operation.hash)
-                .or_insert_with(|| compile_actual_subgraph_cost_plan(operation, supergraph_state));
+                .entry(operation.operation.hash)
+                .or_insert_with(|| compile_actual_subgraph_cost_plan(document, supergraph_state));
         }
         FormulaFetchNode {
             service_name: service_name.to_string(),
             estimated_expr: compile_cost_expr_for_operation(
-                &operation.document.operation,
-                &operation.document.fragments,
+                &document.operation,
+                &document.fragments,
                 root_type,
                 operation_kind,
                 supergraph_state,
@@ -303,106 +304,63 @@ impl DemandControlRuntime {
 
     fn compile_formula_plan_node(
         &self,
-        node: &PlanNode,
+        node: &PlanNode<Planning>,
         supergraph_state: &SupergraphState,
         actual_plans_by_fetch_hash: &mut Option<AHashMap<u64, CompiledSubgraphActualCostPlan>>,
     ) -> FormulaPlanNode {
+        let mut child = |node: &PlanNode<Planning>| {
+            self.compile_formula_plan_node(node, supergraph_state, actual_plans_by_fetch_hash)
+        };
         match node {
-            PlanNode::Fetch(fetch_node) => FormulaPlanNode::Fetch(self.compile_formula_fetch_node(
-                &fetch_node.service_name,
-                fetch_node.operation_kind.as_ref(),
-                &fetch_node.operation,
+            PlanNode::Fetch(fetch) => FormulaPlanNode::Fetch(self.compile_formula_fetch_node(
+                &fetch.service_name,
+                fetch.operation_kind.as_ref(),
+                &fetch.operation,
                 supergraph_state,
                 actual_plans_by_fetch_hash,
             )),
-            PlanNode::BatchFetch(batch_fetch_node) => {
-                FormulaPlanNode::Fetch(self.compile_formula_fetch_node(
-                    &batch_fetch_node.service_name,
-                    batch_fetch_node.operation_kind.as_ref(),
-                    &batch_fetch_node.operation,
-                    supergraph_state,
-                    actual_plans_by_fetch_hash,
-                ))
-            }
-            PlanNode::Flatten(flatten) => self.compile_formula_plan_node(
-                &flatten.node,
+            PlanNode::BatchFetch(fetch) => FormulaPlanNode::Fetch(self.compile_formula_fetch_node(
+                &fetch.service_name,
+                fetch.operation_kind.as_ref(),
+                &fetch.operation,
                 supergraph_state,
                 actual_plans_by_fetch_hash,
-            ),
-            PlanNode::Sequence(sequence) => FormulaPlanNode::Aggregate(
-                sequence
-                    .nodes
-                    .iter()
-                    .map(|child| {
-                        self.compile_formula_plan_node(
-                            child,
-                            supergraph_state,
-                            actual_plans_by_fetch_hash,
-                        )
-                    })
-                    .collect(),
-            ),
-            PlanNode::Parallel(parallel) => FormulaPlanNode::Aggregate(
-                parallel
-                    .nodes
-                    .iter()
-                    .map(|child| {
-                        self.compile_formula_plan_node(
-                            child,
-                            supergraph_state,
-                            actual_plans_by_fetch_hash,
-                        )
-                    })
-                    .collect(),
-            ),
-            PlanNode::Condition(condition) => FormulaPlanNode::Condition {
-                condition: condition.condition.clone(),
-                if_clause: condition.if_clause.as_ref().map(|node| {
-                    Box::new(self.compile_formula_plan_node(
-                        node,
-                        supergraph_state,
-                        actual_plans_by_fetch_hash,
-                    ))
-                }),
-                else_clause: condition.else_clause.as_ref().map(|node| {
-                    Box::new(self.compile_formula_plan_node(
-                        node,
-                        supergraph_state,
-                        actual_plans_by_fetch_hash,
-                    ))
-                }),
-            },
+            )),
             PlanNode::Subscription(subscription) => {
+                let fetch = &subscription.primary;
                 FormulaPlanNode::Fetch(self.compile_formula_fetch_node(
-                    &subscription.primary.service_name,
-                    subscription.primary.operation_kind.as_ref(),
-                    &subscription.primary.operation,
+                    &fetch.service_name,
+                    fetch.operation_kind.as_ref(),
+                    &fetch.operation,
                     supergraph_state,
                     actual_plans_by_fetch_hash,
                 ))
             }
+            PlanNode::Flatten(flatten) => child(&flatten.node),
+            PlanNode::Sequence(sequence) => {
+                FormulaPlanNode::Aggregate(sequence.nodes.iter().map(&mut child).collect())
+            }
+            PlanNode::Parallel(parallel) => {
+                FormulaPlanNode::Aggregate(parallel.nodes.iter().map(&mut child).collect())
+            }
+            PlanNode::Condition(condition) => FormulaPlanNode::Condition {
+                condition: condition.condition.clone(),
+                if_clause: condition.if_clause.as_deref().map(&mut child).map(Box::new),
+                else_clause: condition
+                    .else_clause
+                    .as_deref()
+                    .map(&mut child)
+                    .map(Box::new),
+            },
             PlanNode::Defer(defer) => {
-                let primary = defer.primary.node.as_ref().map(|primary| {
-                    self.compile_formula_plan_node(
-                        primary,
-                        supergraph_state,
-                        actual_plans_by_fetch_hash,
-                    )
-                });
-                let deferred: Vec<FormulaPlanNode> = defer
+                let primary = defer.primary.node.as_deref().map(&mut child);
+                let deferred = defer
                     .deferred
                     .iter()
-                    .filter_map(|node| node.node.as_ref())
-                    .map(|node| {
-                        self.compile_formula_plan_node(
-                            node,
-                            supergraph_state,
-                            actual_plans_by_fetch_hash,
-                        )
-                    })
-                    .collect();
-                let aggregate = primary.into_iter().chain(deferred).collect();
-                FormulaPlanNode::Aggregate(aggregate)
+                    .filter_map(|node| node.node.as_deref())
+                    .map(&mut child)
+                    .collect::<Vec<_>>();
+                FormulaPlanNode::Aggregate(primary.into_iter().chain(deferred).collect())
             }
         }
     }

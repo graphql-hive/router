@@ -13,7 +13,7 @@ use crate::pipeline::demand_control::formula::DemandControlFormulaPlan;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
-use crate::query_planner::planner::plan_nodes::QueryPlan;
+use crate::query_planner::planner::plan_nodes::{Planning, QueryPlan};
 use crate::query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use crate::query_planner::utils::cancellation::CancellationToken;
 use crate::schema_state::{SchemaState, SelectedSupergraph};
@@ -31,6 +31,14 @@ pub struct PlannedQuery {
     pub plan: Arc<QueryPlan>,
     pub demand_control: Option<Arc<DemandControlFormulaPlan>>,
 }
+
+fn empty_planning_plan() -> QueryPlan<Planning> {
+    QueryPlan {
+        kind: QUERY_PLAN_KIND,
+        node: None,
+    }
+}
+
 static EMPTY_QUERY_PLAN: LazyLock<Arc<QueryPlan>> = LazyLock::new(|| {
     Arc::new(QueryPlan {
         kind: QUERY_PLAN_KIND,
@@ -104,7 +112,7 @@ pub async fn plan_operation_with_cache(
         let contains_introspection = normalized_operation.operation_for_introspection.is_some();
         let is_pure_introspection = is_plan_operation_empty && contains_introspection;
 
-        let compile_demand_control = |plan: &QueryPlan| {
+        let compile_demand_control = |plan: &QueryPlan<Planning>| {
             supergraph
                 .runtime
                 .demand_control_runtime
@@ -129,7 +137,7 @@ pub async fn plan_operation_with_cache(
                 if is_pure_introspection {
                     return Ok(PlannedQuery {
                         plan: EMPTY_QUERY_PLAN.clone(),
-                        demand_control: compile_demand_control(&EMPTY_QUERY_PLAN),
+                        demand_control: compile_demand_control(&empty_planning_plan()),
                     });
                 }
 
@@ -148,7 +156,7 @@ pub async fn plan_operation_with_cache(
                 if is_plan_operation_empty && !is_projection_plan_empty {
                     return Ok(PlannedQuery {
                         plan: EMPTY_QUERY_PLAN.clone(),
-                        demand_control: compile_demand_control(&EMPTY_QUERY_PLAN),
+                        demand_control: compile_demand_control(&empty_planning_plan()),
                     });
                 }
 
@@ -160,9 +168,12 @@ pub async fn plan_operation_with_cache(
                         (&request_override_context.clone()).into(),
                         cancellation_token,
                     )
-                    .map(|plan| PlannedQuery {
-                        demand_control: compile_demand_control(&plan),
-                        plan: Arc::new(plan),
+                    .map(|plan| {
+                        let demand_control = compile_demand_control(&plan);
+                        PlannedQuery {
+                            plan: Arc::new(plan.into_executable()),
+                            demand_control,
+                        }
                     })
             })
             .await

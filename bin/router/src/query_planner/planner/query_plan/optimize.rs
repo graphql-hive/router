@@ -62,13 +62,13 @@ use crate::query_planner::{
     ast::{
         hash::{ASTHash, SemanticShapeHashContext},
         minification::minify_operation,
-        operation::{OperationDefinition, SubgraphFetchOperation, VariableDefinition},
+        operation::{OperationDefinition, PlanningFetchOperation, VariableDefinition},
         selection_item::SelectionItem,
         selection_set::{FieldSelection, SelectionSet},
         value::Value,
     },
     planner::error::QueryPlanError,
-    planner::plan_nodes::{
+    planner::plan_nodes::planning::{
         custom_scalar_paths_for_entities_selection, BatchFetchNode, CustomScalarPaths, EntityBatch,
         EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
     },
@@ -283,7 +283,7 @@ impl<'a> BatchFetchBuilder<'a> {
                 Some(self.variable_usages)
             },
             operation_kind: Some(OperationKind::Query),
-            operation: SubgraphFetchOperation::from_anonymous_operation(document),
+            operation: PlanningFetchOperation::from_anonymous_operation(document),
             custom_scalar_paths: (!self.custom_scalar_paths.is_empty())
                 .then_some(self.custom_scalar_paths),
             entity_batch: EntityBatch {
@@ -870,9 +870,9 @@ mod tests {
         ast::{
             document::Document,
             merge_path::{FieldPathSegment, MergePath, Segment},
-            operation::SubgraphFetchOperation,
+            operation::PlanningFetchOperation,
         },
-        planner::plan_nodes::{
+        planner::plan_nodes::planning::{
             FetchNode, FetchNodePathSegment, FetchRewrite, FlattenNode, FlattenNodePath, PlanNode,
             QueryPlan, ValueSetter,
         },
@@ -2258,7 +2258,7 @@ mod tests {
             }
         };
 
-        let operation = SubgraphFetchOperation::from_anonymous_operation(entities_document);
+        let operation = PlanningFetchOperation::from_anonymous_operation(entities_document);
 
         let fetch_node = FetchNode {
             id,
@@ -2323,7 +2323,7 @@ mod tests {
     }
 
     fn non_entity_fetch_node(id: i64, service_name: &str) -> FetchNode {
-        let operation = SubgraphFetchOperation::from_anonymous_operation(parse_document(
+        let operation = PlanningFetchOperation::from_anonymous_operation(parse_document(
             "query { products { upc } }",
         ));
 

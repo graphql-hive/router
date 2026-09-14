@@ -233,3 +233,16 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+/// Converts the benchmark plan to its executable form. The serialized output is what other tools
+/// depend on, so it must stay the same after the planning data is dropped.
+#[test]
+fn preparing_a_plan_preserves_its_wire_form() -> Result<(), Box<dyn std::error::Error>> {
+    init_logger();
+    let document = parse_operation(&std::fs::read_to_string("../../bench/operation.graphql")?);
+    let planning = build_query_plan_with_defaults("../../bench/supergraph.graphql", document)?;
+    let before = serde_json::to_string(&planning)?;
+    let executable = planning.into_executable();
+    assert_eq!(serde_json::to_string(&executable)?, before);
+    Ok(())
+}

@@ -577,6 +577,7 @@ mod tests {
         },
         "#);
 
+        let plan = plan.into_executable();
         let custom_scalar_paths = find_fetch_custom_scalar_paths(plan.node.as_ref(), "test")
             .expect("custom scalar paths");
 

@@ -1757,7 +1757,7 @@ mod tests {
 
     use super::select_fetch_variables;
     use crate::query_planner::{
-        ast::{document::Document, operation::SubgraphFetchOperation},
+        ast::{document::Document, operation::PlanningFetchOperation},
         planner::plan_nodes::{EntityBatch, EntityBatchAlias, FetchNode, ParallelNode, PlanNode},
         utils::parsing::parse_operation,
     };
@@ -2132,9 +2132,10 @@ mod tests {
                         PlanNode::Fetch(FetchNode {
                             id: 1,
                             service_name: "subgraph_a".to_string(),
-                            operation: SubgraphFetchOperation::from_anonymous_operation(
+                            operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_a }"),
-                            ),
+                            )
+                            .operation,
                             custom_scalar_paths: None,
                             requires: None,
                             input_rewrites: None,
@@ -2145,9 +2146,10 @@ mod tests {
                         PlanNode::Fetch(FetchNode {
                             id: 2,
                             service_name: "subgraph_b".to_string(),
-                            operation: SubgraphFetchOperation::from_anonymous_operation(
+                            operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_b }"),
-                            ),
+                            )
+                            .operation,
                             custom_scalar_paths: None,
                             requires: None,
                             input_rewrites: None,
