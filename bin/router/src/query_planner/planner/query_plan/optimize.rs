@@ -562,7 +562,10 @@ fn optimize_parallel_node(
             let batch_fetch_node =
                 build_batched_fetch_node(&shape_groups, &variable_group.variables, supergraph)?;
 
-            batch_node_replacements.insert(first_index, PlanNode::BatchFetch(batch_fetch_node));
+            batch_node_replacements.insert(
+                first_index,
+                PlanNode::BatchFetch(Box::new(batch_fetch_node)),
+            );
 
             for group in &shape_groups {
                 for candidate in group {
@@ -908,7 +911,7 @@ mod tests {
           }
         ";
 
-        let passthrough = PlanNode::Fetch(non_entity_fetch_node(100, "products"));
+        let passthrough = PlanNode::Fetch(Box::new(non_entity_fetch_node(100, "products")));
         let candidate_a =
             flatten_entity_fetch_node(1, "inventory", "products", requires_query, &entities_query);
         let candidate_b =
@@ -2046,8 +2049,8 @@ mod tests {
     fn optimize_parallel_node_returns_original_when_no_entity_candidates() {
         let supergraph = test_supergraph_state();
 
-        let first = PlanNode::Fetch(non_entity_fetch_node(1, "products"));
-        let second = PlanNode::Fetch(non_entity_fetch_node(2, "inventory"));
+        let first = PlanNode::Fetch(Box::new(non_entity_fetch_node(1, "products")));
+        let second = PlanNode::Fetch(Box::new(non_entity_fetch_node(2, "inventory")));
 
         let nodes = vec![first, second];
 
@@ -2283,7 +2286,7 @@ mod tests {
 
         PlanNode::Flatten(FlattenNode {
             path,
-            node: Box::new(PlanNode::Fetch(fetch_node)),
+            node: Box::new(PlanNode::Fetch(Box::new(fetch_node))),
         })
     }
 
