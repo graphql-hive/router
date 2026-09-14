@@ -101,9 +101,9 @@ pub struct TracingCollectConfig {
     /// but does not keep detailed traces.
     #[serde(default = "default_sampling")]
     pub sampling: f64,
-    /// Makes OpenTelemetry follow the parent span's sampling decision.
+    /// Makes OpenTelemetry and Datadog follow the parent span's sampling decision.
     ///
-    /// Datadog handles parent-based sampling itself.
+    /// When disabled, OpenTelemetry and Datadog apply their configured sampling policies.
     #[serde(default = "default_parent_based_sampler")]
     pub parent_based_sampler: bool,
 }
