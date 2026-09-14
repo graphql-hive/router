@@ -59,6 +59,7 @@ use std::{
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::query_planner::{
+    ast::requires::RequiresSelectionSet,
     ast::{
         hash::{ASTHash, SemanticShapeHashContext},
         minification::minify_operation,
@@ -183,7 +184,7 @@ impl<'a> BatchFetchBuilder<'a> {
             alias,
             representations_variable_name,
             merge_paths,
-            requires: representative.requires.clone(),
+            requires: RequiresSelectionSet::from(&representative.requires),
             input_rewrites: representative.input_rewrites.clone(),
             output_rewrites: representative.output_rewrites.clone(),
         });
@@ -356,7 +357,7 @@ impl EntityFetch {
             return Ok(None);
         };
 
-        let Some(requires) = fetch_node.requires.clone() else {
+        let Some(requires) = fetch_node.planner_requires.clone() else {
             return Ok(None);
         };
 
@@ -874,6 +875,7 @@ mod tests {
             document::Document,
             merge_path::{FieldPathSegment, MergePath, Segment},
             operation::PlanningFetchOperation,
+            requires::RequiresSelectionSet,
         },
         planner::plan_nodes::planning::{
             FetchNode, FetchNodePathSegment, FetchRewrite, FlattenNode, FlattenNodePath, PlanNode,
@@ -2270,7 +2272,8 @@ mod tests {
             operation_kind: Some(OperationKind::Query),
             operation,
             custom_scalar_paths: None,
-            requires: Some(requires),
+            requires: Some(RequiresSelectionSet::from(&requires)),
+            planner_requires: Some(Box::new(requires)),
             input_rewrites: None,
             output_rewrites: None,
         };
@@ -2338,6 +2341,7 @@ mod tests {
             operation,
             custom_scalar_paths: None,
             requires: None,
+            planner_requires: None,
             input_rewrites: None,
             output_rewrites: None,
         }

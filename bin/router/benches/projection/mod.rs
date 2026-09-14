@@ -8,6 +8,7 @@ use hive_router::executor::{
     },
     response::value::Value,
 };
+use hive_router::query_planner::ast::requires::RequiresSelectionSet;
 use std::{hint::black_box, sync::Arc};
 
 fn field(name: &str, selections: Option<Vec<FieldProjectionPlan>>) -> FieldProjectionPlan {
@@ -186,11 +187,21 @@ fn requires_benchmarks(c: &mut Criterion) {
         ast::selection_set::SelectionSet, utils::parsing::parse_operation,
     };
 
+    let requires_from = |body: &str| {
+        let document = parse_operation(&format!("{{ {body} }}"));
+        let Definition::Operation(OperationDefinition::SelectionSet(selections)) =
+            document.definitions.into_iter().next().unwrap()
+        else {
+            unreachable!()
+        };
+        let selections: SelectionSet = selections.into();
+        RequiresSelectionSet::from(&selections)
+    };
+
     let keys: Vec<_> = (0..50).map(|i| format!("field_{i:02}")).collect();
     let mut entries = vec![("__typename", Value::String("Item".into()))];
     entries.extend(keys.iter().map(|key| (key.as_str(), Value::U64(42))));
     let data = Value::Object(entries);
-    let types = Default::default();
     let mut group = c.benchmark_group("requires_loops");
     for fragments in [0, 1, 8] {
         // Keep all eight fields selected; vary only how many are wrapped in fragments.
@@ -204,32 +215,67 @@ fn requires_benchmarks(c: &mut Criterion) {
             })
             .collect::<Vec<_>>()
             .join(" ");
-        let document = parse_operation(&format!("{{ {fields} }}"));
-        let Definition::Operation(OperationDefinition::SelectionSet(selections)) =
-            document.definitions.into_iter().next().unwrap()
-        else {
-            unreachable!()
-        };
-        let selections: SelectionSet = selections.into();
+        let requires = requires_from(&fields);
         let input = format!("{fragments}_fragments");
-        group.bench_function(BenchmarkId::new("hash_8_fields", &input), |b| {
-            b.iter(|| black_box(black_box(&data).to_hash(black_box(&selections.items), &types)));
-        });
-        group.bench_function(BenchmarkId::new("project_8_fields", &input), |b| {
-            let mut buffer = Vec::with_capacity(512);
-            b.iter(|| {
-                buffer.clear();
-                project_requires(
-                    &types,
-                    black_box(&selections.items),
-                    black_box(&data),
-                    &mut buffer,
-                    true,
-                    None,
-                );
-                black_box(&buffer);
-            });
-        });
+        bench_execution(&mut group, &requires, &data, &input);
+        bench_serialization(&mut group, &requires, &input);
     }
+
+    const NESTED: &str = "a: id b: sku nested { c: inner deep { d: leaf } } \
+                          ... on Product @skip(if: $s) @include(if: $i) { upc dimensions { size weight } }";
+    let nested_requires = requires_from(NESTED);
+    let nested_json: sonic_rs::Value = sonic_rs::from_str(
+        r#"{"__typename":"Product","id":1,"sku":2,
+            "nested":{"inner":3,"deep":{"leaf":4}},
+            "upc":5,"dimensions":{"size":6,"weight":7}}"#,
+    )
+    .unwrap();
+    let nested_data = Value::from(nested_json.as_ref());
+    bench_execution(
+        &mut group,
+        &nested_requires,
+        &nested_data,
+        "nested_aliased_directives",
+    );
+    bench_serialization(&mut group, &nested_requires, "nested_aliased_directives");
     group.finish();
+}
+
+fn bench_execution(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    requires: &RequiresSelectionSet,
+    data: &Value<'_>,
+    input: &str,
+) {
+    let types = Default::default();
+    group.bench_function(BenchmarkId::new("hash", input), |b| {
+        b.iter(|| {
+            black_box(black_box(data).to_hash(black_box(requires.root_selections()), &types))
+        });
+    });
+    group.bench_function(BenchmarkId::new("project", input), |b| {
+        let mut buffer = Vec::with_capacity(512);
+        b.iter(|| {
+            buffer.clear();
+            project_requires(
+                &types,
+                black_box(requires.root_selections()),
+                black_box(data),
+                &mut buffer,
+                true,
+                None,
+            );
+            black_box(&buffer);
+        });
+    });
+}
+
+fn bench_serialization(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    requires: &RequiresSelectionSet,
+    input: &str,
+) {
+    group.bench_function(BenchmarkId::new("serialize", input), |b| {
+        b.iter(|| black_box(serde_json::to_string(black_box(requires)).unwrap()));
+    });
 }

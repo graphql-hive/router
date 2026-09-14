@@ -5,6 +5,7 @@ pub mod hash;
 pub mod minification;
 pub mod normalization;
 pub mod operation;
+pub mod requires;
 pub mod selection_item;
 pub mod selection_set;
 pub mod semantic_eq;

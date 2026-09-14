@@ -1,4 +1,4 @@
-use crate::query_planner::ast::selection_item::SelectionItem;
+use crate::query_planner::ast::requires::{RequiresSelection, RequiresSelectionSetRef};
 use bytes::BufMut;
 
 use crate::executor::{
@@ -32,7 +32,7 @@ fn write_typename_field(buffer: &mut Vec<u8>, type_name: &str) {
 
 pub fn project_requires(
     possible_types: &PossibleTypes,
-    requires_selections: &Vec<SelectionItem>,
+    requires_selections: RequiresSelectionSetRef<'_>,
     entity: &Value,
     buffer: &mut Vec<u8>,
     first: bool,
@@ -123,7 +123,7 @@ pub fn project_requires(
 
 fn project_requires_map_mut(
     possible_types: &PossibleTypes,
-    requires_selections: &Vec<SelectionItem>,
+    requires_selections: RequiresSelectionSetRef<'_>,
     entity_obj: &Vec<(&str, Value<'_>)>,
     buffer: &mut Vec<u8>,
     first: &mut bool,
@@ -139,9 +139,13 @@ fn project_requires_map_mut(
     // An indicator that only `__typename` is used for the key fields.
     // This is an edge case that we need to identify, in order to detect when
     // `__typename` alone is a valid key but other fields are also required
-    let only_typename = requires_selections.len() == 1 && requires_selections.iter().all(|selection| {
-        matches!(selection, SelectionItem::Field(field) if field.selection_identifier() == TYPENAME_FIELD_NAME)
-    });
+    let only_typename = requires_selections.len() == 1
+        && requires_selections.iter().all(|selection| {
+            matches!(
+                selection,
+                RequiresSelection::Field { name, alias, .. } if alias.unwrap_or(name) == TYPENAME_FIELD_NAME
+            )
+        });
 
     // If the requires selection is only `__typename`, we can skip the rest of the logic, and just write the `__typename` field
     if only_typename {
@@ -155,18 +159,21 @@ fn project_requires_map_mut(
         }
     }
 
-    for requires_selection in requires_selections {
-        match &requires_selection {
-            SelectionItem::Field(requires_selection) => {
-                let field_name = &requires_selection.name;
-                let response_key = requires_selection.selection_identifier();
-
+    for requires_selection in requires_selections.iter() {
+        match requires_selection {
+            RequiresSelection::Field {
+                name: field_name,
+                alias,
+                selections,
+                ..
+            } => {
+                let response_key = alias.unwrap_or(field_name);
                 if response_key == TYPENAME_FIELD_NAME {
                     continue;
                 }
 
                 let original = entity_obj
-                    .binary_search_by_key(&field_name.as_str(), |(k, _)| k)
+                    .binary_search_by_key(&field_name, |(k, _)| k)
                     .ok()
                     .or_else(|| {
                         entity_obj
@@ -205,7 +212,7 @@ fn project_requires_map_mut(
 
                 let projected = project_requires(
                     possible_types,
-                    &requires_selection.selections.items,
+                    selections,
                     original,
                     buffer,
                     *first,
@@ -222,9 +229,11 @@ fn project_requires_map_mut(
                     }
                 }
             }
-            SelectionItem::InlineFragment(requires_selection) => {
-                let type_condition = &requires_selection.type_condition;
-
+            RequiresSelection::InlineFragment {
+                type_condition,
+                selections,
+                ..
+            } => {
                 let type_name = type_name.unwrap_or(type_condition);
                 // For projection, both sides of the condition are valid
                 if possible_types.entity_satisfies_type_condition(type_name, type_condition)
@@ -232,7 +241,7 @@ fn project_requires_map_mut(
                 {
                     project_requires_map_mut(
                         possible_types,
-                        &requires_selection.selections.items,
+                        selections,
                         entity_obj,
                         buffer,
                         first,
@@ -241,7 +250,7 @@ fn project_requires_map_mut(
                     );
                 }
             }
-            SelectionItem::FragmentSpread(_name_ref) => {
+            RequiresSelection::FragmentSpread(_) => {
                 // We only minify the queries to subgraphs, so we never have fragment spreads here.
             }
         }
@@ -252,12 +261,12 @@ fn project_requires_map_mut(
 mod tests {
     use super::project_requires;
     use crate::executor::{introspection::schema::PossibleTypes, response::value::Value};
-    use crate::query_planner::ast::{selection_item::SelectionItem, selection_set::SelectionSet};
+    use crate::query_planner::ast::{requires::RequiresSelectionSet, selection_set::SelectionSet};
     use crate::query_planner::utils::parsing::parse_operation;
     use graphql_tools::parser::query;
     use sonic_rs::json;
 
-    fn requires_from_str(requires: &str) -> Vec<SelectionItem> {
+    fn requires_from_str(requires: &str) -> RequiresSelectionSet {
         let operation = parse_operation(&format!("query {{ {requires} }}"));
 
         let selection_set = operation
@@ -278,7 +287,7 @@ mod tests {
             .expect("operation must contain a selection set");
 
         let selection_set: SelectionSet = selection_set.into();
-        selection_set.items
+        RequiresSelectionSet::from(&selection_set)
     }
 
     fn project_requires_pretty(requires: &str, entity_json: sonic_rs::Value) -> Option<String> {
@@ -288,7 +297,7 @@ mod tests {
         let mut buffer = Vec::new();
         let projected = project_requires(
             &PossibleTypes::default(),
-            &requires,
+            requires.root_selections(),
             &entity,
             &mut buffer,
             true,
@@ -301,6 +310,32 @@ mod tests {
 
         let json: Value = sonic_rs::from_slice(&buffer).unwrap();
         Some(sonic_rs::to_string_pretty(&json).unwrap())
+    }
+
+    #[test]
+    fn project_requires_preserves_aliases_at_each_depth() {
+        let projected = project_requires_pretty(
+            "key: id nested { renamed: value } ... on Product { code: upc }",
+            json!({
+                "__typename": "Product",
+                "id": "original",
+                "key": "fallback",
+                "nested": { "renamed": 2 },
+                "upc": "123"
+            }),
+        )
+        .expect("projection should produce output");
+
+        let actual: serde_json::Value = serde_json::from_str(&projected).unwrap();
+        assert_eq!(
+            actual,
+            serde_json::json!({
+                "__typename": "Product",
+                "key": "original",
+                "nested": { "renamed": 2 },
+                "code": "123"
+            })
+        );
     }
 
     #[test]
