@@ -57,6 +57,7 @@ jobs:
         timeout-minutes: 10
         env:
           RUST_BACKTRACE: full
+          RUST_LOG: info
 
   plugin_examples:
     name: test / plugin examples
