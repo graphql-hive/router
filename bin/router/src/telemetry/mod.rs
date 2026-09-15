@@ -587,6 +587,8 @@ impl TelemetryContext {
 
             // datadog normally inherits this decision before applying collect.sampling and its
             // own rules. 0x02 defers that decision to the datadog sampler instead.
+            // not officially documented, but is a crate public const:
+            // https://github.com/DataDog/dd-trace-rs/blob/0a455eff98accfc42110a2c367c899d333281367/datadog-opentelemetry/src/text_map_propagator.rs#L26
             if self.defer_parent_sampling_decision && parent.is_remote() && parent.is_valid() {
                 // replace only the flags; trace identity, remote status, and trace state stay intact
                 return context.with_remote_span_context(SpanContext::new(
