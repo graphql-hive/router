@@ -159,6 +159,13 @@ pub struct UsageReportingConfig {
     )]
     #[schemars(with = "String")]
     pub flush_interval: Duration,
+
+    /// Report the input fields present in each request's variables instead of marking every
+    /// field of a variable's declared type as used.
+    ///
+    /// Default: false
+    #[serde(default = "default_process_variables")]
+    pub process_variables: bool,
 }
 
 #[cfg(test)]
@@ -241,6 +248,7 @@ impl Default for UsageReportingConfig {
             connect_timeout: default_connect_timeout(),
             request_timeout: default_request_timeout(),
             flush_interval: default_flush_interval(),
+            process_variables: default_process_variables(),
         }
     }
 }
@@ -279,4 +287,8 @@ fn default_connect_timeout() -> Duration {
 
 fn default_flush_interval() -> Duration {
     Duration::from_secs(5)
+}
+
+fn default_process_variables() -> bool {
+    false
 }

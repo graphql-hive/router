@@ -32,6 +32,7 @@ use crate::{
     http_utils::body::drain_body_stream,
 };
 use futures::StreamExt;
+use hive_console_sdk::agent::utils::hash_graphql_variables as sdk_hash_graphql_variables;
 use http::{
     header::{CONTENT_TYPE, RETRY_AFTER},
     HeaderValue, Method,
@@ -44,7 +45,7 @@ use ntex::{
     rt,
     web::{self, HttpRequest},
 };
-use sonic_rs::{JsonContainerTrait, JsonType, JsonValueTrait, Value};
+use sonic_rs::Value;
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
@@ -443,6 +444,11 @@ pub async fn graphql_request_handler(
             None
         };
 
+        let usage_variables = usage_reporting::usage_report_variables(
+            supergraph.runtime.hive_usage_agent.as_ref(),
+            &graphql_params.variables,
+        );
+
         let request_dedupe_enabled = shared_state
             .router_config
             .traffic_shaping
@@ -554,6 +560,7 @@ pub async fn graphql_request_handler(
                 shared_response.error_count(),
                 Some(usage_reporting::request_details_from_ntex_request(req)),
                 prepared_operation.resolved_document_id.as_deref(),
+                usage_variables,
             )
             .await;
         }
@@ -1027,71 +1034,13 @@ pub fn inbound_request_fingerprint(
 
 pub fn hash_graphql_variables(variables: &HashMap<String, Value>) -> u64 {
     let mut hasher = Xxh3::new();
-
-    let mut keys: Vec<&str> = variables.keys().map(String::as_str).collect();
-    keys.sort_unstable();
-
-    keys.len().hash(&mut hasher);
-    for key in keys {
-        key.hash(&mut hasher);
-        if let Some(value) = variables.get(key) {
-            hash_graphql_value(value, &mut hasher);
-        }
-    }
-
+    sdk_hash_graphql_variables(&mut hasher, variables, true);
     hasher.finish()
 }
 
 pub fn hash_graphql_extensions(extensions: &HashMap<String, Value>) -> u64 {
     // reused as hash_graphql_variables has the same function signature
     hash_graphql_variables(extensions)
-}
-
-fn hash_graphql_value(value: &Value, hasher: &mut Xxh3) {
-    match value.get_type() {
-        JsonType::Null => 0u8.hash(hasher),
-        JsonType::Boolean => {
-            1u8.hash(hasher);
-            value.as_bool().unwrap_or(false).hash(hasher);
-        }
-        JsonType::Number => {
-            2u8.hash(hasher);
-            if let Some(number) = value.as_i64() {
-                0u8.hash(hasher);
-                number.hash(hasher);
-            } else if let Some(number) = value.as_u64() {
-                1u8.hash(hasher);
-                number.hash(hasher);
-            } else if let Some(number) = value.as_f64() {
-                2u8.hash(hasher);
-                number.to_bits().hash(hasher);
-            }
-        }
-        JsonType::String => {
-            3u8.hash(hasher);
-            value.as_str().unwrap_or_default().hash(hasher);
-        }
-        JsonType::Object => {
-            4u8.hash(hasher);
-            if let Some(object) = value.as_object() {
-                object.len().hash(hasher);
-                for (key, nested_value) in object.iter() {
-                    key.hash(hasher);
-                    hash_graphql_value(nested_value, hasher);
-                }
-            }
-        }
-        JsonType::Array => {
-            5u8.hash(hasher);
-            if let Some(array) = value.as_array() {
-                let slice = array.as_slice();
-                slice.len().hash(hasher);
-                for item in slice {
-                    hash_graphql_value(item, hasher);
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]
