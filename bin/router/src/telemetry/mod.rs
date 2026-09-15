@@ -32,7 +32,7 @@ use crate::telemetry::{
 };
 use opentelemetry::metrics::Meter;
 use opentelemetry::propagation::{Injector, TextMapCompositePropagator, TextMapPropagator};
-use opentelemetry::trace::TracerProvider;
+use opentelemetry::trace::{SpanContext, TraceContextExt, TraceFlags, TracerProvider};
 use opentelemetry::{InstrumentationScope, KeyValue};
 use opentelemetry_sdk::{trace::IdGenerator, Resource};
 use std::env;
@@ -171,12 +171,16 @@ impl Telemetry {
 
         registry.init();
 
+        // datadog replaces the sdk sampler, so defer its parent decision during extraction
+        // when parent-based sampling is disabled
         let context = TelemetryContext::from_propagation_config_with_meter(
             &config.telemetry.tracing.propagation,
             &config.log,
             metrics_provider
                 .as_ref()
                 .map(|provider| provider.meter_with_scope(scope)),
+            config.telemetry.tracing.has_enabled_datadog()
+                && !config.telemetry.tracing.collect.parent_based_sampler,
         );
 
         let prometheus = create_prometheus_runtime(config, prometheus_config.as_ref())?;
@@ -235,10 +239,13 @@ impl Telemetry {
         let meter = metrics_result
             .as_ref()
             .map(|setup| setup.provider.meter_with_scope(scope));
+        // match the datadog extraction behavior used by global initialization
         let context = TelemetryContext::from_propagation_config_with_meter(
             &config.telemetry.tracing.propagation,
             &config.log,
             meter,
+            config.telemetry.tracing.has_enabled_datadog()
+                && !config.telemetry.tracing.collect.parent_based_sampler,
         );
 
         let (logging_layer, logging_writer_guard) = init_logging::<Registry>(&config.log)?;
@@ -478,6 +485,9 @@ where
 #[derive(Clone)]
 pub struct TelemetryContext {
     propagator: Option<Arc<TextMapCompositePropagator>>,
+    // datadog owns its sampler and normally inherits remote decisions before applying its policy
+    // this switches remote decisions to deferred when parent_based_sampler is false
+    defer_parent_sampling_decision: bool,
     pub metrics: Arc<Metrics>,
     meter: Option<Meter>,
     pub logging_correlation_extractor: RequestIdentifierExtractor,
@@ -489,13 +499,14 @@ impl TelemetryContext {
         telemetry_config: &TracingPropagationConfig,
         log_config: &LoggingConfig,
     ) -> Self {
-        Self::from_propagation_config_with_meter(telemetry_config, log_config, None)
+        Self::from_propagation_config_with_meter(telemetry_config, log_config, None, false)
     }
 
     pub fn from_propagation_config_with_meter(
         telemetry_config: &TracingPropagationConfig,
         log_config: &LoggingConfig,
         meter: Option<Meter>,
+        defer_parent_sampling_decision: bool,
     ) -> Self {
         #[allow(deprecated)]
         use opentelemetry_jaeger_propagator::Propagator as JaegerPropagator;
@@ -533,6 +544,7 @@ impl TelemetryContext {
         if propagators.is_empty() {
             return Self {
                 propagator: None,
+                defer_parent_sampling_decision,
                 metrics,
                 meter,
                 logging_correlation_extractor,
@@ -541,6 +553,7 @@ impl TelemetryContext {
 
         Self {
             propagator: Some(Arc::new(TextMapCompositePropagator::new(propagators))),
+            defer_parent_sampling_decision,
             metrics,
             meter,
             logging_correlation_extractor,
@@ -568,7 +581,25 @@ impl TelemetryContext {
         E: opentelemetry::propagation::Extractor,
     {
         if let Some(propagator) = &self.propagator {
-            propagator.extract(extractor)
+            let context = propagator.extract(extractor);
+            let span = context.span();
+            let parent = span.span_context();
+
+            // datadog normally inherits this decision before applying collect.sampling and its
+            // own rules. 0x02 defers that decision to the datadog sampler instead.
+            // not officially documented, but is a crate public const:
+            // https://github.com/DataDog/dd-trace-rs/blob/0a455eff98accfc42110a2c367c899d333281367/datadog-opentelemetry/src/text_map_propagator.rs#L26
+            if self.defer_parent_sampling_decision && parent.is_remote() && parent.is_valid() {
+                // replace only the flags; trace identity, remote status, and trace state stay intact
+                return context.with_remote_span_context(SpanContext::new(
+                    parent.trace_id(),
+                    parent.span_id(),
+                    TraceFlags::new(0x02),
+                    true,
+                    parent.trace_state().clone(),
+                ));
+            }
+            context
         } else {
             opentelemetry::Context::new()
         }
