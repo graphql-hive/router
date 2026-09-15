@@ -10,7 +10,7 @@ use crate::executor::plugin_trait::{CacheHint, EndControlFlow, StartControlFlow}
 use crate::executor::plugins::hooks;
 use crate::query_planner::state::supergraph_state::OperationKind;
 use crate::query_planner::utils::parsing::{
-    safe_parse_operation, safe_parse_operation_with_token_limit,
+    safe_parse_operation, safe_parse_operation_with_token_limit, shrink_parsed_operation,
 };
 use crate::telemetry::logging::targets;
 use crate::telemetry::traces::spans::graphql::{GraphQLParseSpan, GraphQLSpanOperationIdentity};
@@ -144,7 +144,7 @@ pub async fn parse_operation_with_cache(
             .parse_cache
             .entry(cache_key)
             .or_try_insert_with::<_, ParserCacheError>(async {
-                let parsed = match app_state.router_config.limits.max_tokens.as_ref() {
+                let mut parsed = match app_state.router_config.limits.max_tokens.as_ref() {
                     Some(cfg) => safe_parse_operation_with_token_limit(query_str, cfg.n),
                     _ => safe_parse_operation(query_str),
                 }
@@ -170,6 +170,8 @@ pub async fn parse_operation_with_cache(
 
                     ParserCacheError::ParseError(Arc::new(err))
                 })?;
+
+                shrink_parsed_operation(&mut parsed);
 
                 let parsed_arc = Arc::new(parsed);
                 let minified_arc = Arc::new(minify_query(query_str).map_err(|err| {

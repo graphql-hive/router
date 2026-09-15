@@ -13,7 +13,7 @@ use crate::query_planner::{
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
 
-use super::{selection_item::SelectionItem, selection_set::SelectionSet};
+use super::{selection_item::SelectionItem, selection_set::SelectionSet, shrink::ShrinkMemory};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationDefinition {
@@ -24,6 +24,13 @@ pub struct OperationDefinition {
     pub operation_kind: Option<OperationKind>,
     pub selection_set: SelectionSet,
     pub variable_definitions: Option<Vec<VariableDefinition>>,
+}
+
+impl ShrinkMemory for OperationDefinition {
+    fn shrink_memory(&mut self) {
+        self.variable_definitions.shrink_memory();
+        self.selection_set.shrink_memory();
+    }
 }
 
 impl OperationDefinition {
@@ -245,6 +252,12 @@ pub struct VariableDefinition {
     pub name: String,
     pub variable_type: TypeNode,
     pub default_value: Option<crate::query_planner::ast::value::Value>,
+}
+
+impl ShrinkMemory for VariableDefinition {
+    fn shrink_memory(&mut self) {
+        self.default_value.shrink_memory();
+    }
 }
 
 impl VariableDefinition {

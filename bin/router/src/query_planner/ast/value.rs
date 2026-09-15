@@ -9,6 +9,8 @@ use graphql_tools::parser::query::{Text as ParserText, Value as ParserValue};
 use serde::{Deserialize, Serialize};
 use sonic_rs::Value as SonicValue;
 
+use super::shrink::ShrinkMemory;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Value {
     Variable(String),
@@ -20,6 +22,20 @@ pub enum Value {
     Enum(String),
     List(Vec<Value>),
     Object(BTreeMap<String, Value>),
+}
+
+impl ShrinkMemory for Value {
+    fn shrink_memory(&mut self) {
+        match self {
+            Value::List(items) => items.shrink_memory(),
+            Value::Object(fields) => {
+                for value in fields.values_mut() {
+                    value.shrink_memory();
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 // We manually implement `PartialEq` and `Eq` for `Value` because the `f64` type,

@@ -12,7 +12,7 @@ use crate::query_planner::{
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
 
-use super::{arguments::ArgumentsMap, selection_item::SelectionItem};
+use super::{arguments::ArgumentsMap, selection_item::SelectionItem, shrink::ShrinkMemory};
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct SelectionSet {
@@ -55,6 +55,12 @@ impl Display for SelectionSet {
         }
         write!(f, "}}")?;
         Ok(())
+    }
+}
+
+impl ShrinkMemory for SelectionSet {
+    fn shrink_memory(&mut self) {
+        self.items.shrink_memory();
     }
 }
 

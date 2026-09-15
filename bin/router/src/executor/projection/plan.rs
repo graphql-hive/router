@@ -10,6 +10,7 @@ use crate::query_planner::{
         operation::OperationDefinition,
         selection_item::SelectionItem,
         selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
+        shrink::ShrinkMemory,
     },
     state::supergraph_state::OperationKind,
     utils::pretty_display::{get_indent, PrettyDisplay},
@@ -135,6 +136,20 @@ pub struct FieldProjectionPlan {
     pub value: ProjectionValueSource,
 }
 
+impl ShrinkMemory for FieldProjectionPlan {
+    fn shrink_memory(&mut self) {
+        self.parent_type_guard.shrink_memory();
+        self.conditions.shrink_memory();
+        let ProjectionValueSource::ResponseData { selections } = &mut self.value else {
+            return;
+        };
+        let Some(children) = selections else { return };
+        if let Some(children) = Arc::get_mut(children) {
+            children.shrink_memory();
+        }
+    }
+}
+
 #[cfg(debug_assertions)]
 fn debug_plans_vec(plans: &[FieldProjectionPlan]) {
     for (i, plan) in plans.iter().enumerate() {
@@ -162,6 +177,33 @@ pub enum FieldProjectionCondition {
     EnumValuesCondition(HashSet<String>),
     Or(Box<FieldProjectionCondition>, Box<FieldProjectionCondition>),
     And(Box<FieldProjectionCondition>, Box<FieldProjectionCondition>),
+}
+
+impl ShrinkMemory for TypeCondition {
+    fn shrink_memory(&mut self) {
+        if let TypeCondition::OneOf(types) = self {
+            types.shrink_to_fit();
+        }
+    }
+}
+
+impl ShrinkMemory for FieldProjectionCondition {
+    fn shrink_memory(&mut self) {
+        match self {
+            FieldProjectionCondition::ParentTypeCondition(condition)
+            | FieldProjectionCondition::FieldTypeCondition(condition) => {
+                condition.shrink_memory();
+            }
+            FieldProjectionCondition::EnumValuesCondition(values) => values.shrink_to_fit(),
+            FieldProjectionCondition::Or(left, right)
+            | FieldProjectionCondition::And(left, right) => {
+                left.shrink_memory();
+                right.shrink_memory();
+            }
+            FieldProjectionCondition::IncludeIfVariable(_)
+            | FieldProjectionCondition::SkipIfVariable(_) => {}
+        }
+    }
 }
 
 pub enum FieldProjectionConditionError {

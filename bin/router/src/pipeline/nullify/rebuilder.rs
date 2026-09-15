@@ -130,6 +130,7 @@ fn rebuild_nulled_selection_set(
         }
     }
 
+    kept_items.shrink_to_fit();
     SelectionSet { items: kept_items }
 }
 
@@ -198,6 +199,7 @@ fn rebuild_nulled_projection_plan_recursive(
     if kept_plans.is_empty() {
         None
     } else {
+        kept_plans.shrink_to_fit();
         Some(kept_plans)
     }
 }

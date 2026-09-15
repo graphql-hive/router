@@ -5,6 +5,7 @@ use crate::query_planner::{
 use graphql_tools::parser::query as query_ast;
 
 use super::selection_set::{FieldSelection, InlineFragmentSelection};
+use super::shrink::ShrinkMemory;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -18,6 +19,19 @@ pub enum SelectionItem {
     Field(FieldSelection),
     InlineFragment(InlineFragmentSelection),
     FragmentSpread(String),
+}
+
+impl ShrinkMemory for SelectionItem {
+    fn shrink_memory(&mut self) {
+        match self {
+            SelectionItem::Field(field) => {
+                field.selections.shrink_memory();
+                field.arguments.shrink_memory();
+            }
+            SelectionItem::InlineFragment(fragment) => fragment.selections.shrink_memory(),
+            SelectionItem::FragmentSpread(_) => {}
+        }
+    }
 }
 
 impl Hash for SelectionItem {
