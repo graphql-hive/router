@@ -1,6 +1,5 @@
 ---
 hive-router: patch
-node-addon: patch
 ---
 
 # Mark HTTP 200 GraphQL errors as failed telemetry spans
