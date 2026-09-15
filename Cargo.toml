@@ -54,10 +54,10 @@ ntex-http = { version = "=1.2.0"}
 ntex-codec = { version = "=1.2.1"}
 ntex-io = { version = "=3.13.1"}
 ntex-net = { version = "=3.15.0"}
-ntex-router = { version = "=1.0.0"}
+ntex-router = { version = "=1.1.0"}
 ntex-bytes = { version = "=1.9.0"}
 ntex-dispatcher = { version = "=3.2.1"}
-ntex-error = { version = "=2.5.0" }
+ntex-error = { version = "=2.6.0" }
 ntex-h2 = { version = "=3.13.0" }
 ntex-rt = { version = "=3.17.2" }
 ntex-macros = { version = "=3.5.0" }
