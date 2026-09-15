@@ -1,4 +1,14 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.45 (2026-09-15)
+
+### Fixes
+
+#### Reduce memory retained by cached query and projection plans
+
+Planner data is built using growable collections and then stored in caches, which can leave unused vector capacity allocated. The router now recursively shrinks data structures before caching them.
+
+In tested queries, it resulted in a 50% reduction in retained heap memory.
+
 ## 0.0.44 (2026-09-02)
 
 ### Features

@@ -116,6 +116,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.2.14 (2026-09-15)
+
+### Fixes
+
+#### Reduce memory retained by cached query and projection plans
+
+Planner data is built using growable collections and then stored in caches, which can leave unused vector capacity allocated. The router now recursively shrinks data structures before caching them.
+
+In tested queries, it resulted in a 50% reduction in retained heap memory.
+
 ## 0.2.13 (2026-09-15)
 
 ### Fixes
