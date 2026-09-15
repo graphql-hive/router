@@ -263,8 +263,13 @@ async fn test_datadog_marks_graphql_errors_on_operation_and_root_spans() {
         .await;
 
     agent.wait_for_path("/info").await;
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::ACCEPT,
+        http::HeaderValue::from_static("application/json"),
+    );
     let response = router
-        .send_graphql_request("{ users { id } }", None, None)
+        .send_graphql_request("{ users { id } }", None, Some(headers))
         .await;
     assert_eq!(response.status(), axum::http::StatusCode::OK);
     drop(router);
