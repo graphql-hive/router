@@ -89,7 +89,7 @@ async fn test_otlp_http_export_with_graphql_request() {
       @"
     Span: http.server
       Kind: Server
-      Status: message='' code='1'
+      Status: message='' code='0'
       Attributes:
         client.address: [address]
         client.port: [port]
@@ -351,7 +351,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
       @"
     Span: http.server
       Kind: Server
-      Status: message='' code='1'
+      Status: message='' code='0'
       Attributes:
         client.address: [address]
         client.port: [port]
