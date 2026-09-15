@@ -6,6 +6,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use super::shrink::ShrinkMemory;
 use super::value::Value;
 use graphql_tools::parser::query::{Text as ParserText, Value as ParserValue};
 
@@ -13,6 +14,14 @@ use graphql_tools::parser::query::{Text as ParserText, Value as ParserValue};
 pub struct ArgumentsMap {
     #[serde(flatten)]
     arguments_map: BTreeMap<String, Value>,
+}
+
+impl ShrinkMemory for ArgumentsMap {
+    fn shrink_memory(&mut self) {
+        for value in self.arguments_map.values_mut() {
+            value.shrink_memory();
+        }
+    }
 }
 
 impl Hash for ArgumentsMap {

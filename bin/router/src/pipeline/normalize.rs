@@ -8,6 +8,7 @@ use crate::executor::projection::plan::FieldProjectionPlan;
 use crate::query_planner::ast::normalization::error::NormalizationError;
 use crate::query_planner::ast::normalization::normalize_operation;
 use crate::query_planner::ast::operation::OperationDefinition;
+use crate::query_planner::ast::shrink::ShrinkMemory;
 use crate::query_planner::state::supergraph_state::OperationKind;
 use crate::telemetry::logging::targets;
 use crate::telemetry::traces::spans::graphql::{
@@ -177,10 +178,16 @@ pub async fn normalize_request_with_cache(
                     .operation_kind
                     .clone()
                     .unwrap_or(OperationKind::Query);
-                let (root_type_name, projection_plan) =
+                let (root_type_name, mut projection_plan) =
                     FieldProjectionPlan::from_operation(&operation, &supergraph.metadata);
                 let root_type_name = root_type_name.to_string();
-                let partitioned_operation = partition_operation(operation);
+                let mut partitioned_operation = partition_operation(operation);
+
+                projection_plan.shrink_memory();
+                partitioned_operation.downstream_operation.shrink_memory();
+                if let Some(operation) = &mut partitioned_operation.introspection_operation {
+                    operation.shrink_memory();
+                }
 
                 let operation_for_plan = Arc::new(partitioned_operation.downstream_operation);
                 let operation_for_introspection =

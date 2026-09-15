@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::query_planner::ast::fragment::FragmentDefinition;
 
 use super::operation::OperationDefinition;
+use super::shrink::ShrinkMemory;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NormalizedDocument {
@@ -35,6 +36,13 @@ pub enum Definition {
 pub struct Document {
     pub operation: OperationDefinition,
     pub fragments: Vec<FragmentDefinition>,
+}
+
+impl ShrinkMemory for Document {
+    fn shrink_memory(&mut self) {
+        self.operation.shrink_memory();
+        self.fragments.shrink_memory();
+    }
 }
 
 impl Display for Document {

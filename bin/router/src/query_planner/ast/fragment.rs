@@ -4,7 +4,7 @@ use graphql_tools::parser::query as parser;
 use serde::{Deserialize, Serialize};
 
 use crate::query_planner::{
-    ast::selection_set::SelectionSet,
+    ast::{selection_set::SelectionSet, shrink::ShrinkMemory},
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
 
@@ -13,6 +13,12 @@ pub struct FragmentDefinition {
     pub name: String,
     pub selection_set: SelectionSet,
     pub type_condition: String,
+}
+
+impl ShrinkMemory for FragmentDefinition {
+    fn shrink_memory(&mut self) {
+        self.selection_set.shrink_memory();
+    }
 }
 
 impl Ord for FragmentDefinition {
