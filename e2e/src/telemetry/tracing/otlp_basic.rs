@@ -323,8 +323,13 @@ async fn test_otlp_marks_graphql_errors_as_errors_on_operation_and_root_spans() 
         .start()
         .await;
 
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::ACCEPT,
+        http::HeaderValue::from_static("application/json"),
+    );
     let response = router
-        .send_graphql_request("{ users { id } }", None, None)
+        .send_graphql_request("{ users { id } }", None, Some(headers))
         .await;
     assert_eq!(response.status(), axum::http::StatusCode::OK);
 
