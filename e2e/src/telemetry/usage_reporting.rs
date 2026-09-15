@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -981,4 +982,109 @@ async fn usage_reporting_includes_persisted_document_hash() {
         "plain query must not report a persisted document hash: {}",
         reports[1]
     );
+}
+
+/// With `process_variables` enabled, input-object variables are reported from the runtime
+/// payload: only the fields present in a request appear, and executions of the same operation
+/// with different variables all contribute to its coordinates.
+#[ntex::test]
+async fn usage_reporting_process_variables_reports_only_provided_input_fields() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
+
+    let mock = MockUsageEndpoint::start();
+    let usage_endpoint = &mock.address;
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+            supergraph:
+              source: file
+              path: {supergraph_path}
+
+            telemetry:
+              hive:
+                token: test-token
+                usage_reporting:
+                  enabled: true
+                  endpoint: {usage_endpoint}
+                  buffer_size: 1
+                  flush_interval: 100ms
+                  process_variables: true
+            "#,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    let operation = r#"
+        mutation OneOf($input: OneOfTestInput!) {
+            oneofTest(input: $input) { string }
+        }
+    "#;
+    for variables in [
+        sonic_rs::json!({ "input": { "string": "a" } }),
+        sonic_rs::json!({ "input": { "int": 1 } }),
+    ] {
+        let res = router
+            .send_graphql_request(operation, Some(variables), None)
+            .await;
+        assert!(res.status().is_success());
+    }
+
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while mock.total_operations_count().await < 2 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("Timed out waiting for both operations to be reported");
+
+    // buffer_size=1 flushes each execution on its own, so union the operation record fields
+    // across every received report
+    let fields: HashSet<String> = mock
+        .reports()
+        .await
+        .iter()
+        .filter_map(|report| report.get("map")?.as_object())
+        .flat_map(|map| map.values())
+        .filter_map(|record| record.get("fields")?.as_array())
+        .flatten()
+        .filter_map(|field| field.as_str().map(str::to_string))
+        .collect();
+
+    for expected in [
+        "Mutation.oneofTest",
+        "Mutation.oneofTest.input",
+        "Mutation.oneofTest.input!",
+        "OneOfTestInput.string",
+        "OneOfTestInput.string!",
+        "OneOfTestInput.int",
+        "OneOfTestInput.int!",
+        "OneOfTestResult.string",
+        "String",
+        "Int",
+    ] {
+        assert!(
+            fields.contains(expected),
+            "missing {expected} in {fields:?}"
+        );
+    }
+    for unexpected in [
+        "OneOfTestInput.float",
+        "OneOfTestInput.boolean",
+        "OneOfTestInput.id",
+        "Float",
+        "Boolean",
+        "ID",
+    ] {
+        assert!(
+            !fields.contains(unexpected),
+            "unexpected {unexpected} in {fields:?}"
+        );
+    }
 }

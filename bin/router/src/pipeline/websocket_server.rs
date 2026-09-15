@@ -608,6 +608,11 @@ async fn handle_text_frame(
                       s.set_response_mode(response_mode.as_str());
                   });
 
+                  let usage_variables = usage_reporting::usage_report_variables(
+                      supergraph.runtime.hive_usage_agent.as_ref(),
+                      &payload.variables,
+                  );
+
                   let exec = |guard| execute_planned_request(
                       &method,
                       ws_uri,
@@ -700,6 +705,7 @@ async fn handle_text_frame(
                           // The graphql-transport-ws Subscribe payload carries no document id
                           // and this path never invokes the document id resolver.
                           None,
+                          usage_variables,
                       )
                       .await;
                   }

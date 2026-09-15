@@ -3,9 +3,16 @@ use anyhow::Error;
 use graphql_tools::parser::minify_query_document;
 use graphql_tools::parser::schema::InputObjectType;
 use moka::sync::Cache;
+use sonic_rs::JsonContainerTrait;
+use sonic_rs::JsonType;
+use sonic_rs::JsonValueTrait;
+use sonic_rs::Value as JsonValue;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::hash::Hash;
+use std::hash::Hasher;
+use xxhash_rust::xxh3::Xxh3;
 
 use graphql_tools::ast::{
     visit_document, OperationTransformer, OperationVisitor, OperationVisitorContext, Transformed,
@@ -24,18 +31,43 @@ struct SchemaCoordinatesContext<'a> {
     pub input_values_provided: HashMap<String, usize>,
     pub used_variables: HashSet<&'a str>,
     pub variables_with_defaults: HashSet<&'a str>,
+    /// The variables payload, when `process_variables` is enabled and one is available.
+    variables: Option<&'a ReportVariables>,
+    /// `(variable name, named type)` of every variable definition, expanded against the payload
+    /// when `variables` is set.
+    input_variables: Vec<(&'a str, &'a str)>,
     error: Option<Error>,
 }
+
+pub type ReportVariables = HashMap<String, JsonValue>;
 
 impl SchemaCoordinatesContext<'_> {
     fn is_corrupted(&self) -> bool {
         self.error.is_some()
     }
+
+    fn variable_has_value(&self, variable_name: &str) -> bool {
+        match self.variables {
+            Some(variables) => variables
+                .get(variable_name)
+                .is_some_and(|value| !value.is_null()),
+            None => self.variables_with_defaults.contains(variable_name),
+        }
+    }
 }
 
-pub fn collect_schema_coordinates(
-    document: &Document<'static, String>,
-    schema: &SchemaDocument<'static, String>,
+enum VariableUsage<'v> {
+    /// Every field reachable from the type is reported (`process_variables` off, or no payload).
+    Entire,
+    /// Only what the payload provides is reported; `None` is an absent variable.
+    Provided(Option<&'v JsonValue>),
+}
+
+pub fn collect_schema_coordinates<'a>(
+    document: &'a Document<'static, String>,
+    schema: &'a SchemaDocument<'static, String>,
+    process_variables_enabled: bool,
+    variables: Option<&'a ReportVariables>,
 ) -> Result<HashSet<String>, Error> {
     let mut ctx = SchemaCoordinatesContext {
         schema_coordinates: HashSet::new(),
@@ -43,11 +75,14 @@ pub fn collect_schema_coordinates(
         input_values_provided: HashMap::new(),
         used_variables: HashSet::new(),
         variables_with_defaults: HashSet::new(),
+        variables: variables.filter(|_| process_variables_enabled),
+        input_variables: Vec::new(),
         error: None,
     };
     let mut visit_context = OperationVisitorContext::new(document, schema);
     let mut visitor = SchemaCoordinatesVisitor {
         visited_input_object_types: HashSet::new(),
+        directive_depth: 0,
     };
 
     visit_document(&mut visitor, document, &mut visit_context, &mut ctx);
@@ -56,7 +91,23 @@ pub fn collect_schema_coordinates(
         Err(error)
     } else {
         for type_name in ctx.used_input_fields {
-            visitor.collect_nested_input_type(schema, type_name, &mut ctx.schema_coordinates);
+            visitor.collect_nested_input_type(
+                schema,
+                type_name,
+                VariableUsage::Entire,
+                &mut ctx.schema_coordinates,
+            );
+        }
+
+        if let Some(variables) = ctx.variables {
+            for (variable_name, type_name) in ctx.input_variables {
+                visitor.collect_nested_input_type(
+                    schema,
+                    type_name,
+                    VariableUsage::Provided(variables.get(variable_name)),
+                    &mut ctx.schema_coordinates,
+                );
+            }
         }
 
         Ok(ctx.schema_coordinates)
@@ -88,6 +139,10 @@ fn value_exists(v: &Value<String>) -> bool {
 
 struct SchemaCoordinatesVisitor<'a> {
     visited_input_object_types: HashSet<&'a str>,
+    /// Track if we are inside a directive arguments or not.
+    /// Directive arguments are not coordinates of the operation
+    /// so argument and value hooks are skipped while inside a directive.
+    directive_depth: usize,
 }
 
 impl<'a> SchemaCoordinatesVisitor<'a> {
@@ -173,10 +228,14 @@ impl<'a> SchemaCoordinatesVisitor<'a> {
         }
     }
 
+    /// Expands an input type reached through a variable. Leaf types (scalars and enums) are
+    /// always reported whole; input objects are either expanded entirely
+    /// ([`VariableUsage::Entire`]) or walked along the payload ([`VariableUsage::Provided`]).
     fn collect_nested_input_type(
         &mut self,
         schema: &'a SchemaDocument<'static, String>,
         input_type_name: &'a str,
+        usage: VariableUsage<'_>,
         coordinates: &mut HashSet<String>,
     ) {
         if let Some(input_type_def) = schema.type_by_name(input_type_name) {
@@ -184,9 +243,17 @@ impl<'a> SchemaCoordinatesVisitor<'a> {
                 TypeDefinition::Scalar(scalar_def) => {
                     coordinates.insert(scalar_def.name.clone());
                 }
-                TypeDefinition::InputObject(nested_input_type) => {
-                    self.collect_nested_input_fields(schema, nested_input_type, coordinates);
-                }
+                TypeDefinition::InputObject(nested_input_type) => match usage {
+                    VariableUsage::Entire => {
+                        self.collect_nested_input_fields(schema, nested_input_type, coordinates)
+                    }
+                    VariableUsage::Provided(value) => self.collect_provided_input_fields(
+                        schema,
+                        nested_input_type,
+                        value,
+                        coordinates,
+                    ),
+                },
                 TypeDefinition::Enum(enum_type) => {
                     for value in &enum_type.values {
                         coordinates.insert(format!("{}.{}", enum_type.name, value.name));
@@ -197,6 +264,48 @@ impl<'a> SchemaCoordinatesVisitor<'a> {
         } else if is_builtin_scalar(input_type_name) {
             // Handle built-in scalars
             coordinates.insert(input_type_name.to_string());
+        }
+    }
+
+    fn collect_provided_input_fields(
+        &mut self,
+        schema: &'a SchemaDocument<'static, String>,
+        input_type: &'a InputObjectType<'static, String>,
+        value: Option<&JsonValue>,
+        coordinates: &mut HashSet<String>,
+    ) {
+        let Some(value) = value.filter(|value| !value.is_null()) else {
+            coordinates.insert(input_type.name.to_string());
+            return;
+        };
+
+        if let Some(items) = value.as_array() {
+            for item in items.iter() {
+                self.collect_provided_input_fields(schema, input_type, Some(item), coordinates);
+            }
+            return;
+        }
+
+        let Some(entries) = value.as_object() else {
+            return;
+        };
+
+        for (key, field_value) in entries.iter() {
+            let Some(field) = input_type.fields.iter().find(|field| field.name == key) else {
+                continue;
+            };
+            let field_coordinate = format!("{}.{}", input_type.name, field.name);
+            if !field_value.is_null() {
+                coordinates.insert(format!("{field_coordinate}!"));
+            }
+            coordinates.insert(field_coordinate);
+
+            self.collect_nested_input_type(
+                schema,
+                field.value_type.inner_type(),
+                VariableUsage::Provided(Some(field_value)),
+                coordinates,
+            );
         }
     }
 
@@ -220,7 +329,12 @@ impl<'a> SchemaCoordinatesVisitor<'a> {
 
             let field_type_name = field.value_type.inner_type();
 
-            self.collect_nested_input_type(schema, field_type_name, coordinates);
+            self.collect_nested_input_type(
+                schema,
+                field_type_name,
+                VariableUsage::Entire,
+                coordinates,
+            );
         }
     }
 }
@@ -290,17 +404,39 @@ impl<'a> OperationVisitor<'a, SchemaCoordinatesContext<'a>> for SchemaCoordinate
 
         let type_name = Self::resolve_type_name(&var.var_type);
 
-        if let Some(inner_types) = self.resolve_references(info.schema, type_name) {
-            for inner_type in inner_types {
-                ctx.used_input_fields.insert(inner_type);
+        if ctx.variables.is_some() {
+            ctx.input_variables.push((var.name.as_str(), type_name));
+        } else {
+            if let Some(inner_types) = self.resolve_references(info.schema, type_name) {
+                for inner_type in inner_types {
+                    ctx.used_input_fields.insert(inner_type);
+                }
             }
-        }
 
-        ctx.used_input_fields.insert(type_name);
+            ctx.used_input_fields.insert(type_name);
+        }
 
         if let Some(default_value) = &var.default_value {
             Self::process_default_value(info, ctx, type_name, default_value);
         }
+    }
+
+    fn enter_directive(
+        &mut self,
+        _info: &mut OperationVisitorContext<'a>,
+        _ctx: &mut SchemaCoordinatesContext<'a>,
+        _directive: &Directive<'static, String>,
+    ) {
+        self.directive_depth += 1;
+    }
+
+    fn leave_directive(
+        &mut self,
+        _info: &mut OperationVisitorContext<'a>,
+        _ctx: &mut SchemaCoordinatesContext<'a>,
+        _directive: &Directive<'static, String>,
+    ) {
+        self.directive_depth -= 1;
     }
 
     fn enter_argument(
@@ -309,7 +445,7 @@ impl<'a> OperationVisitor<'a, SchemaCoordinatesContext<'a>> for SchemaCoordinate
         ctx: &mut SchemaCoordinatesContext<'a>,
         arg: &(String, Value<'static, String>),
     ) {
-        if ctx.is_corrupted() {
+        if ctx.is_corrupted() || self.directive_depth > 0 {
             return;
         }
 
@@ -333,9 +469,7 @@ impl<'a> OperationVisitor<'a, SchemaCoordinatesContext<'a>> for SchemaCoordinate
 
             let has_value = match arg_value {
                 Value::Null => false,
-                Value::Variable(var_name) => {
-                    ctx.variables_with_defaults.contains(var_name.as_str())
-                }
+                Value::Variable(var_name) => ctx.variable_has_value(var_name),
                 _ => true,
             };
 
@@ -392,7 +526,7 @@ impl<'a> OperationVisitor<'a, SchemaCoordinatesContext<'a>> for SchemaCoordinate
         ctx: &mut SchemaCoordinatesContext,
         values: &Vec<Value<'static, String>>,
     ) {
-        if ctx.is_corrupted() {
+        if ctx.is_corrupted() || self.directive_depth > 0 {
             return;
         }
 
@@ -435,6 +569,9 @@ impl<'a> OperationVisitor<'a, SchemaCoordinatesContext<'a>> for SchemaCoordinate
         ctx: &mut SchemaCoordinatesContext,
         object_value: &[(String, graphql_tools::static_graphql::query::Value)],
     ) {
+        if ctx.is_corrupted() || self.directive_depth > 0 {
+            return;
+        }
         if let Some(TypeDefinition::InputObject(input_object_def)) = info.current_input_type() {
             object_value.iter().for_each(|(name, value)| {
                 if let Some(field) = input_object_def
@@ -445,9 +582,7 @@ impl<'a> OperationVisitor<'a, SchemaCoordinatesContext<'a>> for SchemaCoordinate
                     let coordinate = format!("{}.{}", input_object_def.name, field.name);
 
                     let has_value = match value {
-                        Value::Variable(var_name) => {
-                            ctx.variables_with_defaults.contains(var_name.as_str())
-                        }
+                        Value::Variable(var_name) => ctx.variable_has_value(var_name),
                         _ => value_exists(value),
                     };
 
@@ -787,6 +922,91 @@ pub fn normalize_operation<'a>(operation_document: &Document<'a, String>) -> Doc
         .replace_or_else(|| normalized.clone())
 }
 
+/// Hashes a variables payload into `hasher`, with variable names sorted.
+pub fn hash_graphql_variables(
+    hasher: &mut Xxh3,
+    variables: &HashMap<String, JsonValue>,
+    include_values: bool,
+) {
+    let mut keys: Vec<&str> = variables.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+
+    keys.len().hash(hasher);
+    for key in keys {
+        key.hash(hasher);
+        if let Some(value) = variables.get(key) {
+            hash_graphql_value(value, hasher, include_values);
+        }
+    }
+}
+
+/// Tag shared by every leaf when values are not included; see [`hash_graphql_variables`].
+const SHAPE_LEAF_TAG: u8 = 0;
+
+pub fn hash_graphql_value(value: &JsonValue, hasher: &mut Xxh3, include_values: bool) {
+    match value.get_type() {
+        JsonType::Null => 0u8.hash(hasher),
+        JsonType::Boolean => {
+            if !include_values {
+                return SHAPE_LEAF_TAG.hash(hasher);
+            }
+            1u8.hash(hasher);
+            value.as_bool().unwrap_or(false).hash(hasher);
+        }
+        JsonType::Number => {
+            if !include_values {
+                return SHAPE_LEAF_TAG.hash(hasher);
+            }
+            2u8.hash(hasher);
+            if let Some(number) = value.as_i64() {
+                0u8.hash(hasher);
+                number.hash(hasher);
+            } else if let Some(number) = value.as_u64() {
+                1u8.hash(hasher);
+                number.hash(hasher);
+            } else if let Some(number) = value.as_f64() {
+                2u8.hash(hasher);
+                number.to_bits().hash(hasher);
+            }
+        }
+        JsonType::String => {
+            if !include_values {
+                return SHAPE_LEAF_TAG.hash(hasher);
+            }
+            3u8.hash(hasher);
+            value.as_str().unwrap_or_default().hash(hasher);
+        }
+        JsonType::Object => {
+            let object = value.as_object();
+            if !include_values && object.is_none_or(|object| object.is_empty()) {
+                return SHAPE_LEAF_TAG.hash(hasher);
+            }
+            4u8.hash(hasher);
+            if let Some(object) = object {
+                object.len().hash(hasher);
+                for (key, nested_value) in object.iter() {
+                    key.hash(hasher);
+                    hash_graphql_value(nested_value, hasher, include_values);
+                }
+            }
+        }
+        JsonType::Array => {
+            let array = value.as_array();
+            if !include_values && array.is_none_or(|array| array.is_empty()) {
+                return SHAPE_LEAF_TAG.hash(hasher);
+            }
+            5u8.hash(hasher);
+            if let Some(array) = array {
+                let slice = array.as_slice();
+                slice.len().hash(hasher);
+                for item in slice {
+                    hash_graphql_value(item, hasher, include_values);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ProcessedOperation {
     pub operation: String,
@@ -795,36 +1015,48 @@ pub struct ProcessedOperation {
 }
 
 pub struct OperationProcessor {
-    cache: Cache<String, Option<ProcessedOperation>>,
-}
-
-impl Default for OperationProcessor {
-    fn default() -> Self {
-        Self::new()
-    }
+    cache: Cache<u64, Option<ProcessedOperation>>,
+    pub(crate) process_variables_enabled: bool,
 }
 
 impl OperationProcessor {
-    pub fn new() -> OperationProcessor {
+    pub fn new(process_variables_enabled: bool) -> OperationProcessor {
         OperationProcessor {
             cache: Cache::new(1000),
+            process_variables_enabled,
         }
+    }
+
+    fn cache_key(&self, operation_body: &str, maybe_variables: Option<&ReportVariables>) -> u64 {
+        let mut hasher = Xxh3::default();
+        hasher.write(operation_body.as_bytes());
+
+        if let Some(variables) = maybe_variables {
+            hash_graphql_variables(&mut hasher, variables, false);
+        }
+
+        hasher.finish()
     }
 
     pub fn process(
         &self,
-        query: &str,
+        operation_body: &str,
         schema: &SchemaDocument<'static, String>,
+        variables: Option<&ReportVariables>,
     ) -> Result<Option<ProcessedOperation>, String> {
-        if self.cache.contains_key(query) {
+        let variables = variables.filter(|_| self.process_variables_enabled);
+        let key = self.cache_key(operation_body, variables);
+
+        if self.cache.contains_key(&key) {
             let entry = self
                 .cache
-                .get(query)
+                .get(&key)
                 .expect("Unable to acquire Cache in OperationProcessor.process");
+
             Ok(entry.clone())
         } else {
-            let result = self.transform(query, schema)?;
-            self.cache.insert(query.to_string(), result.clone());
+            let result = self.transform(operation_body, schema, key, variables)?;
+            self.cache.insert(key, result.clone());
             Ok(result)
         }
     }
@@ -833,6 +1065,8 @@ impl OperationProcessor {
         &self,
         operation: &str,
         schema: &SchemaDocument<'static, String>,
+        cache_key: u64,
+        variables: Option<&ReportVariables>,
     ) -> Result<Option<ProcessedOperation>, String> {
         let parsed = parse_query(operation)
             .map_err(|e| e.to_string())?
@@ -855,14 +1089,14 @@ impl OperationProcessor {
         }
 
         let schema_coordinates_result =
-            collect_schema_coordinates(&parsed, schema).map_err(|e| e.to_string())?;
+            collect_schema_coordinates(&parsed, schema, self.process_variables_enabled, variables)
+                .map_err(|e| e.to_string())?;
 
         let schema_coordinates: Vec<String> = Vec::from_iter(schema_coordinates_result);
 
         let normalized = normalize_operation(&parsed);
-
         let printed = minify_query_document(&normalized);
-        let hash = format!("{:x}", md5::compute(printed.clone()));
+        let hash = format!("{:x}", md5::compute(format!("{}_{}", printed, cache_key)));
 
         Ok(Some(ProcessedOperation {
             operation: printed,
@@ -976,7 +1210,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
 
         let expected = vec![
             "Mutation.deleteProject",
@@ -1021,7 +1256,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
 
         let expected = vec![
             "Query.projects",
@@ -1069,7 +1305,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
 
         let expected = vec![
             "Query.projects",
@@ -1117,7 +1354,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
 
         let expected = vec![
             "Query.projects",
@@ -1157,7 +1395,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
 
         let expected = vec![
             "Query.projectsByTypes",
@@ -1192,7 +1431,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
 
         let expected = vec![
             "Query.projects",
@@ -1233,7 +1473,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
 
         let expected = vec![
             "Query.projects",
@@ -1271,7 +1512,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
 
         let expected = vec![
             "Query.projects",
@@ -1311,7 +1553,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
 
         let expected = vec![
             "Query.projectsByTypes",
@@ -1345,7 +1588,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document_inline, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document_inline, &schema, false, None).unwrap();
 
         let expected = vec![
             "Query.projectsByTypes",
@@ -1380,7 +1624,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
 
         let expected = vec![
             "Query.projectsByType",
@@ -1414,7 +1659,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
 
         let expected = vec![
             "Query.projects",
@@ -1464,7 +1710,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
 
         let expected = vec![
             "Query.projects",
@@ -1510,7 +1757,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
 
         let expected = vec![
             "Query.projects",
@@ -1551,7 +1799,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
 
         let expected = vec![
             "Query.projects",
@@ -1592,7 +1841,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
 
         let expected = vec![
             "Query.projectsByMetadata",
@@ -1626,7 +1876,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
 
         let expected = vec![
             "Query.projectsByMetadata",
@@ -1659,7 +1910,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
 
         let expected = vec![
             "Query.projectsByMetadata",
@@ -1693,7 +1945,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
 
         let expected = vec![
             "Query.projects",
@@ -1729,7 +1982,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
 
         let expected = vec![
             "Query.projects",
@@ -1764,7 +2018,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
 
         let expected = vec![
             "Query.projects",
@@ -1803,7 +2058,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
         let expected = vec![
             "Query.hello",
             "Query.hello.message!",
@@ -1840,7 +2096,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
         let expected = vec!["Query.random", "Query.random.a", "String"]
             .into_iter()
             .map(|s| s.to_string())
@@ -1881,7 +2138,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
         let expected = vec![
             "Query.random",
             "Query.random.a",
@@ -1924,7 +2182,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
         let expected = vec![
             "Query.random",
             "Query.random.a",
@@ -1966,7 +2225,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
         let expected = vec![
             "Query.random",
             "Query.random.a",
@@ -2013,7 +2273,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
         let expected = vec![
             "Query.random",
             "Query.random.a",
@@ -2059,7 +2320,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
         let expected = vec![
             "Query.random",
             "Query.random.a",
@@ -2100,7 +2362,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
         let expected = vec![
             "Query.random",
             "Query.random.a",
@@ -2142,7 +2405,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
         let expected = vec![
             "User.name",
             "Query.user",
@@ -2185,7 +2449,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
         let expected = vec![
             "User.id",
             "Query.user",
@@ -2231,7 +2496,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
         let expected = vec!["User.name", "Query.user", "ID", "Query.user.id"]
             .into_iter()
             .map(|s| s.to_string())
@@ -2268,7 +2534,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
         let expected = vec![
             "User.id",
             "Query.user",
@@ -2320,7 +2587,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
 
         let expected = vec![
             "Query.user",
@@ -2375,7 +2643,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
         let expected = vec![
             "Mutation.createNode",
             "Mutation.createNode.input",
@@ -2422,7 +2691,8 @@ mod tests {
         )
         .unwrap();
 
-        let schema_coordinates = collect_schema_coordinates(&document, &schema).unwrap();
+        let schema_coordinates =
+            collect_schema_coordinates(&document, &schema, false, None).unwrap();
         let expected = vec![
             "Query.someField",
             "Query.someField.input",
@@ -2441,5 +2711,72 @@ mod tests {
 
         assert_eq!(extra.len(), 0, "Extra: {:?}", extra);
         assert_eq!(missing.len(), 0, "Missing: {:?}", missing);
+    }
+}
+
+#[cfg(test)]
+mod variables_hashing_tests {
+    use super::{hash_graphql_variables, ReportVariables};
+    use std::hash::Hasher;
+    use xxhash_rust::xxh3::Xxh3;
+
+    fn variables(json: &str) -> ReportVariables {
+        sonic_rs::from_str(json).unwrap()
+    }
+
+    fn hash(json: &str, include_values: bool) -> u64 {
+        let mut hasher = Xxh3::new();
+        hash_graphql_variables(&mut hasher, &variables(json), include_values);
+        hasher.finish()
+    }
+
+    #[test]
+    fn values_only_matter_when_included() {
+        let a = r#"{ "a": { "x": 1, "tags": ["t"] }, "b": "s" }"#;
+        let b = r#"{ "a": { "x": 2, "tags": ["u"] }, "b": "z" }"#;
+        assert_eq!(hash(a, false), hash(b, false));
+        assert_ne!(hash(a, true), hash(b, true));
+    }
+
+    #[test]
+    fn shape_differences_always_matter() {
+        let x = r#"{ "a": { "x": 1 } }"#;
+        let y = r#"{ "a": { "y": 1 } }"#;
+        let renamed = r#"{ "b": { "x": 1 } }"#;
+        let nested = r#"{ "a": { "x": { "deeper": 1 } } }"#;
+        let longer_list = r#"{ "a": { "x": [1, 2] } }"#;
+        let list = r#"{ "a": { "x": [1] } }"#;
+        for include_values in [false, true] {
+            assert_ne!(hash(x, include_values), hash(y, include_values));
+            assert_ne!(hash(x, include_values), hash(renamed, include_values));
+            assert_ne!(hash(x, include_values), hash(nested, include_values));
+            assert_ne!(
+                hash(list, include_values),
+                hash(longer_list, include_values)
+            );
+        }
+    }
+
+    /// As in the JS SDK's cache key, every leaf looks the same without values: scalars, `null`,
+    /// and empty containers.
+    #[test]
+    fn leaves_are_indistinguishable_without_values() {
+        let scalar = r#"{ "a": 1 }"#;
+        let null = r#"{ "a": null }"#;
+        let empty_object = r#"{ "a": {} }"#;
+        let empty_list = r#"{ "a": [] }"#;
+        assert_eq!(hash(scalar, false), hash(null, false));
+        assert_eq!(hash(scalar, false), hash(empty_object, false));
+        assert_eq!(hash(scalar, false), hash(empty_list, false));
+        assert_ne!(hash(scalar, true), hash(null, true));
+        assert_ne!(hash(scalar, true), hash(empty_object, true));
+    }
+
+    #[test]
+    fn variable_order_does_not_matter() {
+        let ab = r#"{ "a": 1, "b": 2 }"#;
+        let ba = r#"{ "b": 2, "a": 1 }"#;
+        assert_eq!(hash(ab, true), hash(ba, true));
+        assert_eq!(hash(ab, false), hash(ba, false));
     }
 }

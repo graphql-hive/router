@@ -32,6 +32,7 @@ pub struct UsageAgentBuilder {
     exclude: Option<BuilderExclude>,
     sample_rate: f64,
     at_least_once: Option<AtLeastOnceSamplingConfig>,
+    process_variables: bool,
 }
 
 #[derive(Clone)]
@@ -67,6 +68,7 @@ impl Default for UsageAgentBuilder {
             exclude: None,
             sample_rate: 1.0,
             at_least_once: None,
+            process_variables: false,
         }
     }
 }
@@ -146,6 +148,12 @@ impl UsageAgentBuilder {
         self.retry_policy = ExponentialBackoff::builder().build_with_max_retries(max_retries);
         self
     }
+
+    pub fn process_variables(mut self, process_variables: bool) -> Self {
+        self.process_variables = process_variables;
+        self
+    }
+
     pub fn sample_rate(mut self, sample_rate: f64) -> Self {
         self.sample_rate = sample_rate.clamp(0.0, 1.0);
         self
@@ -250,7 +258,7 @@ impl UsageAgentBuilder {
         Ok(UsageAgentInner {
             endpoint,
             buffer,
-            processor: OperationProcessor::new(),
+            processor: OperationProcessor::new(self.process_variables),
             client,
             flush_interval: self.flush_interval,
             circuit_breaker,
