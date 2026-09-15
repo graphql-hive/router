@@ -262,9 +262,15 @@ fn test_http_server_request_span() {
             attributes::HTTP_RESPONSE_BODY_SIZE,
             &response_body.len().to_string(),
         );
-        layer.assert_recorded_value(&span, attributes::OTEL_STATUS_CODE, "Ok");
+        layer.assert_not_recorded(&span, attributes::OTEL_STATUS_CODE);
         layer.assert_recorded_value(&span, attributes::CLIENT_ADDRESS, "192.168.0.1");
         layer.assert_not_recorded(&span, attributes::CLIENT_PORT);
+
+        span.record_error();
+        layer.assert_recorded_value(&span, attributes::OTEL_STATUS_CODE, "Error");
+        // one graphql response can contain several error types, so there is
+        // no honest aggregate value
+        layer.assert_not_recorded(&span, attributes::ERROR_TYPE);
 
         let span = HttpServerRequestSpan::from_request(&req, &ip_header_config(XFF.as_str()));
         span.record_internal_server_error();
@@ -841,6 +847,10 @@ fn test_graphql_operation_span() {
 
         span.record_error_count(3);
         layer.assert_recorded_value(&span, attributes::HIVE_GRAPHQL_ERROR_COUNT, "3");
+        layer.assert_recorded_value(&span, attributes::OTEL_STATUS_CODE, "Error");
+        // individual error types are recorded on events instead of inventing
+        // one for the operation
+        layer.assert_not_recorded(&span, attributes::ERROR_TYPE);
 
         span.record_errors(|| {
             vec![
