@@ -848,7 +848,7 @@ fn test_graphql_operation_span() {
         span.record_error_count(3);
         layer.assert_recorded_value(&span, attributes::HIVE_GRAPHQL_ERROR_COUNT, "3");
         layer.assert_recorded_value(&span, attributes::OTEL_STATUS_CODE, "Error");
-        // individual error types are recorded on events instead of inventind
+        // individual error types are recorded on events instead of inventing
         // one for the operation
         layer.assert_not_recorded(&span, attributes::ERROR_TYPE);
 
