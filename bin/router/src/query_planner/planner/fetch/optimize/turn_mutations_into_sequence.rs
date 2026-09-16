@@ -1,6 +1,8 @@
+use std::collections::HashSet;
+
 use petgraph::{
     graph::{EdgeIndex, NodeIndex},
-    visit::{EdgeRef, NodeRef},
+    visit::{Bfs, EdgeRef, NodeRef},
 };
 use tracing::instrument;
 
@@ -35,6 +37,27 @@ impl FetchGraph<MultiTypeFetchStep> {
 
         node_mutation_field_pos_pairs.sort_by_key(|&(_, pos)| pos);
 
+        let ordered_roots: Vec<NodeIndex> = node_mutation_field_pos_pairs
+            .iter()
+            .map(|(idx, _)| *idx)
+            .collect();
+        let root_set: HashSet<NodeIndex> = ordered_roots.iter().cloned().collect();
+
+        // Capture each root mutation's own result fetches (entity fetches, etc.)
+        // BEFORE chaining, so the sets don't include other roots via the chain.
+        let mut descendants_per_root: Vec<Vec<NodeIndex>> = Vec::with_capacity(ordered_roots.len());
+        for root_mut in &ordered_roots {
+            let mut desc = Vec::new();
+            let mut bfs = Bfs::new(&self.graph, *root_mut);
+            while let Some(nx) = bfs.next(&self.graph) {
+                if nx == *root_mut || nx == root_index || root_set.contains(&nx) {
+                    continue;
+                }
+                desc.push(nx);
+            }
+            descendants_per_root.push(desc);
+        }
+
         let mut new_edges_pairs: Vec<(NodeIndex, NodeIndex)> = Vec::new();
         let mut iter = node_mutation_field_pos_pairs.iter();
         let mut current = iter.next();
@@ -59,6 +82,33 @@ impl FetchGraph<MultiTypeFetchStep> {
 
         for (from_id, to_id) in new_edges_pairs {
             self.connect(from_id, to_id);
+        }
+
+        // Preserve wave barriers for dependency-aware execution:
+        // Sequence(M1, Parallel(E1, M2), M3) requires M3 to wait for E1, not just M2.
+        // Each Mi waits for descendants of Mj for j <= i-2. The immediate
+        // predecessor's descendants stay parallel (M2 || E1, C || F), matching the
+        // existing wave overlap; stronger fully-serial ordering is out of scope.
+        for (i, mi) in ordered_roots.iter().enumerate() {
+            if i < 2 {
+                continue;
+            }
+            for j in 0..=i - 2 {
+                for d in descendants_per_root[j].clone() {
+                    if d == *mi {
+                        continue;
+                    }
+                    if self.is_descendant_of(d, *mi) {
+                        // Mi can already reach D: adding D -> Mi would cycle.
+                        continue;
+                    }
+                    if self.is_descendant_of(*mi, d) {
+                        // D can already reach Mi transitively: redundant.
+                        continue;
+                    }
+                    self.connect(d, *mi);
+                }
+            }
         }
 
         Ok(())

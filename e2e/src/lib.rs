@@ -69,6 +69,8 @@ mod max_directives;
 #[cfg(test)]
 mod max_tokens;
 #[cfg(test)]
+mod mutation_execution;
+#[cfg(test)]
 mod operation_name;
 #[cfg(test)]
 mod override_subgraph_urls;
