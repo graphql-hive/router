@@ -116,6 +116,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.2.15 (2026-09-16)
+
+### Features
+
+#### Add `process_variables` to Hive Console usage reporting
+
+By default, usage reports mark every field of an input-object variable's declared type as used, because the SDK cannot know which fields a client actually sends.
+
+With `telemetry.hive.usage_reporting.process_variables: true`, the router reads request's raw variables (taken before coercion) with its usage report, and the usage report lists only the input fields present in the payload.
+
+In either mode, the variable values are never sent to Hive Console, only schema coordinates.
+
+Defaults to `false`;
+
+Closes https://github.com/graphql-hive/router/issues/1488
+
+### Fixes
+
+#### Mark HTTP 200 GraphQL errors as failed telemetry spans
+
+GraphQL responses can contain errors while still returning an HTTP 200 status. These responses previously left `graphql.operation` spans without an error status and marked the root `http.server` span as successful. Observability platforms could therefore report a 0% service error rate even while the router was returning GraphQL errors.
+
+The router now sets the OpenTelemetry status to `Error` on both the `graphql.operation` span and the root `http.server` span when the GraphQL response contains errors. This allows tracing backends such as Datadog to include these requests in operation-level and service-level error rates without requiring a custom plugin.
+
+Successful 1xx, 2xx, and 3xx root HTTP spans now leave their OpenTelemetry status unset instead of explicitly setting it to `Ok`. This follows the [OpenTelemetry HTTP semantic conventions](https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status) and prevents a successful HTTP status from overwriting an error detected while processing the GraphQL response. HTTP 5xx responses continue to set the span status to `Error` and record the status code as `error.type`.
+
+A GraphQL response can contain multiple errors with different codes and types, so the router does not assign a single aggregate `error.type` to the root or operation span. Individual error details continue to be recorded as span events.
+
+This change does not alter the handling of manually supplied `datadog.error` attributes. The Datadog exporter receives the standard OpenTelemetry error status and maps it to Datadog's native span error flag.
+
 ## 0.2.14 (2026-09-15)
 
 ### Fixes

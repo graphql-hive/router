@@ -1,3 +1,31 @@
+## 0.3.22 (2026-09-16)
+
+### Features
+
+#### Add `process_variables` to Hive Console usage reporting
+
+By default, usage reports mark every field of an input-object variable's declared type as used, because the SDK cannot know which fields a client actually sends.
+
+With `telemetry.hive.usage_reporting.process_variables: true`, the router reads request's raw variables (taken before coercion) with its usage report, and the usage report lists only the input fields present in the payload.
+
+In either mode, the variable values are never sent to Hive Console, only schema coordinates.
+
+Defaults to `false`;
+
+Closes https://github.com/graphql-hive/router/issues/1488
+
+#### Improve the usage-report operation cache key
+
+`OperationProcessor` now keys its cache with an xxh3 hash of the operation body and, when `process_variables` is enabled, the shape of the variables payload: variable names, object keys, nesting and list lengths, never values.
+
+### Fixes
+
+#### Stop reporting directive arguments as schema coordinates in usage reports
+
+Arguments of directives applied to fields, such as `users @include(if: $flag)`, were collected as field-argument coordinates (`Query.users.if`).
+
+Directive arguments are not schema coordinates, so usage reports now skip them as well.
+
 ## 0.3.21 (2026-08-25)
 
 ### Fixes

@@ -2702,7 +2702,7 @@ dependencies = [
 
 [[package]]
 name = "hive-console-sdk"
-version = "0.3.21"
+version = "0.3.22"
 dependencies = [
  "ahash",
  "anyhow",
@@ -2740,7 +2740,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router"
-version = "0.2.14"
+version = "0.2.15"
 dependencies = [
  "ahash",
  "anyhow",
