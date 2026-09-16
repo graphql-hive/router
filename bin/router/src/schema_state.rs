@@ -1,6 +1,6 @@
 use crate::background_tasks::{BackgroundTask, BackgroundTasksManager};
 use crate::config::telemetry::hive::{is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig};
-use crate::config::{supergraph::SupergraphSource, HiveRouterConfig};
+use crate::config::{cache::SupergraphCacheConfig, supergraph::SupergraphSource, HiveRouterConfig};
 use crate::executor::execution::operation_name::OperationNameForwardConfig;
 use crate::executor::executors::http_callback::{CallbackMessage, CallbackSubscriptionsMap};
 use crate::executor::response::graphql_error::GraphQLErrorExtensions;
@@ -292,9 +292,30 @@ impl RouterSupergraphRuntime {
                 hive_usage_agent,
                 persisted_documents,
                 authorization,
-                validate_cache: Cache::new(1000),
-                normalize_cache: Cache::new(1000),
-                plan_cache: Cache::new(1000),
+                validate_cache: Cache::new(
+                    snapshot
+                        .options
+                        .cache
+                        .validation
+                        .resolve(&context.cache.validation)
+                        .max_entries,
+                ),
+                normalize_cache: Cache::new(
+                    snapshot
+                        .options
+                        .cache
+                        .normalization
+                        .resolve(&context.cache.normalization)
+                        .max_entries,
+                ),
+                plan_cache: Cache::new(
+                    snapshot
+                        .options
+                        .cache
+                        .query_plans
+                        .resolve(&context.cache.query_plans)
+                        .max_entries,
+                ),
                 demand_control_runtime,
                 supergraph_lifetime: supergraph_lifetime.clone(),
             })
@@ -317,6 +338,9 @@ impl Drop for RouterSupergraphRuntime {
 
 pub struct RouterSupergraphRuntimeContext {
     telemetry: Arc<TelemetryContext>,
+    /// Cache limits every supergraph runtime starts from.
+    /// A plugin variant can override each of these through `SupergraphOptions::cache`.
+    cache: SupergraphCacheConfig,
     callback_subscriptions: CallbackSubscriptionsMap,
     callback: Option<HttpCallbackRuntimeConfig>,
     persisted_documents_background_tasks: PersistedDocumentsBackgroundTaskController,
@@ -430,6 +454,8 @@ fn supergraph_options(
         error_masking: config.error_masking.clone(),
         persisted_documents: config.persisted_documents.clone(),
         hive_target,
+        // The configured supergraph inherits `cache.supergraph` by default
+        cache: Default::default(),
     })
 }
 
@@ -704,6 +730,7 @@ impl SchemaState {
         let callback_subscriptions: CallbackSubscriptionsMap = Arc::new(DashMap::new());
         let runtime_context = Arc::new(RouterSupergraphRuntimeContext {
             telemetry: telemetry_context.clone(),
+            cache: router_config.cache.supergraph.clone(),
             callback_subscriptions: callback_subscriptions.clone(),
             callback: callback_runtime_config(router_config)?,
             persisted_documents_background_tasks,
@@ -1059,6 +1086,7 @@ impl BackgroundTask for CallbackHeartbeatEnforcerTask {
 #[cfg(test)]
 mod plugin_runtime_cache_tests {
     use super::*;
+    use crate::config::cache::CacheLimitsConfig;
 
     const TEST_SUPERGRAPH_SDL: &str =
         include_str!("../../../plugin_examples/replace_schema/supergraph.graphql");
@@ -1075,6 +1103,7 @@ mod plugin_runtime_cache_tests {
             crate::pipeline::usage_reporting::HiveUsageReportingBackgroundTasks::new();
         let runtime_context = Arc::new(RouterSupergraphRuntimeContext {
             telemetry: telemetry_context.clone(),
+            cache: Default::default(),
             callback_subscriptions: callback_subscriptions.clone(),
             callback: None,
             persisted_documents_background_tasks,
@@ -1101,6 +1130,7 @@ mod plugin_runtime_cache_tests {
         let mut state = test_schema_state();
         state.runtime_context = Arc::new(RouterSupergraphRuntimeContext {
             telemetry: state.runtime_context.telemetry.clone(),
+            cache: Default::default(),
             callback_subscriptions: state.runtime_context.callback_subscriptions.clone(),
             callback: state.runtime_context.callback.clone(),
             persisted_documents_background_tasks: state
@@ -1135,6 +1165,60 @@ mod plugin_runtime_cache_tests {
             Supergraph::from_sdl(TEST_SUPERGRAPH_SDL, SupergraphOptions::default())
                 .expect("valid test supergraph SDL"),
         )
+    }
+
+    /// Same as [`test_schema_state`], but with the cache limits a router config would supply.
+    fn test_schema_state_with_cache(cache: SupergraphCacheConfig) -> SchemaState {
+        let mut state = test_schema_state();
+        let context = state.runtime_context.clone();
+        state.runtime_context = Arc::new(RouterSupergraphRuntimeContext {
+            telemetry: context.telemetry.clone(),
+            cache,
+            callback_subscriptions: context.callback_subscriptions.clone(),
+            callback: context.callback.clone(),
+            persisted_documents_background_tasks: context
+                .persisted_documents_background_tasks
+                .clone(),
+            hive_usage_reporting_background_tasks: context
+                .hive_usage_reporting_background_tasks
+                .clone(),
+            hive: context.hive.clone(),
+            storage_manager: context.storage_manager.clone(),
+            graphql_endpoint: context.graphql_endpoint.clone(),
+        });
+        state
+    }
+
+    #[ntex::test]
+    async fn supergraph_caches_inherit_the_config_unless_the_variant_overrides_them() {
+        let state = test_schema_state_with_cache(SupergraphCacheConfig {
+            validation: CacheLimitsConfig::default().with_max_entries(7),
+            normalization: CacheLimitsConfig::default().with_max_entries(8),
+            query_plans: CacheLimitsConfig::default().with_max_entries(9),
+        });
+
+        // a variant that sets nothing gets every configured limit
+        let inheriting = test_owner();
+        let runtime =
+            RouterSupergraphRuntime::build(&inheriting.snapshot(), &state.runtime_context)
+                .await
+                .unwrap();
+        assert_eq!(runtime.validate_cache.policy().max_capacity(), Some(7));
+        assert_eq!(runtime.normalize_cache.policy().max_capacity(), Some(8));
+        assert_eq!(runtime.plan_cache.policy().max_capacity(), Some(9));
+
+        // overriding one cache leaves the others inheriting
+        let mut options = SupergraphOptions::default();
+        options.cache.query_plans.set_max_entries(3);
+        let overriding =
+            Supergraph::from_sdl(TEST_SUPERGRAPH_SDL, options).expect("valid test supergraph SDL");
+        let runtime =
+            RouterSupergraphRuntime::build(&overriding.snapshot(), &state.runtime_context)
+                .await
+                .unwrap();
+        assert_eq!(runtime.plan_cache.policy().max_capacity(), Some(3));
+        assert_eq!(runtime.validate_cache.policy().max_capacity(), Some(7));
+        assert_eq!(runtime.normalize_cache.policy().max_capacity(), Some(8));
     }
 
     #[ntex::test]
@@ -1418,6 +1502,7 @@ mod plugin_runtime_cache_tests {
                         &Default::default(),
                         &Default::default(),
                     )),
+                    cache: Default::default(),
                     callback_subscriptions: Arc::new(DashMap::new()),
                     callback: None,
                     persisted_documents_background_tasks:
