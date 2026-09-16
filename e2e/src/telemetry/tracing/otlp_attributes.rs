@@ -470,6 +470,7 @@ async fn test_default_client_identification() {
         hive.client.version: tests
         hive.graphql.operation.hash: e92177e49c0010d4e52929531ebe30c9
         hive.kind: graphql.operation
+        hive.supergraph.name: default
         target: hive-router
     "
     );
@@ -550,6 +551,7 @@ async fn test_custom_client_identification() {
         hive.client.version: tests
         hive.graphql.operation.hash: e92177e49c0010d4e52929531ebe30c9
         hive.kind: graphql.operation
+        hive.supergraph.name: default
         target: hive-router
     "
     );

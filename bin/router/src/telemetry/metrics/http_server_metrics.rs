@@ -144,6 +144,7 @@ impl Capture<HttpServerRequestState<'_>> {
         graphql_operation_name: Option<&str>,
         graphql_operation_type: Option<&str>,
         graphql_response_status: values::GraphQLResponseStatus,
+        supergraph_name: Option<&str>,
     ) {
         let Some(state) = self.take() else {
             return;
@@ -184,9 +185,19 @@ impl Capture<HttpServerRequestState<'_>> {
         }
 
         if let Some(histogram) = &state.instruments.request_duration {
+            let mut duration_attributes = attributes.clone();
+            if let Some(supergraph_name) = supergraph_name {
+                duration_attributes.push(KeyValue::new(
+                    labels::SUPERGRAPH_NAME,
+                    supergraph_name.to_string(),
+                ));
+            }
             #[cfg(debug_assertions)]
-            debug_assert_attrs(names::HTTP_SERVER_REQUEST_DURATION, &attributes);
-            histogram.record(state.started_at.elapsed().as_secs_f64(), &attributes);
+            debug_assert_attrs(names::HTTP_SERVER_REQUEST_DURATION, &duration_attributes);
+            histogram.record(
+                state.started_at.elapsed().as_secs_f64(),
+                &duration_attributes,
+            );
         }
 
         if let (Some(histogram), Some(body_size)) =

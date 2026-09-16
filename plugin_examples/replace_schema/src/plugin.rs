@@ -59,7 +59,7 @@ impl RouterPlugin for ReplaceSchemaPlugin {
         options.error_masking.redacted_error_message = "Basic variant error".to_string();
         options.hive_target = Some("example/router/basic".to_string());
 
-        let basic_variant = Arc::new(Supergraph::from_document(document, options)?);
+        let basic_variant = Arc::new(Supergraph::from_document("basic", document, options)?);
         payload.initialize_plugin(Self { basic_variant })
     }
 

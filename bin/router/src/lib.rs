@@ -250,6 +250,10 @@ async fn graphql_endpoint_handler(
         .and_then(|operation| operation.operation_type);
     let graphql_response_status =
         read_graphql_response_metric_status(&request).unwrap_or(GraphQLResponseStatus::Ok);
+    let supergraph_name = request
+        .extensions()
+        .get::<crate::schema_state::SelectedSupergraph>()
+        .map(|selected| selected.snapshot.name.clone());
 
     http_request_capture.finish(
         &response,
@@ -257,6 +261,7 @@ async fn graphql_endpoint_handler(
         graphql_operation_name,
         graphql_operation_type,
         graphql_response_status,
+        supergraph_name.as_deref(),
     );
 
     response

@@ -57,6 +57,14 @@ pub struct SupergraphOptions {
 /// [`SupergraphSnapshot`] cloned from it. Never constructed directly; always reached through the
 /// owner or a snapshot.
 pub struct SupergraphData {
+    /// Human-readable name of this supergraph, chosen by the owner of the supergraph (router or cusotm plugin).
+    ///
+    /// Plugins serving several supergraphs should give each variant a distinct, stable name.
+    ///
+    /// It is used for observability only:
+    /// request summary log line, the `hive.supergraph.name` span
+    /// attribute, and the `supergraph.name` metric label.
+    pub name: Arc<str>,
     /// Process-unique id allocated once per constructed supergraph. Never reused, so a later
     /// instance cannot reuse an earlier runtime or join its in-flight request deduplication,
     /// even when both have identical consumer schemas.
@@ -151,6 +159,7 @@ impl From<&Supergraph> for SupergraphSnapshot {
 impl Supergraph {
     /// Same as [`Self::from_sdl`], but takes an already-parsed supergraph document.
     pub fn from_document(
+        name: impl Into<Arc<str>>,
         document: Document,
         options: SupergraphOptions,
     ) -> Result<Self, SupergraphBuildError> {
@@ -166,6 +175,7 @@ impl Supergraph {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
             .expect("supergraph id space exhausted");
         let data = SupergraphData {
+            name: name.into(),
             cache_id,
             options,
             metadata,
@@ -180,9 +190,12 @@ impl Supergraph {
         })
     }
 
-    /// Parses `sdl` and builds a [`Supergraph`] with its immutable graph-bound options.
-    pub fn from_sdl(sdl: &str, options: SupergraphOptions) -> Result<Self, SupergraphBuildError> {
-        Self::from_document(safe_parse_schema(sdl)?, options)
+    pub fn from_sdl(
+        name: impl Into<Arc<str>>,
+        sdl: &str,
+        options: SupergraphOptions,
+    ) -> Result<Self, SupergraphBuildError> {
+        Self::from_document(name, safe_parse_schema(sdl)?, options)
     }
 
     /// Takes a cheap, read-only snapshot of this owner's schema-derived data plus a clone of its

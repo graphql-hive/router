@@ -161,7 +161,8 @@ mod tests {
             fn on_plugin_init(payload: OnPluginInitPayload<Self>) -> OnPluginInitResult<Self> {
                 let broken_sdl =
                     SUPERGRAPH_SDL.replace("http://0.0.0.0:4200/accounts", "not a valid url ::");
-                let broken_variant = Supergraph::from_sdl(&broken_sdl, Default::default())?;
+                let broken_variant =
+                    Supergraph::from_sdl("broken", &broken_sdl, Default::default())?;
                 payload.initialize_plugin(Self {
                     broken_variant: Arc::new(broken_variant),
                 })

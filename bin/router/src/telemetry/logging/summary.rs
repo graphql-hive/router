@@ -42,7 +42,7 @@ pub struct RequestSummary {
     pub payload_bytes: AtomicI64,
     pub response_bytes: AtomicI64,
     pub duration_ms: AtomicU64,
-    pub supergraph_identifier: AtomicU64,
+    pub supergraph_name: OnceLock<Arc<str>>,
     pub custom: Mutex<BTreeMap<String, sonic_rs::Value>>,
     pub message: OnceLock<Cow<'static, str>>,
 }
@@ -98,8 +98,8 @@ impl RequestSummary {
         self.duration_ms.store(duration.as_millis() as u64, Relaxed);
     }
 
-    pub fn set_supergraph_identifier(&self, identifier: u64) {
-        self.supergraph_identifier.store(identifier, Relaxed);
+    pub fn set_supergraph_name(&self, name: &Arc<str>) {
+        let _ = self.supergraph_name.set(name.clone());
     }
 
     /// Records a plugin-contributed attribute, so it's included when the summary is emitted.
@@ -166,7 +166,7 @@ impl RequestSummary {
             status_code = self.status_code.load(Relaxed),
             payload_bytes = self.payload_bytes.load(Relaxed),
             response_bytes = response_bytes,
-            supergraph_identifier = self.supergraph_identifier.load(Relaxed),
+            supergraph_name = self.supergraph_name.get().map(|name| name.as_ref()),
             duration_ms = self.duration_ms.load(Relaxed),
         );
     }

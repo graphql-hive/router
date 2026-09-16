@@ -112,7 +112,13 @@ impl RouterPlugin for FeatureFlagsPlugin {
                         .to_string(),
                     );
 
-                    match Supergraph::from_document(document, options) {
+                    let name = if feature_flags.is_empty() {
+                        "base".to_string()
+                    } else {
+                        format!("flagged:{}", feature_flags.join(","))
+                    };
+
+                    match Supergraph::from_document(name, document, options) {
                         Ok(supergraph_data) => {
                             // build successful
                             let supergraph_data = Arc::new(supergraph_data);

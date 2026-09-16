@@ -142,7 +142,11 @@ pub async fn execute_plan<'exec>(
             operation_type_name: planned_request.normalized_payload.root_type_name.clone(),
             operation_kind: planned_request.normalized_payload.operation_kind.clone(),
             jwt_auth_forwarding: jwt_auth_forwarding.map(|j| j.into()),
-            graphql_error_recorder: app_state.telemetry_context.metrics.graphql.error_recorder(),
+            graphql_error_recorder: app_state
+                .telemetry_context
+                .metrics
+                .graphql
+                .error_recorder(Some(supergraph.snapshot.name.clone())),
             demand_control_context: planned_request
                 .demand_control_execution_context
                 .map(|d| d.into()),

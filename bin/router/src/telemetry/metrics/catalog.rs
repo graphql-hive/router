@@ -124,6 +124,7 @@ pub mod labels {
     pub const STATUS: &str = "status";
     pub const ERROR_TYPE: &str = "error.type";
     pub const SUBGRAPH_NAME: &str = "subgraph.name";
+    pub const SUPERGRAPH_NAME: &str = "supergraph.name";
     pub const SUBSCRIPTION_TRANSPORT: &str = "subscription.transport";
     pub const SUBSCRIPTION_END_REASON: &str = "subscription.end_reason";
     pub const HTTP_REQUEST_METHOD: &str = "http.request.method";
@@ -312,7 +313,10 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
         names::SUBSCRIPTIONS_CLIENTS_SENT_MESSAGES_TOTAL,
         &[labels::SUBSCRIPTION_TRANSPORT],
     ),
-    (names::GRAPHQL_ERRORS_TOTAL, &[labels::CODE]),
+    (
+        names::GRAPHQL_ERRORS_TOTAL,
+        &[labels::CODE, labels::SUPERGRAPH_NAME],
+    ),
     (
         names::COST_ESTIMATED,
         &[labels::COST_RESULT, labels::GRAPHQL_OPERATION_NAME],
@@ -338,6 +342,7 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
             labels::GRAPHQL_OPERATION_NAME,
             labels::GRAPHQL_OPERATION_TYPE,
             labels::GRAPHQL_RESPONSE_STATUS,
+            labels::SUPERGRAPH_NAME,
         ],
     ),
     (

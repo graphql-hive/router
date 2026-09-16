@@ -354,8 +354,13 @@ impl GraphQLOperationSpan {
             "hive.client.name" = Empty,
             "hive.client.version" = Empty,
             "hive.target" = Empty,
+            "hive.supergraph.name" = Empty,
         );
         GraphQLOperationSpan { span }
+    }
+
+    pub fn record_supergraph_name(&self, name: &str) {
+        self.span.record(attributes::HIVE_SUPERGRAPH_NAME, name);
     }
 
     pub fn record_hive_target(&self, target: Option<&str>) {
