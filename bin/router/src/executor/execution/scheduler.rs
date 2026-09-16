@@ -51,7 +51,6 @@ impl<'exec> Executor<'exec> {
         root: &'exec PlanNode,
     ) -> bool {
         let mut jobs = Vec::new();
-        panic!("SCHEDULER PATH HIT");
         if !collect_jobs(root, true, self.variable_values, &mut jobs) {
             return false;
         }
