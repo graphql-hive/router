@@ -9,6 +9,7 @@ use futures::StreamExt;
 use hive_console_sdk::agent::usage_agent::RequestDetails;
 use hive_console_sdk::agent::usage_agent::UsageAgentExt;
 use hive_console_sdk::agent::usage_agent::{ExecutionReport, UsageAgent};
+use hive_console_sdk::agent::utils::ReportVariables;
 use hive_console_sdk::graphql_tools::parser::parse_schema;
 use hive_console_sdk::graphql_tools::parser::schema::Document;
 use http::HeaderValue;
@@ -115,6 +116,33 @@ pub struct Config {
     /// Frequency of flushing the buffer to the server
     /// Default: 5 seconds
     flush_interval: Option<u64>,
+    /// Report the input fields present in each request's variables instead of marking every
+    /// field of a variable's declared type as used.
+    ///
+    /// Default: false
+    process_variables: Option<bool>,
+}
+
+/// The request's raw variables, as sent by the client, converted for
+/// [`ExecutionReport::variables`]. A variable that fails to convert is left out and its input
+/// type is then reported as if it were absent.
+fn usage_report_variables(req: &supergraph::Request) -> ReportVariables {
+    req.supergraph_request
+        .body()
+        .variables
+        .iter()
+        .filter_map(|(name, value)| match sonic_rs::to_value(value) {
+            Ok(value) => Some((name.as_str().to_string(), value)),
+            Err(err) => {
+                tracing::debug!(
+                    variable = name.as_str(),
+                    error = %err,
+                    "failed to convert a variable for usage reporting"
+                );
+                None
+            }
+        })
+        .collect()
 }
 
 impl UsagePlugin {
@@ -238,6 +266,8 @@ impl Plugin for UsagePlugin {
                 agent = agent.flush_interval(Duration::from_secs(flush_interval));
             }
 
+            agent = agent.process_variables(user_config.process_variables.unwrap_or(false));
+
             if let Some(UsageReportingExclude::Expression { expression }) = &user_config.exclude {
                 agent = agent.exclude_expression(expression.clone());
             }
@@ -288,10 +318,16 @@ impl Plugin for UsagePlugin {
         match self.agent.clone() {
             None => ServiceBuilder::new().service(service).boxed(),
             Some(agent) => {
+                let process_variables = agent.should_process_variables();
                 ServiceBuilder::new()
                     .map_future_with_request_data(
                         move |req: &supergraph::Request| {
                             Self::populate_context(config.clone(), req);
+
+                            // taken before execution (and variable coercion), so the report
+                            // sees the payload exactly as the client sent it
+                            let usage_variables =
+                                process_variables.then(|| usage_report_variables(req));
 
                             let request_details = RequestDetails {
                                 method: req.supergraph_request.method().clone(),
@@ -307,9 +343,14 @@ impl Plugin for UsagePlugin {
                                     })
                                     .collect(),
                             };
-                            (request_details, req.context.clone())
+                            (request_details, req.context.clone(), usage_variables)
                         },
-                        move |(request_details, ctx): (RequestDetails, Context), fut| {
+                        move |(request_details, ctx, usage_variables): (
+                            RequestDetails,
+                            Context,
+                            Option<ReportVariables>,
+                        ),
+                              fut| {
                             let agent = agent.clone();
                             let schema = schema.clone();
                             async move {
@@ -367,6 +408,7 @@ impl Plugin for UsagePlugin {
                                                     operation_body,
                                                     operation_name,
                                                     persisted_document_hash,
+                                                    variables: usage_variables,
                                                     ..Default::default()
                                                 }, Some(request_details))
                                                 .await;
@@ -397,6 +439,7 @@ impl Plugin for UsagePlugin {
                                                         operation_body: operation_body.clone(),
                                                         operation_name: operation_name.clone(),
                                                         persisted_document_hash: persisted_document_hash.clone(),
+                                                        variables: usage_variables.clone(),
                                                         ..Default::default()
                                                     };
                                                     let request_details = request_details.clone();
@@ -498,6 +541,15 @@ mod hive_usage_tests {
         }
     }
 
+    #[test]
+    fn config_process_variables_is_optional() {
+        let config: Config = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(config.process_variables, None);
+
+        let config: Config = serde_json::from_value(json!({ "process_variables": true })).unwrap();
+        assert_eq!(config.process_variables, Some(true));
+    }
+
     lazy_static::lazy_static! {
         static ref SCHEMA_VALIDATOR: Validator =
                 jsonschema::validator_for(&serde_json::from_str(&std::fs::read_to_string("../../../lib/hive-console-sdk/usage-report-v2.schema.json").expect("can't load json schema file")).expect("failed to parse json schema")).expect("failed to parse schema");
@@ -510,19 +562,26 @@ mod hive_usage_tests {
 
     impl UsageTestHelper {
         async fn new() -> Self {
+            Self::with_options("type Query { dummy: String! }", false).await
+        }
+
+        async fn with_options(supergraph_sdl: &str, process_variables: bool) -> Self {
             let server: MockServer = MockServer::start();
             let usage_endpoint = server.url("/usage");
-            let mut config = Config::default();
-            config.enabled = Some(true);
-            config.registry_usage_endpoint = Some(usage_endpoint.to_string());
-            config.registry_token = Some("123".into());
-            config.buffer_size = Some(1);
-            config.flush_interval = Some(1);
+            let config = Config {
+                enabled: Some(true),
+                registry_usage_endpoint: Some(usage_endpoint.to_string()),
+                registry_token: Some("123".into()),
+                buffer_size: Some(1),
+                flush_interval: Some(1),
+                process_variables: Some(process_variables),
+                ..Default::default()
+            };
 
             let plugin_service = UsagePlugin::new(
                 PluginInit::fake_builder()
                     .config(config)
-                    .supergraph_sdl("type Query { dummy: String! }".to_string().into())
+                    .supergraph_sdl(supergraph_sdl.to_string().into())
                     .build(),
             )
             .await
@@ -560,6 +619,19 @@ mod hive_usage_tests {
 
                         SCHEMA_VALIDATOR.is_valid(&body)
                     });
+                then.status(200);
+            })
+        }
+
+        /// Like [`Self::activate_usage_mock`], with a custom matcher over the report body.
+        /// `httpmock` takes a plain function pointer, so expectations are spelled out per test
+        /// (see [`check_usage_fields`]).
+        fn activate_usage_mock_with(
+            &'_ self,
+            matcher: fn(&httpmock::prelude::HttpMockRequest) -> bool,
+        ) -> Mock<'_> {
+            self.mocked_upstream.mock(|when, then| {
+                when.method(POST).path("/usage").matches(matcher);
                 then.status(200);
             })
         }
@@ -641,6 +713,115 @@ mod hive_usage_tests {
 
         instance.wait_for_processing().await;
         println!("Waiting done");
+
+        mock.assert();
+        mock.assert_hits(1);
+    }
+
+    const FILTER_SDL: &str =
+        "type Query { search(filter: Filter): String } input Filter { name: String, limit: Int }";
+
+    fn search_request() -> supergraph::Request {
+        supergraph::Request::fake_builder()
+            .query("query Search($filter: Filter) { search(filter: $filter) }")
+            .operation_name("Search")
+            .variables(
+                serde_json_bytes::json!({ "filter": { "name": "x" } })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )
+            .build()
+            .unwrap()
+    }
+
+    /// Whether the usage report is schema-valid and its `fields` (across all operation
+    /// records) contain every `expected` coordinate and none of the `unexpected` ones.
+    fn check_usage_fields(
+        r: &httpmock::prelude::HttpMockRequest,
+        expected: &[&str],
+        unexpected: &[&str],
+    ) -> bool {
+        let body: serde_json::Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+        if !SCHEMA_VALIDATOR.is_valid(&body) {
+            eprintln!("usage report does not match the schema: {body}");
+            return false;
+        }
+        let fields: std::collections::HashSet<&str> = body["map"]
+            .as_object()
+            .into_iter()
+            .flat_map(|map| map.values())
+            .filter_map(|record| record["fields"].as_array())
+            .flatten()
+            .filter_map(|field| field.as_str())
+            .collect();
+        let matches = expected.iter().all(|f| fields.contains(f))
+            && unexpected.iter().all(|f| !fields.contains(f));
+        if !matches {
+            eprintln!("unexpected usage report fields: {fields:?}");
+        }
+        matches
+    }
+
+    fn matches_granular_search_report(r: &httpmock::prelude::HttpMockRequest) -> bool {
+        check_usage_fields(
+            r,
+            &[
+                "Query.search",
+                "Query.search.filter",
+                "Query.search.filter!",
+                "Filter.name",
+                "Filter.name!",
+                "String",
+            ],
+            &["Filter.limit", "Int"],
+        )
+    }
+
+    fn matches_coarse_search_report(r: &httpmock::prelude::HttpMockRequest) -> bool {
+        check_usage_fields(
+            r,
+            &[
+                "Query.search",
+                "Query.search.filter",
+                "Filter.name",
+                "Filter.limit",
+                "String",
+                "Int",
+            ],
+            &["Query.search.filter!", "Filter.name!"],
+        )
+    }
+
+    #[tokio::test]
+    async fn process_variables_reports_only_provided_input_fields() {
+        let instance = UsageTestHelper::with_options(FILTER_SDL, true).await;
+        let mock = instance.activate_usage_mock_with(matches_granular_search_report);
+
+        instance
+            .execute_operation(search_request())
+            .await
+            .next_response()
+            .await;
+
+        instance.wait_for_processing().await;
+
+        mock.assert();
+        mock.assert_hits(1);
+    }
+
+    #[tokio::test]
+    async fn without_process_variables_reports_whole_input_types() {
+        let instance = UsageTestHelper::with_options(FILTER_SDL, false).await;
+        let mock = instance.activate_usage_mock_with(matches_coarse_search_report);
+
+        instance
+            .execute_operation(search_request())
+            .await
+            .next_response()
+            .await;
+
+        instance.wait_for_processing().await;
 
         mock.assert();
         mock.assert_hits(1);

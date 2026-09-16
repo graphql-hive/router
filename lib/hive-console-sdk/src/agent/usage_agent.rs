@@ -12,7 +12,7 @@ use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
-use crate::expressions::lib::FromVrlValue;
+use crate::{agent::utils::ReportVariables, expressions::lib::FromVrlValue};
 use crate::{
     agent::{buffer::AddStatus, utils::OperationProcessor},
     expressions::ExecutableProgram,
@@ -48,6 +48,9 @@ pub struct ExecutionReport {
     pub operation_name: Option<String>,
     pub operation_type: Option<OperationType>,
     pub persisted_document_hash: Option<String>,
+    /// The raw variables of the execution, as received before coercion.
+    /// Only used when `process_variables` is enabled.
+    pub variables: Option<ReportVariables>,
 }
 
 typify::import_types!(schema = "./usage-report-v2.schema.json");
@@ -131,6 +134,10 @@ impl UsageAgentHandle {
         Self(Some(inner))
     }
 
+    pub fn should_process_variables(&self) -> bool {
+        self.inner().processor.process_variables_enabled
+    }
+
     fn inner(&self) -> &UsageAgentInner {
         self.0.as_ref().expect("UsageAgentHandle used after drop")
     }
@@ -210,7 +217,10 @@ impl UsageAgentInner {
 
         // iterate over reports and check if they are valid
         for op in reports {
-            let operation = self.processor.process(&op.operation_body, &op.schema);
+            let operation =
+                self.processor
+                    .process(&op.operation_body, &op.schema, op.variables.as_ref());
+
             match operation {
                 Err(e) => {
                     tracing::warn!(
@@ -229,7 +239,6 @@ impl UsageAgentInner {
                 Ok(operation) => match operation {
                     Some(operation) => {
                         let hash = operation.hash;
-
                         let client_name = non_empty_string(op.client_name);
                         let client_version = non_empty_string(op.client_version);
 
@@ -800,6 +809,7 @@ mod tests {
                         ok: true,
                         errors: 0,
                         persisted_document_hash: None,
+                        variables: None,
                     },
                     Some((&request).into()),
                 )
@@ -832,6 +842,7 @@ mod tests {
             ok: true,
             errors: 0,
             persisted_document_hash: None,
+            variables: None,
         }
     }
 
@@ -1337,5 +1348,807 @@ mod tests {
             .build();
 
         assert!(result.is_ok());
+    }
+}
+
+#[cfg(test)]
+mod process_variables_tests {
+    use std::collections::HashSet;
+
+    use crate::agent::utils::ReportVariables;
+
+    use super::*;
+    use graphql_tools::parser::{parse_query, parse_schema};
+    use serde_json::json;
+
+    const SCHEMA: &str = "type Query { random(a: A): String } input A { x: Int, y: Int }";
+    const OPERATION: &str = "query Random($a: A) { random(a: $a) }";
+
+    fn setup(process_variables: bool) -> (UsageAgent, Arc<Document<'static, String>>) {
+        let schema = Arc::new(parse_schema::<String>(SCHEMA).unwrap());
+        // the operation must parse; the agent parses it again at flush time
+        parse_query::<String>(OPERATION).unwrap();
+        let agent = UsageAgent::builder()
+            .token("token".into())
+            .process_variables(process_variables)
+            .build()
+            .unwrap();
+        (agent, schema)
+    }
+
+    fn variables(value: serde_json::Value) -> ReportVariables {
+        sonic_rs::from_str(&value.to_string()).unwrap()
+    }
+
+    fn report(
+        schema: &Arc<Document<'static, String>>,
+        variables: Option<ReportVariables>,
+    ) -> ExecutionReport {
+        ExecutionReport {
+            schema: schema.clone(),
+            operation_body: OPERATION.to_string(),
+            operation_name: Some("Random".to_string()),
+            operation_type: Some(OperationType::Query),
+            ok: true,
+            variables,
+            ..Default::default()
+        }
+    }
+
+    fn fields(report: &Report) -> HashSet<&str> {
+        assert_eq!(report.map.len(), 1, "expected a single operation record");
+        report
+            .map
+            .values()
+            .next()
+            .unwrap()
+            .fields
+            .iter()
+            .map(String::as_str)
+            .collect()
+    }
+
+    fn all_fields(report: &Report) -> HashSet<&str> {
+        report
+            .map
+            .values()
+            .flat_map(|record| record.fields.iter().map(String::as_str))
+            .collect()
+    }
+
+    /// The operation map key covers the shape of the variables, not their values (as in the JS
+    /// SDK), so executions that only differ in values share one operation record.
+    #[tokio::test]
+    async fn payloads_of_the_same_shape_end_up_in_the_single_operation_record() {
+        let (agent, schema) = setup(true);
+        assert!(agent.should_process_variables());
+        let produced = agent
+            .inner()
+            .produce_report(vec![
+                report(&schema, Some(variables(json!({ "a": { "x": 1 } })))),
+                report(&schema, Some(variables(json!({ "a": { "x": 2 } })))),
+            ])
+            .unwrap();
+
+        assert_eq!(produced.operations.len(), 2);
+        assert_eq!(
+            produced.operations[0].operation_map_key,
+            produced.operations[1].operation_map_key
+        );
+        assert_eq!(
+            fields(&produced),
+            HashSet::from([
+                "Query.random",
+                "Query.random.a",
+                "Query.random.a!",
+                "A.x",
+                "A.x!",
+                "Int",
+            ])
+        );
+    }
+
+    /// Executions with different payload shapes get their own operation record, each carrying
+    /// only the input fields of its payload (as in the JS SDK).
+    #[tokio::test]
+    async fn payloads_of_different_shapes_get_their_own_operation_record() {
+        let (agent, schema) = setup(true);
+        let produced = agent
+            .inner()
+            .produce_report(vec![
+                report(&schema, Some(variables(json!({ "a": { "x": 1 } })))),
+                report(&schema, Some(variables(json!({ "a": { "y": 2 } })))),
+            ])
+            .unwrap();
+
+        assert_eq!(produced.operations.len(), 2);
+        assert_eq!(produced.map.len(), 2);
+        assert_ne!(
+            produced.operations[0].operation_map_key,
+            produced.operations[1].operation_map_key
+        );
+        for record in produced.map.values() {
+            let fields: HashSet<&str> = record.fields.iter().map(String::as_str).collect();
+            assert!(
+                fields.contains("A.x!") ^ fields.contains("A.y!"),
+                "each record should carry exactly one payload's fields: {fields:?}"
+            );
+        }
+        assert_eq!(
+            all_fields(&produced),
+            HashSet::from([
+                "Query.random",
+                "Query.random.a",
+                "Query.random.a!",
+                "A.x",
+                "A.x!",
+                "A.y",
+                "A.y!",
+                "Int",
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn executions_without_a_payload_report_coarse_coordinates() {
+        let (agent, schema) = setup(true);
+        let produced = agent
+            .inner()
+            .produce_report(vec![report(&schema, None)])
+            .unwrap();
+
+        assert_eq!(
+            fields(&produced),
+            HashSet::from(["Query.random", "Query.random.a", "A.x", "A.y", "Int"])
+        );
+    }
+
+    #[tokio::test]
+    async fn payloads_are_ignored_when_process_variables_is_disabled() {
+        let (agent, schema) = setup(false);
+        assert!(!agent.should_process_variables());
+        let produced = agent
+            .inner()
+            .produce_report(vec![
+                report(&schema, Some(variables(json!({ "a": { "x": 1 } })))),
+                report(&schema, Some(variables(json!({ "a": { "y": 2 } })))),
+            ])
+            .unwrap();
+
+        assert_eq!(
+            fields(&produced),
+            HashSet::from(["Query.random", "Query.random.a", "A.x", "A.y", "Int"])
+        );
+    }
+}
+
+/// 1:1 port of `collect-schema-coordinates.spec.ts` from `@graphql-hive/core`
+#[cfg(test)]
+mod js_parity_tests {
+    use super::*;
+    use crate::agent::utils::ReportVariables;
+    use graphql_tools::parser::parse_schema;
+    use serde_json::{json, Value};
+
+    /// Mirrors `collectSchemaCoordinates({ documentNode, schema, processVariables, variables })`:
+    /// the report's `fields` for one execution of `operation` with `variables`.
+    async fn collect(
+        schema: &'static str,
+        operation: &str,
+        process_variables: bool,
+        variables: Option<Value>,
+    ) -> Vec<String> {
+        let schema = Arc::new(parse_schema::<String>(schema).unwrap());
+        let agent = UsageAgent::builder()
+            .token("token".into())
+            .process_variables(process_variables)
+            .build()
+            .unwrap();
+        let variables: Option<ReportVariables> =
+            variables.map(|value| sonic_rs::from_str(&value.to_string()).unwrap());
+        let produced = agent
+            .inner()
+            .produce_report(vec![ExecutionReport {
+                schema,
+                operation_body: operation.to_string(),
+                operation_type: Some(OperationType::Query),
+                ok: true,
+                variables,
+                ..Default::default()
+            }])
+            .unwrap();
+        let record = produced
+            .map
+            .values()
+            .next()
+            .expect("the operation should be reported");
+        let mut fields = record.fields.clone();
+        fields.sort();
+        fields
+    }
+
+    fn assert_coordinates(actual: Vec<String>, expected: &[&str]) {
+        let mut expected: Vec<String> = expected.iter().map(|s| s.to_string()).collect();
+        expected.sort();
+        assert_eq!(actual, expected);
+    }
+
+    const NESTED: &str = r#"
+        type Query { random(a: A): String }
+        input A { b: B }
+        input B { c: C }
+        input C { d: String }
+    "#;
+
+    const PROJECTS: &str = r#"
+        type Query {
+            project(selector: ProjectSelectorInput!): Project
+            projectsByType(type: ProjectType!): [Project!]!
+            projectsByTypes(types: [ProjectType!]!): [Project!]!
+            projects(filter: FilterInput, and: [FilterInput!]): [Project!]!
+            projectsByMetadata(metadata: JSON): [Project!]!
+        }
+        type Mutation { deleteProject(selector: ProjectSelectorInput!): DeleteProjectPayload! }
+        input ProjectSelectorInput { organization: ID!, project: ID! }
+        input FilterInput { type: ProjectType, pagination: PaginationInput, order: [ProjectOrderByInput!], metadata: JSON }
+        input PaginationInput { limit: Int, offset: Int }
+        input ProjectOrderByInput { field: String!, direction: OrderDirection }
+        enum OrderDirection { ASC DESC }
+        type ProjectSelector { organization: ID!, project: ID! }
+        type DeleteProjectPayload { selector: ProjectSelector!, deletedProject: Project! }
+        type Project { id: ID!, cleanId: ID!, name: String!, type: ProjectType!, buildUrl: String, validationUrl: String }
+        enum ProjectType { FEDERATION STITCHING SINGLE }
+        scalar JSON
+    "#;
+
+    const NESTED_FRAGMENT_OP: &str = r#"
+        query getProjects($limit: Int!, $type: ProjectType!, $includeName: Boolean!) {
+            projects(filter: { pagination: { limit: $limit }, type: $type }) {
+                id
+                ...NestedFragment
+            }
+        }
+        fragment NestedFragment on Project { ...IncludeNameFragment @include(if: $includeName) }
+        fragment IncludeNameFragment on Project { name }
+    "#;
+
+    const NODE: &str = r#"
+        type Query { node: Node }
+        interface Node { id: ID! }
+        type User implements Node { id: ID! }
+        type Animal implements Node { id: ID! }
+    "#;
+
+    #[tokio::test]
+    async fn single_primitive_field_schema_coordinate() {
+        let result = collect(
+            "type Query { hello: String }",
+            "query { hello }",
+            false,
+            None,
+        )
+        .await;
+        assert_coordinates(result, &["Query.hello"]);
+    }
+
+    #[tokio::test]
+    async fn two_primitive_field_schema_coordinates() {
+        let result = collect(
+            "type Query { hello: String, hi: String }",
+            "query { hello hi }",
+            false,
+            None,
+        )
+        .await;
+        assert_coordinates(result, &["Query.hello", "Query.hi"]);
+    }
+
+    #[tokio::test]
+    async fn primitive_field_with_arguments_schema_coordinates() {
+        let result = collect(
+            "type Query { hello(message: String): String }",
+            r#"query { hello(message: "world") }"#,
+            false,
+            None,
+        )
+        .await;
+        assert_coordinates(
+            result,
+            &[
+                "Query.hello",
+                "Query.hello.message!",
+                "Query.hello.message",
+                "String",
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn leaf_field_enum() {
+        let result = collect(
+            "type Query { hello: Option } enum Option { World You }",
+            "query { hello }",
+            false,
+            None,
+        )
+        .await;
+        assert_coordinates(result, &["Query.hello", "Option.World", "Option.You"]);
+    }
+
+    #[tokio::test]
+    async fn interface_selection_set_does_not_contain_exact_resolutions() {
+        let result = collect(NODE, "query { node { id } }", false, None).await;
+        assert_coordinates(result, &["Query.node", "Node.id"]);
+    }
+
+    #[tokio::test]
+    async fn inline_fragment_spread_contains_exact_resolutions() {
+        let result = collect(
+            NODE,
+            "query { node { id ... on User { id } } }",
+            false,
+            None,
+        )
+        .await;
+        assert_coordinates(result, &["Query.node", "Node.id", "User.id"]);
+    }
+
+    #[tokio::test]
+    async fn custom_scalar_as_argument() {
+        let result = collect(
+            "type Query { random(json: JSON): String } scalar JSON",
+            r#"query { random(json: { key: { value: "value" } }) }"#,
+            false,
+            None,
+        )
+        .await;
+        assert_coordinates(
+            result,
+            &[
+                "Query.random",
+                "Query.random.json",
+                "Query.random.json!",
+                "JSON",
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_scalar_in_input_object_field() {
+        let result = collect(
+            "type Query { random(input: I): String } input I { json: JSON } scalar JSON",
+            r#"query { random(input: { json: { key: { value: "value" } } }) }"#,
+            false,
+            None,
+        )
+        .await;
+        assert_coordinates(
+            result,
+            &[
+                "Query.random",
+                "Query.random.input",
+                "Query.random.input!",
+                "I.json",
+                "I.json!",
+                "JSON",
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn deeply_nested_inputs() {
+        let result = collect(
+            NESTED,
+            r#"query { random(a: { b: { c: { d: "D" } } }) }"#,
+            false,
+            None,
+        )
+        .await;
+        assert_coordinates(
+            result,
+            &[
+                "Query.random",
+                "Query.random.a",
+                "Query.random.a!",
+                "A.b",
+                "A.b!",
+                "B.c",
+                "B.c!",
+                "C.d",
+                "C.d!",
+                "String",
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn required_variable_as_argument() {
+        let result = collect(
+            "type Query { random(a: String): String }",
+            "query Foo($a: String!) { random(a: $a) }",
+            true,
+            Some(json!({ "a": "B" })),
+        )
+        .await;
+        assert_coordinates(
+            result,
+            &[
+                "Query.random",
+                "Query.random.a",
+                "Query.random.a!",
+                "String",
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn unused_variable_as_nullable_argument() {
+        let result = collect(
+            "type Query { random(a: String): String }",
+            "query Foo($a: String) { random(a: $a) }",
+            true,
+            Some(json!({})),
+        )
+        .await;
+        assert_coordinates(result, &["Query.random", "Query.random.a", "String"]);
+    }
+
+    #[tokio::test]
+    async fn unused_nullable_argument() {
+        let result = collect(
+            "type Query { random(a: String): String }",
+            "query Foo { random }",
+            true,
+            None,
+        )
+        .await;
+        assert_coordinates(result, &["Query.random"]);
+    }
+
+    #[tokio::test]
+    async fn unused_nullable_input_field() {
+        let result = collect(NESTED, "query Foo { random(a: { b: null }) }", true, None).await;
+        assert_coordinates(
+            result,
+            &[
+                "Query.random",
+                "Query.random.a",
+                "Query.random.a!",
+                "A.b",
+                "B.c",
+                "C.d",
+                "String",
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn required_variable_as_input_field() {
+        let result = collect(
+            "type Query { random(a: A): String } input A { b: String }",
+            "query Foo($b: String!) { random(a: { b: $b }) }",
+            true,
+            Some(json!({ "b": "B" })),
+        )
+        .await;
+        assert_coordinates(
+            result,
+            &[
+                "Query.random",
+                "Query.random.a",
+                "Query.random.a!",
+                "A.b",
+                "A.b!",
+                "String",
+            ],
+        );
+    }
+
+    /// `processVariables=true` with no payload falls back to the coarse collection.
+    #[tokio::test]
+    async fn undefined_variable_as_input_field() {
+        let result = collect(
+            "type Query { random(a: A): String } input A { b: String }",
+            "query Foo($b: String!) { random(a: { b: $b }) }",
+            true,
+            None,
+        )
+        .await;
+        assert_coordinates(
+            result,
+            &[
+                "Query.random",
+                "Query.random.a",
+                "Query.random.a!",
+                "A.b",
+                "String",
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn deeply_nested_variables_process_variables_true() {
+        let result = collect(
+            NESTED,
+            "query Random($a: A) { random(a: $a) }",
+            true,
+            Some(json!({ "a": { "b": { "c": { "d": "D" } } } })),
+        )
+        .await;
+        assert_coordinates(
+            result,
+            &[
+                "Query.random",
+                "Query.random.a",
+                "Query.random.a!",
+                "A.b",
+                "A.b!",
+                "B.c",
+                "B.c!",
+                "C.d",
+                "C.d!",
+                "String",
+            ],
+        );
+    }
+
+    /// Deviation from the JS spec: with `processVariables=false` the JS SDK still reads the
+    /// runtime payload for the `Query.random.a!` marker. With the feature off, the Rust SDK
+    /// never looks at the payload, so the marker is not reported.
+    #[tokio::test]
+    async fn deeply_nested_variables_process_variables_false() {
+        let result = collect(
+            NESTED,
+            "query Random($a: A) { random(a: $a) }",
+            false,
+            Some(json!({ "a": { "b": { "c": { "d": "D" } } } })),
+        )
+        .await;
+        assert_coordinates(
+            result,
+            &[
+                "Query.random",
+                "Query.random.a",
+                "A.b",
+                "B.c",
+                "C.d",
+                "String",
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn aliased_field() {
+        let result = collect(
+            "type Query { random(a: String): String } input C { d: String }",
+            "query Random($a: String) { foo: random(a: $a) }",
+            true,
+            Some(json!({ "a": "B" })),
+        )
+        .await;
+        assert_coordinates(
+            result,
+            &[
+                "Query.random",
+                "Query.random.a",
+                "Query.random.a!",
+                "String",
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn multiple_fields_with_mixed_nullability() {
+        let result = collect(
+            "type Query { random(a: String): String } input C { d: String }",
+            r#"query Random($a: String) { nullable: random(a: $a) nonnullable: random(a: "B") }"#,
+            false,
+            Some(json!({ "a": null })),
+        )
+        .await;
+        assert_coordinates(
+            result,
+            &[
+                "Query.random",
+                "Query.random.a",
+                "Query.random.a!",
+                "String",
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn nested_fragment_with_client_side_directive() {
+        let result = collect(
+            PROJECTS,
+            NESTED_FRAGMENT_OP,
+            false,
+            Some(json!({ "includeName": true })),
+        )
+        .await;
+        assert_coordinates(
+            result,
+            &[
+                "Boolean",
+                "FilterInput.pagination",
+                "FilterInput.pagination!",
+                "FilterInput.type",
+                "Int",
+                "PaginationInput.limit",
+                "Project.id",
+                "Project.name",
+                "ProjectType.FEDERATION",
+                "ProjectType.SINGLE",
+                "ProjectType.STITCHING",
+                "Query.projects",
+                "Query.projects.filter",
+                "Query.projects.filter!",
+            ],
+        );
+    }
+
+    /// Variables referenced inside literal input objects get their `!` from the payload.
+    #[tokio::test]
+    async fn granular_marks_variable_positions_inside_literals_from_the_payload() {
+        let result = collect(
+            PROJECTS,
+            NESTED_FRAGMENT_OP,
+            true,
+            Some(json!({ "limit": 10, "type": "FEDERATION", "includeName": true })),
+        )
+        .await;
+        assert_coordinates(
+            result,
+            &[
+                "Boolean",
+                "FilterInput.pagination",
+                "FilterInput.pagination!",
+                "FilterInput.type",
+                "FilterInput.type!",
+                "Int",
+                "PaginationInput.limit",
+                "PaginationInput.limit!",
+                "Project.id",
+                "Project.name",
+                "ProjectType.FEDERATION",
+                "ProjectType.SINGLE",
+                "ProjectType.STITCHING",
+                "Query.projects",
+                "Query.projects.filter",
+                "Query.projects.filter!",
+            ],
+        );
+    }
+
+    /// JS `collectVariable`: an absent (or null) input-object variable is reported as its bare
+    /// type name, without `!` on the argument.
+    #[tokio::test]
+    async fn granular_absent_input_object_variable_marks_only_the_bare_type() {
+        let result = collect(
+            NESTED,
+            "query Random($a: A) { random(a: $a) }",
+            true,
+            Some(json!({})),
+        )
+        .await;
+        assert_coordinates(result, &["Query.random", "Query.random.a", "A"]);
+    }
+
+    #[tokio::test]
+    async fn granular_null_nested_input_object_marks_its_bare_type() {
+        let result = collect(
+            NESTED,
+            "query Random($a: A) { random(a: $a) }",
+            true,
+            Some(json!({ "a": { "b": null } })),
+        )
+        .await;
+        assert_coordinates(
+            result,
+            &[
+                "A.b",
+                "B",
+                "Query.random",
+                "Query.random.a",
+                "Query.random.a!",
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn granular_list_of_input_objects_reports_only_present_fields() {
+        let result = collect(
+            PROJECTS,
+            "query Q($and: [FilterInput!]) { projects(and: $and) { id } }",
+            true,
+            Some(json!({ "and": [{ "type": "SINGLE" }, { "pagination": { "offset": 2 } }] })),
+        )
+        .await;
+        assert_coordinates(
+            result,
+            &[
+                "FilterInput.pagination",
+                "FilterInput.pagination!",
+                "FilterInput.type",
+                "FilterInput.type!",
+                "Int",
+                "PaginationInput.offset",
+                "PaginationInput.offset!",
+                "Project.id",
+                "ProjectType.FEDERATION",
+                "ProjectType.SINGLE",
+                "ProjectType.STITCHING",
+                "Query.projects",
+                "Query.projects.and",
+                "Query.projects.and!",
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn granular_recursive_input_types() {
+        let result = collect(
+            "type Query { random(f: Filter): String } input Filter { and: [Filter], name: String }",
+            "query Random($f: Filter) { random(f: $f) }",
+            true,
+            Some(json!({ "f": { "and": [{ "and": [{ "name": "x" }] }] } })),
+        )
+        .await;
+        assert_coordinates(
+            result,
+            &[
+                "Filter.and",
+                "Filter.and!",
+                "Filter.name",
+                "Filter.name!",
+                "Query.random",
+                "Query.random.f",
+                "Query.random.f!",
+                "String",
+            ],
+        );
+    }
+
+    /// As in the JS SDK, default values are not applied for absent variables: the default
+    /// literal is collected by the visitor like any other literal (graphql-js `visit` walks
+    /// `VariableDefinition.defaultValue`), and the absent variable itself is reported as its
+    /// bare type, without a `!` marker on the argument.
+    #[tokio::test]
+    async fn granular_absent_variable_with_default_follows_the_js_sdk() {
+        let result = collect(
+            PROJECTS,
+            r#"query Q($filter: FilterInput = { type: SINGLE }) { projects(filter: $filter) { id } }"#,
+            true,
+            Some(json!({})),
+        )
+        .await;
+        assert_coordinates(
+            result,
+            &[
+                "FilterInput",
+                "FilterInput.type",
+                "FilterInput.type!",
+                "Project.id",
+                "ProjectType.SINGLE",
+                "Query.projects",
+                "Query.projects.filter",
+            ],
+        );
+    }
+
+    /// The JS SDK strips directive arguments before collecting, so `@include(if: $x)` on a field
+    /// must not produce a `Query.users.if` coordinate.
+    #[tokio::test]
+    async fn directive_arguments_on_fields_are_not_coordinates() {
+        for process_variables in [false, true] {
+            let result = collect(
+                "type Query { users: [User] } type User { id: ID }",
+                "query Q($x: Boolean!) { users @include(if: $x) { id @skip(if: false) } }",
+                process_variables,
+                Some(json!({ "x": true })),
+            )
+            .await;
+            assert_coordinates(result, &["Boolean", "Query.users", "User.id"]);
+        }
     }
 }
