@@ -107,6 +107,9 @@ struct BatchFetchBuilder<'a> {
     variable_usages: BTreeSet<String>,
     representations_var_by_input_key: HashMap<RepresentationsInputKey, String>,
     custom_scalar_paths: CustomScalarPaths,
+    /// Every fetch id merged into this batch, and the union of what they wait for.
+    completes: Vec<i64>,
+    depends_on: BTreeSet<i64>,
 }
 
 impl<'a> BatchFetchBuilder<'a> {
@@ -129,6 +132,8 @@ impl<'a> BatchFetchBuilder<'a> {
             variable_usages: BTreeSet::new(),
             representations_var_by_input_key: HashMap::new(),
             custom_scalar_paths: CustomScalarPaths::default(),
+            completes: Vec::with_capacity(alias_count),
+            depends_on: BTreeSet::new(),
         }
     }
 
@@ -147,6 +152,9 @@ impl<'a> BatchFetchBuilder<'a> {
                 self.variable_usages
                     .extend(candidate_variable_usages.iter().cloned());
             }
+
+            self.completes.push(candidate.fetch_node_id);
+            self.depends_on.extend(candidate.depends_on.iter().copied());
         }
 
         let alias = format!("_e{alias_index}");
@@ -275,8 +283,20 @@ impl<'a> BatchFetchBuilder<'a> {
             ))
         })?;
 
+        // A batch only ever merges siblings of the same wave, so they cannot depend on
+        // each other. Dropping self-references anyway keeps a bad plan from deadlocking.
+        let depends_on = self
+            .depends_on
+            .iter()
+            .copied()
+            .filter(|id| !self.completes.contains(id))
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+
         Ok(BatchFetchNode {
             id: first_candidate.fetch_node_id,
+            depends_on,
+            completes: self.completes.into_boxed_slice(),
             service_name: first_candidate.service_name.clone(),
             variable_usages: if self.variable_usages.is_empty() {
                 None
@@ -310,6 +330,7 @@ struct EntityFetch {
     /// Original index in the Parallel block (for stable ordering).
     index: usize,
     fetch_node_id: i64,
+    depends_on: Box<[i64]>,
     service_name: String,
     flatten_path: FlattenNodePath,
     variable_usages: Option<BTreeSet<String>>,
@@ -403,6 +424,7 @@ impl EntityFetch {
         Ok(Some(EntityFetch {
             index,
             fetch_node_id: fetch_node.id,
+            depends_on: fetch_node.depends_on.clone(),
             service_name: fetch_node.service_name.clone(),
             flatten_path: flatten_node.path.clone(),
             variable_usages: fetch_node.variable_usages.clone(),
@@ -962,6 +984,65 @@ mod tests {
           },
         },
         "#);
+    }
+
+    /// A batch stands in for several fetches, so it has to report every id it merged
+    /// (otherwise fetches waiting on #2 or #3 would never be unblocked) and the union
+    /// of what those fetches waited for.
+    #[test]
+    fn optimize_parallel_node_batch_keeps_all_merged_fetch_ids_and_dependencies() {
+        let supergraph = test_supergraph_state();
+        let requires_query = "query { ... on Product { upc } }";
+        let entities_query = "
+          query($representations:[_Any!]!) {
+            _entities(representations: $representations) {
+              ... on Product { shippingEstimate }
+            }
+          }
+        ";
+
+        let nodes = vec![
+            with_depends_on(
+                flatten_entity_fetch_node(
+                    1,
+                    "inventory",
+                    "products",
+                    requires_query,
+                    entities_query,
+                ),
+                &[100],
+            ),
+            with_depends_on(
+                flatten_entity_fetch_node(
+                    2,
+                    "inventory",
+                    "products",
+                    requires_query,
+                    entities_query,
+                ),
+                &[100, 101],
+            ),
+            with_depends_on(
+                flatten_entity_fetch_node(
+                    3,
+                    "inventory",
+                    "products",
+                    requires_query,
+                    entities_query,
+                ),
+                &[102],
+            ),
+        ];
+
+        let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph)
+            .expect("optimize should work");
+
+        let batch = optimized
+            .as_batch_fetch()
+            .expect("the three fetches should be merged into one BatchFetch");
+
+        assert_eq!(batch.completes.as_ref(), &[1, 2, 3]);
+        assert_eq!(batch.depends_on.as_ref(), &[100, 101, 102]);
     }
 
     /// Same variable name with incompatible types should block batching,
@@ -2267,6 +2348,7 @@ mod tests {
 
         let fetch_node = FetchNode {
             id,
+            depends_on: Box::default(),
             service_name: service_name.to_string(),
             variable_usages: non_representation_variable_names,
             operation_kind: Some(OperationKind::Query),
@@ -2291,6 +2373,17 @@ mod tests {
             path,
             node: Box::new(PlanNode::Fetch(Box::new(fetch_node))),
         })
+    }
+
+    fn with_depends_on(node: PlanNode, depends_on: &[i64]) -> PlanNode {
+        let PlanNode::Flatten(mut flatten_node) = node else {
+            panic!("expected Flatten node");
+        };
+        let PlanNode::Fetch(fetch_node) = flatten_node.node.as_mut() else {
+            panic!("expected Fetch node");
+        };
+        fetch_node.depends_on = depends_on.into();
+        PlanNode::Flatten(flatten_node)
     }
 
     fn with_input_rewrite(node: PlanNode) -> PlanNode {
@@ -2335,6 +2428,7 @@ mod tests {
 
         FetchNode {
             id,
+            depends_on: Box::default(),
             service_name: service_name.to_string(),
             variable_usages: None,
             operation_kind: Some(OperationKind::Query),

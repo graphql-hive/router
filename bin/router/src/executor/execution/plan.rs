@@ -141,6 +141,8 @@ pub struct QueryPlanExecutionOpts<'exec> {
     pub response_header_sink: ResponseHeaderSink,
     pub error_masking_runtime: Arc<Option<ErrorMaskingRuntime>>,
     pub connection_fingerprint: Option<ConnectionFingerprint>,
+    /// Run the plan by its fetch-graph dependencies instead of its waves.
+    pub dependency_aware_execution: bool,
 }
 
 pub struct PlanSubscriptionOutput {
@@ -423,6 +425,7 @@ pub async fn execute_query_plan<'exec>(
                     response_header_sink: response_header_sink.clone(),
                     error_masking_runtime: opts.error_masking_runtime.clone(),
                     connection_fingerprint: opts.connection_fingerprint,
+                    dependency_aware_execution: opts.dependency_aware_execution,
                 };
                 match execute_query_plan_with_data(response.data, opts).await {
                     Ok(result) => yield result.body,
@@ -533,10 +536,20 @@ async fn execute_query_plan_with_data<'exec>(
         plugin_req_state: opts.plugin_req_state.as_ref(),
         operation_name_factory: &opts.operation_name_factory,
         connection_fingerprint: opts.connection_fingerprint,
+        dependency_aware_execution: opts.dependency_aware_execution,
     };
 
     if let Some(node) = &opts.query_plan.node {
-        executor.execute_plan_node(&mut exec_ctx, node).await;
+        // The scheduler bails out (without touching `exec_ctx`) on plan shapes it does
+        // not run, so wave execution stays the fallback.
+        let scheduled = executor.dependency_aware_execution
+            && executor
+                .execute_plan_dependency_aware(&mut exec_ctx, node)
+                .await;
+
+        if !scheduled {
+            executor.execute_plan_node(&mut exec_ctx, node).await;
+        }
     }
 
     let error_count = exec_ctx.errors.len(); // Added for usage reporting
@@ -712,6 +725,7 @@ pub struct Executor<'exec> {
     pub plugin_req_state: Option<&'exec PluginRequestState<'exec>>,
     pub operation_name_factory: &'exec OperationNameFactory,
     pub connection_fingerprint: Option<ConnectionFingerprint>,
+    pub dependency_aware_execution: bool,
 }
 
 pub enum ExecutionJob<'exec> {
@@ -898,7 +912,7 @@ impl<'exec> Executor<'exec> {
      * The return type is not a future of `Option`, but `Option` of future because the only case when we don't have a future,
      * and the result(`None`) is when the plan node is flatten node with no data.
      */
-    fn prepare_job_future<'wave>(
+    pub(super) fn prepare_job_future<'wave>(
         &'wave self,
         node: &'exec PlanNode,
         data: &Value<'exec>,
@@ -1082,7 +1096,7 @@ impl<'exec> Executor<'exec> {
     // of the GraphQL response
     // For example, if a subgraph is down, the rest of the plan can still be executed
     // See `error_handling_e2e_tests` for reproduction
-    fn process_job_result(
+    pub(super) fn process_job_result(
         &self,
         ctx: &mut ExecutionContext<'exec>,
         job: Result<ExecutionJob<'exec>, PlanExecutionError>,
@@ -1711,7 +1725,7 @@ impl<'exec> Executor<'exec> {
     }
 }
 
-fn condition_node_by_variables<'a>(
+pub(super) fn condition_node_by_variables<'a>(
     condition_node: &'a ConditionNode,
     variable_values: &'a Option<VariablesMap>,
 ) -> Option<&'a PlanNode> {
@@ -1968,6 +1982,7 @@ mod tests {
             plugin_req_state: None,
             operation_name_factory: &OperationNameFactory::default(),
             connection_fingerprint: None,
+            dependency_aware_execution: false,
         };
 
         let data: ResponseValue = sonic_rs::from_str(
@@ -2095,6 +2110,7 @@ mod tests {
             plugin_req_state: None,
             operation_name_factory: &OperationNameFactory::default(),
             connection_fingerprint: None,
+            dependency_aware_execution: false,
         };
 
         let mock_a = subgraph_a
@@ -2148,6 +2164,7 @@ mod tests {
                         PlanNode::Fetch(Box::new(FetchNode {
                             id: 1,
                             planner_requires: (),
+                            depends_on: Box::default(),
                             service_name: "subgraph_a".to_string(),
                             operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_a }"),
@@ -2163,6 +2180,7 @@ mod tests {
                         PlanNode::Fetch(Box::new(FetchNode {
                             id: 2,
                             planner_requires: (),
+                            depends_on: Box::default(),
                             service_name: "subgraph_b".to_string(),
                             operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_b }"),

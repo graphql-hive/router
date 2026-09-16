@@ -73,6 +73,10 @@ pub struct EnvVarOverrides {
     #[envconfig(from = "QUERY_PLANNER_EXPERIMENTAL_ABSTRACT_TYPE_FOLDING")]
     pub query_planner_experimental_abstract_type_folding: Option<bool>,
 
+    // Execution overrides
+    #[envconfig(from = "EXECUTION_EXPERIMENTAL_DEPENDENCY_AWARE_EXECUTION")]
+    pub execution_experimental_dependency_aware_execution: Option<bool>,
+
     // Error masking
     #[envconfig(from = "DISABLE_SUBGRAPH_ERROR_MASKING")]
     pub disable_subgraph_error_masking: Option<bool>,
@@ -264,6 +268,17 @@ impl EnvVarOverrides {
             )?;
         }
 
+        if let Some(dependency_aware_execution) = self
+            .execution_experimental_dependency_aware_execution
+            .take()
+        {
+            debug!(target: CONFIG_LOGGING_TARGET, value = dependency_aware_execution, "overriding 'experimental_dependency_aware_execution'");
+            config = config.set_override(
+                "execution.experimental_dependency_aware_execution",
+                dependency_aware_execution,
+            )?;
+        }
+
         if let Some(disable_subgraph_error_masking) = self.disable_subgraph_error_masking.take() {
             debug!(
                 "[config-override] 'disable_subgraph_error_masking' = {}",
@@ -415,6 +430,16 @@ http:
         });
 
         assert!(config.query_planner.experimental_abstract_type_folding);
+    }
+
+    #[test]
+    fn execution_dependency_aware_execution_override_sets_config() {
+        let config = config_from_overrides(EnvVarOverrides {
+            execution_experimental_dependency_aware_execution: Some(true),
+            ..Default::default()
+        });
+
+        assert!(config.execution.experimental_dependency_aware_execution);
     }
 
     #[test]

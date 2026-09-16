@@ -6,7 +6,11 @@ pub mod monolith;
 pub mod products;
 pub mod reviews;
 
-use std::sync::{atomic::AtomicUsize, Arc};
+use std::{
+    collections::HashMap,
+    sync::{atomic::AtomicUsize, Arc, LazyLock},
+    time::Duration,
+};
 
 use async_graphql_axum::{GraphQL, GraphQLSubscription};
 use axum::{
@@ -23,14 +27,56 @@ use tokio::{
     task::JoinHandle,
 };
 
-async fn delay_middleware(req: Request, next: Next) -> Response {
-    let delay_ms: Option<u64> = std::env::var("SUBGRAPH_DELAY_MS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .filter(|d| *d != 0);
+/// Artificial latency per subgraph, read once at startup.
+///
+/// `SUBGRAPH_DELAY_MS` delays every subgraph, `SUBGRAPH_DELAY_MS_<NAME>` overrides it for
+/// one (`SUBGRAPH_DELAY_MS_REVIEWS=100`). A uniform delay makes every fetch equally slow,
+/// which is exactly the case where wave execution and dependency-aware execution behave
+/// the same - to see a wave barrier you need the subgraphs to differ.
+///
+/// Read once rather than per request: an env lookup per request lands in the latency the
+/// benchmark is measuring.
+static SUBGRAPH_DELAYS: LazyLock<SubgraphDelays> = LazyLock::new(SubgraphDelays::from_env);
 
-    if let Some(delay_ms) = delay_ms {
-        tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+struct SubgraphDelays {
+    every_subgraph: Option<u64>,
+    by_subgraph: HashMap<String, u64>,
+}
+
+impl SubgraphDelays {
+    fn from_env() -> Self {
+        fn parse(value: String) -> Option<u64> {
+            value.parse::<u64>().ok().filter(|ms| *ms != 0)
+        }
+
+        let by_subgraph = std::env::vars()
+            .filter_map(|(key, value)| {
+                let name = key.strip_prefix("SUBGRAPH_DELAY_MS_")?;
+                Some((name.to_ascii_lowercase(), parse(value)?))
+            })
+            .collect();
+
+        Self {
+            every_subgraph: std::env::var("SUBGRAPH_DELAY_MS").ok().and_then(parse),
+            by_subgraph,
+        }
+    }
+
+    /// `/reviews` and `/reviews/ws` are both the `reviews` subgraph.
+    fn for_path(&self, path: &str) -> Option<Duration> {
+        let subgraph = path.trim_start_matches('/').split('/').next()?;
+
+        self.by_subgraph
+            .get(subgraph)
+            .copied()
+            .or(self.every_subgraph)
+            .map(Duration::from_millis)
+    }
+}
+
+async fn delay_middleware(req: Request, next: Next) -> Response {
+    if let Some(delay) = SUBGRAPH_DELAYS.for_path(req.uri().path()) {
+        tokio::time::sleep(delay).await;
     }
 
     next.run(req).await

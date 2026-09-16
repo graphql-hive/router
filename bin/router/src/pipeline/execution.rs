@@ -157,6 +157,10 @@ pub async fn execute_plan<'exec>(
             response_header_sink,
             error_masking_runtime: supergraph.runtime.error_masking.clone(),
             connection_fingerprint: planned_request.connection_fingerprint,
+            dependency_aware_execution: app_state
+                .router_config
+                .execution
+                .experimental_dependency_aware_execution,
         })
         .await?;
 

@@ -32,8 +32,17 @@ jobs:
           RUST_BACKTRACE: full
           RUST_LOG: debug
   e2e:
-    name: test / e2e
+    name: test / e2e (${{ matrix.executor.name }})
     runs-on: ubuntu-latest
+    strategy:
+      # Both executors must report - knowing only that "one of them failed" is useless.
+      fail-fast: false
+      matrix:
+        executor:
+          - name: wave
+            dependency_aware: "false"
+          - name: dependency-aware
+            dependency_aware: "true"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: setup rust
@@ -51,8 +60,12 @@ jobs:
         env:
           RUST_BACKTRACE: full
           RUST_LOG: debug
+          EXECUTION_EXPERIMENTAL_DEPENDENCY_AWARE_EXECUTION: ${{ matrix.executor.dependency_aware }}
 
       - name: memory baseline
+        # One executor is enough: this measures the response pipeline, and two numbers
+        # for the same baseline would only be confusing.
+        if: matrix.executor.dependency_aware == 'false'
         run: cargo run -p e2e --bin memory_baseline
         timeout-minutes: 10
         env:
@@ -309,8 +322,16 @@ jobs:
           ./bench/ci-detect-regression.sh
 
   differential:
-    name: test / differential
+    name: test / differential (${{ matrix.executor.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        executor:
+          - name: wave
+            config: bench/configs/default.config.yaml
+          - name: dependency-aware
+            config: bench/configs/dependency-aware.config.yaml
     env:
       NODE_NO_WARNINGS: true
       NODE_ENV: production
@@ -340,7 +361,7 @@ jobs:
           echo "$!" > router.pid
           sleep 5
         env:
-          ROUTER_CONFIG_FILE_PATH: bench/configs/default.config.yaml
+          ROUTER_CONFIG_FILE_PATH: ${{ matrix.executor.config }}
       - name: Run monolith baseline
         run: |
           npm start --workspace=monolith-js &
@@ -365,7 +386,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: differential-failed-tests
+          name: differential-failed-tests-${{ matrix.executor.name }}
           path: failed-tests/
 
   graphql-over-http:
@@ -384,10 +405,21 @@ jobs:
         working-directory: audits
 
   federation-audit:
-    name: test / federation-audit
+    name: test / federation-audit (${{ matrix.executor.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        executor:
+          - name: wave
+            dependency_aware: "false"
+          - name: dependency-aware
+            dependency_aware: "true"
     env:
       GATEWAY_TIMEOUT: 1800000 # 30 minutes, to prevent CI timeout for long-running tests
+      # Job-level, so both audit runs below (plain and abstract-type-folding) use it.
+      # `run-router.sh` starts the router with the environment it inherits.
+      EXECUTION_EXPERIMENTAL_DEPENDENCY_AWARE_EXECUTION: ${{ matrix.executor.dependency_aware }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: setup rust
@@ -404,7 +436,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: federation-audit-logs
+          name: federation-audit-logs-${{ matrix.executor.name }}
           path: |
             ./audits/logs/*.log
       - name: Run Audits (experimental_abstract_type_folding)
