@@ -67,7 +67,7 @@ async fn test_deprecated_span_attributes() {
       @"
     Span: http.server
       Kind: Server
-      Status: message='' code='1'
+      Status: message='' code='0'
       Attributes:
         client.address: [address]
         client.port: [port]
@@ -202,7 +202,7 @@ async fn test_spec_and_deprecated_span_attributes() {
       @"
     Span: http.server
       Kind: Server
-      Status: message='' code='1'
+      Status: message='' code='0'
       Attributes:
         client.address: [address]
         client.port: [port]
@@ -365,7 +365,7 @@ async fn test_http_route_attribute_is_low_cardinality() {
       @"
     Span: http.server
       Kind: Server
-      Status: message='' code='1'
+      Status: message='' code='0'
       Attributes:
         client.address: [address]
         client.port: [port]

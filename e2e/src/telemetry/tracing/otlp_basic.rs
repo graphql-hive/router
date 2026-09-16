@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::testkit::{
     otel::{CollectedSpan, OtlpCollector},
-    TestRouter, TestSubgraphs,
+    ResponseLike, TestRouter, TestSubgraphs,
 };
 
 /// Verify OTLP exporter works with HTTP protocol
@@ -89,7 +89,7 @@ async fn test_otlp_http_export_with_graphql_request() {
       @"
     Span: http.server
       Kind: Server
-      Status: message='' code='1'
+      Status: message='' code='0'
       Attributes:
         client.address: [address]
         client.port: [port]
@@ -267,6 +267,83 @@ async fn test_otlp_http_export_with_graphql_request() {
     );
 }
 
+#[ntex::test]
+async fn test_otlp_marks_graphql_errors_as_errors_on_operation_and_root_spans() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_traces_endpoint();
+
+    let subgraphs = TestSubgraphs::builder()
+        .with_on_request(|request| {
+            (request.path == "/accounts").then(|| {
+                let mut headers = http::HeaderMap::new();
+                headers.insert(
+                    http::header::CONTENT_TYPE,
+                    http::HeaderValue::from_static("application/json"),
+                );
+                ResponseLike::new(
+                    axum::http::StatusCode::OK,
+                    Some(
+                        r#"{"data":{"users":null},"errors":[{"message":"users failed"}]}"#
+                            .to_string(),
+                    ),
+                    Some(headers),
+                )
+            })
+        })
+        .build()
+        .start()
+        .await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+          supergraph:
+            source: file
+            path: {supergraph_path}
+
+          telemetry:
+            tracing:
+              exporters:
+                - kind: otlp
+                  endpoint: {otlp_endpoint}
+                  protocol: http
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 2s
+      "#,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::ACCEPT,
+        http::HeaderValue::from_static("application/json"),
+    );
+    let response = router
+        .send_graphql_request("{ users { id } }", None, Some(headers))
+        .await;
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+    let root = otlp_collector
+        .wait_for_span_by_hive_kind_one("http.server")
+        .await;
+    let operation = otlp_collector
+        .wait_for_span_by_hive_kind_one("graphql.operation")
+        .await;
+
+    assert_eq!(root.status.as_ref().map(|status| status.code), Some(2));
+    assert_eq!(operation.status.as_ref().map(|status| status.code), Some(2));
+}
+
 /// Verify OTLP exporter works with gRPC protocol
 #[ntex::test]
 async fn test_otlp_grpc_export_with_graphql_request() {
@@ -351,7 +428,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
       @"
     Span: http.server
       Kind: Server
-      Status: message='' code='1'
+      Status: message='' code='0'
       Attributes:
         client.address: [address]
         client.port: [port]

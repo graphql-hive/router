@@ -367,6 +367,10 @@ impl GraphQLOperationSpan {
     pub fn record_error_count(&self, count: usize) {
         self.span
             .record(attributes::HIVE_GRAPHQL_ERROR_COUNT, count);
+        // error details live on events, this status makes the operation visible to apm
+        if count > 0 {
+            self.span.record(attributes::OTEL_STATUS_CODE, "Error");
+        }
     }
 
     pub fn record_errors(&self, errors_fn: impl FnOnce() -> Vec<ObservedError>) {

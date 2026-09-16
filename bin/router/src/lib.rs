@@ -352,6 +352,15 @@ async fn graphql_endpoint_dispatch(
 
         root_http_request_span.record_response(&response);
 
+        // application/json encodes graphql errors in a 200 response, so http
+        // status alone is insufficient to figure out if the http request is error
+        if matches!(
+            read_graphql_response_metric_status(request),
+            Some(GraphQLResponseStatus::Error)
+        ) {
+            root_http_request_span.record_error();
+        }
+
         response
     }
     .instrument(root_http_request_span.clone())

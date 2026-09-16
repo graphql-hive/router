@@ -8,7 +8,7 @@ use libdd_trace_utils::msgpack_decoder::v04;
 
 use crate::{
     some_header_map,
-    testkit::{otel::OtlpCollector, EnvVarsGuard, TestRouter, TestSubgraphs},
+    testkit::{otel::OtlpCollector, EnvVarsGuard, ResponseLike, TestRouter, TestSubgraphs},
 };
 
 #[derive(Clone)]
@@ -209,6 +209,108 @@ async fn test_datadog_sampled_trace_has_router_context() {
     assert!(operation.meta.get("graphql.document.hash").is_some());
     // the instrumentation gate keeps sensitive documents out of datadog's private processor
     assert!(operation.meta.get("graphql.document").is_none());
+}
+
+#[ntex::test]
+async fn test_datadog_marks_graphql_errors_on_operation_and_root_spans() {
+    let agent = MockDatadogAgent::start();
+    let _env = EnvVarsGuard::new()
+        .set("DD_REMOTE_CONFIGURATION_ENABLED", "false")
+        .set("DD_INSTRUMENTATION_TELEMETRY_ENABLED", "false")
+        .apply()
+        .await;
+    let subgraphs = TestSubgraphs::builder()
+        .with_on_request(|request| {
+            (request.path == "/accounts").then(|| {
+                let mut headers = http::HeaderMap::new();
+                headers.insert(
+                    http::header::CONTENT_TYPE,
+                    http::HeaderValue::from_static("application/json"),
+                );
+                ResponseLike::new(
+                    axum::http::StatusCode::OK,
+                    Some(
+                        r#"{"data":{"users":null},"errors":[{"message":"users failed"}]}"#
+                            .to_string(),
+                    ),
+                    Some(headers),
+                )
+            })
+        })
+        .build()
+        .start()
+        .await;
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+          telemetry:
+            tracing:
+              collect:
+                sampling: 1.0
+              exporters:
+                - kind: datadog
+                  endpoint: {}
+        "#,
+            supergraph_path(),
+            agent.address,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    agent.wait_for_path("/info").await;
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::ACCEPT,
+        http::HeaderValue::from_static("application/json"),
+    );
+    let response = router
+        .send_graphql_request("{ users { id } }", None, Some(headers))
+        .await;
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    drop(router);
+
+    let trace_requests = agent.wait_for_path("/v0.4/traces").await;
+    let trace = trace_requests
+        .iter()
+        .filter_map(|request| v04::from_slice(&request.body).ok())
+        .flat_map(|(traces, _)| traces)
+        .find(|trace| {
+            trace
+                .iter()
+                .any(|span| span.meta.get("hive.kind").copied() == Some("graphql.operation"))
+        })
+        .expect("datadog did not receive the graphql trace");
+    let root = trace.iter().find(|span| span.parent_id == 0).unwrap();
+    let operation = trace
+        .iter()
+        .find(|span| span.meta.get("hive.kind").copied() == Some("graphql.operation"))
+        .unwrap();
+    assert_eq!(root.error, 1);
+    assert_eq!(operation.error, 1);
+
+    let stats_requests = agent.wait_for_path("/v0.6/stats").await;
+    let root_errors = stats_requests
+        .iter()
+        .map(|request| {
+            rmp_serde::from_slice::<ClientStatsPayload>(&request.body)
+                .expect("invalid datadog stats payload")
+        })
+        .flat_map(|payload| payload.stats)
+        .flat_map(|bucket| bucket.stats)
+        .filter(|stats| {
+            stats.name == "http.server.request"
+                && stats.resource == "POST /graphql"
+                && stats.span_kind == "server"
+                && stats.is_trace_root == Trilean::True as i32
+        })
+        .map(|stats| stats.errors)
+        .sum::<u64>();
+    assert_eq!(root_errors, 1);
 }
 
 #[ntex::test]
