@@ -1226,8 +1226,8 @@ mod plugin_runtime_cache_tests {
         // overriding one cache leaves the others inheriting
         let mut options = SupergraphOptions::default();
         options.cache.query_plans.set_max_entries(3);
-        let overriding =
-            Supergraph::from_sdl("test", TEST_SUPERGRAPH_SDL, options).expect("valid test supergraph SDL");
+        let overriding = Supergraph::from_sdl("test", TEST_SUPERGRAPH_SDL, options)
+            .expect("valid test supergraph SDL");
         let runtime =
             RouterSupergraphRuntime::build(&overriding.snapshot(), &state.runtime_context)
                 .await
