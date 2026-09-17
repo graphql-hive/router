@@ -1,10 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Limits for a single in-memory cache (router config file).
-///
-/// Plugin authors don't build this directly - see [`CacheOverride`] and
-/// `SupergraphOptions::cache` for the per-variant plugin API.
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 #[non_exhaustive]
@@ -57,7 +53,7 @@ pub struct CacheConfig {
 #[serde(deny_unknown_fields)]
 #[non_exhaustive]
 pub struct RouterCacheConfig {
-    /// Parsed GraphQL documents, keyed by the incoming query string.
+    /// Parsed GraphQL documents, keyed by the hash of the incoming query string.
     #[serde(default)]
     pub parsing: CacheLimitsConfig,
 }
@@ -78,15 +74,15 @@ pub struct SupergraphCacheConfig {
     pub query_plans: CacheLimitsConfig,
 }
 
-/// Per-variant overrides for [`SupergraphCacheConfig`], set by plugins that serve their own
-/// supergraph variants.
+/// Per-variant overrides for [`SupergraphCacheConfig`],
+/// set by plugins that serve their own supergraph variants.
 ///
 /// `SupergraphOptions::default()` already carries a defaulted instance of this, so plugins
 /// only touch the caches they care about - everything left alone inherits the router
 /// config's `cache.supergraph` value:
 ///
 /// ```
-/// # use hive_router::plugins::hooks::on_supergraph_load::SupergraphOptions;
+/// use hive_router::plugins::hooks::on_supergraph_load::SupergraphOptions;
 /// let mut options = SupergraphOptions::default();
 /// options.cache.query_plans.set_max_entries(100);
 /// ```
@@ -117,8 +113,8 @@ pub struct CacheOverride {
 
 impl CacheOverride {
     /// Uses `max_entries` for this variant instead of the router config's value.
-    /// `0` turns the cache off. Returns the mutable reference so further
-    /// `set_*` calls can be chained once more dimensions exist.
+    /// `0` turns the cache off.
+    /// Returns the mutable reference so further `set_*` calls can be chained once more dimensions exist.
     pub fn set_max_entries(&mut self, max_entries: u64) -> &mut Self {
         self.inner = Some(CacheLimitsConfig {
             max_entries,
@@ -169,7 +165,6 @@ mod tests {
 
     #[tokio::test]
     async fn should_cache_nothing_when_max_entries_is_zero() {
-        // `0` is documented as "off", so make sure moka actually honors it
         let cache: moka::future::Cache<u64, u64> = moka::future::Cache::new(0);
         cache.insert(1, 1).await;
         cache.run_pending_tasks().await;
