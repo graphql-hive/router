@@ -156,10 +156,10 @@ async fn test_datadog_sampled_trace_has_router_context() {
         .iter()
         .find(|request| {
             v04::from_slice(&request.body).is_ok_and(|(traces, _)| {
-                traces
-                    .iter()
-                    .flatten()
-                    .any(|span| span.meta.get("hive.kind").copied() == Some("graphql.operation"))
+                traces.iter().flatten().any(|span| {
+                    span.meta.get("hive.kind").map(|value| value.as_ref())
+                        == Some("graphql.operation")
+                })
             })
         })
         .expect("datadog did not receive the graphql trace");
@@ -175,35 +175,54 @@ async fn test_datadog_sampled_trace_has_router_context() {
     let trace = traces
         .iter()
         .find(|trace| {
-            trace
-                .iter()
-                .any(|span| span.meta.get("hive.kind").copied() == Some("graphql.operation"))
+            trace.iter().any(|span| {
+                span.meta.get("hive.kind").map(|value| value.as_ref()) == Some("graphql.operation")
+            })
         })
         .unwrap();
     let root = trace.iter().find(|span| span.parent_id == 0).unwrap();
     assert_eq!(root.name, "http.server.request");
     assert_eq!(root.resource, "POST /graphql");
     assert_eq!(root.service, "hive-router");
-    assert_eq!(root.meta.get("span.kind").copied(), Some("server"));
-    assert_eq!(root.meta.get("http.route").copied(), Some("/graphql"));
-    assert_eq!(root.meta.get("custom.router").copied(), Some("datadog-e2e"));
     assert_eq!(
-        root.meta.get("telemetry.sdk.name").copied(),
+        root.meta.get("span.kind").map(|value| value.as_ref()),
+        Some("server")
+    );
+    assert_eq!(
+        root.meta.get("http.route").map(|value| value.as_ref()),
+        Some("/graphql")
+    );
+    assert_eq!(
+        root.meta.get("custom.router").map(|value| value.as_ref()),
+        Some("datadog-e2e")
+    );
+    assert_eq!(
+        root.meta
+            .get("telemetry.sdk.name")
+            .map(|value| value.as_ref()),
         Some("datadog")
     );
 
     let operation = trace
         .iter()
-        .find(|span| span.meta.get("hive.kind").copied() == Some("graphql.operation"))
+        .find(|span| {
+            span.meta.get("hive.kind").map(|value| value.as_ref()) == Some("graphql.operation")
+        })
         .unwrap();
     assert_eq!(operation.name, "graphql.server.request");
     assert_eq!(operation.resource, "query DatadogUsers");
     assert_eq!(
-        operation.meta.get("graphql.operation.name").copied(),
+        operation
+            .meta
+            .get("graphql.operation.name")
+            .map(|value| value.as_ref()),
         Some("DatadogUsers")
     );
     assert_eq!(
-        operation.meta.get("graphql.operation.type").copied(),
+        operation
+            .meta
+            .get("graphql.operation.type")
+            .map(|value| value.as_ref()),
         Some("query")
     );
     assert!(operation.meta.get("graphql.document.hash").is_some());
@@ -280,15 +299,17 @@ async fn test_datadog_marks_graphql_errors_on_operation_and_root_spans() {
         .filter_map(|request| v04::from_slice(&request.body).ok())
         .flat_map(|(traces, _)| traces)
         .find(|trace| {
-            trace
-                .iter()
-                .any(|span| span.meta.get("hive.kind").copied() == Some("graphql.operation"))
+            trace.iter().any(|span| {
+                span.meta.get("hive.kind").map(|value| value.as_ref()) == Some("graphql.operation")
+            })
         })
         .expect("datadog did not receive the graphql trace");
     let root = trace.iter().find(|span| span.parent_id == 0).unwrap();
     let operation = trace
         .iter()
-        .find(|span| span.meta.get("hive.kind").copied() == Some("graphql.operation"))
+        .find(|span| {
+            span.meta.get("hive.kind").map(|value| value.as_ref()) == Some("graphql.operation")
+        })
         .unwrap();
     assert_eq!(root.error, 1);
     assert_eq!(operation.error, 1);
@@ -439,9 +460,10 @@ async fn assert_datadog_parent_based_sampler(parent_based_sampler: bool) {
             .filter_map(|request| v04::from_slice(&request.body).ok())
             .flat_map(|(traces, _)| traces)
             .find(|trace| {
-                trace
-                    .iter()
-                    .any(|span| span.meta.get("hive.kind").copied() == Some("graphql.operation"))
+                trace.iter().any(|span| {
+                    span.meta.get("hive.kind").map(|value| value.as_ref())
+                        == Some("graphql.operation")
+                })
             })
             .expect("sampled parent was not honored");
         let root = trace
@@ -463,10 +485,10 @@ async fn assert_datadog_parent_based_sampler(parent_based_sampler: bool) {
         agent.wait_for_path("/v0.6/stats").await;
         assert!(agent.requests_for("/v0.4/traces").iter().all(|request| {
             v04::from_slice(&request.body).is_ok_and(|(traces, _)| {
-                traces
-                    .iter()
-                    .flatten()
-                    .all(|span| span.meta.get("hive.kind").copied() != Some("graphql.operation"))
+                traces.iter().flatten().all(|span| {
+                    span.meta.get("hive.kind").map(|value| value.as_ref())
+                        != Some("graphql.operation")
+                })
             })
         }));
     }
@@ -560,16 +582,24 @@ async fn test_datadog_and_otlp_export_sampled_spans_independently() {
         .filter_map(|request| v04::from_slice(&request.body).ok())
         .flat_map(|(traces, _)| traces)
         .flatten()
-        .find(|span| span.meta.get("hive.kind").copied() == Some("graphql.operation"))
+        .find(|span| {
+            span.meta.get("hive.kind").map(|value| value.as_ref()) == Some("graphql.operation")
+        })
         .expect("datadog did not receive the graphql trace");
     assert_eq!(operation.name, "graphql.server.request");
     assert_eq!(operation.resource, "query MixedExporters");
     assert_eq!(
-        operation.meta.get("graphql.operation.name").copied(),
+        operation
+            .meta
+            .get("graphql.operation.name")
+            .map(|value| value.as_ref()),
         Some("MixedExporters")
     );
     assert_eq!(
-        operation.meta.get("graphql.operation.type").copied(),
+        operation
+            .meta
+            .get("graphql.operation.type")
+            .map(|value| value.as_ref()),
         Some("query")
     );
     assert!(operation.meta.get("graphql.document.hash").is_some());
@@ -659,7 +689,7 @@ async fn test_datadog_and_hive_keep_exporter_specific_graphql_documents() {
         .flatten()
         .filter(|span| {
             matches!(
-                span.meta.get("hive.kind").copied(),
+                span.meta.get("hive.kind").map(|value| value.as_ref()),
                 Some("graphql.operation" | "graphql.subgraph.operation")
             )
         })
@@ -822,9 +852,9 @@ async fn test_datadog_partial_sampling_retains_some_traces_and_stats_cover_every
         })
         .flatten()
         .filter(|trace| {
-            trace
-                .iter()
-                .any(|span| span.meta.get("hive.kind").copied() == Some("graphql.operation"))
+            trace.iter().any(|span| {
+                span.meta.get("hive.kind").map(|value| value.as_ref()) == Some("graphql.operation")
+            })
         })
         .count() as u64;
     assert!(retained > 0, "partial sampling retained no traces");
