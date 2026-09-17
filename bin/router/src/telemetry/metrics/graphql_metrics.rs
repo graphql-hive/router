@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use opentelemetry::{
     metrics::{Counter, Meter},
     KeyValue,
@@ -18,6 +20,7 @@ pub struct GraphQLMetrics {
 #[derive(Clone)]
 pub struct GraphQLErrorMetricsRecorder {
     counter: Counter<u64>,
+    supergraph_name: Option<Arc<str>>,
 }
 
 impl GraphQLMetrics {
@@ -35,16 +38,22 @@ impl GraphQLMetrics {
         }
     }
 
-    pub fn error_recorder(&self) -> Option<GraphQLErrorMetricsRecorder> {
+    pub fn error_recorder(
+        &self,
+        supergraph_name: Option<Arc<str>>,
+    ) -> Option<GraphQLErrorMetricsRecorder> {
         self.instruments
             .errors_total
             .as_ref()
             .cloned()
-            .map(|counter| GraphQLErrorMetricsRecorder { counter })
+            .map(|counter| GraphQLErrorMetricsRecorder {
+                counter,
+                supergraph_name,
+            })
     }
 
-    pub fn record_error(&self, code: &str) {
-        if let Some(recorder) = self.error_recorder() {
+    pub fn record_error(&self, code: &str, supergraph_name: Option<Arc<str>>) {
+        if let Some(recorder) = self.error_recorder(supergraph_name) {
             recorder.record_error_code(Some(code));
         }
     }
@@ -55,7 +64,13 @@ impl GraphQLErrorMetricsRecorder {
         let code = code
             .filter(|code| !code.is_empty())
             .unwrap_or(values::UNKNOWN);
-        let attributes = [KeyValue::new(labels::CODE, code.to_string())];
+        let mut attributes = vec![KeyValue::new(labels::CODE, code.to_string())];
+        if let Some(supergraph_name) = &self.supergraph_name {
+            attributes.push(KeyValue::new(
+                labels::SUPERGRAPH_NAME,
+                supergraph_name.clone(),
+            ));
+        }
 
         #[cfg(debug_assertions)]
         debug_assert_attrs(names::GRAPHQL_ERRORS_TOTAL, &attributes);

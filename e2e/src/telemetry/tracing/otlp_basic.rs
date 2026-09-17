@@ -123,6 +123,7 @@ async fn test_otlp_http_export_with_graphql_request() {
         graphql.operation.type: query
         hive.graphql.operation.hash: e92177e49c0010d4e52929531ebe30c9
         hive.kind: graphql.operation
+        hive.supergraph.name: default
         target: hive-router
     "
     );
@@ -462,6 +463,7 @@ async fn test_otlp_grpc_export_with_graphql_request() {
         graphql.operation.type: query
         hive.graphql.operation.hash: e92177e49c0010d4e52929531ebe30c9
         hive.kind: graphql.operation
+        hive.supergraph.name: default
         target: hive-router
     "
     );

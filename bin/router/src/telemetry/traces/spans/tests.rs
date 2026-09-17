@@ -838,12 +838,16 @@ fn test_graphql_operation_span() {
                 attributes::HIVE_CLIENT_NAME,
                 attributes::HIVE_CLIENT_VERSION,
                 attributes::HIVE_TARGET,
+                attributes::HIVE_SUPERGRAPH_NAME,
                 attributes::HIVE_GRAPHQL_OPERATION_HASH,
             ],
         );
 
         span.record_hive_target(Some("example/router/test"));
         layer.assert_recorded_value(&span, attributes::HIVE_TARGET, "example/router/test");
+
+        span.record_supergraph_name("default");
+        layer.assert_recorded_value(&span, attributes::HIVE_SUPERGRAPH_NAME, "default");
 
         span.record_error_count(3);
         layer.assert_recorded_value(&span, attributes::HIVE_GRAPHQL_ERROR_COUNT, "3");

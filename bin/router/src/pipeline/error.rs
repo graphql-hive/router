@@ -563,11 +563,15 @@ pub fn handle_pipeline_error(
         }
     }
 
+    let supergraph_name = req
+        .extensions()
+        .get::<crate::schema_state::SelectedSupergraph>()
+        .map(|selected| selected.snapshot.name.clone());
     if let Some(error_recorder) = shared_state
         .telemetry_context
         .metrics
         .graphql
-        .error_recorder()
+        .error_recorder(supergraph_name)
     {
         error_recorder
             .record_errors(|| errors.iter().map(|error| error.extensions.code.as_deref()));

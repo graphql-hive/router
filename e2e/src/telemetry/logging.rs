@@ -249,7 +249,7 @@ async fn json_log_req_summary() {
       "response_mode": "single",
       "status_code": 200,
       "subgraph_requests": 1,
-      "supergraph_identifier": 0,
+      "supergraph_name": "default",
       "target": "router::request",
       "timestamp": "[timestamp]"
     }
@@ -278,7 +278,7 @@ async fn json_log_req_summary() {
       "response_mode": "single",
       "status_code": 400,
       "subgraph_requests": 0,
-      "supergraph_identifier": 0,
+      "supergraph_name": "default",
       "target": "router::request",
       "timestamp": "[timestamp]"
     }
@@ -307,7 +307,7 @@ async fn json_log_req_summary() {
       "response_mode": "single",
       "status_code": 400,
       "subgraph_requests": 0,
-      "supergraph_identifier": 0,
+      "supergraph_name": "default",
       "target": "router::request",
       "timestamp": "[timestamp]"
     }
@@ -455,7 +455,7 @@ async fn test_logging_of_subscriptions() {
       "response_mode": "stream",
       "status_code": 200,
       "subgraph_requests": 1,
-      "supergraph_identifier": 0,
+      "supergraph_name": "default",
       "target": "router::request",
       "timestamp": "[timestamp]"
     }
@@ -558,7 +558,7 @@ async fn should_report_correct_duration_for_stream_subscription() {
       "response_mode": "stream",
       "status_code": 200,
       "subgraph_requests": 12,
-      "supergraph_identifier": 0,
+      "supergraph_name": "default",
       "target": "router::request",
       "timestamp": "[timestamp]"
     }

@@ -20,7 +20,7 @@ use crate::pipeline::authorization::metadata::AuthorizationMetadata;
 use crate::pipeline::query_plan::PlannedQuery;
 use crate::query_planner::utils::parsing::safe_parse_schema;
 use crate::storage::StorageManager;
-use crate::telemetry::logging::targets;
+use crate::telemetry::logging::{summary, targets};
 use crate::telemetry::utils::resolve_value_or_expression;
 use crate::telemetry::{metrics::Metrics, TelemetryContext};
 use arc_swap::ArcSwap;
@@ -62,6 +62,8 @@ use crate::{
         resolve_from_config,
     },
 };
+
+pub const DEFAULT_SUPERGRAPH_NAME: &str = "default";
 
 #[derive(Debug, thiserror::Error)]
 pub enum RouterSupergraphRuntimeError {
@@ -348,6 +350,12 @@ struct ConfiguredSupergraph {
     runtime: Arc<RouterSupergraphRuntime>,
 }
 
+impl SelectedSupergraph {
+    fn record_selection(&self) {
+        summary::record(|s| s.set_supergraph_name(&self.snapshot.name));
+    }
+}
+
 impl From<&ConfiguredSupergraph> for SelectedSupergraph {
     fn from(configured: &ConfiguredSupergraph) -> Self {
         SelectedSupergraph {
@@ -500,7 +508,8 @@ impl ConfiguredSupergraph {
 
         let options = supergraph_options(router_config)?;
         let mut new_supergraph = new_supergraph.unwrap_or_else(|| {
-            Supergraph::from_document(new_ast, options).map_err(SupergraphManagerError::from)
+            Supergraph::from_document(DEFAULT_SUPERGRAPH_NAME, new_ast, options)
+                .map_err(SupergraphManagerError::from)
         })?;
 
         if !on_end_callbacks.is_empty() {
@@ -557,8 +566,14 @@ impl SchemaState {
                 runtime,
             };
 
-            debug!(target: targets::SUPERGRAPH, internal_id = selected.snapshot.cache_id, "supergraph was set from a plugin");
+            debug!(
+                target: targets::SUPERGRAPH,
+                name = %selected.snapshot.name,
+                internal_id = selected.snapshot.cache_id,
+                "supergraph was set from a plugin"
+            );
 
+            selected.record_selection();
             req.extensions_mut().insert(selected.clone());
 
             return Ok(Some(selected));
@@ -575,6 +590,7 @@ impl SchemaState {
         if let Some(selected) = &selected {
             debug!(target: targets::SUPERGRAPH, "using supergraph from the configured default");
 
+            selected.record_selection();
             req.extensions_mut().insert(selected.clone());
         }
 
@@ -1132,7 +1148,7 @@ mod plugin_runtime_cache_tests {
     fn test_owner() -> Arc<Supergraph> {
         crate::init_rustls_crypto_provider();
         Arc::new(
-            Supergraph::from_sdl(TEST_SUPERGRAPH_SDL, SupergraphOptions::default())
+            Supergraph::from_sdl("test", TEST_SUPERGRAPH_SDL, SupergraphOptions::default())
                 .expect("valid test supergraph SDL"),
         )
     }
@@ -1149,8 +1165,10 @@ mod plugin_runtime_cache_tests {
         second_options.error_masking.redacted_error_message = "second".to_string();
         second_options.traffic_shaping.all.forward_operation_name = true;
 
-        let first = Arc::new(Supergraph::from_sdl(TEST_SUPERGRAPH_SDL, first_options).unwrap());
-        let second = Arc::new(Supergraph::from_sdl(TEST_SUPERGRAPH_SDL, second_options).unwrap());
+        let first =
+            Arc::new(Supergraph::from_sdl("first", TEST_SUPERGRAPH_SDL, first_options).unwrap());
+        let second =
+            Arc::new(Supergraph::from_sdl("second", TEST_SUPERGRAPH_SDL, second_options).unwrap());
         let first_runtime = state.resolve_runtime(&first.snapshot()).await.unwrap();
         let second_runtime = state.resolve_runtime(&second.snapshot()).await.unwrap();
 

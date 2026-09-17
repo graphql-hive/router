@@ -303,9 +303,10 @@ async fn handle_text_frame(
 
             let started_at = Instant::now();
             let operation_span = GraphQLOperationSpan::new();
-            operation_span.record_hive_target(
-                supergraph.and_then(|selected| selected.snapshot.options.hive_target.as_deref()),
-            );
+            if let Some(selected) = supergraph {
+                operation_span.record_supergraph_name(&selected.snapshot.name);
+                operation_span.record_hive_target(selected.snapshot.options.hive_target.as_deref());
+            }
             let span_clone = operation_span.clone();
             let hive_trace_scope = HiveTraceScope::new();
 
@@ -469,13 +470,13 @@ async fn handle_text_frame(
                           let _ = sink.send(ServerMessage::next(&id, &body)).await;
                           return Some(ServerMessage::complete(&id));
                       }
-                      Err(err) => return Some(err.into_server_message(&id, shared_state)),
+                      Err(err) => return Some(err.into_server_message(&id, shared_state, &supergraph.snapshot.name)),
                   };
 
                   let parser_result =
                       match parse_operation_with_cache(shared_state, &payload, &plugin_req_state).await {
                           Ok(result) => result,
-                          Err(err) => return Some(err.into_server_message(&id, shared_state)),
+                          Err(err) => return Some(err.into_server_message(&id, shared_state, &supergraph.snapshot.name)),
                       };
 
                   let parser_payload = match parser_result {
@@ -518,7 +519,7 @@ async fn handle_text_frame(
                           ));
                       }
                       Ok(None) => {}
-                      Err(err) => return Some(err.into_server_message(&id, shared_state)),
+                      Err(err) => return Some(err.into_server_message(&id, shared_state, &supergraph.snapshot.name)),
                   }
 
                   let normalize_payload = match normalize_request_with_cache(
@@ -531,7 +532,7 @@ async fn handle_text_frame(
                   .await
                   {
                       Ok(payload) => payload,
-                      Err(err) => return Some(err.into_server_message(&id, shared_state)),
+                      Err(err) => return Some(err.into_server_message(&id, shared_state, &supergraph.snapshot.name)),
                   };
 
                   let is_subscription = matches!(
@@ -540,7 +541,7 @@ async fn handle_text_frame(
                   );
 
                   if is_subscription && !shared_state.router_config.subscriptions.enabled {
-                      return Some(PipelineError::from(ClientPipelineError::SubscriptionsNotSupported).into_server_message(&id, shared_state));
+                      return Some(PipelineError::from(ClientPipelineError::SubscriptionsNotSupported).into_server_message(&id, shared_state, &supergraph.snapshot.name));
                   }
 
                   let request_dedupe_enabled =
@@ -650,12 +651,12 @@ async fn handle_text_frame(
                       let (shared_response, role) = match result {
                           Ok(result) => result,
                           Err(PipelineError::Client(ClientPipelineError::JwtError(err))) => {
-                              let _ = sink.send(err.clone().into_server_message(&id, shared_state)).await;
+                              let _ = sink.send(err.clone().into_server_message(&id, shared_state, &supergraph.snapshot.name)).await;
                               // we report error as graphql error, but we also close the
                               // connection since we're dealing with auth so let's be safe
                               return Some(err.into_close_message());
                           },
-                          Err(err) => return Some(err.into_server_message(&id, shared_state)),
+                          Err(err) => return Some(err.into_server_message(&id, shared_state, &supergraph.snapshot.name)),
                       };
                       if role == InFlightRole::Joiner {
                           shared_state
@@ -669,12 +670,12 @@ async fn handle_text_frame(
                       match exec(None).await {
                           Ok(result) => result,
                           Err(PipelineError::Client(ClientPipelineError::JwtError(err))) => {
-                              let _ = sink.send(err.clone().into_server_message(&id, shared_state)).await;
+                              let _ = sink.send(err.clone().into_server_message(&id, shared_state, &supergraph.snapshot.name)).await;
                               // we report error as graphql error, but we also close the
                               // connection since we're dealing with auth so let's be safe
                               return Some(err.into_close_message());
                           },
-                          Err(err) => return Some(err.into_server_message(&id, shared_state)),
+                          Err(err) => return Some(err.into_server_message(&id, shared_state, &supergraph.snapshot.name)),
                       }
                   };
 
@@ -897,7 +898,12 @@ fn parse_headers_from_extensions(extensions: Option<&HashMap<String, Value>>) ->
 
 // NOTE: no `From` trait because it can into ws message and ws closecode but both are ws::Message
 impl PipelineError {
-    fn into_server_message(self, id: &str, shared_state: &RouterSharedState) -> ws::Message {
+    fn into_server_message(
+        self,
+        id: &str,
+        shared_state: &RouterSharedState,
+        supergraph_name: &Arc<str>,
+    ) -> ws::Message {
         let code = self.graphql_error_code();
         let message = self.graphql_error_message();
 
@@ -905,7 +911,7 @@ impl PipelineError {
             .telemetry_context
             .metrics
             .graphql
-            .record_error(code);
+            .record_error(code, Some(supergraph_name.clone()));
 
         let graphql_error = GraphQLError::from_message_and_extensions(
             message,
@@ -918,14 +924,19 @@ impl PipelineError {
 
 // NOTE: no `From` trait because it can into ws message and ws closecode but both are ws::Message
 impl JwtError {
-    fn into_server_message(self, id: &str, shared_state: &RouterSharedState) -> ws::Message {
+    fn into_server_message(
+        self,
+        id: &str,
+        shared_state: &RouterSharedState,
+        supergraph_name: &Arc<str>,
+    ) -> ws::Message {
         let code = self.error_code();
 
         shared_state
             .telemetry_context
             .metrics
             .graphql
-            .record_error(code);
+            .record_error(code, Some(supergraph_name.clone()));
 
         ServerMessage::error(
             id,

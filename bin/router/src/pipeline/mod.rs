@@ -246,7 +246,7 @@ pub async fn graphql_request_handler(
                 response_headers: vec![(RETRY_AFTER, HeaderValue::from_static("10"))],
             }.into());
         };
-        summary::record(|s| s.set_supergraph_identifier(supergraph.snapshot.cache_id));
+        operation_span.record_supergraph_name(&supergraph.snapshot.name);
         operation_span.record_hive_target(supergraph.snapshot.options.hive_target.as_deref());
 
         let operation_preparation_result = OperationPreparation::prepare_http(

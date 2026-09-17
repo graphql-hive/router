@@ -44,6 +44,7 @@ pub const HIVE_GRAPHQL_ERROR_CODES: &str = "hive.graphql.error.codes";
 pub const HIVE_CLIENT_NAME: &str = "hive.client.name";
 pub const HIVE_CLIENT_VERSION: &str = "hive.client.version";
 pub const HIVE_TARGET: &str = "hive.target";
+pub const HIVE_SUPERGRAPH_NAME: &str = "hive.supergraph.name";
 pub const HIVE_GRAPHQL_OPERATION_HASH: &str = "hive.graphql.operation.hash";
 pub const HIVE_GRAPHQL_SUBGRAPH_NAME: &str = "hive.graphql.subgraph.name";
 
