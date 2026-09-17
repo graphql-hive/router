@@ -814,4 +814,413 @@ mod tests {
             r#"{"data":{"node":{"label":"Ada"}}}"#
         );
     }
+
+    /// Null-propagation matrix for nested object lists through `ShapeCursor`.
+    ///
+    /// Covers `[[Foo!]!]!`, `[[Foo]]`, `[[Foo!]!]` and `[Foo!]!`
+    /// with `null` introduced at every level:
+    /// - nullable leaf field
+    /// - non-null leaf field
+    /// - null object
+    /// - null inner list
+    /// - null outer list
+    #[test]
+    fn nested_list_nullability_matrix() {
+        let supergraph = parse_schema(
+            r#"
+            type Query {
+                strict: [[Foo!]!]!
+                nullable: [[Foo]]
+                boundary: [[Foo!]!]
+                mixed: [Foo!]!
+            }
+            type Foo { name: String!, nick: String }
+            "#,
+        );
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let schema_metadata = consumer_schema.schema_metadata();
+        let supergraph_state = SupergraphState::new(&supergraph);
+
+        // Shape bytes are one flag byte per level, outside in:
+        // LIST = 1, NON_NULL = 2.
+        let assert_projection = |field: &str,
+                                 expected_shape: &[u8],
+                                 data_value: &str,
+                                 expected: &str| {
+            let operation = parse_operation(&format!(r#"query {{ {field} {{ name nick }} }}"#));
+            let normalized = normalize_operation(&supergraph_state, &operation, None).unwrap();
+            let (root_type_name, plan) =
+                ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+            let root_fields = plan.root_fields();
+            assert_eq!(root_fields.len(), 1, "one root field for {field}");
+            assert_eq!(
+                plan.shape(root_fields[0].nullability()),
+                expected_shape,
+                "nullability shape for {field}"
+            );
+
+            let data_str = format!(r#"{{"__typename":"Query","{field}":{data_value}}}"#);
+            let data_json: sonic_rs::Value = sonic_rs::from_str(&data_str).unwrap();
+            let data = Value::from(data_json.as_ref());
+            let output = project_by_operation(
+                &data,
+                vec![],
+                &Default::default(),
+                root_type_name,
+                &plan,
+                &None,
+                1024,
+                &schema_metadata,
+            )
+            .unwrap();
+            assert_eq!(
+                String::from_utf8(output).unwrap(),
+                expected,
+                "field {field} with data {data_value}"
+            );
+        };
+
+        // `[[Foo!]!]!`: every level is non-null, so any `null` below the field
+        // collapses all the way to `data`.
+        let strict_shape: &[u8] = &[3, 3, 2];
+        assert_projection(
+            "strict",
+            strict_shape,
+            r#"[[{"__typename":"Foo","name":"a","nick":"b"}]]"#,
+            r#"{"data":{"strict":[[{"name":"a","nick":"b"}]]}}"#,
+        );
+        // Nullable leaf stays put.
+        assert_projection(
+            "strict",
+            strict_shape,
+            r#"[[{"__typename":"Foo","name":"a","nick":null}]]"#,
+            r#"{"data":{"strict":[[{"name":"a","nick":null}]]}}"#,
+        );
+        // Non-null leaf bubbles through both lists and the field.
+        assert_projection(
+            "strict",
+            strict_shape,
+            r#"[[{"__typename":"Foo","name":null,"nick":"b"}]]"#,
+            r#"{"data":null}"#,
+        );
+        // Null object (`Foo!`) bubbles.
+        assert_projection("strict", strict_shape, r#"[[null]]"#, r#"{"data":null}"#);
+        // Null inner list (`[Foo!]!`) bubbles.
+        assert_projection("strict", strict_shape, r#"[null]"#, r#"{"data":null}"#);
+        // Null outer list bubbles through the non-null field.
+        assert_projection("strict", strict_shape, r#"null"#, r#"{"data":null}"#);
+        // A late bad item discards earlier good items at the inner level.
+        assert_projection(
+            "strict",
+            strict_shape,
+            r#"[[{"__typename":"Foo","name":"a","nick":"b"},null]]"#,
+            r#"{"data":null}"#,
+        );
+        // A late bad inner discards earlier good inners at the outer level.
+        assert_projection(
+            "strict",
+            strict_shape,
+            r#"[[{"__typename":"Foo","name":"a","nick":"b"}],null]"#,
+            r#"{"data":null}"#,
+        );
+
+        // `[[Foo]]`: every level is nullable, so `null` stays where it appears.
+        let nullable_shape: &[u8] = &[1, 1, 0];
+        assert_projection(
+            "nullable",
+            nullable_shape,
+            r#"[[{"__typename":"Foo","name":"a","nick":"b"}]]"#,
+            r#"{"data":{"nullable":[[{"name":"a","nick":"b"}]]}}"#,
+        );
+        assert_projection(
+            "nullable",
+            nullable_shape,
+            r#"[[{"__typename":"Foo","name":"a","nick":null}]]"#,
+            r#"{"data":{"nullable":[[{"name":"a","nick":null}]]}}"#,
+        );
+        // Non-null leaf still nulls its own (nullable) object, but no further.
+        assert_projection(
+            "nullable",
+            nullable_shape,
+            r#"[[{"__typename":"Foo","name":null,"nick":"b"}]]"#,
+            r#"{"data":{"nullable":[[null]]}}"#,
+        );
+        assert_projection(
+            "nullable",
+            nullable_shape,
+            r#"[[null]]"#,
+            r#"{"data":{"nullable":[[null]]}}"#,
+        );
+        // Null inner list stays next to its good sibling.
+        assert_projection(
+            "nullable",
+            nullable_shape,
+            r#"[[{"__typename":"Foo","name":"a","nick":"b"}],null]"#,
+            r#"{"data":{"nullable":[[{"name":"a","nick":"b"}],null]}}"#,
+        );
+        assert_projection(
+            "nullable",
+            nullable_shape,
+            r#"null"#,
+            r#"{"data":{"nullable":null}}"#,
+        );
+
+        // `[[Foo!]!]`: bubbling crosses the non-null inner list and outer
+        // items, then stops at the nullable outer list / field.
+        let boundary_shape: &[u8] = &[1, 3, 2];
+        assert_projection(
+            "boundary",
+            boundary_shape,
+            r#"[[{"__typename":"Foo","name":null,"nick":"b"}]]"#,
+            r#"{"data":{"boundary":null}}"#,
+        );
+        // The inner list is a non-null item of the outer list.
+        assert_projection(
+            "boundary",
+            boundary_shape,
+            r#"[null]"#,
+            r#"{"data":{"boundary":null}}"#,
+        );
+
+        // `[Foo!]!`: outer list and items are non-null, so item `null`s bubble
+        // to `data` while nullable leaves stay put.
+        let mixed_shape: &[u8] = &[3, 2];
+        assert_projection(
+            "mixed",
+            mixed_shape,
+            r#"[{"__typename":"Foo","name":"a","nick":"b"}]"#,
+            r#"{"data":{"mixed":[{"name":"a","nick":"b"}]}}"#,
+        );
+        assert_projection(
+            "mixed",
+            mixed_shape,
+            r#"[{"__typename":"Foo","name":"a","nick":null}]"#,
+            r#"{"data":{"mixed":[{"name":"a","nick":null}]}}"#,
+        );
+        assert_projection(
+            "mixed",
+            mixed_shape,
+            r#"[{"__typename":"Foo","name":null,"nick":"b"}]"#,
+            r#"{"data":null}"#,
+        );
+        assert_projection("mixed", mixed_shape, r#"[null]"#, r#"{"data":null}"#);
+        assert_projection("mixed", mixed_shape, r#"null"#, r#"{"data":null}"#);
+        assert_projection(
+            "mixed",
+            mixed_shape,
+            r#"[{"__typename":"Foo","name":"a","nick":"b"},null]"#,
+            r#"{"data":null}"#,
+        );
+    }
+
+    /// A requested non-null field that is **absent** from the subgraph data
+    /// (not just explicit `null`) must still bubble, via the missing-field
+    /// branch in `project_object_fields`. This is the shape a partially
+    /// materialized entity (e.g. failed entity resolution, cf. #1110) can
+    /// expose to the projector.
+    #[test]
+    fn missing_non_null_field_bubbles() {
+        let supergraph = parse_schema(
+            r#"
+            type Query { strictUser: User!, nullableUser: User }
+            type User { id: ID!, email: String! }
+            "#,
+        );
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let schema_metadata = consumer_schema.schema_metadata();
+        let supergraph_state = SupergraphState::new(&supergraph);
+
+        let project = |field: &str, data_value: &str| -> String {
+            let operation = parse_operation(&format!(r#"query {{ {field} {{ id email }} }}"#));
+            let normalized = normalize_operation(&supergraph_state, &operation, None).unwrap();
+            let (root_type_name, plan) =
+                ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+            let data_str = format!(r#"{{"__typename":"Query","{field}":{data_value}}}"#);
+            let data_json: sonic_rs::Value = sonic_rs::from_str(&data_str).unwrap();
+            let data = Value::from(data_json.as_ref());
+            let output = project_by_operation(
+                &data,
+                vec![],
+                &Default::default(),
+                root_type_name,
+                &plan,
+                &None,
+                256,
+                &schema_metadata,
+            )
+            .unwrap();
+            String::from_utf8(output).unwrap()
+        };
+
+        // `email` absent under a non-null chain collapses all the way to `data`.
+        assert_eq!(
+            project("strictUser", r#"{"__typename":"User","id":"1"}"#,),
+            r#"{"data":null}"#,
+        );
+        // Same absence under a nullable parent stops at that parent.
+        assert_eq!(
+            project("nullableUser", r#"{"__typename":"User","id":"1"}"#,),
+            r#"{"data":{"nullableUser":null}}"#,
+        );
+        // Sanity: a fully materialized object projects normally.
+        assert_eq!(
+            project(
+                "strictUser",
+                r#"{"__typename":"User","id":"1","email":"a@x.test"}"#,
+            ),
+            r#"{"data":{"strictUser":{"id":"1","email":"a@x.test"}}}"#,
+        );
+    }
+
+    /// Operations that normalize/filter to zero root fields must project to
+    /// `{"data":{}}` instead of failing. Covers both the statically dropped
+    /// case (`roots.len == 0` in the new `ProjectionPlan`) and the runtime
+    /// `@skip` case where the plan is non-empty but every field is skipped.
+    #[test]
+    fn empty_projection_returns_empty_data_object() {
+        let supergraph = parse_schema(
+            r#"
+            type Query { foo: String }
+            "#,
+        );
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let schema_metadata = consumer_schema.schema_metadata();
+        let supergraph_state = SupergraphState::new(&supergraph);
+
+        // Statically skipped: normalization drops the only field, so the plan
+        // itself is empty.
+        let operation = parse_operation(r#"query { foo @skip(if: true) }"#);
+        let normalized = normalize_operation(&supergraph_state, &operation, None).unwrap();
+        let (root_type_name, plan) =
+            ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+        assert!(
+            plan.is_empty(),
+            "statically skipped operation should produce an empty plan"
+        );
+        let data_json = sonic_rs::json!({"__typename": "Query"});
+        let data = Value::from(data_json.as_ref());
+        let output = project_by_operation(
+            &data,
+            vec![],
+            &Default::default(),
+            root_type_name,
+            &plan,
+            &None,
+            64,
+            &schema_metadata,
+        )
+        .unwrap();
+        assert_eq!(String::from_utf8(output).unwrap(), r#"{"data":{}}"#);
+
+        // Variable-skipped: the plan keeps the field behind a `Skip`
+        // condition, and projection with `skip = true` must still yield `{}`.
+        let operation =
+            parse_operation(r#"query Example($skip: Boolean!) { foo @skip(if: $skip) }"#);
+        let normalized = normalize_operation(&supergraph_state, &operation, None).unwrap();
+        let (root_type_name, plan) =
+            ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+        assert!(
+            !plan.is_empty(),
+            "variable-skipped operation keeps its plan until execution"
+        );
+        let mut variables = HashMap::new();
+        variables.insert("skip".to_string(), sonic_rs::Value::from(true));
+        let data_json = sonic_rs::json!({"__typename": "Query", "foo": "x"});
+        let data = Value::from(data_json.as_ref());
+        let output = project_by_operation(
+            &data,
+            vec![],
+            &Default::default(),
+            root_type_name,
+            &plan,
+            &Some(variables),
+            64,
+            &schema_metadata,
+        )
+        .unwrap();
+        assert_eq!(String::from_utf8(output).unwrap(), r#"{"data":{}}"#);
+    }
+
+    /// Nulling one concrete variant behind a shared response key must not
+    /// leak into the sibling variant. Exercises `ProjectionPlan::rewrite`
+    /// (authorization/operation-filter path) together with abstract-type
+    /// specialization: only the `User`-guarded `secret` becomes null.
+    #[test]
+    fn authorization_rewrite_nulls_single_abstract_variant() {
+        use crate::executor::operation_filter::PathSegment;
+        use crate::pipeline::trie::Trie;
+        use std::sync::Arc;
+
+        let supergraph = parse_schema(
+            r#"
+            interface Node { id: ID! }
+            type User implements Node { id: ID!, secret: String }
+            type Admin implements Node { id: ID!, secret: String }
+            type Query { node: Node }
+            "#,
+        );
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let schema_metadata = consumer_schema.schema_metadata();
+        let supergraph_state = SupergraphState::new(&supergraph);
+        let operation = parse_operation(
+            r#"
+            query {
+              node {
+                id
+                ... on User { secret }
+                ... on Admin { secret }
+              }
+            }
+            "#,
+        );
+        let normalized = normalize_operation(&supergraph_state, &operation, None).unwrap();
+        let (root_type_name, plan) =
+            ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+        let plan = Arc::new(plan);
+
+        // Sanity: both variants project before the rewrite.
+        let project = |plan: &ProjectionPlan, typename: &str| -> String {
+            let data_json = sonic_rs::json!({"__typename": "Query", "node": {"__typename": typename, "id": "1", "secret": "shh"}});
+            let data = Value::from(data_json.as_ref());
+            let output = project_by_operation(
+                &data,
+                vec![],
+                &Default::default(),
+                root_type_name,
+                plan,
+                &None,
+                256,
+                &schema_metadata,
+            )
+            .unwrap();
+            String::from_utf8(output).unwrap()
+        };
+        assert_eq!(
+            project(&plan, "User"),
+            r#"{"data":{"node":{"id":"1","secret":"shh"}}}"#
+        );
+        assert_eq!(
+            project(&plan, "Admin"),
+            r#"{"data":{"node":{"id":"1","secret":"shh"}}}"#
+        );
+
+        // Deny only `User.secret`: path is node -> User fragment -> secret.
+        let trie = Trie::from_paths(&[vec![
+            PathSegment::Field("node"),
+            PathSegment::Fragment("User"),
+            PathSegment::Field("secret"),
+        ]]);
+        let rewritten = plan.rewrite(&trie);
+
+        assert_eq!(
+            project(&rewritten, "User"),
+            r#"{"data":{"node":{"id":"1","secret":null}}}"#,
+            "nulled User variant must render secret as null"
+        );
+        assert_eq!(
+            project(&rewritten, "Admin"),
+            r#"{"data":{"node":{"id":"1","secret":"shh"}}}"#,
+            "sibling Admin variant must be unaffected"
+        );
+    }
 }
