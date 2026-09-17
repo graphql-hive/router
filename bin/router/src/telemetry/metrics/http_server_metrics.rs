@@ -1,5 +1,5 @@
 //! https://opentelemetry.io/docs/specs/semconv/http/http-metrics
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use ntex::http::body::{BodySize, MessageBody};
 use ntex::web::{HttpRequest, HttpResponse};
@@ -14,6 +14,8 @@ use crate::telemetry::utils::RequestRoutePattern;
 
 struct HttpServerInstruments {
     request_duration: Option<Histogram<f64>>,
+    request_overhead_duration: Option<Histogram<f64>>,
+    request_external_wait_duration: Option<Histogram<f64>>,
     active_requests: Option<UpDownCounter<i64>>,
     request_body_size: Option<Histogram<u64>>,
     response_body_size: Option<Histogram<u64>>,
@@ -22,6 +24,8 @@ struct HttpServerInstruments {
 impl HttpServerInstruments {
     fn is_enabled(&self) -> bool {
         self.request_duration.is_some()
+            || self.request_overhead_duration.is_some()
+            || self.request_external_wait_duration.is_some()
             || self.active_requests.is_some()
             || self.request_body_size.is_some()
             || self.response_body_size.is_some()
@@ -58,6 +62,28 @@ impl HttpServerMetrics {
                 .build()
         });
 
+        let request_overhead_duration = meter.map(|meter| {
+            meter
+                .f64_histogram(names::REQUEST_OVERHEAD_DURATION)
+                .with_unit("s")
+                .with_description(
+                    "Time the router itself spent on a request: the request duration minus the \
+                     union of the time spent waiting on subgraphs and coprocessors",
+                )
+                .build()
+        });
+
+        let request_external_wait_duration = meter.map(|meter| {
+            meter
+                .f64_histogram(names::REQUEST_EXTERNAL_WAIT_DURATION)
+                .with_unit("s")
+                .with_description(
+                    "Time a request spent waiting on at least one external service (subgraph or \
+                     coprocessor); overlapping waits are counted once",
+                )
+                .build()
+        });
+
         let request_body_size = meter.map(|meter| {
             meter
                 .u64_histogram(names::HTTP_SERVER_REQUEST_BODY_SIZE)
@@ -85,6 +111,8 @@ impl HttpServerMetrics {
         Self {
             instruments: HttpServerInstruments {
                 request_duration,
+                request_overhead_duration,
+                request_external_wait_duration,
                 active_requests,
                 request_body_size,
                 response_body_size,
@@ -137,6 +165,7 @@ impl HttpServerMetrics {
 }
 
 impl Capture<HttpServerRequestState<'_>> {
+    #[allow(clippy::too_many_arguments)]
     pub fn finish(
         self,
         response: &HttpResponse,
@@ -145,10 +174,12 @@ impl Capture<HttpServerRequestState<'_>> {
         graphql_operation_type: Option<&str>,
         graphql_response_status: values::GraphQLResponseStatus,
         supergraph_name: Option<&str>,
+        external_wait: Duration,
     ) {
         let Some(state) = self.take() else {
             return;
         };
+        let elapsed = state.started_at.elapsed();
 
         let mut attributes = vec![
             KeyValue::new(labels::HTTP_REQUEST_METHOD, state.method),
@@ -184,20 +215,69 @@ impl Capture<HttpServerRequestState<'_>> {
             attributes.push(KeyValue::new(labels::ERROR_TYPE, status_code as i64));
         }
 
+        let mut duration_attributes = attributes.clone();
+        if let Some(supergraph_name) = supergraph_name {
+            duration_attributes.push(KeyValue::new(
+                labels::SUPERGRAPH_NAME,
+                supergraph_name.to_string(),
+            ));
+        }
+
         if let Some(histogram) = &state.instruments.request_duration {
-            let mut duration_attributes = attributes.clone();
+            #[cfg(debug_assertions)]
+            debug_assert_attrs(names::HTTP_SERVER_REQUEST_DURATION, &duration_attributes);
+            histogram.record(elapsed.as_secs_f64(), &duration_attributes);
+        }
+
+        // Overhead is only meaningful for responses fully produced before returning to the
+        // client. A streamed body (subscriptions, incremental delivery) keeps waiting on
+        // subgraphs after this point, so `elapsed` would only cover its head.
+        let is_streamed = matches!(response.body().size(), BodySize::Stream);
+        let overhead_enabled = state.instruments.request_overhead_duration.is_some()
+            || state.instruments.request_external_wait_duration.is_some();
+        if !is_streamed && overhead_enabled {
+            // Deliberately narrower than the semconv set: these are GraphQL-level latency
+            // metrics, so the HTTP transport attributes would only add cardinality.
+            let mut overhead_attributes = vec![
+                KeyValue::new(labels::HTTP_ROUTE, state.route),
+                KeyValue::new(
+                    labels::GRAPHQL_RESPONSE_STATUS,
+                    graphql_response_status.as_str(),
+                ),
+                KeyValue::new(
+                    labels::GRAPHQL_OPERATION_NAME,
+                    graphql_operation_name
+                        .map(str::to_string)
+                        .unwrap_or_else(|| values::UNKNOWN.to_string()),
+                ),
+            ];
+            if let Some(graphql_operation_type) = graphql_operation_type {
+                overhead_attributes.push(KeyValue::new(
+                    labels::GRAPHQL_OPERATION_TYPE,
+                    graphql_operation_type.to_string(),
+                ));
+            }
             if let Some(supergraph_name) = supergraph_name {
-                duration_attributes.push(KeyValue::new(
+                overhead_attributes.push(KeyValue::new(
                     labels::SUPERGRAPH_NAME,
                     supergraph_name.to_string(),
                 ));
             }
-            #[cfg(debug_assertions)]
-            debug_assert_attrs(names::HTTP_SERVER_REQUEST_DURATION, &duration_attributes);
-            histogram.record(
-                state.started_at.elapsed().as_secs_f64(),
-                &duration_attributes,
-            );
+
+            if let Some(histogram) = &state.instruments.request_external_wait_duration {
+                #[cfg(debug_assertions)]
+                debug_assert_attrs(names::REQUEST_EXTERNAL_WAIT_DURATION, &overhead_attributes);
+                histogram.record(external_wait.as_secs_f64(), &overhead_attributes);
+            }
+
+            if let Some(histogram) = &state.instruments.request_overhead_duration {
+                #[cfg(debug_assertions)]
+                debug_assert_attrs(names::REQUEST_OVERHEAD_DURATION, &overhead_attributes);
+                histogram.record(
+                    elapsed.saturating_sub(external_wait).as_secs_f64(),
+                    &overhead_attributes,
+                );
+            }
         }
 
         if let (Some(histogram), Some(body_size)) =
