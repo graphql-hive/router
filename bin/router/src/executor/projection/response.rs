@@ -265,90 +265,91 @@ impl<'a> Projector<'a, '_> {
         nullability: Option<ShapeCursor<'_>>,
         indexes: &mut [usize],
     ) -> Result<NullPropagationDecision, ProjectionError> {
-    match data {
-        Value::Array(arr) => {
-            // Reuse field positions across objects in the same list.
-            let cache_size = if indexes.is_empty() && arr.len() > 1 && selection.has_children() {
-                Some(selection.children.len as usize)
-            } else {
-                None
-            };
-            let mut heap_cache = match cache_size {
-                Some(len) if len > STACK_CACHE_FIELD_LIMIT => vec![MISSING_FIELD_INDEX; len],
-                _ => Vec::new(),
-            };
-            let mut stack_cache = [MISSING_FIELD_INDEX; STACK_CACHE_FIELD_LIMIT];
-            let indexes = match cache_size {
-                Some(len) if len <= STACK_CACHE_FIELD_LIMIT => &mut stack_cache[..len],
-                Some(_) => heap_cache.as_mut_slice(),
-                _ => indexes,
-            };
-            let null_propagation_checkpoint = self.buffer.len();
-            let item_shape = nullability.and_then(ShapeCursor::list_item);
-            let item_non_null = item_shape.is_some_and(ShapeCursor::is_non_null);
-            self.buffer.put(OPEN_BRACKET);
-            let mut first = true;
-            for item in arr.iter() {
-                if !first {
-                    self.buffer.put(COMMA);
-                }
-                let needs_null_propagation = self.project_value(
-                    item,
-                    selection,
-                    parent_type_name,
-                    item_shape.or(nullability),
-                    indexes,
-                )?;
+        match data {
+            Value::Array(arr) => {
+                // Reuse field positions across objects in the same list.
+                let cache_size = if indexes.is_empty() && arr.len() > 1 && selection.has_children()
+                {
+                    Some(selection.children.len as usize)
+                } else {
+                    None
+                };
+                let mut heap_cache = match cache_size {
+                    Some(len) if len > STACK_CACHE_FIELD_LIMIT => vec![MISSING_FIELD_INDEX; len],
+                    _ => Vec::new(),
+                };
+                let mut stack_cache = [MISSING_FIELD_INDEX; STACK_CACHE_FIELD_LIMIT];
+                let indexes = match cache_size {
+                    Some(len) if len <= STACK_CACHE_FIELD_LIMIT => &mut stack_cache[..len],
+                    Some(_) => heap_cache.as_mut_slice(),
+                    _ => indexes,
+                };
+                let null_propagation_checkpoint = self.buffer.len();
+                let item_shape = nullability.and_then(ShapeCursor::list_item);
+                let item_non_null = item_shape.is_some_and(ShapeCursor::is_non_null);
+                self.buffer.put(OPEN_BRACKET);
+                let mut first = true;
+                for item in arr.iter() {
+                    if !first {
+                        self.buffer.put(COMMA);
+                    }
+                    let needs_null_propagation = self.project_value(
+                        item,
+                        selection,
+                        parent_type_name,
+                        item_shape.or(nullability),
+                        indexes,
+                    )?;
 
-                if needs_null_propagation.should_propagate() && item_non_null {
+                    if needs_null_propagation.should_propagate() && item_non_null {
+                        self.buffer.truncate(null_propagation_checkpoint);
+                        self.buffer.put(NULL);
+                        return Ok(NullPropagationDecision::PropagateNullValue);
+                    }
+
+                    first = false;
+                }
+
+                self.buffer.put(CLOSE_BRACKET);
+                Ok(NullPropagationDecision::KeepNullValue)
+            }
+            Value::Object(obj) if selection.has_children() => {
+                let null_propagation_checkpoint = self.buffer.len();
+                let mut first = true;
+                let type_name = TypeName::deferred(
+                    selection,
+                    self.plan,
+                    Some(data),
+                    parent_type_name,
+                    self.schema,
+                );
+                let fields = self.plan.fields(selection.children);
+                let null_propagation_decision =
+                    self.project_object_fields(obj, fields, &type_name, &mut first, indexes)?;
+
+                if null_propagation_decision.should_propagate() {
                     self.buffer.truncate(null_propagation_checkpoint);
                     self.buffer.put(NULL);
                     return Ok(NullPropagationDecision::PropagateNullValue);
                 }
 
-                first = false;
+                if !first {
+                    self.buffer.put(CLOSE_BRACE);
+                } else {
+                    self.buffer.put(EMPTY_OBJECT);
+                }
+                Ok(NullPropagationDecision::KeepNullValue)
             }
-
-            self.buffer.put(CLOSE_BRACKET);
-            Ok(NullPropagationDecision::KeepNullValue)
-        }
-        Value::Object(obj) if selection.has_children() => {
-            let null_propagation_checkpoint = self.buffer.len();
-            let mut first = true;
-            let type_name = TypeName::deferred(
-                selection,
-                self.plan,
-                Some(data),
-                parent_type_name,
-                self.schema,
-            );
-            let fields = self.plan.fields(selection.children);
-            let null_propagation_decision =
-                self.project_object_fields(obj, fields, &type_name, &mut first, indexes)?;
-
-            if null_propagation_decision.should_propagate() {
-                self.buffer.truncate(null_propagation_checkpoint);
+            Value::Null => {
                 self.buffer.put(NULL);
-                return Ok(NullPropagationDecision::PropagateNullValue);
+                Ok(NullPropagationDecision::PropagateNullValue)
             }
-
-            if !first {
-                self.buffer.put(CLOSE_BRACE);
-            } else {
-                self.buffer.put(EMPTY_OBJECT);
+            _ => {
+                serialize_value_to_buffer(data, &mut self.buffer);
+                Ok(NullPropagationDecision::KeepNullValue)
             }
-            Ok(NullPropagationDecision::KeepNullValue)
-        }
-        Value::Null => {
-            self.buffer.put(NULL);
-            Ok(NullPropagationDecision::PropagateNullValue)
-        }
-        _ => {
-            serialize_value_to_buffer(data, &mut self.buffer);
-            Ok(NullPropagationDecision::KeepNullValue)
         }
     }
-}
 
     fn project_object_fields(
         &mut self,
@@ -358,86 +359,100 @@ impl<'a> Projector<'a, '_> {
         first: &mut bool,
         indexes: &mut [usize],
     ) -> Result<NullPropagationDecision, ProjectionError> {
-    for (offset, field) in fields.iter().enumerate() {
-        let response_key = self.plan.response_key(field);
-        if let Some(guard) = field.parent_guard {
-            if !self.plan.guard_matches(guard, parent_type_name.get()?) {
-                continue;
+        for (offset, field) in fields.iter().enumerate() {
+            let response_key = self.plan.response_key(field);
+            if let Some(guard) = field.parent_guard {
+                if !self.plan.guard_matches(guard, parent_type_name.get()?) {
+                    continue;
+                }
             }
-        }
 
-        let field_val = find_field(obj, response_key, indexes.get_mut(offset));
+            let field_val = find_field(obj, response_key, indexes.get_mut(offset));
 
-        let res = if let Some(condition) = field.condition {
-            let field_type_name_cell = OnceCell::new();
-            let field_type_name_fn = || {
-                field_type_name_cell
-                    .get_or_init(|| {
-                        resolve_type_name(field, field_val, parent_type_name, self.plan, self.schema)
-                    })
-                    .clone()
-            };
-            let parent_type_name_fn = || parent_type_name.get();
-            evaluate(
-                condition,
-                self.plan,
-                &parent_type_name_fn,
-                &field_type_name_fn,
-                field_val,
-                self.variables,
-            )
-        } else {
-            Ok(())
-        };
-
-        match res {
-            Ok(()) => {
-                let non_null = field.is_non_null();
-                write_key(&mut self.buffer, first, response_key);
-
-                let null_propagation_decision = if field.is_null_value() {
-                    self.buffer.put(NULL);
-                    NullPropagationDecision::PropagateNullValue
-                } else if field.is_typename() {
-                    self.buffer.put(QUOTE);
-                    self.buffer.put(parent_type_name.get()?.as_bytes());
-                    self.buffer.put(QUOTE);
-                    NullPropagationDecision::KeepNullValue
-                } else if let Some(field_val) = field_val {
-                    let nullability = matches!(field_val, Value::Array(_))
-                        .then(|| ShapeCursor::new(self.plan.shape(field.nullability())));
-                    self.project_value(field_val, field, parent_type_name, nullability, &mut [])?
-                } else {
-                    self.buffer.put(NULL);
-                    NullPropagationDecision::PropagateNullValue
+            let res = if let Some(condition) = field.condition {
+                let field_type_name_cell = OnceCell::new();
+                let field_type_name_fn = || {
+                    field_type_name_cell
+                        .get_or_init(|| {
+                            resolve_type_name(
+                                field,
+                                field_val,
+                                parent_type_name,
+                                self.plan,
+                                self.schema,
+                            )
+                        })
+                        .clone()
                 };
+                let parent_type_name_fn = || parent_type_name.get();
+                evaluate(
+                    condition,
+                    self.plan,
+                    &parent_type_name_fn,
+                    &field_type_name_fn,
+                    field_val,
+                    self.variables,
+                )
+            } else {
+                Ok(())
+            };
 
-                // A `null` value in a non-null position bubbles up
-                if null_propagation_decision.should_propagate() && non_null {
-                    return Ok(NullPropagationDecision::PropagateNullValue);
+            match res {
+                Ok(()) => {
+                    let non_null = field.is_non_null();
+                    write_key(&mut self.buffer, first, response_key);
+
+                    let null_propagation_decision = if field.is_null_value() {
+                        self.buffer.put(NULL);
+                        NullPropagationDecision::PropagateNullValue
+                    } else if field.is_typename() {
+                        self.buffer.put(QUOTE);
+                        self.buffer.put(parent_type_name.get()?.as_bytes());
+                        self.buffer.put(QUOTE);
+                        NullPropagationDecision::KeepNullValue
+                    } else if let Some(field_val) = field_val {
+                        let nullability = matches!(field_val, Value::Array(_))
+                            .then(|| ShapeCursor::new(self.plan.shape(field.nullability())));
+                        self.project_value(
+                            field_val,
+                            field,
+                            parent_type_name,
+                            nullability,
+                            &mut [],
+                        )?
+                    } else {
+                        self.buffer.put(NULL);
+                        NullPropagationDecision::PropagateNullValue
+                    };
+
+                    // A `null` value in a non-null position bubbles up
+                    if null_propagation_decision.should_propagate() && non_null {
+                        return Ok(NullPropagationDecision::PropagateNullValue);
+                    }
                 }
-            }
-            Err(ConditionFailure::Fatal(error)) => {
-                return Err(error);
-            }
-            Err(ConditionFailure::Skip | ConditionFailure::InvalidParentType) => continue,
-            Err(
-                failure @ (ConditionFailure::InvalidEnumValue | ConditionFailure::InvalidFieldType),
-            ) => {
-                let non_null = field.is_non_null();
-                write_key(&mut self.buffer, first, response_key);
-                self.buffer.put(NULL);
-                if matches!(failure, ConditionFailure::InvalidEnumValue) {
-                    self.errors.push(GraphQLError::from("Value is not a valid enum value"));
+                Err(ConditionFailure::Fatal(error)) => {
+                    return Err(error);
                 }
-                if non_null {
-                    return Ok(NullPropagationDecision::PropagateNullValue);
+                Err(ConditionFailure::Skip | ConditionFailure::InvalidParentType) => continue,
+                Err(
+                    failure @ (ConditionFailure::InvalidEnumValue
+                    | ConditionFailure::InvalidFieldType),
+                ) => {
+                    let non_null = field.is_non_null();
+                    write_key(&mut self.buffer, first, response_key);
+                    self.buffer.put(NULL);
+                    if matches!(failure, ConditionFailure::InvalidEnumValue) {
+                        self.errors
+                            .push(GraphQLError::from("Value is not a valid enum value"));
+                    }
+                    if non_null {
+                        return Ok(NullPropagationDecision::PropagateNullValue);
+                    }
                 }
             }
         }
+        Ok(NullPropagationDecision::KeepNullValue)
     }
-    Ok(NullPropagationDecision::KeepNullValue)
-}
 }
 
 /// Finds `__typename` in a sorted object.
