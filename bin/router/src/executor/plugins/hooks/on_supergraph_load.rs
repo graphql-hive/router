@@ -41,6 +41,7 @@ static NEXT_SUPERGRAPH_DATA_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Immutable configuration whose meaning belongs to one supergraph generation.
 #[derive(Clone, Default)]
+#[non_exhaustive]
 pub struct SupergraphOptions {
     pub query_planner: QueryPlannerOptions,
     pub traffic_shaping: SupergraphTrafficShapingConfig,
