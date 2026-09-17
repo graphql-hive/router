@@ -354,7 +354,7 @@ impl RouterSharedState {
         active_subscriptions: ActiveSubscriptions,
         storage_manager: Arc<StorageManager>,
     ) -> Result<Self, SharedStateError> {
-        let parse_cache = Cache::new(1000);
+        let parse_cache = Cache::new(router_config.cache.router.parsing.max_entries);
         let coprocessor = router_config
             .coprocessor
             .as_ref()

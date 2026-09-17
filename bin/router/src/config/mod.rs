@@ -1,4 +1,5 @@
 pub mod authorization;
+pub mod cache;
 pub mod coprocessor;
 pub mod cors;
 pub mod csrf;
@@ -180,6 +181,9 @@ pub struct HiveRouterConfig {
     /// Configuration for error masking.
     #[serde(default)]
     pub error_masking: ErrorMaskingConfig,
+
+    #[serde(default)]
+    pub cache: cache::CacheConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]

@@ -3,7 +3,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::config::{
-    demand_control::DemandControlConfig, error_masking::ErrorMaskingConfig, headers::HeadersConfig,
+    cache::SupergraphCacheOverrides, demand_control::DemandControlConfig,
+    error_masking::ErrorMaskingConfig, headers::HeadersConfig,
     override_labels::OverrideLabelsConfig, override_subgraph_urls::OverrideSubgraphUrlsConfig,
     persisted_documents::PersistedDocumentsConfig, subscriptions::SupergraphSubscriptionsConfig,
     traffic_shaping::SupergraphTrafficShapingConfig,
@@ -40,6 +41,7 @@ static NEXT_SUPERGRAPH_DATA_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Immutable configuration whose meaning belongs to one supergraph generation.
 #[derive(Clone, Default)]
+#[non_exhaustive]
 pub struct SupergraphOptions {
     pub query_planner: QueryPlannerOptions,
     pub traffic_shaping: SupergraphTrafficShapingConfig,
@@ -51,6 +53,9 @@ pub struct SupergraphOptions {
     pub error_masking: ErrorMaskingConfig,
     pub persisted_documents: PersistedDocumentsConfig,
     pub hive_target: Option<String>,
+    /// Cache limits for this supergraph.
+    /// Anything left unset inherits the router config's `cache.supergraph` value.
+    pub cache: SupergraphCacheOverrides,
 }
 
 /// The schema and immutable graph-bound options shared by a [`Supergraph`] owner and every
