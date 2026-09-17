@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
 use crate::executor::introspection::schema::FieldNullability;
-use crate::executor::projection::plan::{ConditionId, GuardId};
+use crate::executor::projection::plan::{ConditionId, TypeGuardId};
 
 use super::ir::TypeSet;
-use super::{Condition, Guard, Range, SetId, ShapeFlags, ShapeId, SymbolId};
+use super::{Condition, Guard, NullabilityShapeId, Range, SetId, ShapeFlags, SymbolId};
 
 /// Table indexes are `u32`. You would need billions of fields to overflow one,
 /// so this just panics instead of every encoder function returning a `Result`.
@@ -40,16 +40,26 @@ fn intern_slice<T: PartialEq + Copy>(
 }
 
 #[derive(Default)]
+/// Tables used while building a projection plan.
 pub(super) struct TablesBuilder {
+    /// Storage for interned strings.
     pub(super) text: String,
+    /// Ranges of strings in `text`.
     pub(super) symbols: Vec<Range>,
+    /// Lookup for existing symbols.
     symbol_keys: HashMap<String, SymbolId>,
+    /// Stored conditions.
     pub(super) conditions: Vec<Condition>,
+    /// Stored type guards.
     pub(super) guards: Vec<Guard>,
+    /// Ranges of set members.
     pub(super) sets: Vec<Range>,
+    /// Flattened members of all sets.
     pub(super) set_members: Vec<SymbolId>,
-    pub(super) shapes: Vec<Range>,
-    pub(super) shape_bytes: Vec<u8>,
+    /// Ranges into `shape_flags`, one range per shape.
+    pub(super) shape_ranges: Vec<Range>,
+    /// Shape flags, one byte per type level.
+    pub(super) shape_flags: Vec<u8>,
 }
 
 impl TablesBuilder {
@@ -93,19 +103,19 @@ impl TablesBuilder {
         )))
     }
 
-    pub(super) fn intern_guard(&mut self, types: TypeSet<'_>) -> GuardId {
+    pub(super) fn intern_guard(&mut self, types: TypeSet<'_>) -> TypeGuardId {
         let guard = match types.as_ref() {
             [only] => Guard::Exact(self.intern_symbol(only)),
             _ => Guard::Set(self.intern_members(types)),
         };
-        GuardId::from_index(intern(&mut self.guards, guard))
+        TypeGuardId::from_index(intern(&mut self.guards, guard))
     }
 
     pub(super) fn intern_condition(&mut self, condition: Condition) -> ConditionId {
         ConditionId::from_index(intern(&mut self.conditions, condition))
     }
 
-    pub(super) fn intern_shape(&mut self, nullability: &FieldNullability) -> ShapeId {
+    pub(super) fn intern_shape(&mut self, nullability: &FieldNullability) -> NullabilityShapeId {
         let mut bytes = Vec::new();
         let mut current = nullability;
 
@@ -122,7 +132,7 @@ impl TablesBuilder {
             current = next;
         }
 
-        let index = intern_slice(&mut self.shapes, &mut self.shape_bytes, &bytes);
+        let index = intern_slice(&mut self.shape_ranges, &mut self.shape_flags, &bytes);
         let shape = id(index);
         // `FieldMeta` only spares 28 bits for this, so a bigger id would land
         // on the flag bits and quietly corrupt them.
@@ -130,6 +140,6 @@ impl TablesBuilder {
             shape <= super::FieldMeta::SHAPE_ID_MASK,
             "too many distinct nullability shapes for a projection plan"
         );
-        ShapeId(shape)
+        NullabilityShapeId(shape)
     }
 }

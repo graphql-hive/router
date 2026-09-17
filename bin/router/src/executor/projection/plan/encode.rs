@@ -2,7 +2,7 @@ use super::ir::{Field, Value};
 use super::tables::{id, TablesBuilder};
 use super::*;
 
-impl GuardId {
+impl TypeGuardId {
     pub(super) fn from_index(index: usize) -> Self {
         Self(NonZeroU32::new(id(index) + 1).expect("index + 1 is never zero"))
     }
@@ -34,8 +34,8 @@ impl Encoder {
                 guards: encoder.tables.guards.into_boxed_slice(),
                 sets: encoder.tables.sets.into_boxed_slice(),
                 set_members: encoder.tables.set_members.into_boxed_slice(),
-                shapes: encoder.tables.shapes.into_boxed_slice(),
-                shape_bytes: encoder.tables.shape_bytes.into_boxed_slice(),
+                shape_ranges: encoder.tables.shape_ranges.into_boxed_slice(),
+                shape_flags: encoder.tables.shape_flags.into_boxed_slice(),
             }),
         }
     }

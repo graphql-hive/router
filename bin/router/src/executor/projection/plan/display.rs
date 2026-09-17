@@ -58,7 +58,7 @@ impl ProjectionPlan {
         writeln!(f, "{indent}}}")
     }
 
-    fn fmt_guard(&self, id: GuardId, f: &mut FmtFormatter<'_>) -> FmtResult {
+    fn fmt_guard(&self, id: TypeGuardId, f: &mut FmtFormatter<'_>) -> FmtResult {
         match self.guard(id) {
             Guard::Exact(symbol) => write!(f, "Exact({})", self.text(symbol)),
             Guard::Set(set) => {
