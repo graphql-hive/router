@@ -43,35 +43,40 @@ impl ProjectionPlan {
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// ID of an interned string.
 pub struct SymbolId(pub(crate) u32);
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ShapeId(pub(crate) u32);
+/// ID of a nullability shape.
+pub struct NullabilityShapeId(pub(crate) u32);
 
-// Uses `NonZeroU32` so `Option` stays 4 bytes: `None` is 0,
-// `Some` stores table index + 1.
-// Use `index()` to get the real index back.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct GuardId(pub(crate) NonZeroU32);
+/// ID of a type guard.
+///
+/// Stored as table index + 1 so `Option<TypeGuardId>` stays 4 bytes.
+pub struct TypeGuardId(pub(crate) NonZeroU32);
 
-// Uses `NonZeroU32` so `Option` stays 4 bytes: `None` is 0,
-// `Some` stores table index + 1.
-// Use `index()` to get the real index back.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// ID of a directive or type condition.
+///
+/// Stored as table index + 1 so `Option<ConditionId>` stays 4 bytes.
 pub struct ConditionId(pub(crate) NonZeroU32);
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// ID of a set of symbols.
 pub struct SetId(pub(crate) u32);
 
-/// A slice of one of the flat tables: fields, text, set members or shape bytes.
+/// A slice of a flat table.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Range {
+    /// Start offset.
     pub start: u32,
+    /// Number of entries.
     pub len: u32,
 }
 
@@ -84,7 +89,7 @@ pub struct FieldRecord {
     pub response_key: Range,
     /// Nullability and field flags, packed into one number.
     meta: FieldMeta,
-    pub parent_guard: Option<GuardId>,
+    pub parent_guard: Option<TypeGuardId>,
     pub condition: Option<ConditionId>,
     pub children: Range,
 }
@@ -114,7 +119,7 @@ impl FieldMeta {
     pub(crate) const NON_NULL: u32 = 0b1000 << Self::SHAPE_BITS;
 
     #[inline]
-    pub(crate) fn new(shape: ShapeId, flags: u32) -> Self {
+    pub(crate) fn new(shape: NullabilityShapeId, flags: u32) -> Self {
         debug_assert!(shape.0 <= Self::SHAPE_ID_MASK);
         debug_assert_eq!(flags & Self::SHAPE_ID_MASK, 0);
         Self(shape.0 | flags)
@@ -125,8 +130,8 @@ impl FieldMeta {
 impl FieldRecord {
     /// Returns the field's nullability shape.
     #[inline]
-    pub fn nullability(&self) -> ShapeId {
-        ShapeId(self.meta.0 & FieldMeta::SHAPE_ID_MASK)
+    pub fn nullability(&self) -> NullabilityShapeId {
+        NullabilityShapeId(self.meta.0 & FieldMeta::SHAPE_ID_MASK)
     }
 
     /// Whether this field has nested selections.
@@ -172,8 +177,8 @@ impl FieldRecord {
 pub enum Condition {
     Include(SymbolId),
     Skip(SymbolId),
-    ParentType(GuardId),
-    FieldType(GuardId),
+    ParentType(TypeGuardId),
+    FieldType(TypeGuardId),
     EnumValues(SetId),
     And(ConditionId, ConditionId),
     Or(ConditionId, ConditionId),
@@ -188,14 +193,22 @@ pub enum Guard {
 
 #[derive(Clone, Debug, Default)]
 pub struct ProjectionTables {
+    /// Concatenated names and values
     pub text: Box<str>,
+    /// Ranges of strings in `text`.
     pub symbols: Box<[Range]>,
+    /// Stored conditions.
     pub conditions: Box<[Condition]>,
+    /// Stored type guards.
     pub guards: Box<[Guard]>,
+    /// Ranges of set members.
     pub sets: Box<[Range]>,
+    /// Flattened members of all sets.
     pub set_members: Box<[SymbolId]>,
-    pub shapes: Box<[Range]>,
-    pub shape_bytes: Box<[u8]>,
+    /// Ranges into `shape_flags`, indexed by `NullabilityShapeId`.
+    pub shape_ranges: Box<[Range]>,
+    /// Shape flags, one byte per type level.
+    pub shape_flags: Box<[u8]>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -229,7 +242,7 @@ impl Range {
     }
 }
 
-impl GuardId {
+impl TypeGuardId {
     fn index(self) -> usize {
         self.0.get() as usize - 1
     }
@@ -269,8 +282,8 @@ impl ProjectionPlan {
     }
 
     #[inline]
-    pub fn shape(&self, id: ShapeId) -> &[u8] {
-        self.tables.shapes[id.0 as usize].slice(&self.tables.shape_bytes)
+    pub fn shape(&self, id: NullabilityShapeId) -> &[u8] {
+        self.tables.shape_ranges[id.0 as usize].slice(&self.tables.shape_flags)
     }
 
     #[inline]
@@ -301,7 +314,7 @@ impl ProjectionPlan {
     }
 
     #[inline]
-    pub fn guard_matches(&self, id: GuardId, type_name: &str) -> bool {
+    pub fn guard_matches(&self, id: TypeGuardId, type_name: &str) -> bool {
         let guard = self.tables.guards[id.index()];
         match guard {
             Guard::Exact(symbol) => self.text(symbol) == type_name,
@@ -315,11 +328,11 @@ impl ProjectionPlan {
     }
 
     #[inline]
-    pub fn guard(&self, id: GuardId) -> Guard {
+    pub fn guard(&self, id: TypeGuardId) -> Guard {
         self.tables.guards[id.index()]
     }
 }
 
 const _: () = assert!(size_of::<FieldRecord>() == 32);
 const _: () = assert!(size_of::<Condition>() == 12);
-const _: () = assert!(size_of::<Option<GuardId>>() == 4);
+const _: () = assert!(size_of::<Option<TypeGuardId>>() == 4);
