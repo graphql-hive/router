@@ -1,4 +1,5 @@
 use crate::config::coprocessor::{CoprocessorConfig, CoprocessorEndpoint, CoprocessorProtocol};
+use crate::telemetry::external_wait;
 use crate::telemetry::metrics::catalog::values::GraphQLResponseStatus;
 use crate::telemetry::traces::spans::http_request::HttpClientRequestSpan;
 use crate::telemetry::TelemetryContext;
@@ -221,6 +222,7 @@ impl CoprocessorClient {
                 .inject_context_into_http_headers(request.headers_mut());
 
             let start = std::time::Instant::now();
+            let external_wait_guard = external_wait::enter();
             let response = tokio::time::timeout(self.timeout, self.client.request(request))
                 .await
                 .map_err(|_| CoprocessorError::RequestTimeout {
@@ -255,7 +257,9 @@ impl CoprocessorClient {
             }
 
             let (parts, response_body) = response.into_parts();
-            let response_body = match response_body.collect().await {
+            let response_body = response_body.collect().await;
+            drop(external_wait_guard);
+            let response_body = match response_body {
                 Ok(body) => body.to_bytes(),
                 Err(err) => {
                     let error = CoprocessorError::ResponseBodyReadFailure(err);

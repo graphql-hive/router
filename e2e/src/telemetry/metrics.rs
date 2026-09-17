@@ -365,6 +365,238 @@ async fn test_otlp_http_server_semconv_metrics_for_graphql_handler() {
     );
 }
 
+/// Ensures the router overhead metrics split a request into "waiting on subgraphs" and
+/// "router work", and that parallel subgraph waits are counted once (union), not summed.
+///
+/// Both subgraphs answer after `SUBGRAPH_DELAY`; the query fans out to them in parallel, so the
+/// external wait must be about one delay (not two) and the overhead must exclude it entirely.
+#[ntex::test]
+async fn test_otlp_router_overhead_excludes_union_of_parallel_subgraph_waits() {
+    const SUBGRAPH_DELAY: Duration = Duration::from_millis(400);
+
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_metrics_endpoint();
+
+    let subgraphs = TestSubgraphs::builder()
+        .with_delay(SUBGRAPH_DELAY)
+        .build()
+        .start()
+        .await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          telemetry:
+            metrics:
+              exporters:
+                - kind: otlp
+                  endpoint: {}
+                  protocol: http
+                  interval: 30ms
+                  max_export_timeout: 2s
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    // `users` lives in accounts and `topProducts` in products: two parallel subgraph fetches.
+    let response = router
+        .send_graphql_request(
+            "query ParallelQuery { users { id } topProducts { upc } }",
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(response.status(), ntex::http::StatusCode::OK);
+
+    wait_for_metrics_export().await;
+
+    let metrics = otlp_collector.metrics_view().await;
+    let attrs = [
+        (labels::HTTP_ROUTE, "/graphql"),
+        (labels::GRAPHQL_OPERATION_NAME, "ParallelQuery"),
+        (labels::GRAPHQL_OPERATION_TYPE, "query"),
+        (
+            labels::GRAPHQL_RESPONSE_STATUS,
+            values::GraphQLResponseStatus::Ok.as_str(),
+        ),
+        (labels::SUPERGRAPH_NAME, "default"),
+    ];
+
+    // Two subgraph calls were made, each waiting for the full delay...
+    let (client_count, client_sum) =
+        metrics.latest_histogram_count_sum(names::HTTP_CLIENT_REQUEST_DURATION, &[]);
+    assert_eq!(client_count, 2, "expected two subgraph requests");
+    assert!(
+        client_sum >= 2.0 * SUBGRAPH_DELAY.as_secs_f64(),
+        "expected the summed subgraph durations to cover both delays, got {client_sum}s"
+    );
+
+    // ...but the request waited on them concurrently, so the union is about one delay.
+    let (wait_count, wait_sum) =
+        metrics.latest_histogram_count_sum(names::REQUEST_EXTERNAL_WAIT_DURATION, &attrs);
+    assert_eq!(wait_count, 1);
+    assert!(
+        wait_sum >= SUBGRAPH_DELAY.as_secs_f64(),
+        "external wait {wait_sum}s should cover the subgraph delay"
+    );
+    assert!(
+        wait_sum < 2.0 * SUBGRAPH_DELAY.as_secs_f64() - 0.1,
+        "external wait {wait_sum}s should be a union of the parallel waits, not their sum"
+    );
+
+    let (total_count, total_sum) =
+        metrics.latest_histogram_count_sum(names::HTTP_SERVER_REQUEST_DURATION, &attrs);
+    assert_eq!(total_count, 1);
+
+    let (overhead_count, overhead_sum) =
+        metrics.latest_histogram_count_sum(names::REQUEST_OVERHEAD_DURATION, &attrs);
+    assert_eq!(overhead_count, 1);
+    assert!(
+        overhead_sum < 0.2,
+        "router overhead {overhead_sum}s should not include the subgraph delay"
+    );
+    // overhead = duration - external wait (modulo the microseconds between the two reads)
+    assert!(
+        (total_sum - wait_sum - overhead_sum).abs() < 0.01,
+        "duration {total_sum}s should equal wait {wait_sum}s + overhead {overhead_sum}s"
+    );
+
+    let attrs = metrics.latest_attribute_names(names::REQUEST_OVERHEAD_DURATION);
+    for transport_attr in [
+        labels::HTTP_REQUEST_METHOD,
+        labels::HTTP_RESPONSE_STATUS_CODE,
+        labels::ERROR_TYPE,
+    ] {
+        assert!(
+            !attrs.contains(transport_attr),
+            "Expected {transport_attr} to be absent from {}",
+            names::REQUEST_OVERHEAD_DURATION
+        );
+    }
+}
+
+/// Ensures a persisted document fetched from the Hive CDN on a cache miss counts as external
+/// wait rather than router overhead, and that the cached second lookup does not.
+#[ntex::test]
+async fn test_otlp_router_overhead_excludes_hive_cdn_persisted_document_fetch() {
+    const CDN_DELAY: Duration = Duration::from_millis(400);
+    let doc_id = "app~1.0.0~overhead-doc";
+    let cdn_path = "/apps/app/1.0.0/overhead-doc";
+
+    let mut cdn = mockito::Server::new_async().await;
+    let cdn_host = cdn.host_with_port();
+    let cdn_hit = cdn
+        .mock("GET", cdn_path)
+        .expect(1)
+        .with_status(200)
+        .with_header("content-type", "text/plain")
+        // mockito serves the body on its own thread, so a blocking sleep here only delays
+        // the CDN response and does not stall the router's runtime.
+        .with_chunked_body(|w| {
+            std::thread::sleep(CDN_DELAY);
+            w.write_all(b"query PersistedQuery { topProducts { name } }")
+        })
+        .create();
+
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_metrics_endpoint();
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          persisted_documents:
+            enabled: true
+            require_id: true
+            storage:
+              type: hive
+              endpoint: http://{cdn_host}
+              key: dummy_key
+              retry_policy:
+                max_retries: 0
+
+          telemetry:
+            metrics:
+              exporters:
+                - kind: otlp
+                  endpoint: {}
+                  protocol: http
+                  interval: 30ms
+                  max_export_timeout: 2s
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    // First request: cache miss, fetched from the (slow) CDN.
+    let response = router
+        .send_post_request("/graphql", json!({ "documentId": doc_id }), None)
+        .await;
+    assert_eq!(response.status(), ntex::http::StatusCode::OK);
+    wait_for_metrics_export().await;
+
+    let attrs = [(labels::GRAPHQL_OPERATION_NAME, "PersistedQuery")];
+    let metrics = otlp_collector.metrics_view().await;
+    let (wait_count, wait_sum) =
+        metrics.latest_histogram_count_sum(names::REQUEST_EXTERNAL_WAIT_DURATION, &attrs);
+    let (overhead_count, overhead_sum) =
+        metrics.latest_histogram_count_sum(names::REQUEST_OVERHEAD_DURATION, &attrs);
+    assert_eq!((wait_count, overhead_count), (1, 1));
+    assert!(
+        wait_sum >= CDN_DELAY.as_secs_f64(),
+        "external wait {wait_sum}s should cover the CDN fetch"
+    );
+    assert!(
+        overhead_sum < 0.2,
+        "router overhead {overhead_sum}s should not include the CDN fetch"
+    );
+
+    // Second request: served from the SDK cache, no CDN round-trip to wait on.
+    let response = router
+        .send_post_request("/graphql", json!({ "documentId": doc_id }), None)
+        .await;
+    assert_eq!(response.status(), ntex::http::StatusCode::OK);
+    wait_for_metrics_export().await;
+
+    let metrics = otlp_collector.metrics_view().await;
+    let (wait_count, wait_sum_after) =
+        metrics.latest_histogram_count_sum(names::REQUEST_EXTERNAL_WAIT_DURATION, &attrs);
+    assert_eq!(wait_count, 2);
+    assert!(
+        wait_sum_after - wait_sum < 0.2,
+        "cached lookup added {}s of external wait; only the subgraph call should remain",
+        wait_sum_after - wait_sum
+    );
+
+    cdn_hit.assert();
+}
+
 /// Ensures HTTP client semconv metrics are emitted for outbound subgraph requests.
 ///
 /// Happy-path assertions verify `graphql.response.status=ok` and absence of `error.type`.
@@ -485,6 +717,8 @@ async fn test_otlp_all_metrics_path_attribute_names() {
             names::HTTP_SERVER_REQUEST_DURATION,
             &[labels::ERROR_TYPE][..],
         ),
+        (names::REQUEST_OVERHEAD_DURATION, &[][..]),
+        (names::REQUEST_EXTERNAL_WAIT_DURATION, &[][..]),
         (
             names::HTTP_SERVER_REQUEST_BODY_SIZE,
             &[labels::ERROR_TYPE][..],
@@ -591,6 +825,8 @@ async fn test_otlp_all_metrics_happy_path_attribute_names() {
             names::HTTP_SERVER_REQUEST_DURATION,
             &[labels::ERROR_TYPE][..],
         ),
+        (names::REQUEST_OVERHEAD_DURATION, &[][..]),
+        (names::REQUEST_EXTERNAL_WAIT_DURATION, &[][..]),
         (
             names::HTTP_SERVER_REQUEST_BODY_SIZE,
             &[labels::ERROR_TYPE][..],

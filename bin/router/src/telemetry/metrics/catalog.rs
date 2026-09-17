@@ -165,6 +165,8 @@ pub mod names {
     pub const SUPERGRAPH_POLL_DURATION: &str = "hive.router.supergraph.poll.duration";
     pub const SUPERGRAPH_PROCESS_DURATION: &str = "hive.router.supergraph.process.duration";
     pub const HTTP_SERVER_REQUEST_DURATION: &str = "http.server.request.duration";
+    pub const REQUEST_OVERHEAD_DURATION: &str = "hive.router.request.overhead.duration";
+    pub const REQUEST_EXTERNAL_WAIT_DURATION: &str = "hive.router.request.external_wait.duration";
     pub const HTTP_SERVER_ACTIVE_REQUESTS: &str = "http.server.active_requests";
     pub const HTTP_SERVER_REQUEST_BODY_SIZE: &str = "http.server.request.body.size";
     pub const HTTP_SERVER_RESPONSE_BODY_SIZE: &str = "http.server.response.body.size";
@@ -339,6 +341,26 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
             labels::NETWORK_PROTOCOL_VERSION,
             labels::URL_SCHEME,
             labels::ERROR_TYPE,
+            labels::GRAPHQL_OPERATION_NAME,
+            labels::GRAPHQL_OPERATION_TYPE,
+            labels::GRAPHQL_RESPONSE_STATUS,
+            labels::SUPERGRAPH_NAME,
+        ],
+    ),
+    (
+        names::REQUEST_OVERHEAD_DURATION,
+        &[
+            labels::HTTP_ROUTE,
+            labels::GRAPHQL_OPERATION_NAME,
+            labels::GRAPHQL_OPERATION_TYPE,
+            labels::GRAPHQL_RESPONSE_STATUS,
+            labels::SUPERGRAPH_NAME,
+        ],
+    ),
+    (
+        names::REQUEST_EXTERNAL_WAIT_DURATION,
+        &[
+            labels::HTTP_ROUTE,
             labels::GRAPHQL_OPERATION_NAME,
             labels::GRAPHQL_OPERATION_TYPE,
             labels::GRAPHQL_RESPONSE_STATUS,
