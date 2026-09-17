@@ -2,11 +2,11 @@
 hive-router: minor
 ---
 
-# Named supergraphs, surfaced in logs, traces and metrics
+Named supergraphs, surfaced in logs, traces and metrics
 
 Every `Supergraph` now carries a human-readable `name`. The supergraph loaded from the router configuration (`supergraph.source`) is named `default`. Plugins that construct their own supergraphs - for example to serve a different schema variant per tenant or feature flag - give each one a name, and that name is what the router reports when describing which supergraph handled a request.
 
-## Plugin API
+### Plugin API
 
 `Supergraph::from_sdl` and `Supergraph::from_document` take the name as a new, required first argument:
 
@@ -18,7 +18,7 @@ let variant = Supergraph::from_document(document, options)?;
 let variant = Supergraph::from_document("my-supergraph", document, options)?;
 ```
 
-## Logging
+#### Logging
 
 The request summary line (`router::request` target) reports the name of the supergraph that processed the request:
 
@@ -31,7 +31,7 @@ Example (JSON format):
 {"level":"INFO","target":"router::request","operation_type":"query","status_code":200,"supergraph_name":"default","duration_ms":12,...}
 ```
 
-## Traces
+#### Traces
 
 The `graphql.operation` span gains the attribute:
 
@@ -41,7 +41,7 @@ It is recorded as soon as the supergraph is selected, for both HTTP and WebSocke
 
 Only the operation span carries it; child spans (parse, validate, plan, subgraph calls) are unchanged and can be attributed to a supergraph through their parent.
 
-## Metrics
+#### Metrics
 
 A `supergraph.name` label is added to:
 
