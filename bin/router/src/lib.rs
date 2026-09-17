@@ -7,6 +7,7 @@ pub mod config;
 mod consts;
 pub mod error;
 pub mod executor;
+mod heap_size;
 mod http_utils;
 mod jwt;
 pub mod pipeline;

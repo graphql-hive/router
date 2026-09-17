@@ -10,8 +10,9 @@ use serde::{Deserialize, Serialize};
 use sonic_rs::Value as SonicValue;
 
 use super::shrink::ShrinkMemory;
+use hive_router_macros::HeapSize;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, HeapSize)]
 pub enum Value {
     Variable(String),
     Int(i64),

@@ -20,6 +20,7 @@ use crate::query_planner::{
     },
     graph::edge::{OverrideLabel, Percentage},
 };
+use hive_router_macros::HeapSize;
 
 use super::subgraph_state::SubgraphState;
 
@@ -773,6 +774,7 @@ impl SupergraphState {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[derive(HeapSize)]
 pub enum OperationKind {
     #[serde(rename = "query")]
     Query,
@@ -1122,7 +1124,7 @@ impl SupergraphField {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, HeapSize)]
 pub enum TypeNode {
     List(Box<TypeNode>),
     NonNull(Box<TypeNode>),

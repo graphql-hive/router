@@ -18,6 +18,7 @@ use crate::query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use crate::query_planner::utils::cancellation::CancellationToken;
 use crate::schema_state::{SchemaState, SelectedSupergraph};
 use crate::telemetry::traces::spans::graphql::GraphQLPlanSpan;
+use hive_router_macros::HeapSize;
 use tracing::Instrument;
 use xxhash_rust::xxh3::Xxh3;
 
@@ -26,7 +27,7 @@ pub enum QueryPlanResult {
     EarlyResponse(PlanExecutionOutput),
 }
 
-#[derive(Clone)]
+#[derive(Clone, HeapSize)]
 pub struct PlannedQuery {
     pub plan: Arc<QueryPlan>,
     pub demand_control: Option<Arc<DemandControlFormulaPlan>>,

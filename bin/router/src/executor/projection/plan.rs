@@ -21,8 +21,9 @@ use crate::executor::{
     introspection::schema::{FieldNullability, SchemaMetadata},
     utils::consts::TYPENAME_FIELD_NAME,
 };
+use hive_router_macros::HeapSize;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, HeapSize)]
 pub enum TypeCondition {
     Exact(String),
     OneOf(HashSet<String>),
@@ -102,7 +103,7 @@ impl TypeCondition {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, HeapSize)]
 pub enum ProjectionValueSource {
     /// Represents the entire response data from subgraphs.
     ResponseData {
@@ -121,7 +122,7 @@ pub enum ProjectionValueSource {
 /// `resolve_variants` later collapses them into mutually-exclusive per-concrete-type plans.
 type SelectionVariants = IndexMap<String, Vec<FieldProjectionPlan>>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, HeapSize)]
 pub struct FieldProjectionPlan {
     pub field_name: String,
     pub response_key: String,
@@ -168,7 +169,7 @@ fn debug_plans_map(plans: &SelectionVariants) {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, HeapSize)]
 pub enum FieldProjectionCondition {
     IncludeIfVariable(String),
     SkipIfVariable(String),

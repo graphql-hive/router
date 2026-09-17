@@ -1,3 +1,4 @@
+use crate::heap_size::HeapSize;
 use crate::query_planner::ast::requires::RequiresSelectionSet;
 use crate::query_planner::{
     ast::{
@@ -14,6 +15,7 @@ use crate::query_planner::{
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
+use hive_router_macros::HeapSize;
 use serde::{Deserialize, Serialize};
 
 mod state;
@@ -51,6 +53,8 @@ use xxhash_rust::xxh3::Xxh3;
 // `S` only tracks the plan state. Only `S::Operation` is serialized.
 // Do not require the marker types themselves to implement Serialize or Deserialize.
 #[serde(bound = "")]
+#[derive(HeapSize)]
+#[heap_size(bound = "S::Operation: HeapSize, S::Requires: HeapSize")]
 pub struct QueryPlan<S: PlanState = Executable> {
     pub kind: &'static str, // "QueryPlan"
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -61,6 +65,8 @@ pub struct QueryPlan<S: PlanState = Executable> {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "kind")]
 #[serde(bound = "")]
+#[derive(HeapSize)]
+#[heap_size(bound = "S::Operation: HeapSize, S::Requires: HeapSize")]
 pub enum PlanNode<S: PlanState = Executable> {
     Fetch(Box<FetchNode<S>>),
     BatchFetch(Box<BatchFetchNode<S>>),
@@ -133,6 +139,8 @@ impl<S: PlanState> PlanNode<S> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(bound = "")]
+#[derive(HeapSize)]
+#[heap_size(bound = "S::Operation: HeapSize, S::Requires: HeapSize")]
 pub struct FetchNode<S: PlanState = Executable> {
     #[serde(skip_serializing)]
     pub id: i64,
@@ -157,6 +165,8 @@ pub struct FetchNode<S: PlanState = Executable> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(bound = "")]
+#[derive(HeapSize)]
+#[heap_size(bound = "S::Operation: HeapSize, S::Requires: HeapSize")]
 pub struct BatchFetchNode<S: PlanState = Executable> {
     #[serde(skip_serializing)]
     pub id: i64,
@@ -173,6 +183,7 @@ pub struct BatchFetchNode<S: PlanState = Executable> {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[derive(HeapSize)]
 pub struct CustomScalarPaths {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub children: BTreeMap<String, CustomScalarPaths>,
@@ -369,12 +380,14 @@ pub fn custom_scalar_paths_for_entities_selection(
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(HeapSize)]
 pub struct EntityBatch {
     pub aliases: Vec<EntityBatchAlias>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(HeapSize)]
 pub struct EntityBatchAlias {
     pub alias: String,
     pub representations_variable_name: String,
@@ -390,6 +403,8 @@ pub struct EntityBatchAlias {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(bound = "")]
+#[derive(HeapSize)]
+#[heap_size(bound = "S::Operation: HeapSize, S::Requires: HeapSize")]
 pub struct FlattenNode<S: PlanState = Executable> {
     pub path: FlattenNodePath,
     pub node: Box<PlanNode<S>>,
@@ -397,11 +412,15 @@ pub struct FlattenNode<S: PlanState = Executable> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound = "")]
+#[derive(HeapSize)]
+#[heap_size(bound = "S::Operation: HeapSize, S::Requires: HeapSize")]
 pub struct SequenceNode<S: PlanState = Executable> {
     pub nodes: Vec<PlanNode<S>>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound = "")]
+#[derive(HeapSize)]
+#[heap_size(bound = "S::Operation: HeapSize, S::Requires: HeapSize")]
 pub struct ParallelNode<S: PlanState = Executable> {
     pub nodes: Vec<PlanNode<S>>,
 }
@@ -409,6 +428,8 @@ pub struct ParallelNode<S: PlanState = Executable> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(bound = "")]
+#[derive(HeapSize)]
+#[heap_size(bound = "S::Operation: HeapSize, S::Requires: HeapSize")]
 pub struct ConditionNode<S: PlanState = Executable> {
     pub condition: String, // The variable name acting as the condition
     pub if_clause: Option<Box<PlanNode<S>>>,
@@ -455,12 +476,13 @@ impl<S: PlanState> ConditionNode<S> {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
+#[derive(HeapSize)]
 pub struct KeyRenamer {
     pub path: Vec<FetchNodePathSegment>,
     pub rename_key_to: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, HeapSize)]
 pub enum FetchNodePathSegment {
     Key(String),
     TypenameEquals(BTreeSet<String>),
@@ -472,7 +494,7 @@ impl FetchNodePathSegment {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, HeapSize)]
 pub enum FetchRewrite {
     ValueSetter(ValueSetter),
     KeyRenamer(KeyRenamer),
@@ -480,6 +502,7 @@ pub enum FetchRewrite {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
+#[derive(HeapSize)]
 pub struct ValueSetter {
     pub path: Vec<FetchNodePathSegment>,
     pub set_value_to: String,
@@ -488,6 +511,8 @@ pub struct ValueSetter {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 #[serde(bound = "")]
+#[derive(HeapSize)]
+#[heap_size(bound = "S::Operation: HeapSize, S::Requires: HeapSize")]
 pub struct SubscriptionNode<S: PlanState = Executable> {
     // A subscription node can only really have a primary fetch node.
     pub primary: FetchNode<S>,
@@ -496,6 +521,8 @@ pub struct SubscriptionNode<S: PlanState = Executable> {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 #[serde(bound = "")]
+#[derive(HeapSize)]
+#[heap_size(bound = "S::Operation: HeapSize, S::Requires: HeapSize")]
 pub struct DeferNode<S: PlanState = Executable> {
     pub primary: DeferPrimary<S>,
     pub deferred: Vec<DeferredNode<S>>,
@@ -503,6 +530,8 @@ pub struct DeferNode<S: PlanState = Executable> {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(bound = "")]
+#[derive(HeapSize)]
+#[heap_size(bound = "S::Operation: HeapSize, S::Requires: HeapSize")]
 pub struct DeferPrimary<S: PlanState = Executable> {
     pub subselection: Option<String>,
     pub node: Option<Box<PlanNode<S>>>,
@@ -511,6 +540,8 @@ pub struct DeferPrimary<S: PlanState = Executable> {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 #[serde(bound = "")]
+#[derive(HeapSize)]
+#[heap_size(bound = "S::Operation: HeapSize, S::Requires: HeapSize")]
 pub struct DeferredNode<S: PlanState = Executable> {
     pub depends: Vec<DeferDependency>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -524,6 +555,7 @@ pub struct DeferredNode<S: PlanState = Executable> {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
+#[derive(HeapSize)]
 pub struct DeferDependency {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]

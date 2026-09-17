@@ -1,4 +1,5 @@
 use crate::background_tasks::{BackgroundTask, BackgroundTasksManager};
+use crate::cache_state::build_cache;
 use crate::config::telemetry::hive::{is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig};
 use crate::config::{cache::SupergraphCacheConfig, supergraph::SupergraphSource, HiveRouterConfig};
 use crate::executor::execution::operation_name::OperationNameForwardConfig;
@@ -294,29 +295,26 @@ impl RouterSupergraphRuntime {
                 hive_usage_agent,
                 persisted_documents,
                 authorization,
-                validate_cache: Cache::new(
+                validate_cache: build_cache(
                     snapshot
                         .options
                         .cache
                         .validation
-                        .resolve(&context.cache.validation)
-                        .max_entries,
+                        .resolve(&context.cache.validation),
                 ),
-                normalize_cache: Cache::new(
+                normalize_cache: build_cache(
                     snapshot
                         .options
                         .cache
                         .normalization
-                        .resolve(&context.cache.normalization)
-                        .max_entries,
+                        .resolve(&context.cache.normalization),
                 ),
-                plan_cache: Cache::new(
+                plan_cache: build_cache(
                     snapshot
                         .options
                         .cache
                         .query_plans
-                        .resolve(&context.cache.query_plans)
-                        .max_entries,
+                        .resolve(&context.cache.query_plans),
                 ),
                 demand_control_runtime,
                 supergraph_lifetime: supergraph_lifetime.clone(),
@@ -1208,9 +1206,9 @@ mod plugin_runtime_cache_tests {
     #[ntex::test]
     async fn supergraph_caches_inherit_the_config_unless_the_variant_overrides_them() {
         let state = test_schema_state_with_cache(SupergraphCacheConfig {
-            validation: CacheLimitsConfig::default().with_max_entries(7),
-            normalization: CacheLimitsConfig::default().with_max_entries(8),
-            query_plans: CacheLimitsConfig::default().with_max_entries(9),
+            validation: CacheLimitsConfig::with_max_entries(7),
+            normalization: CacheLimitsConfig::with_max_entries(8),
+            query_plans: CacheLimitsConfig::with_max_entries(9),
         });
 
         // a variant that sets nothing gets every configured limit
@@ -1235,6 +1233,37 @@ mod plugin_runtime_cache_tests {
         assert_eq!(runtime.plan_cache.policy().max_capacity(), Some(3));
         assert_eq!(runtime.validate_cache.policy().max_capacity(), Some(7));
         assert_eq!(runtime.normalize_cache.policy().max_capacity(), Some(8));
+    }
+
+    #[ntex::test]
+    async fn supergraph_caches_take_a_byte_budget_in_place_of_an_entry_count() {
+        crate::init_rustls_crypto_provider();
+
+        let state = test_schema_state_with_cache(SupergraphCacheConfig {
+            validation: CacheLimitsConfig::with_max_size("4096B".parse().unwrap()),
+            ..Default::default()
+        });
+
+        let mut options = SupergraphOptions::default();
+        options
+            .cache
+            .query_plans
+            .set_max_size("8192B".parse().unwrap());
+        let supergraph =
+            Supergraph::from_sdl(TEST_SUPERGRAPH_SDL, options).expect("valid test supergraph SDL");
+        let runtime =
+            RouterSupergraphRuntime::build(&supergraph.snapshot(), &state.runtime_context)
+                .await
+                .unwrap();
+
+        // with a weigher attached the capacity is a weight, so these are bytes, not entries
+        assert_eq!(runtime.validate_cache.policy().max_capacity(), Some(4_096));
+        assert_eq!(runtime.plan_cache.policy().max_capacity(), Some(8_192));
+        assert_eq!(
+            runtime.normalize_cache.policy().max_capacity(),
+            Some(1000),
+            "a cache nobody gave a budget keeps counting entries"
+        );
     }
 
     #[ntex::test]

@@ -6,6 +6,7 @@ use graphql_tools::parser::query as query_ast;
 
 use super::selection_set::{FieldSelection, InlineFragmentSelection};
 use super::shrink::ShrinkMemory;
+use hive_router_macros::HeapSize;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -15,6 +16,7 @@ use std::{
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(tag = "kind")]
+#[derive(HeapSize)]
 pub enum SelectionItem {
     Field(FieldSelection),
     InlineFragment(InlineFragmentSelection),

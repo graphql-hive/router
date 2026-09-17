@@ -8,7 +8,7 @@ use opentelemetry::{
 use crate::telemetry::metrics::capture::Capture;
 #[cfg(debug_assertions)]
 use crate::telemetry::metrics::catalog::debug_assert_attrs;
-use crate::telemetry::metrics::catalog::{labels, names, values};
+use crate::telemetry::metrics::catalog::{labels, names, units, values};
 
 #[derive(Clone)]
 pub struct CacheMetrics {
@@ -26,6 +26,7 @@ impl CacheMetrics {
                 names::PARSE_CACHE_REQUESTS_TOTAL,
                 names::PARSE_CACHE_DURATION,
                 names::PARSE_CACHE_SIZE,
+                names::PARSE_CACHE_SIZE_BYTES,
                 "Parse",
             ),
             validate: CacheMetricSet::new(
@@ -33,6 +34,7 @@ impl CacheMetrics {
                 names::VALIDATE_CACHE_REQUESTS_TOTAL,
                 names::VALIDATE_CACHE_DURATION,
                 names::VALIDATE_CACHE_SIZE,
+                names::VALIDATE_CACHE_SIZE_BYTES,
                 "Validate",
             ),
             normalize: CacheMetricSet::new(
@@ -40,6 +42,7 @@ impl CacheMetrics {
                 names::NORMALIZE_CACHE_REQUESTS_TOTAL,
                 names::NORMALIZE_CACHE_DURATION,
                 names::NORMALIZE_CACHE_SIZE,
+                names::NORMALIZE_CACHE_SIZE_BYTES,
                 "Normalize",
             ),
             plan: CacheMetricSet::new(
@@ -47,6 +50,7 @@ impl CacheMetrics {
                 names::PLAN_CACHE_REQUESTS_TOTAL,
                 names::PLAN_CACHE_DURATION,
                 names::PLAN_CACHE_SIZE,
+                names::PLAN_CACHE_SIZE_BYTES,
                 "Plan",
             ),
         }
@@ -63,6 +67,8 @@ struct CacheInstruments {
     duration_metric_name: &'static str,
     size_metric_name: &'static str,
     size_metric_description: String,
+    size_bytes_metric_name: &'static str,
+    size_bytes_metric_description: String,
     meter: Option<Meter>,
 }
 
@@ -88,6 +94,7 @@ impl CacheMetricSet {
         requests_metric_name: &'static str,
         duration_metric_name: &'static str,
         size_metric_name: &'static str,
+        size_bytes_metric_name: &'static str,
         metric_description_prefix: &'static str,
     ) -> Self {
         let requests_total = meter.map(|meter| {
@@ -114,6 +121,11 @@ impl CacheMetricSet {
                 meter: meter.cloned(),
                 size_metric_name,
                 size_metric_description: format!("{} size", metric_description_prefix),
+                size_bytes_metric_name,
+                size_bytes_metric_description: format!(
+                    "{} size in bytes, as the cache weigher estimates it",
+                    metric_description_prefix
+                ),
             },
         }
     }
@@ -151,6 +163,28 @@ impl CacheMetricSet {
             .with_description(self.instruments.size_metric_description.clone())
             .with_callback(move |observer| {
                 observer.observe(size_fn(), &[]);
+            })
+            .build();
+    }
+
+    /// Reports what the cache's entries are estimated to weigh. Only a cache configured with
+    /// `max_size` weighs anything: under `max_entries` moka has no weigher and this stays at 0,
+    /// so the gauge is registered either way and simply tells the truth about which mode is on.
+    pub fn observe_size_bytes_with(&self, bytes_fn: impl Fn() -> u64 + Send + Sync + 'static) {
+        if !self.instruments.is_enabled() {
+            return;
+        }
+        let Some(meter) = &self.instruments.meter else {
+            return;
+        };
+        #[cfg(debug_assertions)]
+        debug_assert_attrs(self.instruments.size_bytes_metric_name, &[]);
+        meter
+            .u64_observable_gauge(self.instruments.size_bytes_metric_name)
+            .with_unit(units::BYTES)
+            .with_description(self.instruments.size_bytes_metric_description.clone())
+            .with_callback(move |observer| {
+                observer.observe(bytes_fn(), &[]);
             })
             .build();
     }

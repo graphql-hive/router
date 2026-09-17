@@ -14,8 +14,9 @@ use crate::query_planner::{
 };
 
 use super::{selection_item::SelectionItem, selection_set::SelectionSet, shrink::ShrinkMemory};
+use hive_router_macros::HeapSize;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, HeapSize)]
 pub struct OperationDefinition {
     pub name: Option<String>,
     // TODO: Should operation_kind be OperationKind or Option<OperationKind>?
@@ -47,7 +48,7 @@ impl OperationDefinition {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, HeapSize)]
 pub struct SubgraphFetchOperation {
     pub document_str: Box<str>,
     pub hash: u64,
@@ -247,7 +248,7 @@ impl Display for OperationDefinition {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, HeapSize)]
 pub struct VariableDefinition {
     pub name: String,
     pub variable_type: TypeNode,

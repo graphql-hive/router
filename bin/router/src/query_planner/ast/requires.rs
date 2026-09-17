@@ -24,8 +24,9 @@ use crate::query_planner::{
     },
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
+use hive_router_macros::HeapSize;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, HeapSize)]
 pub struct RequiresSelectionSet {
     names: Box<[Box<str>]>,
     nodes: Box<[StoredSelection]>,
@@ -129,7 +130,7 @@ impl RequiresSelectionSet {
 }
 
 #[repr(transparent)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, HeapSize)]
 struct NameId(NonZeroU32);
 
 impl NameId {
@@ -147,7 +148,7 @@ impl NameId {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, HeapSize)]
 struct SelectionRange {
     start: u32,
     len: u32,
@@ -160,7 +161,7 @@ impl SelectionRange {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, HeapSize)]
 enum StoredSelection {
     Field {
         name: NameId,

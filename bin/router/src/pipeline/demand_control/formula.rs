@@ -16,6 +16,7 @@ use crate::query_planner::{
     state::supergraph_state::{OperationKind, SupergraphDefinition, SupergraphState, TypeNode},
 };
 use crate::telemetry::logging::targets;
+use hive_router_macros::HeapSize;
 use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
 use tracing::warn;
 
@@ -29,7 +30,7 @@ type SizeOverrides = Vec<(Vec<String>, CostExpr)>;
 
 /// A mathematical cost expression compiled once per query shape.
 /// Evaluated with only variable lookups, so no schema traversal at request time.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, HeapSize)]
 pub(crate) enum CostExpr {
     /// Compile-time constant.
     Const(u64),
@@ -148,11 +149,13 @@ impl fmt::Display for CostExpr {
     }
 }
 
+#[derive(HeapSize)]
 pub struct DemandControlFormulaPlan {
     pub(crate) root: FormulaPlanNode,
     pub(crate) actual_cost_plan: Arc<CompiledActualCostPlan>,
 }
 
+#[derive(HeapSize)]
 pub(crate) enum FormulaPlanNode {
     Fetch(FormulaFetchNode),
     Aggregate(Vec<FormulaPlanNode>),
@@ -163,6 +166,7 @@ pub(crate) enum FormulaPlanNode {
     },
 }
 
+#[derive(HeapSize)]
 pub(crate) struct FormulaFetchNode {
     pub(crate) service_name: String,
     pub(crate) estimated_expr: CostExpr,

@@ -294,6 +294,88 @@ async fn test_otlp_cache_size_metrics_exported_as_gauges() {
     );
 }
 
+#[ntex::test]
+async fn test_otlp_cache_size_bytes_metrics_report_the_weigher() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_metrics_endpoint();
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          cache:
+            router:
+              parsing:
+                max_size: 64MB
+            supergraph:
+              validation:
+                max_size: 64MB
+              normalization:
+                max_size: 64MB
+              query_plans:
+                max_size: 64MB
+
+          telemetry:
+            metrics:
+              exporters:
+                - kind: otlp
+                  endpoint: {}
+                  protocol: http
+                  interval: 30ms
+                  max_export_timeout: 2s
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    // moka settles `weighted_size` on its own schedule, nudged along by later cache
+    // operations, and each cache settles separately - at 25 requests the parse cache had
+    // caught up and the validation cache still read 0. Enough traffic to get all four there.
+    for index in 0..200 {
+        router
+            .send_graphql_request(&format!("{{ a{index}: users {{ id }} }}"), None, None)
+            .await;
+    }
+
+    wait_for_metrics_export().await;
+
+    let metrics = otlp_collector.metrics_view().await;
+    let no_attrs: [(&str, &str); 0] = [];
+
+    // those operations weigh something in every cache, so a zero here means the byte gauge is
+    // wired to a cache that never got a weigher
+    for name in [
+        names::PARSE_CACHE_SIZE_BYTES,
+        names::VALIDATE_CACHE_SIZE_BYTES,
+        names::NORMALIZE_CACHE_SIZE_BYTES,
+        names::PLAN_CACHE_SIZE_BYTES,
+    ] {
+        assert!(
+            metrics.has_gauge(name, &no_attrs),
+            "Expected {name} gauge series to be exported"
+        );
+        assert!(
+            metrics.latest_gauge(name, &no_attrs) > 0.0,
+            "Expected {name} to report the bytes the weigher charged, got {}",
+            metrics.latest_gauge(name, &no_attrs)
+        );
+    }
+}
+
 /// Ensures HTTP server semconv metrics are emitted for GraphQL requests.
 ///
 /// Happy-path assertions verify GraphQL labels are present and `error.type` is omitted.

@@ -4,12 +4,13 @@ use std::fmt::Display;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::query_planner::ast::merge_path::{MergePath, Segment};
+use hive_router_macros::HeapSize;
 
 use super::FetchNodePathSegment;
 
 /// Uses the tagged format that `lib/node-addon` and `hive-expose-query-plan` expect:
 /// `{"Field": name}`, `{"TypeCondition": [..]}`, and a plain `"@"` for a list step.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, HeapSize)]
 pub enum PathSegment {
     Field(Box<str>),
     /// Boxing this keeps every path step small.
@@ -21,6 +22,7 @@ pub enum PathSegment {
 /// The type names an entity may match. Sorted, with duplicates removed.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
+#[derive(HeapSize)]
 pub struct TypeCondition {
     names: Box<[Box<str>]>,
 }
@@ -42,6 +44,7 @@ impl TypeCondition {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
+#[derive(HeapSize)]
 pub struct FlattenNodePath(Box<[PathSegment]>);
 
 impl FlattenNodePath {
@@ -70,6 +73,7 @@ impl From<Vec<PathSegment>> for FlattenNodePath {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
+#[derive(HeapSize)]
 pub struct MergePaths(Box<[FlattenNodePath]>);
 
 impl MergePaths {

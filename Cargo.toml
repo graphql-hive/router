@@ -5,6 +5,7 @@ members = [
   "lib/hive-console-sdk",
   "bin/dev-cli",
   "bin/router",
+  "lib/macros",
   "bin/differential",
   "e2e",
   "plugin_examples/plugin_template",

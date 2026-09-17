@@ -24,6 +24,7 @@ use crate::telemetry::{
 };
 use ahash::{HashMap as AHashMap, HashSet as AHashSet};
 use http::HeaderValue;
+use hive_router_macros::HeapSize;
 use sonic_rs::JsonValueTrait;
 
 use crate::executor::{
@@ -204,23 +205,23 @@ impl DemandControlExecutionContext {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, HeapSize)]
 pub enum CompiledActualCostPlan {
     BySubgraph(AHashMap<u64, CompiledSubgraphActualCostPlan>),
     ByResponseShape(CompiledResponseShapeActualCostPlan),
 }
 
-#[derive(Debug)]
+#[derive(Debug, HeapSize)]
 pub struct CompiledSubgraphActualCostPlan {
     root: CompiledActualCostRootPlan,
 }
 
-#[derive(Debug)]
+#[derive(Debug, HeapSize)]
 pub struct CompiledResponseShapeActualCostPlan {
     root: CompiledSelectionSetActualCostPlan,
 }
 
-#[derive(Debug)]
+#[derive(Debug, HeapSize)]
 enum CompiledActualCostRootPlan {
     SelectionSet(CompiledSelectionSetActualCostPlan),
     /// One or more `_entities` groups, keyed by response key (field name or alias).
@@ -228,13 +229,13 @@ enum CompiledActualCostRootPlan {
     EntityGroups(Vec<CompiledEntityGroup>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, HeapSize)]
 struct CompiledEntityGroup {
     response_key: String,
     entity_plans_by_type: AHashMap<String, CompiledEntityTypePlan>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, HeapSize)]
 struct CompiledEntityTypePlan {
     /// Cost of the entity's own type (e.g. 1 for an Object, or whatever
     /// the type's `@cost` weight is). Charged once per entity returned by
@@ -243,18 +244,18 @@ struct CompiledEntityTypePlan {
     selections: CompiledSelectionSetActualCostPlan,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, HeapSize)]
 struct CompiledSelectionSetActualCostPlan {
     items: Vec<CompiledSelectionItemActualCostPlan>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, HeapSize)]
 enum CompiledSelectionItemActualCostPlan {
     Field(CompiledFieldActualCostPlan),
     InlineFragment(CompiledInlineFragmentActualCostPlan),
 }
 
-#[derive(Debug)]
+#[derive(Debug, HeapSize)]
 struct CompiledFieldActualCostPlan {
     response_key: String,
     field_base_cost: u64,
@@ -265,7 +266,7 @@ struct CompiledFieldActualCostPlan {
     child: CompiledSelectionSetActualCostPlan,
 }
 
-#[derive(Debug)]
+#[derive(Debug, HeapSize)]
 struct CompiledInlineFragmentActualCostPlan {
     type_condition: String,
     // If parent and fragment type are the same at compile time, the fragment

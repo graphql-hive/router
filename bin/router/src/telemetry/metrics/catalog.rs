@@ -175,15 +175,19 @@ pub mod names {
     pub const PARSE_CACHE_REQUESTS_TOTAL: &str = "hive.router.parse_cache.requests_total";
     pub const PARSE_CACHE_DURATION: &str = "hive.router.parse_cache.duration";
     pub const PARSE_CACHE_SIZE: &str = "hive.router.parse_cache.size";
+    pub const PARSE_CACHE_SIZE_BYTES: &str = "hive.router.parse_cache.size_bytes";
     pub const VALIDATE_CACHE_REQUESTS_TOTAL: &str = "hive.router.validate_cache.requests_total";
     pub const VALIDATE_CACHE_DURATION: &str = "hive.router.validate_cache.duration";
     pub const VALIDATE_CACHE_SIZE: &str = "hive.router.validate_cache.size";
+    pub const VALIDATE_CACHE_SIZE_BYTES: &str = "hive.router.validate_cache.size_bytes";
     pub const NORMALIZE_CACHE_REQUESTS_TOTAL: &str = "hive.router.normalize_cache.requests_total";
     pub const NORMALIZE_CACHE_DURATION: &str = "hive.router.normalize_cache.duration";
     pub const NORMALIZE_CACHE_SIZE: &str = "hive.router.normalize_cache.size";
+    pub const NORMALIZE_CACHE_SIZE_BYTES: &str = "hive.router.normalize_cache.size_bytes";
     pub const PLAN_CACHE_REQUESTS_TOTAL: &str = "hive.router.plan_cache.requests_total";
     pub const PLAN_CACHE_DURATION: &str = "hive.router.plan_cache.duration";
     pub const PLAN_CACHE_SIZE: &str = "hive.router.plan_cache.size";
+    pub const PLAN_CACHE_SIZE_BYTES: &str = "hive.router.plan_cache.size_bytes";
     pub const CIRCUIT_BREAKER_SHORT_CIRCUITS_TOTAL: &str =
         "hive.router.circuit_breaker.short_circuits_total";
     pub const CIRCUIT_BREAKER_STATE: &str = "hive.router.circuit_breaker.state";
@@ -444,15 +448,19 @@ pub(crate) const METRIC_SPECS: &[(&str, &[&str])] = &[
     (names::PARSE_CACHE_REQUESTS_TOTAL, &[labels::RESULT]),
     (names::PARSE_CACHE_DURATION, &[labels::RESULT]),
     (names::PARSE_CACHE_SIZE, &[]),
+    (names::PARSE_CACHE_SIZE_BYTES, &[]),
     (names::VALIDATE_CACHE_REQUESTS_TOTAL, &[labels::RESULT]),
     (names::VALIDATE_CACHE_DURATION, &[labels::RESULT]),
     (names::VALIDATE_CACHE_SIZE, &[]),
+    (names::VALIDATE_CACHE_SIZE_BYTES, &[]),
     (names::NORMALIZE_CACHE_REQUESTS_TOTAL, &[labels::RESULT]),
     (names::NORMALIZE_CACHE_DURATION, &[labels::RESULT]),
     (names::NORMALIZE_CACHE_SIZE, &[]),
+    (names::NORMALIZE_CACHE_SIZE_BYTES, &[]),
     (names::PLAN_CACHE_REQUESTS_TOTAL, &[labels::RESULT]),
     (names::PLAN_CACHE_DURATION, &[labels::RESULT]),
     (names::PLAN_CACHE_SIZE, &[]),
+    (names::PLAN_CACHE_SIZE_BYTES, &[]),
     (
         names::CIRCUIT_BREAKER_SHORT_CIRCUITS_TOTAL,
         &[labels::SUBGRAPH_NAME],

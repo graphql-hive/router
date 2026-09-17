@@ -25,9 +25,10 @@ use crate::cache_state::{CacheHitMiss, EntryResultHitMissExt};
 use crate::pipeline::error::{InternalPipelineError, ParserCacheError, PipelineError};
 use crate::pipeline::execution_request::GetQueryStr;
 use crate::shared_state::RouterSharedState;
+use hive_router_macros::HeapSize;
 use tracing::{debug, error, warn, Instrument};
 
-#[derive(Clone)]
+#[derive(Clone, HeapSize)]
 pub struct ParseCacheEntry {
     document: Arc<Document<'static, String>>,
     document_minified_string: Arc<String>,

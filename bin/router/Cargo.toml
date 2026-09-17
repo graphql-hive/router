@@ -56,6 +56,7 @@ harness = false
 [dependencies]
 hive-console-sdk = { path = "../../lib/hive-console-sdk", version = "0.3.22" }
 graphql-tools =  { path = "../../lib/graphql-tools", version = "0.5.8" }
+hive-router-macros = { path = "../../lib/macros", version = "0.0.1" }
 
 tokio = { workspace = true }
 futures = { workspace = true }

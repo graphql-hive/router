@@ -7,6 +7,7 @@ use graphql_tools::parser::{
     query::Type,
     schema::{Definition, TypeDefinition},
 };
+use hive_router_macros::HeapSize;
 
 #[derive(Debug)]
 pub struct FieldTypeInfo {
@@ -15,7 +16,7 @@ pub struct FieldTypeInfo {
 }
 
 /// The nullability shape of a field's type. Similar to the GraphQL type wrappers.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, HeapSize)]
 pub enum FieldNullability {
     Leaf {
         non_null: bool,

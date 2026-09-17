@@ -26,9 +26,10 @@ use crate::pipeline::nullify::rebuilder::{
 use crate::pipeline::parser::GraphQLParserPayload;
 use crate::pipeline::trie::Trie;
 use crate::schema_state::{RouterSupergraphRuntime, SchemaState};
+use hive_router_macros::HeapSize;
 use tracing::{debug, Instrument};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, HeapSize)]
 pub struct GraphQLNormalizationPayload {
     /// The operation to execute, without introspection fields.
     pub operation_for_plan: Arc<OperationDefinition>,
@@ -42,7 +43,7 @@ pub struct GraphQLNormalizationPayload {
     pub operation_identity: OperationIdentity,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, HeapSize)]
 pub struct OperationIdentity {
     pub name: Option<String>,
     pub operation_type: OperationKind,

@@ -2767,6 +2767,7 @@ dependencies = [
  "graphql-tools",
  "headers-accept",
  "hive-console-sdk",
+ "hive-router-macros",
  "http",
  "http-body-util",
  "http-serde",
@@ -2856,6 +2857,15 @@ dependencies = [
  "vrl",
  "xxhash-rust",
  "zstd 0.14.0",
+]
+
+[[package]]
+name = "hive-router-macros"
+version = "0.0.1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]

@@ -13,8 +13,9 @@ use crate::query_planner::{
 };
 
 use super::{arguments::ArgumentsMap, selection_item::SelectionItem, shrink::ShrinkMemory};
+use hive_router_macros::HeapSize;
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, HeapSize)]
 pub struct SelectionSet {
     pub items: Vec<SelectionItem>,
 }
@@ -160,7 +161,7 @@ impl Serialize for SelectionSet {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, Default)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default, HeapSize)]
 pub struct FieldSelection {
     pub name: String,
     #[serde(skip_serializing_if = "SelectionSet::is_empty")]
@@ -320,6 +321,7 @@ impl FieldSelection {
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(HeapSize)]
 pub struct InlineFragmentSelection {
     pub type_condition: String,
     pub selections: SelectionSet,

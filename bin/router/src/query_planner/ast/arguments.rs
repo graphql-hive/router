@@ -9,8 +9,9 @@ use serde::{Deserialize, Serialize};
 use super::shrink::ShrinkMemory;
 use super::value::Value;
 use graphql_tools::parser::query::{Text as ParserText, Value as ParserValue};
+use hive_router_macros::HeapSize;
 
-#[derive(Clone, Debug, Deserialize, Serialize, Default)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default, HeapSize)]
 pub struct ArgumentsMap {
     #[serde(flatten)]
     arguments_map: BTreeMap<String, Value>,
