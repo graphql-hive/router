@@ -1936,8 +1936,6 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 name = "e2e"
 version = "0.0.1"
 dependencies = [
- "arc-swap",
- "async-trait",
  "axum",
  "axum-server",
  "brotli",
@@ -1945,7 +1943,6 @@ dependencies = [
  "dashmap",
  "flate2",
  "futures",
- "futures-util",
  "gag",
  "graphql-tools",
  "hex",
@@ -1958,7 +1955,6 @@ dependencies = [
  "libdd-trace-utils 12.0.0",
  "mockito",
  "ntex",
- "opentelemetry-otlp",
  "opentelemetry-proto",
  "prost 0.14.4",
  "rcgen",
@@ -1967,7 +1963,6 @@ dependencies = [
  "rustls",
  "s3s",
  "s3s-fs",
- "serde",
  "serde_json",
  "sonic-rs",
  "subgraphs",
@@ -1977,7 +1972,6 @@ dependencies = [
  "tokio-stream",
  "tonic",
  "tracing",
- "tracing-subscriber",
  "zstd 0.14.0",
 ]
 

@@ -15,6 +15,7 @@ impl FetchNode<Planning> {
     fn into_executable(self) -> FetchNode {
         FetchNode {
             id: self.id,
+            depends_on: self.depends_on,
             service_name: self.service_name,
             variable_usages: self.variable_usages,
             operation_kind: self.operation_kind,
@@ -37,6 +38,8 @@ impl PlanNode<Planning> {
             Self::Fetch(fetch) => PlanNode::Fetch(Box::new(fetch.into_executable())),
             Self::BatchFetch(batch) => PlanNode::BatchFetch(Box::new(BatchFetchNode {
                 id: batch.id,
+                depends_on: batch.depends_on,
+                completes: batch.completes,
                 service_name: batch.service_name,
                 variable_usages: batch.variable_usages,
                 operation_kind: batch.operation_kind,

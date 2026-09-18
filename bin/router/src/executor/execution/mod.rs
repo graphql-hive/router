@@ -6,3 +6,4 @@ pub mod jwt_forward;
 pub mod operation_name;
 pub mod plan;
 pub mod rewrites;
+pub mod scheduler;

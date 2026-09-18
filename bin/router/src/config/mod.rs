@@ -6,6 +6,7 @@ pub mod csrf;
 pub mod demand_control;
 mod env_overrides;
 pub mod error_masking;
+pub mod execution;
 mod from_env;
 pub mod headers;
 pub mod http_server;
@@ -86,6 +87,10 @@ pub struct HiveRouterConfig {
     /// Query planning configuration.
     #[serde(default)]
     pub query_planner: QueryPlannerConfig,
+
+    /// Query plan execution configuration.
+    #[serde(default)]
+    pub execution: execution::ExecutionConfig,
 
     /// Configuration for the HTTP server/listener.
     #[serde(default)]
