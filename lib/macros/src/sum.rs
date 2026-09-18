@@ -1,12 +1,6 @@
 //! Generic "sum a `usize` method over every field" derive engine.
 //!
-//! The field-walking logic (structs, enums, empty enums, unions rejected) does not care
-//! which trait it implements. A concrete derive only supplies a [`SumConfig`]:
-//! which trait path to implement, which method to sum, which helper attribute carries
-//! a custom `bound`, and the derive name used in error messages.
-//!
-//! `HeapSize` in `heap_size` is one instantiation; future traits with the same shape
-//! reuse [`expand`] without copying this logic.
+//! A concrete derive only supplies a [`SumConfig`]; [`expand`] does the field walking.
 
 use quote::quote;
 use syn::{
@@ -25,9 +19,7 @@ pub(crate) struct SumConfig {
     pub(crate) derive_name: &'static str,
 }
 
-/// Pure expansion over an already-parsed input, so it stays testable and reusable
-/// outside a `proc_macro::TokenStream` context. The caller maps `Err` to
-/// `to_compile_error()`.
+/// Expansion over an already-parsed input.
 pub(crate) fn expand(
     input: &DeriveInput,
     config: &SumConfig,
@@ -46,7 +38,7 @@ pub(crate) fn expand(
         }
         Data::Enum(data) => {
             if data.variants.is_empty() {
-                // an empty enum has no values, so nothing can call this
+                // No values can call this.
                 quote!(0)
             } else {
                 let arms = data.variants.iter().map(|variant| {
@@ -68,10 +60,7 @@ pub(crate) fn expand(
         Data::Union(_) => {
             return Err(syn::Error::new_spanned(
                 &input.ident,
-                format!(
-                    "{derive_name} cannot be derived for a union: its fields overlap, so there \
-                     is no single answer for what it owns"
-                ),
+                format!("{derive_name} cannot be derived for a union: fields overlap"),
             ));
         }
     };

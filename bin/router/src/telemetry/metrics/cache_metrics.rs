@@ -167,9 +167,7 @@ impl CacheMetricSet {
             .build();
     }
 
-    /// Reports what the cache's entries are estimated to weigh. Only a cache configured with
-    /// `max_size` weighs anything: under `max_entries` moka has no weigher and this stays at 0,
-    /// so the gauge is registered either way and simply tells the truth about which mode is on.
+    /// Reports the estimated heap of the cache's entries. Stays at 0 under `max_entries` (no weigher).
     pub fn observe_size_bytes_with(&self, bytes_fn: impl Fn() -> u64 + Send + Sync + 'static) {
         if !self.instruments.is_enabled() {
             return;

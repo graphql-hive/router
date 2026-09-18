@@ -342,9 +342,7 @@ async fn test_otlp_cache_size_bytes_metrics_report_the_weigher() {
         .start()
         .await;
 
-    // moka settles `weighted_size` on its own schedule, nudged along by later cache
-    // operations, and each cache settles separately - at 25 requests the parse cache had
-    // caught up and the validation cache still read 0. Enough traffic to get all four there.
+    // `weighted_size` settles asynchronously per cache; send enough traffic that all four report.
     for index in 0..200 {
         router
             .send_graphql_request(&format!("{{ a{index}: users {{ id }} }}"), None, None)
@@ -356,8 +354,7 @@ async fn test_otlp_cache_size_bytes_metrics_report_the_weigher() {
     let metrics = otlp_collector.metrics_view().await;
     let no_attrs: [(&str, &str); 0] = [];
 
-    // those operations weigh something in every cache, so a zero here means the byte gauge is
-    // wired to a cache that never got a weigher
+    // Each operation weighs something in every cache; zero means the gauge missed its weigher.
     for name in [
         names::PARSE_CACHE_SIZE_BYTES,
         names::VALIDATE_CACHE_SIZE_BYTES,

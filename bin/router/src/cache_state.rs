@@ -10,10 +10,7 @@ use moka::Entry;
 use crate::schema_state::SchemaState;
 use crate::shared_state::RouterSharedState;
 
-/// Builds a cache bounded the way the config asks for: by entry count, or by the heap its
-/// entries are estimated to hold on to. moka carries a single capacity dimension, so the
-/// weigher is only installed for the byte-budgeted case - with one attached, `max_capacity`
-/// would be a weight and the entry count would stop meaning anything.
+/// Builds a cache bounded by entry count or estimated heap bytes, per the config.
 pub fn build_cache<K, V>(limits: &CacheLimitsConfig) -> Cache<K, V>
 where
     K: Hash + Eq + Send + Sync + 'static,

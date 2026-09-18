@@ -1256,7 +1256,7 @@ mod plugin_runtime_cache_tests {
                 .await
                 .unwrap();
 
-        // with a weigher attached the capacity is a weight, so these are bytes, not entries
+        // Bytes, not entries.
         assert_eq!(runtime.validate_cache.policy().max_capacity(), Some(4_096));
         assert_eq!(runtime.plan_cache.policy().max_capacity(), Some(8_192));
         assert_eq!(

@@ -1,5 +1,3 @@
-//! `HeapSize` derive: one `SumConfig` over the generic engine in `sum`.
-
 use proc_macro::TokenStream;
 
 use crate::sum::{expand, SumConfig};

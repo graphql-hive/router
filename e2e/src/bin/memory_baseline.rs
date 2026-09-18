@@ -63,8 +63,7 @@ const SUPERGRAPH_PATH: &str = concat!(
     "/../bin/router/fixture/grafbase-many-plans/supergraph.graphql"
 );
 
-/// Schema and operation carrying field arguments, an input object and a fragment, planned
-/// with demand control on so the cost formula and the compiled actual-cost plan are cached too.
+/// Schema/operation with arguments, an input object and a fragment, planned with demand control on.
 const COST_SUPERGRAPH_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/fixtures/demand_control/custom_cost_schema.graphql"
@@ -107,8 +106,7 @@ fn operation(index: usize) -> String {
     )
 }
 
-/// The custom-`@cost` fixture with a unique alias on its first field, so every request is a
-/// distinct document in all four caches.
+/// The custom-`@cost` fixture with a unique alias per request, so each is a distinct document.
 fn cost_operation(index: usize) -> String {
     // the fixture's operation is anonymous, and its brace is the only one alone on a line
     let aliased = COST_OPERATION.replacen("\n{\n", &format!("\n{{\n  a{index}: "), 1);
@@ -201,8 +199,8 @@ cache:
     eprintln!("ok: {per_operation} bytes/operation, ceiling {ceiling}");
 }
 
-/// Runs the same check over operations the `grafbase-many-plans` corpus never produces:
-/// argument maps, an input object, a fragment, and the demand-control plans.
+/// Same check over what `grafbase-many-plans` never produces: arguments, an input object,
+/// a fragment, and demand-control plans.
 async fn check_weigher_on_arguments_and_demand_control() {
     let router = TestRouter::builder()
         .inline_config(format!(
@@ -265,8 +263,8 @@ cache:
     check_weigher_against_reality(&router, "custom-cost", before_clear).await;
 }
 
-/// Compares what the weigher charged for the cached entries against the heap that comes
-/// back when the caches are dropped. Runs last for a router, since it empties every cache.
+/// Compares the weigher's charge against the heap freed by dropping the caches.
+/// Empties every cache; run last.
 async fn check_weigher_against_reality(
     router: &e2e::testkit::TestRouter<e2e::testkit::Started>,
     corpus: &str,

@@ -2,10 +2,7 @@ use human_size::Size;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// What bounds a single in-memory cache.
-///
-/// One or the other, never both: moka keeps a single capacity dimension, so a cache is
-/// bounded either by how many entries it holds or by how many bytes they add up to.
+/// What bounds a single in-memory cache. Exactly one limit applies per cache.
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, PartialEq)]
 #[serde(untagged, deny_unknown_fields)]
 #[non_exhaustive]
@@ -15,18 +12,10 @@ pub enum CacheLimitsConfig {
         #[serde(default = "default_max_entries")]
         max_entries: u64,
     },
-    /// Bounded by the estimated heap the cached values hold on to.
+    /// Bounded by the estimated heap of the cached values.
     ///
-    /// Written with a unit - `256MB`, `512MiB`, `64KiB` - by the same parser as
-    /// `limits.max_request_body_size`. Mind that `KB` there means 1024 bytes while `kB` and
-    /// `MB` are the SI 1000 and 1000000, so spell out `KiB`/`MiB`/`GiB` when you mean powers
-    /// of two. A bare number is rejected; give it a unit.
-    ///
-    /// The estimate walks each value as it is inserted, so it follows the real shape of
-    /// a document or a query plan rather than the length of the query that produced it.
-    /// It counts the key, the value, and a fixed allowance for moka's own per-entry
-    /// bookkeeping. A value reached through a shared `Arc` is counted by every cache
-    /// that points at it, so the total errs high rather than low.
+    /// Written with a unit - `256MB`, `512MiB`, `64KiB` - like `limits.max_request_body_size`
+    /// (`MB` is 1_000_000, `MiB` is 2^20). A bare number is rejected; give it a unit.
     Size {
         #[schemars(with = "String")]
         max_size: Size,
@@ -126,31 +115,26 @@ pub struct SupergraphCacheOverrides {
 
 /// Override for a single per-supergraph cache.
 ///
-/// Starts out inheriting the router config's `cache.supergraph` value,
-/// so a plugin that doesn't care about caches picks up whatever the operator configured.
-/// Call [`Self::set_max_entries`] or [`Self::set_max_size`] to bring custom limits for
-/// this variant instead.
+/// Starts out inheriting the router config's `cache.supergraph` value.
+/// Call [`Self::set_max_entries`] or [`Self::set_max_size`] for a custom limit instead.
 ///
-/// The storage is private on purpose: adding a new limit later only adds a new `set_*`
-/// method here, and existing plugin code keeps compiling. An override replaces the whole
-/// [`CacheLimitsConfig`] for that cache, which is also what keeps entries and bytes from
-/// being set at the same time.
+/// An override replaces the whole [`CacheLimitsConfig`] for that cache.
 #[derive(Debug, Default, Clone)]
 pub struct CacheOverride {
+    // Private so adding a new limit only adds a new `set_*` method.
     inner: Option<CacheLimitsConfig>,
 }
 
 impl CacheOverride {
     /// Bounds this variant's cache by entry count instead of the router config's limit.
     /// `0` turns the cache off.
-    /// Returns the mutable reference so further `set_*` calls can be chained.
     pub fn set_max_entries(&mut self, max_entries: u64) -> &mut Self {
         self.inner = Some(CacheLimitsConfig::with_max_entries(max_entries));
         self
     }
 
     /// Bounds this variant's cache by estimated heap instead of the router config's limit.
-    /// `0` turns the cache off.
+    /// `"0B"` turns the cache off.
     pub fn set_max_size(&mut self, max_size: Size) -> &mut Self {
         self.inner = Some(CacheLimitsConfig::with_max_size(max_size));
         self
@@ -223,11 +207,7 @@ mod tests {
         assert_eq!(bytes("256MB"), 256_000_000, "MB is the SI 1000000");
         assert_eq!(bytes("1GiB"), 1 << 30);
         assert_eq!(bytes("1kB"), 1_000);
-        assert_eq!(
-            bytes("1KB"),
-            1_024,
-            "KB is 1024 here, unlike kB - documented so nobody has to find out the hard way"
-        );
+        assert_eq!(bytes("1KB"), 1_024, "KB is 1024 here");
         assert!(
             "1024".parse::<Size>().is_err(),
             "a bare number has no unit, so it is rejected rather than guessed at"
@@ -276,7 +256,6 @@ mod tests {
 
     #[test]
     fn should_refuse_both_limits_on_one_cache() {
-        // moka bounds a cache one way or the other, so asking for both is a config mistake
         let both = serde_json::from_str::<CacheConfig>(
             r#"{"router": {"parsing": {"max_entries": 5, "max_size": "1MB"}}}"#,
         );

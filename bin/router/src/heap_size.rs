@@ -1,13 +1,9 @@
-//! How much heap a cached value hangs on to.
+//! How much heap a cached value hangs on to, for cache byte budgets.
 //!
-//! The cache weighers use this to keep a byte budget instead of an entry count.
-//! `heap_size` reports what a value owns *behind* its pointers; the value's own
-//! `size_of::<Self>()` is left out so nesting composes - a `Vec<T>` counts its buffer
-//! plus whatever each `T` owns, and the weigher adds `size_of::<V>()` once at the top.
-//!
-//! Same deal as [`ShrinkMemory`](crate::query_planner::ast::shrink::ShrinkMemory): when a
-//! cached type grows a field, count it here too. The estimate-vs-measured assertion in
-//! `e2e/src/bin/memory_baseline.rs` is what catches a field somebody forgot.
+//! `heap_size` counts what a value owns behind its pointers, not `size_of::<Self>()`,
+//! so nesting composes. Like [`ShrinkMemory`](crate::query_planner::ast::shrink::ShrinkMemory):
+//! when a cached type grows a field, count it here too - `e2e/src/bin/memory_baseline.rs`
+//! catches a field somebody forgot.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::num::NonZeroU32;
@@ -23,13 +19,10 @@ use graphql_tools::validation::utils::ValidationError;
 /// bound. Checked against the real thing by `e2e/src/bin/memory_baseline.rs`.
 const MOKA_ENTRY_OVERHEAD: usize = 200;
 
-/// What one cache entry is charged against a byte budget.
-///
-/// Runs once per cache miss, right after the work that produced the value, so walking the
-/// value it just built costs a fraction of having built it.
+/// What one cache entry is charged against a byte budget, on insert.
 pub(crate) fn entry_weight<K, V: HeapSize>(value: &V) -> u32 {
     let bytes = MOKA_ENTRY_OVERHEAD + size_of::<K>() + size_of::<V>() + value.heap_size();
-    // a single entry heavier than 4 GiB is not one moka should be asked to hold anyway
+    // Weights are u32; clamp huge values.
     bytes.min(u32::MAX as usize) as u32
 }
 
@@ -44,14 +37,13 @@ pub(crate) trait HeapSize {
 /// undercharged small maps by around 6x - and small is what a field's arguments are.
 const BTREE_NODE_CAPACITY: usize = 11;
 
-/// `LeafNode<K, V>` is a parent pointer, an index and a length, then the key and value arrays.
+/// `LeafNode` layout as of current std: parent pointer, length, then key/value arrays.
 const fn btree_node_size<K, V>() -> usize {
     2 * size_of::<usize>() + BTREE_NODE_CAPACITY * (size_of::<K>() + size_of::<V>())
 }
 
-/// Optimistic above one node's worth: a map that has split keeps its nodes partly filled and
-/// grows internal nodes on top, neither of which this counts. Exact at 11 entries or fewer,
-/// which is nearly all of them here.
+/// Optimistic past one node: ignores partly-filled splits and internal nodes.
+/// Exact at 11 entries or fewer.
 const fn btree_nodes(len: usize) -> usize {
     len.div_ceil(BTREE_NODE_CAPACITY)
 }
@@ -121,8 +113,7 @@ impl<T: HeapSize + ?Sized> HeapSize for Box<T> {
     }
 }
 
-/// Counted in full by every value that points at it. Two caches holding the same `Arc`
-/// each pay for it, which over-charges a shared subtree but never under-charges a budget.
+/// Counted in full by every owner; shared subtrees over-charge rather than under-charge a budget.
 impl<T: HeapSize + ?Sized> HeapSize for Arc<T> {
     #[inline]
     fn heap_size(&self) -> usize {
@@ -178,8 +169,6 @@ impl<T: HeapSize, S> HeapSize for HashSet<T, S> {
             + self.iter().map(HeapSize::heap_size).sum::<usize>()
     }
 }
-
-// The parsed GraphQL document, only ever cached with `String` text.
 
 impl HeapSize for query::Document<'_, String> {
     fn heap_size(&self) -> usize {
@@ -319,11 +308,7 @@ mod tests {
         let mut strings = Vec::with_capacity(4);
         strings.push(String::from("hello"));
 
-        assert_eq!(
-            strings.heap_size(),
-            4 * size_of::<String>() + 5,
-            "the vector's spare capacity counts, and so does the string it holds"
-        );
+        assert_eq!(strings.heap_size(), 4 * size_of::<String>() + 5);
     }
 
     #[test]
