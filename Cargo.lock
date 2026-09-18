@@ -4655,9 +4655,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-error"
-version = "2.5.0"
+version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37be4fd659180da86ea43a9c167a1e726ee43db154a346eefddea89261b4d4a5"
+checksum = "63b828e74404cb353aa0f6713d40881ef16b9ffa29e21d286b032ca500791fc8"
 dependencies = [
  "backtrace",
  "foldhash 0.2.0",
@@ -4798,9 +4798,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-router"
-version = "1.0.0"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "203fc4ba8fd22db656cde62cfbfe705f776aa652ce8d7ce5c6093b7c37185f70"
+checksum = "10ee67c4ff2f6cd5251c11ef50c90207b9f0ecbaa9a7dcaf699a8e75cd28fbb0"
 dependencies = [
  "http",
  "log",
