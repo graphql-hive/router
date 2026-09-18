@@ -38,6 +38,37 @@ fn bench_parser(c: &mut Criterion) {
         });
     }
 
+    let string_heavy = format!(
+        "query Strings {{\n{}\n}}",
+        (0..64)
+            .map(|index| format!("field{index}(value: \"{}\")", "a".repeat(128)))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    let whitespace_and_comments = format!(
+        "query Whitespace {{{}}}",
+        (0..128)
+            .map(|index| format!(" # comment {index}\n field{index}\n"))
+            .collect::<Vec<_>>()
+            .join("")
+    );
+
+    for (name, content) in [
+        ("string-heavy", string_heavy),
+        ("whitespace-and-comments", whitespace_and_comments),
+    ] {
+        group.bench_function(format!("{name}/String"), |b| {
+            b.iter(|| {
+                parse_query::<String>(black_box(content.as_str())).expect("failed to parse query")
+            });
+        });
+        group.bench_function(format!("{name}/&str"), |b| {
+            b.iter(|| {
+                parse_query::<&str>(black_box(content.as_str())).expect("failed to parse query")
+            });
+        });
+    }
+
     group.finish();
 }
 

@@ -502,6 +502,11 @@ mod tests {
     }
 
     #[test]
+    fn rejects_invalid_string_escape() {
+        assert!(super::minify_query(r#"{ field(value: "bad\q") }"#).is_err());
+    }
+
+    #[test]
     fn minify_document_test() {
         let source = "
         query SomeQuery($foo: String!, $bar: String) {
