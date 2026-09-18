@@ -9,7 +9,7 @@
 
 use proc_macro::TokenStream;
 
-mod heap_bytes;
+mod heap_size;
 mod sum;
 
 /// Sums the heap of every field.
@@ -25,5 +25,5 @@ mod sum;
 /// ```
 #[proc_macro_derive(HeapSize, attributes(heap_size))]
 pub fn derive_heap_size(input: TokenStream) -> TokenStream {
-    heap_bytes::derive_heap_size(input)
+    heap_size::derive_heap_size(input)
 }

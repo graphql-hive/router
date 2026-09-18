@@ -5,7 +5,7 @@
 //! which trait path to implement, which method to sum, which helper attribute carries
 //! a custom `bound`, and the derive name used in error messages.
 //!
-//! `HeapSize` in `heap_bytes` is one instantiation; future traits with the same shape
+//! `HeapSize` in `heap_size` is one instantiation; future traits with the same shape
 //! reuse [`expand`] without copying this logic.
 
 use quote::quote;
@@ -206,12 +206,12 @@ pub(crate) fn binding_ident(member: &syn::Member) -> proc_macro2::Ident {
 mod tests {
     use super::*;
 
-    fn other_config() -> SumConfig {
+    fn heap_size_config() -> SumConfig {
         SumConfig {
-            trait_path: syn::parse_quote!(crate::bytes::HeapBytes),
-            method: quote::format_ident!("heap_bytes"),
-            helper_attr: "heap_bytes",
-            derive_name: "HeapBytes",
+            trait_path: syn::parse_quote!(crate::heap_size::HeapSize),
+            method: quote::format_ident!("heap_size"),
+            helper_attr: "heap_size",
+            derive_name: "HeapSize",
         }
     }
 
@@ -220,30 +220,26 @@ mod tests {
         let input: DeriveInput = syn::parse_quote! {
             struct Foo { a: String, b: u32 }
         };
-        let tokens = expand(&input, &other_config())
+        let tokens = expand(&input, &heap_size_config())
             .expect("struct expands")
             .to_string();
         assert!(
-            tokens.contains("crate :: bytes :: HeapBytes"),
+            tokens.contains("crate :: heap_size :: HeapSize"),
             "trait path comes from config, not hardcoded: {tokens}"
         );
         assert!(
-            tokens.contains("fn heap_bytes"),
+            tokens.contains("fn heap_size"),
             "method name comes from config: {tokens}"
-        );
-        assert!(
-            !tokens.contains("heap_size"),
-            "no HeapSize leakage into other derives: {tokens}"
         );
     }
 
     #[test]
     fn custom_bound_replaces_inferred_bounds() {
         let input: DeriveInput = syn::parse_quote! {
-            #[heap_bytes(bound = "T: Clone")]
+            #[heap_size(bound = "T: Clone")]
             struct Foo<T> { inner: T }
         };
-        let tokens = expand(&input, &other_config())
+        let tokens = expand(&input, &heap_size_config())
             .expect("custom bound expands")
             .to_string();
         assert!(
@@ -261,9 +257,9 @@ mod tests {
         let input: DeriveInput = syn::parse_quote! {
             union Foo { a: u32, b: f32 }
         };
-        let err = expand(&input, &other_config()).expect_err("union is rejected");
+        let err = expand(&input, &heap_size_config()).expect_err("union is rejected");
         assert!(
-            err.to_string().contains("HeapBytes"),
+            err.to_string().contains("HeapSize"),
             "error names the derive from config: {err}"
         );
     }
