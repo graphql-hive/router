@@ -15,7 +15,7 @@ use crate::{
             partition::partition_operation,
             schema::{SchemaMetadata, SchemaWithMetadata},
         },
-        projection::plan::FieldProjectionPlan,
+        projection::plan::ProjectionPlan,
         response::graphql_error::GraphQLError,
     },
 };
@@ -145,7 +145,7 @@ impl SupergraphTestData {
             .clone()
             .unwrap_or(OperationKind::Query);
         let (root_type_name, projection_plan) =
-            FieldProjectionPlan::from_operation(&operation, &self.schema_metadata);
+            ProjectionPlan::from_operation(&operation, &self.schema_metadata);
         let root_type_name = root_type_name.to_string();
         let partitioned_operation = partition_operation(operation);
         let operation_for_plan = Arc::new(partitioned_operation.downstream_operation);

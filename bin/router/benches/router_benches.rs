@@ -6,7 +6,7 @@ use hive_router::executor::{
         partition::partition_operation,
         schema::{SchemaMetadata, SchemaWithMetadata},
     },
-    projection::plan::FieldProjectionPlan,
+    projection::plan::ProjectionPlan,
 };
 use hive_router::pipeline::authorization::metadata::AuthorizationMetadata;
 use hive_router::pipeline::normalize::hash_normalized_operation;
@@ -47,7 +47,7 @@ fn authorization_benchmark(c: &mut Criterion) {
         let parsed = safe_parse_operation(query).unwrap();
         let normalized = normalize_operation(supergraph, &parsed, None).unwrap();
         let (root_type_name, projection_plan) =
-            FieldProjectionPlan::from_operation(&normalized.operation, &metadata);
+            ProjectionPlan::from_operation(&normalized.operation, metadata);
         let root_type_name = root_type_name.to_string();
         let operation_kind = normalized
             .operation

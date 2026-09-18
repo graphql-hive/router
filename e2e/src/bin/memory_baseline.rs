@@ -70,7 +70,7 @@ const MEASURED_OPERATIONS: usize = 800;
 const WARMUP_OPERATIONS: usize = 25;
 
 /// Retained heap bytes per operation for `grafbase-many-plans`
-const BASELINE_BYTES_PER_OPERATION: usize = 7_331;
+const BASELINE_BYTES_PER_OPERATION: usize = 5_826;
 
 /// Allowed increase above the baseline
 const TOLERANCE: f64 = 0.05;
