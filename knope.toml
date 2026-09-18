@@ -20,6 +20,10 @@ changelog = "lib/graphql-tools/CHANGELOG.md"
 versioned_files = ["lib/hive-console-sdk/Cargo.toml", { path = "bin/router/Cargo.toml", dependency = "hive-console-sdk" }, "Cargo.lock", { path = "apollo-router-workspace/bin/router/Cargo.toml", dependency = "hive-console-sdk" }, { path = "apollo-router-workspace/Cargo.lock", dependency = "hive-console-sdk" }]
 changelog = "lib/hive-console-sdk/CHANGELOG.md"
 
+[packages.hive-router-macros]
+versioned_files = ["lib/macros/Cargo.toml", { path = "bin/router/Cargo.toml", dependency = "hive-router-macros" }, "Cargo.lock"]
+changelog = "lib/macros/CHANGELOG.md"
+
 [packages.hive-router]
 versioned_files = ["bin/router/Cargo.toml", "Cargo.lock"]
 changelog = "bin/router/CHANGELOG.md"

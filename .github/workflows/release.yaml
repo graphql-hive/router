@@ -38,6 +38,7 @@ jobs:
       PUBLISH_ROUTER_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-router"') }}
       PUBLISH_GRAPHQL_TOOLS_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"graphql-tools"') }}
       PUBLISH_CONSOLE_SDK_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-console-sdk"') }}
+      PUBLISH_MACROS_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-router-macros"') }}
       PUBLISH_HIVE_APOLLO_ROUTER_PLUGIN: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-apollo-router-plugin"') }}
     if: ${{ github.repository_owner == 'graphql-hive' && needs.check.outputs.crates_to_publish != '{}' }}
     steps:
@@ -70,6 +71,13 @@ jobs:
         if: env.PUBLISH_HIVE_APOLLO_ROUTER_PLUGIN == 'true'
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: publish hive-router-macros lib
+        if: env.PUBLISH_MACROS_CRATE == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          cargo publish --manifest-path ${{ fromJson(needs.check.outputs.crates_to_publish).hive-router-macros }}
 
       - name: publish hive-apollo-router-plugin lib
         if: env.PUBLISH_HIVE_APOLLO_ROUTER_PLUGIN == 'true'
