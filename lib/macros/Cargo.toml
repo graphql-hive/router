@@ -4,7 +4,7 @@ version = "0.0.1"
 edition = "2021"
 license = "MIT"
 publish = true
-description = "Derive macros used internally by the Hive Router. They carry no stability guarantees and are not meant to be depended on directly."
+description = "Derive macros used internally by the Hive Router"
 repository = "https://github.com/graphql-hive/router"
 homepage = "https://github.com/graphql-hive/router"
 
