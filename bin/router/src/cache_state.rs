@@ -57,11 +57,6 @@ impl<K, V> EntryValueHitMissExt<V> for Entry<K, V> {
     }
 }
 
-/// Builds a moka cache from [`CacheLimitsConfig`]. Both expiries are combinable:
-/// an entry expires on whichever of TTL/TTI fires first. Zero durations are ignored
-/// (moka would otherwise expire entries immediately), so `0s` behaves like unset.
-/// Kept here (rather than on the config type) so the config stays pure data
-/// without a moka dependency.
 pub(crate) fn build_cache<K, V>(limits: &CacheLimitsConfig) -> moka::future::Cache<K, V>
 where
     K: Hash + Eq + Send + Sync + 'static,
