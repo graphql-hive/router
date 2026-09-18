@@ -5,6 +5,7 @@
 //! It also re-exports the OTEL types used across crates to avoid deep dependency chains.
 
 pub mod error;
+pub mod external_wait;
 pub mod logging;
 pub mod metrics;
 pub mod propagation;
