@@ -1,3 +1,4 @@
+use crate::cache_state::build_cache;
 use crate::config::traffic_shaping::{
     TrafficShapingRouterDedupeHeadersConfig, TrafficShapingRouterDedupeHeadersKeyword,
 };
@@ -354,7 +355,7 @@ impl RouterSharedState {
         active_subscriptions: ActiveSubscriptions,
         storage_manager: Arc<StorageManager>,
     ) -> Result<Self, SharedStateError> {
-        let parse_cache = Cache::new(router_config.cache.router.parsing.max_entries);
+        let parse_cache = build_cache(&router_config.cache.router.parsing);
         let coprocessor = router_config
             .coprocessor
             .as_ref()
