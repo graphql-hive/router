@@ -1,4 +1,5 @@
 use crate::background_tasks::{BackgroundTask, BackgroundTasksManager};
+use crate::cache_state::build_cache;
 use crate::config::telemetry::hive::{is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig};
 use crate::config::{cache::SupergraphCacheConfig, supergraph::SupergraphSource, HiveRouterConfig};
 use crate::executor::execution::operation_name::OperationNameForwardConfig;
@@ -294,29 +295,26 @@ impl RouterSupergraphRuntime {
                 hive_usage_agent,
                 persisted_documents,
                 authorization,
-                validate_cache: Cache::new(
-                    snapshot
+                validate_cache: build_cache(
+                    &snapshot
                         .options
                         .cache
                         .validation
-                        .resolve(&context.cache.validation)
-                        .max_entries,
+                        .resolve(&context.cache.validation),
                 ),
-                normalize_cache: Cache::new(
-                    snapshot
+                normalize_cache: build_cache(
+                    &snapshot
                         .options
                         .cache
                         .normalization
-                        .resolve(&context.cache.normalization)
-                        .max_entries,
+                        .resolve(&context.cache.normalization),
                 ),
-                plan_cache: Cache::new(
-                    snapshot
+                plan_cache: build_cache(
+                    &snapshot
                         .options
                         .cache
                         .query_plans
-                        .resolve(&context.cache.query_plans)
-                        .max_entries,
+                        .resolve(&context.cache.query_plans),
                 ),
                 demand_control_runtime,
                 supergraph_lifetime: supergraph_lifetime.clone(),
@@ -1185,6 +1183,10 @@ mod plugin_runtime_cache_tests {
 
     /// Same as [`test_schema_state`], but with the cache limits a router config would supply.
     fn test_schema_state_with_cache(cache: SupergraphCacheConfig) -> SchemaState {
+        // `Supergraph::from_sdl` needs the process-level provider; install it here (idempotent)
+        // so tests using this helper pass in isolation instead of relying on another test
+        // having installed it first in the same process.
+        crate::init_rustls_crypto_provider();
         let mut state = test_schema_state();
         let context = state.runtime_context.clone();
         state.runtime_context = Arc::new(RouterSupergraphRuntimeContext {
@@ -1210,7 +1212,10 @@ mod plugin_runtime_cache_tests {
         let state = test_schema_state_with_cache(SupergraphCacheConfig {
             validation: CacheLimitsConfig::default().with_max_entries(7),
             normalization: CacheLimitsConfig::default().with_max_entries(8),
-            query_plans: CacheLimitsConfig::default().with_max_entries(9),
+            query_plans: CacheLimitsConfig::default()
+                .with_max_entries(9)
+                .with_time_to_live(Some(Duration::from_secs(1800)))
+                .with_time_to_idle(Some(Duration::from_secs(300))),
         });
 
         // a variant that sets nothing gets every configured limit
@@ -1222,6 +1227,17 @@ mod plugin_runtime_cache_tests {
         assert_eq!(runtime.validate_cache.policy().max_capacity(), Some(7));
         assert_eq!(runtime.normalize_cache.policy().max_capacity(), Some(8));
         assert_eq!(runtime.plan_cache.policy().max_capacity(), Some(9));
+        assert_eq!(
+            runtime.plan_cache.policy().time_to_live(),
+            Some(Duration::from_secs(1800))
+        );
+        assert_eq!(
+            runtime.plan_cache.policy().time_to_idle(),
+            Some(Duration::from_secs(300))
+        );
+        // caches without configured expiry stay expiry-free
+        assert_eq!(runtime.validate_cache.policy().time_to_live(), None);
+        assert_eq!(runtime.validate_cache.policy().time_to_idle(), None);
 
         // overriding one cache leaves the others inheriting
         let mut options = SupergraphOptions::default();
@@ -1233,8 +1249,73 @@ mod plugin_runtime_cache_tests {
                 .await
                 .unwrap();
         assert_eq!(runtime.plan_cache.policy().max_capacity(), Some(3));
+        // untouched dimensions of an overridden cache still inherit the config
+        assert_eq!(
+            runtime.plan_cache.policy().time_to_live(),
+            Some(Duration::from_secs(1800))
+        );
+        assert_eq!(
+            runtime.plan_cache.policy().time_to_idle(),
+            Some(Duration::from_secs(300))
+        );
         assert_eq!(runtime.validate_cache.policy().max_capacity(), Some(7));
         assert_eq!(runtime.normalize_cache.policy().max_capacity(), Some(8));
+    }
+
+    #[ntex::test]
+    async fn supergraph_cache_overrides_can_chain_expiry_dimensions() {
+        let state = test_schema_state_with_cache(SupergraphCacheConfig {
+            validation: CacheLimitsConfig::default().with_max_entries(7),
+            normalization: CacheLimitsConfig::default().with_max_entries(8),
+            query_plans: CacheLimitsConfig::default()
+                .with_max_entries(9)
+                .with_time_to_live(Some(Duration::from_secs(1800)))
+                .with_time_to_idle(Some(Duration::from_secs(300))),
+        });
+
+        // chained setters must preserve every dimension instead of resetting the others
+        let mut options = SupergraphOptions::default();
+        options
+            .cache
+            .query_plans
+            .set_max_entries(3)
+            .set_time_to_live(Some(Duration::from_secs(60)))
+            .set_time_to_idle(Some(Duration::from_secs(10)));
+        let overriding = Supergraph::from_sdl("test", TEST_SUPERGRAPH_SDL, options)
+            .expect("valid test supergraph SDL");
+        let runtime =
+            RouterSupergraphRuntime::build(&overriding.snapshot(), &state.runtime_context)
+                .await
+                .unwrap();
+        assert_eq!(runtime.plan_cache.policy().max_capacity(), Some(3));
+        assert_eq!(
+            runtime.plan_cache.policy().time_to_live(),
+            Some(Duration::from_secs(60))
+        );
+        assert_eq!(
+            runtime.plan_cache.policy().time_to_idle(),
+            Some(Duration::from_secs(10))
+        );
+        // untouched caches still inherit the config
+        assert_eq!(runtime.validate_cache.policy().max_capacity(), Some(7));
+        assert_eq!(runtime.validate_cache.policy().time_to_live(), None);
+
+        // passing None disables an expiry the config sets, without touching other dimensions
+        let mut options = SupergraphOptions::default();
+        options
+            .cache
+            .query_plans
+            .set_time_to_live(None)
+            .set_time_to_idle(None);
+        let overriding = Supergraph::from_sdl("test", TEST_SUPERGRAPH_SDL, options)
+            .expect("valid test supergraph SDL");
+        let runtime =
+            RouterSupergraphRuntime::build(&overriding.snapshot(), &state.runtime_context)
+                .await
+                .unwrap();
+        assert_eq!(runtime.plan_cache.policy().time_to_live(), None);
+        assert_eq!(runtime.plan_cache.policy().time_to_idle(), None);
+        assert_eq!(runtime.plan_cache.policy().max_capacity(), Some(9));
     }
 
     #[ntex::test]
