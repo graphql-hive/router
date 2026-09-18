@@ -138,6 +138,23 @@ pub struct SupergraphCacheOverrides {
     pub query_plans: CacheOverride,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum CacheSetting<T> {
+    #[default]
+    Inherit,
+    Override(T),
+}
+
+impl<T: Clone> CacheSetting<T> {
+    fn resolve(&self, inherited: T) -> T {
+        match self {
+            Self::Inherit => inherited,
+            Self::Override(value) => value.clone(),
+        }
+    }
+}
+
 /// Override for a single per-supergraph cache.
 ///
 /// Starts out inheriting the router config's `cache.supergraph` value,
@@ -151,9 +168,9 @@ pub struct SupergraphCacheOverrides {
 /// `set_*` method here, and existing plugin code keeps compiling.
 #[derive(Debug, Default, Clone)]
 pub struct CacheOverride {
-    max_entries: Option<u64>,
-    time_to_live: Option<Option<Duration>>,
-    time_to_idle: Option<Option<Duration>>,
+    max_entries: CacheSetting<u64>,
+    time_to_live: CacheSetting<Option<Duration>>,
+    time_to_idle: CacheSetting<Option<Duration>>,
 }
 
 impl CacheOverride {
@@ -161,7 +178,7 @@ impl CacheOverride {
     /// `0` turns the cache off.
     /// Returns the mutable reference so further `set_*` calls can be chained.
     pub fn set_max_entries(&mut self, max_entries: u64) -> &mut Self {
-        self.max_entries = Some(max_entries);
+        self.max_entries = CacheSetting::Override(max_entries);
         self
     }
 
@@ -169,7 +186,7 @@ impl CacheOverride {
     /// Pass `None` to disable TTL expiry for this variant even if the config sets one.
     /// Returns the mutable reference so further `set_*` calls can be chained.
     pub fn set_time_to_live(&mut self, time_to_live: Option<Duration>) -> &mut Self {
-        self.time_to_live = Some(time_to_live);
+        self.time_to_live = CacheSetting::Override(time_to_live);
         self
     }
 
@@ -177,7 +194,7 @@ impl CacheOverride {
     /// Pass `None` to disable idle expiry for this variant even if the config sets one.
     /// Returns the mutable reference so further `set_*` calls can be chained.
     pub fn set_time_to_idle(&mut self, time_to_idle: Option<Duration>) -> &mut Self {
-        self.time_to_idle = Some(time_to_idle);
+        self.time_to_idle = CacheSetting::Override(time_to_idle);
         self
     }
 
@@ -188,18 +205,16 @@ impl CacheOverride {
 
     /// Goes back to inheriting the router config's value for this cache.
     pub fn inherit(&mut self) -> &mut Self {
-        self.max_entries = None;
-        self.time_to_live = None;
-        self.time_to_idle = None;
+        *self = Self::default();
         self
     }
 
     /// The limits to actually build the cache with, given what the router config asked for.
     pub(crate) fn resolve(&self, inherited: &CacheLimitsConfig) -> CacheLimitsConfig {
         CacheLimitsConfig {
-            max_entries: self.max_entries.unwrap_or(inherited.max_entries),
-            time_to_live: self.time_to_live.unwrap_or(inherited.time_to_live),
-            time_to_idle: self.time_to_idle.unwrap_or(inherited.time_to_idle),
+            max_entries: self.max_entries.resolve(inherited.max_entries),
+            time_to_live: self.time_to_live.resolve(inherited.time_to_live),
+            time_to_idle: self.time_to_idle.resolve(inherited.time_to_idle),
         }
     }
 }
