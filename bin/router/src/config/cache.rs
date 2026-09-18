@@ -140,17 +140,17 @@ pub struct SupergraphCacheOverrides {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
-pub enum CacheSetting<T> {
+pub(crate) enum CacheSetting<T> {
     #[default]
     Inherit,
     Override(T),
 }
 
-impl<T: Clone> CacheSetting<T> {
+impl<T: Copy> CacheSetting<T> {
     fn resolve(&self, inherited: T) -> T {
         match self {
             Self::Inherit => inherited,
-            Self::Override(value) => value.clone(),
+            Self::Override(value) => *value,
         }
     }
 }

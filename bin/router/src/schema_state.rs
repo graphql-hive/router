@@ -1183,6 +1183,10 @@ mod plugin_runtime_cache_tests {
 
     /// Same as [`test_schema_state`], but with the cache limits a router config would supply.
     fn test_schema_state_with_cache(cache: SupergraphCacheConfig) -> SchemaState {
+        // `Supergraph::from_sdl` needs the process-level provider; install it here (idempotent)
+        // so tests using this helper pass in isolation instead of relying on another test
+        // having installed it first in the same process.
+        crate::init_rustls_crypto_provider();
         let mut state = test_schema_state();
         let context = state.runtime_context.clone();
         state.runtime_context = Arc::new(RouterSupergraphRuntimeContext {
