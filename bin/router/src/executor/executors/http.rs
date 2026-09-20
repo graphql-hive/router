@@ -456,10 +456,10 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 };
 
                 if deduplicate_request {
-                    let external_wait_guard = external_wait::enter();
                     // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
                     // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
                     let _permit = self.semaphore.acquire().await.unwrap();
+                    let external_wait_guard = external_wait::enter();
                     let fetched_response = send_request(send_request_opts).await;
                     drop(external_wait_guard);
                     let fetched_response = fetched_response?;
