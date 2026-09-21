@@ -1,7 +1,7 @@
 use criterion::Criterion;
 use criterion::{criterion_group, criterion_main};
 use hive_router::executor::introspection::schema::SchemaWithMetadata;
-use hive_router::executor::projection::plan::FieldProjectionPlan;
+use hive_router::executor::projection::plan::ProjectionPlan;
 use hive_router::executor::projection::response::project_by_operation;
 use hive_router::executor::response::value::Value;
 use hive_router::query_planner::ast::normalization::normalize_operation;
@@ -30,34 +30,40 @@ fn project_data_by_operation_test(c: &mut Criterion) {
     let normalized_operation = normalized_document.executable_operation();
     let schema_metadata = &planner.consumer_schema.schema_metadata();
     let (root_type_name, projection_plan) =
-        FieldProjectionPlan::from_operation(normalized_operation, schema_metadata);
+        ProjectionPlan::from_operation(normalized_operation, schema_metadata);
+    c.bench_function("compile_projection_plan", |b| {
+        b.iter(|| {
+            let (_, plan) = ProjectionPlan::from_operation(normalized_operation, schema_metadata);
+            black_box(plan);
+        });
+    });
     let result_as_string = raw_result::get_result_as_string();
     let projected_data_as_json: sonic_rs::Value =
         sonic_rs::from_slice(result_as_string.as_bytes()).unwrap();
+    let envelope: Value = Value::from(projected_data_as_json.as_ref());
+    let data = match &envelope {
+        Value::Object(fields) => fields
+            .iter()
+            .find(|(key, _)| *key == "data")
+            .map(|(_, value)| value.clone())
+            .expect("the fixture has a `data` member"),
+        _ => panic!("the fixture is a GraphQL response object"),
+    };
     c.bench_function("project_data_by_operation", |b| {
-        b.iter_batched(
-            || {
-                let val: Value = Value::from(projected_data_as_json.as_ref());
-                val
-            },
-            |data| {
-                let bb_projection_plan = black_box(&projection_plan);
-                let bb_root_type_name = black_box(root_type_name);
-                let result = project_by_operation(
-                    &data,
-                    vec![],
-                    &Default::default(),
-                    bb_root_type_name,
-                    &bb_projection_plan,
-                    &None,
-                    result_as_string.len(),
-                    schema_metadata,
-                )
-                .unwrap();
-                black_box(result);
-            },
-            criterion::BatchSize::SmallInput,
-        );
+        b.iter(|| {
+            let result = project_by_operation(
+                black_box(&data),
+                vec![],
+                &Default::default(),
+                black_box(root_type_name),
+                black_box(&projection_plan),
+                &None,
+                result_as_string.len(),
+                schema_metadata,
+            )
+            .unwrap();
+            black_box(result);
+        });
     });
 }
 

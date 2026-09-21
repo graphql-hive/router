@@ -2,7 +2,7 @@ use std::env;
 use std::process;
 
 use hive_router::executor::introspection::schema::SchemaWithMetadata;
-use hive_router::executor::projection::plan::FieldProjectionPlan;
+use hive_router::executor::projection::plan::ProjectionPlan;
 use hive_router::query_planner::ast::normalization::normalize_operation;
 use hive_router::query_planner::ast::operation::OperationDefinition;
 use hive_router::query_planner::consumer_schema::ConsumerSchema;
@@ -127,12 +127,8 @@ fn main() {
             let consumer_schema = ConsumerSchema::new_from_supergraph(&parsed_schema);
             let schema_metadata = consumer_schema.schema_metadata();
 
-            let (_, projection_plan) =
-                FieldProjectionPlan::from_operation(operation, &schema_metadata);
-
-            for plan in &projection_plan {
-                println!("{}", plan);
-            }
+            let (_, projection) = ProjectionPlan::from_operation(operation, &schema_metadata);
+            println!("{projection}");
         }
         _ => {
             eprintln!("Unknown command. Available commands: consumer_graph, graph, paths, tree, fetch_graph, plan");

@@ -17,9 +17,7 @@ use std::sync::Arc;
 use crate::pipeline::authorization::user_auth_context::UserAuthContext;
 use crate::pipeline::error::{ClientPipelineError, PipelineError};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
-use crate::pipeline::nullify::rebuilder::{
-    rebuild_nulled_operation, rebuild_nulled_projection_plan,
-};
+use crate::pipeline::nullify::rebuilder::rebuild_nulled_operation;
 use crate::pipeline::trie::Trie;
 use crate::utils::StrByAddr;
 
@@ -29,7 +27,7 @@ use crate::executor::execution::client_request_details::JwtRequestDetails;
 use crate::executor::execution::plan::CoerceVariablesPayload;
 use crate::executor::introspection::schema::SchemaMetadata;
 use crate::executor::operation_filter::{OperationFilter, Selection};
-use crate::executor::projection::plan::FieldProjectionPlan;
+use crate::executor::projection::plan::ProjectionPlan;
 use crate::executor::response::graphql_error::GraphQLError;
 use crate::pipeline::authorization::metadata::{AuthorizationMetadata, AuthorizationRule};
 use crate::query_planner::ast::operation::OperationDefinition;
@@ -56,7 +54,7 @@ pub enum AuthorizationDecision {
     /// The operation was modified to remove unauthorized parts. Continue with the new operation.
     Modified {
         new_operation_definition: OperationDefinition,
-        new_projection_plan: Vec<FieldProjectionPlan>,
+        new_projection_plan: Arc<ProjectionPlan>,
         errors: Vec<AuthorizationError>,
     },
     /// The operation should be aborted due to unauthorized access and reject mode being enabled.
@@ -386,8 +384,9 @@ pub fn apply_authorization_to_operation(
 
     let new_operation =
         rebuild_nulled_operation(&normalized_payload.operation_for_plan, &nulled_field_trie);
-    let new_projection_plan =
-        rebuild_nulled_projection_plan(&normalized_payload.projection_plan, &nulled_field_trie);
+    let new_projection_plan = normalized_payload
+        .projection_plan
+        .rewrite(&nulled_field_trie);
 
     Ok(AuthorizationDecision::Modified {
         new_operation_definition: new_operation,

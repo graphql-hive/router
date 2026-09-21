@@ -118,7 +118,7 @@ impl<'p> Trie<'p> {
     /// Returns `(child_position, is_marked)` if the segment is known,
     /// or `None` if it's not in the trie.
     #[inline]
-    pub(super) fn find_segment_at_position(
+    pub(crate) fn find_segment_at_position(
         &self,
         parent_path_position: PathIndex,
         segment: PathSegment<'_>,
@@ -130,7 +130,7 @@ impl<'p> Trie<'p> {
     }
 
     #[inline]
-    pub(super) fn has_children(&self, path_position: PathIndex) -> bool {
+    pub(crate) fn has_children(&self, path_position: PathIndex) -> bool {
         !self.nodes[path_position.get()].children.is_empty()
     }
 }

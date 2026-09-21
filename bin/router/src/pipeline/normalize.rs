@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::executor::hooks::on_graphql_params::GraphQLParams;
 use crate::executor::hooks::on_supergraph_load::SupergraphSnapshot;
 use crate::executor::introspection::partition::partition_operation;
-use crate::executor::projection::plan::FieldProjectionPlan;
+use crate::executor::projection::plan::ProjectionPlan;
 use crate::query_planner::ast::normalization::error::NormalizationError;
 use crate::query_planner::ast::normalization::normalize_operation;
 use crate::query_planner::ast::operation::OperationDefinition;
@@ -20,9 +20,7 @@ use crate::cache_state::{CacheHitMiss, EntryResultHitMissExt};
 use crate::executor::operation_filter::OperationFilterOutput;
 use crate::executor::response::graphql_error::GraphQLError;
 use crate::pipeline::error::PipelineError;
-use crate::pipeline::nullify::rebuilder::{
-    rebuild_nulled_operation, rebuild_nulled_projection_plan,
-};
+use crate::pipeline::nullify::rebuilder::rebuild_nulled_operation;
 use crate::pipeline::parser::GraphQLParserPayload;
 use crate::pipeline::trie::Trie;
 use crate::schema_state::{RouterSupergraphRuntime, SchemaState};
@@ -38,7 +36,7 @@ pub struct GraphQLNormalizationPayload {
     pub normalized_operation_hash: u64,
     pub root_type_name: String,
     pub operation_kind: OperationKind,
-    pub projection_plan: Arc<Vec<FieldProjectionPlan>>,
+    pub projection_plan: Arc<ProjectionPlan>,
     pub operation_identity: OperationIdentity,
 }
 
@@ -64,7 +62,7 @@ impl GraphQLNormalizationPayload {
     pub(crate) fn with_operation(
         &self,
         new_operation: OperationDefinition,
-        new_projection_plan: Vec<FieldProjectionPlan>,
+        new_projection_plan: Arc<ProjectionPlan>,
     ) -> Arc<GraphQLNormalizationPayload> {
         let hashes =
             hash_normalized_operation(&new_operation, self.operation_for_introspection.as_deref());
@@ -78,7 +76,7 @@ impl GraphQLNormalizationPayload {
             normalized_operation_hash: hashes.combined_operation_hash,
             root_type_name: self.root_type_name.clone(),
             operation_kind: self.operation_kind.clone(),
-            projection_plan: Arc::new(new_projection_plan),
+            projection_plan: new_projection_plan,
             operation_identity: self.operation_identity.clone(),
         })
     }
@@ -101,7 +99,7 @@ impl<'exec> FilterOutputExt<'exec> for OperationFilterOutput<'exec> {
     ) -> (Arc<GraphQLNormalizationPayload>, Vec<GraphQLError>) {
         let trie = Trie::from_paths(&self.rejected_paths);
         let new_op = rebuild_nulled_operation(&payload.operation_for_plan, &trie);
-        let new_projection = rebuild_nulled_projection_plan(&payload.projection_plan, &trie);
+        let new_projection = payload.projection_plan.rewrite(&trie);
         (payload.with_operation(new_op, new_projection), self.errors)
     }
 }
@@ -178,12 +176,11 @@ pub async fn normalize_request_with_cache(
                     .operation_kind
                     .clone()
                     .unwrap_or(OperationKind::Query);
-                let (root_type_name, mut projection_plan) =
-                    FieldProjectionPlan::from_operation(&operation, &supergraph.metadata);
+                let (root_type_name, projection_plan) =
+                    ProjectionPlan::from_operation(&operation, &supergraph.metadata);
                 let root_type_name = root_type_name.to_string();
+                let projection_plan = Arc::new(projection_plan);
                 let mut partitioned_operation = partition_operation(operation);
-
-                projection_plan.shrink_memory();
                 partitioned_operation.downstream_operation.shrink_memory();
                 if let Some(operation) = &mut partitioned_operation.introspection_operation {
                     operation.shrink_memory();
@@ -201,7 +198,7 @@ pub async fn normalize_request_with_cache(
                 let payload = GraphQLNormalizationPayload {
                     root_type_name,
                     operation_kind,
-                    projection_plan: Arc::new(projection_plan),
+                    projection_plan,
                     operation_for_plan,
                     operation_for_plan_hash: hashes.operation_for_plan_hash,
                     operation_for_introspection,
