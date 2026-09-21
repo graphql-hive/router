@@ -3,6 +3,7 @@ use std::sync::{Arc, LazyLock};
 
 use crate::cache_state::{CacheHitMiss, EntryResultHitMissExt};
 use crate::executor::execution::plan::PlanExecutionOutput;
+use crate::executor::execution::scheduler::{precompute_schedule, DependencySchedule};
 use crate::executor::hooks::on_query_plan::{
     OnQueryPlanEndHookPayload, OnQueryPlanStartHookPayload,
 };
@@ -30,6 +31,15 @@ pub enum QueryPlanResult {
 pub struct PlannedQuery {
     pub plan: Arc<QueryPlan>,
     pub demand_control: Option<Arc<DemandControlFormulaPlan>>,
+    /// Job graph precomputed once per cached plan. Shared by reference on every
+    /// request, so dependency-aware execution only clones the remaining counts
+    /// and recomputes `active` instead of rebuilding the hash maps.
+    pub(crate) dep_schedule: Option<Arc<DependencySchedule>>,
+}
+
+fn dep_schedule_for(executable: &QueryPlan) -> Option<Arc<DependencySchedule>> {
+    let node = executable.node.as_ref()?;
+    precompute_schedule(node).map(Arc::new)
 }
 
 fn empty_planning_plan() -> QueryPlan<Planning> {
@@ -138,6 +148,7 @@ pub async fn plan_operation_with_cache(
                     return Ok(PlannedQuery {
                         plan: EMPTY_QUERY_PLAN.clone(),
                         demand_control: compile_demand_control(&empty_planning_plan()),
+                        dep_schedule: None,
                     });
                 }
 
@@ -157,6 +168,7 @@ pub async fn plan_operation_with_cache(
                     return Ok(PlannedQuery {
                         plan: EMPTY_QUERY_PLAN.clone(),
                         demand_control: compile_demand_control(&empty_planning_plan()),
+                        dep_schedule: None,
                     });
                 }
 
@@ -170,9 +182,12 @@ pub async fn plan_operation_with_cache(
                     )
                     .map(|plan| {
                         let demand_control = compile_demand_control(&plan);
+                        let executable = plan.into_executable();
+                        let dep_schedule = dep_schedule_for(&executable);
                         PlannedQuery {
-                            plan: Arc::new(plan.into_executable()),
+                            plan: Arc::new(executable),
                             demand_control,
+                            dep_schedule,
                         }
                     })
             })

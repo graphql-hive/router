@@ -39,6 +39,7 @@ use crate::executor::execution::client_request_details::OperationDetails;
 use crate::executor::execution::demand_control::DemandControlExecutionContext;
 use crate::executor::execution::error_masking::ErrorMaskingRuntime;
 use crate::executor::execution::operation_name::OperationNameFactory;
+use crate::executor::execution::scheduler::DependencySchedule;
 use crate::executor::executors::common::ConnectionFingerprint;
 use crate::executor::headers::cache_control;
 use crate::executor::{
@@ -143,6 +144,9 @@ pub struct QueryPlanExecutionOpts<'exec> {
     pub connection_fingerprint: Option<ConnectionFingerprint>,
     /// Run the plan by its fetch-graph dependencies instead of its waves.
     pub dependency_aware_execution: bool,
+    /// Precomputed job graph for the cached plan. Shared by reference, never
+    /// cloned per request; `None` falls back to rebuilding it per request.
+    pub(crate) dependency_schedule: Option<&'exec DependencySchedule>,
 }
 
 pub struct PlanSubscriptionOutput {
@@ -426,6 +430,10 @@ pub async fn execute_query_plan<'exec>(
                     error_masking_runtime: opts.error_masking_runtime.clone(),
                     connection_fingerprint: opts.connection_fingerprint,
                     dependency_aware_execution: opts.dependency_aware_execution,
+                    // The remainder plan above is synthetic (built per subscription
+                    // event, not from the plan cache), so it has no precomputed
+                    // schedule. `None` falls back to rebuilding it per event.
+                    dependency_schedule: None,
                 };
                 match execute_query_plan_with_data(response.data, opts).await {
                     Ok(result) => yield result.body,
@@ -544,7 +552,7 @@ async fn execute_query_plan_with_data<'exec>(
         // not run, so wave execution stays the fallback.
         let scheduled = executor.dependency_aware_execution
             && executor
-                .execute_plan_dependency_aware(&mut exec_ctx, node)
+                .execute_plan_dependency_aware(&mut exec_ctx, node, opts.dependency_schedule)
                 .await;
 
         if !scheduled {

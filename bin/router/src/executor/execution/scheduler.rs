@@ -39,20 +39,102 @@ struct Job<'exec> {
     active: bool,
 }
 
+/// The parts of the job graph that are a pure function of the cached plan.
+///
+/// `collect_jobs` visits fetches in plan order regardless of variable values (both
+/// `@skip`/`@include` branches are always collected, only `active` differs), so the
+/// job order, per-job dependency counts and reverse edges are identical for every
+/// request running the same cached plan. Precomputing them once per plan cache miss
+/// leaves per-request work as "clone the remaining counts, recompute active".
+#[derive(Debug, Clone, Default)]
+pub(crate) struct DependencySchedule {
+    /// `initial_remaining[i]` is the number of fetch ids job `i` waits for.
+    pub initial_remaining: Vec<usize>,
+    /// Fetch id -> indices of jobs waiting for it. Read-only during execution,
+    /// shared by reference, never cloned per request.
+    pub dependents: AHashMap<i64, Vec<usize>>,
+    /// Indices of jobs with zero remaining, in plan order (FIFO).
+    pub initial_ready: Vec<usize>,
+}
+
+/// Builds the [`DependencySchedule`] for a plan node, or `None` for shapes the
+/// scheduler does not run (`@defer`, subscriptions) so the caller falls back.
+pub(crate) fn precompute_schedule(root: &PlanNode) -> Option<DependencySchedule> {
+    let mut jobs = Vec::new();
+    if !collect_jobs(root, true, &None, &mut jobs) {
+        return None;
+    }
+
+    let mut job_by_id: AHashMap<i64, usize> = AHashMap::with_capacity(jobs.len());
+    for (index, job) in jobs.iter().enumerate() {
+        for id in job.completes {
+            job_by_id.insert(*id, index);
+        }
+    }
+
+    let mut dependents: AHashMap<i64, Vec<usize>> = AHashMap::new();
+    let mut initial_remaining = vec![0usize; jobs.len()];
+    for (index, job) in jobs.iter().enumerate() {
+        let mut remaining = 0;
+        for id in job.depends_on {
+            match job_by_id.get(id) {
+                Some(&producer) if producer == index => continue,
+                Some(_) => {
+                    remaining += 1;
+                    dependents.entry(*id).or_default().push(index);
+                }
+                // Same as the per-request path: a dependency nobody produces would
+                // hang, so it is ignored (and warned about there).
+                None => continue,
+            }
+        }
+        initial_remaining[index] = remaining;
+    }
+
+    let initial_ready: Vec<usize> = initial_remaining
+        .iter()
+        .enumerate()
+        .filter(|(_, remaining)| **remaining == 0)
+        .map(|(index, _)| index)
+        .collect();
+
+    Some(DependencySchedule {
+        initial_remaining,
+        dependents,
+        initial_ready,
+    })
+}
+
 impl<'exec> Executor<'exec> {
     /// Runs the plan by its fetch-graph dependencies.
     ///
     /// Returns `false` without touching `ctx` when the plan has a shape this scheduler
     /// does not handle (`@defer`, a subscription node) - the caller falls back to wave
     /// execution.
-    pub async fn execute_plan_dependency_aware(
+    pub(crate) async fn execute_plan_dependency_aware(
         &self,
         ctx: &mut ExecutionContext<'exec>,
         root: &'exec PlanNode,
+        schedule: Option<&'exec DependencySchedule>,
     ) -> bool {
         let mut jobs = Vec::new();
         if !collect_jobs(root, true, self.variable_values, &mut jobs) {
             return false;
+        }
+
+        // Fast path: the job order from `collect_jobs` is independent of variable
+        // values (both condition branches are always collected in plan order), so a
+        // schedule precomputed once per cached plan lines up with this request's
+        // jobs. Clone the remaining counts, recompute active via the walk above,
+        // and share the reverse edges without rebuilding the hash maps.
+        if let Some(schedule) = schedule.filter(|s| s.initial_remaining.len() == jobs.len()) {
+            for (job, remaining) in jobs.iter_mut().zip(schedule.initial_remaining.iter()) {
+                job.remaining = *remaining;
+            }
+            let ready = schedule.initial_ready.iter().copied().collect();
+            self.drive_jobs(ctx, &mut jobs, &schedule.dependents, ready)
+                .await;
+            return true;
         }
 
         // id -> the job that completes it, and the reverse edges we walk on completion.
@@ -87,12 +169,23 @@ impl<'exec> Executor<'exec> {
 
         // FIFO, so fetches start in plan order and request logs stay comparable to the
         // wave executor's.
-        let mut ready: VecDeque<usize> = jobs
+        let ready: VecDeque<usize> = jobs
             .iter()
             .enumerate()
             .filter(|(_, job)| job.remaining == 0)
             .map(|(index, _)| index)
             .collect();
+        self.drive_jobs(ctx, &mut jobs, &dependents, ready).await;
+        true
+    }
+
+    async fn drive_jobs(
+        &self,
+        ctx: &mut ExecutionContext<'exec>,
+        jobs: &mut Vec<Job<'exec>>,
+        dependents: &AHashMap<i64, Vec<usize>>,
+        mut ready: VecDeque<usize>,
+    ) {
         let mut running = FuturesUnordered::new();
         let mut unfinished = jobs.len();
 
@@ -111,7 +204,7 @@ impl<'exec> Executor<'exec> {
                     // representations. Still counts as done for everything behind it.
                     None => {
                         unfinished -= 1;
-                        release(&mut jobs, &dependents, index, &mut ready);
+                        release(jobs, dependents, index, &mut ready);
                     }
                 }
             }
@@ -130,10 +223,8 @@ impl<'exec> Executor<'exec> {
             // need it are prepared, because that's where their representations come from.
             self.process_job_result(ctx, result);
             unfinished -= 1;
-            release(&mut jobs, &dependents, index, &mut ready);
+            release(jobs, dependents, index, &mut ready);
         }
-
-        true
     }
 }
 
@@ -314,6 +405,52 @@ mod tests {
             collect(&plan, &None),
             Some(vec![(vec![1], false), (vec![2], false)])
         );
+    }
+
+    /// The fast path reuses a schedule precomputed once per cached plan keyed by
+    /// job index, so `collect_jobs` must visit fetches in the same order no matter
+    /// the variable values (only `active` may differ).
+    #[test]
+    fn precomputed_schedule_lines_up_regardless_of_variables() {
+        let plan = PlanNode::Sequence(SequenceNode {
+            nodes: vec![
+                fetch(1, &[]),
+                PlanNode::Condition(ConditionNode {
+                    condition: "withReviews".to_string(),
+                    if_clause: Some(Box::new(fetch(2, &[1]))),
+                    else_clause: Some(Box::new(fetch(3, &[1]))),
+                }),
+            ],
+        });
+
+        let schedule = precompute_schedule(&plan).expect("schedulable");
+        assert_eq!(schedule.initial_remaining, vec![0, 1, 1]);
+        assert_eq!(schedule.initial_ready, vec![0]);
+        assert_eq!(schedule.dependents.get(&1).map(Vec::len), Some(2));
+
+        // Same job order (hence same indices) whether the condition holds or not.
+        for variables in [
+            None,
+            Some(VariablesMap::from([(
+                "withReviews".to_string(),
+                true.into(),
+            )])),
+            Some(VariablesMap::from([(
+                "withReviews".to_string(),
+                false.into(),
+            )])),
+        ] {
+            let mut jobs = Vec::new();
+            assert!(collect_jobs(&plan, true, &variables, &mut jobs));
+            assert_eq!(
+                jobs.iter()
+                    .map(|job| job.completes.to_vec())
+                    .collect::<Vec<_>>(),
+                vec![vec![1], vec![2], vec![3]],
+                "job order must not depend on variables for {variables:?}"
+            );
+            assert_eq!(jobs.len(), schedule.initial_remaining.len());
+        }
     }
 
     #[test]
