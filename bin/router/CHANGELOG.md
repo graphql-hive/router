@@ -116,6 +116,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.2.18 (2026-09-21)
+
+### Fixes
+
+#### Use Less Memory for Response Projection Plans
+
+The Router now stores response projection plans in a more compact form.
+
+This reduces the memory used when the Router handles many different queries. In our memory test, each new query used about 20% less memory.
+
 ## 0.2.17 (2026-09-18)
 
 ### Features
