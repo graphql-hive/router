@@ -371,7 +371,7 @@ impl GraphQLOperationSpan {
 
     pub fn record_error_count(&self, count: usize) {
         self.span
-            .record(attributes::HIVE_GRAPHQL_ERROR_COUNT, count);
+            .record(attributes::HIVE_GRAPHQL_ERROR_COUNT, count as i64);
         // error details live on events, this status makes the operation visible to apm
         if count > 0 {
             self.span.record(attributes::OTEL_STATUS_CODE, "Error");
@@ -422,10 +422,11 @@ impl GraphQLOperationSpan {
             return;
         }
 
-        self.span.record(attributes::COST_ESTIMATED, estimated);
+        self.span
+            .record(attributes::COST_ESTIMATED, estimated as i64);
 
         if let Some(actual) = actual {
-            self.span.record(attributes::COST_ACTUAL, actual);
+            self.span.record(attributes::COST_ACTUAL, actual as i64);
         }
 
         if let Some(delta) = delta {
@@ -478,7 +479,7 @@ impl GraphQLSubgraphOperationSpan {
 
     pub fn record_error_count(&self, count: usize) {
         self.span
-            .record(attributes::HIVE_GRAPHQL_ERROR_COUNT, count);
+            .record(attributes::HIVE_GRAPHQL_ERROR_COUNT, count as i64);
     }
 
     pub fn record_errors(&self, errors_fn: impl FnOnce() -> Vec<ObservedError>) {

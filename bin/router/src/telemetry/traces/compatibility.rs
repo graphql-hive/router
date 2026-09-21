@@ -396,6 +396,73 @@ mod tests {
         assert!(find_attribute(span, "http.status_code").is_none());
     }
 
+    /// Numeric span attributes must reach the exporter as OTel ints, not strings.
+    /// Tail-sampling policies and TraceQL match on the numeric type, so a
+    /// string-typed `http.response.status_code` is invisible to them.
+    ///
+    /// Two traps this guards against:
+    /// - `StatusCode::as_str()` yields `"200"`.
+    /// - `tracing_core`'s `Visit::record_u64` defaults to `record_debug`, and
+    ///   `tracing-opentelemetry`'s `SpanAttributeVisitor` implements `record_i64`
+    ///   but not `record_u64` — so `usize`/`u64` values get stringified.
+    ///
+    /// This has to assert through the real exporter: the `Visit` collector in
+    /// `spans::tests` sees the values before the OpenTelemetry conversion and so
+    /// cannot catch either trap.
+    #[test]
+    fn test_numeric_span_attributes_are_ints() {
+        let (provider, memory_exporter) =
+            setup_test_pipeline(SpansSemanticConventionsMode::SpecCompliant);
+        let tracer = provider.tracer("test-tracer");
+        let _guard = setup_tracing_subscriber(&provider);
+
+        let req = ntex::web::test::TestRequest::default()
+            .uri("/test?q=1")
+            .version(ntex::http::Version::HTTP_11)
+            .method(ntex::http::Method::GET)
+            .header(HOST, "example.com:8080")
+            .header(USER_AGENT, "test-agent");
+        let body = Bytes::from_static(b"test body");
+        let http_req = req.to_http_request();
+        let http_res =
+            ntex::web::HttpResponse::build(ntex::http::StatusCode::OK).body("response body");
+
+        tracer.in_span("root", |_cx| {
+            let span =
+                HttpServerRequestSpan::from_request(&http_req, &forwarded_ip_header_config());
+            span.record_body_size(body.len());
+            span.record_response(&http_res);
+        });
+
+        drop(_guard);
+        provider.force_flush().unwrap();
+        let spans = memory_exporter.get_finished_spans().unwrap();
+        let span = &spans[0];
+
+        assert_eq!(
+            find_attribute(span, "http.response.status_code"),
+            Some(&opentelemetry::Value::I64(200)),
+            "status code must be an int, not a string"
+        );
+
+        assert_eq!(
+            find_attribute(span, "server.port"),
+            Some(&opentelemetry::Value::I64(8080)),
+            "port must be an int, not a string"
+        );
+
+        for key in ["http.request.body.size", "http.response.body.size"] {
+            assert!(
+                matches!(
+                    find_attribute(span, key),
+                    Some(&opentelemetry::Value::I64(_))
+                ),
+                "{key} must be an int, got {:?}",
+                find_attribute(span, key)
+            );
+        }
+    }
+
     #[test]
     fn test_http_server_span_deprecated_only() {
         let (provider, memory_exporter) =
