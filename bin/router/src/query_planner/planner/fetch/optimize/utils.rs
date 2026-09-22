@@ -9,7 +9,7 @@ use tracing::{instrument, trace};
 use crate::query_planner::{
     ast::{
         merge_path::{MergePath, Segment},
-        selection_set::find_arguments_conflicts,
+        selection_set::{find_arguments_conflicts, find_selection_set_by_path},
     },
     planner::fetch::{
         error::FetchGraphError,
@@ -116,14 +116,17 @@ pub(crate) fn perform_fetch_step_merge(
         target
             .input
             .migrate_from_another(&source.input, &MergePath::default())?;
-    } else if target.input.selecting_same_types(&source.input) {
+    } else if target.input.selecting_same_types(&source.input)
+        && target.response_path == source.response_path
+    {
         // It's safe to not check if a condition was turned into an inline fragment,
         // because if a condition is present and "me" is a non-entity fetch step,
         // then the type_name values of the inputs are different.
-        if target.response_path != source.response_path {
-            return Err(FetchGraphError::MismatchedResponsePath);
-        }
-
+        //
+        // Inputs only match up when both steps get their keys from the same place. When we
+        // pulled in a step from deeper in the response, our own output already has its input
+        // - that is why we could pull it in - so there is nothing to copy over.
+        // See `can_absorb_nested_entity_call`.
         target
             .input
             .migrate_from_another(&source.input, &MergePath::default())?;
@@ -235,9 +238,13 @@ impl FetchStepData<MultiTypeFetchStep> {
         }
 
         // If both are entities, their response_paths should match,
-        // as we can't merge entity calls resolving different entities
+        // as we can't merge entity calls resolving different entities.
+        // The one exception is a nested entity call that we feed ourselves,
+        // see `can_absorb_nested_entity_call`.
         if matches!(self.kind, FetchStepKind::Entity) && self.kind == other.kind {
-            if !self.response_path.eq(&other.response_path) {
+            if !self.response_path.eq(&other.response_path)
+                && !self.can_absorb_nested_entity_call(self_index, other_index, other, fetch_graph)
+            {
                 return false;
             }
         } else {
@@ -270,6 +277,46 @@ impl FetchStepData<MultiTypeFetchStep> {
         }
 
         true
+    }
+
+    fn can_absorb_nested_entity_call(
+        &self,
+        self_index: NodeIndex,
+        other_index: NodeIndex,
+        other: &Self,
+        fetch_graph: &FetchGraph<MultiTypeFetchStep>,
+    ) -> bool {
+        if !other.response_path.starts_with(&self.response_path) {
+            return false;
+        }
+
+        // Only do this when we are the only step `other` waits for.
+        // If something else feeds it, the keys it sends may come from there,
+        // and pointing its other parents at us could change the order of the graph,
+        // or add a cycle.
+        if fetch_graph.parents_of(other_index).count() != 1
+            || fetch_graph
+                .parents_of(other_index)
+                .any(|edge| edge.source() != self_index)
+        {
+            return false;
+        }
+
+        let Some(input_type) = other.input.try_as_single() else {
+            return false;
+        };
+        let Some(input_selections) = other.input.selections_for_definition(input_type) else {
+            return false;
+        };
+
+        // Every type we fetch must already have `other`'s input at that path.
+        // If one of them does not, the fields we move here would have no object to sit in.
+        let path = other.response_path.slice_from(self.response_path.len());
+        !self.output.is_empty()
+            && self.output.iter_selections().all(|(_, output)| {
+                find_selection_set_by_path(output, &path)
+                    .is_some_and(|at_path| at_path.contains(input_selections))
+            })
     }
 
     pub fn has_arguments_conflicts_with(&self, other: &Self) -> bool {
