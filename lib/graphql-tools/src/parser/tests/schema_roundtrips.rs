@@ -16,7 +16,7 @@ fn roundtrip(filename: &str) {
     assert_eq!(ast.to_string(), buf);
 }
 
-fn roundtrip2(filename: &str) {
+fn roundtrip_against_canonical(filename: &str) {
     let mut buf = String::with_capacity(1024);
     let source = format!(
         "{}/src/parser/tests/schemas/{}.graphql",
@@ -60,7 +60,7 @@ fn implements() {
 }
 #[test]
 fn implements_amp() {
-    roundtrip2("implements_amp");
+    roundtrip_against_canonical("implements_amp");
 }
 #[test]
 fn implements_interface() {
@@ -108,7 +108,7 @@ fn input_type() {
 }
 #[test]
 fn extend_input() {
-    roundtrip2("extend_input");
+    roundtrip_against_canonical("extend_input");
 }
 #[test]
 fn directive() {
@@ -116,11 +116,11 @@ fn directive() {
 }
 #[test]
 fn kitchen_sink() {
-    roundtrip2("kitchen-sink");
+    roundtrip_against_canonical("kitchen-sink");
 }
 #[test]
 fn directive_descriptions() {
-    roundtrip2("directive_descriptions");
+    roundtrip_against_canonical("directive_descriptions");
 }
 #[test]
 fn directive_variable_definition() {

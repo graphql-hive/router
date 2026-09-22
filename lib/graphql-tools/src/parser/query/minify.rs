@@ -14,11 +14,11 @@ pub struct MinifyError(String);
 
 pub fn minify_query(source: &str) -> Result<String, MinifyError> {
     let mut bits: Vec<&str> = Vec::new();
-    let mut stream = TokenStream::new_without_positions(source);
+    let mut stream = TokenStream::new_without_position_tracking(source);
     let mut prev_was_punctuator = false;
 
     loop {
-        match stream.next_token_without_positions() {
+        match stream.next_token_untracked() {
             Ok(x) => {
                 let token: Token = x;
                 let is_non_punctuator = token.kind != Kind::Punctuator;

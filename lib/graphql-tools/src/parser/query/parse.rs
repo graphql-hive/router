@@ -9,13 +9,13 @@ use crate::parser::common::{
 use crate::parser::position::Pos;
 use crate::parser::tokenizer::{Kind, Token, TokenStream};
 
-type PResult<'a, T> = Result<T, InternalError<'a>>;
+type ParseResult<'a, T> = Result<T, InternalError<'a>>;
 
-struct Cursor<'a> {
+struct ParserCursor<'a> {
     stream: TokenStream<'a>,
 }
 
-impl<'a> Cursor<'a> {
+impl<'a> ParserCursor<'a> {
     fn new(stream: TokenStream<'a>) -> Self {
         Self { stream }
     }
@@ -29,19 +29,19 @@ impl<'a> Cursor<'a> {
     }
 
     #[inline]
-    fn next(&mut self) -> PResult<'a, Token<'a>> {
+    fn next(&mut self) -> ParseResult<'a, Token<'a>> {
         let pos = self.stream.position();
         self.stream.uncons().map_err(|e| error_at(pos, e))
     }
 
     #[inline]
-    fn peek_optional(&mut self) -> PResult<'a, Option<Token<'a>>> {
+    fn peek_optional(&mut self) -> ParseResult<'a, Option<Token<'a>>> {
         let pos = self.pos();
         self.stream.peek_token().map_err(|e| error_at(pos, e))
     }
 
     #[inline(always)]
-    fn peek(&mut self) -> PResult<'a, Token<'a>> {
+    fn peek(&mut self) -> ParseResult<'a, Token<'a>> {
         self.peek_optional()?.ok_or_else(|| {
             let mut error = Errors::new(self.pos(), Error::end_of_input());
             error.add_error(Error::Expected(Info::Static("token")));
@@ -49,13 +49,13 @@ impl<'a> Cursor<'a> {
         })
     }
 
-    fn at_punct(&mut self, punct: &'static str) -> PResult<'a, bool> {
+    fn at_punct(&mut self, punct: &'static str) -> ParseResult<'a, bool> {
         Ok(self
             .peek_optional()?
             .is_some_and(|token| is_punct(token, punct)))
     }
 
-    fn consume_punct(&mut self, punct: &'static str) -> PResult<'a, bool> {
+    fn consume_punct(&mut self, punct: &'static str) -> ParseResult<'a, bool> {
         if self.at_punct(punct)? {
             self.next()?;
             Ok(true)
@@ -64,7 +64,7 @@ impl<'a> Cursor<'a> {
         }
     }
 
-    fn expect_punct(&mut self, punct: &'static str) -> PResult<'a, ()> {
+    fn expect_punct(&mut self, punct: &'static str) -> ParseResult<'a, ()> {
         let pos = self.pos();
         if self.consume_punct(punct)? {
             Ok(())
@@ -73,7 +73,7 @@ impl<'a> Cursor<'a> {
         }
     }
 
-    fn expect_keyword(&mut self, keyword: &'static str) -> PResult<'a, ()> {
+    fn expect_keyword(&mut self, keyword: &'static str) -> ParseResult<'a, ()> {
         let pos = self.pos();
         let token = self.next()?;
         if token.kind == Kind::Name && token.value == keyword {
@@ -110,7 +110,7 @@ fn expected_at<'a>(pos: Pos, what: &'static str, token: Option<Token<'a>>) -> In
     errors
 }
 
-fn parse_float<'a>(pos: Pos, value: &str) -> PResult<'a, f64> {
+fn parse_float<'a>(pos: Pos, value: &str) -> ParseResult<'a, f64> {
     value.parse::<f64>().map_err(|_| {
         Errors::new(
             pos,
@@ -120,8 +120,8 @@ fn parse_float<'a>(pos: Pos, value: &str) -> PResult<'a, f64> {
 }
 
 fn parse_value<'a, const ALLOW_VARIABLES: bool, S: Text<'a>>(
-    c: &mut Cursor<'a>,
-) -> PResult<'a, Value<'a, S>> {
+    c: &mut ParserCursor<'a>,
+) -> ParseResult<'a, Value<'a, S>> {
     let tok = c.peek()?;
     match tok.kind {
         Kind::Name => match tok.value {
@@ -177,7 +177,7 @@ fn parse_value<'a, const ALLOW_VARIABLES: bool, S: Text<'a>>(
                     return Err(unexpected_with_expected(c.pos(), tok, "default value"));
                 }
                 c.next()?;
-                let name_tok = bump_kind(c, Kind::Name, "Name")?;
+                let name_tok = expect_kind(c, Kind::Name, "Name")?;
                 Ok(Value::Variable(S::Value::from(name_tok.value)))
             }
             "[" => {
@@ -202,8 +202,8 @@ fn parse_value<'a, const ALLOW_VARIABLES: bool, S: Text<'a>>(
                         c.next()?;
                         break;
                     }
-                    let name_tok = bump_kind(c, Kind::Name, "Name")?;
-                    bump_punct(c, ":")?;
+                    let name_tok = expect_kind(c, Kind::Name, "Name")?;
+                    expect_punct(c, ":")?;
                     let val = parse_value::<ALLOW_VARIABLES, S>(c)?;
                     items.push((S::Value::from(name_tok.value), val));
                 }
@@ -218,21 +218,21 @@ fn parse_value<'a, const ALLOW_VARIABLES: bool, S: Text<'a>>(
     }
 }
 
-fn value<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, Value<'a, S>> {
+fn value<'a, S: Text<'a>>(c: &mut ParserCursor<'a>) -> ParseResult<'a, Value<'a, S>> {
     parse_value::<true, S>(c)
 }
 
-fn const_value<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, Value<'a, S>> {
+fn const_value<'a, S: Text<'a>>(c: &mut ParserCursor<'a>) -> ParseResult<'a, Value<'a, S>> {
     parse_value::<false, S>(c)
 }
 
-fn parse_type<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, Type<'a, S>> {
+fn parse_type<'a, S: Text<'a>>(c: &mut ParserCursor<'a>) -> ParseResult<'a, Type<'a, S>> {
     let tok = c.peek()?;
     let typ = match tok.kind {
         Kind::Punctuator if tok.value == "[" => {
             c.next()?;
             let inner = parse_type::<S>(c)?;
-            bump_punct(c, "]")?;
+            expect_punct(c, "]")?;
             Type::ListType(Box::new(inner))
         }
         Kind::Name => {
@@ -254,7 +254,9 @@ fn parse_type<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, Type<'a, S>> {
     }
 }
 
-fn arguments<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, Vec<(S::Value, Value<'a, S>)>> {
+fn arguments<'a, S: Text<'a>>(
+    c: &mut ParserCursor<'a>,
+) -> ParseResult<'a, Vec<(S::Value, Value<'a, S>)>> {
     let next = c.peek()?;
     if next.kind != Kind::Punctuator || next.value != "(" {
         return Ok(Vec::new());
@@ -272,15 +274,15 @@ fn arguments<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, Vec<(S::Value, 
             c.next()?;
             break;
         }
-        let name_tok = bump_kind(c, Kind::Name, "Name")?;
-        bump_punct(c, ":")?;
+        let name_tok = expect_kind(c, Kind::Name, "Name")?;
+        expect_punct(c, ":")?;
         let val = value::<S>(c)?;
         args.push((S::Value::from(name_tok.value), val));
     }
     Ok(args)
 }
 
-fn directives<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, Vec<Directive<'a, S>>> {
+fn directives<'a, S: Text<'a>>(c: &mut ParserCursor<'a>) -> ParseResult<'a, Vec<Directive<'a, S>>> {
     let mut dirs = Vec::new();
     loop {
         let next = c.peek()?;
@@ -289,7 +291,7 @@ fn directives<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, Vec<Directive<
         }
         let pos = c.pos();
         c.next()?;
-        let name_tok = bump_kind(c, Kind::Name, "Name")?;
+        let name_tok = expect_kind(c, Kind::Name, "Name")?;
         let args = arguments::<S>(c)?;
         dirs.push(Directive {
             position: pos,
@@ -300,9 +302,11 @@ fn directives<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, Vec<Directive<
     Ok(dirs)
 }
 
-fn selection_set<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, SelectionSet<'a, S>> {
+fn selection_set<'a, S: Text<'a>>(
+    c: &mut ParserCursor<'a>,
+) -> ParseResult<'a, SelectionSet<'a, S>> {
     let start = c.pos();
-    bump_punct(c, "{")?;
+    expect_punct(c, "{")?;
     if is_punct(c.peek()?, "}") {
         let pos = c.pos();
         let tok = c.next()?;
@@ -325,7 +329,7 @@ fn selection_set<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, SelectionSe
     })
 }
 
-fn selection<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, Selection<'a, S>> {
+fn selection<'a, S: Text<'a>>(c: &mut ParserCursor<'a>) -> ParseResult<'a, Selection<'a, S>> {
     let tok = c.peek()?;
     match tok.kind {
         Kind::Name => field::<S>(c).map(Selection::Field),
@@ -351,16 +355,16 @@ fn selection<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, Selection<'a, S
 }
 
 fn inline_fragment_after_ellipsis<'a, S: Text<'a>>(
-    c: &mut Cursor<'a>,
+    c: &mut ParserCursor<'a>,
     pos: Pos,
-) -> PResult<'a, Selection<'a, S>> {
+) -> ParseResult<'a, Selection<'a, S>> {
     let type_condition = match c.peek()? {
         Token {
             kind: Kind::Name,
             value: "on",
         } => {
             c.next()?;
-            let name = bump_name::<S>(c)?;
+            let name = expect_name::<S>(c)?;
             Some(TypeCondition::On(name))
         }
         _ => None,
@@ -376,10 +380,10 @@ fn inline_fragment_after_ellipsis<'a, S: Text<'a>>(
 }
 
 fn fragment_spread_after_ellipsis<'a, S: Text<'a>>(
-    c: &mut Cursor<'a>,
+    c: &mut ParserCursor<'a>,
     pos: Pos,
-) -> PResult<'a, Selection<'a, S>> {
-    let name = bump_name::<S>(c)?;
+) -> ParseResult<'a, Selection<'a, S>> {
+    let name = expect_name::<S>(c)?;
     let dirs = directives::<S>(c)?;
     Ok(Selection::FragmentSpread(FragmentSpread {
         position: pos,
@@ -388,13 +392,13 @@ fn fragment_spread_after_ellipsis<'a, S: Text<'a>>(
     }))
 }
 
-fn field<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, Field<'a, S>> {
+fn field<'a, S: Text<'a>>(c: &mut ParserCursor<'a>) -> ParseResult<'a, Field<'a, S>> {
     let pos = c.pos();
-    let first = bump_name::<S>(c)?;
+    let first = expect_name::<S>(c)?;
     let next = c.peek()?;
     let (alias, name) = if next.kind == Kind::Punctuator && next.value == ":" {
         c.next()?;
-        let second = bump_name::<S>(c)?;
+        let second = expect_name::<S>(c)?;
         (Some(first), second)
     } else {
         (None, first)
@@ -422,12 +426,12 @@ fn field<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, Field<'a, S>> {
 }
 
 fn variable_definition<'a, S: Text<'a>>(
-    c: &mut Cursor<'a>,
-) -> PResult<'a, VariableDefinition<'a, S>> {
+    c: &mut ParserCursor<'a>,
+) -> ParseResult<'a, VariableDefinition<'a, S>> {
     let pos = c.pos();
-    bump_punct(c, "$")?;
-    let name_tok = bump_kind(c, Kind::Name, "Name")?;
-    bump_punct(c, ":")?;
+    expect_punct(c, "$")?;
+    let name_tok = expect_kind(c, Kind::Name, "Name")?;
+    expect_punct(c, ":")?;
     let var_type = parse_type::<S>(c)?;
     let next = c.peek()?;
     let default_val = if next.kind == Kind::Punctuator && next.value == "=" {
@@ -445,8 +449,8 @@ fn variable_definition<'a, S: Text<'a>>(
 }
 
 fn variable_definitions<'a, S: Text<'a>>(
-    c: &mut Cursor<'a>,
-) -> PResult<'a, Vec<VariableDefinition<'a, S>>> {
+    c: &mut ParserCursor<'a>,
+) -> ParseResult<'a, Vec<VariableDefinition<'a, S>>> {
     let next = c.peek()?;
     if next.kind != Kind::Punctuator || next.value != "(" {
         return Ok(Vec::new());
@@ -470,8 +474,8 @@ fn variable_definitions<'a, S: Text<'a>>(
 }
 
 fn operation_definition<'a, S: Text<'a>>(
-    c: &mut Cursor<'a>,
-) -> PResult<'a, OperationDefinition<'a, S>> {
+    c: &mut ParserCursor<'a>,
+) -> ParseResult<'a, OperationDefinition<'a, S>> {
     let tok = c.peek()?;
     match tok.kind {
         Kind::Punctuator if tok.value == "{" => {
@@ -543,16 +547,20 @@ struct OperationParts<'a, S: Text<'a>> {
     selection_set: SelectionSet<'a, S>,
 }
 
-fn operation_parts<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, OperationParts<'a, S>> {
+fn operation_parts<'a, S: Text<'a>>(
+    c: &mut ParserCursor<'a>,
+) -> ParseResult<'a, OperationParts<'a, S>> {
     Ok(OperationParts {
-        name: try_operation_name::<S>(c)?,
+        name: optional_operation_name::<S>(c)?,
         variable_definitions: variable_definitions::<S>(c)?,
         directives: directives::<S>(c)?,
         selection_set: selection_set::<S>(c)?,
     })
 }
 
-fn try_operation_name<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, Option<S::Value>> {
+fn optional_operation_name<'a, S: Text<'a>>(
+    c: &mut ParserCursor<'a>,
+) -> ParseResult<'a, Option<S::Value>> {
     let next = c.peek()?;
     if next.kind == Kind::Name {
         let name_tok = c.next()?;
@@ -563,13 +571,13 @@ fn try_operation_name<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, Option
 }
 
 fn fragment_definition<'a, S: Text<'a>>(
-    c: &mut Cursor<'a>,
-) -> PResult<'a, FragmentDefinition<'a, S>> {
+    c: &mut ParserCursor<'a>,
+) -> ParseResult<'a, FragmentDefinition<'a, S>> {
     let pos = c.pos();
-    bump_ident(c, "fragment")?;
-    let name = bump_name::<S>(c)?;
-    bump_ident(c, "on")?;
-    let type_cond_name = bump_name::<S>(c)?;
+    expect_keyword(c, "fragment")?;
+    let name = expect_name::<S>(c)?;
+    expect_keyword(c, "on")?;
+    let type_cond_name = expect_name::<S>(c)?;
     let dirs = directives::<S>(c)?;
     let sel_set = selection_set::<S>(c)?;
     Ok(FragmentDefinition {
@@ -581,7 +589,7 @@ fn fragment_definition<'a, S: Text<'a>>(
     })
 }
 
-fn definition<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, Definition<'a, S>> {
+fn definition<'a, S: Text<'a>>(c: &mut ParserCursor<'a>) -> ParseResult<'a, Definition<'a, S>> {
     let tok = c.peek()?;
     match tok.kind {
         Kind::Punctuator if tok.value == "{" => {
@@ -614,7 +622,7 @@ fn definition<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, Definition<'a,
     }
 }
 
-fn document<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, Document<'a, S>> {
+fn document<'a, S: Text<'a>>(c: &mut ParserCursor<'a>) -> ParseResult<'a, Document<'a, S>> {
     let mut defs = Vec::new();
     while let Some(token) = c.peek_optional()? {
         if is_punct(token, "}") {
@@ -715,8 +723,8 @@ mod tests {
     }
 }
 
-fn bump_name<'a, S: Text<'a>>(c: &mut Cursor<'a>) -> PResult<'a, S::Value> {
-    let tok = bump_kind(c, Kind::Name, "Name")?;
+fn expect_name<'a, S: Text<'a>>(c: &mut ParserCursor<'a>) -> ParseResult<'a, S::Value> {
+    let tok = expect_kind(c, Kind::Name, "Name")?;
     Ok(S::Value::from(tok.value))
 }
 
@@ -725,11 +733,11 @@ fn is_punct(tok: Token<'_>, value: &str) -> bool {
     tok.kind == Kind::Punctuator && tok.value == value
 }
 
-fn bump_kind<'a>(
-    c: &mut Cursor<'a>,
+fn expect_kind<'a>(
+    c: &mut ParserCursor<'a>,
     expected: Kind,
     label: &'static str,
-) -> PResult<'a, Token<'a>> {
+) -> ParseResult<'a, Token<'a>> {
     let pos = c.pos();
     let tok = c.next()?;
     if tok.kind == expected {
@@ -739,11 +747,11 @@ fn bump_kind<'a>(
     }
 }
 
-fn bump_punct<'a>(c: &mut Cursor<'a>, value: &'static str) -> PResult<'a, ()> {
+fn expect_punct<'a>(c: &mut ParserCursor<'a>, value: &'static str) -> ParseResult<'a, ()> {
     c.expect_punct(value)
 }
 
-fn bump_ident<'a>(c: &mut Cursor<'a>, value: &'static str) -> PResult<'a, ()> {
+fn expect_keyword<'a>(c: &mut ParserCursor<'a>, value: &'static str) -> ParseResult<'a, ()> {
     c.expect_keyword(value)
 }
 
@@ -773,7 +781,7 @@ fn parse_query_impl<'a, S>(tokens: TokenStream<'a>) -> Result<Document<'a, S>, P
 where
     S: Text<'a>,
 {
-    let mut c = Cursor::new(tokens);
+    let mut c = ParserCursor::new(tokens);
     document::<S>(&mut c).map_err(ParseError::from)
 }
 
@@ -783,7 +791,7 @@ where
     S: Text<'a>,
 {
     let tokens = TokenStream::new(s);
-    let mut c = Cursor::new(tokens);
+    let mut c = ParserCursor::new(tokens);
     let def = definition::<S>(&mut c).map_err(ParseError::from)?;
     let remainder = &s[c.offset()..];
     Ok((def, remainder))

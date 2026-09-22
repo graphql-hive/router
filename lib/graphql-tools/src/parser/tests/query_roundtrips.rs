@@ -7,7 +7,7 @@ use crate::parser::query::{
 };
 use crate::parser::{parse_query, Style};
 
-fn normalize_document<'a>(document: &mut Document<'a, String>) {
+fn normalize_input_object_fields<'a>(document: &mut Document<'a, String>) {
     for definition in &mut document.definitions {
         match definition {
             Definition::Operation(operation) => normalize_operation(operation),
@@ -116,7 +116,7 @@ fn roundtrip(filename: &str, style: &Style) {
     assert_eq!(ast.format(style), buf);
 }
 
-fn roundtrip2(filename: &str) {
+fn roundtrip_against_canonical(filename: &str) {
     let mut buf = String::with_capacity(1024);
     let source = format!(
         "{}/src/parser/tests/queries/{}.graphql",
@@ -141,8 +141,8 @@ fn roundtrip2(filename: &str) {
     let canonical = parse_query::<String>(&buf).unwrap().to_owned();
     let mut ast = ast;
     let mut canonical = canonical;
-    normalize_document(&mut ast);
-    normalize_document(&mut canonical);
+    normalize_input_object_fields(&mut ast);
+    normalize_input_object_fields(&mut canonical);
     assert_eq!(ast.to_string(), canonical.to_string());
 }
 
@@ -168,7 +168,7 @@ fn query_nameless_vars() {
 }
 #[test]
 fn query_nameless_vars_multiple_fields() {
-    roundtrip2("query_nameless_vars_multiple_fields");
+    roundtrip_against_canonical("query_nameless_vars_multiple_fields");
 }
 #[test]
 fn query_var_defaults() {
@@ -276,5 +276,5 @@ fn directive_args_multiline() {
 }
 #[test]
 fn kitchen_sink() {
-    roundtrip2("kitchen-sink");
+    roundtrip_against_canonical("kitchen-sink");
 }

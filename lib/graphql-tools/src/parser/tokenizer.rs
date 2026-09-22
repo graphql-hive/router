@@ -26,8 +26,8 @@ pub struct Token<'a> {
 #[derive(Debug, PartialEq)]
 pub struct TokenStream<'a> {
     buf: &'a str,
-    state: StreamState,
-    cached_token: Option<CachedToken<'a>>,
+    state: TokenizerState,
+    lookahead: Option<LookaheadToken<'a>>,
     token_limit: Option<usize>,
 }
 
@@ -39,14 +39,14 @@ impl<'a> TokenStream<'a> {
 
     #[inline(always)]
     pub(crate) fn peek_token(&mut self) -> Result<Option<Token<'a>>, Error<Token<'a>, Token<'a>>> {
-        Ok(self.cached_token()?.map(|cached| cached.token))
+        Ok(self.lookahead_token()?.map(|lookahead| lookahead.token))
     }
 
     #[inline(always)]
-    pub(crate) fn next_token_without_positions(
+    pub(crate) fn next_token_untracked(
         &mut self,
     ) -> Result<Token<'a>, Error<Token<'a>, Token<'a>>> {
-        let Some((token, after)) = self.scan_token_impl::<false>()? else {
+        let Some((token, after)) = self.scan_token_inner::<false>()? else {
             return Err(Error::end_of_input());
         };
         self.state = after;
@@ -57,7 +57,7 @@ impl<'a> TokenStream<'a> {
 /// Byte offsets index the source; columns count characters according to the
 /// parser's established conventions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct StreamState {
+struct TokenizerState {
     offset: usize,
     position: Pos,
     recursion_limit: usize,
@@ -65,7 +65,7 @@ struct StreamState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct CacheKey {
+struct TokenCacheKey {
     // Position is determined by the immutable source prefix at `offset`; the
     // cached after-state still carries it for fast commit.
     offset: usize,
@@ -74,15 +74,15 @@ struct CacheKey {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct CachedToken<'a> {
-    before: CacheKey,
+struct LookaheadToken<'a> {
+    before: TokenCacheKey,
     token: Token<'a>,
-    after: StreamState,
+    after: TokenizerState,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Checkpoint {
-    state: StreamState,
+    state: TokenizerState,
 }
 
 impl<'a> StreamOnce for TokenStream<'a> {
@@ -93,16 +93,16 @@ impl<'a> StreamOnce for TokenStream<'a> {
 
     #[inline(always)]
     fn uncons(&mut self) -> Result<Self::Token, Error<Token<'a>, Token<'a>>> {
-        if let Some(cached) = self.cached_token {
-            if cached.before == self.cache_key() {
-                self.cached_token = None;
-                self.state = cached.after;
-                return Ok(cached.token);
+        if let Some(lookahead) = self.lookahead {
+            if lookahead.before == self.token_cache_key() {
+                self.lookahead = None;
+                self.state = lookahead.after;
+                return Ok(lookahead.token);
             }
         }
 
-        let Some((token, after)) = self.scan_token_direct()? else {
-            self.cached_token = None;
+        let Some((token, after)) = self.scan_token_uncached()? else {
+            self.lookahead = None;
             return Err(Error::end_of_input());
         };
         self.state = after;
@@ -112,8 +112,8 @@ impl<'a> StreamOnce for TokenStream<'a> {
 
 impl<'a> TokenStream<'a> {
     #[inline(always)]
-    fn cache_key(&self) -> CacheKey {
-        CacheKey {
+    fn token_cache_key(&self) -> TokenCacheKey {
+        TokenCacheKey {
             offset: self.state.offset,
             recursion_limit: self.state.recursion_limit,
             token_count: self.state.token_count,
@@ -121,30 +121,32 @@ impl<'a> TokenStream<'a> {
     }
 
     #[inline(always)]
-    fn cached_token(&mut self) -> Result<Option<CachedToken<'a>>, Error<Token<'a>, Token<'a>>> {
-        if let Some(cached) = self.cached_token {
-            if cached.before == self.cache_key() {
-                return Ok(Some(cached));
+    fn lookahead_token(
+        &mut self,
+    ) -> Result<Option<LookaheadToken<'a>>, Error<Token<'a>, Token<'a>>> {
+        if let Some(lookahead) = self.lookahead {
+            if lookahead.before == self.token_cache_key() {
+                return Ok(Some(lookahead));
             }
         }
 
         let Some((token, after)) = self.scan_token()? else {
-            self.cached_token = None;
+            self.lookahead = None;
             return Ok(None);
         };
-        let cached = CachedToken {
-            before: self.cache_key(),
+        let lookahead = LookaheadToken {
+            before: self.token_cache_key(),
             token,
             after,
         };
-        self.cached_token = Some(cached);
-        Ok(Some(cached))
+        self.lookahead = Some(lookahead);
+        Ok(Some(lookahead))
     }
 
     #[inline(never)]
-    fn scan_token_direct(
+    fn scan_token_uncached(
         &self,
-    ) -> Result<Option<(Token<'a>, StreamState)>, Error<Token<'a>, Token<'a>>> {
+    ) -> Result<Option<(Token<'a>, TokenizerState)>, Error<Token<'a>, Token<'a>>> {
         self.scan_token()
     }
 }
@@ -163,10 +165,10 @@ impl<'a> ResetStream for TokenStream<'a> {
     fn reset(&mut self, checkpoint: Checkpoint) -> Result<(), Self::Error> {
         self.state = checkpoint.state;
         if self
-            .cached_token
-            .is_some_and(|cached| cached.before != self.cache_key())
+            .lookahead
+            .is_some_and(|lookahead| lookahead.before != self.token_cache_key())
         {
-            self.cached_token = None;
+            self.lookahead = None;
         }
         Ok(())
     }
@@ -338,19 +340,19 @@ impl<'a> TokenStream<'a> {
         Self::with_recursion_limit(s, DEFAULT_RECURSION_LIMIT, Some(token_limit))
     }
 
-    pub(crate) fn new_without_positions(s: &'a str) -> TokenStream<'a> {
+    pub(crate) fn new_without_position_tracking(s: &'a str) -> TokenStream<'a> {
         let mut me = TokenStream {
             buf: s,
-            state: StreamState {
+            state: TokenizerState {
                 offset: 0,
                 position: Pos { line: 1, column: 1 },
                 recursion_limit: DEFAULT_RECURSION_LIMIT,
                 token_count: 0,
             },
-            cached_token: None,
+            lookahead: None,
             token_limit: None,
         };
-        skip_whitespace::<false>(me.buf.as_bytes(), &mut me.state);
+        skip_ignored::<false>(me.buf.as_bytes(), &mut me.state);
         me
     }
 
@@ -362,28 +364,30 @@ impl<'a> TokenStream<'a> {
     ) -> TokenStream<'a> {
         let mut me = TokenStream {
             buf: s,
-            state: StreamState {
+            state: TokenizerState {
                 offset: 0,
                 position: Pos { line: 1, column: 1 },
                 recursion_limit,
                 token_count: 0,
             },
-            cached_token: None,
+            lookahead: None,
             token_limit,
         };
-        skip_whitespace::<true>(me.buf.as_bytes(), &mut me.state);
+        skip_ignored::<true>(me.buf.as_bytes(), &mut me.state);
         me
     }
 
     #[inline(always)]
-    fn scan_token(&self) -> Result<Option<(Token<'a>, StreamState)>, Error<Token<'a>, Token<'a>>> {
-        self.scan_token_impl::<true>()
+    fn scan_token(
+        &self,
+    ) -> Result<Option<(Token<'a>, TokenizerState)>, Error<Token<'a>, Token<'a>>> {
+        self.scan_token_inner::<true>()
     }
 
     #[inline(always)]
-    fn scan_token_impl<const TRACK_POSITION: bool>(
+    fn scan_token_inner<const TRACK_POSITION: bool>(
         &self,
-    ) -> Result<Option<(Token<'a>, StreamState)>, Error<Token<'a>, Token<'a>>> {
+    ) -> Result<Option<(Token<'a>, TokenizerState)>, Error<Token<'a>, Token<'a>>> {
         let before = self.state;
         let bytes = self.buf.as_bytes();
         let Some(&first) = bytes.get(before.offset) else {
@@ -457,7 +461,7 @@ impl<'a> TokenStream<'a> {
         if self.token_limit.is_some() {
             after.token_count += 1;
         }
-        skip_whitespace::<TRACK_POSITION>(bytes, &mut after);
+        skip_ignored::<TRACK_POSITION>(bytes, &mut after);
         let token = Token {
             kind,
             value: &self.buf[before.offset..before.offset + length],
@@ -467,8 +471,8 @@ impl<'a> TokenStream<'a> {
 
     fn scan_string_impl<const TRACK_POSITION: bool>(
         &self,
-        before: StreamState,
-    ) -> Result<Option<(Token<'a>, StreamState)>, Error<Token<'a>, Token<'a>>> {
+        before: TokenizerState,
+    ) -> Result<Option<(Token<'a>, TokenizerState)>, Error<Token<'a>, Token<'a>>> {
         let bytes = self.buf.as_bytes();
         let start = before.offset;
         if self.buf[start..].starts_with(BLOCK_STRING_DELIMITER) {
@@ -493,7 +497,7 @@ impl<'a> TokenStream<'a> {
                     if self.token_limit.is_some() {
                         after.token_count += 1;
                     }
-                    skip_whitespace::<TRACK_POSITION>(bytes, &mut after);
+                    skip_ignored::<TRACK_POSITION>(bytes, &mut after);
                     return Ok(Some((
                         Token {
                             kind: Kind::BlockString,
@@ -529,7 +533,7 @@ impl<'a> TokenStream<'a> {
                     if self.token_limit.is_some() {
                         after.token_count += 1;
                     }
-                    skip_whitespace::<TRACK_POSITION>(bytes, &mut after);
+                    skip_ignored::<TRACK_POSITION>(bytes, &mut after);
                     return Ok(Some((
                         Token {
                             kind: Kind::StringValue,
@@ -562,7 +566,7 @@ impl<'a> TokenStream<'a> {
         )))
     }
 
-    fn update_position(&self, state: &mut StreamState, length: usize) {
+    fn update_position(&self, state: &mut TokenizerState, length: usize) {
         let value = &self.buf[state.offset..state.offset + length];
         state.offset += length;
         let bytes = value.as_bytes();
@@ -601,7 +605,7 @@ fn string_escape_error(error: EscapeError) -> Error<Token<'static>, Token<'stati
 }
 
 #[inline(always)]
-fn skip_whitespace<const TRACK_POSITION: bool>(bytes: &[u8], state: &mut StreamState) {
+fn skip_ignored<const TRACK_POSITION: bool>(bytes: &[u8], state: &mut TokenizerState) {
     let end = bytes.len();
     let mut index = state.offset;
 
