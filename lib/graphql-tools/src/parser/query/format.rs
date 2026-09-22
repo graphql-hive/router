@@ -248,8 +248,8 @@ impl<'a, T: Text<'a>> Displayable for Value<'a, T> {
                 f.write("$");
                 f.write(name.as_ref());
             }
-            Value::Int(ref num) => f.write(&format!("{}", num.0)),
-            Value::Float(val) => f.write(&format!("{}", val)),
+            Value::Int(ref num) => f.write_i64(num.0),
+            Value::Float(val) => f.write_f64(val),
             Value::String(ref val) => f.write_quoted(val),
             Value::Boolean(true) => f.write("true"),
             Value::Boolean(false) => f.write("false"),

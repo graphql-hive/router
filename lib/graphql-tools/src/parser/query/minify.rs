@@ -13,7 +13,7 @@ use thiserror::Error;
 pub struct MinifyError(String);
 
 pub fn minify_query(source: &str) -> Result<String, MinifyError> {
-    let mut bits: Vec<&str> = Vec::new();
+    let mut output = String::with_capacity(source.len());
     let mut stream = TokenStream::new_without_position_tracking(source);
     let mut prev_was_punctuator = false;
 
@@ -24,10 +24,10 @@ pub fn minify_query(source: &str) -> Result<String, MinifyError> {
                 let is_non_punctuator = token.kind != Kind::Punctuator;
 
                 if prev_was_punctuator && is_non_punctuator {
-                    bits.push(" ");
+                    output.push(' ');
                 }
 
-                bits.push(token.value);
+                output.push_str(token.value);
                 prev_was_punctuator = is_non_punctuator;
             }
             Err(ref e) if e == &combine::easy::Error::end_of_input() => break,
@@ -35,7 +35,7 @@ pub fn minify_query(source: &str) -> Result<String, MinifyError> {
         }
     }
 
-    Ok(bits.join(""))
+    Ok(output)
 }
 
 /// Minify a document according to the same rules as `minify_query`

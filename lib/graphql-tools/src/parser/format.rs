@@ -119,6 +119,16 @@ impl<'a> Formatter<'a> {
         self.buf.push_str(s);
     }
 
+    pub fn write_i64(&mut self, value: i64) {
+        let mut buffer = itoa::Buffer::new();
+        self.buf.push_str(buffer.format(value));
+    }
+
+    pub fn write_f64(&mut self, value: f64) {
+        use std::fmt::Write;
+        write!(&mut self.buf, "{value}").unwrap();
+    }
+
     pub fn into_string(self) -> String {
         self.buf
     }
@@ -155,7 +165,13 @@ impl<'a> Formatter<'a> {
             for line in s.lines() {
                 if !line.trim().is_empty() {
                     self.indent();
-                    self.write(&line.replace(r#"""""#, r#"\""""#));
+                    let mut last_pos = 0;
+                    for (pos, _) in line.match_indices("\"\"\"") {
+                        self.write(&line[last_pos..pos]);
+                        self.write("\\\"\"\"");
+                        last_pos = pos + 3;
+                    }
+                    self.write(&line[last_pos..]);
                 }
                 self.endline();
             }

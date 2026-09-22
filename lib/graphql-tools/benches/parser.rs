@@ -153,5 +153,39 @@ fn bench_minifiers(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_parser, bench_minifiers);
+fn bench_formatters(c: &mut Criterion) {
+    let mut group = c.benchmark_group("formatters");
+
+    let numbers = format!(
+        "query Numbers {{{}}}",
+        (0..64)
+            .map(|index| format!("field{index}(integer: {index}, float: {index}.5e+2)"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    let block_strings = format!(
+        "query Blocks {{{}}}",
+        (0..32)
+            .map(|index| format!("field{index}(value: \"\"\"\\n  block {index} \\\"\"\"\\n\"\"\")"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+
+    for (name, source) in [
+        ("kitchen-sink", load_file("kitchen-sink")),
+        ("numbers", numbers),
+        ("block-strings", block_strings),
+    ] {
+        let parsed: Document<'_, String> =
+            parse_query(source.as_str()).expect("failed to parse query");
+
+        group.bench_function(name, |b| {
+            b.iter(|| black_box(&parsed).to_string());
+        });
+    }
+
+    group.finish();
+}
+
+criterion_group!(benches, bench_parser, bench_minifiers, bench_formatters);
 criterion_main!(benches);
