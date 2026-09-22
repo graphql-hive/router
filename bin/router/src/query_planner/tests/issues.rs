@@ -844,3 +844,235 @@ fn requires_self_dependency_false_positive() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+/// https://github.com/graphql-hive/router/issues/1539
+///
+/// `Order.name @requires(fields: "sku")` where the `Order` came out of an `_entities` fetch.
+/// `sku` should be picked up by that same fetch, not by a second trip to `orders`.
+///
+/// The snapshot below is the buggy output: it has that extra `orders` fetch. Once the planner
+/// inlines `sku` into the `User.orders` fetch, the third step disappears.
+#[test]
+fn issue_1539_requires_after_entity_hop() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          user {
+            orders {
+              name
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1539.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "users") {
+          {
+            user {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "user") {
+          Fetch(service: "orders") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on User {
+                orders {
+                  __typename
+                  id
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "user.orders.@") {
+          Fetch(service: "orders") {
+            {
+              ... on Order {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                sku
+              }
+            }
+          },
+        },
+        Flatten(path: "user.orders.@") {
+          Fetch(service: "catalog") {
+            {
+              ... on Order {
+                __typename
+                sku
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                name
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Same as [`issue_1539_requires_after_entity_hop`], but the operation already asks for `sku`.
+/// The `User.orders` fetch does select it here, and the redundant `orders` fetch still shows up.
+#[test]
+fn issue_1539_requires_after_entity_hop_with_explicit_requirement() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          user {
+            orders {
+              sku
+              name
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1539.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "users") {
+          {
+            user {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "user") {
+          Fetch(service: "orders") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on User {
+                orders {
+                  __typename
+                  sku
+                  id
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "user.orders.@") {
+          Fetch(service: "orders") {
+            {
+              ... on Order {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                sku
+              }
+            }
+          },
+        },
+        Flatten(path: "user.orders.@") {
+          Fetch(service: "catalog") {
+            {
+              ... on Order {
+                __typename
+                sku
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                name
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Control for [`issue_1539_requires_after_entity_hop`]: with the parent coming straight from a
+/// root field there is no entity hop, and `sku` already gets inlined into the fetch that resolves
+/// the parent.
+#[test]
+fn issue_1539_requires_on_root_parent() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          order {
+            name
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1539.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "orders") {
+          {
+            order {
+              __typename
+              id
+              sku
+            }
+          }
+        },
+        Flatten(path: "order") {
+          Fetch(service: "catalog") {
+            {
+              ... on Order {
+                __typename
+                sku
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                name
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
