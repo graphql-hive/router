@@ -11,8 +11,21 @@ pub fn collect_fields<'a>(
     known_fragments: &HashMap<&str, &query::FragmentDefinition>,
     context: &'a OperationVisitorContext<'a>,
 ) -> HashMap<String, Vec<query::Field>> {
+    collect_field_references(selection_set, parent_type, known_fragments, context)
+        .into_iter()
+        .map(|(field_name, fields)| (field_name.to_owned(), fields.into_iter().cloned().collect()))
+        .collect()
+}
+
+/// Collect fields without cloning the AST nodes or their nested values.
+pub fn collect_field_references<'doc>(
+    selection_set: &'doc query::SelectionSet,
+    parent_type: &schema::TypeDefinition,
+    known_fragments: &HashMap<&'doc str, &'doc query::FragmentDefinition>,
+    context: &OperationVisitorContext<'_>,
+) -> HashMap<&'doc str, Vec<&'doc query::Field>> {
     let mut map = HashMap::new();
-    let mut visited_fragments_names: Vec<String> = Vec::new();
+    let mut visited_fragments_names: Vec<&'doc str> = Vec::new();
 
     collect_fields_inner(
         selection_set,
@@ -27,7 +40,7 @@ pub fn collect_fields<'a>(
 }
 
 fn does_fragment_condition_match<'a>(
-    fragment_condition: &'a Option<TypeCondition>,
+    fragment_condition: Option<&'a TypeCondition>,
     current_selection_set_type: &'a TypeDefinition,
     context: &'a OperationVisitorContext<'a>,
 ) -> bool {
@@ -60,20 +73,20 @@ fn does_fragment_condition_match<'a>(
 }
 
 fn collect_fields_inner<'a>(
-    selection_set: &query::SelectionSet,
+    selection_set: &'a query::SelectionSet,
     parent_type: &schema::TypeDefinition,
-    known_fragments: &HashMap<&str, &query::FragmentDefinition>,
-    context: &'a OperationVisitorContext<'a>,
-    result_arr: &mut HashMap<String, Vec<query::Field>>,
-    visited_fragments_names: &mut Vec<String>,
+    known_fragments: &HashMap<&'a str, &'a query::FragmentDefinition>,
+    context: &OperationVisitorContext<'_>,
+    result_arr: &mut HashMap<&'a str, Vec<&'a query::Field>>,
+    visited_fragments_names: &mut Vec<&'a str>,
 ) {
     selection_set.items.iter().for_each(|item| match item {
         Selection::Field(f) => {
-            let existing = result_arr.entry(f.name.clone()).or_default();
-            existing.push(f.clone());
+            let existing = result_arr.entry(f.name.as_str()).or_default();
+            existing.push(f);
         }
         Selection::InlineFragment(f) => {
-            if does_fragment_condition_match(&f.type_condition, parent_type, context) {
+            if does_fragment_condition_match(f.type_condition.as_ref(), parent_type, context) {
                 collect_fields_inner(
                     &f.selection_set,
                     parent_type,
@@ -87,13 +100,13 @@ fn collect_fields_inner<'a>(
         Selection::FragmentSpread(f) => {
             if !visited_fragments_names
                 .iter()
-                .any(|name| f.fragment_name.eq(name))
+                .any(|name| f.fragment_name.eq(*name))
             {
-                visited_fragments_names.push(f.fragment_name.clone());
+                visited_fragments_names.push(f.fragment_name.as_str());
 
                 if let Some(fragment) = known_fragments.get(f.fragment_name.as_str()) {
                     if does_fragment_condition_match(
-                        &Some(fragment.type_condition.clone()),
+                        Some(&fragment.type_condition),
                         parent_type,
                         context,
                     ) {

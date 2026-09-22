@@ -1,5 +1,5 @@
 use super::ValidationRule;
-use crate::ast::{collect_fields, OperationVisitor, OperationVisitorContext};
+use crate::ast::{collect_field_references, OperationVisitor, OperationVisitorContext};
 use crate::static_graphql::query::OperationDefinition;
 use crate::static_graphql::schema::TypeDefinition;
 use crate::validation::utils::{ValidationError, ValidationErrorContext};
@@ -34,7 +34,7 @@ impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for SingleFieldSubscri
             if let Some(subscription_type) = visitor_context.schema.subscription_type() {
                 let operation_name = subscription.name.as_ref();
 
-                let selection_set_fields = collect_fields(
+                let selection_set_fields = collect_field_references(
                     &subscription.selection_set,
                     &TypeDefinition::Object(subscription_type.clone()),
                     &visitor_context.known_fragments,

@@ -334,14 +334,15 @@ impl TypeDefinition {
             TypeDefinition::Enum(_) => vec![],
             TypeDefinition::Scalar(_) => vec![],
             TypeDefinition::Interface(i) => schema
-                .type_map()
-                .values()
-                .filter_map(|type_def| {
-                    if i.is_implemented_by(type_def) {
-                        return Some(*type_def);
+                .definitions
+                .iter()
+                .filter_map(|definition| match definition {
+                    schema::Definition::TypeDefinition(type_def)
+                        if i.is_implemented_by(type_def) =>
+                    {
+                        Some(type_def)
                     }
-
-                    None
+                    _ => None,
                 })
                 .collect(),
             TypeDefinition::Union(u) => u
