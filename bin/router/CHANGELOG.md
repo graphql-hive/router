@@ -116,6 +116,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.2.19 (2026-09-23)
+
+### Features
+
+#### Router overhead metrics
+
+Two new histograms report how much of a request's latency is the router's own work versus time spent waiting on external services:
+
+- `hive.router.request.overhead.duration` - the request duration (`http.server.request.duration`) minus the time the request spent waiting on external services. This is the latency the router adds on top of your upstreams: parsing, validation, planning, response merging, plugins.
+- `hive.router.request.external_wait.duration` - the time the request spent waiting on at least one external service.
+
+The following are considered "external" and count as waiting:
+
+- Persisted document fetches from the Hive CDN on a cache miss also count as waiting
+
+- Subgraph calls 
+
+- Co-processor calls
+
+They are not recorded for streamed responses (subscriptions, incremental delivery), whose subgraph waits continue after the response headers are sent.
+
+With explicit histogram buckets (the default), `hive.router.request.overhead.duration` uses fine-grained boundaries from 100µs to 1s instead of the shared `seconds` buckets, since router overhead is typically sub-millisecond.
+
+Closes https://github.com/graphql-hive/router/issues/1579
+
+### Fixes
+
+#### Export numeric span attributes as integers
+
+Some span attributes were exported as strings, even though the OpenTelemetry semantic conventions define them as integers. Filters that compare numbers, such as tail-sampling policies or TraceQL queries like `span.http.response.status_code >= 500`, did not match these attributes.
+
+The following attributes are now exported as integers:
+
+- `http.response.status_code`
+- `http.request.body.size` and `http.response.body.size`
+- `server.port`, `client.port` and `network.peer.port`
+- `hive.graphql.error.count`
+- `cost.estimated` and `cost.actual`
+
+`error.type` on HTTP spans is now always the bare status code as a string, such as `"500"`, as the semantic conventions require. Previously it was sometimes an integer, and 5xx responses recorded the full reason phrase, such as `"500 Internal Server Error"`.
+
 ## 0.2.18 (2026-09-21)
 
 ### Fixes
