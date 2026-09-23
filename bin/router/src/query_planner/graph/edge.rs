@@ -31,7 +31,7 @@ pub struct InterfaceObjectTypeMove {
 }
 
 /// Represent a simple file move
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct FieldMove {
     pub name: String,
     pub type_name: String,

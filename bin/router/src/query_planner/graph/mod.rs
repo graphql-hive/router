@@ -16,7 +16,10 @@ use super::ast::normalization::utils::extract_type_condition;
 use super::graph::{edge::Edge, node::Node};
 use crate::query_planner::planner::walker::utils::get_entrypoints;
 use crate::query_planner::{
-    ast::type_aware_selection::TypeAwareSelection,
+    ast::{
+        selection_item::SelectionItem, selection_set::SelectionSet as PlannerSelectionSet,
+        type_aware_selection::TypeAwareSelection,
+    },
     federation_spec::FederationRules,
     graph::node::{SubgraphTypeSpecialization, UnionMembersData},
     state::supergraph_state::{
@@ -180,6 +183,8 @@ impl Graph {
         self.build_interface_implementation_edges(state)?;
         self.build_entity_reference_edges(state)?;
         self.build_viewed_field_edges(state)?;
+        self.link_provides_views_to_local_fields();
+        self.drop_routes_covered_by_provides_views();
 
         Ok(())
     }
@@ -1279,6 +1284,152 @@ impl Graph {
         }
 
         Ok(())
+    }
+}
+
+impl Graph {
+    /// Every `@provides` view, with the plain node of the same type and subgraph.
+    fn provides_views(&self) -> Vec<(NodeIndex, NodeIndex)> {
+        self.graph
+            .node_indices()
+            .filter_map(|view_index| {
+                let Node::SubgraphType(view) = &self.graph[view_index] else {
+                    return None;
+                };
+                if !self.graph[view_index].is_using_provides() {
+                    return None;
+                }
+                let plain =
+                    Node::new_node(&view.name, view.subgraph.clone(), view.is_interface_object);
+                let plain_index = self.node_display_name_to_index.get(&plain.display_name())?;
+                Some((view_index, *plain_index))
+            })
+            .collect()
+    }
+
+    /// A `@provides` view only gets edges for the provided fields. But the subgraph can still
+    /// resolve its own fields on those objects, so we copy them over from the plain node.
+    ///
+    /// Without this, a field like `name @requires(fields: "sku")` can't be reached from the
+    /// view, and the planner fetches the provided `sku` from another subgraph instead.
+    ///
+    /// A `@requires` field is only copied when the view provides everything it requires. If only
+    /// part of it is provided, the rest comes from an entity call, and the provided part would
+    /// end up in that `_entities` call too - where the subgraph can't resolve it.
+    fn link_provides_views_to_local_fields(&mut self) {
+        let mut edges_to_add = Vec::new();
+
+        for (view_index, plain_index) in self.provides_views() {
+            let fields_on_view: HashSet<&str> = self
+                .graph
+                .edges(view_index)
+                .filter_map(|edge| match edge.weight() {
+                    Edge::FieldMove(field_move) => Some(field_move.name.as_str()),
+                    _ => None,
+                })
+                .collect();
+
+            for edge in self.graph.edges(plain_index) {
+                let Edge::FieldMove(field_move) = edge.weight() else {
+                    continue;
+                };
+                if fields_on_view.contains(field_move.name.as_str()) {
+                    continue;
+                }
+                if field_move
+                    .requirements
+                    .as_ref()
+                    .is_some_and(|requirements| {
+                        !self.view_provides(view_index, &requirements.selection_set)
+                    })
+                {
+                    continue;
+                }
+
+                edges_to_add.push((
+                    view_index,
+                    edge.target(),
+                    Edge::FieldMove(field_move.clone()),
+                ));
+            }
+        }
+
+        for (head, tail, edge) in edges_to_add {
+            self.upsert_edge(head, tail, edge);
+        }
+    }
+
+    /// Runs after `link_provides_views_to_local_fields`. It only makes planning faster.
+    ///
+    /// When a view has every edge of its plain node, the plain edge next to the `@provides` one
+    /// (same parent, same field) is dropped. It leads to the same subgraph and can't do anything
+    /// the view can't, it only gives the walker a second route to explore.
+    fn drop_routes_covered_by_provides_views(&mut self) {
+        let mut edges_to_remove = Vec::new();
+
+        for (view_index, plain_index) in self.provides_views() {
+            if !self.view_covers_plain(view_index, plain_index) {
+                continue;
+            }
+
+            for into_view in self.graph.edges_directed(view_index, Direction::Incoming) {
+                let Edge::FieldMove(provided) = into_view.weight() else {
+                    continue;
+                };
+                edges_to_remove.extend(
+                    self.graph
+                        .edges_connecting(into_view.source(), plain_index)
+                        .filter(|edge| {
+                            matches!(edge.weight(), Edge::FieldMove(field_move) if field_move.name == provided.name)
+                        })
+                        .map(|edge| edge.id()),
+                );
+            }
+        }
+
+        // `remove_edge` moves the last edge into the freed slot, so go from the highest index.
+        edges_to_remove.sort_unstable();
+        edges_to_remove.dedup();
+        for edge in edges_to_remove.into_iter().rev() {
+            self.graph.remove_edge(edge);
+        }
+    }
+
+    /// Can the view do everything the plain node can?
+    ///
+    /// Every field of the plain node has to be on the view. A `@requires` field that
+    /// `link_provides_views_to_local_fields` did not copy makes this false.
+    /// Every other edge has to be on the view too, going to the same node. Edges back to the
+    /// plain node itself (like `_entities` to the same subgraph) are only needed for `@requires`,
+    /// and those are covered by the field check.
+    fn view_covers_plain(&self, view_index: NodeIndex, plain_index: NodeIndex) -> bool {
+        self.graph.edges(plain_index).all(|edge| match edge.weight() {
+            Edge::FieldMove(field_move) => self.graph.edges(view_index).any(|view_edge| {
+                matches!(view_edge.weight(), Edge::FieldMove(view_field) if view_field.name == field_move.name)
+            }),
+            _ => {
+                edge.target() == plain_index
+                    || self
+                        .graph
+                        .edges_connecting(view_index, edge.target())
+                        .any(|view_edge| view_edge.weight() == edge.weight())
+            }
+        })
+    }
+
+    /// Does the view have a plain field edge for everything in `selection_set`?
+    fn view_provides(&self, view_index: NodeIndex, selection_set: &PlannerSelectionSet) -> bool {
+        selection_set.items.iter().all(|item| {
+            let SelectionItem::Field(field) = item else {
+                return false;
+            };
+            self.graph.edges(view_index).any(|edge| {
+                matches!(edge.weight(), Edge::FieldMove(field_move)
+                    if field_move.name == field.name && field_move.requirements.is_none())
+                    && (field.selections.items.is_empty()
+                        || self.view_provides(edge.target(), &field.selections))
+            })
+        })
     }
 }
 

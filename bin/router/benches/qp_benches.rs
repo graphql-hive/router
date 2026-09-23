@@ -198,9 +198,31 @@ fn cache_preparation(c: &mut Criterion) {
     group.finish();
 }
 
+fn graph_building(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_building");
+    for (name, schema_path) in [
+        ("bench", "../../bench/supergraph.graphql"),
+        (
+            "many_plans",
+            "./fixture/grafbase-many-plans/supergraph.graphql",
+        ),
+        ("spotify", "./fixture/spotify-supergraph.graphql"),
+    ] {
+        let schema = parse_schema(&std::fs::read_to_string(schema_path).unwrap());
+        let supergraph_state = SupergraphState::new(&schema);
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                black_box(Graph::graph_from_supergraph_state(black_box(&supergraph_state)).unwrap())
+            })
+        });
+    }
+    group.finish();
+}
+
 fn all_benchmarks(c: &mut Criterion) {
     query_plan_pipeline(c);
     cache_preparation(c);
+    graph_building(c);
 }
 
 criterion_group!(benches, all_benchmarks);

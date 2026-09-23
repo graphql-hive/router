@@ -335,7 +335,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
         }
 
         if fields_to_resolve_locally.is_empty() {
-            let mut indirect_paths = find_indirect_paths(
+            let indirect_paths = find_indirect_paths(
                 graph,
                 supergraph,
                 override_context,
@@ -345,12 +345,15 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
                 cancellation_token,
             )?;
 
-            if !indirect_paths.is_empty() {
+            let found_indirect_paths = !indirect_paths.is_empty();
+            if found_indirect_paths {
                 trace!("advanced: {}", path.pretty_print(graph));
-                next_paths.push(indirect_paths.remove(0));
+                // One best path per subgraph. Keep them all: the fields under the fragment
+                // may only exist in one of them (the first is not always the right one).
+                next_paths.extend(indirect_paths);
             }
 
-            if indirect_paths.is_empty() && direct_paths.is_empty() {
+            if !found_indirect_paths && direct_paths.is_empty() {
                 // Looks like a union member or an interface implementation is not resolvable.
                 // The fact the fragment for that object type passed GraphQL validations,
                 // means that it's a child of the abstract type,

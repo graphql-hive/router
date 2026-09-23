@@ -1892,7 +1892,9 @@ fn process_query_node(
                 requiring_fetch_step_index,
                 condition,
             ),
-            Edge::FieldMove(field) => match field.requirements.is_some() {
+            Edge::FieldMove(field) => match field.requirements.is_some()
+                && !requirements_resolve_in_place(graph, query_node)?
+            {
                 true => process_requires_field_edge(
                     graph,
                     fetch_graph,
@@ -1907,20 +1909,35 @@ fn process_query_node(
                     condition,
                     created_from_requires,
                 ),
-                false => process_plain_field_edge(
-                    graph,
-                    fetch_graph,
-                    supergraph,
-                    override_context,
-                    query_node,
-                    parent_fetch_step_index,
-                    requiring_fetch_step_index,
-                    response_path,
-                    fetch_path,
-                    field,
-                    condition,
-                    created_from_requires,
-                ),
+                false => {
+                    // Required fields we can get from here go into the same fetch as the field.
+                    process_requirements_for_fetch_steps(
+                        graph,
+                        fetch_graph,
+                        supergraph,
+                        override_context,
+                        query_node,
+                        parent_fetch_step_index,
+                        requiring_fetch_step_index,
+                        condition,
+                        response_path,
+                        fetch_path,
+                    )?;
+                    process_plain_field_edge(
+                        graph,
+                        fetch_graph,
+                        supergraph,
+                        override_context,
+                        query_node,
+                        parent_fetch_step_index,
+                        requiring_fetch_step_index,
+                        response_path,
+                        fetch_path,
+                        field,
+                        condition,
+                        created_from_requires,
+                    )
+                }
             },
             Edge::Selfie(type_name) => process_selfie_edge(
                 graph,
@@ -1981,6 +1998,42 @@ fn process_query_node(
             created_from_requires,
         )
     }
+}
+
+/// Can we fetch the required fields right here, in the same fetch as the field?
+///
+/// Yes, when every path to them stays in the current subgraph. Required fields are
+/// `@external`, so this only happens when a `@provides` gave us those fields at this spot.
+fn requirements_resolve_in_place(
+    graph: &Graph,
+    query_node: &QueryTreeNode,
+) -> Result<bool, FetchGraphError> {
+    fn stays_in_subgraph(graph: &Graph, node: &QueryTreeNode) -> Result<bool, FetchGraphError> {
+        if !node.requirements.is_empty() {
+            return Ok(false);
+        }
+        if let Some(edge_index) = node.edge_from_parent {
+            if !matches!(
+                graph.edge(edge_index)?,
+                Edge::FieldMove(_) | Edge::AbstractMove(_) | Edge::Selfie(_)
+            ) {
+                return Ok(false);
+            }
+        }
+        for child in node.children.iter() {
+            if !stays_in_subgraph(graph, child)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    for requirement in query_node.requirements.iter() {
+        if !stays_in_subgraph(graph, requirement)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 pub fn find_graph_roots<State>(graph: &FetchGraph<State>) -> Vec<NodeIndex> {

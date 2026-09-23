@@ -184,8 +184,9 @@ mod graph_tests {
 
         let (_, outgoing) = find_node(&graph, "Query/category");
         let field_edges = outgoing.edges_field("products");
-        // one for provided, other one for regular
-        assert_eq!(field_edges.len(), 2);
+        // Only the provided one. The view has all the edges of the plain `Product/category`,
+        // so the plain `products` edge is dropped.
+        assert_eq!(field_edges.len(), 1);
 
         // Provided ("viewed") field edge
         let (_, to) = field_edges
@@ -206,16 +207,11 @@ mod graph_tests {
         assert!(node1.is_using_provides());
         assert_eq!(node1.display_name(), "Category/category/1");
 
-        // Regular field edge
-        let (_, to_index) = field_edges
-            .iter()
-            .find(|(edge_ref, _to)| format!("{:?}", edge_ref.weight()) == "products")
-            .unwrap();
-        let node = graph.node(*to_index)?;
-        assert_eq!(node.display_name(), "Product/category");
-        assert!(!node.is_using_provides());
-
+        // The plain node still exists (other edges lead there), and the view has its fields.
         find_node(&graph, "Product/category")
+            .1
+            .assert_field_edge("id", "ID/category");
+        find_node(&graph, "Product/category/1")
             .1
             .assert_field_edge("id", "ID/category");
 
