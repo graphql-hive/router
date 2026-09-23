@@ -29,7 +29,7 @@ use tracing_subscriber::Registry;
 
 const XFF: HeaderName = HeaderName::from_static("x-forwarded-for");
 
-struct HttpRequestMock {
+pub(crate) struct HttpRequestMock {
     req: ntex::web::HttpRequest,
     // peer_addr is stored separately as TestRequest never passes it to HttpRequest.
     // It's gone and we need it to test trusted_proxies thingy.
@@ -37,7 +37,7 @@ struct HttpRequestMock {
 }
 
 impl HttpRequestMock {
-    fn with_peer_addr(mut self, peer_addr: SocketAddr) -> Self {
+    pub(crate) fn with_peer_addr(mut self, peer_addr: SocketAddr) -> Self {
         self.peer_addr = Some(peer_addr);
         self
     }

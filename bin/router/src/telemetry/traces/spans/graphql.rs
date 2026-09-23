@@ -13,7 +13,7 @@ use crate::telemetry::{
             },
             kind::{HiveEventKind, HiveSpanKind},
             observed_error::ObservedError,
-            TARGET_NAME,
+            otel_int, TARGET_NAME,
         },
     },
 };
@@ -371,7 +371,7 @@ impl GraphQLOperationSpan {
 
     pub fn record_error_count(&self, count: usize) {
         self.span
-            .record(attributes::HIVE_GRAPHQL_ERROR_COUNT, count);
+            .record(attributes::HIVE_GRAPHQL_ERROR_COUNT, otel_int(count));
         // error details live on events, this status makes the operation visible to apm
         if count > 0 {
             self.span.record(attributes::OTEL_STATUS_CODE, "Error");
@@ -422,10 +422,11 @@ impl GraphQLOperationSpan {
             return;
         }
 
-        self.span.record(attributes::COST_ESTIMATED, estimated);
+        self.span
+            .record(attributes::COST_ESTIMATED, otel_int(estimated));
 
         if let Some(actual) = actual {
-            self.span.record(attributes::COST_ACTUAL, actual);
+            self.span.record(attributes::COST_ACTUAL, otel_int(actual));
         }
 
         if let Some(delta) = delta {
@@ -478,7 +479,7 @@ impl GraphQLSubgraphOperationSpan {
 
     pub fn record_error_count(&self, count: usize) {
         self.span
-            .record(attributes::HIVE_GRAPHQL_ERROR_COUNT, count);
+            .record(attributes::HIVE_GRAPHQL_ERROR_COUNT, otel_int(count));
     }
 
     pub fn record_errors(&self, errors_fn: impl FnOnce() -> Vec<ObservedError>) {
