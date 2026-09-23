@@ -67,7 +67,7 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
             "kind": "BatchFetch",
             "serviceName": "reviews",
             "operationKind": "query",
-            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{reviews{...a}}} _e1: _entities(representations: $__batch_reps_1){...on User{reviews{id body product{__typename upc reviews{...a}}}}}}\\n\\nfragment a on Review {id body author{__typename id reviews{id body product{__typename upc}} username}}\\n",
+            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{reviews{...a}}} _e1: _entities(representations: $__batch_reps_1){...on User{reviews{id body product{__typename upc reviews{...a}}}}}}\\n\\nfragment a on Review {id body author{__typename id username reviews{id body product{__typename upc}}}}\\n",
             "entityBatch": {
               "aliases": [
                 {
@@ -479,7 +479,7 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
             "kind": "BatchFetch",
             "serviceName": "reviews",
             "operationKind": "query",
-            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{reviews{...a}}} _e1: _entities(representations: $__batch_reps_1){...on User{reviews{id body product{__typename upc reviews{...a}}}}}}\\n\\nfragment a on Review {id body author{__typename id reviews{id body product{__typename upc}} username}}\\n",
+            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{reviews{...a}}} _e1: _entities(representations: $__batch_reps_1){...on User{reviews{id body product{__typename upc reviews{...a}}}}}}\\n\\nfragment a on Review {id body author{__typename id username reviews{id body product{__typename upc}}}}\\n",
             "entityBatch": {
               "aliases": [
                 {
