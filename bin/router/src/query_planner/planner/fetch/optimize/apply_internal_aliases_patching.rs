@@ -37,6 +37,11 @@ impl FetchGraph<MultiTypeFetchStep> {
         );
 
         while let Some((aliased_node_index, scoped_aliases_locations)) = nodes_with_aliases.pop() {
+            let aliased_node_path = self
+                .get_step_data(aliased_node_index)?
+                .response_path
+                .clone();
+
             for (root_type_name, aliases_locations) in scoped_aliases_locations {
                 let mut bfs = Bfs::new(&self.graph, aliased_node_index);
 
@@ -61,13 +66,15 @@ impl FetchGraph<MultiTypeFetchStep> {
                         for (alias_path, new_name) in aliases_locations.iter() {
                             // Last segment is the field that was aliased
                             let maybe_patched_field = alias_path.last();
-                            // Build a path without the alias path, to make sure we don't patch the wrong field
-                            let relative_path =
-                                decendent.response_path.slice_from(alias_path.len());
 
                             if let Some(Segment::Field(field_seg, args_hash, condition)) =
                                 maybe_patched_field
                             {
+                                // Where the object holding the aliased field sits in the response.
+                                // `alias_path` starts at the aliased step's root.
+                                let parent_path =
+                                    aliased_node_path.concat(&alias_path.without_last());
+
                                 // TODO: Avoid "except" here of course.
                                 let decendent_type_name = decendent
                                     .input
@@ -88,15 +95,20 @@ impl FetchGraph<MultiTypeFetchStep> {
                                     .expect("selection set is missing");
 
                                 trace!(
-                              "field '{}' was aliased, relative selection path: '{}', checking if need to patch selection '{}'",
+                              "field '{}' was aliased under '{}', checking if need to patch selection '{}'",
                               field_seg.field_name(),
-                              relative_path,
+                              parent_path,
                               selection
                           );
 
-                                // First, check if the node's input selection set contains the field that was aliased
+                                // First, check if the node's input selection set contains the field that was aliased.
+                                // That's only possible when the node reads objects at or above that parent.
+                                let relative_path =
+                                    path_below(&parent_path, &decendent.response_path);
                                 if let Some(selection) =
-                                    find_selection_set_by_path_mut(selection, &relative_path)
+                                    relative_path.as_ref().and_then(|relative_path| {
+                                        find_selection_set_by_path_mut(selection, relative_path)
+                                    })
                                 {
                                     trace!("found selection to patch: {}", selection);
                                     let item_to_patch = selection.items.iter_mut().find(|item| matches!(item, SelectionItem::Field(field) if field.name == field_seg.field_name() && field.arguments_hash() == *args_hash));
@@ -109,15 +121,15 @@ impl FetchGraph<MultiTypeFetchStep> {
 
                                         trace!(
                                       "path '{}' found in selection, patched applied, new selection: {}",
-                                      relative_path,
+                                      parent_path,
                                       field_to_patch
                                   );
                                     }
                                 } else {
                                     trace!(
-                                        "path '{}' was not found in selection '{}', skipping...",
-                                        relative_path,
-                                        selection
+                                        "path '{}' is not read by decendent [{}], skipping...",
+                                        parent_path,
+                                        decendent_idx.index()
                                     );
                                 }
 
@@ -161,5 +173,36 @@ impl FetchGraph<MultiTypeFetchStep> {
         }
 
         Ok(())
+    }
+}
+
+/// If `prefix` points at `path` or at one of its parents, returns the rest of `path` below it.
+///
+/// Type conditions are skipped. Fields match by response key and arguments.
+fn path_below(path: &MergePath, prefix: &MergePath) -> Option<MergePath> {
+    let path = path.without_type_castings();
+    let prefix = prefix.without_type_castings();
+
+    if prefix.len() > path.len() {
+        return None;
+    }
+
+    let same = |a: &Segment, b: &Segment| match (a, b) {
+        (Segment::List, Segment::List) => true,
+        (Segment::Field(a, a_args, _), Segment::Field(b, b_args, _)) => {
+            a.response_key() == b.response_key() && a_args == b_args
+        }
+        _ => false,
+    };
+
+    if prefix
+        .inner
+        .iter()
+        .zip(path.inner.iter())
+        .all(|(a, b)| same(a, b))
+    {
+        Some(path.slice_from(prefix.len()))
+    } else {
+        None
     }
 }

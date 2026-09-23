@@ -481,3 +481,184 @@ fn progressive_override_of_union_field() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+/// `b` takes `User.orders` from `a` behind a label, and provides `sku` on it. The provided `sku`
+/// only counts when `orders` really comes from `b`.
+#[test]
+fn progressive_override_of_provides_field() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          me {
+            orders {
+              sku
+            }
+          }
+        }
+        "#,
+    );
+    // flag on: `orders` comes from b, and so does the provided `sku`
+    let query_plan = build_query_plan(
+        "fixture/tests/provides-progressive-override.supergraph.graphql",
+        document.clone(),
+        PlannerOverrideContext::from_flag("orders_in_b".into()),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "b") {
+        {
+          me {
+            orders {
+              sku
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    // flag off: a still owns `orders`, so b's @provides path can't be used
+    let query_plan = build_query_plan(
+        "fixture/tests/provides-progressive-override.supergraph.graphql",
+        document,
+        PlannerOverrideContext::from_flag("different_flag".into()),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {
+            me {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "me") {
+          Fetch(service: "a") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on User {
+                orders {
+                  sku
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Same as above, with a union field. `b` takes `User.media` from `a` behind a label and
+/// provides `title` on both members. Each member has its own edge, and the label has to be on
+/// all of them.
+#[test]
+fn progressive_override_of_provides_union_field() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          me {
+            media {
+              ... on Book {
+                title
+              }
+              ... on Movie {
+                title
+              }
+            }
+          }
+        }
+        "#,
+    );
+
+    // flag on: `media` comes from b, and so do the provided titles
+    let query_plan = build_query_plan(
+        "fixture/tests/provides-union-progressive-override.supergraph.graphql",
+        document.clone(),
+        PlannerOverrideContext::from_flag("media_in_b".into()),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "b") {
+        {
+          me {
+            media {
+              __typename
+              ... on Book {
+                title
+              }
+              ... on Movie {
+                title
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    // flag off: a still owns `media`
+    let query_plan = build_query_plan(
+        "fixture/tests/provides-union-progressive-override.supergraph.graphql",
+        document,
+        PlannerOverrideContext::from_flag("different_flag".into()),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {
+            me {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "me") {
+          Fetch(service: "a") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on User {
+                media {
+                  __typename
+                  ... on Book {
+                    title
+                  }
+                  ... on Movie {
+                    title
+                  }
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
