@@ -1,5 +1,6 @@
 ---
 hive-router: patch
+node-addon: patch
 ---
 
 # Fix several query planner bugs around `@requires`, `@provides` and `@interfaceObject`
