@@ -8,6 +8,7 @@ use hive_console_sdk::persisted_documents::{PersistedDocumentsError, PersistedDo
 use thiserror::Error;
 
 use crate::consts::ROUTER_VERSION;
+use crate::telemetry::external_wait;
 
 use super::{
     PersistedDocumentResolveInput, PersistedDocumentResolver, PersistedDocumentResolverError,
@@ -210,16 +211,18 @@ impl PersistedDocumentResolver for HiveCDNResolver {
         input: PersistedDocumentResolveInput<'_>,
     ) -> Result<ResolvedDocument, PersistedDocumentResolverError> {
         let app_document_id = AppDocumentId::try_from(input)?;
-        let text = self
+        let external_wait_guard = external_wait::enter();
+        let resolved = self
             .manager
             .resolve_document(app_document_id.as_ref())
-            .await
-            .map_err(|err| match err {
-                PersistedDocumentsError::DocumentNotFound => {
-                    PersistedDocumentResolverError::NotFound(app_document_id.as_ref().to_string())
-                }
-                other => HiveResolverError::SDKError(other.to_string()).into(),
-            })?;
+            .await;
+        drop(external_wait_guard);
+        let text = resolved.map_err(|err| match err {
+            PersistedDocumentsError::DocumentNotFound => {
+                PersistedDocumentResolverError::NotFound(app_document_id.as_ref().to_string())
+            }
+            other => HiveResolverError::SDKError(other.to_string()).into(),
+        })?;
 
         Ok(ResolvedDocument {
             text: Arc::<str>::from(text),

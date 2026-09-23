@@ -34,7 +34,7 @@ use crate::telemetry::{
     error::TelemetryError,
     logging::targets,
     metrics::catalog::{
-        all_metric_names, labels_for,
+        all_metric_names, labels_for, names,
         units::{BYTES, DEMAND_CONTROL_COST_UNIT, SECONDS},
     },
     resolve_string_map,
@@ -262,6 +262,12 @@ fn validate_explicit_histogram_buckets(
 /// Cost-shaped histogram buckets for demand-control cost metrics
 const DEMAND_CONTROL_COST_BUCKETS: &[f64] = &[0.0, 10.0, 50.0, 200.0, 1000.0, 5000.0, 10000.0];
 
+/// Buckets for `hive.router.request.overhead.duration`. Router overhead is typically well
+/// below a millisecond, where the default seconds buckets (starting at 5ms) have no resolution.
+const REQUEST_OVERHEAD_BUCKETS: &[f64] = &[
+    0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0,
+];
+
 fn histogram_aggregation_for_unit(
     histogram_config: &MetricsHistogramConfig,
     instrument_name: &str,
@@ -279,6 +285,9 @@ fn histogram_aggregation_for_unit(
         }),
         MetricsHistogramConfig::Explicit { seconds, bytes } => {
             let (buckets, record_min_max) = match instrument_unit {
+                SECONDS if instrument_name == names::REQUEST_OVERHEAD_DURATION => {
+                    (REQUEST_OVERHEAD_BUCKETS.to_vec(), seconds.record_min_max)
+                }
                 SECONDS => (
                     seconds
                         .resolve_seconds_buckets()

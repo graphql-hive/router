@@ -20,6 +20,7 @@ use crate::executor::plugins::hooks;
 use crate::executor::response::subgraph_response::SubgraphResponse;
 use crate::http_utils::compression;
 use crate::query_planner::planner::plan_nodes::CustomScalarPaths;
+use crate::telemetry::external_wait;
 use crate::telemetry::logging::targets;
 use crate::telemetry::metrics::catalog::values::GraphQLResponseStatus;
 use crate::telemetry::metrics::http_client_metrics::HttpClientRequestStateCapture;
@@ -458,7 +459,10 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                     // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
                     // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
                     let _permit = self.semaphore.acquire().await.unwrap();
-                    let fetched_response = send_request(send_request_opts).await?;
+                    let external_wait_guard = external_wait::enter();
+                    let fetched_response = send_request(send_request_opts).await;
+                    drop(external_wait_guard);
+                    let fetched_response = fetched_response?;
                     http_request_capture = Some(HttpRequestTelemetryCapture {
                         capture: fetched_response.http_request_capture,
                         response_body_size: fetched_response.response.body.len() as u64,
@@ -478,7 +482,8 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                     let result: Result<_, SubgraphExecutorError> = async {
                         let claim = self.in_flight_requests.claim(fingerprint);
                         let mut leader_http_request_capture = None;
-                        let (shared_response, role) = claim
+                        let external_wait_guard = external_wait::enter();
+                        let init_result = claim
                             .get_or_try_init(|| async {
                                 let res = {
                                     // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
@@ -498,7 +503,9 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                                     (fetched_response.response, unique_leader_fingerprint())
                                 })
                             })
-                            .await?;
+                            .await;
+                        drop(external_wait_guard);
+                        let (shared_response, role) = init_result?;
 
                         let (shared_response, leader_id) = shared_response.as_ref();
                         let shared_response = shared_response.clone();

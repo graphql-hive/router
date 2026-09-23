@@ -77,6 +77,7 @@ pub use crate::pipeline::authorization::user_auth_context::{
     AuthorizationMetadataError, UserAuthContext,
 };
 pub use crate::plugins::registry::PluginRegistry;
+use crate::telemetry::external_wait::{ExternalWaitTracker, WithExternalWaitTracker};
 use crate::telemetry::logging::request_id::{self, REQUEST_IDENTIFIERS};
 use crate::telemetry::metrics::catalog::values::GraphQLResponseStatus;
 use crate::telemetry::{
@@ -211,6 +212,7 @@ async fn graphql_endpoint_handler(
         "http request started",
     );
 
+    let overhead_tracker = ExternalWaitTracker::new();
     let response = graphql_endpoint_dispatch(
         &mut request,
         body_stream,
@@ -218,7 +220,9 @@ async fn graphql_endpoint_handler(
         app_state.clone(),
         parent_ctx,
     )
+    .with_external_wait_tracker(overhead_tracker.clone())
     .await;
+    let external_wait = overhead_tracker.total();
 
     let status_code = response.status().as_u16();
     let payload_bytes = match response.body().size() {
@@ -262,6 +266,7 @@ async fn graphql_endpoint_handler(
         graphql_operation_type,
         graphql_response_status,
         supergraph_name.as_deref(),
+        external_wait,
     );
 
     response
