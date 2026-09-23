@@ -279,9 +279,14 @@ impl<E: SpanExporter> SpanExporter for HttpCompatibilityExporter<E> {
 mod tests {
     use super::*;
     use crate::config::telemetry::ClientIpHeaderConfig;
-    use crate::telemetry::traces::spans::http_request::{
-        HttpClientRequestSpan, HttpServerRequestSpan,
+    use crate::telemetry::metrics::demand_control_metrics::DemandControlResultCode;
+    use crate::telemetry::traces::spans::graphql::{
+        GraphQLOperationSpan, GraphQLSubgraphOperationSpan,
     };
+    use crate::telemetry::traces::spans::http_request::{
+        HttpClientRequestSpan, HttpInflightRequestSpan, HttpServerRequestSpan,
+    };
+    use crate::telemetry::traces::spans::tests::HttpRequestMock;
     use http::header::FORWARDED;
     use http_body_util::Full;
     use ntex::http::header::{HOST, USER_AGENT};
@@ -400,67 +405,152 @@ mod tests {
     /// Tail-sampling policies and TraceQL match on the numeric type, so a
     /// string-typed `http.response.status_code` is invisible to them.
     ///
-    /// Two traps this guards against:
+    /// Two traps these tests guard against:
     /// - `StatusCode::as_str()` yields `"200"`.
     /// - `tracing_core`'s `Visit::record_u64` defaults to `record_debug`, and
     ///   `tracing-opentelemetry`'s `SpanAttributeVisitor` implements `record_i64`
-    ///   but not `record_u64` — so `usize`/`u64` values get stringified.
+    ///   but not `record_u64`, so `u16`/`u64`/`usize` values get stringified.
     ///
-    /// This has to assert through the real exporter: the `Visit` collector in
+    /// They have to assert through the real exporter: the `Visit` collector in
     /// `spans::tests` sees the values before the OpenTelemetry conversion and so
     /// cannot catch either trap.
-    #[test]
-    fn test_numeric_span_attributes_are_ints() {
+    fn export_first_span(record: impl FnOnce()) -> SpanData {
         let (provider, memory_exporter) =
             setup_test_pipeline(SpansSemanticConventionsMode::SpecCompliant);
         let tracer = provider.tracer("test-tracer");
-        let _guard = setup_tracing_subscriber(&provider);
+        let guard = setup_tracing_subscriber(&provider);
 
-        let req = ntex::web::test::TestRequest::default()
-            .uri("/test?q=1")
-            .version(ntex::http::Version::HTTP_11)
-            .method(ntex::http::Method::GET)
-            .header(HOST, "example.com:8080")
-            .header(USER_AGENT, "test-agent");
+        tracer.in_span("root", |_cx| record());
+
+        drop(guard);
+        provider.force_flush().unwrap();
+        memory_exporter
+            .get_finished_spans()
+            .unwrap()
+            .into_iter()
+            .next()
+            .expect("span exported")
+    }
+
+    fn assert_int(span: &SpanData, key: &'static str, expected: i64) {
+        assert_eq!(
+            find_attribute(span, key),
+            Some(&opentelemetry::Value::I64(expected)),
+            "{key} must be the int {expected}"
+        );
+    }
+
+    fn assert_str(span: &SpanData, key: &'static str, expected: &'static str) {
+        assert_eq!(
+            find_attribute(span, key),
+            Some(&opentelemetry::Value::from(expected)),
+            "{key} must be the string {expected:?}"
+        );
+    }
+
+    #[test]
+    fn test_http_server_span_numeric_attributes_are_ints() {
+        let req = HttpRequestMock::from(
+            ntex::web::test::TestRequest::default()
+                .uri("/test?q=1")
+                .header(HOST, "example.com:8080"),
+        )
+        .with_peer_addr("10.0.0.2:5678".parse().unwrap());
         let body = Bytes::from_static(b"test body");
-        let http_req = req.to_http_request();
-        let http_res =
-            ntex::web::HttpResponse::build(ntex::http::StatusCode::OK).body("response body");
+        let res = ntex::web::HttpResponse::build(ntex::http::StatusCode::OK).body("response body");
 
-        tracer.in_span("root", |_cx| {
-            let span =
-                HttpServerRequestSpan::from_request(&http_req, &forwarded_ip_header_config());
+        let span = export_first_span(|| {
+            let span = HttpServerRequestSpan::from_request(&req, &None);
             span.record_body_size(body.len());
-            span.record_response(&http_res);
+            span.record_response(&res);
         });
 
-        drop(_guard);
-        provider.force_flush().unwrap();
-        let spans = memory_exporter.get_finished_spans().unwrap();
-        let span = &spans[0];
+        assert_int(&span, "http.response.status_code", 200);
+        assert_int(&span, "http.request.body.size", 9);
+        assert_int(&span, "http.response.body.size", 13);
+        assert_int(&span, "server.port", 8080);
+        assert_int(&span, "client.port", 5678);
+        assert_int(&span, "network.peer.port", 5678);
+    }
 
-        assert_eq!(
-            find_attribute(span, "http.response.status_code"),
-            Some(&opentelemetry::Value::I64(200)),
-            "status code must be an int, not a string"
-        );
+    #[test]
+    fn test_http_server_span_error_type_is_status_code() {
+        let req = ntex::web::test::TestRequest::default().to_http_request();
+        let res = ntex::web::HttpResponse::build(ntex::http::StatusCode::BAD_GATEWAY).finish();
 
-        assert_eq!(
-            find_attribute(span, "server.port"),
-            Some(&opentelemetry::Value::I64(8080)),
-            "port must be an int, not a string"
-        );
+        let span = export_first_span(|| {
+            HttpServerRequestSpan::from_request(&req, &None).record_response(&res);
+        });
 
-        for key in ["http.request.body.size", "http.response.body.size"] {
-            assert!(
-                matches!(
-                    find_attribute(span, key),
-                    Some(&opentelemetry::Value::I64(_))
-                ),
-                "{key} must be an int, got {:?}",
-                find_attribute(span, key)
+        assert_int(&span, "http.response.status_code", 502);
+        assert_str(&span, "error.type", "502");
+    }
+
+    #[test]
+    fn test_http_client_span_numeric_attributes_are_ints() {
+        let request = http::Request::builder()
+            .uri("https://api.example.com:8443/v1/users")
+            .body(Full::from("dummy body"))
+            .unwrap();
+        let response = http::Response::builder()
+            .status(503)
+            .body(Full::from("response body"))
+            .unwrap();
+
+        let span = export_first_span(|| {
+            HttpClientRequestSpan::from_request(&request).record_response(&response);
+        });
+
+        assert_int(&span, "http.response.status_code", 503);
+        assert_int(&span, "http.request.body.size", 10);
+        assert_int(&span, "http.response.body.size", 13);
+        assert_int(&span, "server.port", 8443);
+        assert_str(&span, "error.type", "503");
+    }
+
+    #[test]
+    fn test_http_inflight_span_numeric_attributes_are_ints() {
+        let url = http::Uri::from_static("http://localhost:8082/graphql");
+        let body = bytes::Bytes::from_static(b"inflight response");
+
+        let span = export_first_span(|| {
+            let span = HttpInflightRequestSpan::new(
+                &http::Method::POST,
+                &url,
+                &http::HeaderMap::new(),
+                b"test body",
             );
-        }
+            span.record_response(&body, &http::StatusCode::INTERNAL_SERVER_ERROR);
+        });
+
+        assert_int(&span, "http.response.status_code", 500);
+        assert_int(&span, "http.request.body.size", 9);
+        assert_int(&span, "http.response.body.size", 17);
+        assert_int(&span, "server.port", 8082);
+        assert_str(&span, "error.type", "500");
+    }
+
+    #[test]
+    fn test_graphql_operation_span_numeric_attributes_are_ints() {
+        let span = export_first_span(|| {
+            let span = GraphQLOperationSpan::new();
+            span.record_error_count(2);
+            span.record_demand_control(11, Some(3), Some(-8), &DemandControlResultCode::CostOk);
+        });
+
+        assert_int(&span, "hive.graphql.error.count", 2);
+        assert_int(&span, "cost.estimated", 11);
+        assert_int(&span, "cost.actual", 3);
+        assert_int(&span, "cost.delta", -8);
+    }
+
+    #[test]
+    fn test_graphql_subgraph_operation_span_numeric_attributes_are_ints() {
+        let span = export_first_span(|| {
+            GraphQLSubgraphOperationSpan::new("products", "{ me }").record_error_count(2);
+        });
+
+        assert_int(&span, "hive.graphql.error.count", 2);
     }
 
     #[test]

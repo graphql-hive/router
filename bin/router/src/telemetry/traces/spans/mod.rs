@@ -20,5 +20,15 @@ pub mod http_request;
 pub mod kind;
 pub mod observed_error;
 
+/// Converts a number into the `i64` a span field needs to be exported as an OpenTelemetry int.
+///
+/// `tracing-opentelemetry` maps `i64` fields to int attributes, but has no `record_u64`, so
+/// unsigned values (`u16`, `u64`, `usize`, ...) fall back to `record_debug` and are exported
+/// as strings. Record every numeric field through this helper. Values above `i64::MAX`
+/// saturate instead of wrapping.
+pub fn otel_int(value: impl TryInto<i64>) -> i64 {
+    value.try_into().unwrap_or(i64::MAX)
+}
+
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

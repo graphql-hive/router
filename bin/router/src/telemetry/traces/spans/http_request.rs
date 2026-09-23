@@ -4,7 +4,7 @@ use crate::telemetry::traces::{
     spans::{
         attributes::{self},
         kind::HiveSpanKind,
-        TARGET_NAME,
+        otel_int, TARGET_NAME,
     },
 };
 use crate::telemetry::utils::http::{HttpMethodAsStr, HttpUriAsStr, HttpVersionAsStr};
@@ -132,7 +132,7 @@ impl HttpServerRequestSpan {
 
             // Stable Attributes
             "server.address" = server_address,
-            "server.port" = server_port.map(i64::from),
+            "server.port" = server_port.map(otel_int),
             "url.full" = %url,
             "url.path" = url.path(),
             "url.scheme" = url_scheme,
@@ -145,9 +145,9 @@ impl HttpServerRequestSpan {
             "http.route" = request.route_pattern(),
             // Client
             "client.address" = client_address,
-            "client.port" = client_port.map(i64::from),
+            "client.port" = client_port.map(otel_int),
             "network.peer.address" = peer_address,
-            "network.peer.port" = peer_port.map(i64::from),
+            "network.peer.port" = peer_port.map(otel_int),
         );
 
         Self { span }
@@ -155,7 +155,7 @@ impl HttpServerRequestSpan {
 
     pub fn record_body_size(&self, body_size: usize) {
         self.span
-            .record(attributes::HTTP_REQUEST_BODY_SIZE, body_size as i64);
+            .record(attributes::HTTP_REQUEST_BODY_SIZE, otel_int(body_size));
     }
 
     pub fn record_request_id(&self, req_id: &str) {
@@ -168,13 +168,13 @@ impl HttpServerRequestSpan {
         }
 
         let body_size: Option<i64> = response.body().as_ref().and_then(|b| match b.size() {
-            ntex::http::body::BodySize::Sized(size) => Some(size as i64),
+            ntex::http::body::BodySize::Sized(size) => Some(otel_int(size)),
             _ => None,
         });
 
         record_all!(
             self.span,
-            "http.response.status_code" = i64::from(response.status().as_u16()),
+            "http.response.status_code" = otel_int(response.status().as_u16()),
             "http.response.body.size" = body_size,
         );
 
@@ -195,7 +195,7 @@ impl HttpServerRequestSpan {
             record_all!(
                 self.span,
                 "otel.status_code" = "Error",
-                "error.type" = response.status().to_string(),
+                "error.type" = response.status().as_str(),
             );
         }
     }
@@ -241,7 +241,7 @@ impl HttpClientRequestSpan {
             };
         }
 
-        let request_body_size = request.size_hint().upper().map(|v| v as i64);
+        let request_body_size = request.size_hint().upper().map(otel_int);
         let request_method = request.method().as_static_str();
         let header_user_agent = request.headers().get(USER_AGENT).map(Cow::Borrowed);
         let url = Cow::Borrowed(request.uri());
@@ -263,7 +263,7 @@ impl HttpClientRequestSpan {
 
             // Stable Attributes
             "server.address" = server_address,
-            "server.port" = server_port.map(i64::from),
+            "server.port" = server_port.map(otel_int),
             "url.full" = %url,
             "url.path" = url.path(),
             "url.scheme" = url_scheme,
@@ -286,19 +286,20 @@ impl HttpClientRequestSpan {
             return;
         }
 
-        let body_size = response.body().size_hint().exact().map(|s| s as i64);
+        let status = response.status();
+        let body_size = response.body().size_hint().exact().map(otel_int);
 
         record_all!(
             self.span,
-            "http.response.status_code" = i64::from(response.status().as_u16()),
+            "http.response.status_code" = otel_int(status.as_u16()),
             "http.response.body.size" = body_size,
-            "otel.status_code" = if response.status().is_server_error() {
+            "otel.status_code" = if status.is_server_error() {
                 "Error"
             } else {
                 "Ok"
             },
-            "error.type" = if response.status().is_server_error() {
-                Some(response.status().to_string())
+            "error.type" = if status.is_server_error() {
+                Some(status.as_str())
             } else {
                 None
             },
@@ -354,7 +355,7 @@ impl HttpInflightRequestSpan {
         let server_address = url.host();
         let server_port = url.port_u16();
 
-        let request_body_size = Some(body_bytes.len() as i64);
+        let request_body_size = Some(otel_int(body_bytes.len()));
         let request_method = method.as_static_str();
         let header_user_agent = headers.get(USER_AGENT).map(Cow::Borrowed);
         let url = Cow::Borrowed(url);
@@ -378,7 +379,7 @@ impl HttpInflightRequestSpan {
 
             // Stable Attributes
             "server.address" = server_address,
-            "server.port" = server_port.map(i64::from),
+            "server.port" = server_port.map(otel_int),
             "url.full" = %url,
             "url.path" = url.path(),
             "url.scheme" = url_scheme,
@@ -418,8 +419,8 @@ impl HttpInflightRequestSpan {
 
         record_all!(
             self.span,
-            "http.response.status_code" = i64::from(status.as_u16()),
-            "http.response.body.size" = body_size as i64,
+            "http.response.status_code" = otel_int(status.as_u16()),
+            "http.response.body.size" = otel_int(body_size),
             "otel.status_code" = if status.is_server_error() {
                 "Error"
             } else {
