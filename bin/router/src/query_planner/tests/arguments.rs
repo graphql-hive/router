@@ -2254,3 +2254,110 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+/// Same idea as `fed_audit_requires_with_argument_conflict`, but the `Order` comes out of an
+/// `_entities` fetch. `usd` needs `price(currency: "USD")` and `eur` needs
+/// `price(currency: "EUR")`, both from `orders`, so the second one is sent as
+/// `_internal_qp_alias_0`.
+///
+/// `eur`'s `_entities` call has to read `price: _internal_qp_alias_0`, like in the audit case.
+/// We used to send plain `price` - the USD value - to both, because the alias was recorded
+/// from `orders.@` and looked up as if it started at the `user` fetch's root. See the matching
+/// e2e test in `e2e/src/issues/mod.rs`.
+#[test]
+fn requires_with_argument_conflict_after_entity_hop() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          user {
+            orders {
+              usd
+              eur
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-argument-conflict-after-hop.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "users") {
+          {
+            user {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "user") {
+          Fetch(service: "orders") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on User {
+                orders {
+                  __typename
+                  id
+                  price(currency: "USD")
+                  _internal_qp_alias_0: price(currency: "EUR")
+                }
+              }
+            }
+          },
+        },
+        BatchFetch(service: "catalog") {
+          {
+            _e0 {
+              paths: [
+                "user.orders.@"
+              ]
+              {
+                ... on Order {
+                  __typename
+                  price: _internal_qp_alias_0
+                  id
+                }
+              }
+            }
+            _e1 {
+              paths: [
+                "user.orders.@"
+              ]
+              {
+                ... on Order {
+                  __typename
+                  price
+                  id
+                }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Order {
+                eur
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Order {
+                usd
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
