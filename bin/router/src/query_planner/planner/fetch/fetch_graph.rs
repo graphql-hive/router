@@ -195,24 +195,20 @@ impl<State> FetchGraph<State> {
         None
     }
 
-    /// Checks whether the given step is an ancestor of a step that has the given condition
-    pub fn is_ancestor_of_condition(&self, step_index: NodeIndex, condition: &Condition) -> bool {
-        let mut bfs = Bfs::new(&self.graph, step_index);
-
-        while let Some(current_index) = bfs.next(&self.graph) {
-            let current_step = match self.get_step_data(current_index) {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-
-            if let Some(step_condition) = &current_step.condition {
-                if step_condition == condition {
-                    return true;
-                }
-            }
-        }
-
-        false
+    /// Is `condition` already applied to the whole step, or to the step that needs what we
+    /// add to it? Then what we add doesn't need it again. Fetching a key or a required field
+    /// when nothing reads it is harmless.
+    pub fn applies_condition(
+        &self,
+        step_index: NodeIndex,
+        requiring_step_index: Option<NodeIndex>,
+        condition: &Condition,
+    ) -> bool {
+        [Some(step_index), requiring_step_index]
+            .into_iter()
+            .flatten()
+            .filter_map(|index| self.get_step_data(index).ok())
+            .any(|step| step.condition.as_ref() == Some(condition))
     }
 }
 
@@ -1106,12 +1102,14 @@ fn process_subgraph_reentry(
         false
     };
 
-    let ancestor_of_condition = match condition {
-        Some(c) => fetch_graph.is_ancestor_of_condition(parent_fetch_step_index, c),
+    let condition_applied = match condition {
+        Some(c) => {
+            fetch_graph.applies_condition(parent_fetch_step_index, requiring_fetch_step_index, c)
+        }
         None => false,
     };
 
-    let should_strip_condition = condition_in_path || ancestor_of_condition;
+    let should_strip_condition = condition_in_path || condition_applied;
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
     parent_fetch_step.output.add_at_path(
         fetch_path,
@@ -1204,8 +1202,10 @@ fn process_selfie_edge(
     target_type_name: &String,
     condition: Option<&Condition>,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
-    let is_ancestor_of_condition = match condition {
-        Some(c) => fetch_graph.is_ancestor_of_condition(parent_fetch_step_index, c),
+    let condition_applied = match condition {
+        Some(c) => {
+            fetch_graph.applies_condition(parent_fetch_step_index, requiring_fetch_step_index, c)
+        }
         None => false,
     };
 
@@ -1222,14 +1222,14 @@ fn process_selfie_edge(
                 type_condition: target_type_name.clone(),
                 selections: SelectionSet::default(),
                 skip_if: condition.and_then(|c| {
-                    if is_ancestor_of_condition {
+                    if condition_applied {
                         None
                     } else {
                         c.to_skip_if()
                     }
                 }),
                 include_if: condition.and_then(|c| {
-                    if is_ancestor_of_condition {
+                    if condition_applied {
                         None
                     } else {
                         c.to_include_if()
@@ -1239,7 +1239,7 @@ fn process_selfie_edge(
         },
     )?;
 
-    let segment_condition = if is_ancestor_of_condition {
+    let segment_condition = if condition_applied {
         None
     } else {
         condition.cloned()
@@ -1385,12 +1385,14 @@ fn process_plain_field_edge(
         false
     };
 
-    let ancestor_of_condition = match condition {
-        Some(c) => fetch_graph.is_ancestor_of_condition(parent_fetch_step_index, c),
+    let condition_applied = match condition {
+        Some(c) => {
+            fetch_graph.applies_condition(parent_fetch_step_index, requiring_fetch_step_index, c)
+        }
         None => false,
     };
 
-    let should_strip_condition = condition_in_path || ancestor_of_condition;
+    let should_strip_condition = condition_in_path || condition_applied;
 
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
     trace!(

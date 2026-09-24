@@ -160,6 +160,34 @@ fn include_fragment_test() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// A conditional field keeps its `@skip` when another conditional field on the same object
+/// needs a fetch of its own. It used to lose it when that other fetch had been planned first,
+/// so the order of the fields decided if `price` was fetched when `$bool` is true.
+#[test]
+fn skip_stays_on_a_field_next_to_a_conditional_entity_call() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let plan = |query: &str| {
+        build_query_plan_with_defaults(
+            "fixture/tests/simple-include-skip.supergraph.graphql",
+            parse_operation(query),
+        )
+        .map(|plan| format!("{plan}"))
+    };
+    let skip_first = plan(
+        "query ($bool: Boolean = false) { product { skip @skip(if: $bool) price @skip(if: $bool) } }",
+    )?;
+    let price_first = plan(
+        "query ($bool: Boolean = false) { product { price @skip(if: $bool) skip @skip(if: $bool) } }",
+    )?;
+
+    // `price` is fetched by the root fetch in both, which isn't skipped with the others.
+    for plan in [&skip_first, &price_first] {
+        assert!(plan.contains("price @skip(if: $bool)"), "{plan}");
+    }
+
+    Ok(())
+}
+
 #[test]
 fn skip_basic_test() -> Result<(), Box<dyn Error>> {
     init_logger();
