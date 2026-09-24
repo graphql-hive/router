@@ -162,7 +162,6 @@ pub fn project_by_operation(
             root_fields,
             &TypeName::resolved(operation_type_name),
             &mut first,
-            &mut [],
         )?;
 
         if null_propagation_decision.should_propagate() {
@@ -243,11 +242,6 @@ pub fn serialize_value_to_buffer(data: &Value, buffer: &mut Vec<u8>) {
     };
 }
 
-/// Cached field positions kept on the stack before falling back to the heap.
-const STACK_CACHE_FIELD_LIMIT: usize = 16;
-/// Marks a field that was not found.
-const MISSING_FIELD_INDEX: usize = usize::MAX;
-
 struct Projector<'a, 'v> {
     plan: &'a ProjectionPlan,
     schema: &'a SchemaMetadata,
@@ -263,27 +257,9 @@ impl<'a> Projector<'a, '_> {
         selection: &'a FieldRecord,
         parent_type_name: &TypeName<'a, '_>,
         nullability: Option<ShapeCursor<'_>>,
-        indexes: &mut [usize],
     ) -> Result<NullPropagationDecision, ProjectionError> {
         match data {
             Value::Array(arr) => {
-                // Reuse field positions across objects in the same list.
-                let cache_size = if indexes.is_empty() && arr.len() > 1 && selection.has_children()
-                {
-                    Some(selection.children.len as usize)
-                } else {
-                    None
-                };
-                let mut heap_cache = match cache_size {
-                    Some(len) if len > STACK_CACHE_FIELD_LIMIT => vec![MISSING_FIELD_INDEX; len],
-                    _ => Vec::new(),
-                };
-                let mut stack_cache = [MISSING_FIELD_INDEX; STACK_CACHE_FIELD_LIMIT];
-                let indexes = match cache_size {
-                    Some(len) if len <= STACK_CACHE_FIELD_LIMIT => &mut stack_cache[..len],
-                    Some(_) => heap_cache.as_mut_slice(),
-                    _ => indexes,
-                };
                 let null_propagation_checkpoint = self.buffer.len();
                 let item_shape = nullability.and_then(ShapeCursor::list_item);
                 let item_non_null = item_shape.is_some_and(ShapeCursor::is_non_null);
@@ -298,7 +274,6 @@ impl<'a> Projector<'a, '_> {
                         selection,
                         parent_type_name,
                         item_shape.or(nullability),
-                        indexes,
                     )?;
 
                     if needs_null_propagation.should_propagate() && item_non_null {
@@ -325,7 +300,7 @@ impl<'a> Projector<'a, '_> {
                 );
                 let fields = self.plan.fields(selection.children);
                 let null_propagation_decision =
-                    self.project_object_fields(obj, fields, &type_name, &mut first, indexes)?;
+                    self.project_object_fields(obj, fields, &type_name, &mut first)?;
 
                 if null_propagation_decision.should_propagate() {
                     self.buffer.truncate(null_propagation_checkpoint);
@@ -357,9 +332,12 @@ impl<'a> Projector<'a, '_> {
         fields: &'a [FieldRecord],
         parent_type_name: &TypeName<'a, '_>,
         first: &mut bool,
-        indexes: &mut [usize],
     ) -> Result<NullPropagationDecision, ProjectionError> {
-        for (offset, field) in fields.iter().enumerate() {
+        // Fields are visited in query order, and the object holds them in the order the
+        // subgraph returned them, which follows the subgraph query. So the next field is
+        // usually right after the previous one.
+        let mut cursor = 0;
+        for field in fields {
             let response_key = self.plan.response_key(field);
             if let Some(guard) = field.parent_guard {
                 if !self.plan.guard_matches(guard, parent_type_name.get()?) {
@@ -367,7 +345,8 @@ impl<'a> Projector<'a, '_> {
                 }
             }
 
-            let field_val = find_field(obj, response_key, indexes.get_mut(offset));
+            let field_val = Value::object_position_from(obj, response_key, &mut cursor)
+                .map(|index| &obj[index].1);
 
             let res = if let Some(condition) = field.condition {
                 let field_type_name_cell = OnceCell::new();
@@ -413,13 +392,7 @@ impl<'a> Projector<'a, '_> {
                     } else if let Some(field_val) = field_val {
                         let nullability = matches!(field_val, Value::Array(_))
                             .then(|| ShapeCursor::new(self.plan.shape(field.nullability())));
-                        self.project_value(
-                            field_val,
-                            field,
-                            parent_type_name,
-                            nullability,
-                            &mut [],
-                        )?
+                        self.project_value(field_val, field, parent_type_name, nullability)?
                     } else {
                         self.buffer.put(NULL);
                         NullPropagationDecision::PropagateNullValue
@@ -458,39 +431,7 @@ impl<'a> Projector<'a, '_> {
 /// Finds `__typename` in a sorted object.
 #[inline]
 fn find_typename<'a>(object: &'a [(&str, Value)]) -> Option<&'a str> {
-    if let Some((key, value)) = object.first() {
-        if *key == TYPENAME_FIELD_NAME {
-            return value.as_str();
-        }
-    }
-    object
-        .binary_search_by_key(&TYPENAME_FIELD_NAME, |(key, _)| *key)
-        .ok()
-        .and_then(|index| object[index].1.as_str())
-}
-
-#[inline]
-fn find_field<'a>(
-    obj: &'a [(&str, Value)],
-    response_key: &str,
-    hint: Option<&mut usize>,
-) -> Option<&'a Value<'a>> {
-    // The saved position is only a hint: check that the key still matches.
-    if let Some((key, value)) = hint.as_ref().and_then(|hint| obj.get(**hint)) {
-        if *key == response_key {
-            return Some(value);
-        }
-    }
-
-    // A previous object may have left the field out or kept it in a different
-    // spot, so always search the current object and save what is found.
-    let found = obj
-        .binary_search_by_key(&response_key, |(key, _)| *key)
-        .ok();
-    if let Some(hint) = hint {
-        *hint = found.unwrap_or(MISSING_FIELD_INDEX);
-    }
-    found.map(|index| &obj[index].1)
+    Value::object_get(object, TYPENAME_FIELD_NAME).and_then(Value::as_str)
 }
 
 #[inline(always)]
@@ -719,18 +660,23 @@ mod tests {
         let (root_type_name, plan) =
             ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
 
-        let data_json = sonic_rs::json!({
-            "__typename": "Query",
-            "metadatas": [
-                {
-                    "__typename": "Metadata",
-                    "id": "meta1",
-                    "timestamp": "2024-01-01T00:00:00Z",
-                    "data": { "float": 41.5, "int": -42, "str": "value1", "unsigned": 123 }
-                },
-                { "__typename": "Metadata", "id": "meta2", "data": null }
-            ]
-        });
+        // Parsed from text rather than built with `json!`, so object keys keep the order
+        // written here: the JSON scalar must come out in the order the subgraph sent it.
+        let data_json: sonic_rs::Value = sonic_rs::from_str(
+            r#"{
+                "__typename": "Query",
+                "metadatas": [
+                    {
+                        "__typename": "Metadata",
+                        "id": "meta1",
+                        "timestamp": "2024-01-01T00:00:00Z",
+                        "data": { "float": 41.5, "int": -42, "str": "value1", "unsigned": 123 }
+                    },
+                    { "__typename": "Metadata", "id": "meta2", "data": null }
+                ]
+            }"#,
+        )
+        .unwrap();
         let data = Value::from(data_json.as_ref());
         let output = project_by_operation(
             &data,

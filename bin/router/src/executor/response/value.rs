@@ -51,6 +51,44 @@ impl Hash for Value<'_> {
 }
 
 impl<'a> Value<'a> {
+    /// Finds the position of `key` in an object's entries.
+    #[inline]
+    pub fn object_position(obj: &[(&str, Value<'_>)], key: &str) -> Option<usize> {
+        obj.iter().position(|(k, _)| *k == key)
+    }
+
+    /// Like object_position, but scans from `cursor` first, wraps around,
+    /// and moves `cursor` past the match.
+    #[inline]
+    pub fn object_position_from(
+        obj: &[(&str, Value<'_>)],
+        key: &str,
+        cursor: &mut usize,
+    ) -> Option<usize> {
+        let start = (*cursor).min(obj.len());
+        let (after, before) = (&obj[start..], &obj[..start]);
+        let position = after
+            .iter()
+            .position(|(k, _)| *k == key)
+            .map(|index| start + index)
+            .or_else(|| before.iter().position(|(k, _)| *k == key))?;
+        *cursor = position + 1;
+        Some(position)
+    }
+
+    #[inline]
+    pub fn object_get<'b, 'v>(obj: &'b [(&str, Value<'v>)], key: &str) -> Option<&'b Value<'v>> {
+        Self::object_position(obj, key).map(|index| &obj[index].1)
+    }
+
+    #[inline]
+    pub fn object_get_mut<'b, 'v>(
+        obj: &'b mut [(&str, Value<'v>)],
+        key: &str,
+    ) -> Option<&'b mut Value<'v>> {
+        Self::object_position(obj, key).map(|index| &mut obj[index].1)
+    }
+
     pub fn take_entities(&mut self) -> Option<Vec<Value<'a>>> {
         self.take_entities_by_key("_entities")
     }
@@ -58,7 +96,7 @@ impl<'a> Value<'a> {
     pub fn take_entities_by_key(&mut self, key: &str) -> Option<Vec<Value<'a>>> {
         match self {
             Value::Object(data) => {
-                if let Ok(entities_idx) = data.binary_search_by_key(&key, |(k, _)| *k) {
+                if let Some(entities_idx) = Value::object_position(data, key) {
                     if let Value::Array(arr) = data.remove(entities_idx).1 {
                         return Some(arr);
                     }
@@ -120,7 +158,7 @@ impl<'a> Value<'a> {
                 RequiresSelection::Field {
                     name, selections, ..
                 } => {
-                    if let Ok(idx) = obj.binary_search_by_key(&name, |(k, _)| k) {
+                    if let Some(idx) = Value::object_position(obj, name) {
                         let (key, value) = &obj[idx];
                         key.hash(state);
                         value.hash_with_requires(state, selections, possible_types);
@@ -133,9 +171,7 @@ impl<'a> Value<'a> {
                 } => {
                     let type_name = type_name
                         .get_or_insert_with(|| {
-                            obj.binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
-                                .ok()
-                                .and_then(|idx| obj[idx].1.as_str())
+                            Value::object_get(obj, TYPENAME_FIELD_NAME).and_then(Value::as_str)
                         })
                         .unwrap_or(type_condition);
 
@@ -180,7 +216,6 @@ impl<'a> Value<'a> {
             ValueRef::Object(obj) => {
                 let mut vec = Vec::with_capacity(obj.len());
                 vec.extend(obj.iter().map(|(k, v)| (k, Value::from(v.as_ref()))));
-                vec.sort_unstable_by_key(|(k, _)| *k);
                 Value::Object(vec)
             }
         }
@@ -362,8 +397,6 @@ impl<'de> Visitor<'de> for ValueVisitor<'de> {
         while let Some((key, value)) = map.next_entry()? {
             entries.push((key, value));
         }
-        // IMPORTANT: We keep the sort for binary search compatibility.
-        entries.sort_unstable_by_key(|(k, _)| *k);
         Ok(Value::Object(entries))
     }
 }
@@ -445,6 +478,70 @@ mod tests {
     use super::Value;
     use serde::Deserialize;
     use std::borrow::Cow;
+
+    fn object<'a>(keys: &[&'a str]) -> Vec<(&'a str, Value<'a>)> {
+        keys.iter().map(|key| (*key, Value::Null)).collect()
+    }
+
+    #[test]
+    fn keeps_keys_in_input_order() {
+        let bytes = br#"{"b": 1, "a": 2, "c": 3}"#;
+        let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
+        let value = Value::deserialize(&mut deserializer).unwrap();
+
+        let keys: Vec<_> = value.as_object().unwrap().iter().map(|(k, _)| *k).collect();
+        assert_eq!(keys, ["b", "a", "c"]);
+    }
+
+    #[test]
+    fn object_position_from_advances_the_cursor_past_each_match() {
+        let obj = object(&["id", "name", "price"]);
+        let mut cursor = 0;
+
+        assert_eq!(
+            Value::object_position_from(&obj, "id", &mut cursor),
+            Some(0)
+        );
+        assert_eq!(
+            Value::object_position_from(&obj, "name", &mut cursor),
+            Some(1)
+        );
+        assert_eq!(
+            Value::object_position_from(&obj, "price", &mut cursor),
+            Some(2)
+        );
+        assert_eq!(cursor, 3);
+    }
+
+    #[test]
+    fn object_position_from_wraps_around_for_keys_before_the_cursor() {
+        let obj = object(&["id", "name", "price"]);
+        let mut cursor = 2;
+
+        assert_eq!(
+            Value::object_position_from(&obj, "id", &mut cursor),
+            Some(0)
+        );
+        assert_eq!(cursor, 1);
+    }
+
+    #[test]
+    fn object_position_from_leaves_the_cursor_on_a_miss() {
+        let obj = object(&["id", "name"]);
+        let mut cursor = 1;
+
+        assert_eq!(
+            Value::object_position_from(&obj, "missing", &mut cursor),
+            None
+        );
+        assert_eq!(cursor, 1);
+
+        let mut past_the_end = 5;
+        assert_eq!(
+            Value::object_position_from(&obj, "name", &mut past_the_end),
+            Some(1)
+        );
+    }
 
     #[test]
     fn deserializes_escaped_string_as_owned() {
