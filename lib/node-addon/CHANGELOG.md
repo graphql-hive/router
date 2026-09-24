@@ -1,4 +1,22 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.47 (2026-09-24)
+
+### Fixes
+
+#### Fix type conditions on a list of an `@interfaceObject`
+
+Queries with a type condition on a list of an `@interfaceObject`, like `friends { ... on User { name } }`, no longer fail with `No paths found for selection item`.
+
+#### Faster Processing of Large Subgraph Responses
+
+The Router no longer sorts the fields of every object in a subgraph response. Objects now keep the order the subgraph sent them in, and the Router finds each field by checking the next one first, since responses follow the order of the query.
+
+This removes a sort per object and a search per field. In our test with a single subgraph returning a 2.8MB response, the time the Router spends on each request dropped by about 10%, and throughput increased by about 5%.
+
+#### Fix progressive `@override` on fields returning a union
+
+When a field returning a union was progressively overridden (`@override(from: ..., label: ...)`), the overriding subgraph was still used when the label was off. The label is now respected, like it is for other fields.
+
 ## 0.0.46 (2026-09-21)
 
 ### Fixes
