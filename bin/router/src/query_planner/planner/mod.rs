@@ -88,6 +88,14 @@ impl Planner {
         override_context: PlannerOverrideContext,
         cancellation_token: &CancellationToken,
     ) -> Result<QueryPlan<Planning>, PlannerError> {
+        // Nothing left to plan, like when `@skip(if: true)` dropped every root field.
+        if normalized_operation.selection_set.is_empty() {
+            return Ok(QueryPlan {
+                kind: query_plan::QUERY_PLAN_KIND,
+                node: None,
+            });
+        }
+
         let best_paths_per_leaf = walk_operation(
             &self.graph,
             &self.supergraph,

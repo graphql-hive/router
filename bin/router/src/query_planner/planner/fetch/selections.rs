@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     fmt::Display,
     marker::PhantomData,
@@ -7,11 +8,11 @@ use std::{
 use crate::query_planner::{
     ast::{
         merge_path::{Condition, MergePath},
-        safe_merge::{AliasesRecords, SafeSelectionSetMerger},
+        safe_merge::{has_conflicts, AliasesRecords, SafeSelectionSetMerger},
         selection_item::SelectionItem,
         selection_set::{
-            find_selection_set_by_path_mut, merge_selection_set, selection_items_are_subset_of,
-            FieldSelection, InlineFragmentSelection, SelectionSet,
+            find_selection_set_by_path, find_selection_set_by_path_mut, merge_selection_set,
+            selection_items_are_subset_of, FieldSelection, InlineFragmentSelection, SelectionSet,
         },
     },
     planner::fetch::state::{MultiTypeFetchStep, SingleTypeFetchStep},
@@ -85,6 +86,33 @@ impl FetchStepSelections<MultiTypeFetchStep> {
                 .collect(),
         }
     }
+}
+
+/// When the output of one type goes into a step that outputs a single other type, like
+/// `Cat` fields into an `Animal` step, they have to stay under `... on Cat`. Deeper in the
+/// step, the path already points into the right type.
+///
+/// Only for outputs. Two outputs at the same place are the same type, or an abstract type and
+/// one of its members. An input can be another type, `@interfaceObject` steps take `Book` in
+/// and give `Media` out, where `... on Book` doesn't exist.
+fn scoped_to_definition<'a>(
+    definition_name: &str,
+    target_type: &str,
+    fetch_path: &MergePath,
+    selection_set: &'a SelectionSet,
+) -> Cow<'a, SelectionSet> {
+    if definition_name == target_type || !fetch_path.is_empty() {
+        return Cow::Borrowed(selection_set);
+    }
+
+    Cow::Owned(SelectionSet {
+        items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+            type_condition: definition_name.to_string(),
+            include_if: None,
+            skip_if: None,
+            selections: selection_set.clone(),
+        })],
+    })
 }
 
 fn inline_fragment_condition(fragment: &InlineFragmentSelection) -> Option<Condition> {
@@ -474,6 +502,32 @@ impl FetchStepSelections<MultiTypeFetchStep> {
         Ok(())
     }
 
+    /// Whether every type of `other` has a place to go in a merge. With a single type here,
+    /// everything goes into it. Otherwise each type needs its own, `Cat` and `Dog` selections
+    /// have no room for `Animal` ones.
+    pub fn has_room_for(&self, other: &Self) -> bool {
+        self.try_as_single().is_some()
+            || other
+                .iter_selections()
+                .all(|(definition_name, _)| self.selections.contains_key(definition_name))
+    }
+
+    /// Whether `safe_migrate_from_another` would run into a conflict.
+    pub fn has_conflicts_with_another(&self, other: &Self, fetch_path: &MergePath) -> bool {
+        let maybe_merge_into = self.try_as_single();
+
+        other
+            .iter_selections()
+            .any(|(definition_name, selection_set)| {
+                let target_type = maybe_merge_into.unwrap_or(definition_name);
+                let selection_set =
+                    scoped_to_definition(definition_name, target_type, fetch_path, selection_set);
+                self.selections_for_definition(target_type)
+                    .and_then(|current| find_selection_set_by_path(current, fetch_path))
+                    .is_some_and(|current| has_conflicts(current, &selection_set))
+            })
+    }
+
     pub fn safe_migrate_from_another(
         &mut self,
         other: &Self,
@@ -499,10 +553,12 @@ impl FetchStepSelections<MultiTypeFetchStep> {
                     )
                 })?;
 
+            let selection_set =
+                scoped_to_definition(definition_name, target_type, fetch_path, selection_set);
             let mut merger = SafeSelectionSetMerger::default();
             let current_aliases_made = merger.merge_selection_set(
                 selection_at_path,
-                selection_set,
+                &selection_set,
                 (self_used_for_requires, other_used_for_requires),
                 false,
             );

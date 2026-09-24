@@ -172,19 +172,21 @@ fn issue_190_test() -> Result<(), Box<dyn Error>> {
         build_query_plan_with_defaults("fixture/issues/190.supergraph.graphql", document)?;
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
-      Fetch(service: "recommender") {
-        query ($included:Boolean!) {
-          recommender @include(if: $included) {
-            id
-            results {
-              __typename
-              ... on Product {
-                id
+      Include(if: $included) {
+        Fetch(service: "recommender") {
+          {
+            recommender {
+              id
+              results {
+                __typename
+                ... on Product {
+                  id
+                }
               }
+              __typename
             }
-            __typename
           }
-        }
+        },
       },
     },
     "#);
@@ -212,18 +214,20 @@ fn issue_190_test() -> Result<(), Box<dyn Error>> {
         build_query_plan_with_defaults("fixture/issues/190.supergraph.graphql", document)?;
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
-      Fetch(service: "recommender") {
-        query ($included:Boolean!) {
-          recommender @include(if: $included) {
-            id
-            results {
-              __typename
-              ... on Product {
-                id
+      Include(if: $included) {
+        Fetch(service: "recommender") {
+          {
+            recommender {
+              id
+              results {
+                __typename
+                ... on Product {
+                  id
+                }
               }
             }
           }
-        }
+        },
       },
     },
     "#);
@@ -249,18 +253,20 @@ fn issue_190_test() -> Result<(), Box<dyn Error>> {
         build_query_plan_with_defaults("fixture/issues/190.supergraph.graphql", document)?;
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
-      Fetch(service: "recommender") {
-        query ($included:Boolean!) {
-          recommender @include(if: $included) {
-            id
-            results {
-              __typename
-              ... on Product {
-                id
+      Include(if: $included) {
+        Fetch(service: "recommender") {
+          {
+            recommender {
+              id
+              results {
+                __typename
+                ... on Product {
+                  id
+                }
               }
             }
           }
-        }
+        },
       },
     },
     "#);
@@ -1111,6 +1117,518 @@ fn issue_1539_requires_on_self_referential_entity() -> Result<(), Box<dyn Error>
               }
             }
           },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// https://github.com/graphql-hive/router/issues/1311
+///
+/// `thumbnail` is asked for with a different `width` under each type condition. The walker
+/// makes one `media` fetch per branch, and they used to get batched into one, where the merge
+/// panicked on the argument conflict.
+///
+/// Aliasing one side doesn't help. It's an `_entities` fetch of photos, nothing in its
+/// response says which photo came from `Aquatics`, so the alias can't be renamed back for the
+/// right ones. Each branch keeps its own entity call, with its own path.
+#[test]
+fn issue_1311_same_field_with_different_arguments_under_different_types(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          storefront {
+            departments {
+              ... on Aquatics {
+                photo {
+                  thumbnail(width: 100)
+                }
+              }
+              ... on Reptiles {
+                photo {
+                  thumbnail(width: 200)
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1311.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "catalog") {
+          {
+            storefront {
+              departments {
+                __typename
+                ... on Aquatics {
+                  photo {
+                    ...a
+                  }
+                }
+                ... on Reptiles {
+                  photo {
+                    ...a
+                  }
+                }
+              }
+            }
+          }
+          fragment a on Photo {
+            __typename
+            id
+          }
+        },
+        BatchFetch(service: "media") {
+          {
+            _e0 {
+              paths: [
+                "storefront.departments.@|[Reptiles].photo"
+              ]
+              {
+                ... on Photo {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e1 {
+              paths: [
+                "storefront.departments.@|[Aquatics].photo"
+              ]
+              {
+                ... on Photo {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Photo {
+                thumbnail(width: 200)
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Photo {
+                thumbnail(width: 100)
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// https://github.com/graphql-hive/router/issues/1310
+///
+/// `Checkup.grade @requires(fields: "fee")` sits inside `Pet.checkup @requires(fields: "weight age")`,
+/// and `weight` and `age` come from two different subgraphs. The step with `checkup` waits on
+/// both of them, and `process_requires_field_edge` used to fail with `NonSingleParent`.
+#[test]
+fn issue_1310_requires_inside_requires_with_two_providers() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          pet {
+            checkup {
+              grade
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1310.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "clinic") {
+          {
+            pet {
+              __typename
+              id
+            }
+          }
+        },
+        Parallel {
+          Flatten(path: "pet") {
+            Fetch(service: "records") {
+              {
+                ... on Pet {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Pet {
+                  weight
+                }
+              }
+            },
+          },
+          Flatten(path: "pet") {
+            Fetch(service: "profiles") {
+              {
+                ... on Pet {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Pet {
+                  age
+                }
+              }
+            },
+          },
+        },
+        Flatten(path: "pet") {
+          Fetch(service: "clinic") {
+            {
+              ... on Pet {
+                __typename
+                weight
+                age
+                id
+              }
+            } =>
+            {
+              ... on Pet {
+                checkup {
+                  __typename
+                  id
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "pet.checkup") {
+          Fetch(service: "records") {
+            {
+              ... on Checkup {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Checkup {
+                fee
+              }
+            }
+          },
+        },
+        Flatten(path: "pet.checkup") {
+          Fetch(service: "clinic") {
+            {
+              ... on Checkup {
+                __typename
+                fee
+                id
+              }
+            } =>
+            {
+              ... on Checkup {
+                grade
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// https://github.com/graphql-hive/router/issues/1309
+///
+/// `Listing.rank @requires` reads `tricks` and `whiskers` through the `Animal` entity
+/// interface. The `Dog` and `Cat` fetches get merged into the `Animal` one, and their fields
+/// used to lose the type conditions, so `whiskers` ended up right on `Animal`.
+///
+/// The issue's `ranking` subgraph is missing `Bird`, which Apollo refuses to compose, so the
+/// fixture adds it.
+#[test]
+fn issue_1309_requires_through_entity_interface() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          listings {
+            rank
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1309.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "search") {
+          {
+            listings {
+              __typename
+              id
+              pet {
+                __typename
+                id
+                ... on Cat {
+                  __typename
+                  id
+                }
+                ... on Dog {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+        },
+        Flatten(path: "listings.@.pet") {
+          Fetch(service: "catalog") {
+            {
+              ... on Animal {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Animal {
+                __typename
+                ... on Cat {
+                  whiskers
+                }
+                ... on Dog {
+                  tricks
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "listings.@") {
+          Fetch(service: "ranking") {
+            {
+              ... on Listing {
+                __typename
+                pet {
+                  __typename
+                  ... on Dog {
+                    tricks
+                  }
+                  ... on Cat {
+                    whiskers
+                  }
+                }
+                id
+              }
+            } =>
+            {
+              ... on Listing {
+                rank
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// https://github.com/graphql-hive/router/issues/1308
+///
+/// Same schema as `issue_1309_requires_through_entity_interface`, one entity hop deeper.
+/// It used to fail with `UnexpectedMissingDefinition("Animal")` or with the #1309 error,
+/// depending on which way the sibling fetches got merged. The other direction is covered by
+/// `multi_type_step_does_not_absorb_step_of_another_type`.
+#[test]
+fn issue_1308_requires_through_entity_interface_after_entity_hop() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          cage {
+            listings {
+              rank
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1308.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "catalog") {
+          {
+            cage {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "cage") {
+          Fetch(service: "search") {
+            {
+              ... on Cage {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Cage {
+                listings {
+                  __typename
+                  id
+                  pet {
+                    __typename
+                    id
+                    ... on Cat {
+                      __typename
+                      id
+                    }
+                    ... on Dog {
+                      __typename
+                      id
+                    }
+                  }
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "cage.listings.@.pet") {
+          Fetch(service: "catalog") {
+            {
+              ... on Animal {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Animal {
+                __typename
+                ... on Cat {
+                  whiskers
+                }
+                ... on Dog {
+                  tricks
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "cage.listings.@") {
+          Fetch(service: "ranking") {
+            {
+              ... on Listing {
+                __typename
+                pet {
+                  __typename
+                  ... on Dog {
+                    tricks
+                  }
+                  ... on Cat {
+                    whiskers
+                  }
+                }
+                id
+              }
+            } =>
+            {
+              ... on Listing {
+                rank
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// https://github.com/graphql-hive/router/issues/1189
+///
+/// `@skip(if: true)` on the only root field leaves nothing to plan. That's an empty plan,
+/// not an error, and the router should answer `{"data": {}}`.
+#[test]
+fn issue_1189_nothing_to_plan_after_static_skip() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          product @skip(if: true) {
+            price
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/simple-include-skip.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      None,
+    },
+    "#);
+
+    Ok(())
+}
+
+/// https://github.com/graphql-hive/router/issues/1189
+///
+/// Same as `issue_1189_nothing_to_plan_after_static_skip`, but through a variable. The whole
+/// fetch goes under `Skip`, so with `$v: true` we don't send `a` a query with nothing in it.
+#[test]
+fn issue_1189_nothing_to_fetch_after_variable_skip() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($v: Boolean!) {
+          product @skip(if: $v) {
+            price
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/simple-include-skip.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Skip(if: $v) {
+        Fetch(service: "a") {
+          {
+            product {
+              price
+            }
+          }
         },
       },
     },

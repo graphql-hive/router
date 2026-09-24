@@ -10,14 +10,8 @@ use graphql_tools::parser::query as query_ast;
 
 use crate::query_planner::ast::normalization::normalize_operation;
 use crate::query_planner::graph::edge::PlannerOverrideContext;
-use crate::query_planner::graph::Graph;
-use crate::query_planner::planner::best::find_best_combination;
-use crate::query_planner::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
 use crate::query_planner::planner::plan_nodes::planning::QueryPlan;
-use crate::query_planner::planner::query_plan::build_query_plan_from_fetch_graph;
-use crate::query_planner::planner::walker::walk_operation;
-use crate::query_planner::planner::{add_variables_to_fetch_steps, QueryPlannerOptions};
-use crate::query_planner::state::supergraph_state::{OperationKind, SupergraphState};
+use crate::query_planner::planner::{Planner, QueryPlannerOptions};
 use crate::query_planner::utils::cancellation::CancellationToken;
 use crate::query_planner::utils::parsing::parse_schema;
 
@@ -60,36 +54,14 @@ pub fn build_query_plan(
     override_context: PlannerOverrideContext,
     options: QueryPlannerOptions,
 ) -> Result<QueryPlan, Box<dyn Error>> {
-    let cancellation_token = CancellationToken::new();
     let schema = parse_schema(&read_supergraph(fixture_path));
-    let supergraph_state = SupergraphState::new(&schema);
-    let graph = Graph::graph_from_supergraph_state(&supergraph_state)?;
-    let document = normalize_operation(&supergraph_state, &query, None)?;
-    let operation = document.executable_operation();
-    let best_paths_per_leaf = walk_operation(
-        &graph,
-        &supergraph_state,
-        &override_context,
-        operation,
-        &cancellation_token,
+    let planner = Planner::new_from_supergraph(&schema, options)?;
+    let document = normalize_operation(&planner.supergraph, &query, None)?;
+    let plan = planner.plan_from_normalized_operation(
+        document.executable_operation(),
+        override_context,
+        &CancellationToken::new(),
     )?;
-    let query_tree = find_best_combination(&graph, best_paths_per_leaf, &cancellation_token)?;
-    let mut fetch_graph = build_fetch_graph_from_query_tree(
-        &graph,
-        &supergraph_state,
-        &override_context,
-        query_tree,
-        operation
-            .operation_kind
-            .clone()
-            .unwrap_or(OperationKind::Query),
-        &options,
-        &cancellation_token,
-    )?;
-    add_variables_to_fetch_steps(&mut fetch_graph, &operation.variable_definitions)?;
-
-    let plan =
-        build_query_plan_from_fetch_graph(fetch_graph, &supergraph_state, &cancellation_token)?;
 
     Ok(plan)
 }

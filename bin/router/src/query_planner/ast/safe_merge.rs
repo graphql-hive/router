@@ -32,6 +32,38 @@ pub enum ConflictResolutionLocation {
 
 pub type AliasesRecords = Vec<(MergePath, String)>;
 
+/// Whether merging `source` into `target` would find a conflict: a field with the same
+/// response key, but other arguments or alias. Matches fields the same way the merger does.
+pub fn has_conflicts(target: &SelectionSet, source: &SelectionSet) -> bool {
+    source.items.iter().any(|source_item| {
+        target
+            .items
+            .iter()
+            .any(|target_item| match (source_item, target_item) {
+                (SelectionItem::Field(source_field), SelectionItem::Field(target_field))
+                    if source_field.selection_identifier()
+                        == target_field.selection_identifier()
+                        && source_field.include_if == target_field.include_if
+                        && source_field.skip_if == target_field.skip_if =>
+                {
+                    source_field.arguments_hash() != target_field.arguments_hash()
+                        || source_field.alias != target_field.alias
+                        || has_conflicts(&target_field.selections, &source_field.selections)
+                }
+                (
+                    SelectionItem::InlineFragment(source_fragment),
+                    SelectionItem::InlineFragment(target_fragment),
+                ) if source_fragment.type_condition == target_fragment.type_condition
+                    && source_fragment.include_if == target_fragment.include_if
+                    && source_fragment.skip_if == target_fragment.skip_if =>
+                {
+                    has_conflicts(&target_fragment.selections, &source_fragment.selections)
+                }
+                _ => false,
+            })
+    })
+}
+
 impl SafeSelectionSetMerger {
     pub fn safe_next_alias_name(&mut self, target_existing: &[SelectionItem]) -> String {
         loop {

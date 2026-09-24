@@ -1037,6 +1037,19 @@ fn process_subgraph_entrypoint_edge(
     operation_kind: OperationKind,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
+    // When every root field has the same `@skip`/`@include`, the whole fetch can be skipped,
+    // and the fields don't need it anymore. A subscription has to start with its fetch, so
+    // there it stays on the fields.
+    let mut conditions = query_node
+        .children
+        .iter()
+        .map(|child| child.condition.as_ref());
+    let first_condition = conditions.next().flatten();
+    let condition = first_condition.filter(|&condition| {
+        operation_kind != OperationKind::Subscription
+            && conditions.all(|other| other == Some(condition))
+    });
+
     let fetch_step_index = create_fetch_step_for_root_move(
         fetch_graph,
         parent_fetch_step_index,
@@ -1045,7 +1058,7 @@ fn process_subgraph_entrypoint_edge(
         operation_kind,
         query_node.mutation_field_position,
         &MergePath::default(),
-        None,
+        condition,
     );
 
     fetch_graph.connect(parent_fetch_step_index, fetch_step_index);
@@ -1487,18 +1500,6 @@ fn process_requires_field_edge(
     condition: Option<&Condition>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
-    if fetch_graph.parents_of(parent_fetch_step_index).count() != 1 {
-        return Err(FetchGraphError::NonSingleParent(
-            parent_fetch_step_index.index(),
-        ));
-    }
-
-    let parent_parent_index = fetch_graph
-        .parents_of(parent_fetch_step_index)
-        .next()
-        .map(|edge| edge.source())
-        .unwrap();
-
     let requires = field_move
         .requirements
         .as_ref()
@@ -1541,8 +1542,19 @@ fn process_requires_field_edge(
         //   baz
         // }
         //
-        // We need to stick to the parent of the parent.
-        false => parent_parent_index,
+        // We need to stick to the parent of the parent. Only here we need a single one, the
+        // parent itself can wait on many, like when its own `@requires` came from two subgraphs.
+        false => {
+            let mut parents = fetch_graph.parents_of(parent_fetch_step_index);
+            match (parents.next(), parents.next()) {
+                (Some(parent), None) => parent.source(),
+                _ => {
+                    return Err(FetchGraphError::NonSingleParent(
+                        parent_fetch_step_index.index(),
+                    ))
+                }
+            }
+        }
     };
 
     // When a field (foo) is annotated with `@requires(fields: "bar")`

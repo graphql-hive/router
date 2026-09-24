@@ -274,6 +274,10 @@ impl FetchStepData<MultiTypeFetchStep> {
             }
         }
 
+        if !self.output.has_room_for(&other.output) {
+            return false;
+        }
+
         if self.has_arguments_conflicts_with(other) {
             return false;
         }
@@ -333,9 +337,24 @@ impl FetchStepData<MultiTypeFetchStep> {
             },
         );
 
-        input_conflicts
+        if input_conflicts
             .iter()
             .any(|(_, conflicts)| !conflicts.is_empty())
+        {
+            return true;
+        }
+
+        // The merge aliases the `@requires` side of an output conflict. Between two plain
+        // steps there's nothing to alias, the client asked for both fields under that key.
+        let used_for_requires =
+            |step: &Self| step.flags.contains(FetchStepFlags::USED_FOR_REQUIRES);
+        if used_for_requires(self) || used_for_requires(other) {
+            return false;
+        }
+
+        let fetch_path = other.response_path.slice_from(self.response_path.len());
+        self.output
+            .has_conflicts_with_another(&other.output, &fetch_path)
     }
 }
 
@@ -452,6 +471,47 @@ mod tests {
         let parent_data = graph.get_step_data(parent).unwrap();
         let child_data = graph.get_step_data(child).unwrap();
         assert!(!parent_data.can_merge(parent, child, child_data, &graph));
+    }
+
+    /// https://github.com/graphql-hive/router/issues/1308
+    ///
+    /// `Cat` and `Dog` calls batched into one step, next to an `Animal` call at the same path.
+    /// The batched step has no `Animal` selections for the other one to go into. The other way
+    /// around works, the `Animal` step takes them under `... on Cat` and `... on Dog`.
+    #[test]
+    fn multi_type_step_does_not_absorb_step_of_another_type() {
+        let mut graph =
+            FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
+
+        let batched = graph.add_step(entity_step(
+            "catalog",
+            path(&["listings", "@", "pet"]),
+            selections(&[("Cat", "{ __typename id }"), ("Dog", "{ __typename id }")]),
+            selections(&[("Cat", "{ whiskers }"), ("Dog", "{ tricks }")]),
+        ));
+        let interface = graph.add_step(entity_step(
+            "catalog",
+            path(&["listings", "@", "pet"]),
+            selections(&[("Animal", "{ __typename id }")]),
+            selections(&[("Animal", "{ __typename }")]),
+        ));
+
+        let batched_data = graph.get_step_data(batched).unwrap();
+        let interface_data = graph.get_step_data(interface).unwrap();
+        assert!(!batched_data.can_merge(batched, interface, interface_data, &graph));
+        assert!(interface_data.can_merge(interface, batched, batched_data, &graph));
+
+        perform_fetch_step_merge(interface, batched, &mut graph, false).unwrap();
+        assert_eq!(
+            graph
+                .get_step_data(interface)
+                .unwrap()
+                .output
+                .selections_for_definition("Animal")
+                .unwrap()
+                .to_string(),
+            "{__typename ...on Cat{whiskers} ...on Dog{tricks}}"
+        );
     }
 
     /// Two entity calls for the same type at unrelated paths can't be merged. The merged step
