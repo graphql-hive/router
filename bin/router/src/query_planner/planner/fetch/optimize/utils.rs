@@ -9,7 +9,7 @@ use tracing::{instrument, trace};
 use crate::query_planner::{
     ast::{
         merge_path::{MergePath, Segment},
-        selection_set::find_arguments_conflicts,
+        selection_set::{find_arguments_conflicts, find_selection_set_by_path},
     },
     planner::fetch::{
         error::FetchGraphError,
@@ -86,9 +86,10 @@ pub(crate) fn perform_fetch_step_merge(
         target.scope_fetch_conditions_before_merge(source);
     }
 
+    let source_fetch_path = source.response_path.slice_from(target.response_path.len());
     let scoped_aliases = target.output.safe_migrate_from_another(
         &source.output,
-        &source.response_path.slice_from(target.response_path.len()),
+        &source_fetch_path,
         (
             target.flags.contains(FetchStepFlags::USED_FOR_REQUIRES),
             source.flags.contains(FetchStepFlags::USED_FOR_REQUIRES),
@@ -102,6 +103,19 @@ pub(crate) fn perform_fetch_step_merge(
         );
         // In cases where merging a step resulted in internal aliasing, keep a record of the aliases.
         target.internal_aliases_locations.extend(scoped_aliases);
+    }
+
+    // The source may have made aliases in earlier merges. Its fields now sit at
+    // `source_fetch_path` in the target, so its records have to start there too.
+    let target_type = target.output.try_as_single().map(|t| t.to_string());
+    for (type_name, records) in std::mem::take(&mut source.internal_aliases_locations) {
+        target.internal_aliases_locations.push((
+            target_type.clone().unwrap_or(type_name),
+            records
+                .into_iter()
+                .map(|(alias_path, alias)| (source_fetch_path.concat(&alias_path), alias))
+                .collect(),
+        ));
     }
 
     if let Some(input_rewrites) = source.input_rewrites.take() {
@@ -120,13 +134,16 @@ pub(crate) fn perform_fetch_step_merge(
         // It's safe to not check if a condition was turned into an inline fragment,
         // because if a condition is present and "me" is a non-entity fetch step,
         // then the type_name values of the inputs are different.
-        if target.response_path != source.response_path {
+        if target.response_path == source.response_path {
+            target
+                .input
+                .migrate_from_another(&source.input, &MergePath::default())?;
+        } else if !source.response_path.starts_with(&target.response_path) {
             return Err(FetchGraphError::MismatchedResponsePath);
         }
-
-        target
-            .input
-            .migrate_from_another(&source.input, &MergePath::default())?;
+        // Otherwise we pulled in a step from deeper in the response. Our own output
+        // already has its input - that is why we could pull it in - so there is
+        // nothing to copy over. See `can_absorb_nested_entity_call`.
     }
 
     // Conditions may have been pushed down to keep the merge correct.
@@ -234,10 +251,20 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
+        // Is `this` FetchStep the only one `other` waits for?
+        let is_only_parent = fetch_graph.parents_of(other_index).count() == 1
+            && fetch_graph
+                .parents_of(other_index)
+                .all(|edge| edge.source() == self_index);
+
         // If both are entities, their response_paths should match,
-        // as we can't merge entity calls resolving different entities
+        // as we can't merge entity calls resolving different entities.
+        // The one exception is a nested entity call that we feed ourselves,
+        // see `can_absorb_nested_entity_call`.
         if matches!(self.kind, FetchStepKind::Entity) && self.kind == other.kind {
-            if !self.response_path.eq(&other.response_path) {
+            if !self.response_path.eq(&other.response_path)
+                && !(is_only_parent && self.can_absorb_nested_entity_call(other))
+            {
                 return false;
             }
         } else {
@@ -251,12 +278,7 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
-        // if the `other` FetchStep has a single parent and it's `this` FetchStep
-        if fetch_graph.parents_of(other_index).count() == 1
-            && fetch_graph
-                .parents_of(other_index)
-                .all(|edge| edge.source() == self_index)
-        {
+        if is_only_parent {
             return true;
         }
 
@@ -272,6 +294,36 @@ impl FetchStepData<MultiTypeFetchStep> {
         true
     }
 
+    /// Only call this when we are the only step `other` waits for.
+    /// If something else feeds it, the keys it sends may come from there,
+    /// and pointing its other parents at us could change the order of the graph,
+    /// or add a cycle.
+    fn can_absorb_nested_entity_call(&self, other: &Self) -> bool {
+        if !other.response_path.starts_with(&self.response_path) {
+            return false;
+        }
+
+        let Some(input_type) = other.input.try_as_single() else {
+            return false;
+        };
+        let Some(input_selections) = other.input.selections_for_definition(input_type) else {
+            return false;
+        };
+
+        // The merge only knows where to put `other`'s fields when we fetch a single type.
+        let Some(output_type) = self.output.try_as_single() else {
+            return false;
+        };
+
+        // We must already have `other`'s input at that path.
+        // If we do not, the fields we move here would have no object to sit in.
+        let path = other.response_path.slice_from(self.response_path.len());
+        self.output
+            .selections_for_definition(output_type)
+            .and_then(|output| find_selection_set_by_path(output, &path))
+            .is_some_and(|at_path| at_path.contains(input_selections))
+    }
+
     pub fn has_arguments_conflicts_with(&self, other: &Self) -> bool {
         let input_conflicts = FetchStepSelections::<MultiTypeFetchStep>::iter_matching_types(
             &self.input,
@@ -284,5 +336,195 @@ impl FetchStepData<MultiTypeFetchStep> {
         input_conflicts
             .iter()
             .any(|(_, conflicts)| !conflicts.is_empty())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use graphql_tools::parser::query::{Definition, OperationDefinition};
+
+    use crate::query_planner::{
+        ast::{
+            merge_path::{FieldPathSegment, MergePath, Segment},
+            selection_set::SelectionSet,
+        },
+        planner::fetch::{
+            error::FetchGraphError,
+            fetch_graph::FetchGraph,
+            fetch_step_data::{FetchStepData, FetchStepFlags, FetchStepKind},
+            selections::FetchStepSelections,
+            state::{MultiTypeFetchStep, SingleTypeFetchStep},
+        },
+        state::supergraph_state::{OperationKind, SubgraphName},
+        utils::parsing::parse_operation,
+    };
+
+    use super::perform_fetch_step_merge;
+
+    /// Selections for one or more types, e.g. `&[("User", "{ id }"), ("Admin", "{ id }")]`.
+    fn selections(types: &[(&str, &str)]) -> FetchStepSelections<MultiTypeFetchStep> {
+        let parse = |query: &str| -> SelectionSet {
+            match parse_operation(query).definitions.first() {
+                Some(Definition::Operation(OperationDefinition::SelectionSet(s))) => {
+                    s.clone().into()
+                }
+                _ => panic!("expected a selection set"),
+            }
+        };
+
+        let mut result = FetchStepSelections::<SingleTypeFetchStep>::new_empty().into_multi_type();
+        for (type_name, query) in types {
+            let mut single = FetchStepSelections::<SingleTypeFetchStep>::new(type_name);
+            single.add(&parse(query)).unwrap();
+            result.declare_known_type(type_name);
+            result
+                .migrate_from_another(&single.into_multi_type(), &MergePath::default())
+                .unwrap();
+        }
+        result
+    }
+
+    fn path(fields: &[&str]) -> MergePath {
+        MergePath::new(
+            fields
+                .iter()
+                .map(|name| match *name {
+                    "@" => Segment::List,
+                    name => Segment::Field(FieldPathSegment::named(name.to_string()), 0, None),
+                })
+                .collect(),
+        )
+    }
+
+    fn entity_step(
+        service: &str,
+        response_path: MergePath,
+        input: FetchStepSelections<MultiTypeFetchStep>,
+        output: FetchStepSelections<MultiTypeFetchStep>,
+    ) -> FetchStepData<MultiTypeFetchStep> {
+        FetchStepData {
+            id: 0,
+            service_name: SubgraphName(service.to_string()),
+            response_path,
+            input,
+            output,
+            kind: FetchStepKind::Entity,
+            operation_kind: OperationKind::Query,
+            flags: FetchStepFlags::empty(),
+            condition: None,
+            variable_usages: None,
+            variable_definitions: None,
+            mutation_field_position: None,
+            input_rewrites: None,
+            output_rewrites: None,
+            internal_aliases_locations: Vec::new(),
+        }
+    }
+
+    /// A parent that fetches two types - what `batch_multi_type` builds - must not pull in a
+    /// nested call. The merge only knows where to put the child's fields when the parent has a
+    /// single type. Otherwise it looks for `Order` in the parent, and fails.
+    #[test]
+    fn multi_type_parent_does_not_absorb_nested_call() {
+        let mut graph =
+            FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
+
+        let parent = graph.add_step(entity_step(
+            "orders",
+            path(&["accounts", "@"]),
+            selections(&[
+                ("User", "{ __typename id }"),
+                ("Admin", "{ __typename id }"),
+            ]),
+            selections(&[
+                ("User", "{ orders { __typename id } }"),
+                ("Admin", "{ orders { __typename id } }"),
+            ]),
+        ));
+        let child = graph.add_step(entity_step(
+            "orders",
+            path(&["accounts", "@", "orders", "@"]),
+            selections(&[("Order", "{ __typename id }")]),
+            selections(&[("Order", "{ sku }")]),
+        ));
+        graph.connect(parent, child);
+
+        let parent_data = graph.get_step_data(parent).unwrap();
+        let child_data = graph.get_step_data(child).unwrap();
+        assert!(!parent_data.can_merge(parent, child, child_data, &graph));
+    }
+
+    /// Two entity calls for the same type at unrelated paths can't be merged. The merged step
+    /// would only fetch at `a.@`, and the entities at `b.@` would be lost.
+    #[test]
+    fn same_type_entity_calls_at_unrelated_paths_do_not_merge() {
+        let mut graph =
+            FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
+
+        let a = graph.add_step(entity_step(
+            "catalog",
+            path(&["a", "@"]),
+            selections(&[("Order", "{ __typename id }")]),
+            selections(&[("Order", "{ name }")]),
+        ));
+        let b = graph.add_step(entity_step(
+            "catalog",
+            path(&["b", "@"]),
+            selections(&[("Order", "{ __typename id }")]),
+            selections(&[("Order", "{ name }")]),
+        ));
+
+        let result = perform_fetch_step_merge(a, b, &mut graph, false);
+        assert!(
+            matches!(result, Err(FetchGraphError::MismatchedResponsePath)),
+            "{result:?}"
+        );
+    }
+
+    /// A step that already made aliases in an earlier merge gets merged again. Its fields now sit
+    /// under `orders.@` in the target, so its alias records have to move there too - otherwise
+    /// the steps reading those fields never learn about the alias.
+    #[test]
+    fn merge_keeps_alias_records_of_the_merged_step() {
+        let mut graph =
+            FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
+
+        let target = graph.add_step(entity_step(
+            "orders",
+            path(&["user"]),
+            selections(&[("User", "{ __typename id }")]),
+            selections(&[("User", "{ orders { __typename id } }")]),
+        ));
+        let source = graph.add_step(entity_step(
+            "orders",
+            path(&["user", "orders", "@"]),
+            selections(&[("Order", "{ __typename id }")]),
+            selections(&[("Order", "{ price _internal_qp_alias_0: price }")]),
+        ));
+        graph.connect(target, source);
+        graph
+            .get_step_data_mut(source)
+            .unwrap()
+            .internal_aliases_locations
+            .push((
+                "Order".to_string(),
+                vec![(path(&["price"]), "_internal_qp_alias_0".to_string())],
+            ));
+
+        perform_fetch_step_merge(target, source, &mut graph, false).unwrap();
+
+        assert_eq!(
+            graph
+                .get_step_data(target)
+                .unwrap()
+                .internal_aliases_locations,
+            vec![(
+                "User".to_string(),
+                vec![(
+                    path(&["orders", "@", "price"]),
+                    "_internal_qp_alias_0".to_string()
+                )]
+            )]
+        );
     }
 }
