@@ -2361,3 +2361,84 @@ fn requires_with_argument_conflict_after_entity_hop() -> Result<(), Box<dyn Erro
 
     Ok(())
 }
+
+/// Like `requires_with_argument_conflict_after_entity_hop`, but the list field on `User` is
+/// also `price(currency:)`, asked for with the same `"EUR"` as the requirement. So
+/// `User.price("EUR")` and the aliased `Order.price("EUR")` look the same by name and arguments.
+///
+/// The alias belongs to `Order.price`, one level down. We used to rename the `User.price`
+/// segment of the `catalog` fetch's path instead, and read from `user._internal_qp_alias_0`,
+/// which isn't there. See the matching e2e test in `e2e/src/issues/mod.rs`.
+#[test]
+fn requires_alias_does_not_rename_ancestor_with_same_field() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          user {
+            price(currency: "EUR") {
+              price(currency: "GBP")
+              eur
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-alias-ancestor-same-field.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "users") {
+          {
+            user {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "user") {
+          Fetch(service: "orders") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on User {
+                price(currency: "EUR") {
+                  __typename
+                  price(currency: "GBP")
+                  id
+                  _internal_qp_alias_0: price(currency: "EUR")
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "user.price.@") {
+          Fetch(service: "catalog") {
+            {
+              ... on Order {
+                __typename
+                price: _internal_qp_alias_0
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                eur
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}

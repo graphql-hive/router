@@ -1232,6 +1232,107 @@ fn issue_1311_same_field_with_different_arguments_under_different_types(
     Ok(())
 }
 
+/// Same as `issue_1311_same_field_with_different_arguments_under_different_types`, but each
+/// `thumbnail` has its own `@include`. The merge puts each one under its own
+/// `... on Photo @include(...)`, and we used to miss the conflict there, so both ended up in
+/// one `Photo` selection. That's not a valid operation, and with both variables true every
+/// photo would get both widths. Different conditions don't make two fields exclusive for
+/// GraphQL validation.
+#[test]
+fn issue_1311_conflict_under_different_include_conditions() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($a: Boolean!, $b: Boolean!) {
+          storefront {
+            departments {
+              ... on Aquatics {
+                photo {
+                  thumbnail(width: 100) @include(if: $a)
+                }
+              }
+              ... on Reptiles {
+                photo {
+                  thumbnail(width: 200) @include(if: $b)
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1311.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "catalog") {
+          {
+            storefront {
+              departments {
+                __typename
+                ... on Aquatics {
+                  photo {
+                    ...a
+                  }
+                }
+                ... on Reptiles {
+                  photo {
+                    ...a
+                  }
+                }
+              }
+            }
+          }
+          fragment a on Photo {
+            __typename
+            id
+          }
+        },
+        Parallel {
+          Include(if: $b) {
+            Flatten(path: "storefront.departments.@|[Reptiles].photo") {
+              Fetch(service: "media") {
+                {
+                  ... on Photo {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Photo {
+                    thumbnail(width: 200)
+                  }
+                }
+              },
+            },
+          },
+          Include(if: $a) {
+            Flatten(path: "storefront.departments.@|[Aquatics].photo") {
+              Fetch(service: "media") {
+                {
+                  ... on Photo {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Photo {
+                    thumbnail(width: 100)
+                  }
+                }
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
 /// https://github.com/graphql-hive/router/issues/1310
 ///
 /// `Checkup.grade @requires(fields: "fee")` sits inside `Pet.checkup @requires(fields: "weight age")`,

@@ -3574,4 +3574,96 @@ mod issues_e2e_tests {
         ]
         "#);
     }
+
+    #[ntex::test]
+    /// `User.price(currency: "EUR")` is a list of `Order`s, and `eur` needs
+    /// `Order.price(currency: "EUR")`. Same name, same arguments, one level apart. The client
+    /// also asks for `Order.price(currency: "GBP")`, so the EUR one is sent as
+    /// `_internal_qp_alias_0`.
+    ///
+    /// We used to rename `User.price` in the `catalog` fetch's path too, and looked for the
+    /// orders under `user._internal_qp_alias_0`, which isn't there, so `eur` never got resolved.
+    async fn requires_alias_does_not_rename_ancestor_with_same_field() {
+        use crate::testkit::{mock_subgraphs::mock_subgraphs, ResponseLike};
+        use serde_json::json;
+
+        let mocks = mock_subgraphs(json!({
+            "users": {
+                "query": { "user": { "__typename": "User", "id": "u1" } }
+            },
+            "catalog": {
+                // The mock picks the entity that matches the representation, so the price
+                // `catalog` receives decides which of these comes back.
+                "entities": [
+                    { "__typename": "Order", "id": "o1", "price": 80, "eur": 80 },
+                    { "__typename": "Order", "id": "o1", "price": 90, "eur": 90 }
+                ]
+            }
+        }));
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(move |req| {
+                if req.path != "/orders" {
+                    return mocks(req);
+                }
+                // `mock_subgraphs` ignores field arguments, so it can't return a different
+                // `price` per currency. Answer the one `orders` fetch by hand.
+                let mut headers = http::HeaderMap::new();
+                headers.insert(
+                    http::header::CONTENT_TYPE,
+                    http::HeaderValue::from_static("application/json"),
+                );
+                Some(ResponseLike::new(
+                    axum::http::StatusCode::OK,
+                    Some(
+                        json!({ "data": { "_entities": [{ "price": [{
+                            "__typename": "Order",
+                            "id": "o1",
+                            "price": 80,
+                            "_internal_qp_alias_0": 90
+                        }] }] } })
+                        .to_string(),
+                    ),
+                    Some(headers),
+                ))
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.requires-alias-ancestor-same-field.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"{ user { price(currency: "EUR") { price(currency: "GBP") eur } } }"#,
+                None,
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "user": {
+              "price": [
+                {
+                  "price": 80,
+                  "eur": 90
+                }
+              ]
+            }
+          }
+        }
+        "#);
+    }
 }
