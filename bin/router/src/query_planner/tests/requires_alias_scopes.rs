@@ -2,12 +2,16 @@
 //! `price(currency: "GBP")` on the same objects, so one of them gets an internal alias. These
 //! tests check what the plan does with it, under interfaces, type conditions and `@include`.
 //!
-//! Both fixtures are composed from real subgraphs:
+//! All fixtures are composed from real subgraphs:
 //! - `requires-alias-entity-interface`: `shop` has `interface Node { price(currency:) }` with
 //!   `Cat` and `Dog`, and `pricing` has `Cat.eur` / `Dog.eur` requiring the EUR price.
 //! - `requires-alias-interface-object`: the same `shop`, with `pricing` seeing `Node` as an
 //!   `@interfaceObject` with `eur` on it. Composed with Apollo, the Guild composer gets this one
 //!   wrong, see `composition-guild.md`.
+//! - `requires-alias-two-requirements`: the same `shop` and `pricing`, plus `tax` with
+//!   `Cat.gbp` requiring the GBP price. Composed with Apollo, for the same reason.
+//! - `requires-alias-object-field`: `users` has `User.team(role:)`, `teams` has `Team.name`,
+//!   and `perms` has `User.label` requiring `team(role: "admin") { name }`.
 
 use std::error::Error;
 
@@ -27,6 +31,8 @@ use crate::query_planner::{
 
 const INTERFACE_OBJECT: &str = "fixture/tests/requires-alias-interface-object.supergraph.graphql";
 const ENTITY_INTERFACE: &str = "fixture/tests/requires-alias-entity-interface.supergraph.graphql";
+const TWO_REQUIREMENTS: &str = "fixture/tests/requires-alias-two-requirements.supergraph.graphql";
+const OBJECT_FIELD: &str = "fixture/tests/requires-alias-object-field.supergraph.graphql";
 
 /// What `shop` serves, without the federation parts. Enough to validate its root fetches.
 const SHOP_SCHEMA: &str = r#"
@@ -186,6 +192,101 @@ fn requires_alias_reaches_readers_batched_for_many_types() -> Result<(), Box<dyn
     Ok(())
 }
 
+/// `pricing` needs the EUR price of every `Node` and `tax` the GBP price of `Cat`s, next to
+/// the client's own price. `shop` fetches them per type, under different aliases, like
+/// `_internal_qp_alias_1: price(currency: "EUR")` for `Cat` and `_internal_qp_alias_2` for
+/// `Dog`.
+///
+/// The `pricing` input is `... on Node { ... on Cat { price } ... on Dog { price } }`. The
+/// alias pass only looks for `price` right in the input, not inside those fragments, so it
+/// stays plain `price` and `pricing` gets the client's price instead of the EUR one.
+#[test]
+fn requires_alias_reaches_readers_inside_type_fragments() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    for query in [
+        r#"{ things { price(currency: "USD") eur ... on Cat { gbp } } }"#,
+        r#"{ things { ... on Cat { gbp } eur } }"#,
+        r#"{ things { ... on Cat { price(currency: "USD") gbp } eur } }"#,
+    ] {
+        let plan = plan(TWO_REQUIREMENTS, query)?;
+        let shop = root_fetch(&plan, "shop");
+        let mut wrong = Vec::new();
+        for reader in fetches(&plan) {
+            let expected = match reader.service.as_str() {
+                "pricing" => r#"currency: "EUR""#,
+                "tax" => r#"currency: "GBP""#,
+                _ => continue,
+            };
+            for (type_name, key) in read_keys(&reader.requires, "price") {
+                let values: Vec<_> = selections_with_key(&shop.operation, &key)
+                    .into_iter()
+                    .filter(|s| s.applies_to(&type_name))
+                    .map(|s| s.arguments)
+                    .collect();
+                if values.is_empty() || values.iter().any(|a| a != expected) {
+                    wrong.push(format!(
+                        "`{}` reads `{key}` of `{type_name}`, which `shop` fetches as {values:?}",
+                        reader.service
+                    ));
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{query}\n{wrong:#?}\n{}", shop.operation);
+    }
+
+    Ok(())
+}
+
+/// `perms` needs `team(role: "admin") { name }` and the client asks for
+/// `team(role: "user") { name }` on the same `me`. When they end up in one fetch, the admin one
+/// gets an alias. When they don't, the admin team still comes back under the plain `team` key,
+/// lands on the same `me` as the client's team, and both `teams` fetches write `name` into
+/// that one object. The client can get the admin team's name.
+///
+/// So no two fetches can write the same key at the same place with different arguments.
+#[test]
+fn requires_alias_keeps_response_keys_apart_across_fetches() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    for query in [
+        // Both in one fetch, the admin team is aliased. This one is right.
+        r#"{ me { team(role: "user") { name } label } }"#,
+        r#"query($x: Boolean!) { me { team(role: "user") { name } label @include(if: $x) } }"#,
+        r#"query($x: Boolean!) { me { team(role: "user") @include(if: $x) { name } label } }"#,
+        r#"
+        query($x: Boolean!, $y: Boolean!) {
+          me {
+            ... on User @include(if: $x) { team(role: "user") { name } label }
+            ... on User @include(if: $y) { label }
+          }
+        }
+        "#,
+    ] {
+        let plan = plan(OBJECT_FIELD, query)?;
+        let writes: Vec<_> = fetches(&plan).iter().flat_map(writes).collect();
+        let mut clashes = Vec::new();
+        for (i, a) in writes.iter().enumerate() {
+            for b in &writes[i + 1..] {
+                if a.location == b.location && a.key == b.key && a.arguments != b.arguments {
+                    clashes.push(format!(
+                        "`{}` at `{}` is `{}({})` from {} and `{}({})` from {}",
+                        a.key,
+                        a.location.join("."),
+                        a.name,
+                        a.arguments,
+                        a.service,
+                        b.name,
+                        b.arguments,
+                        b.service
+                    ));
+                }
+            }
+        }
+        assert!(clashes.is_empty(), "{query}\n{clashes:#?}");
+    }
+
+    Ok(())
+}
+
 fn plan(fixture: &str, query: &str) -> Result<Value, Box<dyn Error>> {
     let plan = build_query_plan_with_defaults(fixture, parse_operation(query))?;
     Ok(serde_json::to_value(&plan)?)
@@ -197,10 +298,24 @@ struct Fetch {
     requires: Value,
     /// Variables of the `Condition` nodes around the fetch, `!x` for a skip.
     conditions: Vec<String>,
+    /// Where the fetched objects go, as response keys, without lists and type conditions.
+    paths: Vec<Vec<String>>,
+    /// In a batch, the alias of this entity call, like `_e0`.
+    entity_alias: Option<String>,
+}
+
+/// A `Flatten` or batch path, as response keys.
+fn response_keys(path: &Value) -> Vec<String> {
+    path.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|segment| segment.get("Field").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect()
 }
 
 fn fetches(plan: &Value) -> Vec<Fetch> {
-    fn walk(node: &Value, conditions: &[String], out: &mut Vec<Fetch>) {
+    fn walk(node: &Value, conditions: &[String], path: &[String], out: &mut Vec<Fetch>) {
         match node {
             Value::Object(map) => {
                 if map.get("kind").and_then(Value::as_str) == Some("Fetch") {
@@ -209,7 +324,13 @@ fn fetches(plan: &Value) -> Vec<Fetch> {
                         operation: map["operation"].as_str().unwrap_or_default().to_string(),
                         requires: map.get("requires").cloned().unwrap_or(Value::Null),
                         conditions: conditions.to_vec(),
+                        paths: vec![path.to_vec()],
+                        entity_alias: None,
                     });
+                    return;
+                }
+                if map.get("kind").and_then(Value::as_str) == Some("Flatten") {
+                    walk(&map["node"], conditions, &response_keys(&map["path"]), out);
                     return;
                 }
                 // Each entity call in a batch has its own representations.
@@ -221,6 +342,13 @@ fn fetches(plan: &Value) -> Vec<Fetch> {
                             operation: map["operation"].as_str().unwrap_or_default().to_string(),
                             requires: alias["requires"].clone(),
                             conditions: conditions.to_vec(),
+                            paths: alias["paths"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .map(response_keys)
+                                .collect(),
+                            entity_alias: alias["alias"].as_str().map(str::to_string),
                         });
                     }
                     return;
@@ -231,22 +359,24 @@ fn fetches(plan: &Value) -> Vec<Fetch> {
                         if let Some(branch) = map.get(branch) {
                             let mut inner = conditions.to_vec();
                             inner.push(format!("{prefix}{variable}"));
-                            walk(branch, &inner, out);
+                            walk(branch, &inner, path, out);
                         }
                     }
                     return;
                 }
                 for value in map.values() {
-                    walk(value, conditions, out);
+                    walk(value, conditions, path, out);
                 }
             }
-            Value::Array(items) => items.iter().for_each(|item| walk(item, conditions, out)),
+            Value::Array(items) => items
+                .iter()
+                .for_each(|item| walk(item, conditions, path, out)),
             _ => {}
         }
     }
 
     let mut out = Vec::new();
-    walk(plan, &[], &mut out);
+    walk(plan, &[], &[], &mut out);
     out
 }
 
@@ -259,11 +389,15 @@ fn root_fetch(plan: &Value, service: &str) -> Fetch {
 }
 
 /// For each type in a representation, the response key it reads `field` from.
+/// Looks into nested fragments too, and takes the innermost type.
 fn read_keys(requires: &Value, field: &str) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for fragment in requires.as_array().into_iter().flatten() {
-        let type_name = fragment["typeCondition"].as_str().unwrap_or_default();
-        for selection in fragment["selections"].as_array().into_iter().flatten() {
+    fn walk(selections: &Value, type_name: &str, field: &str, out: &mut Vec<(String, String)>) {
+        for selection in selections.as_array().into_iter().flatten() {
+            if selection["kind"].as_str() == Some("InlineFragment") {
+                let inner = selection["typeCondition"].as_str().unwrap_or(type_name);
+                walk(&selection["selections"], inner, field, out);
+                continue;
+            }
             let name = selection["name"].as_str().unwrap_or_default();
             let alias = selection.get("alias").and_then(Value::as_str);
             if alias.unwrap_or(name) == field {
@@ -271,7 +405,99 @@ fn read_keys(requires: &Value, field: &str) -> Vec<(String, String)> {
             }
         }
     }
+
+    let mut out = Vec::new();
+    walk(requires, "", field, &mut out);
     out
+}
+
+struct Write {
+    service: String,
+    /// Where the object holding the field sits, as response keys.
+    location: Vec<String>,
+    key: String,
+    name: String,
+    arguments: String,
+}
+
+/// Every field a fetch puts into the response, and where.
+fn writes(fetch: &Fetch) -> Vec<Write> {
+    fn collect(
+        set: &SelectionSet<'_, String>,
+        location: &[String],
+        fetch: &Fetch,
+        out: &mut Vec<Write>,
+    ) {
+        for item in &set.items {
+            match item {
+                Selection::Field(field) => {
+                    let key = field.alias.clone().unwrap_or_else(|| field.name.clone());
+                    out.push(Write {
+                        service: fetch.service.clone(),
+                        location: location.to_vec(),
+                        key: key.clone(),
+                        name: field.name.clone(),
+                        arguments: arguments_of(field),
+                    });
+                    let mut inner = location.to_vec();
+                    inner.push(key);
+                    collect(&field.selection_set, &inner, fetch, out);
+                }
+                Selection::InlineFragment(fragment) => {
+                    collect(&fragment.selection_set, location, fetch, out)
+                }
+                Selection::FragmentSpread(_) => {}
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    let document = parse_operation(&fetch.operation);
+    for root in operation_selection_sets(&document) {
+        let entities_key = fetch.entity_alias.as_deref().unwrap_or("_entities");
+        let entities = root.items.iter().find_map(|item| match item {
+            Selection::Field(field)
+                if field.name == "_entities"
+                    && field.alias.as_deref().unwrap_or(&field.name) == entities_key =>
+            {
+                Some(&field.selection_set)
+            }
+            _ => None,
+        });
+        match entities {
+            Some(set) => {
+                for path in &fetch.paths {
+                    collect(set, path, fetch, &mut out);
+                }
+            }
+            None => collect(root, &[], fetch, &mut out),
+        }
+    }
+    out
+}
+
+fn arguments_of(field: &graphql_tools::parser::query::Field<'_, String>) -> String {
+    field
+        .arguments
+        .iter()
+        .map(|(name, value)| format!("{name}: {value}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Operations without variables are printed as a bare `{ ... }`.
+fn operation_selection_sets<'a>(
+    document: &'a graphql_tools::parser::query::Document<'static, String>,
+) -> Vec<&'a SelectionSet<'static, String>> {
+    document
+        .definitions
+        .iter()
+        .filter_map(|definition| match definition {
+            Definition::Operation(OperationDefinition::Query(query)) => Some(&query.selection_set),
+            Definition::Operation(OperationDefinition::SelectionSet(set)) => Some(set),
+            _ => None,
+        })
+        .collect()
 }
 
 struct Selected {
