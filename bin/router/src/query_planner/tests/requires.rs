@@ -1237,6 +1237,77 @@ fn requires_reentry_selects_entity_typename() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// `tax` requires `price` from `pricing`, so `products` is called again through `_entities`.
+/// `products` can select both its own key `id` and `pricing`'s bigger key `sku region`, but only
+/// `id` is a key there. The representations it gets must use `id`.
+#[test]
+fn requires_reentry_uses_a_key_of_its_own_subgraph() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          products {
+            tax
+          }
+        }"#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-reentry-own-key.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            products {
+              __typename
+              id
+              sku
+              region
+            }
+          }
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "pricing") {
+            {
+              ... on Product {
+                __typename
+                sku
+                region
+              }
+            } =>
+            {
+              ... on Product {
+                price
+              }
+            }
+          },
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "products") {
+            {
+              ... on Product {
+                __typename
+                price
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                tax
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
 /// related: https://github.com/graphql-hive/router/issues/1539
 ///
 /// `Order.name` requires `grade`, and `grade` requires `sku`.

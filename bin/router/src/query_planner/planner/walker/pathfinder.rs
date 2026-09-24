@@ -511,27 +511,47 @@ impl<'graph> PathSearch<'graph> {
     }
 }
 
-#[instrument(level = "trace", skip_all, fields(
-  path = path.pretty_print(graph),
-  edge = edge_ref.weight().display_name(),
-))]
-#[allow(clippy::too_many_arguments)]
-pub fn can_satisfy_edge<'graph>(
+/// The `@key` to call `_entities` with, to get back into the subgraph of `node` for the
+/// objects at `node`. A `@requires` field and an `@interfaceObject` type condition are resolved
+/// that way. The key has to be one of that subgraph's own keys, and the subgraph has to be able
+/// to select its fields right at `node`, without leaving it. `None` when it can't.
+pub fn find_reentry_key<'graph>(
     graph: &'graph Graph,
-    supergraph: &'graph SupergraphState,
-    override_context: &'graph PlannerOverrideContext,
-    edge_ref: &EdgeReference<'graph>,
-    path: &OperationPath<'graph>,
-    excluded: &ExcludedFromLookup<'graph>,
-    use_only_direct_edges: bool,
-    cancellation_token: &'graph CancellationToken,
-) -> Result<Option<Vec<OperationPath<'graph>>>, WalkOperationError> {
-    PathSearch::new(graph, supergraph, override_context, cancellation_token).can_satisfy_edge(
-        edge_ref,
-        path,
-        excluded,
-        use_only_direct_edges,
-    )
+    supergraph: &SupergraphState,
+    override_context: &PlannerOverrideContext,
+    node: NodeIndex,
+    cancellation_token: &CancellationToken,
+) -> Result<Option<&'graph TypeAwareSelection>, WalkOperationError> {
+    let subgraph = graph.node(node)?.graph_id();
+    let mut own_keys = graph
+        .edges_from(node)
+        .filter(|edge_ref| matches!(edge_ref.weight(), Edge::EntityMove(_)))
+        .filter(|edge_ref| {
+            graph
+                .node(edge_ref.target())
+                .is_ok_and(|tail| tail.graph_id() == subgraph)
+        })
+        .collect::<Vec<_>>();
+    // With more than one key, the biggest one is tried first.
+    own_keys.sort_by_key(|edge_ref| std::cmp::Reverse(edge_ref.weight().cost()));
+
+    let at_node = OperationPath {
+        root_node: node,
+        last_segment: None,
+        cost: 0,
+        union_context: None,
+    };
+    let mut search = PathSearch::new(graph, supergraph, override_context, cancellation_token);
+    for edge_ref in own_keys {
+        if search
+            .can_satisfy_edge(&edge_ref, &at_node, &Default::default(), true)?
+            .is_some()
+        {
+            return Ok(edge_ref.weight().requirements());
+        }
+    }
+
+    Ok(None)
 }
 
 impl<'graph> PathSearch<'graph> {
@@ -619,18 +639,13 @@ impl<'graph> PathSearch<'graph> {
                                         trace!("  Path {} is valid", next_path.pretty_print(graph));
                                     }
 
+                                    // One way to get each required field is enough. Keeping
+                                    // every equally cheap one would fetch the field from each.
                                     if selection_field_requirement.is_leaf() {
-                                        let best_paths = find_best_paths(next_paths);
-                                        trace!(
-                                            "Found {} best paths for this leaf requirement",
-                                            best_paths.len()
-                                        );
-
-                                        for best_path in best_paths {
+                                        if let Some(best_path) = find_best_paths(next_paths).first()
+                                        {
                                             paths_to_requirements.push(
-                                                path.build_requirement_continuation_path(
-                                                    &best_path,
-                                                ),
+                                                path.build_requirement_continuation_path(best_path),
                                             );
                                         }
                                     }

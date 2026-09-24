@@ -1490,14 +1490,6 @@ fn issue_1309_requires_through_entity_interface() -> Result<(), Box<dyn Error>> 
               pet {
                 __typename
                 id
-                ... on Cat {
-                  __typename
-                  id
-                }
-                ... on Dog {
-                  __typename
-                  id
-                }
               }
             }
           }
@@ -1604,14 +1596,6 @@ fn issue_1308_requires_through_entity_interface_after_entity_hop() -> Result<(),
                   pet {
                     __typename
                     id
-                    ... on Cat {
-                      __typename
-                      id
-                    }
-                    ... on Dog {
-                      __typename
-                      id
-                    }
                   }
                 }
               }

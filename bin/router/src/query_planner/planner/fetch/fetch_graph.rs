@@ -18,13 +18,11 @@ use crate::query_planner::planner::fetch::state::{MultiTypeFetchStep, SingleType
 use crate::query_planner::planner::plan_nodes::{FetchNodePathSegment, FetchRewrite, ValueSetter};
 use crate::query_planner::planner::tree::query_tree::QueryTree;
 use crate::query_planner::planner::tree::query_tree_node::{MutationFieldPosition, QueryTreeNode};
-use crate::query_planner::planner::walker::path::OperationPath;
-use crate::query_planner::planner::walker::pathfinder::can_satisfy_edge;
+use crate::query_planner::planner::walker::pathfinder::find_reentry_key;
 use crate::query_planner::planner::QueryPlannerOptions;
 use crate::query_planner::state::supergraph_state::{OperationKind, SubgraphName, SupergraphState};
 use crate::query_planner::utils::cancellation::CancellationToken;
 use petgraph::algo::has_path_connecting;
-use petgraph::graph::EdgeReference;
 use petgraph::stable_graph::{EdgeIndex, NodeIndex, NodeIndices, NodeReferences, StableDiGraph};
 use petgraph::visit::EdgeRef;
 use petgraph::visit::{Bfs, IntoNodeReferences};
@@ -906,12 +904,8 @@ fn process_interface_object_type_move_edge(
         step_for_children_index.index()
     );
     step_for_children.input.add(&requirement.selection_set)?;
-    let key_to_reenter_subgraph = find_satisfiable_key(
-        graph,
-        supergraph,
-        override_context,
-        query_node.requirements.first().unwrap(),
-    )?;
+    let key_to_reenter_subgraph =
+        reentry_key(graph, supergraph, override_context, head_node_index)?;
     trace!(
         "adding key '{}' to fetch step [{}]",
         key_to_reenter_subgraph,
@@ -1506,12 +1500,8 @@ fn process_requires_field_edge(
         _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
 
-    let key_to_reenter_subgraph = find_satisfiable_key(
-        graph,
-        supergraph,
-        override_context,
-        query_node.requirements.first().unwrap(),
-    )?;
+    let key_to_reenter_subgraph =
+        reentry_key(graph, supergraph, override_context, head_node_index)?;
 
     // The keys to re-enter the subgraph go where the object sits. Usually that's the parent,
     // at `fetch_path`. When the parent is an entity call of this very object, created to
@@ -1735,86 +1725,27 @@ fn process_requires_field_edge(
     )
 }
 
-/// A field marked with `@requires` tells us that in order to resolve it,
-/// the subgraph needs data from another subgraph.
-///
-/// This interaction ALWAYS involves an entity call,
-/// but the trigger for resolving the field differs:
-///
-/// 1.  Cross-Subgraph: If the field annotated with `@requires` is being
-///     fetched after an `EntityMove` brought us to the current subgraph from another,
-///     the `EntityMove` itself already handled fetching the necessary `@key` fields.
-///     We don't need to think about it, we just need to add the field set of `@requires(fields:)`
-///     to the `FetchStep` input.
-///
-/// 2.  Root: If the field annotated with `@requires` is being fetched locally,
-///     because the query started from the root type,
-///     the `EntityMove` is needed, but the data to satisfy the key fields is all local.
-///     The subgraph effectively makes an "internal" entity call to itself.
-///     - We first fetch the fields needed to satisfy some resolvable `@key` of the
-///       entity type within this subgraph.
-///     - Then, we use that to resolve the fields specified in the `@requires(fields:)`.
-///     - This effectively splits the resolution within the subgraph: part comes from the
-///       main query path, part comes via the internal entity resolution triggered by `@requires`.
-///
-/// The key fields need to be added to the output of the parent,
-/// and input of the entity move.
-#[instrument(level = "trace",skip_all, fields(
-  node = graph.node(query_node.node_index).unwrap().to_string()
-))]
-fn find_satisfiable_key<'a>(
+/// See `find_reentry_key`. It only looks at the edges of `node`, so it's quick, and it doesn't
+/// need to be cancelled.
+fn reentry_key<'a>(
     graph: &'a Graph,
-    supergraph: &'a SupergraphState,
-    override_context: &'a PlannerOverrideContext,
-    query_node: &QueryTreeNode,
+    supergraph: &SupergraphState,
+    override_context: &PlannerOverrideContext,
+    node: NodeIndex,
 ) -> Result<&'a TypeAwareSelection, FetchGraphError> {
-    // This could be improved...
-    // We added a flag to `can_satisfy_edge` and increased the complexity.
-
-    let mut entity_moves_edges_to_self: Vec<
-        EdgeReference<crate::query_planner::graph::edge::Edge>,
-    > = graph
-        .edges_from(query_node.node_index)
-        .filter(|edge_reference| {
-            let edge = graph.edge(edge_reference.id()).unwrap();
-            matches!(edge, Edge::EntityMove(_))
-        })
-        .collect();
-    entity_moves_edges_to_self.sort_by_key(|edge| std::cmp::Reverse(edge.weight().cost()));
-
-    for edge_ref in entity_moves_edges_to_self {
-        if can_satisfy_edge(
-            graph,
-            supergraph,
-            override_context,
-            &edge_ref,
-            &OperationPath {
-                root_node: query_node.node_index,
-                last_segment: None,
-                cost: 0,
-                union_context: None,
-            },
-            &Default::default(),
-            true,
-            // It's safe to use a noop CancellationToken here,
-            // as the result of this function is guaranteed to be successful,
-            // and fast.
-            &CancellationToken::new(),
-        )?
-        .is_some()
-        {
-            return edge_ref
-                .weight()
-                .requirements()
-                .ok_or(FetchGraphError::Internal(String::from(
-                    "Resolved empty Satisfiable Key",
-                )));
-        }
-    }
-
-    Err(FetchGraphError::Internal(String::from(
-        "Failed to find Satisfiable Key",
-    )))
+    find_reentry_key(
+        graph,
+        supergraph,
+        override_context,
+        node,
+        &CancellationToken::new(),
+    )?
+    .ok_or_else(|| {
+        FetchGraphError::Internal(format!(
+            "No key to get back into the subgraph of {}",
+            graph.pretty_print_node(&node)
+        ))
+    })
 }
 
 // TODO: simplfy args
