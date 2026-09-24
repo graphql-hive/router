@@ -935,3 +935,127 @@ fn interface_object_local_id_remote_field_with_inline_fragment() -> Result<(), B
 
     Ok(())
 }
+
+/// `social` has `Account` as an `@interfaceObject` with `friends: [Account!]!`, and `users` has
+/// the real `interface Account @key(fields: "id")` with `User`. `name` only lives on `User` in
+/// `users`, so `... on User` has to go to `users` first.
+///
+/// Two ways lead to `... on User` from `Account/social`: one stays in `social`, the other goes to
+/// `User/users`. We used to keep only the first one, and then failed with "No paths found" for
+/// `name`.
+#[test]
+fn interface_object_list_field_with_type_condition() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          me {
+            friends {
+              ... on User {
+                name
+              }
+              credits
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-object-nested-list.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "social") {
+          {
+            me {
+              friends {
+                __typename
+                id
+                credits
+              }
+            }
+          }
+        },
+        Flatten(path: "me.friends.@") {
+          Fetch(service: "users") {
+            {
+              ... on Account {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Account {
+                __typename
+                ... on User {
+                  name
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Same as `interface_object_list_field_with_type_condition`, right on the root field.
+#[test]
+fn interface_object_type_condition_on_root_field() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          me {
+            ... on User {
+              name
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-object-nested-list.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "social") {
+          {
+            me {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "me") {
+          Fetch(service: "users") {
+            {
+              ... on Account {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Account {
+                __typename
+                ... on User {
+                  name
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
