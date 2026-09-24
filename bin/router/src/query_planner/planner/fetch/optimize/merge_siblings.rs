@@ -7,10 +7,14 @@ use crate::query_planner::planner::fetch::{
     error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
     optimize::utils::perform_fetch_step_merge, state::MultiTypeFetchStep,
 };
+use crate::query_planner::state::supergraph_state::SupergraphState;
 
 impl FetchGraph<MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
-    pub(crate) fn merge_siblings(&mut self) -> Result<(), FetchGraphError> {
+    pub(crate) fn merge_siblings(
+        &mut self,
+        supergraph: &SupergraphState,
+    ) -> Result<(), FetchGraphError> {
         let root_index = self
             .root_index
             .ok_or(FetchGraphError::NonSingleRootStep(0))?;
@@ -65,7 +69,8 @@ impl FetchGraph<MultiTypeFetchStep> {
                         *other_sibling_index,
                         other_sibling,
                         self,
-                    ) {
+                        supergraph,
+                    )? {
                         trace!(
                             "Found siblings optimization: {} <- {}",
                             sibling_index.index(),
@@ -97,6 +102,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                     *other_child_index_latest,
                     self,
                     false,
+                    supergraph,
                 )?;
 
                 // Because `other_child` was merged into `child`,
@@ -116,10 +122,8 @@ impl FetchStepData<MultiTypeFetchStep> {
         other_index: NodeIndex,
         other: &Self,
         fetch_graph: &FetchGraph<MultiTypeFetchStep>,
-    ) -> bool {
-        // First, check if the base conditions for merging are met.
-        let can_merge_base = self.can_merge(self_index, other_index, other, fetch_graph);
-
+        supergraph: &SupergraphState,
+    ) -> Result<bool, FetchGraphError> {
         if let (Some(self_mut_idx), Some(other_mut_index)) =
             (self.mutation_field_position, other.mutation_field_position)
         {
@@ -129,15 +133,16 @@ impl FetchStepData<MultiTypeFetchStep> {
             if self_mut_idx != other_mut_index
                 && (self_mut_idx as i64 - other_mut_index as i64).abs() != 1
             {
-                return false;
+                return Ok(false);
             }
         }
 
         if fetch_graph.is_ancestor_or_descendant(self_index, other_index) {
             // Looks like they depend on each other
-            return false;
+            return Ok(false);
         }
 
-        can_merge_base
+        // Last, it runs a trial merge.
+        self.can_merge(self_index, other_index, other, fetch_graph, supergraph)
     }
 }

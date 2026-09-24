@@ -8,6 +8,7 @@ use crate::query_planner::ast::merge_path::Condition;
 use crate::query_planner::planner::fetch::fetch_step_data::{
     type_condition_types_from_response_path, FetchStepFlags,
 };
+use crate::query_planner::state::supergraph_state::SupergraphState;
 use crate::query_planner::{
     ast::merge_path::{MergePath, Segment},
     planner::fetch::{
@@ -30,7 +31,10 @@ impl FetchGraph<MultiTypeFetchStep> {
     /// used there are `... on Book` and `... on Magazine`, then merging `|[Book]`
     /// and `|[Magazine]` can drop the type condition at that slot.
     #[instrument(level = "trace", skip_all)]
-    pub(crate) fn batch_multi_type(&mut self) -> Result<(), FetchGraphError> {
+    pub(crate) fn batch_multi_type(
+        &mut self,
+        supergraph: &SupergraphState,
+    ) -> Result<(), FetchGraphError> {
         let root_index = self
             .root_index
             .ok_or(FetchGraphError::NonSingleRootStep(0))?;
@@ -64,7 +68,7 @@ impl FetchGraph<MultiTypeFetchStep> {
 
                     let other_sibling = self.get_step_data(*other_sibling_index)?;
 
-                    if current.can_be_batched_with(other_sibling) {
+                    if current.can_be_batched_with(other_sibling, supergraph)? {
                         trace!(
                             "Found multi-type batching optimization: [{}] <- [{}]",
                             sibling_index.index(),
@@ -101,7 +105,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                 let can_still_batch = {
                     let left = self.get_step_data(*child_index_latest)?;
                     let right = self.get_step_data(*other_child_index_latest)?;
-                    left.can_be_batched_with(right)
+                    left.can_be_batched_with(right, supergraph)?
                 };
 
                 if !can_still_batch {
@@ -121,6 +125,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                     *other_child_index_latest,
                     self,
                     true,
+                    supergraph,
                 )?;
 
                 let merged = self.get_step_data_mut(*child_index_latest)?;
@@ -409,32 +414,36 @@ fn normalized_path_hash(path: &MergePath) -> u64 {
 }
 
 impl FetchStepData<MultiTypeFetchStep> {
-    pub fn can_be_batched_with(&self, other: &Self) -> bool {
+    pub fn can_be_batched_with(
+        &self,
+        other: &Self,
+        supergraph: &SupergraphState,
+    ) -> Result<bool, FetchGraphError> {
         // Both steps must be the same fetch kind.
         if self.kind != other.kind {
-            return false;
+            return Ok(false);
         }
 
         // Both steps must call the same service.
         if self.service_name != other.service_name {
-            return false;
+            return Ok(false);
         }
 
         // Only entity fetches can be batched.
         if !self.is_entity_call() || !other.is_entity_call() {
-            return false;
+            return Ok(false);
         }
 
         // Paths must match after removing type conditions.
         if self.response_path.without_type_castings() != other.response_path.without_type_castings()
         {
-            return false;
+            return Ok(false);
         }
 
         // Paths must have the same length.
         // Example: a.@.b and a.@.b.c are not compatible.
         if self.response_path.len() != other.response_path.len() {
-            return false;
+            return Ok(false);
         }
 
         // Type-condition segments must be in the same positions.
@@ -449,7 +458,7 @@ impl FetchStepData<MultiTypeFetchStep> {
                     != matches!(right, Segment::TypeCondition(_, _))
             })
         {
-            return false;
+            return Ok(false);
         }
 
         // Type-condition conditions must also match at each position.
@@ -467,11 +476,11 @@ impl FetchStepData<MultiTypeFetchStep> {
                 _ => false,
             })
         {
-            return false;
+            return Ok(false);
         }
 
         if self.has_arguments_conflicts_with(other) {
-            return false;
+            return Ok(false);
         }
 
         let self_used_for_requires = self.flags.contains(FetchStepFlags::USED_FOR_REQUIRES);
@@ -479,10 +488,10 @@ impl FetchStepData<MultiTypeFetchStep> {
         // Mixing @requires and non-@requires steps can widen paths incorrectly.
         // Keep them separate to avoid regressions.
         if self_used_for_requires != other_used_for_requires {
-            return false;
+            return Ok(false);
         }
 
-        self.batches_cleanly_with(other)
+        self.batches_cleanly_with(other, supergraph)
     }
 }
 

@@ -38,11 +38,11 @@ impl FetchGraph<MultiTypeFetchStep> {
             let edge_count_before = self.graph.edge_count();
 
             self.merge_passthrough_child()?;
-            self.merge_children_with_parents()?;
-            self.merge_siblings()?;
-            self.merge_leafs()?;
+            self.merge_children_with_parents(supergraph_state)?;
+            self.merge_siblings(supergraph_state)?;
+            self.merge_leafs(supergraph_state)?;
             self.deduplicate_and_prune_fetch_steps()?;
-            self.batch_multi_type()?;
+            self.batch_multi_type(supergraph_state)?;
             self.normalize_selection_sets(supergraph_state)?;
             let abstract_type_converted =
                 self.fold_concrete_selections_to_interfaces(supergraph_state, options)?;
@@ -61,7 +61,7 @@ impl FetchGraph<MultiTypeFetchStep> {
         self.fix_conflicting_type_mismatches(supergraph_state)?;
 
         // We call this last, because it should be done after all other optimizations/merging are done
-        self.apply_internal_aliases_patching()?;
+        self.apply_internal_aliases_patching(supergraph_state)?;
 
         Ok(())
     }

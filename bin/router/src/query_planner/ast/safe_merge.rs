@@ -1,16 +1,20 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use tracing::trace;
 
-use crate::query_planner::ast::{
-    merge_path::{FieldPathSegment, MergePath, Segment},
-    selection_item::SelectionItem,
-    selection_set::SelectionSet,
+use crate::query_planner::{
+    ast::{
+        merge_path::{FieldPathSegment, MergePath, Segment},
+        selection_item::SelectionItem,
+        selection_set::{FieldSelection, SelectionSet},
+    },
+    state::supergraph_state::{SupergraphDefinition, SupergraphState},
 };
 
-#[derive(Debug, Clone, Default)]
-pub struct SafeSelectionSetMerger {
+#[derive(Debug, Clone)]
+pub struct SafeSelectionSetMerger<'a> {
     aliases_counter: u64,
+    supergraph: &'a SupergraphState,
 }
 
 pub enum ConflictsLookupResult {
@@ -38,7 +42,14 @@ pub type AliasesRecords = Vec<(MergePath, String)>;
 #[error("Field '{0}' has a conflict that can't be resolved with an alias")]
 pub struct UnresolvableConflict(pub String);
 
-impl SafeSelectionSetMerger {
+impl<'a> SafeSelectionSetMerger<'a> {
+    pub fn new(supergraph: &'a SupergraphState) -> Self {
+        Self {
+            aliases_counter: 0,
+            supergraph,
+        }
+    }
+
     pub fn safe_next_alias_name(&mut self, target_existing: &[SelectionItem]) -> String {
         loop {
             let alias = format!("_internal_qp_alias_{}", self.aliases_counter);
@@ -71,7 +82,24 @@ impl SafeSelectionSetMerger {
             &mut aliases_performed,
         )?;
 
+        // The merge above only compares items at the same level, with the same conditions.
+        // Fields that land in different fragments, or have different `@include`/`@skip`,
+        // are copied next to each other, so check the whole result.
+        self.check_conflicts(target)?;
+
         Ok(aliases_performed)
+    }
+
+    /// Fails when `selection_set` has fields that can't be in one operation together, see
+    /// `find_field_conflict`.
+    pub fn check_conflicts(
+        &self,
+        selection_set: &SelectionSet,
+    ) -> Result<(), UnresolvableConflict> {
+        match find_field_conflict(self.supergraph, &[(selection_set, None)]) {
+            Some(field_name) => Err(UnresolvableConflict(field_name)),
+            None => Ok(()),
+        }
     }
 
     pub fn merge_selection_set_inner(
@@ -266,14 +294,113 @@ impl SafeSelectionSetMerger {
     }
 }
 
+/// GraphQL wants fields with the same response key in a selection set to be the same field,
+/// with the same arguments, including the ones inside inline fragments. `@include`/`@skip`
+/// don't change that, even when they can never be true together. Returns the name of the
+/// first field that breaks it.
+///
+/// `sets` are selection sets that end up as one, like the sub-selections of fields that share
+/// a response key. Each comes with the type it's selected on, if we know it.
+///
+/// Only fields under two different object types are left alone, they can never be on the same
+/// object. Anything else, like an interface and one of its objects, is checked.
+fn find_field_conflict(
+    supergraph: &SupergraphState,
+    sets: &[(&SelectionSet, Option<&str>)],
+) -> Option<String> {
+    let mut fields: Vec<(&FieldSelection, Option<&str>)> = Vec::new();
+    for (set, type_name) in sets {
+        collect_fields(set, *type_name, &mut fields);
+    }
+
+    let mut by_response_key: HashMap<&str, Vec<(&FieldSelection, Option<&str>)>> = HashMap::new();
+    for field in fields {
+        by_response_key
+            .entry(field.0.selection_identifier())
+            .or_default()
+            .push(field);
+    }
+
+    for group in by_response_key.values() {
+        let is_object = |name: &str| {
+            matches!(
+                supergraph.definitions.get(name),
+                Some(SupergraphDefinition::Object(_))
+            )
+        };
+        let same_scope = |a: Option<&str>, b: Option<&str>| match (a, b) {
+            (Some(a), Some(b)) => a == b || !is_object(a) || !is_object(b),
+            _ => true,
+        };
+
+        for (i, (a, a_type)) in group.iter().enumerate() {
+            let mut children = vec![(&a.selections, None)];
+            for (b, b_type) in &group[i + 1..] {
+                if !same_scope(*a_type, *b_type) {
+                    continue;
+                }
+                if a.name != b.name || a.arguments_hash() != b.arguments_hash() {
+                    return Some(a.name.clone());
+                }
+                children.push((&b.selections, None));
+            }
+            if let Some(field_name) = find_field_conflict(supergraph, &children) {
+                return Some(field_name);
+            }
+        }
+    }
+
+    None
+}
+
+/// Fields of `set`, and of the inline fragments in it, with the type they're selected on.
+fn collect_fields<'a>(
+    set: &'a SelectionSet,
+    type_name: Option<&'a str>,
+    fields: &mut Vec<(&'a FieldSelection, Option<&'a str>)>,
+) {
+    for item in &set.items {
+        match item {
+            SelectionItem::Field(field) => fields.push((field, type_name)),
+            SelectionItem::InlineFragment(fragment) => {
+                collect_fields(&fragment.selections, Some(&fragment.type_condition), fields)
+            }
+            SelectionItem::FragmentSpread(_) => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use graphql_tools::parser::query::{Definition, OperationDefinition};
 
+    use lazy_static::lazy_static;
+
     use crate::query_planner::{
         ast::{safe_merge::SafeSelectionSetMerger, selection_set::SelectionSet},
-        utils::parsing::parse_operation,
+        state::supergraph_state::SupergraphState,
+        utils::parsing::{parse_operation, parse_schema},
     };
+
+    lazy_static! {
+        static ref SUPERGRAPH: SupergraphState = SupergraphState::new(&parse_schema(
+            r#"
+            directive @join__type(graph: join__Graph!, key: join__FieldSet) repeatable on OBJECT | INTERFACE
+            scalar join__FieldSet
+            enum join__Graph { A @join__graph(name: "a", url: "") }
+            interface Node @join__type(graph: A) { id: ID! }
+            interface Pet @join__type(graph: A) { id: ID! }
+            type Cat implements Node & Pet @join__type(graph: A) { id: ID! }
+            type Dog implements Node & Pet @join__type(graph: A) { id: ID! }
+            type Photo @join__type(graph: A) { id: ID! }
+            type Query @join__type(graph: A) { node: Node }
+            "#,
+        ));
+    }
+
+    fn new_merger() -> SafeSelectionSetMerger<'static> {
+        SafeSelectionSetMerger::new(&SUPERGRAPH)
+    }
 
     fn parse_selection_set(input: &str) -> SelectionSet {
         let op = parse_operation(input);
@@ -289,7 +416,7 @@ mod tests {
         let mut a = parse_selection_set("{ a }");
         let b = parse_selection_set("{ b }");
 
-        let mut merger = SafeSelectionSetMerger::default();
+        let mut merger = new_merger();
         merger
             .merge_selection_set(&mut a, &b, (true, false), false)
             .unwrap();
@@ -302,10 +429,47 @@ mod tests {
         let mut a = parse_selection_set("{ a { b(x: 1) } }");
         let b = parse_selection_set("{ a { b(x: 2) } }");
 
-        let mut merger = SafeSelectionSetMerger::default();
+        let mut merger = new_merger();
         assert!(merger
             .merge_selection_set(&mut a, &b, (false, false), false)
             .is_err());
+    }
+
+    #[test]
+    fn conflict_under_different_conditions_is_an_error() {
+        let merge = |a: &str, b: &str| {
+            let mut a = parse_selection_set(a);
+            new_merger().merge_selection_set(&mut a, &parse_selection_set(b), (true, true), false)
+        };
+
+        // In fragments with different conditions.
+        assert!(merge(
+            "{ ... on Photo @include(if: $a) { t(w: 1) } }",
+            "{ ... on Photo @include(if: $b) { t(w: 2) } }",
+        )
+        .is_err());
+        // Plain fields with different conditions.
+        assert!(merge("{ t(w: 1) @include(if: $a) }", "{ t(w: 2) @skip(if: $a) }").is_err());
+        // Deeper, under fields that don't merge because of their conditions.
+        assert!(merge(
+            "{ p @include(if: $a) { t(w: 1) } }",
+            "{ p @include(if: $b) { t(w: 2) } }",
+        )
+        .is_err());
+        // Different type conditions can have different arguments.
+        assert!(merge("{ ... on Cat { t(w: 1) } }", "{ ... on Dog { t(w: 2) } }").is_ok());
+        // An interface and an object that can be one: some `Node`s are `Cat`s.
+        assert!(merge("{ ... on Node { t(w: 1) } }", "{ ... on Cat { t(w: 2) } }").is_err());
+        // Two interfaces can share objects.
+        assert!(merge("{ ... on Node { t(w: 1) } }", "{ ... on Pet { t(w: 2) } }").is_err());
+        // A type we don't know about gets checked too.
+        assert!(merge("{ ... on Cat { t(w: 1) } }", "{ ... on Nope { t(w: 2) } }").is_err());
+        // Same arguments are fine.
+        assert!(merge(
+            "{ ... on Photo @include(if: $a) { t(w: 1) } }",
+            "{ ... on Photo @include(if: $b) { t(w: 1) } }",
+        )
+        .is_ok());
     }
 
     #[test]
@@ -313,7 +477,7 @@ mod tests {
         let mut a = parse_selection_set("{ a }");
         let b = parse_selection_set("{ a: b }");
 
-        let mut merger = SafeSelectionSetMerger::default();
+        let mut merger = new_merger();
         merger
             .merge_selection_set(&mut a, &b, (true, false), false)
             .unwrap();
@@ -326,7 +490,7 @@ mod tests {
         let mut a = parse_selection_set("{ a }");
         let b = parse_selection_set("{ a }");
 
-        let mut merger = SafeSelectionSetMerger::default();
+        let mut merger = new_merger();
         merger
             .merge_selection_set(&mut a, &b, (true, false), false)
             .unwrap();
@@ -339,7 +503,7 @@ mod tests {
         let mut a = parse_selection_set("{ a(i: 1) }");
         let b = parse_selection_set("{ a(i: 2) }");
 
-        let mut merger = SafeSelectionSetMerger::default();
+        let mut merger = new_merger();
         merger
             .merge_selection_set(&mut a, &b, (false, true), false)
             .unwrap();
@@ -352,7 +516,7 @@ mod tests {
         let mut a = parse_selection_set("{ a(i: 1) _internal_qp_alias_0 }");
         let b = parse_selection_set("{ a(i: 2) }");
 
-        let mut merger = SafeSelectionSetMerger::default();
+        let mut merger = new_merger();
         merger
             .merge_selection_set(&mut a, &b, (true, true), false)
             .unwrap();
@@ -365,7 +529,7 @@ mod tests {
         let mut a = parse_selection_set("{ a(i: 1) _internal_qp_alias_0: test }");
         let b = parse_selection_set("{ a(i: 2) }");
 
-        let mut merger = SafeSelectionSetMerger::default();
+        let mut merger = new_merger();
         merger
             .merge_selection_set(&mut a, &b, (false, true), false)
             .unwrap();
@@ -379,7 +543,7 @@ mod tests {
         let b = parse_selection_set("{ a(i: 2) }");
         let c = parse_selection_set("{ a(i: 3) }");
 
-        let mut merger = SafeSelectionSetMerger::default();
+        let mut merger = new_merger();
         merger
             .merge_selection_set(&mut a, &b, (false, true), false)
             .unwrap();
@@ -396,7 +560,7 @@ mod tests {
         let b = parse_selection_set("{ p { a(i: 2) } }");
         let c = parse_selection_set("{ p { a(i: 3) } }");
 
-        let mut merger = SafeSelectionSetMerger::default();
+        let mut merger = new_merger();
         merger
             .merge_selection_set(&mut a, &b, (false, true), false)
             .unwrap();
@@ -413,11 +577,11 @@ mod tests {
         let b = parse_selection_set("{ p { a(i: 2) } }");
         let c = parse_selection_set("{ p { a(i: 3) } }");
 
-        let mut merger = SafeSelectionSetMerger::default();
+        let mut merger = new_merger();
         merger
             .merge_selection_set(&mut a, &b, (false, true), false)
             .unwrap();
-        let mut merger2 = SafeSelectionSetMerger::default();
+        let mut merger2 = new_merger();
         merger2
             .merge_selection_set(&mut a, &c, (false, true), false)
             .unwrap();
@@ -430,7 +594,7 @@ mod tests {
         let mut a = parse_selection_set("{ p { a(i: 1) } }");
         let b = parse_selection_set("{ p { a(i: 2) } }");
 
-        let mut merger = SafeSelectionSetMerger::default();
+        let mut merger = new_merger();
         merger
             .merge_selection_set(&mut a, &b, (false, true), false)
             .unwrap();
@@ -443,7 +607,7 @@ mod tests {
         let mut a = parse_selection_set("{ p { a(i: 1) } }");
         let b = parse_selection_set("{ p { a(i: 2) } }");
 
-        let mut merger = SafeSelectionSetMerger::default();
+        let mut merger = new_merger();
         merger
             .merge_selection_set(&mut a, &b, (true, false), false)
             .unwrap();
@@ -456,7 +620,7 @@ mod tests {
         let mut a = parse_selection_set("{ p { a(i: 1) } }");
         let b = parse_selection_set("{ p { a(i: 2) } }");
 
-        let mut merger = SafeSelectionSetMerger::default();
+        let mut merger = new_merger();
         let merge_locations = merger
             .merge_selection_set(&mut a, &b, (false, true), false)
             .unwrap();

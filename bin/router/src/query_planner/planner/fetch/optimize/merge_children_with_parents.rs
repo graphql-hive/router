@@ -7,10 +7,14 @@ use crate::query_planner::planner::fetch::{
     error::FetchGraphError, fetch_graph::FetchGraph, optimize::utils::perform_fetch_step_merge,
     state::MultiTypeFetchStep,
 };
+use crate::query_planner::state::supergraph_state::SupergraphState;
 
 impl FetchGraph<MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
-    pub(crate) fn merge_children_with_parents(&mut self) -> Result<(), FetchGraphError> {
+    pub(crate) fn merge_children_with_parents(
+        &mut self,
+        supergraph: &SupergraphState,
+    ) -> Result<(), FetchGraphError> {
         let root_index = self
             .root_index
             .ok_or(FetchGraphError::NonSingleRootStep(0))?;
@@ -43,7 +47,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                 node_indexes.insert(*child_index, *child_index);
                 node_indexes.insert(parent_index, parent_index);
 
-                if parent.can_merge(parent_index, *child_index, child, self) {
+                if parent.can_merge(parent_index, *child_index, child, self, supergraph)? {
                     trace!(
                         "optimization found: merge parent [{}] with child [{}]",
                         parent_index.index(),
@@ -63,7 +67,13 @@ impl FetchGraph<MultiTypeFetchStep> {
                     .get(&child_index)
                     .ok_or(FetchGraphError::IndexMappingLost)?;
 
-                perform_fetch_step_merge(*parent_index_latest, *child_index_latest, self, false)?;
+                perform_fetch_step_merge(
+                    *parent_index_latest,
+                    *child_index_latest,
+                    self,
+                    false,
+                    supergraph,
+                )?;
 
                 // Because `child` was merged into `parent`,
                 // then everything that was pointing to `child`

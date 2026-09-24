@@ -7,7 +7,7 @@ use std::{
 
 use crate::query_planner::{
     ast::{
-        merge_path::{Condition, MergePath, Segment},
+        merge_path::{Condition, MergePath},
         safe_merge::{AliasesRecords, SafeSelectionSetMerger, UnresolvableConflict},
         selection_item::SelectionItem,
         selection_set::{
@@ -16,6 +16,7 @@ use crate::query_planner::{
         },
     },
     planner::fetch::state::{MultiTypeFetchStep, SingleTypeFetchStep},
+    state::supergraph_state::SupergraphState,
 };
 
 #[derive(Debug, thiserror::Error, Clone)]
@@ -26,6 +27,9 @@ pub enum FetchStepSelectionsError {
     MissingPathInSelection(String, String),
     #[error(transparent)]
     UnresolvableConflict(#[from] UnresolvableConflict),
+    /// We select more than one type, and not the one being merged in.
+    #[error("No selection for type {0} to merge into")]
+    NoSelectionForType(String),
 }
 
 #[derive(Debug, Clone)]
@@ -121,17 +125,6 @@ impl MergeTarget {
                     selections: selection_set.clone(),
                 })],
             }),
-        }
-    }
-
-    /// A path that started at the root of `source_type`, now starting at the root of the target.
-    pub fn scope_path(&self, source_type: &str, path: &MergePath) -> MergePath {
-        match self {
-            MergeTarget::Same(_) => path.clone(),
-            MergeTarget::UnderFragment(_) => path.insert_front(Segment::TypeCondition(
-                BTreeSet::from([source_type.to_string()]),
-                None,
-            )),
         }
     }
 }
@@ -532,7 +525,7 @@ impl FetchStepSelections<MultiTypeFetchStep> {
             None if self.selections.contains_key(source_type) => {
                 Ok(MergeTarget::Same(source_type.to_string()))
             }
-            None => Err(FetchStepSelectionsError::UnexpectedMissingDefinition(
+            None => Err(FetchStepSelectionsError::NoSelectionForType(
                 source_type.to_string(),
             )),
         }
@@ -556,8 +549,9 @@ impl FetchStepSelections<MultiTypeFetchStep> {
         other: &Self,
         fetch_path: &MergePath,
         (self_used_for_requires, other_used_for_requires): (bool, bool),
-    ) -> Result<Vec<(String, AliasesRecords)>, FetchStepSelectionsError> {
-        let mut aliases_made: Vec<(String, AliasesRecords)> = Vec::new();
+        supergraph: &SupergraphState,
+    ) -> Result<AliasesRecords, FetchStepSelectionsError> {
+        let mut aliases_made = AliasesRecords::new();
 
         for (definition_name, selection_set) in other.iter_selections() {
             let target = self.merge_target(definition_name, fetch_path, true)?;
@@ -576,7 +570,7 @@ impl FetchStepSelections<MultiTypeFetchStep> {
                     )
                 })?;
 
-            let mut merger = SafeSelectionSetMerger::default();
+            let mut merger = SafeSelectionSetMerger::new(supergraph);
             let current_aliases_made = merger.merge_selection_set(
                 selection_at_path,
                 &target.scope(definition_name, selection_set),
@@ -584,15 +578,22 @@ impl FetchStepSelections<MultiTypeFetchStep> {
                 false,
             )?;
 
-            if !current_aliases_made.is_empty() {
-                // The merger only knows paths from where we merged, so we add the rest,
-                // to make them start at the step's root.
-                let current_aliases_made = current_aliases_made
-                    .into_iter()
-                    .map(|(alias_path, alias)| (fetch_path.concat(&alias_path), alias))
-                    .collect();
-                aliases_made.push((target_type.to_string(), current_aliases_made));
+            // The merger only checked below `fetch_path`, but what's around it ends up on the
+            // same objects too, like `... on Node { price(currency: "GBP") }` next to the
+            // `... on Cat` we merged into.
+            if !fetch_path.is_empty() {
+                if let Some(current) = self.selections_for_definition(target_type) {
+                    merger.check_conflicts(current)?;
+                }
             }
+
+            // The merger only knows paths from where we merged, so we add the rest,
+            // to make them start at the step's root.
+            aliases_made.extend(
+                current_aliases_made
+                    .into_iter()
+                    .map(|(alias_path, alias)| (fetch_path.concat(&alias_path), alias)),
+            );
         }
 
         Ok(aliases_made)

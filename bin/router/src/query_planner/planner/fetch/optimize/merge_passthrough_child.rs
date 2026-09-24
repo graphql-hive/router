@@ -136,7 +136,10 @@ fn perform_passthrough_child_merge(
     fetch_graph: &mut FetchGraph<MultiTypeFetchStep>,
 ) -> Result<(), FetchGraphError> {
     let (me, other) = fetch_graph.get_pair_of_steps_mut(self_index, other_index)?;
-    let path = other.response_path.slice_from(me.response_path.len());
+    let path = other
+        .response_path
+        .strip_prefix(&me.response_path)
+        .ok_or(FetchGraphError::MismatchedResponsePath)?;
 
     trace!(
         "merging fetch steps [{}] + [{}] at path {}",
@@ -146,6 +149,7 @@ fn perform_passthrough_child_merge(
     );
 
     me.output.migrate_from_another(&other.output, &path)?;
+    me.internal_aliases.append(&mut other.internal_aliases);
 
     let mut children_indexes: Vec<NodeIndex> = vec![];
     let mut parents_indexes: Vec<NodeIndex> = vec![];

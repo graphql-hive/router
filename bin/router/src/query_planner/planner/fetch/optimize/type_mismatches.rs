@@ -54,7 +54,7 @@ impl FetchGraph<MultiTypeFetchStep> {
             );
 
             for (root_def_name, mismatch_path) in mismatches_paths {
-                let mut merger = SafeSelectionSetMerger::default();
+                let mut merger = SafeSelectionSetMerger::new(supergraph);
 
                 if let Some(Segment::Field(field_seg, args_hash_lookup, condition)) =
                     mismatch_path.last()

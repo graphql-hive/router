@@ -29,7 +29,7 @@ use petgraph::visit::EdgeRef;
 use petgraph::visit::{Bfs, IntoNodeReferences};
 use petgraph::Directed;
 use petgraph::Direction;
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fmt::{Debug, Display};
 use tracing::{instrument, trace};
 
@@ -40,6 +40,17 @@ pub struct FetchGraph<State> {
     pub(crate) graph: StableDiGraph<FetchStepData<State>, ()>,
     pub root_index: Option<NodeIndex>,
     pub(crate) operation_kind: OperationKind,
+    /// Where each entity call gets its objects from. Only used while building the graph,
+    /// optimizations move selections around and don't keep it up to date.
+    key_sources: HashMap<NodeIndex, KeySource>,
+}
+
+/// The step whose output holds the objects an entity call resolves, with their keys, and
+/// where in that output.
+#[derive(Debug, Clone)]
+struct KeySource {
+    step: NodeIndex,
+    path: MergePath,
 }
 
 impl FetchGraph<SingleTypeFetchStep> {
@@ -52,6 +63,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             graph: new_graph,
             root_index: self.root_index,
             operation_kind: self.operation_kind,
+            key_sources: HashMap::new(),
         }
     }
 
@@ -60,7 +72,25 @@ impl FetchGraph<SingleTypeFetchStep> {
             graph: StableDiGraph::new(),
             root_index: None,
             operation_kind: kind,
+            key_sources: HashMap::new(),
         }
+    }
+
+    /// A reused step keeps the source it was created with. Steps are only reused under the
+    /// same parent, at the same path.
+    fn set_key_source(&mut self, entity_call: NodeIndex, step: NodeIndex, path: MergePath) {
+        self.key_sources
+            .entry(entity_call)
+            .or_insert(KeySource { step, path });
+    }
+
+    fn key_source(&self, entity_call: NodeIndex) -> Result<&KeySource, FetchGraphError> {
+        self.key_sources.get(&entity_call).ok_or_else(|| {
+            FetchGraphError::Internal(format!(
+                "Entity call [{}] has no recorded key source",
+                entity_call.index()
+            ))
+        })
     }
 }
 
@@ -316,7 +346,7 @@ fn create_noop_fetch_step(
         variable_usages: None,
         variable_definitions: None,
         mutation_field_position: None,
-        internal_aliases_locations: Vec::new(),
+        internal_aliases: Vec::new(),
     })
 }
 
@@ -356,7 +386,7 @@ fn create_fetch_step_for_entity_call(
         variable_usages: None,
         variable_definitions: None,
         mutation_field_position: None,
-        internal_aliases_locations: Vec::new(),
+        internal_aliases: Vec::new(),
     })
 }
 
@@ -387,7 +417,7 @@ fn create_fetch_step_for_root_move(
         input_rewrites: None,
         output_rewrites: None,
         mutation_field_position,
-        internal_aliases_locations: Vec::new(),
+        internal_aliases: Vec::new(),
     });
 
     fetch_graph.connect(root_step_index, idx);
@@ -806,6 +836,11 @@ fn process_entity_move_edge(
         fetch_step_index.index()
     );
     fetch_graph.connect(parent_fetch_step_index, fetch_step_index);
+    fetch_graph.set_key_source(
+        fetch_step_index,
+        parent_fetch_step_index,
+        fetch_path.clone(),
+    );
 
     process_requirements_for_fetch_steps(
         graph,
@@ -973,6 +1008,9 @@ fn process_interface_object_type_move_edge(
     //
 
     fetch_graph.connect(parent_fetch_step_index, step_for_requirements_index);
+    for step in [step_for_children_index, step_for_requirements_index] {
+        fetch_graph.set_key_source(step, parent_fetch_step_index, fetch_path.clone());
+    }
 
     trace!("Processing requirements");
     let leaf_fetch_step_indexes = process_query_node(
@@ -1491,6 +1529,7 @@ fn process_requires_field_edge(
     query_node: &QueryTreeNode,
     parent_fetch_step_index: NodeIndex,
     response_path: &MergePath,
+    fetch_path: &MergePath,
     requiring_fetch_step_index: Option<NodeIndex>,
     field_move: &FieldMove,
     edge_index: EdgeIndex,
@@ -1516,44 +1555,28 @@ fn process_requires_field_edge(
         query_node.requirements.first().unwrap(),
     )?;
 
+    // The keys to re-enter the subgraph go where the object sits. Usually that's the parent,
+    // at `fetch_path`. When the parent is an entity call of this very object, created to
+    // fetch its plain fields, the keys go where that call got its own keys from, so fetching
+    // the requirements doesn't have to wait for it.
+    //
+    // Example: Fetch Step was created to get `baz`
+    // {
+    //   foo
+    //   bar @requires(fields: "foo")
+    //   baz
+    // }
     let parent_fetch_step = fetch_graph.get_step_data(parent_fetch_step_index)?;
-    // In case of a field with `@requires`, the parent will be the current subgraph we're in.
-    let real_parent_fetch_step_index = match !parent_fetch_step
-        .output
-        .is_selecting_definition(head_type_name)
-        // The parent is an entity call of the same type, but the field sits deeper in its
-        // output, like `User.other: User`. The keys can go right there.
-        || parent_fetch_step.response_path.len() < response_path.len()
+    let (real_parent_fetch_step_index, key_to_reenter_at) = if fetch_path.is_empty()
+        && parent_fetch_step.is_entity_call()
+        && parent_fetch_step
+            .output
+            .is_selecting_definition(head_type_name)
     {
-        // If the parent's output resolves a different type, then it's a root type.
-        // We can use that as a parent.
-        true => parent_fetch_step_index,
-        // If the parent's output resolves the same type, it means we're in an entity call.
-        // We need to move up, as the entity call was created to fetch regular fields of the type
-        // (those without @requires).
-        //
-        // Example: Fetch Step was created to get `baz`
-        // {
-        //   foo
-        //   bar @requires(fields: "foo")
-        //   baz
-        // }
-        //
-        // We need to stick to the parent of the parent. An entity call gets exactly one when
-        // it's created. Only the step resolving a `@requires` field waits on more, the ones
-        // fetching its requirements, but whatever we plan under it sits deeper in the response,
-        // so it never gets here.
-        false => {
-            let mut parents = fetch_graph.parents_of(parent_fetch_step_index);
-            match (parents.next(), parents.next()) {
-                (Some(parent), None) => parent.source(),
-                _ => {
-                    return Err(FetchGraphError::NonSingleParent(
-                        parent_fetch_step_index.index(),
-                    ))
-                }
-            }
-        }
+        let key_source = fetch_graph.key_source(parent_fetch_step_index)?;
+        (key_source.step, key_source.path.clone())
+    } else {
+        (parent_fetch_step_index, fetch_path.clone())
     };
 
     // When a field (foo) is annotated with `@requires(fields: "bar")`
@@ -1572,6 +1595,11 @@ fn process_requires_field_edge(
         requires,
     )?;
 
+    fetch_graph.set_key_source(
+        step_for_children_index,
+        real_parent_fetch_step_index,
+        key_to_reenter_at.clone(),
+    );
     let step_for_children = fetch_graph.get_step_data_mut(step_for_children_index)?;
 
     step_for_children.output.add_at_path(
@@ -1622,14 +1650,6 @@ fn process_requires_field_edge(
 
     let real_parent_fetch_step = fetch_graph.get_step_data_mut(real_parent_fetch_step_index)?;
 
-    let key_to_reenter_at = if real_parent_fetch_step.response_path.len() > response_path.len() {
-        return Err(FetchGraphError::Internal(
-            "Response path is longer than expected".to_string(),
-        ));
-    } else {
-        response_path.slice_from(real_parent_fetch_step.response_path.len())
-    };
-
     trace!(
         "Adding {} to fetch([{}]).output at path {}",
         key_to_reenter_subgraph,
@@ -1672,6 +1692,11 @@ fn process_requires_field_edge(
             .input
             .add(&key_to_reenter_subgraph.selection_set)?;
         fetch_graph.connect(real_parent_fetch_step_index, step_for_requirements_index);
+        fetch_graph.set_key_source(
+            step_for_requirements_index,
+            real_parent_fetch_step_index,
+            key_to_reenter_at.clone(),
+        );
 
         (step_for_requirements_index, MergePath::default())
     };
@@ -1925,6 +1950,7 @@ fn process_query_node(
                     query_node,
                     parent_fetch_step_index,
                     response_path,
+                    fetch_path,
                     requiring_fetch_step_index,
                     field,
                     edge_index,

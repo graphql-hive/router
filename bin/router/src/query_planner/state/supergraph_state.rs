@@ -297,6 +297,22 @@ impl SupergraphState {
         self.interface_to_object_types.get(interface_name)
     }
 
+    /// The object types a value of `type_name` can be. A name we don't know stands for itself.
+    pub fn possible_object_types<'a>(&'a self, type_name: &'a str) -> BTreeSet<&'a str> {
+        match self.definitions.get(type_name) {
+            Some(SupergraphDefinition::Interface(_)) => self
+                .interface_members(type_name)
+                .into_iter()
+                .flatten()
+                .map(String::as_str)
+                .collect(),
+            Some(SupergraphDefinition::Union(union_type)) => {
+                union_type.types.iter().map(String::as_str).collect()
+            }
+            _ => BTreeSet::from([type_name]),
+        }
+    }
+
     pub fn field_return_type_name(&self, type_name: &str, field_name: &str) -> Option<&str> {
         if field_name == "__typename" {
             return Some("String");
