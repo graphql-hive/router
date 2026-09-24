@@ -10,7 +10,7 @@ use crate::query_planner::{
     ast::{
         merge_path::{Condition, MergePath, Segment},
         selection_item::SelectionItem,
-        selection_set::find_selection_set_by_path_mut,
+        selection_set::{segment_selects, SelectionSet},
     },
     planner::fetch::{
         error::FetchGraphError,
@@ -123,8 +123,6 @@ fn patch_reader(
         else {
             continue;
         };
-        // Inputs have no fragments for the types the path narrows down to.
-        let relative_path = parent_location.slice_from(rest).without_type_castings();
         let selection = reader
             .input
             .selections_for_definition_mut(&type_name)
@@ -135,28 +133,20 @@ fn patch_reader(
                     reader_index.index()
                 ))
             })?;
-
-        if let Some(selection) = find_selection_set_by_path_mut(selection, &relative_path) {
-            let field_to_patch = selection.items.iter_mut().find_map(|item| match item {
-                SelectionItem::Field(field)
-                    if field.name == field_seg.field_name()
-                        && field.arguments_hash() == *args_hash =>
-                {
-                    Some(field)
-                }
-                _ => None,
-            });
-            if let Some(field) = field_to_patch {
-                field.alias = Some(field.name.clone());
-                field.name = alias.alias.clone();
-                trace!(
-                    "patched input of step [{}] at '{}': {}",
-                    reader_index.index(),
-                    parent_location,
-                    field
-                );
-            }
-        }
+        patch_input(
+            selection,
+            &parent_location.inner[rest..],
+            None,
+            (field_seg.field_name(), *args_hash),
+            &alias.alias,
+            supergraph,
+        );
+        trace!(
+            "patched input of step [{}] at '{}': {}",
+            reader_index.index(),
+            parent_location,
+            selection
+        );
     }
 
     // Only the segment at the aliased field's own position counts, an ancestor with the same
@@ -184,6 +174,83 @@ fn patch_reader(
     }
 
     Ok(())
+}
+
+/// Renames the field to the alias wherever the input reads it at `path`. The input can wrap it
+/// in fragments, like `... on Node { ... on Cat { price } }`, so we look inside those, but only
+/// the ones for types that can have the alias. `objects` is what the path lets through at this
+/// level, `None` when it says nothing.
+fn patch_input(
+    selection_set: &mut SelectionSet,
+    path: &[Segment],
+    objects: Option<&BTreeSet<&str>>,
+    (field_name, args_hash): (&str, u64),
+    alias: &str,
+    supergraph: &SupergraphState,
+) {
+    // Type conditions before the next field narrow down the objects at this level.
+    let level_len = path
+        .iter()
+        .take_while(|segment| !matches!(segment, Segment::Field(..)))
+        .count();
+    let type_conditions: Vec<_> = path[..level_len]
+        .iter()
+        .filter_map(|segment| match segment {
+            Segment::TypeCondition(types, _) => Some(types),
+            _ => None,
+        })
+        .collect();
+    let narrowed;
+    let objects = if type_conditions.is_empty() {
+        objects
+    } else {
+        narrowed = objects_of(supergraph, &type_conditions);
+        Some(&narrowed)
+    };
+    let path = &path[level_len..];
+
+    for item in selection_set.items.iter_mut() {
+        let descend = path
+            .first()
+            .is_some_and(|segment| segment_selects(segment, item));
+        match item {
+            SelectionItem::InlineFragment(fragment) => {
+                let fits = objects.is_none_or(|objects| {
+                    supergraph
+                        .possible_object_types(&fragment.type_condition)
+                        .iter()
+                        .any(|object| objects.contains(object))
+                });
+                if fits {
+                    patch_input(
+                        &mut fragment.selections,
+                        path,
+                        objects,
+                        (field_name, args_hash),
+                        alias,
+                        supergraph,
+                    );
+                }
+            }
+            SelectionItem::Field(field) if path.is_empty() => {
+                if field.name == field_name && field.arguments_hash() == args_hash {
+                    field.alias = Some(field.name.clone());
+                    field.name = alias.to_string();
+                }
+            }
+            SelectionItem::Field(field) if descend => {
+                patch_input(
+                    &mut field.selections,
+                    &path[1..],
+                    None,
+                    (field_name, args_hash),
+                    alias,
+                    supergraph,
+                );
+            }
+            _ => {}
+        }
+    }
 }
 
 /// The `@include`/`@skip` on a path and on its step, as (variable, is a skip) pairs.

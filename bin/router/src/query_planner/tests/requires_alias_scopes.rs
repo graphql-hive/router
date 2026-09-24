@@ -12,6 +12,10 @@
 //!   `Cat.gbp` requiring the GBP price. Composed with Apollo, for the same reason.
 //! - `requires-alias-object-field`: `users` has `User.team(role:)`, `teams` has `Team.name`,
 //!   and `perms` has `User.label` requiring `team(role: "admin") { name }`.
+//! - `requires-alias-entity-calls`: `catalog` has `things: [Thing]`, `shop` has
+//!   `Thing.price(currency:)`, `pricing` has `Thing.eur` requiring the EUR price and `tax` has
+//!   `Thing.gbp` requiring the GBP one. `shop` isn't the root here, so every price comes from
+//!   an entity call.
 
 use std::error::Error;
 
@@ -33,6 +37,7 @@ const INTERFACE_OBJECT: &str = "fixture/tests/requires-alias-interface-object.su
 const ENTITY_INTERFACE: &str = "fixture/tests/requires-alias-entity-interface.supergraph.graphql";
 const TWO_REQUIREMENTS: &str = "fixture/tests/requires-alias-two-requirements.supergraph.graphql";
 const OBJECT_FIELD: &str = "fixture/tests/requires-alias-object-field.supergraph.graphql";
+const ENTITY_CALLS: &str = "fixture/tests/requires-alias-entity-calls.supergraph.graphql";
 
 /// What `shop` serves, without the federation parts. Enough to validate its root fetches.
 const SHOP_SCHEMA: &str = r#"
@@ -198,8 +203,8 @@ fn requires_alias_reaches_readers_batched_for_many_types() -> Result<(), Box<dyn
 /// `Dog`.
 ///
 /// The `pricing` input is `... on Node { ... on Cat { price } ... on Dog { price } }`. The
-/// alias pass only looks for `price` right in the input, not inside those fragments, so it
-/// stays plain `price` and `pricing` gets the client's price instead of the EUR one.
+/// alias pass has to look inside those fragments, or `price` stays plain and `pricing` gets
+/// the client's price instead of the EUR one.
 #[test]
 fn requires_alias_reaches_readers_inside_type_fragments() -> Result<(), Box<dyn Error>> {
     init_logger();
@@ -209,29 +214,30 @@ fn requires_alias_reaches_readers_inside_type_fragments() -> Result<(), Box<dyn 
         r#"{ things { ... on Cat { price(currency: "USD") gbp } eur } }"#,
     ] {
         let plan = plan(TWO_REQUIREMENTS, query)?;
-        let shop = root_fetch(&plan, "shop");
-        let mut wrong = Vec::new();
-        for reader in fetches(&plan) {
-            let expected = match reader.service.as_str() {
-                "pricing" => r#"currency: "EUR""#,
-                "tax" => r#"currency: "GBP""#,
-                _ => continue,
-            };
-            for (type_name, key) in read_keys(&reader.requires, "price") {
-                let values: Vec<_> = selections_with_key(&shop.operation, &key)
-                    .into_iter()
-                    .filter(|s| s.applies_to(&type_name))
-                    .map(|s| s.arguments)
-                    .collect();
-                if values.is_empty() || values.iter().any(|a| a != expected) {
-                    wrong.push(format!(
-                        "`{}` reads `{key}` of `{type_name}`, which `shop` fetches as {values:?}",
-                        reader.service
-                    ));
-                }
-            }
-        }
-        assert!(wrong.is_empty(), "{query}\n{wrong:#?}\n{}", shop.operation);
+        let wrong = wrong_price_reads(&plan);
+        assert!(wrong.is_empty(), "{query}\n{wrong:#?}");
+    }
+
+    Ok(())
+}
+
+/// Same fixture and readers as above, but under `... on Node @include(if: $x)`. `shop` needs
+/// three prices per `Cat`, and they come from separate steps merged into the root one by one.
+/// Each merge picks alias names with a fresh counter and only checks the fields right next to
+/// it, so after the GBP one went into a fragment as `_internal_qp_alias_0`, the EUR one picks
+/// `_internal_qp_alias_0` too. The conflict check catches it, but the merge is a real one by
+/// then, so the whole plan fails.
+#[test]
+fn requires_alias_names_stay_unique_across_merges() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    for query in [
+        r#"query($x: Boolean!) { things { ... on Node @include(if: $x) { price(currency: "USD") eur ... on Cat { gbp } } } }"#,
+        r#"query($x: Boolean!) { things { ... on Node @include(if: $x) { price(currency: "USD") ... on Cat { gbp } eur } } }"#,
+        r#"query($x: Boolean!) { things { ... on Node @include(if: $x) { ... on Cat { gbp } price(currency: "USD") eur } } }"#,
+    ] {
+        let plan = plan(TWO_REQUIREMENTS, query).map_err(|e| format!("{query}\n{e}"))?;
+        let wrong = wrong_price_reads(&plan);
+        assert!(wrong.is_empty(), "{query}\n{wrong:#?}");
     }
 
     Ok(())
@@ -261,27 +267,56 @@ fn requires_alias_keeps_response_keys_apart_across_fetches() -> Result<(), Box<d
         }
         "#,
     ] {
-        let plan = plan(OBJECT_FIELD, query)?;
-        let writes: Vec<_> = fetches(&plan).iter().flat_map(writes).collect();
-        let mut clashes = Vec::new();
-        for (i, a) in writes.iter().enumerate() {
-            for b in &writes[i + 1..] {
-                if a.location == b.location && a.key == b.key && a.arguments != b.arguments {
-                    clashes.push(format!(
-                        "`{}` at `{}` is `{}({})` from {} and `{}({})` from {}",
-                        a.key,
-                        a.location.join("."),
-                        a.name,
-                        a.arguments,
-                        a.service,
-                        b.name,
-                        b.arguments,
-                        b.service
-                    ));
-                }
-            }
-        }
+        let clashes = key_clashes(&plan(OBJECT_FIELD, query)?);
         assert!(clashes.is_empty(), "{query}\n{clashes:#?}");
+    }
+
+    Ok(())
+}
+
+/// Like the test above, but `me` is selected twice, once of them under `@include`. The admin
+/// team is fetched for the `me` without the client's team, and the merge compares it with the
+/// fields next to it, which don't include the other `me`. Both `me`s are the same object,
+/// so the merge is refused and the admin team lands under the plain `team` key again.
+#[test]
+fn requires_alias_keeps_response_keys_apart_when_the_parent_repeats() -> Result<(), Box<dyn Error>>
+{
+    init_logger();
+    for query in [
+        r#"query($x: Boolean!) { me { team(role: "user") { name } } me @include(if: $x) { label } }"#,
+        r#"query($x: Boolean!) { me @include(if: $x) { team(role: "user") { name } } me { label } }"#,
+        r#"query($x: Boolean!, $y: Boolean!) { me @include(if: $x) { team(role: "user") { name } } me @include(if: $y) { label } }"#,
+        r#"query($x: Boolean!, $y: Boolean!) { me @include(if: $x) { team(role: "user") { name } label } me @include(if: $y) { label } }"#,
+        r#"query($x: Boolean!, $y: Boolean!) { ... @include(if: $x) { me { team(role: "user") { name } } } ... @include(if: $y) { me { label } } }"#,
+    ] {
+        let clashes = key_clashes(&plan(OBJECT_FIELD, query)?);
+        assert!(clashes.is_empty(), "{query}\n{clashes:#?}");
+    }
+
+    Ok(())
+}
+
+/// Every price comes from a `shop` entity call, and entity calls under different conditions
+/// are never merged. So when `eur` is under `@include(if: $x)`, its EUR price gets its own
+/// call, and nothing compares it with the client's USD price in the other one. Both write
+/// `price` into the same `things`, so the client can get the EUR price and `pricing` the USD
+/// one. The same goes for two requirements, like `gbp` under `$x` next to `eur`.
+#[test]
+fn requires_alias_keeps_response_keys_apart_across_entity_calls() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    for query in [
+        // All in one call, EUR and GBP get aliases. This one is right.
+        r#"{ things { price(currency: "USD") eur gbp } }"#,
+        r#"query($x: Boolean!) { things { price(currency: "USD") eur @include(if: $x) } }"#,
+        r#"query($x: Boolean!) { things { price(currency: "USD") @include(if: $x) eur } }"#,
+        r#"query($x: Boolean!) { things { price(currency: "USD") ... @include(if: $x) { eur gbp } } }"#,
+        r#"query($x: Boolean!) { things { ... @include(if: $x) { price(currency: "USD") } eur gbp } }"#,
+        r#"query($x: Boolean!) { things { ... @include(if: $x) { gbp } eur } }"#,
+    ] {
+        let plan = plan(ENTITY_CALLS, query)?;
+        let mut wrong = key_clashes(&plan);
+        wrong.extend(wrong_price_reads(&plan));
+        assert!(wrong.is_empty(), "{query}\n{wrong:#?}");
     }
 
     Ok(())
@@ -290,6 +325,67 @@ fn requires_alias_keeps_response_keys_apart_across_fetches() -> Result<(), Box<d
 fn plan(fixture: &str, query: &str) -> Result<Value, Box<dyn Error>> {
     let plan = build_query_plan_with_defaults(fixture, parse_operation(query))?;
     Ok(serde_json::to_value(&plan)?)
+}
+
+/// Readers of `price` that don't get the one they need: `pricing` needs the EUR price, `tax`
+/// the GBP one. A `Node` reader reads for `Cat`s and `Dog`s, so the key has to be there for
+/// both.
+fn wrong_price_reads(plan: &Value) -> Vec<String> {
+    let all = fetches(plan);
+    let shops: Vec<_> = all.iter().filter(|f| f.service == "shop").collect();
+    let mut wrong = Vec::new();
+    for reader in &all {
+        let expected = match reader.service.as_str() {
+            "pricing" => r#"currency: "EUR""#,
+            "tax" => r#"currency: "GBP""#,
+            _ => continue,
+        };
+        for (read_type, key) in read_keys(&reader.requires, "price") {
+            let objects = match read_type.as_str() {
+                "Node" => vec!["Cat".to_string(), "Dog".to_string()],
+                _ => vec![read_type],
+            };
+            for type_name in objects {
+                let values: Vec<_> = shops
+                    .iter()
+                    .flat_map(|shop| selections_with_key(&shop.operation, &key))
+                    .filter(|s| s.applies_to(&type_name))
+                    .map(|s| s.arguments)
+                    .collect();
+                if values.is_empty() || values.iter().any(|a| a != expected) {
+                    wrong.push(format!(
+                        "`{}` reads `{key}` of `{type_name}`, which `shop` fetches as {values:?}",
+                        reader.service
+                    ));
+                }
+            }
+        }
+    }
+    wrong
+}
+
+/// Fetches that write the same key at the same place, with different arguments.
+fn key_clashes(plan: &Value) -> Vec<String> {
+    let writes: Vec<_> = fetches(plan).iter().flat_map(writes).collect();
+    let mut clashes = Vec::new();
+    for (i, a) in writes.iter().enumerate() {
+        for b in &writes[i + 1..] {
+            if a.location == b.location && a.key == b.key && a.arguments != b.arguments {
+                clashes.push(format!(
+                    "`{}` at `{}` is `{}({})` from {} and `{}({})` from {}",
+                    a.key,
+                    a.location.join("."),
+                    a.name,
+                    a.arguments,
+                    a.service,
+                    b.name,
+                    b.arguments,
+                    b.service
+                ));
+            }
+        }
+    }
+    clashes
 }
 
 struct Fetch {

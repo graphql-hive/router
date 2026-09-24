@@ -7,7 +7,7 @@ use std::{
 
 use crate::query_planner::{
     ast::{
-        merge_path::{Condition, MergePath},
+        merge_path::{Condition, MergePath, Segment},
         safe_merge::{AliasesRecords, SafeSelectionSetMerger, UnresolvableConflict},
         selection_item::SelectionItem,
         selection_set::{
@@ -552,6 +552,10 @@ impl FetchStepSelections<MultiTypeFetchStep> {
         supergraph: &SupergraphState,
     ) -> Result<AliasesRecords, FetchStepSelectionsError> {
         let mut aliases_made = AliasesRecords::new();
+        let mut merger = SafeSelectionSetMerger::new(supergraph);
+        for (_, selection_set) in self.iter_selections() {
+            merger.skip_aliases_in(selection_set);
+        }
 
         for (definition_name, selection_set) in other.iter_selections() {
             let target = self.merge_target(definition_name, fetch_path, true)?;
@@ -562,6 +566,9 @@ impl FetchStepSelections<MultiTypeFetchStep> {
                     FetchStepSelectionsError::UnexpectedMissingDefinition(target_type.to_string())
                 })?;
 
+            let surroundings =
+                (!fetch_path.is_empty()).then(|| fields_on_same_objects(current, fetch_path));
+
             let selection_at_path = find_selection_set_by_path_mut(current, fetch_path)
                 .ok_or_else(|| {
                     FetchStepSelectionsError::MissingPathInSelection(
@@ -570,12 +577,12 @@ impl FetchStepSelections<MultiTypeFetchStep> {
                     )
                 })?;
 
-            let mut merger = SafeSelectionSetMerger::new(supergraph);
             let current_aliases_made = merger.merge_selection_set(
                 selection_at_path,
                 &target.scope(definition_name, selection_set),
                 (self_used_for_requires, other_used_for_requires),
                 false,
+                surroundings.as_ref(),
             )?;
 
             // The merger only checked below `fetch_path`, but what's around it ends up on the
@@ -673,6 +680,75 @@ impl FetchStepSelections<SingleTypeFetchStep> {
             _state: Default::default(),
             selections: Default::default(),
         }
+    }
+}
+
+/// Copies of the fields that land on the same objects as `path`, without what's under them.
+/// The path is followed by response key only, through fragments and whatever `@include` or
+/// `@skip` is on the way. Those are all the same objects: the fragment next to
+/// `me.|[User] @include(if: $y)` is on the same `me`, and so is a second `me @include(if: $x)`.
+fn fields_on_same_objects(root: &SelectionSet, path: &MergePath) -> SelectionSet {
+    let mut sets = vec![root];
+    for segment in path.inner.iter() {
+        if let Segment::Field(field, _, _) = segment {
+            let mut next = Vec::new();
+            for set in sets {
+                selections_by_key(set, field.response_key(), &mut next);
+            }
+            sets = next;
+        }
+    }
+    SelectionSet {
+        items: sets
+            .into_iter()
+            .flat_map(|set| shallow(set).items)
+            .collect(),
+    }
+}
+
+/// The selections of the fields of `set` with the response key `key`, looking through
+/// fragments.
+fn selections_by_key<'a>(set: &'a SelectionSet, key: &str, out: &mut Vec<&'a SelectionSet>) {
+    for item in &set.items {
+        match item {
+            SelectionItem::Field(field) if field.selection_identifier() == key => {
+                out.push(&field.selections)
+            }
+            SelectionItem::InlineFragment(fragment) => {
+                selections_by_key(&fragment.selections, key, out)
+            }
+            _ => {}
+        }
+    }
+}
+
+/// `set` with its fields and fragments, but nothing under the fields.
+fn shallow(set: &SelectionSet) -> SelectionSet {
+    SelectionSet {
+        items: set
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                SelectionItem::Field(field) => Some(SelectionItem::Field(FieldSelection {
+                    name: field.name.clone(),
+                    selections: SelectionSet::default(),
+                    alias: field.alias.clone(),
+                    arguments: field.arguments.clone(),
+                    skip_if: field.skip_if.clone(),
+                    include_if: field.include_if.clone(),
+                    omit_from_response: field.omit_from_response,
+                })),
+                SelectionItem::InlineFragment(fragment) => {
+                    Some(SelectionItem::InlineFragment(InlineFragmentSelection {
+                        type_condition: fragment.type_condition.clone(),
+                        selections: shallow(&fragment.selections),
+                        skip_if: fragment.skip_if.clone(),
+                        include_if: fragment.include_if.clone(),
+                    }))
+                }
+                SelectionItem::FragmentSpread(_) => None,
+            })
+            .collect(),
     }
 }
 

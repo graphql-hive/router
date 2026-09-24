@@ -36,6 +36,8 @@ pub enum ConflictResolutionLocation {
 
 pub type AliasesRecords = Vec<(MergePath, String)>;
 
+const ALIAS_PREFIX: &str = "_internal_qp_alias_";
+
 /// Two plain fields with the same response key and other arguments or alias. Neither side is
 /// there for a `@requires`, so both are what the client asked for, and there's nothing to alias.
 #[derive(Debug, Clone, thiserror::Error)]
@@ -50,9 +52,35 @@ impl<'a> SafeSelectionSetMerger<'a> {
         }
     }
 
+    /// Moves the counter past every internal alias in `set`. A step's selections end up in one
+    /// operation, so a name used anywhere in it, even in another fragment, can't be picked
+    /// again. `safe_next_alias_name` only sees the items next to the new field.
+    pub fn skip_aliases_in(&mut self, set: &SelectionSet) {
+        for item in &set.items {
+            match item {
+                SelectionItem::Field(field) => {
+                    // Inputs are patched the other way around, `price: _internal_qp_alias_0`.
+                    for name in field.alias.iter().chain([&field.name]) {
+                        if let Some(number) = name
+                            .strip_prefix(ALIAS_PREFIX)
+                            .and_then(|number| number.parse::<u64>().ok())
+                        {
+                            self.aliases_counter = self.aliases_counter.max(number + 1);
+                        }
+                    }
+                    self.skip_aliases_in(&field.selections);
+                }
+                SelectionItem::InlineFragment(fragment) => {
+                    self.skip_aliases_in(&fragment.selections)
+                }
+                SelectionItem::FragmentSpread(_) => {}
+            }
+        }
+    }
+
     pub fn safe_next_alias_name(&mut self, target_existing: &[SelectionItem]) -> String {
         loop {
-            let alias = format!("_internal_qp_alias_{}", self.aliases_counter);
+            let alias = format!("{ALIAS_PREFIX}{}", self.aliases_counter);
             self.aliases_counter += 1;
 
             let exists = target_existing
@@ -71,6 +99,7 @@ impl<'a> SafeSelectionSetMerger<'a> {
         source: &SelectionSet,
         (self_used_for_requires, other_used_for_requires): (bool, bool),
         as_first: bool,
+        surroundings: Option<&SelectionSet>,
     ) -> Result<AliasesRecords, UnresolvableConflict> {
         let mut aliases_performed: AliasesRecords = Vec::new();
         self.merge_selection_set_inner(
@@ -79,6 +108,7 @@ impl<'a> SafeSelectionSetMerger<'a> {
             (self_used_for_requires, other_used_for_requires),
             as_first,
             MergePath::default(),
+            surroundings,
             &mut aliases_performed,
         )?;
 
@@ -102,6 +132,7 @@ impl<'a> SafeSelectionSetMerger<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn merge_selection_set_inner(
         &mut self,
         target: &mut SelectionSet,
@@ -109,6 +140,8 @@ impl<'a> SafeSelectionSetMerger<'a> {
         (self_used_for_requires, other_used_for_requires): (bool, bool),
         as_first: bool,
         response_path: MergePath,
+        // Fields next to `target` that end up on the same objects, only known at the top.
+        surroundings: Option<&SelectionSet>,
         aliases_performed: &mut AliasesRecords,
     ) -> Result<(), UnresolvableConflict> {
         if source.items.is_empty() {
@@ -156,6 +189,7 @@ impl<'a> SafeSelectionSetMerger<'a> {
                                 (self_used_for_requires, other_used_for_requires),
                                 as_first,
                                 next_path,
+                                None,
                                 aliases_performed,
                             )?;
 
@@ -204,6 +238,7 @@ impl<'a> SafeSelectionSetMerger<'a> {
                             (self_used_for_requires, other_used_for_requires),
                             as_first,
                             next_path,
+                            None,
                             aliases_performed,
                         )?;
                         break;
@@ -227,7 +262,34 @@ impl<'a> SafeSelectionSetMerger<'a> {
                 }
                 // In case the field does not exists, and doesn't have a conflict, we can just copy it as-is.
                 ConflictsLookupResult::Copy => {
-                    pending_items.push(MergeAction::Copy(source_item.clone()));
+                    let mut copied = SelectionSet {
+                        items: vec![source_item.clone()],
+                    };
+                    // The loop above only compares items with the same conditions. What we
+                    // copy can still clash with a field under another `@include` or in a
+                    // fragment, it all ends up on the same objects. The side that's there for
+                    // a `@requires` gets an alias.
+                    match (self_used_for_requires, other_used_for_requires) {
+                        (_, true) => self.alias_clashes(
+                            &mut copied,
+                            &[&*target]
+                                .into_iter()
+                                .chain(surroundings)
+                                .collect::<Vec<_>>(),
+                            &response_path,
+                            aliases_performed,
+                        ),
+                        // We can't alias what's around `target`, if that clashes too, the
+                        // conflict check below fails the merge.
+                        (true, false) => self.alias_clashes(
+                            target,
+                            &[&copied],
+                            &response_path,
+                            aliases_performed,
+                        ),
+                        (false, false) => {}
+                    }
+                    pending_items.extend(copied.items.into_iter().map(MergeAction::Copy));
                 }
             }
         }
@@ -292,6 +354,102 @@ impl<'a> SafeSelectionSetMerger<'a> {
 
         Ok(())
     }
+
+    /// Aliases the fields of `set` that have the same response key as a field of `others` on
+    /// the same objects, but aren't the same field. All are looked through inline fragments.
+    fn alias_clashes(
+        &mut self,
+        set: &mut SelectionSet,
+        others: &[&SelectionSet],
+        response_path: &MergePath,
+        aliases_performed: &mut AliasesRecords,
+    ) {
+        let mut other_fields = Vec::new();
+        for other in others {
+            collect_fields(other, None, &mut other_fields);
+        }
+        let mut set_fields = Vec::new();
+        collect_fields(set, None, &mut set_fields);
+        let mut taken: BTreeSet<String> = other_fields
+            .iter()
+            .chain(&set_fields)
+            .map(|(field, _)| field.selection_identifier().to_string())
+            .collect();
+
+        let supergraph = self.supergraph;
+        let counter = &mut self.aliases_counter;
+        for_each_field_mut(set, None, response_path, &mut |field, type_name, path| {
+            let clashes = other_fields.iter().any(|(other, other_type)| {
+                other.selection_identifier() == field.selection_identifier()
+                    && (other.name != field.name
+                        || other.arguments_hash() != field.arguments_hash())
+                    && can_share_objects(supergraph, type_name, *other_type)
+            });
+            if !clashes {
+                return;
+            }
+            let alias = loop {
+                let alias = format!("{ALIAS_PREFIX}{counter}");
+                *counter += 1;
+                if taken.insert(alias.clone()) {
+                    break alias;
+                }
+            };
+            trace!(
+                "aliasing '{}' as '{alias}', it clashes with another field",
+                field.name
+            );
+            field.alias = Some(alias.clone());
+            let location = path.push(Segment::Field(
+                FieldPathSegment::named(field.name.clone()),
+                field.arguments_hash(),
+                (&*field).into(),
+            ));
+            aliases_performed.push((location, alias));
+        });
+    }
+}
+
+/// Calls `f` for every field of `set` at its own level, looking through inline fragments,
+/// with the type it's selected on and the path to where it sits.
+fn for_each_field_mut(
+    set: &mut SelectionSet,
+    type_name: Option<&str>,
+    path: &MergePath,
+    f: &mut impl FnMut(&mut FieldSelection, Option<&str>, &MergePath),
+) {
+    for item in set.items.iter_mut() {
+        match item {
+            SelectionItem::Field(field) => f(field, type_name, path),
+            SelectionItem::InlineFragment(fragment) => {
+                let path = path.push(Segment::TypeCondition(
+                    BTreeSet::from([fragment.type_condition.clone()]),
+                    (&*fragment).into(),
+                ));
+                for_each_field_mut(
+                    &mut fragment.selections,
+                    Some(&fragment.type_condition),
+                    &path,
+                    f,
+                );
+            }
+            SelectionItem::FragmentSpread(_) => {}
+        }
+    }
+}
+
+/// Fields under two different object types can never be on the same object.
+fn can_share_objects(supergraph: &SupergraphState, a: Option<&str>, b: Option<&str>) -> bool {
+    let is_object = |name: &str| {
+        matches!(
+            supergraph.definitions.get(name),
+            Some(SupergraphDefinition::Object(_))
+        )
+    };
+    match (a, b) {
+        (Some(a), Some(b)) => a == b || !is_object(a) || !is_object(b),
+        _ => true,
+    }
 }
 
 /// GraphQL wants fields with the same response key in a selection set to be the same field,
@@ -322,21 +480,10 @@ fn find_field_conflict(
     }
 
     for group in by_response_key.values() {
-        let is_object = |name: &str| {
-            matches!(
-                supergraph.definitions.get(name),
-                Some(SupergraphDefinition::Object(_))
-            )
-        };
-        let same_scope = |a: Option<&str>, b: Option<&str>| match (a, b) {
-            (Some(a), Some(b)) => a == b || !is_object(a) || !is_object(b),
-            _ => true,
-        };
-
         for (i, (a, a_type)) in group.iter().enumerate() {
             let mut children = vec![(&a.selections, None)];
             for (b, b_type) in &group[i + 1..] {
-                if !same_scope(*a_type, *b_type) {
+                if !can_share_objects(supergraph, *a_type, *b_type) {
                     continue;
                 }
                 if a.name != b.name || a.arguments_hash() != b.arguments_hash() {
@@ -418,7 +565,7 @@ mod tests {
 
         let mut merger = new_merger();
         merger
-            .merge_selection_set(&mut a, &b, (true, false), false)
+            .merge_selection_set(&mut a, &b, (true, false), false, None)
             .unwrap();
 
         insta::assert_snapshot!(a, @"{a b}");
@@ -431,7 +578,7 @@ mod tests {
 
         let mut merger = new_merger();
         assert!(merger
-            .merge_selection_set(&mut a, &b, (false, false), false)
+            .merge_selection_set(&mut a, &b, (false, false), false, None)
             .is_err());
     }
 
@@ -439,7 +586,13 @@ mod tests {
     fn conflict_under_different_conditions_is_an_error() {
         let merge = |a: &str, b: &str| {
             let mut a = parse_selection_set(a);
-            new_merger().merge_selection_set(&mut a, &parse_selection_set(b), (true, true), false)
+            new_merger().merge_selection_set(
+                &mut a,
+                &parse_selection_set(b),
+                (false, false),
+                false,
+                None,
+            )
         };
 
         // In fragments with different conditions.
@@ -472,6 +625,53 @@ mod tests {
         .is_ok());
     }
 
+    /// Fields under other conditions or in fragments aren't compared by the merge itself,
+    /// but they still clash, so the side that's there for a `@requires` gets an alias.
+    #[test]
+    fn conflict_under_different_conditions_gets_an_alias() {
+        let merge = |a: &str, b: &str, sides, surroundings: Option<&str>| {
+            let mut a = parse_selection_set(a);
+            let surroundings = surroundings.map(parse_selection_set);
+            let aliases = new_merger()
+                .merge_selection_set(
+                    &mut a,
+                    &parse_selection_set(b),
+                    sides,
+                    false,
+                    surroundings.as_ref(),
+                )
+                .unwrap();
+            let aliases: Vec<_> = aliases
+                .iter()
+                .map(|(path, alias)| format!("{path} as {alias}"))
+                .collect();
+            format!("{a} {aliases:?}")
+        };
+
+        insta::assert_snapshot!(
+            merge("{ t(w: 1) @include(if: $a) }", "{ t(w: 2) }", (false, true), None),
+            @r#"{t(w: 1) @include(if: $a) _internal_qp_alias_0: t(w: 2)} ["t as _internal_qp_alias_0"]"#
+        );
+        insta::assert_snapshot!(
+            merge("{ t(w: 1) }", "{ ... on Photo @include(if: $a) { t(w: 2) } }", (false, true), None),
+            @r#"{t(w: 1) ...on Photo @include(if: $a){_internal_qp_alias_0: t(w: 2)}} ["|[Photo] @include(if: $a).t as _internal_qp_alias_0"]"#
+        );
+        insta::assert_snapshot!(
+            merge("{ ... on Photo @include(if: $a) { t(w: 1) } }", "{ t(w: 2) }", (true, false), None),
+            @r#"{...on Photo @include(if: $a){_internal_qp_alias_0: t(w: 1)} t(w: 2)} ["|[Photo] @include(if: $a).t as _internal_qp_alias_0"]"#
+        );
+        // What's around the merge target counts too, and so do the aliases in it.
+        insta::assert_snapshot!(
+            merge(
+                "{ id }",
+                "{ t(w: 2) }",
+                (false, true),
+                Some("{ ... on Photo { id t(w: 1) _internal_qp_alias_0: t(w: 3) } }"),
+            ),
+            @r#"{id _internal_qp_alias_1: t(w: 2)} ["t as _internal_qp_alias_1"]"#
+        );
+    }
+
     #[test]
     fn mix_field_name_and_alias() {
         let mut a = parse_selection_set("{ a }");
@@ -479,7 +679,7 @@ mod tests {
 
         let mut merger = new_merger();
         merger
-            .merge_selection_set(&mut a, &b, (true, false), false)
+            .merge_selection_set(&mut a, &b, (true, false), false, None)
             .unwrap();
 
         insta::assert_snapshot!(a, @"{_internal_qp_alias_0: a a: b}");
@@ -492,7 +692,7 @@ mod tests {
 
         let mut merger = new_merger();
         merger
-            .merge_selection_set(&mut a, &b, (true, false), false)
+            .merge_selection_set(&mut a, &b, (true, false), false, None)
             .unwrap();
 
         insta::assert_snapshot!(a, @"{a}");
@@ -505,7 +705,7 @@ mod tests {
 
         let mut merger = new_merger();
         merger
-            .merge_selection_set(&mut a, &b, (false, true), false)
+            .merge_selection_set(&mut a, &b, (false, true), false, None)
             .unwrap();
 
         insta::assert_snapshot!(a, @"{a(i: 1) _internal_qp_alias_0: a(i: 2)}");
@@ -518,7 +718,7 @@ mod tests {
 
         let mut merger = new_merger();
         merger
-            .merge_selection_set(&mut a, &b, (true, true), false)
+            .merge_selection_set(&mut a, &b, (true, true), false, None)
             .unwrap();
 
         insta::assert_snapshot!(a, @"{a(i: 1) _internal_qp_alias_0 _internal_qp_alias_1: a(i: 2)}");
@@ -531,7 +731,7 @@ mod tests {
 
         let mut merger = new_merger();
         merger
-            .merge_selection_set(&mut a, &b, (false, true), false)
+            .merge_selection_set(&mut a, &b, (false, true), false, None)
             .unwrap();
 
         insta::assert_snapshot!(a, @"{a(i: 1) _internal_qp_alias_0: test _internal_qp_alias_1: a(i: 2)}");
@@ -545,10 +745,10 @@ mod tests {
 
         let mut merger = new_merger();
         merger
-            .merge_selection_set(&mut a, &b, (false, true), false)
+            .merge_selection_set(&mut a, &b, (false, true), false, None)
             .unwrap();
         merger
-            .merge_selection_set(&mut a, &c, (false, true), false)
+            .merge_selection_set(&mut a, &c, (false, true), false, None)
             .unwrap();
 
         insta::assert_snapshot!(a, @"{a(i: 1) _internal_qp_alias_0: a(i: 2) _internal_qp_alias_1: a(i: 3)}");
@@ -562,10 +762,10 @@ mod tests {
 
         let mut merger = new_merger();
         merger
-            .merge_selection_set(&mut a, &b, (false, true), false)
+            .merge_selection_set(&mut a, &b, (false, true), false, None)
             .unwrap();
         merger
-            .merge_selection_set(&mut a, &c, (false, true), false)
+            .merge_selection_set(&mut a, &c, (false, true), false, None)
             .unwrap();
 
         insta::assert_snapshot!(a, @"{p{a(i: 1) _internal_qp_alias_0: a(i: 2) _internal_qp_alias_1: a(i: 3)}}");
@@ -579,11 +779,11 @@ mod tests {
 
         let mut merger = new_merger();
         merger
-            .merge_selection_set(&mut a, &b, (false, true), false)
+            .merge_selection_set(&mut a, &b, (false, true), false, None)
             .unwrap();
         let mut merger2 = new_merger();
         merger2
-            .merge_selection_set(&mut a, &c, (false, true), false)
+            .merge_selection_set(&mut a, &c, (false, true), false, None)
             .unwrap();
 
         insta::assert_snapshot!(a, @"{p{a(i: 1) _internal_qp_alias_0: a(i: 2) _internal_qp_alias_1: a(i: 3)}}");
@@ -596,7 +796,7 @@ mod tests {
 
         let mut merger = new_merger();
         merger
-            .merge_selection_set(&mut a, &b, (false, true), false)
+            .merge_selection_set(&mut a, &b, (false, true), false, None)
             .unwrap();
 
         insta::assert_snapshot!(a, @"{p{a(i: 1) _internal_qp_alias_0: a(i: 2)}}");
@@ -609,7 +809,7 @@ mod tests {
 
         let mut merger = new_merger();
         merger
-            .merge_selection_set(&mut a, &b, (true, false), false)
+            .merge_selection_set(&mut a, &b, (true, false), false, None)
             .unwrap();
 
         insta::assert_snapshot!(a, @"{p{_internal_qp_alias_0: a(i: 1) a(i: 2)}}");
@@ -622,7 +822,7 @@ mod tests {
 
         let mut merger = new_merger();
         let merge_locations = merger
-            .merge_selection_set(&mut a, &b, (false, true), false)
+            .merge_selection_set(&mut a, &b, (false, true), false, None)
             .unwrap();
         assert_eq!(merge_locations.len(), 1);
         insta::assert_snapshot!(merge_locations[0].0, @"p.a");

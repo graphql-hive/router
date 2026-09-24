@@ -564,7 +564,7 @@ fn merge_field_omit_from_response(target: &mut FieldSelection, source: &FieldSel
 }
 
 /// Does this path segment point at this selection item?
-fn segment_selects(segment: &Segment, item: &SelectionItem) -> bool {
+pub(crate) fn segment_selects(segment: &Segment, item: &SelectionItem) -> bool {
     match (segment, item) {
         (
             Segment::TypeCondition(type_names, condition),
