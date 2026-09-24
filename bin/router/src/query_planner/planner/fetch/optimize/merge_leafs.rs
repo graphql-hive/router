@@ -57,7 +57,7 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
-        true
+        self.merges_cleanly_with(other)
     }
 }
 

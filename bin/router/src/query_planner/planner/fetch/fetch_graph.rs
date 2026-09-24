@@ -857,11 +857,6 @@ fn process_interface_object_type_move_edge(
     condition: Option<&Condition>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
-    if fetch_graph.parents_of(parent_fetch_step_index).count() != 1 {
-        return Err(FetchGraphError::NonSingleParent(
-            parent_fetch_step_index.index(),
-        ));
-    }
     let edge = graph.edge(edge_index)?;
     let requirement = match edge {
         Edge::InterfaceObjectTypeMove(m) => TypeAwareSelection {
@@ -1038,7 +1033,9 @@ fn process_subgraph_entrypoint_edge(
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     // When every root field has the same `@skip`/`@include`, the whole fetch can be skipped,
-    // and the fields don't need it anymore. A subscription has to start with its fetch, so
+    // and the fields don't need it anymore. It has to be decided here, before the fields are
+    // planned: with the condition on the fetch, the fields and the steps under them are
+    // planned without it, and their paths too. A subscription has to start with its fetch, so
     // there it stays on the fields.
     let mut conditions = query_node
         .children
@@ -1542,8 +1539,10 @@ fn process_requires_field_edge(
         //   baz
         // }
         //
-        // We need to stick to the parent of the parent. Only here we need a single one, the
-        // parent itself can wait on many, like when its own `@requires` came from two subgraphs.
+        // We need to stick to the parent of the parent. An entity call gets exactly one when
+        // it's created. Only the step resolving a `@requires` field waits on more, the ones
+        // fetching its requirements, but whatever we plan under it sits deeper in the response,
+        // so it never gets here.
         false => {
             let mut parents = fetch_graph.parents_of(parent_fetch_step_index);
             match (parents.next(), parents.next()) {

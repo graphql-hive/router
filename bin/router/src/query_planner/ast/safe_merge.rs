@@ -32,37 +32,11 @@ pub enum ConflictResolutionLocation {
 
 pub type AliasesRecords = Vec<(MergePath, String)>;
 
-/// Whether merging `source` into `target` would find a conflict: a field with the same
-/// response key, but other arguments or alias. Matches fields the same way the merger does.
-pub fn has_conflicts(target: &SelectionSet, source: &SelectionSet) -> bool {
-    source.items.iter().any(|source_item| {
-        target
-            .items
-            .iter()
-            .any(|target_item| match (source_item, target_item) {
-                (SelectionItem::Field(source_field), SelectionItem::Field(target_field))
-                    if source_field.selection_identifier()
-                        == target_field.selection_identifier()
-                        && source_field.include_if == target_field.include_if
-                        && source_field.skip_if == target_field.skip_if =>
-                {
-                    source_field.arguments_hash() != target_field.arguments_hash()
-                        || source_field.alias != target_field.alias
-                        || has_conflicts(&target_field.selections, &source_field.selections)
-                }
-                (
-                    SelectionItem::InlineFragment(source_fragment),
-                    SelectionItem::InlineFragment(target_fragment),
-                ) if source_fragment.type_condition == target_fragment.type_condition
-                    && source_fragment.include_if == target_fragment.include_if
-                    && source_fragment.skip_if == target_fragment.skip_if =>
-                {
-                    has_conflicts(&target_fragment.selections, &source_fragment.selections)
-                }
-                _ => false,
-            })
-    })
-}
+/// Two plain fields with the same response key and other arguments or alias. Neither side is
+/// there for a `@requires`, so both are what the client asked for, and there's nothing to alias.
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("Field '{0}' has a conflict that can't be resolved with an alias")]
+pub struct UnresolvableConflict(pub String);
 
 impl SafeSelectionSetMerger {
     pub fn safe_next_alias_name(&mut self, target_existing: &[SelectionItem]) -> String {
@@ -86,7 +60,7 @@ impl SafeSelectionSetMerger {
         source: &SelectionSet,
         (self_used_for_requires, other_used_for_requires): (bool, bool),
         as_first: bool,
-    ) -> AliasesRecords {
+    ) -> Result<AliasesRecords, UnresolvableConflict> {
         let mut aliases_performed: AliasesRecords = Vec::new();
         self.merge_selection_set_inner(
             target,
@@ -95,9 +69,9 @@ impl SafeSelectionSetMerger {
             as_first,
             MergePath::default(),
             &mut aliases_performed,
-        );
+        )?;
 
-        aliases_performed
+        Ok(aliases_performed)
     }
 
     pub fn merge_selection_set_inner(
@@ -108,9 +82,9 @@ impl SafeSelectionSetMerger {
         as_first: bool,
         response_path: MergePath,
         aliases_performed: &mut AliasesRecords,
-    ) {
+    ) -> Result<(), UnresolvableConflict> {
         if source.items.is_empty() {
-            return;
+            return Ok(());
         }
 
         // A vector to store pending merge/conflict resolution actions
@@ -155,7 +129,7 @@ impl SafeSelectionSetMerger {
                                 as_first,
                                 next_path,
                                 aliases_performed,
-                            );
+                            )?;
 
                             break;
                         } else {
@@ -166,7 +140,9 @@ impl SafeSelectionSetMerger {
                                 (false, true) | (true, true) => {
                                     ConflictResolutionLocation::Source { source_item_idx }
                                 }
-                                (false, false) => panic!("Unexpected conflict"),
+                                (false, false) => {
+                                    return Err(UnresolvableConflict(source_field.name.clone()))
+                                }
                             };
 
                             trace!(
@@ -201,7 +177,7 @@ impl SafeSelectionSetMerger {
                             as_first,
                             next_path,
                             aliases_performed,
-                        );
+                        )?;
                         break;
                     }
                     _ => {}
@@ -285,6 +261,8 @@ impl SafeSelectionSetMerger {
                 }
             }
         }
+
+        Ok(())
     }
 }
 
@@ -312,9 +290,22 @@ mod tests {
         let b = parse_selection_set("{ b }");
 
         let mut merger = SafeSelectionSetMerger::default();
-        merger.merge_selection_set(&mut a, &b, (true, false), false);
+        merger
+            .merge_selection_set(&mut a, &b, (true, false), false)
+            .unwrap();
 
         insta::assert_snapshot!(a, @"{a b}");
+    }
+
+    #[test]
+    fn conflict_without_requires_is_an_error() {
+        let mut a = parse_selection_set("{ a { b(x: 1) } }");
+        let b = parse_selection_set("{ a { b(x: 2) } }");
+
+        let mut merger = SafeSelectionSetMerger::default();
+        assert!(merger
+            .merge_selection_set(&mut a, &b, (false, false), false)
+            .is_err());
     }
 
     #[test]
@@ -323,7 +314,9 @@ mod tests {
         let b = parse_selection_set("{ a: b }");
 
         let mut merger = SafeSelectionSetMerger::default();
-        merger.merge_selection_set(&mut a, &b, (true, false), false);
+        merger
+            .merge_selection_set(&mut a, &b, (true, false), false)
+            .unwrap();
 
         insta::assert_snapshot!(a, @"{_internal_qp_alias_0: a a: b}");
     }
@@ -334,7 +327,9 @@ mod tests {
         let b = parse_selection_set("{ a }");
 
         let mut merger = SafeSelectionSetMerger::default();
-        merger.merge_selection_set(&mut a, &b, (true, false), false);
+        merger
+            .merge_selection_set(&mut a, &b, (true, false), false)
+            .unwrap();
 
         insta::assert_snapshot!(a, @"{a}");
     }
@@ -345,7 +340,9 @@ mod tests {
         let b = parse_selection_set("{ a(i: 2) }");
 
         let mut merger = SafeSelectionSetMerger::default();
-        merger.merge_selection_set(&mut a, &b, (false, true), false);
+        merger
+            .merge_selection_set(&mut a, &b, (false, true), false)
+            .unwrap();
 
         insta::assert_snapshot!(a, @"{a(i: 1) _internal_qp_alias_0: a(i: 2)}");
     }
@@ -356,7 +353,9 @@ mod tests {
         let b = parse_selection_set("{ a(i: 2) }");
 
         let mut merger = SafeSelectionSetMerger::default();
-        merger.merge_selection_set(&mut a, &b, (true, true), false);
+        merger
+            .merge_selection_set(&mut a, &b, (true, true), false)
+            .unwrap();
 
         insta::assert_snapshot!(a, @"{a(i: 1) _internal_qp_alias_0 _internal_qp_alias_1: a(i: 2)}");
     }
@@ -367,7 +366,9 @@ mod tests {
         let b = parse_selection_set("{ a(i: 2) }");
 
         let mut merger = SafeSelectionSetMerger::default();
-        merger.merge_selection_set(&mut a, &b, (false, true), false);
+        merger
+            .merge_selection_set(&mut a, &b, (false, true), false)
+            .unwrap();
 
         insta::assert_snapshot!(a, @"{a(i: 1) _internal_qp_alias_0: test _internal_qp_alias_1: a(i: 2)}");
     }
@@ -379,8 +380,12 @@ mod tests {
         let c = parse_selection_set("{ a(i: 3) }");
 
         let mut merger = SafeSelectionSetMerger::default();
-        merger.merge_selection_set(&mut a, &b, (false, true), false);
-        merger.merge_selection_set(&mut a, &c, (false, true), false);
+        merger
+            .merge_selection_set(&mut a, &b, (false, true), false)
+            .unwrap();
+        merger
+            .merge_selection_set(&mut a, &c, (false, true), false)
+            .unwrap();
 
         insta::assert_snapshot!(a, @"{a(i: 1) _internal_qp_alias_0: a(i: 2) _internal_qp_alias_1: a(i: 3)}");
     }
@@ -392,8 +397,12 @@ mod tests {
         let c = parse_selection_set("{ p { a(i: 3) } }");
 
         let mut merger = SafeSelectionSetMerger::default();
-        merger.merge_selection_set(&mut a, &b, (false, true), false);
-        merger.merge_selection_set(&mut a, &c, (false, true), false);
+        merger
+            .merge_selection_set(&mut a, &b, (false, true), false)
+            .unwrap();
+        merger
+            .merge_selection_set(&mut a, &c, (false, true), false)
+            .unwrap();
 
         insta::assert_snapshot!(a, @"{p{a(i: 1) _internal_qp_alias_0: a(i: 2) _internal_qp_alias_1: a(i: 3)}}");
     }
@@ -405,9 +414,13 @@ mod tests {
         let c = parse_selection_set("{ p { a(i: 3) } }");
 
         let mut merger = SafeSelectionSetMerger::default();
-        merger.merge_selection_set(&mut a, &b, (false, true), false);
+        merger
+            .merge_selection_set(&mut a, &b, (false, true), false)
+            .unwrap();
         let mut merger2 = SafeSelectionSetMerger::default();
-        merger2.merge_selection_set(&mut a, &c, (false, true), false);
+        merger2
+            .merge_selection_set(&mut a, &c, (false, true), false)
+            .unwrap();
 
         insta::assert_snapshot!(a, @"{p{a(i: 1) _internal_qp_alias_0: a(i: 2) _internal_qp_alias_1: a(i: 3)}}");
     }
@@ -418,7 +431,9 @@ mod tests {
         let b = parse_selection_set("{ p { a(i: 2) } }");
 
         let mut merger = SafeSelectionSetMerger::default();
-        merger.merge_selection_set(&mut a, &b, (false, true), false);
+        merger
+            .merge_selection_set(&mut a, &b, (false, true), false)
+            .unwrap();
 
         insta::assert_snapshot!(a, @"{p{a(i: 1) _internal_qp_alias_0: a(i: 2)}}");
     }
@@ -429,7 +444,9 @@ mod tests {
         let b = parse_selection_set("{ p { a(i: 2) } }");
 
         let mut merger = SafeSelectionSetMerger::default();
-        merger.merge_selection_set(&mut a, &b, (true, false), false);
+        merger
+            .merge_selection_set(&mut a, &b, (true, false), false)
+            .unwrap();
 
         insta::assert_snapshot!(a, @"{p{_internal_qp_alias_0: a(i: 1) a(i: 2)}}");
     }
@@ -440,7 +457,9 @@ mod tests {
         let b = parse_selection_set("{ p { a(i: 2) } }");
 
         let mut merger = SafeSelectionSetMerger::default();
-        let merge_locations = merger.merge_selection_set(&mut a, &b, (false, true), false);
+        let merge_locations = merger
+            .merge_selection_set(&mut a, &b, (false, true), false)
+            .unwrap();
         assert_eq!(merge_locations.len(), 1);
         insta::assert_snapshot!(merge_locations[0].0, @"p.a");
         insta::assert_snapshot!(merge_locations[0].1, @"_internal_qp_alias_0");

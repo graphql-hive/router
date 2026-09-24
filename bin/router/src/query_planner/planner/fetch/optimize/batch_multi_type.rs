@@ -114,15 +114,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                 let original_me_path = me.response_path.clone();
                 let original_other_path = other.response_path.clone();
 
-                // We "declare" the known type for the step, so later merging will be possible into that type instead of failing with an error.
-                for (input_type_name, _) in other.input.iter_selections() {
-                    me.input.declare_known_type(input_type_name);
-                }
-
-                // We "declare" the known type for the step, so later merging will be possible into that type instead of failing with an error.
-                for (output_type_name, _) in other.output.iter_selections() {
-                    me.output.declare_known_type(output_type_name);
-                }
+                me.declare_types_of(other);
 
                 perform_fetch_step_merge(
                     *child_index_latest,
@@ -490,7 +482,7 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
-        true
+        self.batches_cleanly_with(other)
     }
 }
 

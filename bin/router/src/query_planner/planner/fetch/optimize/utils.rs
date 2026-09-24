@@ -65,22 +65,13 @@ fn merge_source_condition_into_non_entity_target(
     Ok(true)
 }
 
-// Return true in case an alias was applied during the merge process.
-#[instrument(level = "trace", skip_all)]
-pub(crate) fn perform_fetch_step_merge(
-    target_index: NodeIndex,
-    source_index: NodeIndex,
-    fetch_graph: &mut FetchGraph<MultiTypeFetchStep>,
+/// Moves everything `source` fetches into `target`. It only touches the two steps, not the
+/// graph, so it can run on copies too, to see if a merge works out.
+fn merge_step_data(
+    target: &mut FetchStepData<MultiTypeFetchStep>,
+    source: &mut FetchStepData<MultiTypeFetchStep>,
     force_merge_inputs: bool,
 ) -> Result<(), FetchGraphError> {
-    let (target, source) = fetch_graph.get_pair_of_steps_mut(target_index, source_index)?;
-
-    trace!(
-        "merging fetch steps [{}] + [{}]",
-        target_index.index(),
-        source_index.index(),
-    );
-
     let source_condition_merged = merge_source_condition_into_non_entity_target(target, source)?;
     if !source_condition_merged {
         target.scope_fetch_conditions_before_merge(source);
@@ -107,13 +98,18 @@ pub(crate) fn perform_fetch_step_merge(
 
     // The source may have made aliases in earlier merges. Its fields now sit at
     // `source_fetch_path` in the target, so its records have to start there too.
-    let target_type = target.output.try_as_single().map(|t| t.to_string());
     for (type_name, records) in std::mem::take(&mut source.internal_aliases_locations) {
+        let merge_target = target
+            .output
+            .merge_target(&type_name, &source_fetch_path, true)?;
         target.internal_aliases_locations.push((
-            target_type.clone().unwrap_or(type_name),
+            merge_target.type_name().to_string(),
             records
                 .into_iter()
-                .map(|(alias_path, alias)| (source_fetch_path.concat(&alias_path), alias))
+                .map(|(alias_path, alias)| {
+                    let path = source_fetch_path.concat(&alias_path);
+                    (merge_target.scope_path(&type_name, &path), alias)
+                })
                 .collect(),
         ));
     }
@@ -150,6 +146,26 @@ pub(crate) fn perform_fetch_step_merge(
     // If the merged fetch is still guarded by one shared condition, lift it back to
     // step level.
     target.lift_shared_output_condition_to_fetch();
+
+    Ok(())
+}
+
+// Return true in case an alias was applied during the merge process.
+#[instrument(level = "trace", skip_all)]
+pub(crate) fn perform_fetch_step_merge(
+    target_index: NodeIndex,
+    source_index: NodeIndex,
+    fetch_graph: &mut FetchGraph<MultiTypeFetchStep>,
+    force_merge_inputs: bool,
+) -> Result<(), FetchGraphError> {
+    trace!(
+        "merging fetch steps [{}] + [{}]",
+        target_index.index(),
+        source_index.index(),
+    );
+
+    let (target, source) = fetch_graph.get_pair_of_steps_mut(target_index, source_index)?;
+    merge_step_data(target, source, force_merge_inputs)?;
 
     let mut children_indexes: Vec<NodeIndex> = vec![];
     let mut parents_indexes: Vec<NodeIndex> = vec![];
@@ -274,28 +290,46 @@ impl FetchStepData<MultiTypeFetchStep> {
             }
         }
 
-        if !self.output.has_room_for(&other.output) {
-            return false;
-        }
-
         if self.has_arguments_conflicts_with(other) {
             return false;
         }
 
-        if is_only_parent {
-            return true;
-        }
-
         // if they do not share parents, they can't be merged
-        if !fetch_graph.parents_of(self_index).all(|self_edge| {
-            fetch_graph
-                .parents_of(other_index)
-                .any(|other_edge| other_edge.source() == self_edge.source())
-        }) {
+        if !is_only_parent
+            && !fetch_graph.parents_of(self_index).all(|self_edge| {
+                fetch_graph
+                    .parents_of(other_index)
+                    .any(|other_edge| other_edge.source() == self_edge.source())
+            })
+        {
             return false;
         }
 
-        true
+        self.merges_cleanly_with(other)
+    }
+
+    /// Runs the merge on copies of both steps. Only the merge itself knows all the ways it
+    /// can fail, like two plain fields it can't alias, or a type with nowhere to go.
+    pub fn merges_cleanly_with(&self, other: &Self) -> bool {
+        merge_step_data(&mut self.clone(), &mut other.clone(), false).is_ok()
+    }
+
+    /// Makes room for every type of `other`, so its selections can sit next to ours
+    /// instead of going into one of our types.
+    pub fn declare_types_of(&mut self, other: &Self) {
+        for (input_type_name, _) in other.input.iter_selections() {
+            self.input.declare_known_type(input_type_name);
+        }
+        for (output_type_name, _) in other.output.iter_selections() {
+            self.output.declare_known_type(output_type_name);
+        }
+    }
+
+    /// Like `merges_cleanly_with`, for batching, where every type keeps its own selections.
+    pub fn batches_cleanly_with(&self, other: &Self) -> bool {
+        let mut me = self.clone();
+        me.declare_types_of(other);
+        merge_step_data(&mut me, &mut other.clone(), true).is_ok()
     }
 
     /// Only call this when we are the only step `other` waits for.
@@ -337,24 +371,9 @@ impl FetchStepData<MultiTypeFetchStep> {
             },
         );
 
-        if input_conflicts
+        input_conflicts
             .iter()
             .any(|(_, conflicts)| !conflicts.is_empty())
-        {
-            return true;
-        }
-
-        // The merge aliases the `@requires` side of an output conflict. Between two plain
-        // steps there's nothing to alias, the client asked for both fields under that key.
-        let used_for_requires =
-            |step: &Self| step.flags.contains(FetchStepFlags::USED_FOR_REQUIRES);
-        if used_for_requires(self) || used_for_requires(other) {
-            return false;
-        }
-
-        let fetch_path = other.response_path.slice_from(self.response_path.len());
-        self.output
-            .has_conflicts_with_another(&other.output, &fetch_path)
     }
 }
 

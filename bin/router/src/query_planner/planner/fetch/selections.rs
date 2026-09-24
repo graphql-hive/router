@@ -7,12 +7,12 @@ use std::{
 
 use crate::query_planner::{
     ast::{
-        merge_path::{Condition, MergePath},
-        safe_merge::{has_conflicts, AliasesRecords, SafeSelectionSetMerger},
+        merge_path::{Condition, MergePath, Segment},
+        safe_merge::{AliasesRecords, SafeSelectionSetMerger, UnresolvableConflict},
         selection_item::SelectionItem,
         selection_set::{
-            find_selection_set_by_path, find_selection_set_by_path_mut, merge_selection_set,
-            selection_items_are_subset_of, FieldSelection, InlineFragmentSelection, SelectionSet,
+            find_selection_set_by_path_mut, merge_selection_set, selection_items_are_subset_of,
+            FieldSelection, InlineFragmentSelection, SelectionSet,
         },
     },
     planner::fetch::state::{MultiTypeFetchStep, SingleTypeFetchStep},
@@ -24,6 +24,8 @@ pub enum FetchStepSelectionsError {
     UnexpectedMissingDefinition(String),
     #[error("Path '{0}' cannot be found in selection set of type {1}")]
     MissingPathInSelection(String, String),
+    #[error(transparent)]
+    UnresolvableConflict(#[from] UnresolvableConflict),
 }
 
 #[derive(Debug, Clone)]
@@ -88,31 +90,50 @@ impl FetchStepSelections<MultiTypeFetchStep> {
     }
 }
 
-/// When the output of one type goes into a step that outputs a single other type, like
-/// `Cat` fields into an `Animal` step, they have to stay under `... on Cat`. Deeper in the
-/// step, the path already points into the right type.
-///
-/// Only for outputs. Two outputs at the same place are the same type, or an abstract type and
-/// one of its members. An input can be another type, `@interfaceObject` steps take `Book` in
-/// and give `Media` out, where `... on Book` doesn't exist.
-fn scoped_to_definition<'a>(
-    definition_name: &str,
-    target_type: &str,
-    fetch_path: &MergePath,
-    selection_set: &'a SelectionSet,
-) -> Cow<'a, SelectionSet> {
-    if definition_name == target_type || !fetch_path.is_empty() {
-        return Cow::Borrowed(selection_set);
+/// Where the selections of one type go, when they're merged into a step.
+pub enum MergeTarget {
+    /// Straight into the selections of this type.
+    Same(String),
+    /// Into the selections of this type, under `... on <their type>`. Like `Cat` fields
+    /// going into an `Animal` step, where `whiskers` alone doesn't exist.
+    UnderFragment(String),
+}
+
+impl MergeTarget {
+    pub fn type_name(&self) -> &str {
+        match self {
+            MergeTarget::Same(type_name) | MergeTarget::UnderFragment(type_name) => type_name,
+        }
     }
 
-    Cow::Owned(SelectionSet {
-        items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-            type_condition: definition_name.to_string(),
-            include_if: None,
-            skip_if: None,
-            selections: selection_set.clone(),
-        })],
-    })
+    fn scope<'a>(
+        &self,
+        source_type: &str,
+        selection_set: &'a SelectionSet,
+    ) -> Cow<'a, SelectionSet> {
+        match self {
+            MergeTarget::Same(_) => Cow::Borrowed(selection_set),
+            MergeTarget::UnderFragment(_) => Cow::Owned(SelectionSet {
+                items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+                    type_condition: source_type.to_string(),
+                    include_if: None,
+                    skip_if: None,
+                    selections: selection_set.clone(),
+                })],
+            }),
+        }
+    }
+
+    /// A path that started at the root of `source_type`, now starting at the root of the target.
+    pub fn scope_path(&self, source_type: &str, path: &MergePath) -> MergePath {
+        match self {
+            MergeTarget::Same(_) => path.clone(),
+            MergeTarget::UnderFragment(_) => path.insert_front(Segment::TypeCondition(
+                BTreeSet::from([source_type.to_string()]),
+                None,
+            )),
+        }
+    }
 }
 
 fn inline_fragment_condition(fragment: &InlineFragmentSelection) -> Option<Condition> {
@@ -487,45 +508,47 @@ impl FetchStepSelections<MultiTypeFetchStep> {
             .insert(abstract_type.to_string(), selection_set);
     }
 
+    /// Decides where the selections of `source_type` go, when merged in at `fetch_path`.
+    ///
+    /// With a single type here, everything goes into it. Deeper in the step, the path already
+    /// points into the right type. At the root, another type has to stay under its own
+    /// `... on`, but only when `scope_by_type` is set: an input can be another type in a way
+    /// that has no fragment, `@interfaceObject` steps take `Book` in and give `Media` out,
+    /// and the subgraph knows no `Book`.
+    ///
+    /// With many types here, each needs its own place. `Cat` and `Dog` selections have no room
+    /// for `Animal` ones.
+    pub fn merge_target(
+        &self,
+        source_type: &str,
+        fetch_path: &MergePath,
+        scope_by_type: bool,
+    ) -> Result<MergeTarget, FetchStepSelectionsError> {
+        match self.try_as_single() {
+            Some(single) if single != source_type && fetch_path.is_empty() && scope_by_type => {
+                Ok(MergeTarget::UnderFragment(single.to_string()))
+            }
+            Some(single) => Ok(MergeTarget::Same(single.to_string())),
+            None if self.selections.contains_key(source_type) => {
+                Ok(MergeTarget::Same(source_type.to_string()))
+            }
+            None => Err(FetchStepSelectionsError::UnexpectedMissingDefinition(
+                source_type.to_string(),
+            )),
+        }
+    }
+
     pub fn migrate_from_another(
         &mut self,
         other: &Self,
         fetch_path: &MergePath,
     ) -> Result<(), FetchStepSelectionsError> {
-        let maybe_merge_into = self.try_as_single().map(|str| str.to_string());
-
         for (definition_name, selection_set) in other.iter_selections() {
-            let target_type = maybe_merge_into.as_ref().unwrap_or(definition_name);
-            self.add_at_path_inner(target_type, fetch_path, selection_set.clone(), false)?;
+            let target = self.merge_target(definition_name, fetch_path, false)?;
+            self.add_at_path_inner(target.type_name(), fetch_path, selection_set.clone(), false)?;
         }
 
         Ok(())
-    }
-
-    /// Whether every type of `other` has a place to go in a merge. With a single type here,
-    /// everything goes into it. Otherwise each type needs its own, `Cat` and `Dog` selections
-    /// have no room for `Animal` ones.
-    pub fn has_room_for(&self, other: &Self) -> bool {
-        self.try_as_single().is_some()
-            || other
-                .iter_selections()
-                .all(|(definition_name, _)| self.selections.contains_key(definition_name))
-    }
-
-    /// Whether `safe_migrate_from_another` would run into a conflict.
-    pub fn has_conflicts_with_another(&self, other: &Self, fetch_path: &MergePath) -> bool {
-        let maybe_merge_into = self.try_as_single();
-
-        other
-            .iter_selections()
-            .any(|(definition_name, selection_set)| {
-                let target_type = maybe_merge_into.unwrap_or(definition_name);
-                let selection_set =
-                    scoped_to_definition(definition_name, target_type, fetch_path, selection_set);
-                self.selections_for_definition(target_type)
-                    .and_then(|current| find_selection_set_by_path(current, fetch_path))
-                    .is_some_and(|current| has_conflicts(current, &selection_set))
-            })
     }
 
     pub fn safe_migrate_from_another(
@@ -535,10 +558,10 @@ impl FetchStepSelections<MultiTypeFetchStep> {
         (self_used_for_requires, other_used_for_requires): (bool, bool),
     ) -> Result<Vec<(String, AliasesRecords)>, FetchStepSelectionsError> {
         let mut aliases_made: Vec<(String, AliasesRecords)> = Vec::new();
-        let maybe_merge_into = self.try_as_single().map(|str| str.to_string());
 
         for (definition_name, selection_set) in other.iter_selections() {
-            let target_type = maybe_merge_into.as_ref().unwrap_or(definition_name);
+            let target = self.merge_target(definition_name, fetch_path, true)?;
+            let target_type = target.type_name();
             let current = self
                 .selections_for_definition_mut(target_type)
                 .ok_or_else(|| {
@@ -553,15 +576,13 @@ impl FetchStepSelections<MultiTypeFetchStep> {
                     )
                 })?;
 
-            let selection_set =
-                scoped_to_definition(definition_name, target_type, fetch_path, selection_set);
             let mut merger = SafeSelectionSetMerger::default();
             let current_aliases_made = merger.merge_selection_set(
                 selection_at_path,
-                &selection_set,
+                &target.scope(definition_name, selection_set),
                 (self_used_for_requires, other_used_for_requires),
                 false,
-            );
+            )?;
 
             if !current_aliases_made.is_empty() {
                 // The merger only knows paths from where we merged, so we add the rest,
