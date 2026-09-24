@@ -103,9 +103,10 @@ mod graph_tests {
                 let node = self.graph.node(*node_id).unwrap();
                 let formatted_node = format!("{}", node);
 
+                // A copy is named after its plain node, plus what's provided on it.
                 if node.is_using_provides() {
                     return edge.display_name() == key
-                        && formatted_node.contains(&format!("{}/", other_side));
+                        && formatted_node.starts_with(&format!("{}{{", other_side));
                 }
 
                 edge.display_name() == key && formatted_node == other_side
@@ -174,6 +175,15 @@ mod graph_tests {
         (incoming_edges, outgoing_edges)
     }
 
+    /// Name of the node the only `edge_name` edge of `node_id` leads to.
+    fn follow(graph: &Graph, node_id: &str, edge_name: &str) -> String {
+        let (_, outgoing) = find_node(graph, node_id);
+        let (_, to) = outgoing
+            .edge_field(edge_name)
+            .unwrap_or_else(|| panic!("no {} edge on {}", edge_name, node_id));
+        graph.node(*to).unwrap().display_name()
+    }
+
     #[test]
     fn nested_provides() -> Result<(), Box<dyn std::error::Error>> {
         let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -184,8 +194,8 @@ mod graph_tests {
 
         let (_, outgoing) = find_node(&graph, "Query/category");
         let field_edges = outgoing.edges_field("products");
-        // one for provided, other one for regular
-        assert_eq!(field_edges.len(), 2);
+        // The field edge points at the copy. There is no second, plain `products` edge.
+        assert_eq!(field_edges.len(), 1);
 
         // Provided ("viewed") field edge
         let (_, to) = field_edges
@@ -195,7 +205,10 @@ mod graph_tests {
 
         let node = graph.node(*to)?;
         assert!(node.is_using_provides());
-        assert_eq!(node.display_name(), "Product/category/1");
+        assert_eq!(
+            node.display_name(),
+            "Product/category{categories{subCategories}}"
+        );
 
         let (_, viewed_outgoing) = find_node(&graph, &node.display_name());
 
@@ -204,20 +217,103 @@ mod graph_tests {
             .expect("failed to find edge for field categories");
         let node1 = graph.node(*to)?;
         assert!(node1.is_using_provides());
-        assert_eq!(node1.display_name(), "Category/category/1");
+        assert_eq!(node1.display_name(), "Category/category{subCategories}");
 
-        // Regular field edge
-        let (_, to_index) = field_edges
-            .iter()
-            .find(|(edge_ref, _to)| format!("{:?}", edge_ref.weight()) == "products")
-            .unwrap();
-        let node = graph.node(*to_index)?;
-        assert_eq!(node.display_name(), "Product/category");
-        assert!(!node.is_using_provides());
-
+        // The plain node still exists (other edges lead there), and the copy has its fields.
         find_node(&graph, "Product/category")
             .1
             .assert_field_edge("id", "ID/category");
+        find_node(&graph, &follow(&graph, "Query/category", "products"))
+            .1
+            .assert_field_edge("id", "ID/category");
+
+        Ok(())
+    }
+
+    // A copy is keyed by its plain node and what's provided on it.
+    #[test]
+    fn provides_copies_are_keyed_by_what_they_provide() -> Result<(), Box<dyn std::error::Error>> {
+        let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixture/tests/provides-copies.supergraph.graphql");
+        let graph = init_test(
+            &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
+        );
+
+        // `User.orders` is handled before `ZOrder.product`, its copy still gets `name`. The
+        // plain `ZOrder` and its copy share the one `Product` copy.
+        let orders = follow(&graph, "User/orders", "orders");
+        assert_eq!(orders, "ZOrder/orders{sku}");
+        assert_eq!(follow(&graph, &orders, "product"), "Product/orders{name}");
+        assert_eq!(
+            follow(&graph, "ZOrder/orders", "product"),
+            "Product/orders{name}"
+        );
+
+        // `User.related: User` provides `name` again, so it comes back to the copy it's on.
+        let related = follow(&graph, "User/social", "related");
+        assert_eq!(related, "User/social{name}");
+        assert_eq!(follow(&graph, &related, "related"), related);
+
+        Ok(())
+    }
+
+    // Returning the same type isn't enough to keep what's provided. `related` provides `name`
+    // again, `other` doesn't.
+    #[test]
+    fn provides_copy_keeps_fields_only_where_they_are_provided(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixture/tests/requires-nested-same-type.supergraph.graphql");
+        let graph = init_test(
+            &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
+        );
+
+        let related = follow(&graph, "User/social", "related");
+        assert_eq!(related, "User/social{name}");
+        assert_eq!(follow(&graph, &related, "related"), related);
+        assert_eq!(follow(&graph, &related, "other"), "User/social");
+
+        Ok(())
+    }
+
+    // A union field has an edge per member. Every one of them goes to its copy, and keeps the
+    // field's @override label and @provides.
+    #[test]
+    fn provides_on_union_field_redirects_every_member_edge(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixture/tests/provides-union-progressive-override.supergraph.graphql");
+        let graph = init_test(
+            &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
+        );
+
+        let (_, outgoing) = find_node(&graph, "User/b");
+        let mut targets = vec![];
+        for (edge_ref, to) in outgoing.edges_field("media") {
+            let Edge::FieldMove(field_move) = edge_ref.weight() else {
+                unreachable!()
+            };
+            assert!(field_move.override_label.is_some());
+            assert!(field_move.join_field.as_ref().unwrap().provides.is_some());
+            targets.push(graph.node(*to)?.display_name());
+        }
+        targets.sort();
+        assert_eq!(
+            targets,
+            vec![
+                "Media/b for User.media:Book{...on Book{title}}",
+                "Media/b for User.media:Movie{...on Movie{title}}",
+            ]
+        );
+
+        // a's edges are the overridden side.
+        let (_, outgoing) = find_node(&graph, "User/a");
+        for (edge_ref, _) in outgoing.edges_field("media") {
+            let Edge::FieldMove(field_move) = edge_ref.weight() else {
+                unreachable!()
+            };
+            assert!(matches!(&field_move.overridden_by, Some((b, Some(_))) if b == "b"));
+        }
 
         Ok(())
     }
@@ -366,11 +462,12 @@ mod graph_tests {
         let node1 = graph.node(*to)?;
         assert!(node1.is_using_provides());
 
-        // Verify that each provided path points only to the relevant, provided fields
+        // A copy has every edge of the plain node, plus the provided fields.
+        let plain_edges = find_node(&graph, "User/foo").1.edges.len();
         let (viewed_incoming, viewed_outgoing) = find_node(&graph, &node1.display_name());
         viewed_outgoing.assert_field_edge("id", "String/foo");
         assert_eq!(viewed_incoming.edges.len(), 2); // +1 for Selfie
-        assert_eq!(viewed_outgoing.edges.len(), 4); // +1 for Selfie, +1 for __typename
+        assert_eq!(viewed_outgoing.edges.len(), plain_edges + 1); // +1 for id
 
         let (_, to) = outgoing
             .edges_field("user")
@@ -380,28 +477,21 @@ mod graph_tests {
         let node2 = graph.node(*to)?;
         assert!(node2.is_using_provides());
 
-        // Verify that each provided path points only to the relevant, provided fields
         let (viewed_incoming, viewed_outgoing) = find_node(&graph, &node2.display_name());
         viewed_outgoing.assert_field_edge("name", "String/foo");
         assert_eq!(viewed_incoming.edges.len(), 2); // +1 for Selfie
-        assert_eq!(viewed_outgoing.edges.len(), 5); // +1 for Selfie, +1 for __typename
+        assert_eq!(viewed_outgoing.edges.len(), plain_edges + 2); // +1 for name, +1 for profile
 
-        let (nested_provides_id, nested_provides_node) = viewed_outgoing
+        // `Profile.age` is a local field in `foo`, so `profile { age }` adds nothing below
+        // `profile`, and it leads to the plain node.
+        let (_, profile) = viewed_outgoing
             .edge_field("profile")
-            .map(|(_, node_index)| (*node_index, graph.node(*node_index).unwrap()))
-            .expect("failed to located viewed node from profile field");
-
-        assert!(nested_provides_node.is_using_provides());
-        assert!(nested_provides_node
-            .display_name()
-            .starts_with("Profile/foo/"));
-
-        let mut nested_edges = graph.edges_from(nested_provides_id);
-        assert_eq!(nested_edges.clone().count(), 3); // +1 for Selfie, +1 for __typename
-        assert_eq!(
-            nested_edges.next().unwrap().weight().display_name(),
-            String::from("age")
-        );
+            .expect("failed to locate the provided profile field");
+        let profile = graph.node(*profile)?;
+        assert!(!profile.is_using_provides());
+        find_node(&graph, &profile.display_name())
+            .1
+            .assert_field_edge("age", "Int/foo");
 
         // Two different views should be different nodes
         assert_ne!(node1, node2);
@@ -438,12 +528,14 @@ mod graph_tests {
             &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
         );
 
-        find_node(&graph, "Item/provider/1")
+        let holder = follow(&graph, "Query/provider", "holder");
+        let item = follow(&graph, &holder, "item");
+        find_node(&graph, &item)
             .1
             .assert_field_edge("__typename", "String/provider")
             .assert_field_edge("nested", "Nested/provider");
 
-        find_node(&graph, "Nested/provider/1")
+        find_node(&graph, &follow(&graph, &item, "nested"))
             .1
             .assert_field_edge("__typename", "String/provider")
             .assert_field_edge("label", "String/provider");
@@ -460,7 +552,7 @@ mod graph_tests {
             &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
         );
 
-        let (_, outgoing) = find_node(&graph, "Holder/provider/1");
+        let (_, outgoing) = find_node(&graph, &follow(&graph, "Query/provider", "holder"));
         let (items_edge, to) = outgoing
             .edge_field("items")
             .expect("failed to find edge for field items");
@@ -490,12 +582,14 @@ mod graph_tests {
             &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
         );
 
-        find_node(&graph, "Animal/a/1")
+        let book = follow(&graph, "Query/a", "book");
+        let animals = follow(&graph, &book, "animals");
+        find_node(&graph, &animals)
             .1
             .assert_field_edge("__typename", "String/a")
             .assert_interface_edge("Dog", "Dog/a");
 
-        find_node(&graph, "Dog/a/1")
+        find_node(&graph, &follow(&graph, &animals, "Dog"))
             .1
             .assert_field_edge("__typename", "String/a")
             .assert_field_edge("name", "String/a");
