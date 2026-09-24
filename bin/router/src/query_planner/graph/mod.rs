@@ -1,6 +1,7 @@
 pub(crate) mod edge;
 pub(crate) mod error;
 pub(crate) mod node;
+mod provided;
 
 pub use self::edge::PlannerOverrideContext;
 pub use self::edge::PERCENTAGE_SCALE_FACTOR;
@@ -12,8 +13,7 @@ use std::{
     fmt::{Debug, Display},
 };
 
-use super::ast::normalization::utils::extract_type_condition;
-use super::graph::{edge::Edge, node::Node};
+use super::graph::{edge::Edge, node::Node, provided::Provided};
 use crate::query_planner::planner::walker::utils::get_entrypoints;
 use crate::query_planner::{
     ast::type_aware_selection::TypeAwareSelection,
@@ -24,7 +24,6 @@ use crate::query_planner::{
     },
 };
 use error::GraphError;
-use graphql_tools::parser::query::{Selection, SelectionSet};
 use petgraph::{
     dot::Dot,
     graph::{EdgeIndex, Edges, NodeIndex},
@@ -176,10 +175,10 @@ impl Graph {
 
         self.build_root_nodes(state)?;
         self.link_root_edges(state)?;
-        self.build_field_edges(state)?;
+        let provides = self.build_field_edges(state)?;
         self.build_interface_implementation_edges(state)?;
         self.build_entity_reference_edges(state)?;
-        self.build_viewed_field_edges(state)?;
+        self.build_provides_edges(state, provides)?;
 
         Ok(())
     }
@@ -580,9 +579,14 @@ impl Graph {
         Ok(())
     }
 
+    /// Returns the `@provides` of each field edge that has one, for `build_provides_edges`.
     #[instrument(level = "trace", skip(self, state))]
-    fn build_field_edges(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
+    fn build_field_edges(
+        &mut self,
+        state: &SupergraphState,
+    ) -> Result<HashMap<EdgeIndex, Provided>, GraphError> {
         let unions = UnionDefinitions::new(state);
+        let mut provides = HashMap::new();
 
         for (def_name, definition) in state.definitions.iter() {
             for graph_id in definition.subgraphs().iter() {
@@ -704,6 +708,19 @@ impl Graph {
                               .into(),
                           });
 
+                    // Parsed once, a union field has an edge per member.
+                    let provided = maybe_join_field
+                        .and_then(|join_field| {
+                            let graph_id = join_field.graph_id.as_ref()?;
+                            FederationRules::parse_provides(
+                                state,
+                                join_field,
+                                graph_id,
+                                target_type,
+                            )
+                        })
+                        .map(|selection_set| Provided::from_selection_set(&selection_set));
+
                     // If a field points to a union type:
                     //
                     // ```
@@ -778,7 +795,6 @@ impl Graph {
                                     field_name: field_name.clone(),
                                     object_type_name: member.to_string(),
                                     possible_members: possible_members.clone(),
-                                    provides: None,
                                 }),
                             ));
                             let abstract_tail = self.upsert_node(Node::new_node(
@@ -818,7 +834,7 @@ impl Graph {
                                 field_name,
                                 graph_id
                             );
-                            self.upsert_edge(
+                            let edge = self.upsert_edge(
                                 head,
                                 tail,
                                 Edge::create_field_move(
@@ -831,6 +847,9 @@ impl Graph {
                                     overridden_by.clone(),
                                 ),
                             );
+                            if let Some(provided) = &provided {
+                                provides.insert(edge, provided.clone());
+                            }
 
                             trace!(
                                 "  [x] Creating abstract move edge for '{}.{}/{}' (union member: {})",
@@ -867,7 +886,7 @@ impl Graph {
                         state.is_interface_object_in_subgraph(target_type, graph_id),
                     ));
 
-                    self.upsert_edge(
+                    let edge = self.upsert_edge(
                         head,
                         tail,
                         Edge::create_field_move(
@@ -875,22 +894,14 @@ impl Graph {
                             def_name.clone(),
                             state.is_scalar_type(target_type),
                             field_definition.field_type.is_list(),
-                            maybe_join_field.map(|join_field| match join_field.provides {
-                                Some(_) => {
-                                    // This is done in order to "reset" the provided field info, we can probably
-                                    // do this in a better way, and extract info from the JoinFieldDirective into the edges, instead of depending on
-                                    // the raw directive info.
-                                    // TODO: @dotan, can you explain it?
-                                    let mut new = join_field.clone();
-                                    new.provides = None;
-                                    new
-                                }
-                                None => join_field.clone(),
-                            }),
+                            maybe_join_field.cloned(),
                             requirements.clone(),
                             overridden_by.clone(),
                         ),
                     );
+                    if let Some(provided) = provided {
+                        provides.insert(edge, provided);
+                    }
 
                     // If the target type is a root type, we handle it differently and checking if a re-entry is needed.
                     // Our goal is to find all "Query/subgraph" entrypoints
@@ -938,348 +949,337 @@ impl Graph {
             }
         }
 
-        Ok(())
+        Ok(provides)
     }
+}
 
-    #[instrument(level = "trace",skip(self, state, parent_type_def, head), fields(selection_set, parent_type_name = parent_type_def.name()))]
-    fn handle_viewed_selection_set(
+impl Graph {
+    /// A `@provides` field makes more fields available below it, but only on that path.
+    ///
+    /// The path gets its own copies of the nodes it goes through. A copy is keyed by its plain
+    /// node and by what's provided on it, and it's built from just those two: the plain node's
+    /// edges, pointed at the copies for what's provided further down. So:
+    /// - it doesn't matter which `@provides` we get to first,
+    /// - two paths that provide the same fields share their copies, different fields never do,
+    /// - returning the same type isn't enough to keep what's provided. `User.related: User
+    ///   @provides(fields: "name")` comes back to the copy it's on only because its own
+    ///   `@provides` makes the same state again. Another `User` field without it goes to the
+    ///   plain `User`.
+    ///
+    /// Runs after all other edges exist, because a copy only gets the edges its plain node has.
+    #[instrument(level = "trace", skip(self, state))]
+    fn build_provides_edges(
         &mut self,
         state: &SupergraphState,
-        selection_set: &SelectionSet<'static, String>,
-        graph_id: &str,
-        parent_type_def: &SupergraphDefinition,
-        head: NodeIndex,
-        view_id: u64,
+        provides: HashMap<EdgeIndex, Provided>,
     ) -> Result<(), GraphError> {
-        for jt in parent_type_def
-            .join_types()
-            .iter()
-            .filter(|jt| jt.resolvable && jt.key.is_some() && jt.graph_id != graph_id)
-        {
-            let tail = self.upsert_node(Node::new_node(
-                parent_type_def.name(),
-                state.resolve_graph_id(&jt.graph_id)?,
-                jt.is_interface_object,
-            ));
-            let key_selection = FederationRules::parse_key(
-                state,
-                &jt.graph_id,
-                parent_type_def.name(),
-                jt.key.as_ref().unwrap(),
-            );
-            trace!(
-                "Creating entity move edge from '{}/{}' to '{}/{}' via key '{}'",
-                parent_type_def.name(),
-                graph_id,
-                parent_type_def.name(),
-                jt.graph_id,
-                jt.key.as_ref().unwrap()
-            );
-            self.upsert_edge(
-                head,
-                tail,
-                Edge::create_entity_move(
-                    jt.key.as_ref().unwrap(),
-                    key_selection,
-                    parent_type_def.is_interface_type(),
-                ),
-            );
-        }
+        // The map is in no particular order. Sorting keeps the node order, and so the plans,
+        // the same between runs.
+        let mut providing_edges: Vec<(String, EdgeIndex, String)> = provides
+            .keys()
+            .map(|&edge| {
+                let (head, tail) = self.graph.edge_endpoints(edge).expect("edge exists");
+                let Edge::FieldMove(field_move) = &self.graph[edge] else {
+                    unreachable!("only field moves have @provides");
+                };
+                let graph_id = field_move
+                    .join_field
+                    .as_ref()
+                    .and_then(|join_field| join_field.graph_id.clone())
+                    .expect("@provides comes with a graph");
+                let key = format!(
+                    "{} {} {}",
+                    self.graph[head], field_move.name, self.graph[tail]
+                );
+                (key, edge, graph_id)
+            })
+            .collect();
+        providing_edges.sort_unstable();
 
-        let is_interface_object = parent_type_def
-            .extract_join_types_for(graph_id)
-            .iter()
-            .any(|j| j.is_interface_object);
-        let has_resolvable_typename = matches!(
-            parent_type_def,
-            SupergraphDefinition::Object(_)
-                | SupergraphDefinition::Union(_)
-                | SupergraphDefinition::Interface(_)
-        ) && !is_interface_object;
+        let mut ctx = ProvidesContext {
+            state,
+            provides,
+            copies: HashMap::new(),
+        };
 
-        // __typename is a meta-field, resolvable from any subgraph that
-        // resolves the parent
-        if has_resolvable_typename {
-            let tail = self.upsert_node(Node::new_specialized_node(
-                "String",
-                state.resolve_graph_id(graph_id)?,
-                false,
-                SubgraphTypeSpecialization::Provides(view_id),
-            ));
-
-            self.upsert_edge(tail, tail, Edge::Selfie("String".to_string()));
-            self.upsert_typename_edge(head, tail, parent_type_def.name());
-        }
-
-        for selection in selection_set.items.iter() {
-            match selection {
-                Selection::Field(field) => {
-                    if field.name == "__typename" {
-                        continue;
-                    }
-
-                    let is_leaf = field.selection_set.items.is_empty();
-                    let field_in_parent =
-                        parent_type_def.fields().get(&field.name).ok_or_else(|| {
-                            GraphError::FieldDefinitionNotFound(
-                                field.name.clone(),
-                                parent_type_def.name().to_string(),
-                            )
-                        })?;
-                    let return_type_name = field_in_parent.field_type.inner_type();
-
-                    trace!(
-                        "Upserting graph viewed node for '{}.{}'",
-                        return_type_name,
-                        graph_id,
-                    );
-
-                    let tail = self.upsert_node(Node::new_specialized_node(
-                        return_type_name,
-                        state.resolve_graph_id(graph_id)?,
-                        state.is_interface_object_in_subgraph(return_type_name, graph_id),
-                        SubgraphTypeSpecialization::Provides(view_id),
-                    ));
-
-                    self.upsert_edge(tail, tail, Edge::Selfie(return_type_name.to_string()));
-
-                    trace!(
-                        "Creating viewed (#{}) field edge for '{}.{}' (type: {})",
-                        view_id,
-                        parent_type_def.name(),
-                        field.name,
-                        return_type_name
-                    );
-
-                    self.upsert_edge(
-                        head,
-                        tail,
-                        Edge::create_field_move(
-                            field.name.to_string(),
-                            parent_type_def.name().to_string(),
-                            state.is_scalar_type(parent_type_def.name()),
-                            field_in_parent.field_type.is_list(),
-                            None,
-                            None,
-                            None,
-                        ),
-                    );
-
-                    if !is_leaf {
-                        let return_type =
-                            state.definitions.get(return_type_name).ok_or_else(|| {
-                                GraphError::DefinitionNotFound(return_type_name.to_string())
-                            })?;
-
-                        self.handle_viewed_selection_set(
-                            state,
-                            &field.selection_set,
-                            graph_id,
-                            return_type,
-                            tail,
-                            view_id,
-                        )?;
-                    }
-                }
-                Selection::InlineFragment(fragment) => {
-                    let type_name_from_cond = extract_type_condition(
-                        fragment.type_condition.as_ref().unwrap_or_else(|| {
-                            // Inline fragments without type condition should have been normalized and converted into selection set
-                            panic!("Inline fragment without type condition detected");
-                        }),
-                    );
-                    let type_def_from_cond =
-                        state.definitions.get(type_name_from_cond).ok_or_else(|| {
-                            GraphError::DefinitionNotFound(type_name_from_cond.to_string())
-                        })?;
-
-                    // head is either an interface or a union
-                    // tail is a type from a type condition (it's an object type - after normalization)
-                    let tail = self.upsert_node(Node::new_specialized_node(
-                        type_name_from_cond,
-                        state.resolve_graph_id(graph_id)?,
-                        state.is_interface_object_in_subgraph(type_name_from_cond, graph_id),
-                        SubgraphTypeSpecialization::Provides(view_id),
-                    ));
-
-                    self.upsert_edge(tail, tail, Edge::Selfie(type_name_from_cond.to_string()));
-
-                    // because it's abstract -> object move, add an abstract move edge
-                    self.upsert_edge(
-                        head,
-                        tail,
-                        Edge::AbstractMove(type_name_from_cond.to_string()),
-                    );
-
-                    // use object type (tail) when handling selection sets
-                    self.handle_viewed_selection_set(
-                        state,
-                        &fragment.selection_set,
-                        graph_id,
-                        type_def_from_cond,
-                        tail,
-                        view_id,
-                    )?;
-                }
-                Selection::FragmentSpread(_) => {
-                    // Fragment spreads should have been normalized (converted into inline fragments) at this point
-                    panic!(
-                        "Fragment spread detected. Expected either a Field or an Inline Fragment"
-                    )
-                }
-            };
-        }
-
-        Ok(())
-    }
-
-    #[instrument(level = "trace", skip(self, state))]
-    fn build_viewed_field_edges(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
-        for (def_name, definition) in state.definitions.iter() {
-            for join_type in definition.join_types().iter() {
-                let mut view_id = 0;
-
-                // A map of provided types to graph ids that
-                // we need to create edges to their matching entity types.
-                let mut connection_to_build: HashMap<NodeIndex, String> = HashMap::new();
-
-                for (field_name, field_definition) in definition.fields().iter() {
-                    for join_field in field_definition.join_field.iter() {
-                        if join_field
-                            .graph_id
-                            .as_ref()
-                            .is_some_and(|v| v == &join_type.graph_id)
-                            && join_field.provides.is_some()
-                        {
-                            if let Some(selection_set) = FederationRules::parse_provides(
-                                state,
-                                join_field,
-                                &join_type.graph_id,
-                                field_definition.field_type.inner_type(),
-                            ) {
-                                view_id += 1;
-
-                                let head = self.upsert_node(Node::new_node(
-                                    definition.name(),
-                                    state.resolve_graph_id(&join_type.graph_id)?,
-                                    state.is_interface_object_in_subgraph(
-                                        definition.name(),
-                                        &join_type.graph_id,
-                                    ),
-                                ));
-
-                                connection_to_build.insert(head, join_type.graph_id.clone());
-
-                                let return_type_name = field_definition.field_type.inner_type();
-
-                                let tail = self.upsert_node(Node::new_specialized_node(
-                                    return_type_name,
-                                    state.resolve_graph_id(&join_type.graph_id)?,
-                                    state.is_interface_object_in_subgraph(
-                                        return_type_name,
-                                        &join_type.graph_id,
-                                    ),
-                                    SubgraphTypeSpecialization::Provides(view_id),
-                                ));
-
-                                self.upsert_edge(
-                                    tail,
-                                    tail,
-                                    Edge::Selfie(return_type_name.to_string()),
-                                );
-
-                                trace!(
-                                    "Creating viewed (#{}) link for provided field '{}.{}/{:?}' (type: {})",
-                                    view_id, def_name, field_name, join_type.graph_id, return_type_name
-                                );
-
-                                let requirements =
-                                    join_field.requires.as_ref().map(|requires_str| {
-                                        TypeAwareSelection {
-                                            type_name: def_name.to_string(),
-                                            selection_set: FederationRules::parse_requires(
-                                                state,
-                                                join_field.graph_id.as_ref().unwrap(),
-                                                def_name,
-                                                requires_str,
-                                            )
-                                            .into(),
-                                        }
-                                    });
-
-                                self.upsert_edge(
-                                    head,
-                                    tail,
-                                    Edge::create_field_move(
-                                        field_name.to_string(),
-                                        def_name.clone(),
-                                        state.is_scalar_type(
-                                            field_definition.field_type.inner_type(),
-                                        ),
-                                        field_definition.field_type.is_list(),
-                                        Some(join_field.clone()),
-                                        requirements,
-                                        None,
-                                    ),
-                                );
-
-                                let return_type =
-                                    state.definitions.get(return_type_name).ok_or_else(|| {
-                                        GraphError::DefinitionNotFound(return_type_name.to_string())
-                                    })?;
-
-                                self.handle_viewed_selection_set(
-                                    state,
-                                    &selection_set,
-                                    &join_type.graph_id,
-                                    return_type,
-                                    tail,
-                                    view_id,
-                                )?;
-                            }
-                        }
-                    }
-                }
-
-                for (head, from_graph_id) in connection_to_build {
-                    for jt in definition.join_types().iter().filter(|jt| {
-                        jt.resolvable && jt.key.is_some() && jt.graph_id != from_graph_id
-                    }) {
-                        let tail = self.upsert_node(Node::new_node(
-                            def_name,
-                            state.resolve_graph_id(&jt.graph_id)?,
-                            jt.is_interface_object,
-                        ));
-                        let key_selection = FederationRules::parse_key(
-                            state,
-                            &jt.graph_id,
-                            def_name,
-                            jt.key.as_ref().unwrap(),
-                        );
-                        trace!(
-                            "Creating entity move edge from '{}/{}' to '{}/{}' via key '{}'",
-                            def_name,
-                            from_graph_id,
-                            def_name,
-                            jt.graph_id,
-                            jt.key.as_ref().unwrap()
-                        );
-                        self.upsert_edge(
-                            head,
-                            tail,
-                            Edge::create_entity_move(
-                                jt.key.as_ref().unwrap(),
-                                key_selection,
-                                definition.is_interface_type(),
-                            ),
-                        );
-                    }
-                }
+        // Copies are built from the plain edges, so those stay as they are until every copy
+        // exists.
+        let mut redirects = Vec::new();
+        for (_, edge, graph_id) in providing_edges {
+            let target = self.graph.edge_endpoints(edge).expect("edge exists").1;
+            let provided = ctx.provides[&edge].clone();
+            let copy = self.provided_node(&mut ctx, target, provided, &graph_id)?;
+            if copy != target {
+                redirects.push((edge, copy));
             }
         }
 
+        // `remove_edge` moves the last edge into the freed index. Going from the highest index
+        // down, that's never one we still have to redirect.
+        redirects.sort_unstable_by_key(|&(edge, _)| std::cmp::Reverse(edge));
+        for (edge, copy) in redirects {
+            let head = self.graph.edge_endpoints(edge).expect("edge exists").0;
+            let weight = self.graph.remove_edge(edge).expect("edge exists");
+            trace!(
+                "Pointing provided field '{}.{}' at {}",
+                self.graph[head].display_name(),
+                weight.display_name(),
+                self.graph[copy].display_name()
+            );
+            self.graph.add_edge(head, copy, weight);
+        }
+
         Ok(())
     }
+
+    /// The node for `original` with `provided` available on it: `original` itself when that
+    /// adds nothing, its copy otherwise.
+    fn provided_node(
+        &mut self,
+        ctx: &mut ProvidesContext,
+        original: NodeIndex,
+        provided: Provided,
+        graph_id: &str,
+    ) -> Result<NodeIndex, GraphError> {
+        let provided = self.prune_provided(ctx.state, original, provided, graph_id)?;
+        if provided.is_empty() {
+            return Ok(original);
+        }
+        if let Some(&copy) = ctx.copies.get(&(original, provided.clone())) {
+            return Ok(copy);
+        }
+
+        let copy = self.upsert_node(self.graph[original].provides_copy(provided.to_string()));
+        // Saved before the edges are, so a path that comes back to the same state ends up here.
+        ctx.copies.insert((original, provided.clone()), copy);
+
+        // `original` is a plain node, so these are plain edges, and `ctx.provides` knows them.
+        let edges: Vec<(EdgeIndex, NodeIndex, Edge)> = self
+            .graph
+            .edges(original)
+            .map(|edge| (edge.id(), edge.target(), edge.weight().clone()))
+            .collect();
+        for (edge_index, target, edge) in edges {
+            let target = match &edge {
+                Edge::FieldMove(field_move) => {
+                    let mut below = provided
+                        .fields
+                        .get(&field_move.name)
+                        .cloned()
+                        .unwrap_or_default();
+                    // The field's own `@provides` counts on every path.
+                    if let Some(own) = ctx.provides.get(&edge_index) {
+                        below.merge(own.clone());
+                    }
+                    self.provided_node(ctx, target, below, graph_id)?
+                }
+                Edge::AbstractMove(type_name) => {
+                    let below = provided
+                        .on_types
+                        .get(type_name)
+                        .cloned()
+                        .unwrap_or_default();
+                    self.provided_node(ctx, target, below, graph_id)?
+                }
+                // `... on Order` on an `Order` keeps the provided fields.
+                Edge::Selfie(_) if target == original => copy,
+                // Provided fields are gone after an entity call, even to the same subgraph.
+                _ => target,
+            };
+            self.graph.add_edge(copy, target, edge);
+        }
+
+        // What's left are `@external` fields and type conditions, only available on this path.
+        let type_name = self.graph[original].name_str().to_string();
+        let subgraph = ctx.state.resolve_graph_id(graph_id)?;
+        for (field_name, below) in &provided.fields {
+            if self.field_targets(original, field_name).next().is_some() {
+                continue;
+            }
+            let field_definition = field_definition(ctx.state, &type_name, field_name)?;
+            let return_type_name = field_definition.field_type.inner_type();
+            let plain = self.upsert_node(Node::new_node(
+                return_type_name,
+                subgraph.clone(),
+                ctx.state
+                    .is_interface_object_in_subgraph(return_type_name, graph_id),
+            ));
+            let target = self.provided_node(ctx, plain, below.clone(), graph_id)?;
+            self.graph.add_edge(
+                copy,
+                target,
+                Edge::create_field_move(
+                    field_name.clone(),
+                    type_name.clone(),
+                    ctx.state.is_scalar_type(return_type_name),
+                    field_definition.field_type.is_list(),
+                    None,
+                    None,
+                    None,
+                ),
+            );
+        }
+        for (on_type, below) in &provided.on_types {
+            if self.member_targets(original, on_type).next().is_some() {
+                continue;
+            }
+            let plain = self.upsert_node(Node::new_node(
+                on_type,
+                subgraph.clone(),
+                ctx.state.is_interface_object_in_subgraph(on_type, graph_id),
+            ));
+            let target = self.provided_node(ctx, plain, below.clone(), graph_id)?;
+            self.graph
+                .add_edge(copy, target, Edge::AbstractMove(on_type.clone()));
+        }
+
+        Ok(copy)
+    }
+
+    /// Drops the parts of `provided` that `node` has anyway, and folds `... on T` into the
+    /// fields when `node` is a `T`. What's left is the key of the copy.
+    fn prune_provided(
+        &self,
+        state: &SupergraphState,
+        node: NodeIndex,
+        mut provided: Provided,
+        graph_id: &str,
+    ) -> Result<Provided, GraphError> {
+        // Most edges of a copy have nothing provided below them.
+        if provided.is_empty() {
+            return Ok(provided);
+        }
+        let type_name = self.graph[node].name_str().to_string();
+        while let Some(same_type) = provided.on_types.remove(&type_name) {
+            provided.merge(same_type);
+        }
+
+        let mut pruned = Provided::default();
+        for (field_name, below) in provided.fields {
+            let targets: Vec<NodeIndex> = self.field_targets(node, &field_name).collect();
+            if targets.is_empty() {
+                // `@external`, the path is the only way to get it.
+                let plain = match below.is_empty() {
+                    true => None,
+                    false => self.plain_node_of_field(state, node, &field_name, graph_id)?,
+                };
+                let below = match plain {
+                    Some(plain) => self.prune_provided(state, plain, below, graph_id)?,
+                    None => below,
+                };
+                pruned.fields.insert(field_name, below);
+                continue;
+            }
+            // The subgraph resolves it anyway, so only what's below can add something.
+            let mut kept = Provided::default();
+            for target in targets {
+                kept.merge(self.prune_provided(state, target, below.clone(), graph_id)?);
+            }
+            if !kept.is_empty() {
+                pruned.fields.insert(field_name, kept);
+            }
+        }
+
+        for (on_type, below) in provided.on_types {
+            let members: Vec<NodeIndex> = self.member_targets(node, &on_type).collect();
+            if members.is_empty() {
+                // On a union member tail, it's another member's condition.
+                if self.graph[node].union_members_data().is_some() {
+                    continue;
+                }
+                // An `@external` abstract field has no member edges here, the path adds one.
+                let plain = Node::new_node(
+                    &on_type,
+                    state.resolve_graph_id(graph_id)?,
+                    state.is_interface_object_in_subgraph(&on_type, graph_id),
+                );
+                let below = match self.node_display_name_to_index.get(&plain.display_name()) {
+                    Some(&plain) => self.prune_provided(state, plain, below, graph_id)?,
+                    None => below,
+                };
+                pruned.on_types.insert(on_type, below);
+                continue;
+            }
+            let mut kept = Provided::default();
+            for member in members {
+                kept.merge(self.prune_provided(state, member, below.clone(), graph_id)?);
+            }
+            if !kept.is_empty() {
+                pruned.on_types.insert(on_type, kept);
+            }
+        }
+
+        Ok(pruned)
+    }
+
+    fn field_targets<'a>(
+        &'a self,
+        node: NodeIndex,
+        field_name: &'a str,
+    ) -> impl Iterator<Item = NodeIndex> + 'a {
+        self.graph
+            .edges(node)
+            .filter(move |edge| matches!(edge.weight(), Edge::FieldMove(field_move) if field_move.name == field_name))
+            .map(|edge| edge.target())
+    }
+
+    fn member_targets<'a>(
+        &'a self,
+        node: NodeIndex,
+        type_name: &'a str,
+    ) -> impl Iterator<Item = NodeIndex> + 'a {
+        self.graph
+            .edges(node)
+            .filter(
+                move |edge| matches!(edge.weight(), Edge::AbstractMove(name) if name == type_name),
+            )
+            .map(|edge| edge.target())
+    }
+
+    /// The plain node an `@external` field would lead to, if it's in the graph already.
+    fn plain_node_of_field(
+        &self,
+        state: &SupergraphState,
+        node: NodeIndex,
+        field_name: &str,
+        graph_id: &str,
+    ) -> Result<Option<NodeIndex>, GraphError> {
+        let field_definition = field_definition(state, self.graph[node].name_str(), field_name)?;
+        let return_type_name = field_definition.field_type.inner_type();
+        let plain = Node::new_node(
+            return_type_name,
+            state.resolve_graph_id(graph_id)?,
+            state.is_interface_object_in_subgraph(return_type_name, graph_id),
+        );
+        Ok(self
+            .node_display_name_to_index
+            .get(&plain.display_name())
+            .copied())
+    }
+}
+
+fn field_definition<'a>(
+    state: &'a SupergraphState,
+    type_name: &str,
+    field_name: &str,
+) -> Result<&'a SupergraphField, GraphError> {
+    state
+        .definitions
+        .get(type_name)
+        .ok_or_else(|| GraphError::DefinitionNotFound(type_name.to_string()))?
+        .fields()
+        .get(field_name)
+        .ok_or_else(|| {
+            GraphError::FieldDefinitionNotFound(field_name.to_string(), type_name.to_string())
+        })
+}
+
+struct ProvidesContext<'a> {
+    state: &'a SupergraphState,
+    /// The own `@provides` of each plain field edge that has one.
+    provides: HashMap<EdgeIndex, Provided>,
+    /// Copies, by their plain node and what's provided on them.
+    copies: HashMap<(NodeIndex, Provided), NodeIndex>,
 }
 
 /// Print me with `println!("{}", graph);` to see the graph in DOT/digraph format.
