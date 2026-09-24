@@ -1,5 +1,3 @@
-use std::cmp::Ordering;
-
 use crate::executor::response::value::Value;
 
 pub fn deep_merge<'a>(target: &mut Value<'a>, source: Value<'a>) {
@@ -47,40 +45,53 @@ fn deep_merge_objects<'a>(
         return;
     }
 
-    let old_target = std::mem::take(target_vec);
-    let mut merged = Vec::with_capacity(old_target.len() + source_obj.len());
-
-    let mut target_iter = old_target.into_iter().peekable();
-    let mut source_iter = source_obj.into_iter().peekable();
-
-    while let (Some(&(target_key, _)), Some(&(source_key, _))) =
-        (target_iter.peek(), source_iter.peek())
-    {
-        match target_key.cmp(source_key) {
-            Ordering::Less => {
-                merged.push(target_iter.next().unwrap());
-            }
-            Ordering::Greater => {
-                let (key, value) = source_iter.next().unwrap();
-                merged.push((key, value));
-            }
-            Ordering::Equal => {
-                let (key, target_val_ref) = target_iter.next().unwrap();
-                let (_, source_val_ref) = source_iter.next().unwrap();
-
-                let mut new_val = target_val_ref;
-                deep_merge_internal(&mut new_val, source_val_ref);
-                merged.push((key, new_val));
-            }
+    let mut cursor = 0;
+    target_vec.reserve(source_obj.len());
+    for (key, source_val) in source_obj {
+        match Value::object_position_from(target_vec, key, &mut cursor) {
+            Some(index) => deep_merge_internal(&mut target_vec[index].1, source_val),
+            None => target_vec.push((key, source_val)),
         }
     }
+}
 
-    // At this point, at least one of the iterators is exhausted.
-    // We can extend the merged vector with the remaining elements from both.
-    // For the exhausted iterator, this will be a no-op.
-    merged.extend(target_iter);
-    merged.extend(source_iter);
+#[cfg(test)]
+mod tests {
+    use super::deep_merge;
+    use crate::executor::response::value::Value;
+    use serde::Deserialize;
 
-    // Replace the original vector with the newly merged one.
-    *target_vec = merged;
+    fn parse(json: &'static str) -> Value<'static> {
+        let mut deserializer = sonic_rs::Deserializer::from_slice(json.as_bytes());
+        Value::deserialize(&mut deserializer).unwrap()
+    }
+
+    fn keys<'a>(value: &'a Value<'a>) -> Vec<&'a str> {
+        value.as_object().unwrap().iter().map(|(k, _)| *k).collect()
+    }
+
+    #[test]
+    fn merges_shared_keys_and_appends_new_ones_in_source_order() {
+        let mut target = parse(r#"{"id": "1", "name": "a", "nested": {"x": 1}}"#);
+        let source = parse(r#"{"price": 10, "nested": {"y": 2}, "id": "1", "stock": 3}"#);
+
+        deep_merge(&mut target, source);
+
+        assert_eq!(keys(&target), ["id", "name", "nested", "price", "stock"]);
+        let nested = Value::object_get(target.as_object().unwrap(), "nested").unwrap();
+        assert_eq!(keys(nested), ["x", "y"]);
+    }
+
+    #[test]
+    fn source_scalars_replace_target_values() {
+        let mut target = parse(r#"{"b": 1, "a": 2}"#);
+        let source = parse(r#"{"a": 3, "b": null}"#);
+
+        deep_merge(&mut target, source);
+
+        let obj = target.as_object().unwrap();
+        assert!(matches!(Value::object_get(obj, "a"), Some(Value::U64(3))));
+        // A null source value leaves the target untouched.
+        assert!(matches!(Value::object_get(obj, "b"), Some(Value::U64(1))));
+    }
 }

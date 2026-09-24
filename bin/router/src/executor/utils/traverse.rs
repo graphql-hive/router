@@ -101,8 +101,7 @@ fn walk_mut<'a, Callback>(
             // If the key is Field, we expect current_data to be an object
             if let Value::Object(map) = current_data {
                 let field_name: &str = field_name.as_ref();
-                if let Ok(idx) = map.binary_search_by_key(&field_name, |(key, _)| key) {
-                    let (_, next_data) = map.get_mut(idx).unwrap();
+                if let Some(next_data) = Value::object_get_mut(map, field_name) {
                     push_field(error_path, field_name);
                     walk_mut(
                         next_data,
@@ -118,10 +117,8 @@ fn walk_mut<'a, Callback>(
         PathSegment::TypeCondition(type_condition) => {
             // If the key is Cast, we expect current_data to be an object or an array
             if let Value::Object(obj) = current_data {
-                let maybe_type_name = obj
-                    .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
-                    .ok()
-                    .and_then(|idx| obj[idx].1.as_str());
+                let maybe_type_name =
+                    Value::object_get(obj, TYPENAME_FIELD_NAME).and_then(Value::as_str);
 
                 if maybe_type_name.is_none_or(|type_name| {
                     entity_satisfies_any_type_condition(
@@ -187,18 +184,15 @@ pub fn traverse_and_callback<'a, Callback>(
         PathSegment::Field(field_name) => {
             if let Value::Object(map) = current_data {
                 let field_name: &str = field_name.as_ref();
-                if let Ok(idx) = map.binary_search_by_key(&field_name, |(key, _)| key) {
-                    let (_, next_data) = &map[idx];
+                if let Some(next_data) = Value::object_get(map, field_name) {
                     traverse_and_callback(next_data, rest_of_path, possible_types, callback);
                 }
             }
         }
         PathSegment::TypeCondition(type_condition) => {
             if let Value::Object(obj) = current_data {
-                let maybe_type_name = obj
-                    .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
-                    .ok()
-                    .and_then(|idx| obj[idx].1.as_str());
+                let maybe_type_name =
+                    Value::object_get(obj, TYPENAME_FIELD_NAME).and_then(Value::as_str);
 
                 if maybe_type_name.is_none_or(|type_name| {
                     entity_satisfies_any_type_condition(possible_types, type_name, type_condition)

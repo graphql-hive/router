@@ -359,6 +359,10 @@ impl<'a> Projector<'a, '_> {
         first: &mut bool,
         indexes: &mut [usize],
     ) -> Result<NullPropagationDecision, ProjectionError> {
+        // Fields are visited in query order, and the object holds them in the order the
+        // subgraph returned them, which follows the subgraph query. So the next field is
+        // usually right after the previous one.
+        let mut cursor = 0;
         for (offset, field) in fields.iter().enumerate() {
             let response_key = self.plan.response_key(field);
             if let Some(guard) = field.parent_guard {
@@ -367,7 +371,7 @@ impl<'a> Projector<'a, '_> {
                 }
             }
 
-            let field_val = find_field(obj, response_key, indexes.get_mut(offset));
+            let field_val = find_field(obj, response_key, indexes.get_mut(offset), &mut cursor);
 
             let res = if let Some(condition) = field.condition {
                 let field_type_name_cell = OnceCell::new();
@@ -458,35 +462,29 @@ impl<'a> Projector<'a, '_> {
 /// Finds `__typename` in a sorted object.
 #[inline]
 fn find_typename<'a>(object: &'a [(&str, Value)]) -> Option<&'a str> {
-    if let Some((key, value)) = object.first() {
-        if *key == TYPENAME_FIELD_NAME {
-            return value.as_str();
-        }
-    }
-    object
-        .binary_search_by_key(&TYPENAME_FIELD_NAME, |(key, _)| *key)
-        .ok()
-        .and_then(|index| object[index].1.as_str())
+    Value::object_get(object, TYPENAME_FIELD_NAME).and_then(Value::as_str)
 }
 
+/// Checks where the previous object in the list had the field, then falls back to the cursor scan.
 #[inline]
 fn find_field<'a>(
-    obj: &'a [(&str, Value)],
+    obj: &'a [(&str, Value<'a>)],
     response_key: &str,
     hint: Option<&mut usize>,
+    cursor: &mut usize,
 ) -> Option<&'a Value<'a>> {
-    // The saved position is only a hint: check that the key still matches.
-    if let Some((key, value)) = hint.as_ref().and_then(|hint| obj.get(**hint)) {
-        if *key == response_key {
-            return Some(value);
+    // Objects in a list usually share a shape, so the saved spot is almost always right.
+    // It's only a hint though, so check the key.
+    if let Some(index) = hint.as_deref().copied() {
+        if let Some((key, value)) = obj.get(index) {
+            if *key == response_key {
+                *cursor = index + 1;
+                return Some(value);
+            }
         }
     }
 
-    // A previous object may have left the field out or kept it in a different
-    // spot, so always search the current object and save what is found.
-    let found = obj
-        .binary_search_by_key(&response_key, |(key, _)| *key)
-        .ok();
+    let found = Value::object_position_from(obj, response_key, cursor);
     if let Some(hint) = hint {
         *hint = found.unwrap_or(MISSING_FIELD_INDEX);
     }
@@ -719,18 +717,23 @@ mod tests {
         let (root_type_name, plan) =
             ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
 
-        let data_json = sonic_rs::json!({
-            "__typename": "Query",
-            "metadatas": [
-                {
-                    "__typename": "Metadata",
-                    "id": "meta1",
-                    "timestamp": "2024-01-01T00:00:00Z",
-                    "data": { "float": 41.5, "int": -42, "str": "value1", "unsigned": 123 }
-                },
-                { "__typename": "Metadata", "id": "meta2", "data": null }
-            ]
-        });
+        // Parsed from text rather than built with `json!`, so object keys keep the order
+        // written here: the JSON scalar must come out in the order the subgraph sent it.
+        let data_json: sonic_rs::Value = sonic_rs::from_str(
+            r#"{
+                "__typename": "Query",
+                "metadatas": [
+                    {
+                        "__typename": "Metadata",
+                        "id": "meta1",
+                        "timestamp": "2024-01-01T00:00:00Z",
+                        "data": { "float": 41.5, "int": -42, "str": "value1", "unsigned": 123 }
+                    },
+                    { "__typename": "Metadata", "id": "meta2", "data": null }
+                ]
+            }"#,
+        )
+        .unwrap();
         let data = Value::from(data_json.as_ref());
         let output = project_by_operation(
             &data,
