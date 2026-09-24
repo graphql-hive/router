@@ -162,6 +162,7 @@ pub fn project_by_operation(
             root_fields,
             &TypeName::resolved(operation_type_name),
             &mut first,
+            &mut [],
         )?;
 
         if null_propagation_decision.should_propagate() {
@@ -242,6 +243,11 @@ pub fn serialize_value_to_buffer(data: &Value, buffer: &mut Vec<u8>) {
     };
 }
 
+/// Cached field positions kept on the stack before falling back to the heap.
+const STACK_CACHE_FIELD_LIMIT: usize = 16;
+/// Marks a field that was not found.
+const MISSING_FIELD_INDEX: usize = usize::MAX;
+
 struct Projector<'a, 'v> {
     plan: &'a ProjectionPlan,
     schema: &'a SchemaMetadata,
@@ -257,9 +263,27 @@ impl<'a> Projector<'a, '_> {
         selection: &'a FieldRecord,
         parent_type_name: &TypeName<'a, '_>,
         nullability: Option<ShapeCursor<'_>>,
+        indexes: &mut [usize],
     ) -> Result<NullPropagationDecision, ProjectionError> {
         match data {
             Value::Array(arr) => {
+                // Reuse field positions across objects in the same list.
+                let cache_size = if indexes.is_empty() && arr.len() > 1 && selection.has_children()
+                {
+                    Some(selection.children.len as usize)
+                } else {
+                    None
+                };
+                let mut heap_cache = match cache_size {
+                    Some(len) if len > STACK_CACHE_FIELD_LIMIT => vec![MISSING_FIELD_INDEX; len],
+                    _ => Vec::new(),
+                };
+                let mut stack_cache = [MISSING_FIELD_INDEX; STACK_CACHE_FIELD_LIMIT];
+                let indexes = match cache_size {
+                    Some(len) if len <= STACK_CACHE_FIELD_LIMIT => &mut stack_cache[..len],
+                    Some(_) => heap_cache.as_mut_slice(),
+                    _ => indexes,
+                };
                 let null_propagation_checkpoint = self.buffer.len();
                 let item_shape = nullability.and_then(ShapeCursor::list_item);
                 let item_non_null = item_shape.is_some_and(ShapeCursor::is_non_null);
@@ -274,6 +298,7 @@ impl<'a> Projector<'a, '_> {
                         selection,
                         parent_type_name,
                         item_shape.or(nullability),
+                        indexes,
                     )?;
 
                     if needs_null_propagation.should_propagate() && item_non_null {
@@ -300,7 +325,7 @@ impl<'a> Projector<'a, '_> {
                 );
                 let fields = self.plan.fields(selection.children);
                 let null_propagation_decision =
-                    self.project_object_fields(obj, fields, &type_name, &mut first)?;
+                    self.project_object_fields(obj, fields, &type_name, &mut first, indexes)?;
 
                 if null_propagation_decision.should_propagate() {
                     self.buffer.truncate(null_propagation_checkpoint);
@@ -332,12 +357,13 @@ impl<'a> Projector<'a, '_> {
         fields: &'a [FieldRecord],
         parent_type_name: &TypeName<'a, '_>,
         first: &mut bool,
+        indexes: &mut [usize],
     ) -> Result<NullPropagationDecision, ProjectionError> {
         // Fields are visited in query order, and the object holds them in the order the
         // subgraph returned them, which follows the subgraph query. So the next field is
         // usually right after the previous one.
         let mut cursor = 0;
-        for field in fields {
+        for (offset, field) in fields.iter().enumerate() {
             let response_key = self.plan.response_key(field);
             if let Some(guard) = field.parent_guard {
                 if !self.plan.guard_matches(guard, parent_type_name.get()?) {
@@ -345,8 +371,7 @@ impl<'a> Projector<'a, '_> {
                 }
             }
 
-            let field_val = Value::object_position_from(obj, response_key, &mut cursor)
-                .map(|index| &obj[index].1);
+            let field_val = find_field(obj, response_key, indexes.get_mut(offset), &mut cursor);
 
             let res = if let Some(condition) = field.condition {
                 let field_type_name_cell = OnceCell::new();
@@ -392,7 +417,13 @@ impl<'a> Projector<'a, '_> {
                     } else if let Some(field_val) = field_val {
                         let nullability = matches!(field_val, Value::Array(_))
                             .then(|| ShapeCursor::new(self.plan.shape(field.nullability())));
-                        self.project_value(field_val, field, parent_type_name, nullability)?
+                        self.project_value(
+                            field_val,
+                            field,
+                            parent_type_name,
+                            nullability,
+                            &mut [],
+                        )?
                     } else {
                         self.buffer.put(NULL);
                         NullPropagationDecision::PropagateNullValue
@@ -432,6 +463,32 @@ impl<'a> Projector<'a, '_> {
 #[inline]
 fn find_typename<'a>(object: &'a [(&str, Value)]) -> Option<&'a str> {
     Value::object_get(object, TYPENAME_FIELD_NAME).and_then(Value::as_str)
+}
+
+/// Checks where the previous object in the list had the field, then falls back to the cursor scan.
+#[inline]
+fn find_field<'a>(
+    obj: &'a [(&str, Value<'a>)],
+    response_key: &str,
+    hint: Option<&mut usize>,
+    cursor: &mut usize,
+) -> Option<&'a Value<'a>> {
+    // Objects in a list usually share a shape, so the saved spot is almost always right.
+    // It's only a hint though, so check the key.
+    if let Some(index) = hint.as_deref().copied() {
+        if let Some((key, value)) = obj.get(index) {
+            if *key == response_key {
+                *cursor = index + 1;
+                return Some(value);
+            }
+        }
+    }
+
+    let found = Value::object_position_from(obj, response_key, cursor);
+    if let Some(hint) = hint {
+        *hint = found.unwrap_or(MISSING_FIELD_INDEX);
+    }
+    found.map(|index| &obj[index].1)
 }
 
 #[inline(always)]

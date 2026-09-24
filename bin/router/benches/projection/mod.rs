@@ -55,7 +55,6 @@ fn abstract_type_benchmarks(c: &mut Criterion) {
     let (root_type_name, plan) =
         ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
 
-    // Object keys must stay sorted for binary search.
     let user = |row: usize| {
         Value::Object(vec![
             ("__typename", Value::String("User".into())),
@@ -142,7 +141,7 @@ fn list_benchmarks(c: &mut Criterion) {
         let (root_type_name, plan) =
             ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
 
-        // Object keys must stay sorted for binary search.
+        // Keys are stored in schema order, the opposite of the selection order above.
         let objects = (0..LIST_LENGTH)
             .map(|row| {
                 Value::Object(
