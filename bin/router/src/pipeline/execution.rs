@@ -6,6 +6,7 @@ use crate::executor::execution::plan::{
     execute_query_plan, CoerceVariablesPayload, ExecutionResultExtensions, PlanExecutionOutput,
     QueryPlanExecutionOpts, QueryPlanExecutionResult,
 };
+use crate::executor::execution::scheduler::DependencySchedule;
 use crate::executor::executors::common::ConnectionFingerprint;
 use crate::executor::headers::response::ResponseHeaderSink;
 use crate::pipeline::error::{InternalPipelineError, PipelineError};
@@ -35,6 +36,7 @@ pub enum ExposeQueryPlanMode {
 pub struct PlannedRequest<'req> {
     pub normalized_payload: Arc<GraphQLNormalizationPayload>,
     pub query_plan_payload: &'req QueryPlan,
+    pub(crate) dep_schedule_payload: Option<&'req DependencySchedule>,
     pub variable_payload: Arc<CoerceVariablesPayload>,
     pub client_request_details: Arc<ClientRequestDetails<'req>>,
     pub initial_errors: Vec<GraphQLError>,
@@ -128,6 +130,7 @@ pub async fn execute_plan<'exec>(
         let operation_name = planned_request.client_request_details.operation.name;
         let result = execute_query_plan(QueryPlanExecutionOpts {
             query_plan: planned_request.query_plan_payload,
+            dependency_schedule: planned_request.dep_schedule_payload,
             operation_for_plan: planned_request
                 .normalized_payload
                 .operation_for_plan
@@ -161,6 +164,10 @@ pub async fn execute_plan<'exec>(
             response_header_sink,
             error_masking_runtime: supergraph.runtime.error_masking.clone(),
             connection_fingerprint: planned_request.connection_fingerprint,
+            dependency_aware_execution: app_state
+                .router_config
+                .execution
+                .experimental_dependency_aware_execution,
         })
         .await?;
 

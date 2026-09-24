@@ -950,6 +950,7 @@ pub async fn execute_pipeline<'exec>(
         }
     };
     let query_plan_payload = prepared_query_plan.plan;
+    let dep_schedule_payload = prepared_query_plan.dep_schedule;
 
     let variable_payload = Arc::new(variable_payload);
 
@@ -971,6 +972,7 @@ pub async fn execute_pipeline<'exec>(
     let planned_request = PlannedRequest {
         normalized_payload: normalize_payload,
         query_plan_payload: &query_plan_payload,
+        dep_schedule_payload: dep_schedule_payload.as_deref(),
         variable_payload: variable_payload.clone(),
         client_request_details: client_request_details.clone(),
         initial_errors: authorization_errors

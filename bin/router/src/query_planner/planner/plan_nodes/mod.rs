@@ -136,6 +136,10 @@ impl<S: PlanState> PlanNode<S> {
 pub struct FetchNode<S: PlanState = Executable> {
     #[serde(skip_serializing)]
     pub id: i64,
+    /// Ids of the fetches this one waits for, taken straight from the fetch graph.
+    /// Execution-only, never serialized - the query plan output stays wave-shaped.
+    #[serde(skip)]
+    pub depends_on: Box<[i64]>,
     pub service_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub variable_usages: Option<BTreeSet<String>>,
@@ -160,6 +164,13 @@ pub struct FetchNode<S: PlanState = Executable> {
 pub struct BatchFetchNode<S: PlanState = Executable> {
     #[serde(skip_serializing)]
     pub id: i64,
+    /// Union of the `depends_on` of every fetch merged into this batch.
+    #[serde(skip)]
+    pub depends_on: Box<[i64]>,
+    /// Every original fetch id merged into this batch. `id` is only the first one,
+    /// so the scheduler needs the full list to unblock all downstream fetches.
+    #[serde(skip)]
+    pub completes: Box<[i64]>,
     pub service_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub variable_usages: Option<BTreeSet<String>>,
@@ -642,6 +653,7 @@ fn create_output_operation(
 impl FetchNode<Planning> {
     pub fn from_fetch_step(
         step: &FetchStepData<MultiTypeFetchStep>,
+        depends_on: Box<[i64]>,
         supergraph: &SupergraphState,
     ) -> Self {
         match step.is_entity_call() {
@@ -649,6 +661,7 @@ impl FetchNode<Planning> {
                 let planner_requires = create_input_selection_set(&step.input);
                 FetchNode {
                     id: step.id,
+                    depends_on,
                     service_name: step.service_name.0.clone(),
                     variable_usages: step.variable_usages.clone(),
                     operation_kind: Some(OperationKind::Query),
@@ -677,6 +690,7 @@ impl FetchNode<Planning> {
 
                 FetchNode {
                     id: step.id,
+                    depends_on,
                     service_name: step.service_name.0.clone(),
                     variable_usages: step.variable_usages.clone(),
                     operation_kind: Some(step.operation_kind.clone()),
@@ -699,9 +713,10 @@ impl FetchNode<Planning> {
 impl PlanNode<Planning> {
     pub fn from_fetch_step(
         step: &FetchStepData<MultiTypeFetchStep>,
+        depends_on: Box<[i64]>,
         supergraph: &SupergraphState,
     ) -> Self {
-        let fetch = FetchNode::from_fetch_step(step, supergraph);
+        let fetch = FetchNode::from_fetch_step(step, depends_on, supergraph);
 
         let node = if !step.response_path.is_empty() {
             PlanNode::Flatten(FlattenNode {
@@ -1004,8 +1019,10 @@ mod stored_size_tests {
         for (name, actual, expected) in [
             ("PlanNode", size_of::<PlanNode>(), 40),
             ("ConditionNode", size_of::<ConditionNode>(), 40),
-            ("FetchNode", size_of::<FetchNode>(), 224),
-            ("BatchFetchNode", size_of::<BatchFetchNode>(), 160),
+            // 224 -> 240 and 160 -> 192: the `depends_on` / `completes` slices the
+            // dependency-aware executor schedules on.
+            ("FetchNode", size_of::<FetchNode>(), 240),
+            ("BatchFetchNode", size_of::<BatchFetchNode>(), 192),
             (
                 "SubgraphFetchOperation",
                 size_of::<crate::query_planner::ast::operation::SubgraphFetchOperation>(),

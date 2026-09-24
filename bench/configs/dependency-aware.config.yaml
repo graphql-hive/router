@@ -1,0 +1,10 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+# Same as default.config.yaml, with the dependency-aware executor turned on, so the two
+# can be benchmarked against each other with everything else held equal.
+supergraph:
+  source: file
+  path: ../supergraph.graphql
+log:
+  level: info
+execution:
+  experimental_dependency_aware_execution: true
