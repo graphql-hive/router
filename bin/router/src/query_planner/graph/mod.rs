@@ -826,7 +826,7 @@ impl Graph {
                                     def_name.clone(),
                                     state.is_scalar_type(target_type),
                                     field_definition.field_type.is_list(),
-                                    None,
+                                    maybe_join_field.cloned(),
                                     requirements.clone(),
                                     overridden_by.clone(),
                                 ),

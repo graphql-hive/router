@@ -382,3 +382,102 @@ fn progressive_override_flag_test() -> Result<(), Box<dyn Error>> {
     "#);
     Ok(())
 }
+
+/// `b` takes `User.media`, a union field, from `a` behind a label. Each union member has its own
+/// edge, and the label has to be on all of them, or `b` keeps serving `media` with the flag off.
+#[test]
+fn progressive_override_of_union_field() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          me {
+            media {
+              ... on Book {
+                id
+              }
+              ... on Movie {
+                id
+              }
+            }
+          }
+        }
+        "#,
+    );
+
+    // flag on: `media` comes from b
+    let query_plan = build_query_plan(
+        "fixture/tests/union-progressive-override.supergraph.graphql",
+        document.clone(),
+        PlannerOverrideContext::from_flag("media_in_b".into()),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "b") {
+        {
+          me {
+            media {
+              __typename
+              ... on Book {
+                id
+              }
+              ... on Movie {
+                id
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    // flag off: a still owns `media`
+    let query_plan = build_query_plan(
+        "fixture/tests/union-progressive-override.supergraph.graphql",
+        document,
+        PlannerOverrideContext::from_flag("different_flag".into()),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {
+            me {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "me") {
+          Fetch(service: "a") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on User {
+                media {
+                  __typename
+                  ... on Book {
+                    id
+                  }
+                  ... on Movie {
+                    id
+                  }
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
