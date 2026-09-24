@@ -46,20 +46,6 @@ pub struct FetchStepData<State> {
     pub mutation_field_position: MutationFieldPosition,
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     pub output_rewrites: Option<Vec<FetchRewrite>>,
-    /// Fields this step selects under an internal alias.
-    pub internal_aliases: Vec<InternalAlias>,
-}
-
-/// A field fetched under an internal alias, like `_internal_qp_alias_0: price(currency: "EUR")`,
-/// so it doesn't clash with a field of the same name.
-///
-/// `location` is where the field sits in the response: the step's `response_path`, then the
-/// path in its output, ending with the field itself (name and arguments). Merging steps moves
-/// selections around, but the data lands in the same place, so the location never changes.
-#[derive(Debug, Clone, PartialEq)]
-pub struct InternalAlias {
-    pub location: MergePath,
-    pub alias: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -244,7 +230,6 @@ impl FetchStepData<SingleTypeFetchStep> {
             mutation_field_position: self.mutation_field_position,
             input_rewrites: self.input_rewrites,
             output_rewrites: self.output_rewrites,
-            internal_aliases: self.internal_aliases,
         }
     }
 }

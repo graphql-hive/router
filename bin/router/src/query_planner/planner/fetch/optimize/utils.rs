@@ -14,7 +14,7 @@ use crate::query_planner::{
     planner::fetch::{
         error::FetchGraphError,
         fetch_graph::FetchGraph,
-        fetch_step_data::{FetchStepData, FetchStepFlags, FetchStepKind, InternalAlias},
+        fetch_step_data::{FetchStepData, FetchStepKind},
         selections::{FetchStepSelections, FetchStepSelectionsError},
         state::MultiTypeFetchStep,
     },
@@ -102,31 +102,9 @@ fn merge_step_data(
     if !source_condition_merged {
         target.scope_fetch_conditions_before_merge(source);
     }
-    let scoped_aliases = target.output.safe_migrate_from_another(
-        &source.output,
-        &source_fetch_path,
-        (
-            target.flags.contains(FetchStepFlags::USED_FOR_REQUIRES),
-            source.flags.contains(FetchStepFlags::USED_FOR_REQUIRES),
-        ),
-        supergraph,
-    )?;
-
-    trace!(
-        "Total of {} alises applied during safe merge of selections",
-        scoped_aliases.len()
-    );
-    target.internal_aliases.extend(
-        scoped_aliases
-            .into_iter()
-            .map(|(path, alias)| InternalAlias {
-                location: target.response_path.path().concat(&path),
-                alias,
-            }),
-    );
-    // Aliases the source made in earlier merges. Their locations are in the response,
-    // so they stay the same.
-    target.internal_aliases.append(&mut source.internal_aliases);
+    target
+        .output
+        .safe_migrate_from_another(&source.output, &source_fetch_path, supergraph)?;
 
     if let Some(input_rewrites) = source.input_rewrites.take() {
         if !input_rewrites.is_empty() {
@@ -420,7 +398,7 @@ mod tests {
         planner::fetch::{
             error::FetchGraphError,
             fetch_graph::FetchGraph,
-            fetch_step_data::{FetchStepData, FetchStepFlags, FetchStepKind, InternalAlias},
+            fetch_step_data::{FetchStepData, FetchStepFlags, FetchStepKind},
             selections::FetchStepSelections,
             state::{MultiTypeFetchStep, SingleTypeFetchStep},
         },
@@ -433,22 +411,6 @@ mod tests {
     /// These tests don't depend on types, so the schema can be empty.
     fn supergraph() -> SupergraphState {
         SupergraphState::new(&parse_schema("type Query { a: Int }"))
-    }
-
-    /// For the alias tests, which need to know that `Cat` and `Dog` are `Node`s.
-    fn pets_supergraph() -> SupergraphState {
-        SupergraphState::new(&parse_schema(
-            r#"
-            directive @join__type(graph: join__Graph!, key: join__FieldSet) repeatable on OBJECT | INTERFACE
-            directive @join__implements(graph: join__Graph!, interface: String!) repeatable on OBJECT | INTERFACE
-            scalar join__FieldSet
-            enum join__Graph { A @join__graph(name: "a", url: "") }
-            type Query @join__type(graph: A) { things: [Node!]! }
-            interface Node @join__type(graph: A) { id: ID! price: Int! }
-            type Cat implements Node @join__type(graph: A) @join__implements(graph: A, interface: "Node") { id: ID! price: Int! }
-            type Dog implements Node @join__type(graph: A) @join__implements(graph: A, interface: "Node") { id: ID! price: Int! }
-            "#,
-        ))
     }
 
     /// Selections for one or more types, e.g. `&[("User", "{ id }"), ("Admin", "{ id }")]`.
@@ -486,28 +448,6 @@ mod tests {
         )
     }
 
-    fn path_under_types(types: &[&str]) -> MergePath {
-        types
-            .iter()
-            .fold(path(&["things", "@"]), |path, type_name| {
-                path.push(Segment::TypeCondition(
-                    std::collections::BTreeSet::from([(*type_name).to_string()]),
-                    None,
-                ))
-            })
-    }
-
-    fn price_alias(types: &[&str]) -> InternalAlias {
-        InternalAlias {
-            location: path_under_types(types).push(Segment::Field(
-                FieldPathSegment::named("price".to_string()),
-                0,
-                None,
-            )),
-            alias: "_internal_qp_alias_0".to_string(),
-        }
-    }
-
     fn add_entity_step(
         graph: &mut FetchGraph<MultiTypeFetchStep>,
         service: &str,
@@ -531,7 +471,6 @@ mod tests {
             mutation_field_position: None,
             input_rewrites: None,
             output_rewrites: None,
-            internal_aliases: Vec::new(),
         })
     }
 
@@ -645,204 +584,6 @@ mod tests {
         assert!(
             matches!(result, Err(FetchGraphError::MismatchedResponsePath)),
             "{result:?}"
-        );
-    }
-
-    /// Alias records hold response locations, so they come along unchanged when the aliased
-    /// step is merged, and again when the result is merged into another step.
-    #[test]
-    fn alias_records_keep_their_location_across_merges() {
-        let mut graph =
-            FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
-
-        let users = add_entity_step(
-            &mut graph,
-            "orders",
-            path(&["user"]),
-            selections(&[("User", "{ __typename id }")]),
-            selections(&[("User", "{ orders { __typename id } }")]),
-        );
-        let orders = add_entity_step(
-            &mut graph,
-            "orders",
-            path(&["user", "orders", "@"]),
-            selections(&[("Order", "{ __typename id }")]),
-            selections(&[("Order", "{ price _internal_qp_alias_0: price }")]),
-        );
-        let other_users = add_entity_step(
-            &mut graph,
-            "orders",
-            path(&["user"]),
-            selections(&[("User", "{ __typename id }")]),
-            selections(&[("User", "{ name }")]),
-        );
-        graph.connect(users, orders);
-        let expected = vec![InternalAlias {
-            location: path(&["user", "orders", "@", "price"]),
-            alias: "_internal_qp_alias_0".to_string(),
-        }];
-        graph.get_step_data_mut(orders).unwrap().internal_aliases = expected.clone();
-
-        perform_fetch_step_merge(users, orders, &mut graph, false, &supergraph()).unwrap();
-        assert_eq!(
-            graph.get_step_data(users).unwrap().internal_aliases,
-            expected
-        );
-
-        perform_fetch_step_merge(other_users, users, &mut graph, false, &supergraph()).unwrap();
-        assert_eq!(
-            graph.get_step_data(other_users).unwrap().internal_aliases,
-            expected
-        );
-    }
-
-    /// `price` is aliased for `Cat`s only. A step reading `price` of `Dog`s at the same place
-    /// reads other objects, so it keeps the plain name.
-    #[test]
-    fn alias_patching_keeps_to_its_type_branch() {
-        let mut graph =
-            FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
-        let under = |types: &str| {
-            path(&["things", "@"]).push(Segment::TypeCondition(
-                std::collections::BTreeSet::from([types.to_string()]),
-                None,
-            ))
-        };
-
-        let aliased = add_entity_step(
-            &mut graph,
-            "shop",
-            path(&["things", "@"]),
-            selections(&[("Thing", "{ __typename id }")]),
-            selections(&[("Thing", "{ ... on Cat { _internal_qp_alias_0: price } }")]),
-        );
-        graph.get_step_data_mut(aliased).unwrap().internal_aliases = vec![InternalAlias {
-            location: under("Cat").push(Segment::Field(
-                FieldPathSegment::named("price".to_string()),
-                0,
-                None,
-            )),
-            alias: "_internal_qp_alias_0".to_string(),
-        }];
-        let cats = add_entity_step(
-            &mut graph,
-            "pricing",
-            under("Cat"),
-            selections(&[("Cat", "{ __typename id price }")]),
-            selections(&[("Cat", "{ tax }")]),
-        );
-        let dogs = add_entity_step(
-            &mut graph,
-            "pricing",
-            under("Dog"),
-            selections(&[("Dog", "{ __typename id price }")]),
-            selections(&[("Dog", "{ tax }")]),
-        );
-        graph.connect(aliased, cats);
-        graph.connect(aliased, dogs);
-
-        graph
-            .apply_internal_aliases_patching(&pets_supergraph())
-            .unwrap();
-
-        let input = |step, type_name| {
-            graph
-                .get_step_data(step)
-                .unwrap()
-                .input
-                .selections_for_definition(type_name)
-                .unwrap()
-                .to_string()
-        };
-        assert_eq!(
-            input(cats, "Cat"),
-            "{__typename id price: _internal_qp_alias_0}"
-        );
-        assert_eq!(input(dogs, "Dog"), "{__typename id price}");
-    }
-
-    /// Nested fragments narrow the runtime type cumulatively: Node + Cat is disjoint from
-    /// Node + Dog, even though both paths mention Node.
-    #[test]
-    fn alias_patching_does_not_cross_nested_disjoint_type_conditions() {
-        let mut graph =
-            FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
-
-        let aliased = add_entity_step(
-            &mut graph,
-            "shop",
-            path(&["things", "@"]),
-            selections(&[("Thing", "{ __typename id }")]),
-            selections(&[(
-                "Thing",
-                "{ ... on Node { ... on Cat { _internal_qp_alias_0: price } } }",
-            )]),
-        );
-        graph.get_step_data_mut(aliased).unwrap().internal_aliases =
-            vec![price_alias(&["Node", "Cat"])];
-
-        let dogs = add_entity_step(
-            &mut graph,
-            "pricing",
-            path_under_types(&["Node", "Dog"]),
-            selections(&[("Dog", "{ __typename id price }")]),
-            selections(&[("Dog", "{ tax }")]),
-        );
-        graph.connect(aliased, dogs);
-
-        graph
-            .apply_internal_aliases_patching(&pets_supergraph())
-            .unwrap();
-
-        assert_eq!(
-            graph
-                .get_step_data(dogs)
-                .unwrap()
-                .input
-                .selections_for_definition("Dog")
-                .unwrap()
-                .to_string(),
-            "{__typename id price}"
-        );
-    }
-
-    /// Cat implements Node, so a reader under Cat can consume a field aliased under Node.
-    #[test]
-    fn alias_patching_matches_interface_and_implementing_object() {
-        let mut graph =
-            FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
-
-        let aliased = add_entity_step(
-            &mut graph,
-            "shop",
-            path(&["things", "@"]),
-            selections(&[("Thing", "{ __typename id }")]),
-            selections(&[("Thing", "{ ... on Node { _internal_qp_alias_0: price } }")]),
-        );
-        graph.get_step_data_mut(aliased).unwrap().internal_aliases = vec![price_alias(&["Node"])];
-
-        let cats = add_entity_step(
-            &mut graph,
-            "pricing",
-            path_under_types(&["Cat"]),
-            selections(&[("Cat", "{ __typename id price }")]),
-            selections(&[("Cat", "{ tax }")]),
-        );
-        graph.connect(aliased, cats);
-
-        graph
-            .apply_internal_aliases_patching(&pets_supergraph())
-            .unwrap();
-
-        assert_eq!(
-            graph
-                .get_step_data(cats)
-                .unwrap()
-                .input
-                .selections_for_definition("Cat")
-                .unwrap()
-                .to_string(),
-            "{__typename id price: _internal_qp_alias_0}"
         );
     }
 }

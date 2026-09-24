@@ -349,7 +349,6 @@ fn create_noop_fetch_step(
         variable_usages: None,
         variable_definitions: None,
         mutation_field_position: None,
-        internal_aliases: Vec::new(),
     })
 }
 
@@ -390,7 +389,6 @@ fn create_fetch_step_for_entity_call(
         variable_usages: None,
         variable_definitions: None,
         mutation_field_position: None,
-        internal_aliases: Vec::new(),
     })
 }
 
@@ -422,7 +420,6 @@ fn create_fetch_step_for_root_move(
         input_rewrites: None,
         output_rewrites: None,
         mutation_field_position,
-        internal_aliases: Vec::new(),
     });
 
     fetch_graph.connect(root_step_index, idx);
@@ -1149,7 +1146,12 @@ fn process_subgraph_reentry(
         reentry_move.name.to_string(),
         query_node.selection_alias().map(|a| a.to_string()),
     );
-    let mut child_response_path = response_path.push(Segment::Field(segment_field, 0, None));
+    let args_hash = query_node
+        .selection_arguments()
+        .map(|a| a.hash_u64())
+        .unwrap_or(0);
+    let mut child_response_path =
+        response_path.push(Segment::Field(segment_field, args_hash, None));
     if reentry_move.is_list {
         child_response_path = child_response_path.push(Segment::List);
     }
@@ -2032,6 +2034,7 @@ pub fn build_fetch_graph_from_query_tree(
 
     // fine to unwrap as we have already checked the length
     fetch_graph.root_index = Some(*root_indexes.first().unwrap());
+    fetch_graph.give_internal_fields_their_keys(graph, &query_tree.root)?;
     let mut fetch_graph = fetch_graph.to_multi_type();
     fetch_graph.optimize(supergraph, options, cancellation_token)?;
     fetch_graph.collect_variable_usages()?;

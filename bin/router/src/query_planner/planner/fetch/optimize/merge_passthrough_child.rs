@@ -149,7 +149,6 @@ fn perform_passthrough_child_merge(
     );
 
     me.output.migrate_from_another(&other.output, &path)?;
-    me.internal_aliases.append(&mut other.internal_aliases);
 
     let mut children_indexes: Vec<NodeIndex> = vec![];
     let mut parents_indexes: Vec<NodeIndex> = vec![];

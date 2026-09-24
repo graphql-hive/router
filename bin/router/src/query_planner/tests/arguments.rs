@@ -1150,8 +1150,8 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
             } =>
             {
               ... on Test {
-                _internal_qp_alias_1: otherField(arg: 2)
-                _internal_qp_alias_0: otherField(arg: 3)
+                _internal_qp_alias_0: otherField(arg: 2)
+                _internal_qp_alias_1: otherField(arg: 3)
                 otherField(arg: 1)
               }
             }
@@ -1166,7 +1166,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
               {
                 ... on Test {
                   __typename
-                  otherField: _internal_qp_alias_0
+                  otherField: _internal_qp_alias_1
                   id
                 }
               }
@@ -1178,7 +1178,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
               {
                 ... on Test {
                   __typename
-                  otherField: _internal_qp_alias_1
+                  otherField: _internal_qp_alias_0
                   id
                 }
               }
@@ -1224,7 +1224,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
               "kind": "Fetch",
               "serviceName": "b",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{_internal_qp_alias_1: otherField(arg: 2) _internal_qp_alias_0: otherField(arg: 3) otherField(arg: 1)}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{_internal_qp_alias_0: otherField(arg: 2) _internal_qp_alias_1: otherField(arg: 3) otherField(arg: 1)}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -1271,7 +1271,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
                         },
                         {
                           "kind": "Field",
-                          "name": "_internal_qp_alias_0",
+                          "name": "_internal_qp_alias_1",
                           "alias": "otherField"
                         },
                         {
@@ -1303,7 +1303,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
                         },
                         {
                           "kind": "Field",
-                          "name": "_internal_qp_alias_1",
+                          "name": "_internal_qp_alias_0",
                           "alias": "otherField"
                         },
                         {
