@@ -55,7 +55,7 @@ fn merge_source_condition_into_non_entity_target(
 
     // Check if the condition is already enforced by the path
     let condition_redundant = matches!(
-        source.response_path.last(),
+        source.response_path.path().last(),
         Some(Segment::TypeCondition(_, Some(c)) | Segment::Field(_, _, Some(c))) if c == &condition
     );
 
@@ -120,7 +120,7 @@ fn merge_step_data(
         scoped_aliases
             .into_iter()
             .map(|(path, alias)| InternalAlias {
-                location: target.response_path.concat(&path),
+                location: target.response_path.path().concat(&path),
                 alias,
             }),
     );
@@ -292,14 +292,14 @@ impl FetchStepData<MultiTypeFetchStep> {
         // The one exception is a nested entity call that we feed ourselves,
         // see `can_absorb_nested_entity_call`.
         if matches!(self.kind, FetchStepKind::Entity) && self.kind == other.kind {
-            if !self.response_path.eq(&other.response_path)
+            if self.response_path != other.response_path
                 && !(is_only_parent && self.can_absorb_nested_entity_call(other))
             {
                 return Ok(false);
             }
         } else {
             // otherwise we can merge
-            if !other.response_path.starts_with(&self.response_path) {
+            if !other.response_path.is_within(&self.response_path) {
                 return Ok(false);
             }
         }
@@ -508,13 +508,15 @@ mod tests {
         }
     }
 
-    fn entity_step(
+    fn add_entity_step(
+        graph: &mut FetchGraph<MultiTypeFetchStep>,
         service: &str,
         response_path: MergePath,
         input: FetchStepSelections<MultiTypeFetchStep>,
         output: FetchStepSelections<MultiTypeFetchStep>,
-    ) -> FetchStepData<MultiTypeFetchStep> {
-        FetchStepData {
+    ) -> petgraph::graph::NodeIndex {
+        let response_path = graph.locations.get(&response_path);
+        graph.add_step(FetchStepData {
             id: 0,
             service_name: SubgraphName(service.to_string()),
             response_path,
@@ -530,7 +532,7 @@ mod tests {
             input_rewrites: None,
             output_rewrites: None,
             internal_aliases: Vec::new(),
-        }
+        })
     }
 
     /// A parent that fetches two types - what `batch_multi_type` builds - must not pull in a
@@ -541,7 +543,8 @@ mod tests {
         let mut graph =
             FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
 
-        let parent = graph.add_step(entity_step(
+        let parent = add_entity_step(
+            &mut graph,
             "orders",
             path(&["accounts", "@"]),
             selections(&[
@@ -552,13 +555,14 @@ mod tests {
                 ("User", "{ orders { __typename id } }"),
                 ("Admin", "{ orders { __typename id } }"),
             ]),
-        ));
-        let child = graph.add_step(entity_step(
+        );
+        let child = add_entity_step(
+            &mut graph,
             "orders",
             path(&["accounts", "@", "orders", "@"]),
             selections(&[("Order", "{ __typename id }")]),
             selections(&[("Order", "{ sku }")]),
-        ));
+        );
         graph.connect(parent, child);
 
         let parent_data = graph.get_step_data(parent).unwrap();
@@ -578,18 +582,20 @@ mod tests {
         let mut graph =
             FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
 
-        let batched = graph.add_step(entity_step(
+        let batched = add_entity_step(
+            &mut graph,
             "catalog",
             path(&["listings", "@", "pet"]),
             selections(&[("Cat", "{ __typename id }"), ("Dog", "{ __typename id }")]),
             selections(&[("Cat", "{ whiskers }"), ("Dog", "{ tricks }")]),
-        ));
-        let interface = graph.add_step(entity_step(
+        );
+        let interface = add_entity_step(
+            &mut graph,
             "catalog",
             path(&["listings", "@", "pet"]),
             selections(&[("Animal", "{ __typename id }")]),
             selections(&[("Animal", "{ __typename }")]),
-        ));
+        );
 
         let batched_data = graph.get_step_data(batched).unwrap();
         let interface_data = graph.get_step_data(interface).unwrap();
@@ -620,18 +626,20 @@ mod tests {
         let mut graph =
             FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
 
-        let a = graph.add_step(entity_step(
+        let a = add_entity_step(
+            &mut graph,
             "catalog",
             path(&["a", "@"]),
             selections(&[("Order", "{ __typename id }")]),
             selections(&[("Order", "{ name }")]),
-        ));
-        let b = graph.add_step(entity_step(
+        );
+        let b = add_entity_step(
+            &mut graph,
             "catalog",
             path(&["b", "@"]),
             selections(&[("Order", "{ __typename id }")]),
             selections(&[("Order", "{ name }")]),
-        ));
+        );
 
         let result = perform_fetch_step_merge(a, b, &mut graph, false, &supergraph());
         assert!(
@@ -647,24 +655,27 @@ mod tests {
         let mut graph =
             FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
 
-        let users = graph.add_step(entity_step(
+        let users = add_entity_step(
+            &mut graph,
             "orders",
             path(&["user"]),
             selections(&[("User", "{ __typename id }")]),
             selections(&[("User", "{ orders { __typename id } }")]),
-        ));
-        let orders = graph.add_step(entity_step(
+        );
+        let orders = add_entity_step(
+            &mut graph,
             "orders",
             path(&["user", "orders", "@"]),
             selections(&[("Order", "{ __typename id }")]),
             selections(&[("Order", "{ price _internal_qp_alias_0: price }")]),
-        ));
-        let other_users = graph.add_step(entity_step(
+        );
+        let other_users = add_entity_step(
+            &mut graph,
             "orders",
             path(&["user"]),
             selections(&[("User", "{ __typename id }")]),
             selections(&[("User", "{ name }")]),
-        ));
+        );
         graph.connect(users, orders);
         let expected = vec![InternalAlias {
             location: path(&["user", "orders", "@", "price"]),
@@ -698,12 +709,13 @@ mod tests {
             ))
         };
 
-        let aliased = graph.add_step(entity_step(
+        let aliased = add_entity_step(
+            &mut graph,
             "shop",
             path(&["things", "@"]),
             selections(&[("Thing", "{ __typename id }")]),
             selections(&[("Thing", "{ ... on Cat { _internal_qp_alias_0: price } }")]),
-        ));
+        );
         graph.get_step_data_mut(aliased).unwrap().internal_aliases = vec![InternalAlias {
             location: under("Cat").push(Segment::Field(
                 FieldPathSegment::named("price".to_string()),
@@ -712,18 +724,20 @@ mod tests {
             )),
             alias: "_internal_qp_alias_0".to_string(),
         }];
-        let cats = graph.add_step(entity_step(
+        let cats = add_entity_step(
+            &mut graph,
             "pricing",
             under("Cat"),
             selections(&[("Cat", "{ __typename id price }")]),
             selections(&[("Cat", "{ tax }")]),
-        ));
-        let dogs = graph.add_step(entity_step(
+        );
+        let dogs = add_entity_step(
+            &mut graph,
             "pricing",
             under("Dog"),
             selections(&[("Dog", "{ __typename id price }")]),
             selections(&[("Dog", "{ tax }")]),
-        ));
+        );
         graph.connect(aliased, cats);
         graph.connect(aliased, dogs);
 
@@ -754,7 +768,8 @@ mod tests {
         let mut graph =
             FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
 
-        let aliased = graph.add_step(entity_step(
+        let aliased = add_entity_step(
+            &mut graph,
             "shop",
             path(&["things", "@"]),
             selections(&[("Thing", "{ __typename id }")]),
@@ -762,16 +777,17 @@ mod tests {
                 "Thing",
                 "{ ... on Node { ... on Cat { _internal_qp_alias_0: price } } }",
             )]),
-        ));
+        );
         graph.get_step_data_mut(aliased).unwrap().internal_aliases =
             vec![price_alias(&["Node", "Cat"])];
 
-        let dogs = graph.add_step(entity_step(
+        let dogs = add_entity_step(
+            &mut graph,
             "pricing",
             path_under_types(&["Node", "Dog"]),
             selections(&[("Dog", "{ __typename id price }")]),
             selections(&[("Dog", "{ tax }")]),
-        ));
+        );
         graph.connect(aliased, dogs);
 
         graph
@@ -796,20 +812,22 @@ mod tests {
         let mut graph =
             FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
 
-        let aliased = graph.add_step(entity_step(
+        let aliased = add_entity_step(
+            &mut graph,
             "shop",
             path(&["things", "@"]),
             selections(&[("Thing", "{ __typename id }")]),
             selections(&[("Thing", "{ ... on Node { _internal_qp_alias_0: price } }")]),
-        ));
+        );
         graph.get_step_data_mut(aliased).unwrap().internal_aliases = vec![price_alias(&["Node"])];
 
-        let cats = graph.add_step(entity_step(
+        let cats = add_entity_step(
+            &mut graph,
             "pricing",
             path_under_types(&["Cat"]),
             selections(&[("Cat", "{ __typename id price }")]),
             selections(&[("Cat", "{ tax }")]),
-        ));
+        );
         graph.connect(aliased, cats);
 
         graph

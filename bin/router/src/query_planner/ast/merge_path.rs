@@ -48,7 +48,7 @@ impl From<&FieldSelection> for FieldPathSegment {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Condition {
     Skip(String),
     Include(String),
@@ -126,7 +126,7 @@ impl From<&InlineFragmentSelection> for Option<Condition> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Segment {
     // A field with a unique identifier and the arguments hash
     // We used this to uniquely identify the field in the selection set.
@@ -206,14 +206,6 @@ impl MergePath {
         result
     }
 
-    /// Insert a string at the beginning of the path
-    pub fn insert_front(&self, segment: impl Into<Segment>) -> Self {
-        let mut new_segments = Vec::with_capacity(self.inner.len() + 1);
-        new_segments.push(segment.into());
-        new_segments.extend_from_slice(&self.inner);
-        Self::new(new_segments)
-    }
-
     /// Inserts a string at the end of the path
     pub fn push(&self, segment: impl Into<Segment>) -> Self {
         let mut new_segments = Vec::with_capacity(self.inner.len() + 1);
@@ -238,29 +230,8 @@ impl MergePath {
         self.inner.is_empty()
     }
 
-    pub fn common_prefix_len(&self, other: &MergePath) -> usize {
-        self.inner
-            .iter()
-            .zip(other.inner.iter())
-            .take_while(|(s, o)| s == o)
-            .count()
-    }
-
-    pub fn starts_with(&self, other: &MergePath) -> bool {
-        if other.len() > self.len() {
-            return false;
-        }
-        self.common_prefix_len(other) == other.len()
-    }
-
-    /// The rest of this path below `prefix`, when it starts with exactly `prefix`.
-    pub fn strip_prefix(&self, prefix: &MergePath) -> Option<MergePath> {
-        self.starts_with(prefix)
-            .then(|| self.slice_from(prefix.len()))
-    }
-
-    /// Like `strip_prefix`, but for places in the response, where two paths can point at the
-    /// same objects without being written the same way.
+    /// Where `prefix` sits at the start of this path, for places in the response, where two
+    /// paths can point at the same objects without being written the same way.
     ///
     /// Fields match by response key and arguments, lists match lists, and `@skip`/`@include`
     /// on segments don't count. Type conditions only narrow which objects a path points at, so
@@ -311,17 +282,6 @@ impl MergePath {
             }
             (i, j) = (next_i + 1, next_j + 1);
         }
-    }
-
-    pub fn without_type_castings(&self) -> Self {
-        let new_segments = self
-            .inner
-            .iter()
-            .filter(|segment| !matches!(segment, Segment::TypeCondition(_, _)))
-            .cloned()
-            .collect::<Vec<_>>();
-
-        Self::new(new_segments)
     }
 }
 
@@ -398,18 +358,6 @@ mod tests {
                 })
                 .collect(),
         )
-    }
-
-    #[test]
-    fn strip_prefix_is_exact() {
-        assert_eq!(path("a.@.b").strip_prefix(&path("a.@")), Some(path("b")));
-        assert_eq!(path("a.@").strip_prefix(&path("a.@")), Some(path("")));
-        assert_eq!(
-            path("a.@|[Cat].b").strip_prefix(&path("a.@")),
-            Some(path("|[Cat].b"))
-        );
-        assert_eq!(path("a.@.b").strip_prefix(&path("a.@|[Cat]")), None);
-        assert_eq!(path("a").strip_prefix(&path("a.b")), None);
     }
 
     #[test]

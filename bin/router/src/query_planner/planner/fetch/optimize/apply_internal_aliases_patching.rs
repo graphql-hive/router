@@ -50,15 +50,19 @@ impl FetchGraph<MultiTypeFetchStep> {
                 if descendant_index == aliased_step_index {
                     continue;
                 }
-                let descendant = self.get_step_data_mut(descendant_index)?;
                 for alias in &aliases {
-                    patch_reader(
+                    let descendant = self.get_step_data_mut(descendant_index)?;
+                    let patched_path = patch_reader(
                         descendant,
                         descendant_index,
                         alias,
                         aliased_step_condition.as_ref(),
                         supergraph,
                     )?;
+                    if let Some(path) = patched_path {
+                        let location = self.locations.get(&path);
+                        self.get_step_data_mut(descendant_index)?.response_path = location;
+                    }
                 }
             }
         }
@@ -73,7 +77,7 @@ fn patch_reader(
     alias: &InternalAlias,
     aliased_step_condition: Option<&Condition>,
     supergraph: &SupergraphState,
-) -> Result<(), FetchGraphError> {
+) -> Result<Option<MergePath>, FetchGraphError> {
     let types_overlap = |a: &[&BTreeSet<String>], b: &[&BTreeSet<String>]| {
         !objects_of(supergraph, a).is_disjoint(&objects_of(supergraph, b))
     };
@@ -81,7 +85,7 @@ fn patch_reader(
     // The alias is only in the response when every condition on its way is true. A reader
     // that's sent in other cases too can't count on it, it reads the plain field.
     let needed = conditions_of(&alias.location, aliased_step_condition);
-    let given = conditions_of(&reader.response_path, reader.condition.as_ref());
+    let given = conditions_of(reader.response_path.path(), reader.condition.as_ref());
     if !needed.is_subset(&given) {
         trace!(
             "step [{}] is sent under other conditions than alias '{}' at '{}'",
@@ -89,7 +93,7 @@ fn patch_reader(
             alias.alias,
             alias.location
         );
-        return Ok(());
+        return Ok(None);
     }
 
     let Some(Segment::Field(field_seg, args_hash, condition)) = alias.location.last() else {
@@ -112,12 +116,12 @@ fn patch_reader(
     let batched = input_types.len() > 1;
     for type_name in input_types {
         let reader_location = if batched {
-            reader.response_path.push(Segment::TypeCondition(
+            reader.response_path.path().push(Segment::TypeCondition(
                 BTreeSet::from([type_name.clone()]),
                 None,
             ))
         } else {
-            reader.response_path.clone()
+            reader.response_path.path().clone()
         };
         let Some(rest) = parent_location.strip_location_prefix(&reader_location, types_overlap)
         else {
@@ -151,29 +155,30 @@ fn patch_reader(
 
     // Only the segment at the aliased field's own position counts, an ancestor with the same
     // name and arguments is a different field.
-    let segment_idx_to_patch = reader
-        .response_path
+    let response_path = reader.response_path.path();
+    let segment_idx_to_patch = response_path
         .strip_location_prefix(&alias.location, types_overlap)
         // The segment right before the rest is the aliased field.
         .map(|rest| rest - 1)
-        .filter(|idx| {
-            matches!(&reader.response_path.inner[*idx], Segment::Field(_, _, c) if c == condition)
-        });
+        .filter(
+            |idx| matches!(&response_path.inner[*idx], Segment::Field(_, _, c) if c == condition),
+        );
 
-    if let Some(idx) = segment_idx_to_patch {
-        let mut new_path = reader.response_path.inner.to_vec();
-        if let Some(Segment::Field(segment, _, _)) = new_path.get_mut(idx) {
-            segment.field_name = alias.alias.clone();
-            reader.response_path = MergePath::new(new_path);
-            trace!(
-                "patched response path of step [{}]: {}",
-                reader_index.index(),
-                reader.response_path
-            );
-        }
-    }
-
-    Ok(())
+    let Some(idx) = segment_idx_to_patch else {
+        return Ok(None);
+    };
+    let mut new_path = response_path.inner.to_vec();
+    let Some(Segment::Field(segment, _, _)) = new_path.get_mut(idx) else {
+        return Ok(None);
+    };
+    segment.field_name = alias.alias.clone();
+    let new_path = MergePath::new(new_path);
+    trace!(
+        "patched response path of step [{}]: {}",
+        reader_index.index(),
+        new_path
+    );
+    Ok(Some(new_path))
 }
 
 /// Renames the field to the alias wherever the input reads it at `path`. The input can wrap it

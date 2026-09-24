@@ -703,9 +703,9 @@ impl PlanNode<Planning> {
     ) -> Self {
         let fetch = FetchNode::from_fetch_step(step, supergraph);
 
-        let node = if !step.response_path.is_empty() {
+        let node = if !step.response_path.is_root() {
             PlanNode::Flatten(FlattenNode {
-                path: step.response_path.clone().into(),
+                path: step.response_path.path().clone().into(),
                 node: Box::new(PlanNode::Fetch(Box::new(fetch))),
             })
         } else if matches!(fetch.operation_kind, Some(OperationKind::Subscription)) {

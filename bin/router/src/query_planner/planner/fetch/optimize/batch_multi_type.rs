@@ -1,10 +1,8 @@
 use std::collections::{BTreeSet, HashMap, VecDeque};
-use std::hash::{DefaultHasher, Hash, Hasher};
 
 use petgraph::{graph::NodeIndex, Direction};
 use tracing::{instrument, trace};
 
-use crate::query_planner::ast::merge_path::Condition;
 use crate::query_planner::planner::fetch::fetch_step_data::{
     type_condition_types_from_response_path, FetchStepFlags,
 };
@@ -13,7 +11,7 @@ use crate::query_planner::{
     ast::merge_path::{MergePath, Segment},
     planner::fetch::{
         error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
-        optimize::utils::perform_fetch_step_merge, state::MultiTypeFetchStep,
+        location::Location, optimize::utils::perform_fetch_step_merge, state::MultiTypeFetchStep,
     },
 };
 
@@ -128,6 +126,12 @@ impl FetchGraph<MultiTypeFetchStep> {
                     supergraph,
                 )?;
 
+                let merged_path = merge_batched_response_paths(
+                    &original_me_path,
+                    &original_other_path,
+                    &requested_type_condition_types_by_position,
+                );
+                let merged_location = self.locations.get(&merged_path);
                 let merged = self.get_step_data_mut(*child_index_latest)?;
                 // After merge, update the path so Flatten(path) is correct.
                 // Example:
@@ -137,15 +141,11 @@ impl FetchGraph<MultiTypeFetchStep> {
                 //
                 // Without recomputing this path, merged results can be flattened
                 // at the wrong location.
-                merged.response_path = merge_batched_response_paths(
-                    &original_me_path,
-                    &original_other_path,
-                    &requested_type_condition_types_by_position,
-                );
+                merged.response_path = merged_location;
                 if merged.is_fetching_multiple_types() {
                     if let Some(condition) = merged.condition.clone() {
                         if let Some(conditioned_types) =
-                            type_condition_types_from_response_path(&merged.response_path)
+                            type_condition_types_from_response_path(merged.response_path.path())
                         {
                             // Multi-type merged step: keep condition on matching
                             // type branches instead of gating the whole fetch step.
@@ -170,17 +170,16 @@ impl FetchGraph<MultiTypeFetchStep> {
     fn requested_type_condition_types_by_position(
         &self,
         siblings_indices: &[NodeIndex],
-    ) -> Result<HashMap<(u64, usize), BTreeSet<String>>, FetchGraphError> {
-        // Key: (path hash without type conditions, type-condition position).
+    ) -> Result<HashMap<(Location, usize), BTreeSet<String>>, FetchGraphError> {
+        // Key: (path without type conditions, type-condition position).
         // Value: all concrete types requested by siblings at that position.
-        let mut result = HashMap::<(u64, usize), BTreeSet<String>>::new();
+        let mut result = HashMap::<(Location, usize), BTreeSet<String>>::new();
 
         // Iterate over all siblings (fetch steps)
         for sibling_index in siblings_indices {
             let sibling = self.get_step_data(*sibling_index)?;
-            let path = &sibling.response_path;
-            // Create a key for the `result` hashmap
-            let normalized_path_key = normalized_path_hash(path);
+            let path = sibling.response_path.path();
+            let untyped = sibling.response_path.untyped();
 
             // Index of the current non-type-condition segment.
             let mut non_type_condition_position = 0;
@@ -198,7 +197,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                         if !pending_type_condition_members.is_empty() {
                             // We reached a non-type segment, so save collected types for this slot
                             result
-                                .entry((normalized_path_key, non_type_condition_position))
+                                .entry((untyped.clone(), non_type_condition_position))
                                 .or_default()
                                 .extend(pending_type_condition_members.iter().cloned());
                             pending_type_condition_members.clear();
@@ -213,7 +212,7 @@ impl FetchGraph<MultiTypeFetchStep> {
             // If path ends with type conditions, save them for the last slot
             if !pending_type_condition_members.is_empty() {
                 result
-                    .entry((normalized_path_key, non_type_condition_position))
+                    .entry((untyped.clone(), non_type_condition_position))
                     .or_default()
                     .extend(pending_type_condition_members);
             }
@@ -224,9 +223,9 @@ impl FetchGraph<MultiTypeFetchStep> {
 }
 
 fn merge_batched_response_paths(
-    me: &MergePath,
-    other: &MergePath,
-    requested_type_condition_types_by_position: &HashMap<(u64, usize), BTreeSet<String>>,
+    me_location: &Location,
+    other_location: &Location,
+    requested_type_condition_types_by_position: &HashMap<(Location, usize), BTreeSet<String>>,
 ) -> MergePath {
     // Merge rule at each slot (type-condition part only):
     // - If non-type-condition shape differs -> keep `me` unchanged
@@ -262,13 +261,13 @@ fn merge_batched_response_paths(
     }
 
     fn merged_type_condition_segment(
-        normalized_path_key: u64,
+        untyped: &Location,
         non_type_condition_position: usize,
         type_condition_changed: bool,
         me_had_type_condition: bool,
         other_had_type_condition: bool,
         merged_type_condition_members: BTreeSet<&str>,
-        requested_type_condition_types_by_position: &HashMap<(u64, usize), BTreeSet<String>>,
+        requested_type_condition_types_by_position: &HashMap<(Location, usize), BTreeSet<String>>,
     ) -> Option<Segment> {
         // We keep a type condition only when both sides had one at this position.
         if !me_had_type_condition
@@ -295,7 +294,7 @@ fn merge_batched_response_paths(
         // position are already covered by merged type-condition members.
         // Example: merged {Book, Magazine} and requested {Book, Magazine} -> strip.
         let requested_types = requested_type_condition_types_by_position
-            .get(&(normalized_path_key, non_type_condition_position));
+            .get(&(untyped.clone(), non_type_condition_position));
         if requested_types.is_some_and(|requested_types| {
             requested_types.len() == merged_type_condition_members.len()
                 && merged_type_condition_members
@@ -316,10 +315,11 @@ fn merge_batched_response_paths(
 
     // If non-type-condition parts differ, do not merge.
     // Example: a.@.b vs a.c.b.
-    if me.without_type_castings() != other.without_type_castings() {
+    let (me, other) = (me_location.path(), other_location.path());
+    let untyped = me_location.untyped();
+    if untyped != other_location.untyped() {
         return me.clone();
     }
-    let normalized_path_key = normalized_path_hash(me);
 
     // Final merged path.
     let mut merged = Vec::<Segment>::new();
@@ -342,7 +342,7 @@ fn merge_batched_response_paths(
 
         // Keep or remove type condition here based on merged types and sibling usage.
         if let Some(merged_type_condition_segment) = merged_type_condition_segment(
-            normalized_path_key,
+            untyped,
             non_type_condition_position,
             type_condition_changed,
             me_had_type_condition,
@@ -376,43 +376,6 @@ fn merge_batched_response_paths(
     MergePath::new(merged)
 }
 
-fn normalized_path_hash(path: &MergePath) -> u64 {
-    let mut hasher = DefaultHasher::new();
-
-    for segment in path.inner.iter() {
-        match segment {
-            Segment::Field(field_name, args_hash, condition) => {
-                "Field".hash(&mut hasher);
-                field_name.hash(&mut hasher);
-                args_hash.hash(&mut hasher);
-                match condition {
-                    Some(Condition::Skip(variable)) => {
-                        "Condition(Skip)".hash(&mut hasher);
-                        variable.hash(&mut hasher);
-                    }
-                    Some(Condition::Include(variable)) => {
-                        "Condition(Include)".hash(&mut hasher);
-                        variable.hash(&mut hasher);
-                    }
-                    Some(Condition::SkipAndInclude { skip, include }) => {
-                        "Condition(SkipAndInclude)".hash(&mut hasher);
-                        skip.hash(&mut hasher);
-                        include.hash(&mut hasher);
-                    }
-                    None => "Condition(None)".hash(&mut hasher),
-                }
-            }
-            Segment::List => {
-                "List".hash(&mut hasher);
-            }
-            // Ignore type conditions when building the normalized path hash.
-            Segment::TypeCondition(_, _) => {}
-        }
-    }
-
-    hasher.finish()
-}
-
 impl FetchStepData<MultiTypeFetchStep> {
     pub fn can_be_batched_with(
         &self,
@@ -435,14 +398,13 @@ impl FetchStepData<MultiTypeFetchStep> {
         }
 
         // Paths must match after removing type conditions.
-        if self.response_path.without_type_castings() != other.response_path.without_type_castings()
-        {
+        if self.response_path.untyped() != other.response_path.untyped() {
             return Ok(false);
         }
 
         // Paths must have the same length.
         // Example: a.@.b and a.@.b.c are not compatible.
-        if self.response_path.len() != other.response_path.len() {
+        if self.response_path.path().len() != other.response_path.path().len() {
             return Ok(false);
         }
 
@@ -450,9 +412,10 @@ impl FetchStepData<MultiTypeFetchStep> {
         // Example: a.@|[Book].b and a.@.b are not compatible.
         if self
             .response_path
+            .path()
             .inner
             .iter()
-            .zip(other.response_path.inner.iter())
+            .zip(other.response_path.path().inner.iter())
             .any(|(left, right)| {
                 matches!(left, Segment::TypeCondition(_, _))
                     != matches!(right, Segment::TypeCondition(_, _))
@@ -465,9 +428,10 @@ impl FetchStepData<MultiTypeFetchStep> {
         // Example: |[Book] @skip(if: $x) vs |[Book] with no condition.
         if self
             .response_path
+            .path()
             .inner
             .iter()
-            .zip(other.response_path.inner.iter())
+            .zip(other.response_path.path().inner.iter())
             .any(|(left, right)| match (left, right) {
                 (
                     Segment::TypeCondition(_, left_condition),
@@ -501,10 +465,10 @@ mod tests {
 
     use crate::query_planner::{
         ast::merge_path::{FieldPathSegment, MergePath, Segment},
-        planner::plan_nodes::FlattenNodePath,
+        planner::{fetch::location::Locations, plan_nodes::FlattenNodePath},
     };
 
-    use super::{merge_batched_response_paths, normalized_path_hash};
+    use super::merge_batched_response_paths;
 
     fn path(type_name: &str) -> MergePath {
         MergePath::new(vec![
@@ -519,11 +483,11 @@ mod tests {
 
     #[test]
     fn keeps_non_exhaustive_type_list_in_flatten_path() {
-        let me = path("Book");
-        let other = path("User");
-        let normalized_path_key = normalized_path_hash(&me);
+        let mut locations = Locations::default();
+        let me = locations.get(&path("Book"));
+        let other = locations.get(&path("User"));
         let requested_type_condition_types_by_position = HashMap::from([(
-            (normalized_path_key, 2),
+            (me.untyped().clone(), 2),
             BTreeSet::from_iter([
                 "Book".to_string(),
                 "User".to_string(),
@@ -542,11 +506,11 @@ mod tests {
 
     #[test]
     fn strips_type_list_when_type_conditions_are_exhaustive() {
-        let me = path("Book");
-        let other = path("User");
-        let normalized_path_key = normalized_path_hash(&me);
+        let mut locations = Locations::default();
+        let me = locations.get(&path("Book"));
+        let other = locations.get(&path("User"));
         let requested_type_condition_types_by_position = HashMap::from([(
-            (normalized_path_key, 2),
+            (me.untyped().clone(), 2),
             BTreeSet::from_iter(["Book".to_string(), "User".to_string()]),
         )]);
 

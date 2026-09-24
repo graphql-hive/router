@@ -10,6 +10,7 @@ use crate::query_planner::{
     },
     planner::{
         fetch::{
+            location::Location,
             selections::FetchStepSelections,
             state::{MultiTypeFetchStep, SingleTypeFetchStep},
         },
@@ -33,7 +34,7 @@ bitflags! {
 pub struct FetchStepData<State> {
     pub id: i64,
     pub service_name: SubgraphName,
-    pub response_path: MergePath,
+    pub response_path: Location,
     pub input: FetchStepSelections<State>,
     pub output: FetchStepSelections<State>,
     pub kind: FetchStepKind,
@@ -81,7 +82,7 @@ impl<State> Display for FetchStepData<State> {
             write!(f, "{}/{} ", def_name, selections)?;
         }
 
-        write!(f, "at $.{}", self.response_path.join("."))?;
+        write!(f, "at $.{}", self.response_path.path().join("."))?;
 
         if self.flags.contains(FetchStepFlags::USED_FOR_REQUIRES) {
             write!(f, " [@requires]")?;
@@ -175,7 +176,7 @@ impl FetchStepData<MultiTypeFetchStep> {
         };
 
         let type_names = if scope_by_response_path_types {
-            type_condition_types_from_response_path(&self.response_path)
+            type_condition_types_from_response_path(self.response_path.path())
         } else {
             None
         };
@@ -198,7 +199,7 @@ impl FetchStepData<MultiTypeFetchStep> {
             self.is_fetching_multiple_types() || source.is_fetching_multiple_types();
         let condition_is_type_scoped = self.condition.is_some()
             && self.is_fetching_multiple_types()
-            && type_condition_types_from_response_path(&self.response_path).is_some();
+            && type_condition_types_from_response_path(self.response_path.path()).is_some();
 
         // A condition carried by a typed response path must stay on that concrete branch.
         // For example, `products.@|[Book]` with `@include($showBook)` must not become an `Include` node

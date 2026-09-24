@@ -143,12 +143,13 @@ impl<'a> StepConverter<'a> {
         step: &mut FetchStepData<MultiTypeFetchStep>,
     ) -> Result<bool, FetchGraphError> {
         // Only rewrite if the step is at the root (no response path).
-        if !step.response_path.inner.is_empty() {
+        if !step.response_path.is_root() {
             return Ok(false);
         }
 
         let interface_name = step
             .response_path
+            .path()
             .resolve_type_name(self.root_type_name, self.supergraph)?;
 
         let branches = step
