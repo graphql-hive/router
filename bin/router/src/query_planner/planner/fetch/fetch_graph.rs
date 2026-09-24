@@ -1523,6 +1523,9 @@ fn process_requires_field_edge(
     let real_parent_fetch_step_index = match !parent_fetch_step
         .output
         .is_selecting_definition(head_type_name)
+        // The parent is an entity call of the same type, but the field sits deeper in its
+        // output, like `User.other: User`. The keys can go right there.
+        || parent_fetch_step.response_path.len() < response_path.len()
     {
         // If the parent's output resolves a different type, then it's a root type.
         // We can use that as a parent.

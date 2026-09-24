@@ -239,3 +239,183 @@ fn provides_fieldset_with_typename_and_requires() -> Result<(), Box<dyn Error>> 
     "#);
     Ok(())
 }
+
+/// `label @requires(fields: "name")` on a `User` nested in the entity call for another `User`.
+/// The keys for the `names` hop go into that entity call at `other`, not into its parent.
+#[test]
+fn requires_on_same_type_nested_in_entity_call() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          user {
+            other {
+              label
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-nested-same-type.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "users") {
+          {
+            user {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "user") {
+          Fetch(service: "social") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on User {
+                other {
+                  __typename
+                  id
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "user.other") {
+          Fetch(service: "names") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on User {
+                name
+              }
+            }
+          },
+        },
+        Flatten(path: "user.other") {
+          Fetch(service: "social") {
+            {
+              ... on User {
+                __typename
+                name
+                id
+              }
+            } =>
+            {
+              ... on User {
+                label
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Same as above, with a `@provides` field on the way. `other` is a plain `User`, so `name`
+/// still comes from `names`.
+#[test]
+fn requires_on_same_type_nested_under_provides() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          user {
+            related {
+              other {
+                label
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-nested-same-type.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "users") {
+          {
+            user {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "user") {
+          Fetch(service: "social") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on User {
+                related {
+                  other {
+                    __typename
+                    id
+                  }
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "user.related.other") {
+          Fetch(service: "names") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on User {
+                name
+              }
+            }
+          },
+        },
+        Flatten(path: "user.related.other") {
+          Fetch(service: "social") {
+            {
+              ... on User {
+                __typename
+                name
+                id
+              }
+            } =>
+            {
+              ... on User {
+                label
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
