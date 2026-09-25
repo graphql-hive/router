@@ -7,5 +7,4 @@ node-addon: patch
 
 - `@requires` after an entity hop no longer adds an extra fetch to the same subgraph ([#1539](https://github.com/graphql-hive/router/issues/1539)).
 - Fields below `@provides` can now be resolved together with the subgraph's own fields, without extra `_entities` calls.
-- Queries with a type condition on a list of an `@interfaceObject` no longer fail with `No paths found for selection item`.
 - Aliased `@requires` fields with different arguments (like `price(currency: USD)` and `price(currency: EUR)`) now get the right values after an entity hop.
