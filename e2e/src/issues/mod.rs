@@ -3666,4 +3666,178 @@ mod issues_e2e_tests {
         }
         "#);
     }
+
+    #[ntex::test]
+    /// https://github.com/graphql-hive/router/issues/1311
+    ///
+    /// `thumbnail` is asked for with `width: 100` under `Aquatics` and `width: 200` under
+    /// `Reptiles`, with and without an `@include` on each. Photo `p1` sits in both kinds of
+    /// department, so the two widths land on the same photo entity, at different places in the
+    /// response. Each place has to get its own width, and only when its variable is true.
+    async fn issue_1311_each_department_gets_its_own_thumbnail_width() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mock_subgraphs(json!({
+                "catalog": {
+                    "query": { "storefront": { "departments": [
+                        { "__typename": "Aquatics", "id": "a1", "photo": { "__typename": "Photo", "id": "p1" } },
+                        { "__typename": "Reptiles", "id": "r1", "photo": { "__typename": "Photo", "id": "p1" } },
+                        { "__typename": "Aquatics", "id": "a2", "photo": { "__typename": "Photo", "id": "p2" } }
+                    ] } }
+                },
+                "media": {
+                    "entities": [
+                        { "__typename": "Photo", "id": "p1", "thumbnail(width: 100)": "p1@100", "thumbnail(width: 200)": "p1@200" },
+                        { "__typename": "Photo", "id": "p2", "thumbnail(width: 100)": "p2@100", "thumbnail(width: 200)": "p2@200" }
+                    ]
+                }
+            })))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.1311.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let unconditional = r#"{ storefront { departments {
+            ... on Aquatics { photo { thumbnail(width: 100) } }
+            ... on Reptiles { photo { thumbnail(width: 200) } }
+        } } }"#;
+        let conditional = r#"query($a: Boolean!, $b: Boolean!) { storefront { departments {
+            ... on Aquatics { photo { thumbnail(width: 100) @include(if: $a) } }
+            ... on Reptiles { photo { thumbnail(width: 200) @include(if: $b) } }
+        } } }"#;
+
+        let mut results = vec![];
+        let res = router.send_graphql_request(unconditional, None, None).await;
+        results.push(format!("no @include => {}", res.string_body().await));
+        for (a, b) in [(true, true), (true, false), (false, true), (false, false)] {
+            let variables = sonic_rs::json!({ "a": a, "b": b });
+            let res = router
+                .send_graphql_request(conditional, Some(variables), None)
+                .await;
+            results.push(format!("a={a} b={b} => {}", res.string_body().await));
+        }
+
+        insta::assert_snapshot!(results.join("\n"), @r#"
+        no @include => {"data":{"storefront":{"departments":[{"photo":{"thumbnail":"p1@100"}},{"photo":{"thumbnail":"p1@200"}},{"photo":{"thumbnail":"p2@100"}}]}}}
+        a=true b=true => {"data":{"storefront":{"departments":[{"photo":{"thumbnail":"p1@100"}},{"photo":{"thumbnail":"p1@200"}},{"photo":{"thumbnail":"p2@100"}}]}}}
+        a=true b=false => {"data":{"storefront":{"departments":[{"photo":{"thumbnail":"p1@100"}},{"photo":{}},{"photo":{"thumbnail":"p2@100"}}]}}}
+        a=false b=true => {"data":{"storefront":{"departments":[{"photo":{}},{"photo":{"thumbnail":"p1@200"}},{"photo":{}}]}}}
+        a=false b=false => {"data":{"storefront":{"departments":[{"photo":{}},{"photo":{}},{"photo":{}}]}}}
+        "#);
+    }
+
+    #[ntex::test]
+    /// `shop` answers `price` with a different value per currency: USD 100, EUR 200, GBP 300.
+    /// `pricing` resolves `eur` from the price it's sent, and `tax` does the same for `gbp`. So
+    /// `eur` must be 200, `gbp` 300 and the client's `price` 100, whichever fields sit under
+    /// `@include`.
+    ///
+    /// With `@include`, the prices can come from separate `shop` calls that write to the same
+    /// `things`. Each price needs its own response key there, or a reader gets whichever one
+    /// lands last.
+    async fn requires_alias_keeps_prices_apart_across_entity_calls() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+
+        // `pricing` and `tax` pick the entity that matches the price they're sent, and echo it.
+        let echo = |field: &str| {
+            [100, 200, 300].map(
+                |price| json!({ "__typename": "Thing", "id": "t1", "price": price, field: price }),
+            )
+        };
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mock_subgraphs(json!({
+                "catalog": {
+                    "query": { "things": [{ "__typename": "Thing", "id": "t1" }] }
+                },
+                "shop": {
+                    "entities": [{
+                        "__typename": "Thing",
+                        "id": "t1",
+                        "price(currency: \"USD\")": 100,
+                        "price(currency: \"EUR\")": 200,
+                        "price(currency: \"GBP\")": 300
+                    }]
+                },
+                "pricing": { "entities": echo("eur") },
+                "tax": { "entities": echo("gbp") }
+            })))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.requires-alias-entity-calls.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let mut results = vec![];
+        for query in [
+            r#"{ things { price(currency: "USD") eur gbp } }"#,
+            r#"query($x: Boolean!) { things { price(currency: "USD") eur @include(if: $x) } }"#,
+            r#"query($x: Boolean!) { things { price(currency: "USD") @include(if: $x) eur } }"#,
+            r#"query($x: Boolean!) { things { price(currency: "USD") ... @include(if: $x) { eur gbp } } }"#,
+            r#"query($x: Boolean!) { things { ... @include(if: $x) { price(currency: "USD") } eur gbp } }"#,
+            r#"query($x: Boolean!) { things { ... @include(if: $x) { gbp } eur } }"#,
+        ] {
+            let values: &[Option<bool>] = if query.contains("$x") {
+                &[Some(true), Some(false)]
+            } else {
+                &[None]
+            };
+            for x in values {
+                let variables = x.map(|x| sonic_rs::json!({ "x": x }));
+                let res = router.send_graphql_request(query, variables, None).await;
+                let x = x.map_or(String::new(), |x| format!(" x={x}"));
+                results.push(format!("{query}{x}\n  => {}", res.string_body().await));
+            }
+        }
+
+        insta::assert_snapshot!(results.join("\n"), @r#"
+        { things { price(currency: "USD") eur gbp } }
+          => {"data":{"things":[{"price":100,"eur":200,"gbp":300}]}}
+        query($x: Boolean!) { things { price(currency: "USD") eur @include(if: $x) } } x=true
+          => {"data":{"things":[{"price":100,"eur":200}]}}
+        query($x: Boolean!) { things { price(currency: "USD") eur @include(if: $x) } } x=false
+          => {"data":{"things":[{"price":100}]}}
+        query($x: Boolean!) { things { price(currency: "USD") @include(if: $x) eur } } x=true
+          => {"data":{"things":[{"price":100,"eur":200}]}}
+        query($x: Boolean!) { things { price(currency: "USD") @include(if: $x) eur } } x=false
+          => {"data":{"things":[{"eur":200}]}}
+        query($x: Boolean!) { things { price(currency: "USD") ... @include(if: $x) { eur gbp } } } x=true
+          => {"data":{"things":[{"price":100,"eur":200,"gbp":300}]}}
+        query($x: Boolean!) { things { price(currency: "USD") ... @include(if: $x) { eur gbp } } } x=false
+          => {"data":{"things":[{"price":100}]}}
+        query($x: Boolean!) { things { ... @include(if: $x) { price(currency: "USD") } eur gbp } } x=true
+          => {"data":{"things":[{"price":100,"eur":200,"gbp":300}]}}
+        query($x: Boolean!) { things { ... @include(if: $x) { price(currency: "USD") } eur gbp } } x=false
+          => {"data":{"things":[{"eur":200,"gbp":300}]}}
+        query($x: Boolean!) { things { ... @include(if: $x) { gbp } eur } } x=true
+          => {"data":{"things":[{"gbp":300,"eur":200}]}}
+        query($x: Boolean!) { things { ... @include(if: $x) { gbp } eur } } x=false
+          => {"data":{"things":[{"eur":200}]}}
+        "#);
+    }
 }
