@@ -84,9 +84,73 @@ impl ConsumerSchema {
                             result.definitions.push(def.clone());
                         }
                     }
+                    Definition::DirectiveDefinition(directive_def_in_introspection) => {
+                        // Supergraphs may already define built-in directives (e.g. `@oneOf`),
+                        // keep theirs to avoid duplicate definitions
+                        let already_defined = result.definitions.iter().any(|d| {
+                            matches!(
+                                d,
+                                Definition::DirectiveDefinition(existing)
+                                    if existing.name == directive_def_in_introspection.name
+                            )
+                        });
+                        if !already_defined {
+                            result.definitions.push(def.clone());
+                        }
+                    }
                     _ => result.definitions.push(def.clone()),
                 }
             });
         result
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use graphql_tools::static_graphql::schema::Definition;
+
+    use crate::query_planner::utils::parsing::parse_schema;
+
+    use super::ConsumerSchema;
+
+    #[test]
+    fn does_not_duplicate_built_in_directives_defined_in_supergraph() {
+        let supergraph = parse_schema(
+            r#"
+            schema
+              @link(url: "https://specs.apollo.dev/link/v1.0")
+              @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
+              query: Query
+            }
+
+            directive @oneOf on INPUT_OBJECT
+            directive @deprecated(
+              reason: String = "No longer supported"
+            ) on FIELD_DEFINITION | ARGUMENT_DEFINITION | INPUT_FIELD_DEFINITION | ENUM_VALUE
+
+            input Filter @oneOf {
+              id: ID
+              name: String
+            }
+
+            type Query {
+              search(filter: Filter!, old: String @deprecated): String
+            }
+            "#,
+        );
+
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let directive_count = |name: &str| {
+            consumer_schema
+                .document
+                .definitions
+                .iter()
+                .filter(|d| matches!(d, Definition::DirectiveDefinition(dir) if dir.name == name))
+                .count()
+        };
+
+        for name in ["oneOf", "deprecated", "skip", "include", "specifiedBy"] {
+            assert_eq!(directive_count(name), 1, "@{name} should be defined once");
+        }
     }
 }
