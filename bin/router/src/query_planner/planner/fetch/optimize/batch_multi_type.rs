@@ -3,19 +3,17 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use petgraph::{graph::NodeIndex, Direction};
 use tracing::{instrument, trace};
 
-use crate::query_planner::planner::fetch::fetch_step_data::{
-    type_condition_types_from_response_path, FetchStepFlags,
-};
+use crate::query_planner::planner::fetch::fetch_step_data::type_condition_types_from_response_path;
 use crate::query_planner::state::supergraph_state::SupergraphState;
 use crate::query_planner::{
     ast::merge_path::{MergePath, Segment},
     planner::fetch::{
         error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
-        location::Location, optimize::utils::perform_fetch_step_merge, state::MultiTypeFetchStep,
+        location::Location, optimize::utils::try_merge_steps,
     },
 };
 
-impl FetchGraph<MultiTypeFetchStep> {
+impl FetchGraph {
     /// Batches sibling entity fetches that only differ by type conditions.
     ///
     /// 1. Find compatible sibling fetches
@@ -40,9 +38,10 @@ impl FetchGraph<MultiTypeFetchStep> {
         let mut queue = VecDeque::from([root_index]);
 
         while let Some(parent_index) = queue.pop_front() {
+            if !self.graph.contains_node(parent_index) {
+                continue;
+            }
             // We only batch child steps that share the same parent.
-            let mut merges_to_perform = Vec::<(NodeIndex, NodeIndex)>::new();
-            let mut node_indexes: HashMap<NodeIndex, NodeIndex> = HashMap::new();
             let siblings_indices = self
                 .graph
                 .neighbors_directed(parent_index, Direction::Outgoing)
@@ -54,113 +53,80 @@ impl FetchGraph<MultiTypeFetchStep> {
                 self.requested_type_condition_types_by_position(&siblings_indices)?;
 
             for (i, sibling_index) in siblings_indices.iter().enumerate() {
+                // A sibling batched into an earlier one is gone.
+                if !self.graph.contains_node(*sibling_index) {
+                    continue;
+                }
                 queue.push_back(*sibling_index);
-                let current = self.get_step_data(*sibling_index)?;
 
                 for other_sibling_index in siblings_indices.iter().skip(i + 1) {
+                    if !self.graph.contains_node(*other_sibling_index) {
+                        continue;
+                    }
                     trace!(
                         "checking if [{}] and [{}] can be batched",
                         sibling_index.index(),
                         other_sibling_index.index()
                     );
 
-                    let other_sibling = self.get_step_data(*other_sibling_index)?;
-
-                    if current.can_be_batched_with(other_sibling, supergraph)? {
-                        trace!(
-                            "Found multi-type batching optimization: [{}] <- [{}]",
-                            sibling_index.index(),
-                            other_sibling_index.index()
-                        );
-                        // Register their original indexes in the map.
-                        node_indexes.insert(*sibling_index, *sibling_index);
-                        node_indexes.insert(*other_sibling_index, *other_sibling_index);
-
-                        merges_to_perform.push((*sibling_index, *other_sibling_index));
+                    // Checked against the sibling as it is now, with whatever it took in
+                    // already.
+                    let me = self.get_step_data(*sibling_index)?;
+                    let other = self.get_step_data(*other_sibling_index)?;
+                    if !me.can_be_batched_with(other)
+                        || self.is_ancestor_or_descendant(*sibling_index, *other_sibling_index)
+                    {
+                        continue;
                     }
-                }
-            }
+                    let original_me_path = me.response_path.clone();
+                    let original_other_path = other.response_path.clone();
 
-            // First find all merge candidates. Then apply merges.
-            for (child_index, other_child_index) in merges_to_perform {
-                // Get the latest indexes for the nodes, accounting for previous merges.
-                let child_index_latest = node_indexes
-                    .get(&child_index)
-                    .ok_or(FetchGraphError::IndexMappingLost)?;
-                let other_child_index_latest = node_indexes
-                    .get(&other_child_index)
-                    .ok_or(FetchGraphError::IndexMappingLost)?;
+                    if !try_merge_steps(
+                        *sibling_index,
+                        *other_sibling_index,
+                        self,
+                        true,
+                        supergraph,
+                    )? {
+                        continue;
+                    }
+                    trace!(
+                        "Found multi-type batching optimization: [{}] <- [{}]",
+                        sibling_index.index(),
+                        other_sibling_index.index()
+                    );
 
-                if child_index_latest == other_child_index_latest {
-                    continue;
-                }
-
-                if self.is_ancestor_or_descendant(*child_index_latest, *other_child_index_latest) {
-                    continue;
-                }
-
-                // Revalidate because previous merges may change step compatibility
-                let can_still_batch = {
-                    let left = self.get_step_data(*child_index_latest)?;
-                    let right = self.get_step_data(*other_child_index_latest)?;
-                    left.can_be_batched_with(right, supergraph)?
-                };
-
-                if !can_still_batch {
-                    continue;
-                }
-
-                let (me, other) =
-                    self.get_pair_of_steps_mut(*child_index_latest, *other_child_index_latest)?;
-
-                let original_me_path = me.response_path.clone();
-                let original_other_path = other.response_path.clone();
-
-                me.declare_types_of(other);
-
-                perform_fetch_step_merge(
-                    *child_index_latest,
-                    *other_child_index_latest,
-                    self,
-                    true,
-                    supergraph,
-                )?;
-
-                let merged_path = merge_batched_response_paths(
-                    &original_me_path,
-                    &original_other_path,
-                    &requested_type_condition_types_by_position,
-                );
-                let merged_location = self.locations.get(&merged_path);
-                let merged = self.get_step_data_mut(*child_index_latest)?;
-                // After merge, update the path so Flatten(path) is correct.
-                // Example:
-                //   `me`     path: products.[Book].reviews
-                //   `other`  path: products.[User].reviews
-                //   `merged` path: products.[Book|User].reviews (or stripped if fully covered)
-                //
-                // Without recomputing this path, merged results can be flattened
-                // at the wrong location.
-                merged.response_path = merged_location;
-                if merged.is_fetching_multiple_types() {
-                    if let Some(condition) = merged.condition.clone() {
-                        if let Some(conditioned_types) =
-                            type_condition_types_from_response_path(merged.response_path.path())
-                        {
-                            // Multi-type merged step: keep condition on matching
-                            // type branches instead of gating the whole fetch step.
-                            merged
-                                .output
-                                .wrap_with_condition_for_types(condition, &conditioned_types);
-                            merged.condition = None;
+                    let merged_path = merge_batched_response_paths(
+                        &original_me_path,
+                        &original_other_path,
+                        &requested_type_condition_types_by_position,
+                    );
+                    let merged_location = self.locations.get(&merged_path);
+                    let merged = self.get_step_data_mut(*sibling_index)?;
+                    // After merge, update the path so Flatten(path) is correct.
+                    // Example:
+                    //   `me`     path: products.[Book].reviews
+                    //   `other`  path: products.[User].reviews
+                    //   `merged` path: products.[Book|User].reviews (or stripped if fully covered)
+                    //
+                    // Without recomputing this path, merged results can be flattened
+                    // at the wrong location.
+                    merged.response_path = merged_location;
+                    if merged.is_fetching_multiple_types() {
+                        if let Some(condition) = merged.condition.clone() {
+                            if let Some(conditioned_types) =
+                                type_condition_types_from_response_path(merged.response_path.path())
+                            {
+                                // Multi-type merged step: keep condition on matching
+                                // type branches instead of gating the whole fetch step.
+                                merged
+                                    .output
+                                    .wrap_with_condition_for_types(condition, &conditioned_types);
+                                merged.condition = None;
+                            }
                         }
                     }
                 }
-
-                // Because `other_child` was merged into `child`,
-                // then everything that was pointing to `other_child`
-                // has to point to the `child`.
-                node_indexes.insert(*other_child_index_latest, *child_index_latest);
             }
         }
 
@@ -376,36 +342,34 @@ fn merge_batched_response_paths(
     MergePath::new(merged)
 }
 
-impl FetchStepData<MultiTypeFetchStep> {
-    pub fn can_be_batched_with(
-        &self,
-        other: &Self,
-        supergraph: &SupergraphState,
-    ) -> Result<bool, FetchGraphError> {
+impl FetchStepData {
+    /// Could `other` be batched into this step, as far as their kinds and places go? Whether
+    /// their selections fit together is up to `try_merge_steps`.
+    pub fn can_be_batched_with(&self, other: &Self) -> bool {
         // Both steps must be the same fetch kind.
         if self.kind != other.kind {
-            return Ok(false);
+            return false;
         }
 
         // Both steps must call the same service.
         if self.service_name != other.service_name {
-            return Ok(false);
+            return false;
         }
 
         // Only entity fetches can be batched.
         if !self.is_entity_call() || !other.is_entity_call() {
-            return Ok(false);
+            return false;
         }
 
         // Paths must match after removing type conditions.
         if self.response_path.untyped() != other.response_path.untyped() {
-            return Ok(false);
+            return false;
         }
 
         // Paths must have the same length.
         // Example: a.@.b and a.@.b.c are not compatible.
         if self.response_path.path().len() != other.response_path.path().len() {
-            return Ok(false);
+            return false;
         }
 
         // Type-condition segments must be in the same positions.
@@ -421,7 +385,7 @@ impl FetchStepData<MultiTypeFetchStep> {
                     != matches!(right, Segment::TypeCondition(_, _))
             })
         {
-            return Ok(false);
+            return false;
         }
 
         // Type-condition conditions must also match at each position.
@@ -440,22 +404,10 @@ impl FetchStepData<MultiTypeFetchStep> {
                 _ => false,
             })
         {
-            return Ok(false);
+            return false;
         }
 
-        if self.has_arguments_conflicts_with(other) {
-            return Ok(false);
-        }
-
-        let self_used_for_requires = self.flags.contains(FetchStepFlags::USED_FOR_REQUIRES);
-        let other_used_for_requires = other.flags.contains(FetchStepFlags::USED_FOR_REQUIRES);
-        // Mixing @requires and non-@requires steps can widen paths incorrectly.
-        // Keep them separate to avoid regressions.
-        if self_used_for_requires != other_used_for_requires {
-            return Ok(false);
-        }
-
-        self.batches_cleanly_with(other, supergraph)
+        !self.has_arguments_conflicts_with(other)
     }
 }
 

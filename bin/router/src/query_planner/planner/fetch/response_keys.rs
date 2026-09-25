@@ -10,6 +10,13 @@
 //! Objects are told apart by the fields and arguments on the way to them, not by type
 //! conditions, lists or `@skip`/`@include`. That can put objects together that never meet,
 //! like the ones under `... on Cat` and `... on Dog`, which only costs an alias.
+//!
+//! So fields of two steps can only clash when the client's own fields do: one key, two
+//! values, on what's one object here. Like `thumbnail(width: 100)` and
+//! `thumbnail(width: 200)` of photos under `... on Aquatics` and `... on Reptiles`. The
+//! client may do that, the objects are apart in its query, but a fetch that gets all those
+//! photos at once can't. It's rare, and the optimizer only has to check merges when it
+//! happens.
 
 use std::collections::{HashMap, HashSet};
 
@@ -23,7 +30,7 @@ use crate::query_planner::{
     },
     graph::{edge::Edge, Graph},
     planner::{
-        fetch::{error::FetchGraphError, fetch_graph::FetchGraph, state::SingleTypeFetchStep},
+        fetch::{error::FetchGraphError, fetch_graph::FetchGraph},
         tree::query_tree_node::QueryTreeNode,
     },
 };
@@ -46,6 +53,8 @@ struct ResponseKeys {
     /// The keys given to the plan's own values.
     internal: HashMap<(ObjectId, Value), String>,
     next_alias: usize,
+    /// See the module docs.
+    client_keys_clash: bool,
 }
 
 impl ResponseKeys {
@@ -119,10 +128,9 @@ impl ResponseKeys {
                         child.selection_arguments().map_or(0, |a| a.hash_u64()),
                     );
                     let key = child.selection_alias().unwrap_or(name).to_string();
-                    self.taken
-                        .entry((object, key.clone()))
-                        .or_default()
-                        .insert(value.clone());
+                    let values = self.taken.entry((object, key.clone())).or_default();
+                    values.insert(value.clone());
+                    self.client_keys_clash |= values.len() > 1;
                     self.client.insert((object, value.clone(), key));
                     self.object(object, &value)
                 }
@@ -210,7 +218,7 @@ impl ResponseKeys {
     }
 }
 
-impl FetchGraph<SingleTypeFetchStep> {
+impl FetchGraph {
     /// See the module docs.
     pub(crate) fn give_internal_fields_their_keys(
         &mut self,
@@ -219,6 +227,7 @@ impl FetchGraph<SingleTypeFetchStep> {
     ) -> Result<(), FetchGraphError> {
         let mut keys = ResponseKeys::default();
         keys.take_client_keys(graph, tree_root, ROOT)?;
+        self.client_keys_clash = keys.client_keys_clash;
 
         let steps: Vec<(NodeIndex, ObjectId)> = self
             .graph

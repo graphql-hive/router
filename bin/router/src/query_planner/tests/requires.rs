@@ -1590,3 +1590,74 @@ fn requires_after_two_entity_hops() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+/// `pricing` has the keys `id` and `sku region`. `tax` there requires `price` from `catalog`.
+/// The requirements are fetched from `products`, where `product` comes from, so they don't
+/// wait for the `pricing` call. `products` only knows `id`, the key that call used, so that's
+/// the key `pricing` is re-entered with. It used to pick `sku region`, and ask `products` for
+/// fields it doesn't have.
+#[test]
+fn requires_reentry_uses_the_key_its_source_has() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          product {
+            tax
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-reentry-parent-key.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            product {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "product") {
+          Fetch(service: "catalog") {
+            {
+              ... on Product {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                price
+              }
+            }
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "pricing") {
+            {
+              ... on Product {
+                __typename
+                price
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                tax
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}

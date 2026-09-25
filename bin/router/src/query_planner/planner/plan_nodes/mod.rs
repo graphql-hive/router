@@ -8,9 +8,7 @@ use crate::query_planner::{
         selection_set::{FieldSelection, SelectionSet},
         value::Value,
     },
-    planner::fetch::{
-        fetch_step_data::FetchStepData, selections::FetchStepSelections, state::MultiTypeFetchStep,
-    },
+    planner::fetch::{fetch_step_data::FetchStepData, selections::FetchStepSelections},
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
@@ -313,7 +311,7 @@ fn collect_custom_scalar_path_state(
 }
 
 fn custom_scalar_paths_from_fetch_output(
-    output: &FetchStepSelections<MultiTypeFetchStep>,
+    output: &FetchStepSelections,
     supergraph: &SupergraphState,
     entities_root_key: Option<&str>,
 ) -> Option<CustomScalarPaths> {
@@ -587,16 +585,14 @@ impl<S: PlanState> PlanNode<S> {
     }
 }
 
-fn create_input_selection_set(
-    input_selections: &FetchStepSelections<MultiTypeFetchStep>,
-) -> SelectionSet {
+fn create_input_selection_set(input_selections: &FetchStepSelections) -> SelectionSet {
     let selection_set = input_selections.to_non_root_selection_set();
 
     selection_set.strip_for_plan_input()
 }
 
 fn create_output_operation(
-    step: &FetchStepData<MultiTypeFetchStep>,
+    step: &FetchStepData,
     supergraph: &SupergraphState,
 ) -> PlanningFetchOperation {
     let mut variables = vec![VariableDefinition {
@@ -640,10 +636,7 @@ fn create_output_operation(
 }
 
 impl FetchNode<Planning> {
-    pub fn from_fetch_step(
-        step: &FetchStepData<MultiTypeFetchStep>,
-        supergraph: &SupergraphState,
-    ) -> Self {
+    pub fn from_fetch_step(step: &FetchStepData, supergraph: &SupergraphState) -> Self {
         match step.is_entity_call() {
             true => {
                 let planner_requires = create_input_selection_set(&step.input);
@@ -697,10 +690,7 @@ impl FetchNode<Planning> {
 }
 
 impl PlanNode<Planning> {
-    pub fn from_fetch_step(
-        step: &FetchStepData<MultiTypeFetchStep>,
-        supergraph: &SupergraphState,
-    ) -> Self {
+    pub fn from_fetch_step(step: &FetchStepData, supergraph: &SupergraphState) -> Self {
         let fetch = FetchNode::from_fetch_step(step, supergraph);
 
         let node = if !step.response_path.is_root() {
@@ -933,8 +923,7 @@ pub fn hash_minified_query(minified_query: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use crate::query_planner::{
-        planner::fetch::{selections::FetchStepSelections, state::SingleTypeFetchStep},
-        state::supergraph_state::SupergraphState,
+        planner::fetch::selections::FetchStepSelections, state::supergraph_state::SupergraphState,
         utils::parsing::parse_schema,
     };
 
@@ -978,7 +967,7 @@ mod tests {
         );
         let supergraph = SupergraphState::new(&schema);
 
-        let mut output = FetchStepSelections::<SingleTypeFetchStep>::new_empty().into_multi_type();
+        let mut output = FetchStepSelections::new_empty();
         output.declare_known_type("TypeA");
         output.declare_known_type("TypeB");
         *output.selections_for_definition_mut("TypeA").unwrap() = selection_set_for_field("meta");

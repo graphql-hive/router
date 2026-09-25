@@ -226,6 +226,16 @@ impl MergePath {
         self.inner.len()
     }
 
+    /// Is `condition` on a field or a type condition along the path?
+    pub fn has_condition(&self, condition: &Condition) -> bool {
+        self.inner.iter().any(|segment| {
+            matches!(
+                segment,
+                Segment::TypeCondition(_, Some(c)) | Segment::Field(_, _, Some(c)) if c == condition
+            )
+        })
+    }
+
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }

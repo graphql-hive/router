@@ -2,7 +2,6 @@ use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     fmt::Display,
-    marker::PhantomData,
 };
 
 use crate::query_planner::{
@@ -15,7 +14,6 @@ use crate::query_planner::{
             FieldSelection, InlineFragmentSelection, SelectionSet,
         },
     },
-    planner::fetch::state::{MultiTypeFetchStep, SingleTypeFetchStep},
     state::supergraph_state::SupergraphState,
 };
 
@@ -33,12 +31,11 @@ pub enum FetchStepSelectionsError {
 }
 
 #[derive(Debug, Clone)]
-pub struct FetchStepSelections<State> {
+pub struct FetchStepSelections {
     selections: BTreeMap<String, SelectionSet>,
-    _state: PhantomData<State>,
 }
 
-impl Display for FetchStepSelections<SingleTypeFetchStep> {
+impl Display for FetchStepSelections {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let as_selection_set: SelectionSet = self.into();
 
@@ -46,7 +43,7 @@ impl Display for FetchStepSelections<SingleTypeFetchStep> {
     }
 }
 
-impl FetchStepSelections<MultiTypeFetchStep> {
+impl FetchStepSelections {
     /// Meant for input and output of entity calls.
     pub fn to_non_root_selection_set(&self) -> SelectionSet {
         self.wrap_in_type_fragments()
@@ -254,34 +251,27 @@ fn try_lift_condition(
     Some((condition, lifted_selections))
 }
 
-impl From<&FetchStepSelections<SingleTypeFetchStep>> for SelectionSet {
-    fn from(value: &FetchStepSelections<SingleTypeFetchStep>) -> Self {
+impl From<&FetchStepSelections> for SelectionSet {
+    fn from(value: &FetchStepSelections) -> Self {
         let (_type_name, selections) = value.selections.iter().next().unwrap();
 
         selections.clone()
     }
 }
 
-impl FetchStepSelections<SingleTypeFetchStep> {
-    pub fn into_multi_type(self) -> FetchStepSelections<MultiTypeFetchStep> {
-        FetchStepSelections {
-            _state: Default::default(),
-            selections: self.selections,
-        }
-    }
-
+impl FetchStepSelections {
     pub fn definition_name(&self) -> &str {
         self.selections
             .keys()
             .next()
-            .expect("SingleTypeFetchStep should have exactly one selection")
+            .expect("a step being built selects exactly one type")
     }
 
     pub fn selection_set(&self) -> &SelectionSet {
         self.selections
             .iter()
             .next()
-            .expect("SingleTypeFetchStep should have exactly one selection")
+            .expect("a step being built selects exactly one type")
             .1
     }
 
@@ -289,7 +279,7 @@ impl FetchStepSelections<SingleTypeFetchStep> {
         self.selections
             .iter_mut()
             .next()
-            .expect("SingleTypeFetchStep should have exactly one selection")
+            .expect("a step being built selects exactly one type")
             .1
     }
 
@@ -320,7 +310,7 @@ impl FetchStepSelections<SingleTypeFetchStep> {
     }
 }
 
-impl<State> FetchStepSelections<State> {
+impl FetchStepSelections {
     pub fn is_fetching_multiple_types(&self) -> bool {
         self.selections.len() > 1
     }
@@ -403,7 +393,7 @@ impl<State> FetchStepSelections<State> {
     }
 }
 
-impl FetchStepSelections<MultiTypeFetchStep> {
+impl FetchStepSelections {
     fn wrap_definition_selection_with_condition(
         def_name: &str,
         selection_set: &mut SelectionSet,
@@ -456,8 +446,8 @@ impl FetchStepSelections<MultiTypeFetchStep> {
     }
 
     pub fn iter_matching_types<'a, 'b, R>(
-        input: &'a FetchStepSelections<MultiTypeFetchStep>,
-        other: &'b FetchStepSelections<MultiTypeFetchStep>,
+        input: &'a FetchStepSelections,
+        other: &'b FetchStepSelections,
         mut callback: impl FnMut(&str, &SelectionSet, &SelectionSet) -> R,
     ) -> Vec<(&'a str, R)> {
         let mut result: Vec<(&'a str, R)> = Vec::new();
@@ -640,7 +630,7 @@ impl FetchStepSelections<MultiTypeFetchStep> {
     }
 }
 
-impl FetchStepSelections<SingleTypeFetchStep> {
+impl FetchStepSelections {
     pub fn add(&mut self, selection_set: &SelectionSet) -> Result<(), FetchStepSelectionsError> {
         merge_selection_set(self.selection_set_mut(), selection_set, false);
 
@@ -651,15 +641,11 @@ impl FetchStepSelections<SingleTypeFetchStep> {
         let mut map = BTreeMap::new();
         map.insert(definition_name.to_string(), SelectionSet::default());
 
-        Self {
-            _state: Default::default(),
-            selections: map,
-        }
+        Self { selections: map }
     }
 
     pub fn new_empty() -> Self {
         Self {
-            _state: Default::default(),
             selections: Default::default(),
         }
     }
@@ -667,7 +653,7 @@ impl FetchStepSelections<SingleTypeFetchStep> {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, marker::PhantomData};
+    use std::collections::BTreeMap;
 
     use graphql_tools::parser::query::{Definition, OperationDefinition};
 
@@ -676,7 +662,7 @@ mod tests {
     use crate::query_planner::utils::parsing::parse_operation;
     use crate::query_planner::utils::pretty_display::PrettyDisplay;
 
-    use super::{FetchStepSelections, MultiTypeFetchStep};
+    use super::FetchStepSelections;
 
     fn parse_selection_set(input: &str) -> SelectionSet {
         let op = parse_operation(input);
@@ -687,9 +673,7 @@ mod tests {
         }
     }
 
-    fn multi_type_from_top_level_inline_fragments(
-        query: &str,
-    ) -> FetchStepSelections<MultiTypeFetchStep> {
+    fn multi_type_from_top_level_inline_fragments(query: &str) -> FetchStepSelections {
         let parsed = parse_selection_set(query);
         let mut map = BTreeMap::<String, SelectionSet>::new();
 
@@ -704,10 +688,7 @@ mod tests {
                 .push(SelectionItem::InlineFragment(inline_fragment));
         }
 
-        FetchStepSelections {
-            selections: map,
-            _state: PhantomData,
-        }
+        FetchStepSelections { selections: map }
     }
 
     struct PrettySelectionSet(SelectionSet);

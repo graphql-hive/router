@@ -274,6 +274,10 @@ fn graph_building(c: &mut Criterion) {
 }
 
 fn all_benchmarks(c: &mut Criterion) {
+    // With no subscriber at all, `tracing` builds every span, `trace` ones too, to hand them
+    // to `log`. The router always has a subscriber, so give the benchmarks one that drops
+    // everything, or they mostly measure formatting paths for spans nobody reads.
+    let _ = tracing::subscriber::set_global_default(tracing::subscriber::NoSubscriber::default());
     query_plan_pipeline(c);
     cache_preparation(c);
     graph_building(c);

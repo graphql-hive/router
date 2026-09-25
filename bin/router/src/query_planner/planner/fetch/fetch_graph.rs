@@ -9,12 +9,9 @@ use crate::query_planner::graph::edge::{
 };
 use crate::query_planner::graph::node::Node;
 use crate::query_planner::graph::Graph;
-use crate::query_planner::planner::fetch::fetch_step_data::{
-    FetchStepData, FetchStepFlags, FetchStepKind,
-};
+use crate::query_planner::planner::fetch::fetch_step_data::{FetchStepData, FetchStepKind};
 use crate::query_planner::planner::fetch::location::Locations;
 use crate::query_planner::planner::fetch::selections::FetchStepSelections;
-use crate::query_planner::planner::fetch::state::{MultiTypeFetchStep, SingleTypeFetchStep};
 use crate::query_planner::planner::plan_nodes::{FetchNodePathSegment, FetchRewrite, ValueSetter};
 use crate::query_planner::planner::tree::query_tree::QueryTree;
 use crate::query_planner::planner::tree::query_tree_node::{MutationFieldPosition, QueryTreeNode};
@@ -35,8 +32,8 @@ use tracing::{instrument, trace};
 use super::error::FetchGraphError;
 
 #[derive(Debug, Clone)]
-pub struct FetchGraph<State> {
-    pub(crate) graph: StableDiGraph<FetchStepData<State>, ()>,
+pub struct FetchGraph {
+    pub(crate) graph: StableDiGraph<FetchStepData, ()>,
     pub root_index: Option<NodeIndex>,
     pub(crate) operation_kind: OperationKind,
     /// Every place in the response a step of this graph sits at.
@@ -44,6 +41,10 @@ pub struct FetchGraph<State> {
     /// Where each entity call gets its objects from. Only used while building the graph,
     /// optimizations move selections around and don't keep it up to date.
     key_sources: HashMap<NodeIndex, KeySource>,
+    /// Do two of the client's fields share a response key on one object, with different
+    /// arguments? Only then can two steps have fields that don't fit together, see
+    /// `give_internal_fields_their_keys`.
+    pub(crate) client_keys_clash: bool,
 }
 
 /// The step whose output holds the objects an entity call resolves, with their keys, and
@@ -52,23 +53,12 @@ pub struct FetchGraph<State> {
 struct KeySource {
     step: NodeIndex,
     path: MergePath,
+    /// The key the entity call was entered with, a key of its own subgraph. That step has its
+    /// fields, the call couldn't be made otherwise.
+    key: Option<TypeAwareSelection>,
 }
 
-impl FetchGraph<SingleTypeFetchStep> {
-    pub fn to_multi_type(self) -> FetchGraph<MultiTypeFetchStep> {
-        let new_graph = self
-            .graph
-            .map(|_, w| w.clone().into_multi_type(), |_, _| ());
-
-        FetchGraph {
-            graph: new_graph,
-            root_index: self.root_index,
-            operation_kind: self.operation_kind,
-            locations: self.locations,
-            key_sources: HashMap::new(),
-        }
-    }
-
+impl FetchGraph {
     pub fn new(kind: OperationKind) -> Self {
         Self {
             graph: StableDiGraph::new(),
@@ -76,15 +66,26 @@ impl FetchGraph<SingleTypeFetchStep> {
             operation_kind: kind,
             locations: Locations::default(),
             key_sources: HashMap::new(),
+            client_keys_clash: false,
         }
     }
 
     /// A reused step keeps the source it was created with. Steps are only reused under the
     /// same parent, at the same path.
-    fn set_key_source(&mut self, entity_call: NodeIndex, step: NodeIndex, path: MergePath) {
+    fn set_key_source(
+        &mut self,
+        entity_call: NodeIndex,
+        step: NodeIndex,
+        path: MergePath,
+        key: Option<&TypeAwareSelection>,
+    ) {
         self.key_sources
             .entry(entity_call)
-            .or_insert(KeySource { step, path });
+            .or_insert_with(|| KeySource {
+                step,
+                path,
+                key: key.cloned(),
+            });
     }
 
     fn key_source(&self, entity_call: NodeIndex) -> Result<&KeySource, FetchGraphError> {
@@ -97,8 +98,8 @@ impl FetchGraph<SingleTypeFetchStep> {
     }
 }
 
-impl<State> FetchGraph<State> {
-    pub fn all_nodes(&self) -> NodeReferences<'_, FetchStepData<State>> {
+impl FetchGraph {
+    pub fn all_nodes(&self) -> NodeReferences<'_, FetchStepData> {
         self.graph.node_references()
     }
 
@@ -109,7 +110,7 @@ impl<State> FetchGraph<State> {
     pub fn get_step_data_mut(
         &mut self,
         index: NodeIndex,
-    ) -> Result<&mut FetchStepData<State>, FetchGraphError> {
+    ) -> Result<&mut FetchStepData, FetchGraphError> {
         self.graph
             .node_weight_mut(index)
             .ok_or(FetchGraphError::MissingStep(
@@ -119,7 +120,7 @@ impl<State> FetchGraph<State> {
     }
 }
 
-impl<State> FetchGraph<State> {
+impl FetchGraph {
     pub fn parents_of(&self, index: NodeIndex) -> petgraph::stable_graph::Edges<'_, (), Directed> {
         self.graph.edges_directed(index, Direction::Incoming)
     }
@@ -137,14 +138,11 @@ impl<State> FetchGraph<State> {
         self.is_descendant_of(a, b) || self.is_descendant_of(b, a)
     }
 
-    pub fn step_indices<'a>(&'a self) -> NodeIndices<'a, FetchStepData<State>> {
+    pub fn step_indices<'a>(&'a self) -> NodeIndices<'a, FetchStepData> {
         self.graph.node_indices()
     }
 
-    pub fn get_step_data(
-        &self,
-        index: NodeIndex,
-    ) -> Result<&FetchStepData<State>, FetchGraphError> {
+    pub fn get_step_data(&self, index: NodeIndex) -> Result<&FetchStepData, FetchGraphError> {
         self.graph
             .node_weight(index)
             .ok_or(FetchGraphError::MissingStep(
@@ -168,13 +166,31 @@ impl<State> FetchGraph<State> {
         self.graph.remove_node(index).is_some_and(|_| true)
     }
 
-    pub fn add_step(&mut self, data: FetchStepData<State>) -> NodeIndex {
+    /// Removes `old`, after it was merged into `new`. Whatever waited for `old` waits for `new`
+    /// now, and `new` waits for whatever `old` waited for.
+    pub fn replace_step(&mut self, old: NodeIndex, new: NodeIndex) {
+        let children: Vec<NodeIndex> = self.children_of(old).map(|edge| edge.target()).collect();
+        let parents: Vec<NodeIndex> = self
+            .parents_of(old)
+            .map(|edge| edge.source())
+            .filter(|parent| *parent != new)
+            .collect();
+        for child in children {
+            self.connect(new, child);
+        }
+        for parent in parents {
+            self.connect(parent, new);
+        }
+        self.remove_step(old);
+    }
+
+    pub fn add_step(&mut self, data: FetchStepData) -> NodeIndex {
         self.graph.add_node(data)
     }
 
     pub fn bfs<F>(&self, root_index: NodeIndex, mut visitor: F) -> Option<NodeIndex>
     where
-        F: FnMut(&NodeIndex, &FetchStepData<State>) -> bool,
+        F: FnMut(&NodeIndex, &FetchStepData) -> bool,
     {
         self.graph.node_weight(root_index)?;
 
@@ -212,7 +228,7 @@ impl<State> FetchGraph<State> {
     }
 }
 
-impl FetchGraph<MultiTypeFetchStep> {
+impl FetchGraph {
     #[instrument(level = "trace", skip_all)]
     pub fn collect_variable_usages(&mut self) -> Result<(), FetchGraphError> {
         let nodes_idx = self.graph.node_indices().collect::<Vec<_>>();
@@ -233,13 +249,7 @@ impl FetchGraph<MultiTypeFetchStep> {
         &mut self,
         index1: NodeIndex,
         index2: NodeIndex,
-    ) -> Result<
-        (
-            &mut FetchStepData<MultiTypeFetchStep>,
-            &mut FetchStepData<MultiTypeFetchStep>,
-        ),
-        FetchGraphError,
-    > {
+    ) -> Result<(&mut FetchStepData, &mut FetchStepData), FetchGraphError> {
         // `index_twice_mut` panics when indexes are equal
         if index1 == index2 {
             return Err(FetchGraphError::SameNodeIndex(index1.index()));
@@ -263,7 +273,7 @@ impl FetchGraph<MultiTypeFetchStep> {
     }
 }
 
-impl<State> Display for FetchGraph<State> {
+impl Display for FetchGraph {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Nodes:")?;
         for node_index in self.graph.node_indices() {
@@ -320,23 +330,13 @@ impl<State> Display for FetchGraph<State> {
     }
 }
 
-fn create_noop_fetch_step(
-    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
-    created_from_requires: bool,
-) -> NodeIndex {
-    let flags = if created_from_requires {
-        FetchStepFlags::USED_FOR_REQUIRES
-    } else {
-        FetchStepFlags::empty()
-    };
-
+fn create_noop_fetch_step(fetch_graph: &mut FetchGraph) -> NodeIndex {
     fetch_graph.add_step(FetchStepData {
         id: fetch_graph.create_fetch_id(),
         service_name: SubgraphName::any(),
         response_path: fetch_graph.locations.root(),
         input: FetchStepSelections::new_empty(),
         output: FetchStepSelections::new_empty(),
-        flags,
         condition: None,
         kind: FetchStepKind::Root,
         operation_kind: OperationKind::Query,
@@ -349,19 +349,13 @@ fn create_noop_fetch_step(
 }
 
 fn create_fetch_step_for_entity_call(
-    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    fetch_graph: &mut FetchGraph,
     subgraph_name: &SubgraphName,
     input_type_name: &str,
     output_type_name: &str,
     response_path: &MergePath,
     condition: Option<&Condition>,
-    used_for_requires: bool,
 ) -> NodeIndex {
-    let flags = if used_for_requires {
-        FetchStepFlags::USED_FOR_REQUIRES
-    } else {
-        FetchStepFlags::empty()
-    };
     let mut input = FetchStepSelections::new(input_type_name);
     input
         .add(&SelectionSet {
@@ -376,7 +370,6 @@ fn create_fetch_step_for_entity_call(
         response_path,
         input,
         output: FetchStepSelections::new(output_type_name),
-        flags,
         condition: condition.cloned(),
         kind: FetchStepKind::Entity,
         operation_kind: OperationKind::Query,
@@ -391,7 +384,7 @@ fn create_fetch_step_for_entity_call(
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
 fn create_fetch_step_for_root_move(
-    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    fetch_graph: &mut FetchGraph,
     root_step_index: NodeIndex,
     subgraph_name: &SubgraphName,
     type_name: &str,
@@ -407,7 +400,6 @@ fn create_fetch_step_for_root_move(
         response_path,
         input: FetchStepSelections::new(type_name),
         output: FetchStepSelections::new(type_name),
-        flags: FetchStepFlags::empty(),
         condition: condition.cloned(),
         kind: FetchStepKind::Root,
         operation_kind,
@@ -423,148 +415,62 @@ fn create_fetch_step_for_root_move(
     idx
 }
 
-// TODO: simplfy args
+/// An entity call to `subgraph_name` for the objects at `response_path`, under `parent`.
+/// A call already there is reused when it gets the same objects from the same parent, under
+/// the same condition, and already sends `sends` (a key, or the fields a `@requires` needs).
+/// Otherwise it's a new one, and the caller adds what it sends.
 #[allow(clippy::too_many_arguments)]
-fn ensure_fetch_step_for_subgraph(
-    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+fn ensure_entity_call(
+    fetch_graph: &mut FetchGraph,
     parent_fetch_step_index: NodeIndex,
     subgraph_name: &SubgraphName,
     input_type_name: &str,
     output_type_name: &str,
     response_path: &MergePath,
-    key: &TypeAwareSelection,
     condition: Option<&Condition>,
-    created_from_requires: bool,
-) -> Result<NodeIndex, FetchGraphError> {
+    sends: &TypeAwareSelection,
+) -> NodeIndex {
     let location = fetch_graph.locations.get(response_path);
-    let matching_child_index =
-        fetch_graph
-            .children_of(parent_fetch_step_index)
-            .find_map(|to_child_edge_ref| {
-                let fetch_step = fetch_graph.get_step_data(to_child_edge_ref.target()).ok()?;
-                let reusable = fetch_step.service_name == *subgraph_name
-                && fetch_step.input.definition_name() == input_type_name
-                && fetch_step.response_path == location
-                && fetch_step.condition.as_ref() == condition
-                && fetch_step.input.definition_name() == key.type_name
-                && fetch_step.input.selection_set().contains(&key.selection_set)
-                // A step made for `@requires` isn't reused here, the optimizer may merge it later.
-                && !fetch_step.flags.contains(FetchStepFlags::USED_FOR_REQUIRES);
-                reusable.then(|| to_child_edge_ref.target())
-            });
+    let existing = fetch_graph
+        .children_of(parent_fetch_step_index)
+        .map(|edge| edge.target())
+        .find(|&index| {
+            fetch_graph.get_step_data(index).is_ok_and(|step| {
+                step.service_name == *subgraph_name
+                    && step.input.definition_name() == input_type_name
+                    && step.response_path == location
+                    && step.condition.as_ref() == condition
+                    && step.input.contains(&sends.type_name, &sends.selection_set)
+            })
+        });
 
-    if let Some(idx) = matching_child_index {
+    if let Some(index) = existing {
         trace!(
-            "found existing fetch step [{}] for entity move key({}) in children of {}",
-            idx.index(),
-            key,
+            "reusing fetch step [{}] sending {} under [{}]",
+            index.index(),
+            sends,
             parent_fetch_step_index.index(),
         );
-        return Ok(idx);
+        return index;
     }
 
-    let step_index = create_fetch_step_for_entity_call(
+    let index = create_fetch_step_for_entity_call(
         fetch_graph,
         subgraph_name,
         input_type_name,
         output_type_name,
         response_path,
         condition,
-        created_from_requires,
     );
-    fetch_graph
-        .get_step_data_mut(step_index)?
-        .input
-        .add(&key.selection_set)?;
-
     trace!(
-        "created a new fetch step [{}] subgraph({}) type({}) key({}) in children of {}",
-        step_index.index(),
+        "created fetch step [{}] subgraph({}) type({}) sending {} under [{}]",
+        index.index(),
         subgraph_name,
         input_type_name,
-        key,
+        sends,
         parent_fetch_step_index.index(),
     );
-
-    Ok(step_index)
-}
-
-fn ensure_fetch_step_for_requirement(
-    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
-    parent_fetch_step_index: NodeIndex,
-    subgraph_name: &SubgraphName,
-    type_name: &String,
-    response_path: &MergePath,
-    condition: Option<&Condition>,
-    requirement: &TypeAwareSelection,
-) -> Result<NodeIndex, FetchGraphError> {
-    let location = fetch_graph.locations.get(response_path);
-    let matching_child_index =
-        fetch_graph
-            .children_of(parent_fetch_step_index)
-            .find_map(|to_child_edge_ref| {
-                if let Ok(fetch_step) = fetch_graph.get_step_data(to_child_edge_ref.target()) {
-                    if fetch_step.service_name != *subgraph_name {
-                        return None;
-                    }
-
-                    if fetch_step.condition.as_ref() != condition {
-                        return None;
-                    }
-
-                    if fetch_step.input.definition_name() != *type_name {
-                        return None;
-                    }
-
-                    if fetch_step.response_path != location {
-                        return None;
-                    }
-
-                    if !fetch_step
-                        .input
-                        .contains(&requirement.type_name, &requirement.selection_set)
-                    {
-                        return None;
-                    }
-
-                    return Some(to_child_edge_ref.target());
-                }
-
-                None
-            });
-
-    match matching_child_index {
-        Some(idx) => {
-            trace!(
-                "found existing fetch step [{}] children of {}",
-                idx.index(),
-                parent_fetch_step_index.index(),
-            );
-            Ok(idx)
-        }
-        None => {
-            let step_index = create_fetch_step_for_entity_call(
-                fetch_graph,
-                subgraph_name,
-                type_name,
-                type_name,
-                response_path,
-                condition,
-                true,
-            );
-
-            trace!(
-                "created a new fetch step [{}] subgraph({}) type({}) requirement({}) in children of {}",
-                step_index.index(),
-                subgraph_name,
-                type_name,
-                requirement.to_string(),
-                parent_fetch_step_index.index(),
-            );
-
-            Ok(step_index)
-        }
-    }
+    index
 }
 
 // TODO: simplfy args
@@ -578,7 +484,7 @@ fn ensure_fetch_step_for_requirement(
 ))]
 fn process_children_for_fetch_steps(
     graph: &Graph,
-    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    fetch_graph: &mut FetchGraph,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
@@ -587,7 +493,6 @@ fn process_children_for_fetch_steps(
     fetch_path: &MergePath,
     requiring_fetch_step_index: Option<NodeIndex>,
     condition: Option<&Condition>,
-    created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     if query_node.children.is_empty() {
         return Ok(vec![parent_fetch_step_index]);
@@ -606,7 +511,6 @@ fn process_children_for_fetch_steps(
             fetch_path,
             requiring_fetch_step_index,
             condition,
-            created_from_requires,
         )?);
     }
 
@@ -622,7 +526,7 @@ fn process_children_for_fetch_steps(
 ))]
 fn process_requirements_for_fetch_steps(
     graph: &Graph,
-    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    fetch_graph: &mut FetchGraph,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
@@ -648,7 +552,6 @@ fn process_requirements_for_fetch_steps(
             fetch_path,
             requiring_fetch_step_index,
             condition,
-            true,
         )?;
     }
 
@@ -659,7 +562,7 @@ fn process_requirements_for_fetch_steps(
 #[allow(clippy::too_many_arguments)]
 fn process_noop_edge(
     graph: &Graph,
-    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    fetch_graph: &mut FetchGraph,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
@@ -668,11 +571,10 @@ fn process_noop_edge(
     fetch_path: &MergePath,
     requiring_fetch_step_index: Option<NodeIndex>,
     condition: Option<&Condition>,
-    created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     // We're at the root
-    let fetch_step_index = parent_fetch_step_index
-        .unwrap_or_else(|| create_noop_fetch_step(fetch_graph, created_from_requires));
+    let fetch_step_index =
+        parent_fetch_step_index.unwrap_or_else(|| create_noop_fetch_step(fetch_graph));
 
     process_children_for_fetch_steps(
         graph,
@@ -685,7 +587,6 @@ fn process_noop_edge(
         fetch_path,
         requiring_fetch_step_index,
         condition,
-        created_from_requires,
     )
 }
 
@@ -698,7 +599,7 @@ fn process_noop_edge(
 ))]
 fn process_entity_move_edge(
     graph: &Graph,
-    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    fetch_graph: &mut FetchGraph,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
@@ -708,7 +609,6 @@ fn process_entity_move_edge(
     requiring_fetch_step_index: Option<NodeIndex>,
     edge_index: EdgeIndex,
     condition: Option<&Condition>,
-    created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     let edge = graph.edge(edge_index)?;
     let (requirement, is_interface) = match edge {
@@ -740,17 +640,16 @@ fn process_entity_move_edge(
         _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
 
-    let fetch_step_index = ensure_fetch_step_for_subgraph(
+    let fetch_step_index = ensure_entity_call(
         fetch_graph,
         parent_fetch_step_index,
         subgraph_name,
         input_type_name,
         output_type_name,
         response_path,
-        &requirement,
         condition,
-        created_from_requires,
-    )?;
+        &requirement,
+    );
 
     let fetch_step = fetch_graph.get_step_data_mut(fetch_step_index)?;
     trace!(
@@ -777,10 +676,6 @@ fn process_entity_move_edge(
             ],
             set_value_to: output_type_name.clone(),
         }));
-
-        fetch_step
-            .flags
-            .insert(FetchStepFlags::USED_FOR_TYPE_CONDITION);
     }
 
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
@@ -799,6 +694,7 @@ fn process_entity_move_edge(
         fetch_step_index,
         parent_fetch_step_index,
         fetch_path.clone(),
+        Some(&requirement),
     );
 
     process_requirements_for_fetch_steps(
@@ -825,7 +721,6 @@ fn process_entity_move_edge(
         &MergePath::default(),
         requiring_fetch_step_index,
         condition,
-        created_from_requires,
     )
 }
 
@@ -838,7 +733,7 @@ fn process_entity_move_edge(
 ))]
 fn process_interface_object_type_move_edge(
     graph: &Graph,
-    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    fetch_graph: &mut FetchGraph,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
@@ -849,7 +744,6 @@ fn process_interface_object_type_move_edge(
     edge_index: EdgeIndex,
     object_type_name: &str,
     condition: Option<&Condition>,
-    created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     let edge = graph.edge(edge_index)?;
     let requirement = match edge {
@@ -878,17 +772,16 @@ fn process_interface_object_type_move_edge(
         _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
 
-    let step_for_children_index = ensure_fetch_step_for_subgraph(
+    let step_for_children_index = ensure_entity_call(
         fetch_graph,
         parent_fetch_step_index,
         subgraph_name,
         object_type_name,
         interface_type_name,
         response_path,
-        &requirement,
         condition,
-        created_from_requires,
-    )?;
+        &requirement,
+    );
 
     let step_for_children = fetch_graph.get_step_data_mut(step_for_children_index)?;
     trace!(
@@ -936,7 +829,6 @@ fn process_interface_object_type_move_edge(
         interface_type_name,
         response_path,
         condition,
-        false,
     );
     let step_for_requirements = fetch_graph.get_step_data_mut(step_for_requirements_index)?;
     trace!(
@@ -962,7 +854,7 @@ fn process_interface_object_type_move_edge(
 
     fetch_graph.connect(parent_fetch_step_index, step_for_requirements_index);
     for step in [step_for_children_index, step_for_requirements_index] {
-        fetch_graph.set_key_source(step, parent_fetch_step_index, fetch_path.clone());
+        fetch_graph.set_key_source(step, parent_fetch_step_index, fetch_path.clone(), None);
     }
 
     trace!("Processing requirements");
@@ -977,7 +869,6 @@ fn process_interface_object_type_move_edge(
         &MergePath::default(),
         None,
         condition,
-        true,
     )?;
 
     for idx in leaf_fetch_step_indexes {
@@ -996,7 +887,6 @@ fn process_interface_object_type_move_edge(
         &MergePath::default(),
         requiring_fetch_step_index,
         condition,
-        created_from_requires,
     )
 }
 
@@ -1009,7 +899,7 @@ fn process_interface_object_type_move_edge(
 ))]
 fn process_subgraph_entrypoint_edge(
     graph: &Graph,
-    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    fetch_graph: &mut FetchGraph,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
@@ -1017,7 +907,6 @@ fn process_subgraph_entrypoint_edge(
     subgraph_name: &SubgraphName,
     type_name: &str,
     operation_kind: OperationKind,
-    created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     // When every root field has the same `@skip`/`@include`, the whole fetch can be skipped,
     // and the fields don't need it anymore. It has to be decided here, before the fields are
@@ -1056,7 +945,6 @@ fn process_subgraph_entrypoint_edge(
         &MergePath::default(),
         None,
         None,
-        created_from_requires,
     )
 }
 
@@ -1066,13 +954,12 @@ fn process_subgraph_entrypoint_edge(
 ))]
 fn process_subgraph_reentry(
     graph: &Graph,
-    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    fetch_graph: &mut FetchGraph,
     supergraph: &SupergraphState,
     edge_index: EdgeIndex,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: NodeIndex,
-    created_from_requires: bool,
     reentry_move: &ReentryMove,
     response_path: &MergePath,
     fetch_path: &MergePath,
@@ -1091,16 +978,7 @@ fn process_subgraph_reentry(
     // separate (re-entered) fetch. Record the field in the parent output with a `__typename`
     // so the parent operation stays valid.
     //
-    let condition_in_path = if let Some(condition) = condition {
-        fetch_path.inner.iter().any(|segment| {
-            matches!(
-                segment,
-                Segment::TypeCondition(_, Some(c)) | Segment::Field(_, _, Some(c)) if c == condition
-            )
-        })
-    } else {
-        false
-    };
+    let condition_in_path = condition.is_some_and(|c| fetch_path.has_condition(c));
 
     let condition_applied = match condition {
         Some(c) => {
@@ -1176,7 +1054,6 @@ fn process_subgraph_reentry(
         &MergePath::default(),
         requiring_fetch_step_index,
         None,
-        created_from_requires,
     )
 }
 
@@ -1191,7 +1068,7 @@ fn process_subgraph_reentry(
 ))]
 fn process_selfie_edge(
     graph: &Graph,
-    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    fetch_graph: &mut FetchGraph,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
@@ -1264,7 +1141,6 @@ fn process_selfie_edge(
         &child_fetch_path,
         requiring_fetch_step_index,
         condition,
-        false,
     )
 }
 
@@ -1279,7 +1155,7 @@ fn process_selfie_edge(
 ))]
 fn process_abstract_edge(
     graph: &Graph,
-    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    fetch_graph: &mut FetchGraph,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
@@ -1332,7 +1208,6 @@ fn process_abstract_edge(
         &child_fetch_path,
         requiring_fetch_step_index,
         condition,
-        false,
     )
 }
 
@@ -1352,7 +1227,7 @@ fn process_abstract_edge(
 ))]
 fn process_plain_field_edge(
     graph: &Graph,
-    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    fetch_graph: &mut FetchGraph,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
@@ -1362,7 +1237,6 @@ fn process_plain_field_edge(
     fetch_path: &MergePath,
     field_move: &FieldMove,
     condition: Option<&Condition>,
-    created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     if let Some(requiring_fetch_step_index) = requiring_fetch_step_index {
         trace!(
@@ -1374,16 +1248,7 @@ fn process_plain_field_edge(
     }
 
     // If we are inserting into "... | [Product] @include(if: $bool)", we don't need the condition on the field.
-    let condition_in_path = if let Some(condition) = condition {
-        fetch_path.inner.iter().any(|segment| {
-            matches!(
-                segment,
-                Segment::TypeCondition(_, Some(c)) | Segment::Field(_, _, Some(c)) if c == condition
-            )
-        })
-    } else {
-        false
-    };
+    let condition_in_path = condition.is_some_and(|c| fetch_path.has_condition(c));
 
     let condition_applied = match condition {
         Some(c) => {
@@ -1468,7 +1333,6 @@ fn process_plain_field_edge(
         &child_fetch_path,
         requiring_fetch_step_index,
         condition,
-        created_from_requires,
     )
 }
 
@@ -1479,7 +1343,7 @@ fn process_plain_field_edge(
 ))]
 fn process_requires_field_edge(
     graph: &Graph,
-    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    fetch_graph: &mut FetchGraph,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
@@ -1490,7 +1354,6 @@ fn process_requires_field_edge(
     field_move: &FieldMove,
     edge_index: EdgeIndex,
     condition: Option<&Condition>,
-    created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     let requires = field_move
         .requirements
@@ -1504,9 +1367,6 @@ fn process_requires_field_edge(
         _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
 
-    let key_to_reenter_subgraph =
-        reentry_key(graph, supergraph, override_context, head_node_index)?;
-
     // The keys to re-enter the subgraph go where the object sits. Usually that's the parent,
     // at `fetch_path`. When the parent is an entity call of this very object, created to
     // fetch its plain fields, the keys go where that call got its own keys from, so fetching
@@ -1518,17 +1378,29 @@ fn process_requires_field_edge(
     //   bar @requires(fields: "foo")
     //   baz
     // }
+    //
+    // The key is then the one that call was entered with. That step has its fields, which
+    // isn't true of every key of this subgraph: `products` may know `id`, and not `sku`.
     let parent_fetch_step = fetch_graph.get_step_data(parent_fetch_step_index)?;
-    let (real_parent_fetch_step_index, key_to_reenter_at) = if fetch_path.is_empty()
+    let (real_parent_fetch_step_index, key_to_reenter_at, key_used_by_parent) = if fetch_path
+        .is_empty()
         && parent_fetch_step.is_entity_call()
         && parent_fetch_step
             .output
             .is_selecting_definition(head_type_name)
     {
         let key_source = fetch_graph.key_source(parent_fetch_step_index)?;
-        (key_source.step, key_source.path.clone())
+        let key = key_source
+            .key
+            .clone()
+            .filter(|_| parent_fetch_step.service_name == *head_subgraph_name);
+        (key_source.step, key_source.path.clone(), key)
     } else {
-        (parent_fetch_step_index, fetch_path.clone())
+        (parent_fetch_step_index, fetch_path.clone(), None)
+    };
+    let key_to_reenter_subgraph = match key_used_by_parent {
+        Some(key) => key,
+        None => reentry_key(graph, supergraph, override_context, head_node_index)?.clone(),
     };
 
     // When a field (foo) is annotated with `@requires(fields: "bar")`
@@ -1537,20 +1409,22 @@ fn process_requires_field_edge(
     // The new FetchStep will have `foo` as the output and `bar` as the input.
     // The `bar` should be fetched by one of the parents.
     trace!("Creating a fetch step for children of @requires");
-    let step_for_children_index = ensure_fetch_step_for_requirement(
+    let step_for_children_index = ensure_entity_call(
         fetch_graph,
         real_parent_fetch_step_index,
         head_subgraph_name,
         head_type_name,
+        head_type_name,
         response_path,
         condition,
         requires,
-    )?;
+    );
 
     fetch_graph.set_key_source(
         step_for_children_index,
         real_parent_fetch_step_index,
         key_to_reenter_at.clone(),
+        Some(&key_to_reenter_subgraph),
     );
     let step_for_children = fetch_graph.get_step_data_mut(step_for_children_index)?;
 
@@ -1632,7 +1506,6 @@ fn process_requires_field_edge(
             head_type_name,
             response_path,
             condition,
-            true,
         );
         let step_for_requirements = fetch_graph.get_step_data_mut(step_for_requirements_index)?;
         trace!(
@@ -1648,6 +1521,7 @@ fn process_requires_field_edge(
             step_for_requirements_index,
             real_parent_fetch_step_index,
             key_to_reenter_at.clone(),
+            Some(&key_to_reenter_subgraph),
         );
 
         (step_for_requirements_index, MergePath::default())
@@ -1686,7 +1560,6 @@ fn process_requires_field_edge(
         &requirements_fetch_path,
         None,
         condition,
-        true,
     )?;
 
     //
@@ -1725,7 +1598,6 @@ fn process_requires_field_edge(
         &child_fetch_path,
         requiring_fetch_step_index,
         condition,
-        created_from_requires,
     )
 }
 
@@ -1756,7 +1628,7 @@ fn reentry_key<'a>(
 #[allow(clippy::too_many_arguments)]
 fn process_query_node(
     graph: &Graph,
-    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    fetch_graph: &mut FetchGraph,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
@@ -1765,7 +1637,6 @@ fn process_query_node(
     fetch_path: &MergePath,
     requiring_fetch_step_index: Option<NodeIndex>,
     condition: Option<&Condition>,
-    created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     let condition = query_node.condition.as_ref().or(condition);
     if let Some(edge_index) = query_node.edge_from_parent {
@@ -1796,7 +1667,6 @@ fn process_query_node(
                     name,
                     type_name,
                     operation_kind.clone(),
-                    created_from_requires,
                 )
             }
             Edge::EntityMove(_) => process_entity_move_edge(
@@ -1811,7 +1681,6 @@ fn process_query_node(
                 requiring_fetch_step_index,
                 edge_index,
                 condition,
-                created_from_requires,
             ),
             Edge::ReentryMove(field) => process_subgraph_reentry(
                 graph,
@@ -1821,7 +1690,6 @@ fn process_query_node(
                 override_context,
                 query_node,
                 parent_fetch_step_index,
-                created_from_requires,
                 field,
                 response_path,
                 fetch_path,
@@ -1844,7 +1712,6 @@ fn process_query_node(
                     field,
                     edge_index,
                     condition,
-                    created_from_requires,
                 ),
                 false => {
                     // Required fields we can get from here go into the same fetch as the field.
@@ -1872,7 +1739,6 @@ fn process_query_node(
                         fetch_path,
                         field,
                         condition,
-                        created_from_requires,
                     )
                 }
             },
@@ -1917,7 +1783,6 @@ fn process_query_node(
                 edge_index,
                 object_type_name,
                 condition,
-                created_from_requires,
             ),
         }
     } else {
@@ -1932,7 +1797,6 @@ fn process_query_node(
             fetch_path,
             requiring_fetch_step_index,
             condition,
-            created_from_requires,
         )
     }
 }
@@ -1973,7 +1837,7 @@ fn requirements_resolve_in_place(
     Ok(true)
 }
 
-pub fn find_graph_roots<State>(graph: &FetchGraph<State>) -> Vec<NodeIndex> {
+pub fn find_graph_roots(graph: &FetchGraph) -> Vec<NodeIndex> {
     let mut roots = Vec::new();
 
     // Iterate over all nodes in the graph
@@ -2000,7 +1864,7 @@ pub fn build_fetch_graph_from_query_tree(
     operation_kind: OperationKind,
     options: &QueryPlannerOptions,
     cancellation_token: &CancellationToken,
-) -> Result<FetchGraph<MultiTypeFetchStep>, FetchGraphError> {
+) -> Result<FetchGraph, FetchGraphError> {
     let mut fetch_graph = FetchGraph::new(operation_kind);
 
     process_query_node(
@@ -2014,7 +1878,6 @@ pub fn build_fetch_graph_from_query_tree(
         &MergePath::default(),
         None,
         None,
-        false,
     )?;
 
     trace!("Done");
@@ -2037,7 +1900,6 @@ pub fn build_fetch_graph_from_query_tree(
     // fine to unwrap as we have already checked the length
     fetch_graph.root_index = Some(*root_indexes.first().unwrap());
     fetch_graph.give_internal_fields_their_keys(graph, &query_tree.root)?;
-    let mut fetch_graph = fetch_graph.to_multi_type();
     fetch_graph.optimize(supergraph, options, cancellation_token)?;
     fetch_graph.collect_variable_usages()?;
 

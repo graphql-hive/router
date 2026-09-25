@@ -7,12 +7,11 @@ use crate::query_planner::{
     },
     planner::fetch::{
         error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
-        state::MultiTypeFetchStep,
     },
     state::supergraph_state::SupergraphState,
 };
 
-impl FetchGraph<MultiTypeFetchStep> {
+impl FetchGraph {
     #[instrument(level = "trace", skip_all)]
     pub(crate) fn normalize_selection_sets(
         &mut self,
@@ -35,10 +34,7 @@ struct SelectionSetNormalizer<'a> {
 }
 
 impl SelectionSetNormalizer<'_> {
-    fn normalize_step(
-        &self,
-        step: &mut FetchStepData<MultiTypeFetchStep>,
-    ) -> Result<(), FetchGraphError> {
+    fn normalize_step(&self, step: &mut FetchStepData) -> Result<(), FetchGraphError> {
         for (definition_name, selection_set) in step.output.iter_selections_mut() {
             self.normalize_selection_set(definition_name, selection_set)?;
         }

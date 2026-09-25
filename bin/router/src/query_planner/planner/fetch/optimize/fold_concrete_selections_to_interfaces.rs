@@ -36,7 +36,6 @@ use crate::query_planner::{
     },
     planner::fetch::{
         error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
-        state::MultiTypeFetchStep,
     },
     planner::QueryPlannerOptions,
     state::{
@@ -45,13 +44,13 @@ use crate::query_planner::{
     },
 };
 
-impl FetchGraph<MultiTypeFetchStep> {
+impl FetchGraph {
     #[instrument(level = "trace", skip_all)]
     pub(crate) fn fold_concrete_selections_to_interfaces(
         &mut self,
         supergraph: &SupergraphState,
         options: &QueryPlannerOptions,
-    ) -> Result<bool, FetchGraphError> {
+    ) -> Result<(), FetchGraphError> {
         let root_type_name = match self.operation_kind {
             OperationKind::Query => supergraph.query_type.as_str(),
             OperationKind::Mutation => supergraph.mutation_type.as_deref().ok_or_else(|| {
@@ -64,7 +63,6 @@ impl FetchGraph<MultiTypeFetchStep> {
             }
         };
 
-        let mut changed = false;
         let step_indices = self.step_indices().collect::<Vec<_>>();
 
         for index in step_indices {
@@ -73,7 +71,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                 continue;
             };
 
-            changed |= StepConverter {
+            StepConverter {
                 root_type_name,
                 supergraph,
                 subgraph,
@@ -82,7 +80,7 @@ impl FetchGraph<MultiTypeFetchStep> {
             .rewrite_step(step)?;
         }
 
-        Ok(changed)
+        Ok(())
     }
 }
 
@@ -119,10 +117,7 @@ struct FoldCandidate<'a> {
 }
 
 impl<'a> StepConverter<'a> {
-    fn rewrite_step(
-        &self,
-        step: &mut FetchStepData<MultiTypeFetchStep>,
-    ) -> Result<bool, FetchGraphError> {
+    fn rewrite_step(&self, step: &mut FetchStepData) -> Result<bool, FetchGraphError> {
         let mut changed = false;
         changed |= self.rewrite_root_output(step)?;
         changed |= self.rewrite_nested_output(step)?;
@@ -138,10 +133,7 @@ impl<'a> StepConverter<'a> {
     /// into
     ///
     ///   `{ Media: { id } }`
-    fn rewrite_root_output(
-        &self,
-        step: &mut FetchStepData<MultiTypeFetchStep>,
-    ) -> Result<bool, FetchGraphError> {
+    fn rewrite_root_output(&self, step: &mut FetchStepData) -> Result<bool, FetchGraphError> {
         // Only rewrite if the step is at the root (no response path).
         if !step.response_path.is_root() {
             return Ok(false);
@@ -182,10 +174,7 @@ impl<'a> StepConverter<'a> {
     /// After:
     ///
     /// `{ media { id } }`
-    fn rewrite_nested_output(
-        &self,
-        step: &mut FetchStepData<MultiTypeFetchStep>,
-    ) -> Result<bool, FetchGraphError> {
+    fn rewrite_nested_output(&self, step: &mut FetchStepData) -> Result<bool, FetchGraphError> {
         let mut changed = false;
 
         for (definition_name, selection_set) in step.output.iter_selections_mut() {

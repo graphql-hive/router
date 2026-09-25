@@ -43,8 +43,8 @@ fn testing() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Product {
-                isAvailable
                 uuid
+                isAvailable
               }
             }
           },
@@ -93,7 +93,7 @@ fn testing() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "info",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isAvailable uuid}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{uuid isAvailable}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",

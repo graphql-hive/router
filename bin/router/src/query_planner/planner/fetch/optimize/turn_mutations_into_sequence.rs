@@ -5,11 +5,11 @@ use petgraph::{
 use tracing::instrument;
 
 use crate::query_planner::{
-    planner::fetch::{error::FetchGraphError, fetch_graph::FetchGraph, state::MultiTypeFetchStep},
+    planner::fetch::{error::FetchGraphError, fetch_graph::FetchGraph},
     state::supergraph_state::OperationKind,
 };
 
-impl FetchGraph<MultiTypeFetchStep> {
+impl FetchGraph {
     #[instrument(level = "trace", skip_all)]
     pub(crate) fn turn_mutations_into_sequence(&mut self) -> Result<(), FetchGraphError> {
         let root_index = self

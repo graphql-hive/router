@@ -1,6 +1,5 @@
 use std::{collections::BTreeSet, fmt::Display};
 
-use bitflags::bitflags;
 use petgraph::graph::NodeIndex;
 
 use crate::query_planner::{
@@ -9,37 +8,22 @@ use crate::query_planner::{
         operation::VariableDefinition,
     },
     planner::{
-        fetch::{
-            location::Location,
-            selections::FetchStepSelections,
-            state::{MultiTypeFetchStep, SingleTypeFetchStep},
-        },
+        fetch::{location::Location, selections::FetchStepSelections},
         plan_nodes::FetchRewrite,
         tree::query_tree_node::MutationFieldPosition,
     },
     state::supergraph_state::{OperationKind, SubgraphName},
 };
 
-bitflags! {
-    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-    pub struct FetchStepFlags: u8 {
-        /// This fetch is for resolving a @requires directive.
-        const USED_FOR_REQUIRES = 1 << 0;
-        /// This fetch is for resolving a type condition on an interface.
-        const USED_FOR_TYPE_CONDITION = 1 << 1;
-    }
-}
-
 #[derive(Debug, Clone)]
-pub struct FetchStepData<State> {
+pub struct FetchStepData {
     pub id: i64,
     pub service_name: SubgraphName,
     pub response_path: Location,
-    pub input: FetchStepSelections<State>,
-    pub output: FetchStepSelections<State>,
+    pub input: FetchStepSelections,
+    pub output: FetchStepSelections,
     pub kind: FetchStepKind,
     pub operation_kind: OperationKind,
-    pub flags: FetchStepFlags,
     pub condition: Option<Condition>,
     pub variable_usages: Option<BTreeSet<String>>,
     pub variable_definitions: Option<Vec<VariableDefinition>>,
@@ -54,7 +38,7 @@ pub enum FetchStepKind {
     Root,
 }
 
-impl<State> Display for FetchStepData<State> {
+impl Display for FetchStepData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "[{}]: ", self.service_name)?;
 
@@ -70,14 +54,6 @@ impl<State> Display for FetchStepData<State> {
 
         write!(f, "at $.{}", self.response_path.path().join("."))?;
 
-        if self.flags.contains(FetchStepFlags::USED_FOR_REQUIRES) {
-            write!(f, " [@requires]")?;
-        }
-
-        if self.flags.contains(FetchStepFlags::USED_FOR_TYPE_CONDITION) {
-            write!(f, " [no_pass_through]")?;
-        }
-
         if let Some(condition) = &self.condition {
             match condition {
                 Condition::Include(var_name) => write!(f, " [@include(if: ${})]", var_name)?,
@@ -92,7 +68,7 @@ impl<State> Display for FetchStepData<State> {
     }
 }
 
-impl<State> FetchStepData<State> {
+impl FetchStepData {
     pub fn pretty_write(
         &self,
         writer: &mut std::fmt::Formatter<'_>,
@@ -122,7 +98,7 @@ impl<State> FetchStepData<State> {
     }
 }
 
-impl<State> FetchStepData<State> {
+impl FetchStepData {
     pub fn is_fetching_multiple_types(&self) -> bool {
         self.input.is_fetching_multiple_types() || self.output.is_fetching_multiple_types()
     }
@@ -150,7 +126,7 @@ pub(crate) fn type_condition_types_from_response_path(
     }
 }
 
-impl FetchStepData<MultiTypeFetchStep> {
+impl FetchStepData {
     // Moves a fetch-level condition down into this step's output selections.
     // A fetch-level condition means "the whole HTTP request can be skipped".
     // That is only correct while every output selection in the fetch has the same condition.
@@ -209,27 +185,6 @@ impl FetchStepData<MultiTypeFetchStep> {
         // In that case we lift the condition back to fetch level so the router can skip the whole HTTP request.
         if self.condition.is_none() {
             self.condition = self.output.take_shared_top_level_fragment_condition();
-        }
-    }
-}
-
-impl FetchStepData<SingleTypeFetchStep> {
-    pub fn into_multi_type(self) -> FetchStepData<MultiTypeFetchStep> {
-        FetchStepData::<MultiTypeFetchStep> {
-            id: self.id,
-            service_name: self.service_name,
-            response_path: self.response_path,
-            input: self.input.into_multi_type(),
-            output: self.output.into_multi_type(),
-            kind: self.kind,
-            operation_kind: self.operation_kind,
-            flags: self.flags,
-            condition: self.condition,
-            variable_usages: self.variable_usages,
-            variable_definitions: self.variable_definitions,
-            mutation_field_position: self.mutation_field_position,
-            input_rewrites: self.input_rewrites,
-            output_rewrites: self.output_rewrites,
         }
     }
 }

@@ -4,7 +4,6 @@ use petgraph::{graph::NodeIndex, visit::EdgeRef};
 
 use crate::query_planner::{
     planner::{
-        fetch::state::MultiTypeFetchStep,
         plan_nodes::planning::PlanNode,
         query_plan::optimize::{optimize_root_node, optimize_top_level_sequence},
     },
@@ -26,11 +25,11 @@ mod optimize;
 /// when its in-degree becomes zero.
 pub struct InDegree<'a> {
     state: HashMap<NodeIndex, usize>,
-    fetch_graph: &'a FetchGraph<MultiTypeFetchStep>,
+    fetch_graph: &'a FetchGraph,
 }
 
 impl<'a> InDegree<'a> {
-    pub fn new(fetch_graph: &'a FetchGraph<MultiTypeFetchStep>) -> Result<Self, QueryPlanError> {
+    pub fn new(fetch_graph: &'a FetchGraph) -> Result<Self, QueryPlanError> {
         let mut state: HashMap<NodeIndex, usize> = HashMap::new();
         let root_index = fetch_graph.root_index.ok_or(QueryPlanError::NoRoot)?;
 
@@ -83,7 +82,7 @@ pub static QUERY_PLAN_KIND: &str = "QueryPlan";
 
 #[tracing::instrument(level = "trace", skip_all)]
 pub fn build_query_plan_from_fetch_graph(
-    fetch_graph: FetchGraph<MultiTypeFetchStep>,
+    fetch_graph: FetchGraph,
     supergraph: &SupergraphState,
     cancellation_token: &CancellationToken,
 ) -> Result<QueryPlan, QueryPlanError> {

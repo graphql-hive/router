@@ -367,8 +367,8 @@ fn simple_inline_fragment() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Product {
-                isAvailable
                 uuid
+                isAvailable
               }
             }
           },
@@ -441,8 +441,8 @@ fn fragment_spread() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Product {
-                isAvailable
                 uuid
+                isAvailable
               }
             }
           },

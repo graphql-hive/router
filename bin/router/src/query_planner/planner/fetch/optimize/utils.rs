@@ -1,14 +1,11 @@
 use std::collections::{HashSet, VecDeque};
 
-use petgraph::{
-    graph::NodeIndex,
-    visit::{EdgeRef, NodeRef},
-};
+use petgraph::{graph::NodeIndex, visit::EdgeRef};
 use tracing::{instrument, trace};
 
 use crate::query_planner::{
     ast::{
-        merge_path::{MergePath, Segment},
+        merge_path::MergePath,
         selection_set::{find_arguments_conflicts, find_selection_set_by_path},
     },
     planner::fetch::{
@@ -16,7 +13,6 @@ use crate::query_planner::{
         fetch_graph::FetchGraph,
         fetch_step_data::{FetchStepData, FetchStepKind},
         selections::{FetchStepSelections, FetchStepSelectionsError},
-        state::MultiTypeFetchStep,
     },
     state::supergraph_state::SupergraphState,
 };
@@ -25,8 +21,8 @@ use crate::query_planner::{
 /// When merging an entity fetch into a non-entity target, the condition must
 /// stay attached to the source branch data, not to the whole target step.
 fn merge_source_condition_into_non_entity_target(
-    target: &FetchStepData<MultiTypeFetchStep>,
-    source: &mut FetchStepData<MultiTypeFetchStep>,
+    target: &FetchStepData,
+    source: &mut FetchStepData,
 ) -> Result<bool, FetchGraphError> {
     let Some(condition) = source.condition.clone() else {
         return Ok(false);
@@ -53,11 +49,12 @@ fn merge_source_condition_into_non_entity_target(
         .output
         .migrate_from_another(&source.input, &MergePath::default())?;
 
-    // Check if the condition is already enforced by the path
-    let condition_redundant = matches!(
-        source.response_path.path().last(),
-        Some(Segment::TypeCondition(_, Some(c)) | Segment::Field(_, _, Some(c))) if c == &condition
-    );
+    // The fields the source goes under may already have the condition, anywhere on the way
+    // down from the target.
+    let condition_redundant = source
+        .response_path
+        .strip_prefix(&target.response_path)
+        .is_some_and(|path| path.has_condition(&condition));
 
     if !condition_redundant {
         source.output.wrap_with_condition(condition);
@@ -66,7 +63,7 @@ fn merge_source_condition_into_non_entity_target(
     Ok(true)
 }
 
-/// Turns the result of a trial merge into a yes or no. Only a field conflict, or a type with
+/// Turns the result of a merge into a yes or no. Only a field conflict, or a type with
 /// nowhere to go, means the steps can't be merged. Anything else is a bug, so it's passed up.
 fn merge_succeeded(result: Result<(), FetchGraphError>) -> Result<bool, FetchGraphError> {
     match result {
@@ -80,10 +77,10 @@ fn merge_succeeded(result: Result<(), FetchGraphError>) -> Result<bool, FetchGra
 }
 
 /// Moves everything `source` fetches into `target`. It only touches the two steps, not the
-/// graph, so it can run on copies too, to see if a merge works out.
+/// graph.
 fn merge_step_data(
-    target: &mut FetchStepData<MultiTypeFetchStep>,
-    source: &mut FetchStepData<MultiTypeFetchStep>,
+    target: &mut FetchStepData,
+    source: &mut FetchStepData,
     force_merge_inputs: bool,
     supergraph: &SupergraphState,
 ) -> Result<(), FetchGraphError> {
@@ -132,6 +129,12 @@ fn merge_step_data(
         // nothing to copy over. See `can_absorb_nested_entity_call`.
     }
 
+    // The merged step runs the mutations of both. Only neighbouring mutations are merged, so
+    // remembering the last one keeps the one after it a neighbour.
+    target.mutation_field_position = target
+        .mutation_field_position
+        .max(source.mutation_field_position);
+
     // Conditions may have been pushed down to keep the merge correct.
     // If the merged fetch is still guarded by one shared condition, lift it back to
     // step level.
@@ -140,50 +143,88 @@ fn merge_step_data(
     Ok(())
 }
 
-// Return true in case an alias was applied during the merge process.
+/// Merges `source` into `target`, when their selections fit together, and returns whether
+/// it did. They don't when a type of `source` has nowhere to go in `target`, which the types
+/// alone tell. Or when two of their fields share a response key on the same objects, which
+/// only happens when the client's fields do (`FetchGraph::client_keys_clash`). Only then is
+/// the merge tried on copies first, the merge itself knows best where every field lands.
 #[instrument(level = "trace", skip_all)]
-pub(crate) fn perform_fetch_step_merge(
+pub(crate) fn try_merge_steps(
     target_index: NodeIndex,
     source_index: NodeIndex,
-    fetch_graph: &mut FetchGraph<MultiTypeFetchStep>,
+    fetch_graph: &mut FetchGraph,
     force_merge_inputs: bool,
     supergraph: &SupergraphState,
-) -> Result<(), FetchGraphError> {
+) -> Result<bool, FetchGraphError> {
+    let may_clash = fetch_graph.client_keys_clash;
+    let (target, source) = fetch_graph.get_pair_of_steps_mut(target_index, source_index)?;
+    if !force_merge_inputs && !types_fit(target, source) {
+        trace!(
+            "fetch steps [{}] + [{}] have types that don't fit together",
+            target_index.index(),
+            source_index.index(),
+        );
+        return Ok(false);
+    }
+
+    if may_clash {
+        let mut merged = target.clone();
+        if force_merge_inputs {
+            merged.declare_types_of(source);
+        }
+        if !merge_succeeded(merge_step_data(
+            &mut merged,
+            &mut source.clone(),
+            force_merge_inputs,
+            supergraph,
+        ))? {
+            trace!(
+                "fetch steps [{}] + [{}] have fields that don't fit together",
+                target_index.index(),
+                source_index.index(),
+            );
+            return Ok(false);
+        }
+        *target = merged;
+    } else {
+        if force_merge_inputs {
+            // Batching keeps every type's selections apart, so make room for the source's types.
+            target.declare_types_of(source);
+        }
+        merge_step_data(target, source, force_merge_inputs, supergraph)?;
+    }
+
     trace!(
-        "merging fetch steps [{}] + [{}]",
+        "merged fetch steps [{}] + [{}]",
         target_index.index(),
         source_index.index(),
     );
+    fetch_graph.replace_step(source_index, target_index);
 
-    let (target, source) = fetch_graph.get_pair_of_steps_mut(target_index, source_index)?;
-    merge_step_data(target, source, force_merge_inputs, supergraph)?;
+    Ok(true)
+}
 
-    let mut children_indexes: Vec<NodeIndex> = vec![];
-    let mut parents_indexes: Vec<NodeIndex> = vec![];
-    for edge_ref in fetch_graph.children_of(source_index) {
-        children_indexes.push(edge_ref.target().id());
-    }
-
-    for edge_ref in fetch_graph.parents_of(source_index) {
-        // We ignore self_index
-        if edge_ref.source().id() != target_index {
-            parents_indexes.push(edge_ref.source().id());
-        }
-    }
-
-    // Replace parents:
-    // 1. Add self -> child
-    for child_index in children_indexes.iter() {
-        fetch_graph.connect(target_index, *child_index);
-    }
-    // 2. Add parent -> self
-    for parent_index in parents_indexes {
-        fetch_graph.connect(parent_index, target_index);
-    }
-    // 3. Drop other -> child and parent -> other
-    fetch_graph.remove_step(source_index);
-
-    Ok(())
+/// Does every type `source` fetches have a place in `target`? See `merge_step_data`, and
+/// `FetchStepSelections::merge_target`.
+fn types_fit(target: &FetchStepData, source: &FetchStepData) -> bool {
+    let Some(fetch_path) = source.response_path.strip_prefix(&target.response_path) else {
+        // Not a merge `can_merge` allows. `merge_step_data` says so.
+        return true;
+    };
+    // A conditional entity call going into a query puts its input next to its output first.
+    let input_goes_to_output = source.condition.is_some() && !target.is_entity_call();
+    source.output.iter_selections().all(|(type_name, _)| {
+        target
+            .output
+            .merge_target(type_name, &fetch_path, true)
+            .is_ok()
+    }) && (!input_goes_to_output
+        || source.input.iter_selections().all(|(type_name, _)| {
+            source
+                .output
+                .merge_target(type_name, &MergePath::default(), false)
+                .is_ok()
+        }))
 }
 
 /// Checks if an ancestor node (`target_ancestor_index`) is reachable from a
@@ -195,7 +236,7 @@ pub(crate) fn perform_fetch_step_merge(
 /// The search starts from all direct parents of `child_index` *except*
 /// `target_ancestor_index`, and follows incoming edges from there.
 pub fn is_reachable_via_alternative_upstream_path(
-    graph: &FetchGraph<MultiTypeFetchStep>,
+    graph: &FetchGraph,
     child_index: NodeIndex,
     target_ancestor_index: NodeIndex,
 ) -> Result<bool, FetchGraphError> {
@@ -237,26 +278,27 @@ pub fn is_reachable_via_alternative_upstream_path(
     Ok(false)
 }
 
-impl FetchStepData<MultiTypeFetchStep> {
+impl FetchStepData {
+    /// Could `other` go into this step, as far as the graph and the steps' kinds and places
+    /// go? Whether their selections fit together is up to `try_merge_steps`.
     pub fn can_merge(
         &self,
         self_index: NodeIndex,
         other_index: NodeIndex,
         other: &Self,
-        fetch_graph: &FetchGraph<MultiTypeFetchStep>,
-        supergraph: &SupergraphState,
-    ) -> Result<bool, FetchGraphError> {
+        fetch_graph: &FetchGraph,
+    ) -> bool {
         if self_index == other_index {
-            return Ok(false);
+            return false;
         }
 
         if self.service_name != other.service_name {
-            return Ok(false);
+            return false;
         }
 
         // We allow to merge root with entity calls by adding an inline fragment with the @include/@skip
         if self.is_entity_call() && other.is_entity_call() && self.condition != other.condition {
-            return Ok(false);
+            return false;
         }
 
         // Is `this` FetchStep the only one `other` waits for?
@@ -273,17 +315,17 @@ impl FetchStepData<MultiTypeFetchStep> {
             if self.response_path != other.response_path
                 && !(is_only_parent && self.can_absorb_nested_entity_call(other))
             {
-                return Ok(false);
+                return false;
             }
         } else {
             // otherwise we can merge
             if !other.response_path.is_within(&self.response_path) {
-                return Ok(false);
+                return false;
             }
         }
 
         if self.has_arguments_conflicts_with(other) {
-            return Ok(false);
+            return false;
         }
 
         // if they do not share parents, they can't be merged
@@ -294,52 +336,21 @@ impl FetchStepData<MultiTypeFetchStep> {
                     .any(|other_edge| other_edge.source() == self_edge.source())
             })
         {
-            return Ok(false);
+            return false;
         }
 
-        self.merges_cleanly_with(other, supergraph)
-    }
-
-    /// Runs the merge on copies of both steps. Only the merge itself knows all the ways it
-    /// can fail, like two plain fields it can't alias, or a type with nowhere to go.
-    pub fn merges_cleanly_with(
-        &self,
-        other: &Self,
-        supergraph: &SupergraphState,
-    ) -> Result<bool, FetchGraphError> {
-        merge_succeeded(merge_step_data(
-            &mut self.clone(),
-            &mut other.clone(),
-            false,
-            supergraph,
-        ))
+        true
     }
 
     /// Makes room for every type of `other`, so its selections can sit next to ours
     /// instead of going into one of our types.
-    pub fn declare_types_of(&mut self, other: &Self) {
+    fn declare_types_of(&mut self, other: &Self) {
         for (input_type_name, _) in other.input.iter_selections() {
             self.input.declare_known_type(input_type_name);
         }
         for (output_type_name, _) in other.output.iter_selections() {
             self.output.declare_known_type(output_type_name);
         }
-    }
-
-    /// Like `merges_cleanly_with`, for batching, where every type keeps its own selections.
-    pub fn batches_cleanly_with(
-        &self,
-        other: &Self,
-        supergraph: &SupergraphState,
-    ) -> Result<bool, FetchGraphError> {
-        let mut me = self.clone();
-        me.declare_types_of(other);
-        merge_succeeded(merge_step_data(
-            &mut me,
-            &mut other.clone(),
-            true,
-            supergraph,
-        ))
     }
 
     /// Only call this when we are the only step `other` waits for.
@@ -372,7 +383,7 @@ impl FetchStepData<MultiTypeFetchStep> {
     }
 
     pub fn has_arguments_conflicts_with(&self, other: &Self) -> bool {
-        let input_conflicts = FetchStepSelections::<MultiTypeFetchStep>::iter_matching_types(
+        let input_conflicts = FetchStepSelections::iter_matching_types(
             &self.input,
             &other.input,
             |_, self_selections, other_selections| {
@@ -398,15 +409,14 @@ mod tests {
         planner::fetch::{
             error::FetchGraphError,
             fetch_graph::FetchGraph,
-            fetch_step_data::{FetchStepData, FetchStepFlags, FetchStepKind},
+            fetch_step_data::{FetchStepData, FetchStepKind},
             selections::FetchStepSelections,
-            state::{MultiTypeFetchStep, SingleTypeFetchStep},
         },
         state::supergraph_state::{OperationKind, SubgraphName, SupergraphState},
         utils::parsing::{parse_operation, parse_schema},
     };
 
-    use super::perform_fetch_step_merge;
+    use super::try_merge_steps;
 
     /// These tests don't depend on types, so the schema can be empty.
     fn supergraph() -> SupergraphState {
@@ -414,7 +424,7 @@ mod tests {
     }
 
     /// Selections for one or more types, e.g. `&[("User", "{ id }"), ("Admin", "{ id }")]`.
-    fn selections(types: &[(&str, &str)]) -> FetchStepSelections<MultiTypeFetchStep> {
+    fn selections(types: &[(&str, &str)]) -> FetchStepSelections {
         let parse = |query: &str| -> SelectionSet {
             match parse_operation(query).definitions.first() {
                 Some(Definition::Operation(OperationDefinition::SelectionSet(s))) => {
@@ -424,13 +434,13 @@ mod tests {
             }
         };
 
-        let mut result = FetchStepSelections::<SingleTypeFetchStep>::new_empty().into_multi_type();
+        let mut result = FetchStepSelections::new_empty();
         for (type_name, query) in types {
-            let mut single = FetchStepSelections::<SingleTypeFetchStep>::new(type_name);
+            let mut single = FetchStepSelections::new(type_name);
             single.add(&parse(query)).unwrap();
             result.declare_known_type(type_name);
             result
-                .migrate_from_another(&single.into_multi_type(), &MergePath::default())
+                .migrate_from_another(&single, &MergePath::default())
                 .unwrap();
         }
         result
@@ -449,11 +459,11 @@ mod tests {
     }
 
     fn add_entity_step(
-        graph: &mut FetchGraph<MultiTypeFetchStep>,
+        graph: &mut FetchGraph,
         service: &str,
         response_path: MergePath,
-        input: FetchStepSelections<MultiTypeFetchStep>,
-        output: FetchStepSelections<MultiTypeFetchStep>,
+        input: FetchStepSelections,
+        output: FetchStepSelections,
     ) -> petgraph::graph::NodeIndex {
         let response_path = graph.locations.get(&response_path);
         graph.add_step(FetchStepData {
@@ -464,7 +474,6 @@ mod tests {
             output,
             kind: FetchStepKind::Entity,
             operation_kind: OperationKind::Query,
-            flags: FetchStepFlags::empty(),
             condition: None,
             variable_usages: None,
             variable_definitions: None,
@@ -479,8 +488,7 @@ mod tests {
     /// single type. Otherwise it looks for `Order` in the parent, and fails.
     #[test]
     fn multi_type_parent_does_not_absorb_nested_call() {
-        let mut graph =
-            FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
+        let mut graph = FetchGraph::new(OperationKind::Query);
 
         let parent = add_entity_step(
             &mut graph,
@@ -506,9 +514,7 @@ mod tests {
 
         let parent_data = graph.get_step_data(parent).unwrap();
         let child_data = graph.get_step_data(child).unwrap();
-        assert!(!parent_data
-            .can_merge(parent, child, child_data, &graph, &supergraph())
-            .unwrap());
+        assert!(!parent_data.can_merge(parent, child, child_data, &graph));
     }
 
     /// https://github.com/graphql-hive/router/issues/1308
@@ -518,8 +524,7 @@ mod tests {
     /// around works, the `Animal` step takes them under `... on Cat` and `... on Dog`.
     #[test]
     fn multi_type_step_does_not_absorb_step_of_another_type() {
-        let mut graph =
-            FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
+        let mut graph = FetchGraph::new(OperationKind::Query);
 
         let batched = add_entity_step(
             &mut graph,
@@ -536,16 +541,17 @@ mod tests {
             selections(&[("Animal", "{ __typename }")]),
         );
 
-        let batched_data = graph.get_step_data(batched).unwrap();
-        let interface_data = graph.get_step_data(interface).unwrap();
-        assert!(!batched_data
-            .can_merge(batched, interface, interface_data, &graph, &supergraph())
-            .unwrap());
-        assert!(interface_data
-            .can_merge(interface, batched, batched_data, &graph, &supergraph())
-            .unwrap());
+        // The merge doesn't work out, and leaves both steps as they were.
+        assert!(!try_merge_steps(batched, interface, &mut graph, false, &supergraph()).unwrap());
+        assert_eq!(graph.graph.node_count(), 2);
+        assert!(graph
+            .get_step_data(batched)
+            .unwrap()
+            .output
+            .selections_for_definition("Animal")
+            .is_none());
 
-        perform_fetch_step_merge(interface, batched, &mut graph, false, &supergraph()).unwrap();
+        assert!(try_merge_steps(interface, batched, &mut graph, false, &supergraph()).unwrap());
         assert_eq!(
             graph
                 .get_step_data(interface)
@@ -558,12 +564,64 @@ mod tests {
         );
     }
 
+    /// Siblings `a` and `b` can't be merged, their inputs ask for `p` with different
+    /// arguments. `c` fits with either. Once `a` takes `c` in, `b` has to be checked against
+    /// `a` with `c`, not against `c` as it was. It used to be merged into `b` unchecked.
+    #[test]
+    fn sibling_merges_are_checked_against_merged_steps() {
+        let mut graph = FetchGraph::new(OperationKind::Query);
+
+        let root = add_entity_step(
+            &mut graph,
+            "products",
+            path(&[]),
+            selections(&[("Query", "{ __typename }")]),
+            selections(&[("Query", "{ products { __typename id } }")]),
+        );
+        graph.root_index = Some(root);
+        let sibling = |graph: &mut FetchGraph, input: &str, output: &str| {
+            let step = add_entity_step(
+                graph,
+                "inventory",
+                path(&["products", "@"]),
+                selections(&[("Product", input)]),
+                selections(&[("Product", output)]),
+            );
+            graph.connect(root, step);
+            step
+        };
+        // The pass sees siblings in the reverse order they were added: `a`, `b`, `c`.
+        sibling(&mut graph, "{ __typename id }", "{ c }");
+        sibling(&mut graph, "{ __typename id p(x: 2) }", "{ b }");
+        sibling(&mut graph, "{ __typename id p(x: 1) }", "{ a }");
+
+        graph.merge_siblings(&supergraph()).unwrap();
+
+        let mut inputs: Vec<String> = graph
+            .step_indices()
+            .filter(|index| *index != root)
+            .map(|index| {
+                graph
+                    .get_step_data(index)
+                    .unwrap()
+                    .input
+                    .selections_for_definition("Product")
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        inputs.sort();
+        assert_eq!(
+            inputs,
+            vec!["{__typename id p(x: 1)}", "{__typename id p(x: 2)}"]
+        );
+    }
+
     /// Two entity calls for the same type at unrelated paths can't be merged. The merged step
     /// would only fetch at `a.@`, and the entities at `b.@` would be lost.
     #[test]
     fn same_type_entity_calls_at_unrelated_paths_do_not_merge() {
-        let mut graph =
-            FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
+        let mut graph = FetchGraph::new(OperationKind::Query);
 
         let a = add_entity_step(
             &mut graph,
@@ -580,7 +638,7 @@ mod tests {
             selections(&[("Order", "{ name }")]),
         );
 
-        let result = perform_fetch_step_merge(a, b, &mut graph, false, &supergraph());
+        let result = try_merge_steps(a, b, &mut graph, false, &supergraph());
         assert!(
             matches!(result, Err(FetchGraphError::MismatchedResponsePath)),
             "{result:?}"

@@ -310,8 +310,8 @@ fn aliasing_both_parent_and_leaf() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Product {
-                available: isAvailable
                 uuid
+                available: isAvailable
               }
             }
           },

@@ -21,8 +21,6 @@ pub enum FetchGraphError {
     SatisfiableKeyFailure(#[from] WalkOperationError),
     #[error("Expected a FetchStep with Mutation to have its order defined")]
     MutationStepWithNoOrder,
-    #[error("Index mapping got lost")]
-    IndexMappingLost,
     #[error("Expected Fetch Steps not to be empty")]
     EmptyFetchSteps,
     #[error("Input types are equal but response_path are different!")]

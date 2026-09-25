@@ -10,13 +10,13 @@ use crate::query_planner::{
         selection_set::{field_condition_equal, find_selection_set_by_path_mut},
     },
     planner::{
-        fetch::{error::FetchGraphError, fetch_graph::FetchGraph, state::MultiTypeFetchStep},
+        fetch::{error::FetchGraphError, fetch_graph::FetchGraph},
         plan_nodes::{FetchNodePathSegment, FetchRewrite, KeyRenamer},
     },
     state::supergraph_state::SupergraphState,
 };
 
-impl FetchGraph<MultiTypeFetchStep> {
+impl FetchGraph {
     #[instrument(level = "trace", skip_all)]
     pub(crate) fn fix_conflicting_type_mismatches(
         &mut self,

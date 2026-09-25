@@ -66,60 +66,23 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
             id
           }
         },
-        BatchFetch(service: "b") {
-          {
-            _e0 {
-              paths: [
-                "viewer.review|[UserReview].product"
-              ]
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
+        Flatten(path: "viewer.review.product") {
+          Fetch(service: "b") {
+            {
+              ... on Product {
+                __typename
+                id
               }
-            }
-            _e1 {
-              paths: [
-                "viewer.review|[AnonymousReview].product"
-              ]
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              }
-            }
-          }
-          {
-            _e0: _entities(representations: $__batch_reps_0) {
+            } =>
+            {
               ... on Product {
                 pid
-              }
-            }
-            _e1: _entities(representations: $__batch_reps_1) {
-              ... on Product {
                 b
               }
             }
-          }
+          },
         },
         Parallel {
-          Flatten(path: "viewer.review|[UserReview].product") {
-            Fetch(service: "c") {
-              {
-                ... on Product {
-                  __typename
-                  pid
-                }
-              } =>
-              {
-                ... on Product {
-                  c
-                }
-              }
-            },
-          },
           Flatten(path: "viewer.review|[UserReview].product") {
             Fetch(service: "d") {
               {
@@ -131,6 +94,21 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
               {
                 ... on Product {
                   d
+                }
+              }
+            },
+          },
+          Flatten(path: "viewer.review|[UserReview].product") {
+            Fetch(service: "c") {
+              {
+                ... on Product {
+                  __typename
+                  pid
+                }
+              } =>
+              {
+                ... on Product {
+                  c
                 }
               }
             },

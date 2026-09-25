@@ -8,7 +8,7 @@ use crate::query_planner::{
         selection_item::SelectionItem,
         selection_set::{FieldSelection, SelectionSet},
     },
-    planner::fetch::{selections::FetchStepSelections, state::MultiTypeFetchStep},
+    planner::fetch::selections::FetchStepSelections,
     state::{
         subgraph_state::{SubgraphDefinition, SubgraphState},
         supergraph_state::{SubgraphName, SupergraphState, TypeNode},
@@ -31,7 +31,7 @@ impl<'a> SelectionMismatchFinder<'a> {
     pub fn find_mismatches_in_node(
         &self,
         subgraph_name: &SubgraphName,
-        selections: &FetchStepSelections<MultiTypeFetchStep>,
+        selections: &FetchStepSelections,
     ) -> MismatchesFound {
         let mut mismtaches_found = MismatchesFound::new();
         let subgraph_state = self

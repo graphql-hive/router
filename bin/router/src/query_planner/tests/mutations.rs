@@ -198,3 +198,43 @@ fn many_fields_two_same_graph() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+/// Three mutations in a row on one subgraph go in one fetch. After the first two are merged,
+/// the third one has to still count as next to them.
+#[test]
+fn three_fields_in_a_row_same_graph() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation {
+          one: add(num: 1)
+          two: add(num: 2)
+          three: add(num: 3)
+          final: delete
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "c") {
+          mutation {
+            one: add(num: 1)
+            two: add(num: 2)
+            three: add(num: 3)
+          }
+        },
+        Fetch(service: "b") {
+          mutation {
+            final: delete
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
