@@ -5,7 +5,6 @@ use crate::parser::{
     },
     tokenizer::{Kind, Token, TokenStream},
 };
-use combine::StreamOnce;
 use thiserror::Error;
 
 /// Error minifying query
@@ -15,11 +14,11 @@ pub struct MinifyError(String);
 
 pub fn minify_query(source: &str) -> Result<String, MinifyError> {
     let mut bits: Vec<&str> = Vec::new();
-    let mut stream = TokenStream::new(source);
+    let mut stream = TokenStream::new_without_positions(source);
     let mut prev_was_punctuator = false;
 
     loop {
-        match stream.uncons() {
+        match stream.next_token_without_positions() {
             Ok(x) => {
                 let token: Token = x;
                 let is_non_punctuator = token.kind != Kind::Punctuator;
@@ -49,8 +48,7 @@ pub fn minify_query_document<'a, T: Text<'a>>(doc: &Document<'a, T>) -> String {
 /// Minifier builds a minified GraphQL query string from a parsed AST.
 ///
 /// This struct uses a single-pass traversal of the document AST, writing directly to a buffer
-/// instead of creating intermediate string representations. This approach is significantly
-/// faster than the `minify_query` approach which required converting the AST to a Display string first.
+/// instead of creating an intermediate display string.
 ///
 /// Key optimizations:
 /// - Direct buffer writing avoids intermediate allocations
@@ -502,6 +500,11 @@ mod tests {
     }
 
     #[test]
+    fn rejects_invalid_string_escape() {
+        assert!(super::minify_query(r#"{ field(value: "bad\q") }"#).is_err());
+    }
+
+    #[test]
     fn minify_document_test() {
         let source = "
         query SomeQuery($foo: String!, $bar: String) {
@@ -517,8 +520,7 @@ mod tests {
         }
         ";
 
-        let doc =
-            crate::parser::query::grammar::parse_query::<String>(source).expect("parse failed");
+        let doc = crate::parser::query::parse_query::<String>(source).expect("parse failed");
         let minified_doc = super::minify_query_document(&doc);
         let minified_query = super::minify_query(source).expect("minification failed");
 
@@ -546,8 +548,7 @@ mod tests {
         }
         "#;
 
-        let doc =
-            crate::parser::query::grammar::parse_query::<String>(source).expect("parse failed");
+        let doc = crate::parser::query::parse_query::<String>(source).expect("parse failed");
         let minified_doc = super::minify_query_document(&doc);
         let minified_query = super::minify_query(source).expect("minification failed");
 
@@ -566,7 +567,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @r#"query{node@dir(a:1 b:"2" c:true d:false e:null)}"#);
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -583,7 +584,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @r#"query{node@dir(a:1 b:"2" c:true d:false e:null)}"#);
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -598,7 +599,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"fragment frag on Friend{node}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -614,7 +615,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"query{node{id...something}}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -630,7 +631,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"query{node{id...on User{name}}}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -647,7 +648,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"query{node{id...on User@defer{name}}}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -669,7 +670,7 @@ mod tests {
         "#);
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
 
         insta::assert_snapshot!(minified_document, @r#"query queryName($foo:ComplexType$site:Site=MOBILE){whoever123is:node(id:[123 456]){id...on User@defer{field2{id alias:field1(first:10 after:$foo)@include(if:$foo){id...frag}}}...@skip(unless:$foo){id}...{id}}}mutation likeStory{like(story:123)@defer{story{id}}}subscription StoryLikeSubscription($input:StoryLikeSubscribeInput){storyLikeSubscribe(input:$input){story{likers{count}likeSentence{text}}}}fragment frag on Friend{foo(size:$size bar:$b obj:{key:"value" block:"block string uses \"\"\""})}{unnamed(truthy:true falsey:false nullish:null)query}"#);
@@ -688,7 +689,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @r#"query queryName($foo:ComplexType$site:Site=MOBILE){whoever123is:node(id:[123 456]){id...on User@defer{field2{id alias:field1(first:10 after:$foo)@include(if:$foo){id...frag}}}...@skip(unless:$foo){id}...{id}}}mutation likeStory{like(story:123)@defer{story{id}}}subscription StoryLikeSubscription($input:StoryLikeSubscribeInput){storyLikeSubscribe(input:$input){story{likers{count}likeSentence{text}}}}fragment frag on Friend{foo(size:$size bar:$b obj:{block:"block string uses \"\"\"" key:"value"})}{unnamed(truthy:true falsey:false nullish:null)query}"#);
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -703,7 +704,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"{a}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -719,7 +720,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"mutation{notify}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -735,7 +736,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"query{node}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -751,7 +752,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"mutation@directive{node}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -768,7 +769,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"mutation($first:Int$second:Int){field1(first:$first)field2(second:$second)}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -784,7 +785,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"query Foo{field}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -800,7 +801,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"query{node{id}}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -816,7 +817,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"query{an_alias:node}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -832,7 +833,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"query{node(id:1)}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -849,7 +850,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"query{node(id:1)node(id:1 one:3)}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -867,7 +868,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"query{node(id:[5 6 7])}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -883,7 +884,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"query@directive{node}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -900,7 +901,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"query{node(id:1 list:[123 456])}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -917,7 +918,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"query($first:Int$second:Int){field1(first:$first)field2(second:$second)}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -935,7 +936,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"query($houseId:String!$streetNumber:Int!){house(id:$houseId){id name lat lng}street(number:$streetNumber){id}houseStreet(id:$houseId number:$streetNumber){id}}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -953,7 +954,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"query($houseId:String!$streetNumber:Int!){house(id:$houseId){id name lat lng}street(number:$streetNumber){id}houseStreet(id:$houseId number:$streetNumber){id}}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
 
         assert_eq!(
@@ -971,7 +972,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"query{node(id:1 obj:{key1:123 key2:456})}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -989,7 +990,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"query{node(id:1 obj:{key1:123 key2:456})}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -1006,7 +1007,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"query Foo($site:Float=0.5){field}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -1023,7 +1024,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"query Foo($site:[Int]=[123 456]){field}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -1040,7 +1041,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"query Foo($site:Site={url:null}){field}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -1057,7 +1058,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @r#"query Foo($site:String="string"){field}"#);
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -1081,7 +1082,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"query Foo($arg:SomeType){field}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -1097,7 +1098,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @r#"query{node(id:"hello")}"#);
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -1114,7 +1115,7 @@ mod tests {
         insta::assert_snapshot!(minified_query, @"subscription@directive{node}");
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,
@@ -1136,7 +1137,7 @@ mod tests {
         "#);
 
         let minified_document = super::minify_query_document(
-            &crate::parser::query::grammar::parse_query::<String>(&source).unwrap(),
+            &crate::parser::query::parse_query::<String>(&source).unwrap(),
         );
         assert_eq!(
             minified_query, minified_document,

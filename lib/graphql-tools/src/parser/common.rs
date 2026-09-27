@@ -6,7 +6,7 @@ use combine::{parser, Parser};
 
 use super::helpers::{ident, kind, name, punct};
 use super::position::Pos;
-use super::tokenizer::{Kind as T, Token, TokenStream};
+use super::tokenizer::{decode_escape, EscapeError, Kind as T, Token, TokenStream};
 
 /// Text abstracts over types that hold a string value.
 /// It is used to make the AST generic over the string type.
@@ -171,7 +171,7 @@ where
         .into_result()
 }
 
-fn unquote_block_string(src: &str) -> Result<String, Error<Token<'_>, Token<'_>>> {
+pub(crate) fn unquote_block_string(src: &str) -> Result<String, Error<Token<'_>, Token<'_>>> {
     debug_assert!(src.starts_with("\"\"\"") && src.ends_with("\"\"\""));
     let lines = src[3..src.len() - 3].lines();
 
@@ -226,64 +226,39 @@ fn unquote_block_string(src: &str) -> Result<String, Error<Token<'_>, Token<'_>>
     Ok(result)
 }
 
-fn unquote_string<'a>(s: &'a str) -> Result<String, Error<Token<'a>, Token<'a>>> {
+pub(crate) fn unquote_string<'a>(s: &'a str) -> Result<String, Error<Token<'a>, Token<'a>>> {
     let mut res = String::with_capacity(s.len());
     debug_assert!(s.starts_with('"') && s.ends_with('"'));
-    let mut chars = s[1..s.len() - 1].chars();
-    let mut temp_code_point = String::with_capacity(4);
-    while let Some(c) = chars.next() {
-        match c {
-            '\\' => {
-                match chars.next().expect("slash cant be at the end") {
-                    c @ '"' | c @ '\\' | c @ '/' => res.push(c),
-                    'b' => res.push('\u{0010}'),
-                    'f' => res.push('\u{000C}'),
-                    'n' => res.push('\n'),
-                    'r' => res.push('\r'),
-                    't' => res.push('\t'),
-                    'u' => {
-                        temp_code_point.clear();
-                        for _ in 0..4 {
-                            match chars.next() {
-                                Some(inner_c) => temp_code_point.push(inner_c),
-                                None => {
-                                    return Err(Error::Unexpected(Info::Owned(
-                                        format_args!(
-                                            "\\u must have 4 characters after it, only found '{}'",
-                                            temp_code_point
-                                        )
-                                        .to_string(),
-                                    )))
-                                }
-                            }
-                        }
-
-                        // convert our hex string into a u32, then convert that into a char
-                        match u32::from_str_radix(&temp_code_point, 16).map(std::char::from_u32) {
-                            Ok(Some(unicode_char)) => res.push(unicode_char),
-                            _ => {
-                                return Err(Error::Unexpected(Info::Owned(
-                                    format_args!(
-                                        "{} is not a valid unicode code point",
-                                        temp_code_point
-                                    )
-                                    .to_string(),
-                                )))
-                            }
-                        }
-                    }
-                    c => {
-                        return Err(Error::Unexpected(Info::Owned(
-                            format_args!("bad escaped char {:?}", c).to_string(),
-                        )));
-                    }
-                }
-            }
-            c => res.push(c),
+    let bytes = s.as_bytes();
+    let mut index = 1;
+    let end = s.len() - 1;
+    while index < end {
+        if bytes[index] == b'\\' {
+            let (value, consumed) = decode_escape(bytes, index).map_err(escape_error)?;
+            res.push(value);
+            index += consumed;
+        } else {
+            let value = s[index..].chars().next().expect("valid UTF-8 source");
+            res.push(value);
+            index += value.len_utf8();
         }
     }
-
     Ok(res)
+}
+
+fn escape_error<'a>(error: EscapeError) -> Error<Token<'a>, Token<'a>> {
+    let message = match error {
+        EscapeError::Unknown(byte) => {
+            format_args!("bad escaped char {:?}", byte as char).to_string()
+        }
+        EscapeError::IncompleteUnicode(found) => {
+            format_args!("\\u must have 4 characters after it, only found {found}").to_string()
+        }
+        EscapeError::InvalidUnicode(value) => {
+            format_args!("{value:04X} is not a valid unicode code point").to_string()
+        }
+    };
+    Error::Unexpected(Info::Owned(message))
 }
 
 pub fn string<'a>(input: &mut TokenStream<'a>) -> StdParseResult<String, TokenStream<'a>> {

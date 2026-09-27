@@ -1,16 +1,15 @@
-extern crate graphql_parser;
-#[cfg(test)]
-#[macro_use]
-extern crate pretty_assertions;
-
 use std::fs::File;
 use std::io::Read;
 
-use graphql_tools::parser::parse_query;
+use crate::parser::parse_query;
 
 fn test_error(filename: &str) {
     let mut buf = String::with_capacity(1024);
-    let path = format!("tests/query_errors/{}.txt", filename);
+    let path = format!(
+        "{}/src/parser/tests/query_errors/{}.txt",
+        env!("CARGO_MANIFEST_DIR"),
+        filename
+    );
     let mut f = File::open(path).unwrap();
     f.read_to_string(&mut buf).unwrap();
     let mut iter = buf.splitn(2, "\n---\n");

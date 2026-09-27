@@ -85,6 +85,16 @@ mod helpers;
 mod position;
 mod tokenizer;
 
+#[cfg(test)]
+#[path = "tests/query_errors.rs"]
+mod query_errors;
+#[cfg(test)]
+#[path = "tests/query_roundtrips.rs"]
+mod query_roundtrips;
+#[cfg(test)]
+#[path = "tests/schema_roundtrips.rs"]
+mod schema_roundtrips;
+
 pub mod hash;
 pub mod query;
 pub mod schema;
