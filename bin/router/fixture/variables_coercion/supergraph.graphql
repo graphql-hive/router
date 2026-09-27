@@ -226,6 +226,8 @@ type Query @join__type(graph: TEST) {
   nnListNN(input: [String!]!): String
   # router additions
   int(input: Int): String
+  # The spec's Non-Null example (§3.12).
+  withNonNullArg(cannotBeNull: String!): String
   float(input: Float): String
   id(input: ID): String
   boolean(input: Boolean): String

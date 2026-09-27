@@ -11,6 +11,7 @@
 mod enums;
 mod harness;
 mod input_objects;
+mod lists;
 mod oneof;
 mod scalars;
 mod variable_level;
