@@ -44,7 +44,7 @@ fn accepts(operation: &str, variables: &str) {
 mod non_object_values {
     use super::*;
 
-    /// graphql-js v17 variables-test.ts:657; v16 variables-test.ts:444
+    /// graphql-js `variables-test.ts` "errors on incorrect type"
     #[test]
     fn errors_on_incorrect_type() {
         rejects(
@@ -56,8 +56,9 @@ mod non_object_values {
         );
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:245, coerceInputValue-test.ts:147;
-    /// v16 coerceInputValue-test.ts:207
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLInputObject > returns an error for a
+    /// non-object type"; `coerceInputValue-test.ts` "invalid for a non-object type", "returns an
+    /// error for a non-object type"
     #[test]
     fn input_object_rejects_number() {
         rejects(
@@ -69,8 +70,9 @@ mod non_object_values {
         );
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:301, coerceInputValue-test.ts:173;
-    /// v16 coerceInputValue-test.ts:283
+    /// graphql-js `validateInputValue-test.ts` "returns error when supplied with an array";
+    /// `coerceInputValue-test.ts` "invalid when supplied with an array", "returns an error for an
+    /// array type"
     #[test]
     fn input_object_rejects_array() {
         rejects(
@@ -106,7 +108,9 @@ mod non_object_values {
         );
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:311, coerceInputValue-test.ts:177
+    /// graphql-js `validateInputValue-test.ts` "returns error when a nested input object is
+    /// supplied with an array"; `coerceInputValue-test.ts` "invalid when a nested input object is
+    /// supplied with an array"
     #[test]
     fn nested_input_object_rejects_array() {
         rejects(
@@ -118,7 +122,7 @@ mod non_object_values {
         );
     }
 
-    /// graphql-js v16 coerceInputValue-test.ts:294
+    /// graphql-js `coerceInputValue-test.ts` "returns an error for an array type on a nested field"
     #[test]
     fn nested_deep_object_rejects_list() {
         rejects(
@@ -136,7 +140,7 @@ mod non_object_values {
 mod required_fields_and_defaults {
     use super::*;
 
-    /// graphql-js v17 variables-test.ts:671; v16 variables-test.ts:458
+    /// graphql-js `variables-test.ts` "errors on omission of nested non-null"
     #[test]
     fn errors_on_omission_of_nested_non_null() {
         rejects(
@@ -148,8 +152,9 @@ mod required_fields_and_defaults {
         );
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:277, coerceInputValue-test.ts:159;
-    /// v16 coerceInputValue-test.ts:245
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLInputObject > returns error for a
+    /// missing required field"; `coerceInputValue-test.ts` "invalid for a missing required field",
+    /// "returns error for a missing required field"
     #[test]
     fn returns_error_for_a_missing_required_field() {
         rejects(
@@ -185,15 +190,17 @@ mod required_fields_and_defaults {
         );
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:241, coerceInputValue-test.ts:143;
-    /// v16 coerceInputValue-test.ts:202
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLInputObject > returns no error for a
+    /// valid input"; `coerceInputValue-test.ts` "for GraphQLInputObject > returns no error for a
+    /// valid input"
     #[test]
     fn returns_no_error_for_a_valid_input() {
         accepts(INT_INPUT, r#"{"v":{"foo":123}}"#);
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:364, coerceInputValue-test.ts:248;
-    /// v16 coerceInputValue-test.ts:426
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLInputObject with default value > no
+    /// error for no errors for valid input value"; `coerceInputValue-test.ts` "returns no errors
+    /// for valid input value"
     #[test]
     fn field_default_valid_input_value() {
         accepts(
@@ -202,8 +209,9 @@ mod required_fields_and_defaults {
         );
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:368, coerceInputValue-test.ts:252;
-    /// v16 coerceInputValue-test.ts:431. graphql-js coerces to `{ foo: 7 }`.
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLInputObject with default value > no
+    /// error for object with default value"; `coerceInputValue-test.ts` "returns object with
+    /// default value". graphql-js coerces to `{ foo: 7 }`.
     #[test]
     fn field_default_omitted_not_injected() {
         accepts(
@@ -212,8 +220,8 @@ mod required_fields_and_defaults {
         );
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:372, coerceInputValue-test.ts:256;
-    /// v16 coerceInputValue-test.ts:436
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLInputObject with default value > no
+    /// error for null as value"; `coerceInputValue-test.ts` "returns null as value"
     #[test]
     fn null_field_default_omitted_not_injected() {
         accepts(
@@ -267,7 +275,7 @@ mod required_fields_and_defaults {
 mod explicit_null_fields {
     use super::*;
 
-    /// graphql-js v17 variables-test.ts:642; v16 variables-test.ts:429
+    /// graphql-js `variables-test.ts` "errors on null for nested non-null"
     #[test]
     fn errors_on_null_for_nested_non_null() {
         rejects(
@@ -309,7 +317,7 @@ mod explicit_null_fields {
 mod unknown_fields {
     use super::*;
 
-    /// graphql-js v17 variables-test.ts:709; v16 variables-test.ts:496
+    /// graphql-js `variables-test.ts` "errors on addition of unknown input field"
     #[test]
     fn errors_on_addition_of_unknown_input_field() {
         rejects(
@@ -321,8 +329,9 @@ mod unknown_fields {
         );
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:287, coerceInputValue-test.ts:163;
-    /// v16 coerceInputValue-test.ts:256
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLInputObject > returns error for an
+    /// unknown field"; `coerceInputValue-test.ts` "for GraphQLInputObject > invalid for an unknown
+    /// field", "for GraphQLInputObject > returns error for an unknown field"
     #[test]
     fn returns_error_for_an_unknown_field() {
         rejects(
@@ -334,8 +343,9 @@ mod unknown_fields {
         );
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:335; v16 coerceInputValue-test.ts:271
-    /// (the variant without suggestions)
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLInputObject > returns error for a
+    /// misspelled field (no suggestions)"; `coerceInputValue-test.ts` "for GraphQLInputObject >
+    /// returns error for a misspelled field" (the variant without suggestions)
     #[test]
     fn returns_error_for_a_misspelled_field() {
         rejects(
@@ -399,8 +409,8 @@ mod unknown_fields {
 mod nested_fields {
     use super::*;
 
-    /// graphql-js v17 variables-test.ts:685; v16 variables-test.ts:472. Only the first error
-    /// is reported (graphql-js also reports the missing `nb`).
+    /// graphql-js `variables-test.ts` "errors on deep nested errors and with many errors". Only the
+    /// first error is reported (graphql-js also reports the missing `nb`).
     #[test]
     fn errors_on_deep_nested_errors_and_with_many_errors() {
         rejects(
@@ -423,8 +433,10 @@ mod nested_fields {
         );
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:255, coerceInputValue-test.ts:151;
-    /// v16 coerceInputValue-test.ts:218 (`NaN` there; JSON cannot carry it)
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLInputObject > returns an error for an
+    /// invalid field"; `coerceInputValue-test.ts` "for GraphQLInputObject > invalid for an invalid
+    /// field", "for GraphQLInputObject > returns an error for an invalid field" (`NaN` there; JSON
+    /// cannot carry it)
     #[test]
     fn returns_an_error_for_an_invalid_field() {
         rejects(
@@ -436,7 +448,7 @@ mod nested_fields {
         );
     }
 
-    /// graphql-js v17 variables-test.ts:615; v16 variables-test.ts:402. Custom scalars are
+    /// graphql-js `variables-test.ts` "executes with complex scalar input". Custom scalars are
     /// opaque, so the unknown-field check must not look inside `d`.
     #[test]
     fn executes_with_complex_scalar_input() {
@@ -508,14 +520,14 @@ mod recursive_types {
 mod field_wrappers {
     use super::*;
 
-    /// graphql-js v17 variables-test.ts:391; v16 variables-test.ts:281
+    /// graphql-js `variables-test.ts` "using variables > executes with complex input"
     #[test]
     fn executes_with_complex_input() {
         accepts(TEST_INPUT, r#"{"input":{"a":"foo","b":["bar"],"c":"baz"}}"#);
     }
 
-    /// graphql-js v17 variables-test.ts:604; v16 variables-test.ts:391. graphql-js coerces `b`
-    /// to `["bar"]`; the router forwards it as sent.
+    /// graphql-js `variables-test.ts` "using variables > properly parses single value to list".
+    /// graphql-js coerces `b` to `["bar"]`; the router forwards it as sent.
     #[test]
     fn properly_parses_single_value_to_list() {
         accepts(TEST_INPUT, r#"{"input":{"a":"foo","b":"bar","c":"baz"}}"#);
@@ -725,9 +737,10 @@ mod in_lists {
 mod error_order {
     use super::*;
 
-    /// graphql-js v17 validateInputValue-test.ts:264, coerceInputValue-test.ts:155;
-    /// v16 coerceInputValue-test.ts:229. Only the first error is reported (graphql-js also
-    /// reports `.bar`).
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLInputObject > returns multiple errors
+    /// for multiple invalid fields"; `coerceInputValue-test.ts` "invalid for multiple invalid
+    /// fields", "for GraphQLInputObject > returns multiple errors for multiple invalid fields".
+    /// Only the first error is reported (graphql-js also reports `.bar`).
     #[test]
     fn returns_multiple_errors_for_multiple_invalid_fields() {
         rejects(
@@ -865,7 +878,8 @@ mod variables_in_literals {
         r#"query q($input: String) { fieldWithObjectInput(input: { a: $input, c: "baz" }) }"#;
     const NON_NULL_IN_LITERAL: &str = "query ($var: Int!) { exampleInput(input: {b: $var}) }";
 
-    /// graphql-js v17 variables-test.ts:436
+    /// graphql-js `variables-test.ts` "preserves explicit null variables within input object
+    /// literals"
     #[test]
     fn preserves_explicit_null_variables_within_input_object_literals() {
         accepts(IN_LITERAL, r#"{"input":null}"#);
@@ -915,8 +929,8 @@ mod variables_in_literals {
         );
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:901. The field has a default, so an absent
-    /// variable is allowed.
+    /// graphql-js `validateInputValue-test.ts` "allows missing variables in an optional field". The
+    /// field has a default, so an absent variable is allowed.
     #[test]
     fn allows_missing_variables_in_an_optional_field() {
         assert_coerced(
@@ -931,7 +945,7 @@ mod variables_in_literals {
 mod defaults {
     use super::*;
 
-    /// graphql-js v17 variables-test.ts:468; v16 variables-test.ts:326
+    /// graphql-js `variables-test.ts` "uses default value when not provided"
     #[test]
     fn uses_default_value_when_not_provided() {
         assert_coerced(
@@ -941,7 +955,8 @@ mod defaults {
         );
     }
 
-    /// graphql-js v17 variables-test.ts:482
+    /// graphql-js `variables-test.ts` "reports invalid default values with variable definition
+    /// locations"
     #[test]
     fn reports_invalid_default_values_is_rejected_by_validation() {
         assert_rejected_by_validation(
@@ -950,7 +965,7 @@ mod defaults {
         );
     }
 
-    /// graphql-js v17 variables-test.ts:517
+    /// graphql-js `variables-test.ts` "hides suggestions for invalid default values when specified"
     #[test]
     fn unknown_field_in_default_is_rejected_by_validation() {
         assert_rejected_by_validation(

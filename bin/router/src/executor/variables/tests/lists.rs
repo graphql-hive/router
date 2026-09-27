@@ -39,8 +39,9 @@ fn rejects(variable_type: &str, value: &str, path: &str, reason: &str) {
 mod non_null {
     use super::*;
 
-    /// graphql-js v17 validateInputValue-test.ts:52, coerceInputValue-test.ts:52;
-    /// v16 coerceInputValue-test.ts:56
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLNonNull > returns no error for non-null
+    /// value"; `coerceInputValue-test.ts` "returns for a non-null value", "returns no error for
+    /// non-null value"
     #[test]
     fn non_null_returns_no_error_for_non_null_value() {
         accepts("Int!", "1");
@@ -120,25 +121,25 @@ mod nullability_matrix {
         );
     }
 
-    /// graphql-js v17 variables-test.ts:1105; v16 variables-test.ts:804
+    /// graphql-js `variables-test.ts` "allows lists to be null"
     #[test]
     fn allows_lists_to_be_null() {
         accepts(LIST, "null");
     }
 
-    /// graphql-js v17 variables-test.ts:1116; v16 variables-test.ts:815
+    /// graphql-js `variables-test.ts` "allows lists to contain values"
     #[test]
     fn allows_lists_to_contain_values() {
         accepts(LIST, r#"["A"]"#);
     }
 
-    /// graphql-js v17 variables-test.ts:1127; v16 variables-test.ts:826
+    /// graphql-js `variables-test.ts` "allows lists to contain null"
     #[test]
     fn allows_lists_to_contain_null() {
         accepts(LIST, r#"["A",null,"B"]"#);
     }
 
-    /// graphql-js v17 variables-test.ts:1138; v16 variables-test.ts:837
+    /// graphql-js `variables-test.ts` "does not allow non-null lists to be null"
     #[test]
     fn does_not_allow_non_null_lists_to_be_null() {
         rejects(
@@ -149,31 +150,31 @@ mod nullability_matrix {
         );
     }
 
-    /// graphql-js v17 variables-test.ts:1157; v16 variables-test.ts:856
+    /// graphql-js `variables-test.ts` "allows non-null lists to contain values"
     #[test]
     fn allows_non_null_lists_to_contain_values() {
         accepts(NN_LIST, r#"["A"]"#);
     }
 
-    /// graphql-js v17 variables-test.ts:1168; v16 variables-test.ts:867
+    /// graphql-js `variables-test.ts` "allows non-null lists to contain null"
     #[test]
     fn allows_non_null_lists_to_contain_null() {
         accepts(NN_LIST, r#"["A",null,"B"]"#);
     }
 
-    /// graphql-js v17 variables-test.ts:1179; v16 variables-test.ts:878
+    /// graphql-js `variables-test.ts` "allows lists of non-nulls to be null"
     #[test]
     fn allows_lists_of_non_nulls_to_be_null() {
         accepts(LIST_NN, "null");
     }
 
-    /// graphql-js v17 variables-test.ts:1190; v16 variables-test.ts:889
+    /// graphql-js `variables-test.ts` "allows lists of non-nulls to contain values"
     #[test]
     fn allows_lists_of_non_nulls_to_contain_values() {
         accepts(LIST_NN, r#"["A"]"#);
     }
 
-    /// graphql-js v17 variables-test.ts:1201; v16 variables-test.ts:900
+    /// graphql-js `variables-test.ts` "does not allow lists of non-nulls to contain null"
     #[test]
     fn does_not_allow_lists_of_non_nulls_to_contain_null() {
         rejects(
@@ -184,7 +185,7 @@ mod nullability_matrix {
         );
     }
 
-    /// graphql-js v17 variables-test.ts:1220; v16 variables-test.ts:919
+    /// graphql-js `variables-test.ts` "does not allow non-null lists of non-nulls to be null"
     #[test]
     fn does_not_allow_non_null_lists_of_non_nulls_to_be_null() {
         rejects(
@@ -195,13 +196,13 @@ mod nullability_matrix {
         );
     }
 
-    /// graphql-js v17 variables-test.ts:1239; v16 variables-test.ts:938
+    /// graphql-js `variables-test.ts` "allows non-null lists of non-nulls to contain values"
     #[test]
     fn allows_non_null_lists_of_non_nulls_to_contain_values() {
         accepts(NN_LIST_NN, r#"["A"]"#);
     }
 
-    /// graphql-js v17 variables-test.ts:1250; v16 variables-test.ts:949
+    /// graphql-js `variables-test.ts` "does not allow non-null lists of non-nulls to contain null"
     #[test]
     fn does_not_allow_non_null_lists_of_non_nulls_to_contain_null() {
         rejects(
@@ -212,7 +213,7 @@ mod nullability_matrix {
         );
     }
 
-    /// graphql-js v16 coerceInputValue-test.ts:556
+    /// graphql-js `coerceInputValue-test.ts` "throw error with path"
     #[test]
     fn list_of_non_null_rejects_a_null_first_item() {
         super::rejects(
@@ -247,16 +248,16 @@ mod nullability_matrix {
 mod list_coercion {
     use super::*;
 
-    /// graphql-js v17 validateInputValue-test.ts:495, coerceInputValue-test.ts:286;
-    /// v16 coerceInputValue-test.ts:450
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLList > returns no error for a valid
+    /// input"; `coerceInputValue-test.ts` "for GraphQLList > returns no error for a valid input"
     #[test]
     fn list_returns_no_error_for_a_valid_input() {
         accepts("[Int]", "[1,2,3]");
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:510, coerceInputValue-test.ts:300;
-    /// v16 coerceInputValue-test.ts:466. Only the first error is reported (graphql-js also
-    /// reports `true` at `[2]`).
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLList > returns an error for an invalid
+    /// input"; `coerceInputValue-test.ts` "invalid for an invalid input", "returns an error for an
+    /// invalid input". Only the first error is reported (graphql-js also reports `true` at `[2]`).
     #[test]
     fn list_returns_an_error_for_an_invalid_input() {
         rejects(
@@ -267,15 +268,17 @@ mod list_coercion {
         );
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:523, coerceInputValue-test.ts:304;
-    /// v16 coerceInputValue-test.ts:482. The router forwards `42`; the subgraph wraps it.
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLList > no error for a list for a
+    /// non-list value"; `coerceInputValue-test.ts` "for GraphQLList > returns a list for a non-list
+    /// value". The router forwards `42`; the subgraph wraps it.
     #[test]
     fn list_accepts_a_non_list_value() {
         accepts("[Int]", "42");
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:527, coerceInputValue-test.ts:321;
-    /// v16 coerceInputValue-test.ts:501. A single value has no index in the path.
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLList > returns an error for a non-list
+    /// invalid value"; `coerceInputValue-test.ts` "invalid for a non-list invalid value", "returns
+    /// an error for a non-list invalid value". A single value has no index in the path.
     #[test]
     fn list_returns_an_error_for_a_non_list_invalid_value() {
         rejects(
@@ -286,8 +289,9 @@ mod list_coercion {
         );
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:536, coerceInputValue-test.ts:325;
-    /// v16 coerceInputValue-test.ts:512. `null` stays `null`, not `[null]`.
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLList > no error for null for a null
+    /// value"; `coerceInputValue-test.ts` "for GraphQLList > returns null for a null value". `null`
+    /// stays `null`, not `[null]`.
     #[test]
     fn list_returns_null_for_a_null_value() {
         accepts("[Int]", "null");
@@ -315,8 +319,8 @@ mod list_coercion {
         );
     }
 
-    /// graphql-js v17 coerceInputValue-test.ts:308 (an array-like object, as JSON): an object is
-    /// not a list.
+    /// graphql-js `coerceInputValue-test.ts` "returns a list for a non-list object value" (an
+    /// array-like object, as JSON): an object is not a list.
     #[test]
     fn list_rejects_an_object_as_a_single_item() {
         rejects(
@@ -355,36 +359,41 @@ mod list_coercion {
 mod nested_lists {
     use super::*;
 
-    /// graphql-js v17 validateInputValue-test.ts:544, coerceInputValue-test.ts:333;
-    /// v16 coerceInputValue-test.ts:521
+    /// graphql-js `validateInputValue-test.ts` "for nested GraphQLList > no error for a valid
+    /// input"; `coerceInputValue-test.ts` "for nested GraphQLList > returns no error for a valid
+    /// input"
     #[test]
     fn nested_list_returns_no_error_for_a_valid_input() {
         accepts("[[Int]]", "[[1],[2,3]]");
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:548, coerceInputValue-test.ts:337;
-    /// v16 coerceInputValue-test.ts:526
+    /// graphql-js `validateInputValue-test.ts` "for nested GraphQLList > no error for a list for a
+    /// non-list value"; `coerceInputValue-test.ts` "for nested GraphQLList > returns a list for a
+    /// non-list value"
     #[test]
     fn nested_list_accepts_a_non_list_value() {
         accepts("[[Int]]", "42");
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:552, coerceInputValue-test.ts:341;
-    /// v16 coerceInputValue-test.ts:531
+    /// graphql-js `validateInputValue-test.ts` "for nested GraphQLList > no error for null for a
+    /// null value"; `coerceInputValue-test.ts` "for nested GraphQLList > returns null for a null
+    /// value"
     #[test]
     fn nested_list_returns_null_for_a_null_value() {
         accepts("[[Int]]", "null");
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:556, coerceInputValue-test.ts:345;
-    /// v16 coerceInputValue-test.ts:536
+    /// graphql-js `validateInputValue-test.ts` "for nested GraphQLList > no error for nested lists
+    /// for nested non-list values"; `coerceInputValue-test.ts` "returns nested lists for nested
+    /// non-list values"
     #[test]
     fn nested_list_accepts_nested_non_list_values() {
         accepts("[[Int]]", "[1,2,3]");
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:560, coerceInputValue-test.ts:349;
-    /// v16 coerceInputValue-test.ts:541
+    /// graphql-js `validateInputValue-test.ts` "for nested GraphQLList > no error for nested null
+    /// for nested null values"; `coerceInputValue-test.ts` "returns nested null for nested null
+    /// values"
     #[test]
     fn nested_list_accepts_nested_null_values() {
         accepts("[[Int]]", "[42,[null],null]");

@@ -3,10 +3,6 @@
 //!
 //! The tests describe the target behavior, so some of them fail until the router's coercion is
 //! fixed. Expected error messages use the graphql-js v17 wording (commit ee5ce41).
-//!
-//! Many test vectors and expected messages are ported from graphql-js
-//! (https://github.com/graphql/graphql-js), Copyright (c) GraphQL Contributors, MIT License.
-//! Each ported test names its upstream source in its doc comment.
 
 mod enums;
 mod harness;

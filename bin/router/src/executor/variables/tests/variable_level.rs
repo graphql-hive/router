@@ -124,7 +124,7 @@ mod decision_table {
         assert_rejected_by_validation(NON_NULL_WITH_NULL_DEFAULT, "ValuesOfCorrectType");
     }
 
-    /// spec §6.1.2: the default is coerced by the variable type. graphql-js v17 values.ts:206-223.
+    /// spec §6.1.2: the default is coerced by the variable type. graphql-js `values.ts`.
     #[test]
     fn non_null_with_null_default_absent_is_rejected() {
         assert_rejected(
@@ -182,9 +182,10 @@ mod decision_table {
 mod defaults {
     use super::*;
 
-    /// graphql-js v17 valueFromAST-test.ts:222, coerceInputValue-test.ts:547. graphql-js coerces
-    /// the default to `{ foo: 7 }`; the router forwards it as written and the subgraph applies
-    /// the input field default.
+    /// graphql-js `valueFromAST-test.ts` "coerces input objects according to input coercion rules";
+    /// `coerceInputValue-test.ts` "uses default values for unprovided fields". graphql-js coerces
+    /// the default to `{ foo: 7 }`; the router forwards it as written and the subgraph applies the
+    /// input field default.
     #[test]
     fn input_object_default_is_kept_as_written() {
         assert_coerced(
@@ -194,7 +195,7 @@ mod defaults {
         );
     }
 
-    /// graphql-js v17 values.ts:204-223
+    /// graphql-js `values.ts`
     #[test]
     fn invalid_default_is_ignored_when_a_value_is_provided() {
         assert_coerced(
@@ -248,7 +249,7 @@ mod definitions {
         );
     }
 
-    /// graphql-js v17 variables-test.ts:1932
+    /// graphql-js `variables-test.ts` "does not expose prototype variable names when omitted"
     #[test]
     fn does_not_expose_prototype_variable_names_when_omitted() {
         assert_coerced(
@@ -258,7 +259,7 @@ mod definitions {
         );
     }
 
-    /// graphql-js v17 variables-test.ts:1938
+    /// graphql-js `variables-test.ts` "still returns provided variables with colliding names"
     #[test]
     fn still_returns_provided_variables_with_colliding_names() {
         assert_coerced(
@@ -268,7 +269,8 @@ mod definitions {
         );
     }
 
-    /// graphql-js v17 variables-test.ts:1932 (derived)
+    /// graphql-js `variables-test.ts` "does not expose prototype variable names when omitted"
+    /// (derived)
     #[test]
     fn prototype_named_required_variable_absent_is_rejected() {
         assert_rejected(
@@ -317,8 +319,8 @@ mod first_error {
         );
     }
 
-    /// graphql-js v17 variables-test.ts:1458, v16 variables-test.ts:1090 (graphql-js reports
-    /// all three errors)
+    /// graphql-js `variables-test.ts` "return all errors by default" (graphql-js reports all three
+    /// errors)
     #[test]
     fn return_first_error_in_value_order() {
         assert_rejected(
@@ -352,8 +354,9 @@ mod definition_syntax {
         assert_coerced(DESCRIBED, r#"{"v":"a"}"#, r#"{"v":"a"}"#);
     }
 
-    /// graphql-js v17 variables-test.ts:1269, v16 variables-test.ts:968. graphql-js catches
-    /// it during execution; the router rejects it in validation, before coercion.
+    /// graphql-js `variables-test.ts` "does not allow invalid types to be used as values".
+    /// graphql-js catches it during execution; the router rejects it in validation, before
+    /// coercion.
     #[test]
     fn does_not_allow_invalid_types_to_be_used_as_values() {
         assert_rejected_by_validation(
@@ -362,8 +365,9 @@ mod definition_syntax {
         );
     }
 
-    /// graphql-js v17 variables-test.ts:1288, v16 variables-test.ts:987. graphql-js catches
-    /// it during execution; the router rejects it in validation, before coercion.
+    /// graphql-js `variables-test.ts` "does not allow unknown types to be used as values".
+    /// graphql-js catches it during execution; the router rejects it in validation, before
+    /// coercion.
     #[test]
     fn does_not_allow_unknown_types_to_be_used_as_values() {
         assert_rejected_by_validation(

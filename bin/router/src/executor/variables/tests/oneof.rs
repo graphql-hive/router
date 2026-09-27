@@ -41,8 +41,11 @@ fn accepts(operation: &str, variables: &str) {
 mod valid_values {
     use super::*;
 
-    /// graphql-js v17 oneof-test.ts:92, :113, validateInputValue-test.ts:391, :405,
-    /// coerceInputValue-test.ts:203; v16 oneof-test.ts:93, :114, coerceInputValue-test.ts:319
+    /// graphql-js `oneof-test.ts` "accepts a good variable", "accepts a good variable with an
+    /// undefined key"; `validateInputValue-test.ts` "for GraphQLInputObject that isOneOf > no error
+    /// for a valid input", "does not count undefined keys as provided"; `coerceInputValue-test.ts`
+    /// "for GraphQLInputObject that isOneOf > returns for valid input", "for GraphQLInputObject
+    /// that isOneOf > returns no error for a valid input"
     #[test]
     fn accepts_oneof_with_single_string_member() {
         accepts(ONE_OF, r#"{"input":{"a":"abc"}}"#);
@@ -96,7 +99,7 @@ mod count_and_null {
         );
     }
 
-    /// graphql-js v17 oneof-test.ts:158; v16 oneof-test.ts:137; spec §3.10.1
+    /// graphql-js `oneof-test.ts` "rejects a variable with multiple non-null keys"; spec §3.10.1
     #[test]
     fn rejects_oneof_with_two_non_null_fields() {
         rejects(
@@ -107,9 +110,10 @@ mod count_and_null {
         );
     }
 
-    /// graphql-js v17 oneof-test.ts:182, validateInputValue-test.ts:395,
-    /// coerceInputValue-test.ts:207; v16 oneof-test.ts:161, coerceInputValue-test.ts:324.
-    /// A field given as `null` still counts.
+    /// graphql-js `oneof-test.ts` "rejects a variable with multiple nullable keys";
+    /// `validateInputValue-test.ts` "returns error if more than one field is specified";
+    /// `coerceInputValue-test.ts` "invalid if more than one field is specified", "returns an error
+    /// if more than one field is specified". A field given as `null` still counts.
     #[test]
     fn rejects_oneof_with_additional_null_field() {
         rejects(
@@ -154,8 +158,10 @@ mod count_and_null {
         );
     }
 
-    /// graphql-js v17 oneof-test.ts:136, validateInputValue-test.ts:409,
-    /// coerceInputValue-test.ts:211; v16 coerceInputValue-test.ts:336
+    /// graphql-js `oneof-test.ts` "rejects a variable with a nulled key";
+    /// `validateInputValue-test.ts` "returns error if the one field is null";
+    /// `coerceInputValue-test.ts` "invalid if the one field is null", "returns an error the one
+    /// field is null"
     #[test]
     fn rejects_oneof_with_single_null_member() {
         rejects(
@@ -170,8 +176,10 @@ mod count_and_null {
 mod member_values_and_unknown_fields {
     use super::*;
 
-    /// graphql-js v17 validateInputValue-test.ts:419, coerceInputValue-test.ts:227;
-    /// v16 coerceInputValue-test.ts:347 (`NaN` there; JSON cannot carry it)
+    /// graphql-js `validateInputValue-test.ts` "returns error for an invalid field";
+    /// `coerceInputValue-test.ts` "for GraphQLInputObject that isOneOf > invalid for an invalid
+    /// field", "for GraphQLInputObject that isOneOf > returns an error for an invalid field" (`NaN`
+    /// there; JSON cannot carry it)
     #[test]
     fn rejects_oneof_member_of_wrong_type() {
         rejects(
@@ -204,9 +212,11 @@ mod member_values_and_unknown_fields {
         );
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:446, coerceInputValue-test.ts:231;
-    /// v16 coerceInputValue-test.ts:380. spec §3.10.1: every given field counts, so this is a
-    /// OneOf error. graphql-js reports only the unknown field.
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLInputObject that isOneOf > returns error
+    /// for an unknown field"; `coerceInputValue-test.ts` "for GraphQLInputObject that isOneOf >
+    /// invalid for an unknown field", "for GraphQLInputObject that isOneOf > returns error for an
+    /// unknown field". spec §3.10.1: every given field counts, so this is a OneOf error. graphql-js
+    /// reports only the unknown field.
     #[test]
     fn rejects_unknown_field_next_to_valid_member() {
         rejects(
@@ -217,8 +227,9 @@ mod member_values_and_unknown_fields {
         );
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:456; v16 coerceInputValue-test.ts:395
-    /// (the variant without suggestions)
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLInputObject that isOneOf > returns error
+    /// for a misspelled field"; `coerceInputValue-test.ts` "for GraphQLInputObject that isOneOf >
+    /// returns error for a misspelled field" (the variant without suggestions)
     #[test]
     fn rejects_oneof_with_only_unknown_field() {
         rejects(
@@ -364,8 +375,9 @@ mod defaults {
         )
     }
 
-    /// graphql-js v17 oneof-test.ts:49, valueFromAST-test.ts:239,
-    /// coerceInputValue-test.ts:611; v16 oneof-test.ts:44
+    /// graphql-js `oneof-test.ts` "accepts a good default value"; `valueFromAST-test.ts` "coerces
+    /// input objects according to input coercion rules"; `coerceInputValue-test.ts` "coerces input
+    /// objects according to input coercion rules"
     #[test]
     fn accepts_good_oneof_default() {
         assert_coerced(
@@ -375,7 +387,8 @@ mod defaults {
         );
     }
 
-    /// graphql-js v17 valueFromAST-test.ts:242, coerceInputValue-test.ts:614
+    /// graphql-js `valueFromAST-test.ts` "coerces input objects according to input coercion rules";
+    /// `coerceInputValue-test.ts` "coerces input objects according to input coercion rules"
     #[test]
     fn accepts_good_oneof_default_for_second_member() {
         assert_coerced(
@@ -385,8 +398,9 @@ mod defaults {
         );
     }
 
-    /// graphql-js v17 oneof-test.ts:70, valueFromAST-test.ts:250,
-    /// coerceInputValue-test.ts:620; v16 oneof-test.ts:65
+    /// graphql-js `oneof-test.ts` "rejects a bad default value"; `valueFromAST-test.ts` "coerces
+    /// input objects according to input coercion rules"; `coerceInputValue-test.ts` "coerces input
+    /// objects according to input coercion rules"
     #[test]
     fn oneof_default_with_two_fields_is_rejected_by_validation() {
         assert_rejected_by_validation(
@@ -395,7 +409,8 @@ mod defaults {
         );
     }
 
-    /// graphql-js v17 valueFromAST-test.ts:245, coerceInputValue-test.ts:617
+    /// graphql-js `valueFromAST-test.ts` "coerces input objects according to input coercion rules";
+    /// `coerceInputValue-test.ts` "coerces input objects according to input coercion rules"
     #[test]
     fn oneof_default_with_additional_null_field_is_rejected_by_validation() {
         assert_rejected_by_validation(
@@ -404,7 +419,8 @@ mod defaults {
         );
     }
 
-    /// graphql-js v17 valueFromAST-test.ts:248, coerceInputValue-test.ts:618
+    /// graphql-js `valueFromAST-test.ts` "coerces input objects according to input coercion rules";
+    /// `coerceInputValue-test.ts` "coerces input objects according to input coercion rules"
     #[test]
     fn oneof_default_with_single_null_member_is_rejected_by_validation() {
         assert_rejected_by_validation(
@@ -413,13 +429,15 @@ mod defaults {
         );
     }
 
-    /// graphql-js v17 valueFromAST-test.ts:256, coerceInputValue-test.ts:622
+    /// graphql-js `valueFromAST-test.ts` "coerces input objects according to input coercion rules";
+    /// `coerceInputValue-test.ts` "coerces input objects according to input coercion rules"
     #[test]
     fn empty_oneof_default_is_rejected_by_validation() {
         assert_rejected_by_validation(&test_one_of_with_default("{}"), "ValuesOfCorrectType");
     }
 
-    /// graphql-js v17 valueFromAST-test.ts:253, coerceInputValue-test.ts:621
+    /// graphql-js `valueFromAST-test.ts` "coerces input objects according to input coercion rules";
+    /// `coerceInputValue-test.ts` "coerces input objects according to input coercion rules"
     #[test]
     fn oneof_default_with_unknown_field_is_rejected_by_validation() {
         assert_rejected_by_validation(
@@ -433,7 +451,8 @@ mod defaults {
 mod literals {
     use super::*;
 
-    /// graphql-js v17 validateInputValue-test.ts:1071; spec §3.10.1
+    /// graphql-js `validateInputValue-test.ts` "errors with missing variables as the additional
+    /// field"; spec §3.10.1
     #[test]
     fn oneof_literal_with_two_fields_is_rejected_by_validation() {
         assert_rejected_by_validation(
@@ -448,8 +467,9 @@ mod literals {
         assert_rejected_by_validation("{ test(input: {a: null}) { a b } }", "ValuesOfCorrectType");
     }
 
-    /// graphql-js v17 oneof-test.ts:206, validateInputValue-test.ts:1045. A nullable variable
-    /// could make the field `null`.
+    /// graphql-js `oneof-test.ts` "errors with nulled variable for field";
+    /// `validateInputValue-test.ts` "for GraphQLInputObject that isOneOf > allows correct use of
+    /// variables". A nullable variable could make the field `null`.
     #[test]
     fn nullable_variable_in_oneof_literal_is_rejected_by_validation() {
         assert_rejected_by_validation(
@@ -458,8 +478,8 @@ mod literals {
         );
     }
 
-    /// graphql-js v17 VariablesInAllowedPositionRule.ts:119: a default does not help, since the
-    /// client can still send `null`.
+    /// graphql-js `VariablesInAllowedPositionRule.ts`: a default does not help, since the client
+    /// can still send `null`.
     #[test]
     fn defaulted_nullable_variable_in_oneof_literal_is_rejected_by_validation() {
         assert_rejected_by_validation(
@@ -475,13 +495,15 @@ mod variables_in_literals {
 
     const NON_NULL: &str = "query ($a: String!) { test(input: {a: $a}) { a b } }";
 
-    /// graphql-js v17 validateInputValue-test.ts:1045
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLInputObject that isOneOf > allows
+    /// correct use of variables"
     #[test]
     fn forwards_non_null_variable_in_oneof_literal() {
         assert_coerced(NON_NULL, r#"{"a":"abc"}"#, r#"{"a":"abc"}"#);
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:1055
+    /// graphql-js `validateInputValue-test.ts` "returns error with variable provided a value of
+    /// null"
     #[test]
     fn rejects_null_for_non_null_variable_in_oneof_literal() {
         assert_rejected(

@@ -37,21 +37,21 @@ fn rejects(operation: &str, value: &str, reason: &str) {
 mod valid_names {
     use super::*;
 
-    /// graphql-js v17 validateInputValue-test.ts:131, coerceInputValue-test.ts:110;
-    /// v16 coerceInputValue-test.ts:144
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLEnum > returns no error for a known enum
+    /// name"; `coerceInputValue-test.ts` "returns no error for a known enum name"
     #[test]
     fn returns_no_error_for_a_known_enum_name_foo() {
         accepts(&operation("FooBarEnum", "fooBar"), r#""FOO""#);
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:133, coerceInputValue-test.ts:112;
-    /// v16 coerceInputValue-test.ts:147
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLEnum > returns no error for a known enum
+    /// name"; `coerceInputValue-test.ts` "returns no error for a known enum name"
     #[test]
     fn returns_no_error_for_a_known_enum_name_bar() {
         accepts(&operation("FooBarEnum", "fooBar"), r#""BAR""#);
     }
 
-    /// graphql-js v17 enumType-test.ts:284; v16 enumType-test.ts:250
+    /// graphql-js `enumType-test.ts` "accepts JSON string as enum variable"
     #[test]
     fn accepts_json_string_as_enum_variable() {
         assert_coerced(
@@ -61,14 +61,14 @@ mod valid_names {
         );
     }
 
-    /// graphql-js v17 enumType-test.ts:363; v16 enumType-test.ts:329. The router forwards the
-    /// name; internal values only exist in the subgraph.
+    /// graphql-js `enumType-test.ts` "enum value may have an internal value of 0". The router
+    /// forwards the name; internal values only exist in the subgraph.
     #[test]
     fn enum_value_may_have_an_internal_value_of_0() {
         accepts(&operation("Color", "color"), r#""RED""#);
     }
 
-    /// graphql-js v17 variables-test.ts:729; v16 variables-test.ts:516 (the literals as
+    /// graphql-js `variables-test.ts` "allows custom enum values as inputs" (the literals as
     /// variables, forwarded by name)
     #[test]
     fn allows_custom_enum_values_as_inputs() {
@@ -87,8 +87,8 @@ mod valid_names {
         }
     }
 
-    /// graphql-js v17 variables-test.ts:751; v16 variables-test.ts:538. The name `"NULL"` is
-    /// not a JSON `null`.
+    /// graphql-js `variables-test.ts` "allows non-nullable inputs to have null as enum custom
+    /// value". The name `"NULL"` is not a JSON `null`.
     #[test]
     fn allows_non_nullable_inputs_to_have_null_as_enum_custom_value() {
         accepts(
@@ -103,7 +103,7 @@ mod valid_names {
         accepts(&operation("Color", "color"), r#""OLD_BLUE""#);
     }
 
-    /// graphql-js v17 enumType-test.ts:379; v16 enumType-test.ts:345
+    /// graphql-js `enumType-test.ts` "enum inputs may be nullable"
     #[test]
     fn enum_inputs_may_be_nullable() {
         assert_coerced(&operation("Color", "color"), "{}", "{}");
@@ -123,7 +123,8 @@ mod unknown_names {
         operation("Color", "color")
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:136
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLEnum > returns an error for unknown enum
+    /// value"
     #[test]
     fn returns_an_error_for_unknown_enum_value() {
         rejects(
@@ -133,8 +134,9 @@ mod unknown_names {
         );
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:145, coerceInputValue-test.ts:116;
-    /// v16 coerceInputValue-test.ts:151 (the variant without suggestions)
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLEnum > returns an error for misspelled
+    /// enum value"; `coerceInputValue-test.ts` "invalid for misspelled enum value", "returns an
+    /// error for misspelled enum value" (the variant without suggestions)
     #[test]
     fn returns_an_error_for_misspelled_enum_value() {
         rejects(
@@ -144,7 +146,8 @@ mod unknown_names {
         );
     }
 
-    /// graphql-js v17 enumType-test.ts:229; v16 enumType-test.ts:195 (literal as a variable)
+    /// graphql-js `enumType-test.ts` "does not accept values with incorrect casing" (literal as a
+    /// variable)
     #[test]
     fn does_not_accept_values_with_incorrect_casing() {
         rejects(
@@ -154,7 +157,8 @@ mod unknown_names {
         );
     }
 
-    /// graphql-js v17 enumType-test.ts:198; v16 enumType-test.ts:181 (literal as a variable)
+    /// graphql-js `enumType-test.ts` "does not accept values not in the enum" (literal as a
+    /// variable)
     #[test]
     fn does_not_accept_values_not_in_the_enum() {
         rejects(
@@ -248,8 +252,9 @@ mod unknown_names {
 mod non_string_values {
     use super::*;
 
-    /// graphql-js v17 validateInputValue-test.ts:196, coerceInputValue-test.ts:120;
-    /// v16 coerceInputValue-test.ts:164
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLEnum > returns an error for incorrect
+    /// value type"; `coerceInputValue-test.ts` "invalid for incorrect value type", "returns an
+    /// error for incorrect value type"
     #[test]
     fn returns_an_error_for_incorrect_value_type_number() {
         rejects(
@@ -259,8 +264,9 @@ mod non_string_values {
         );
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:203, coerceInputValue-test.ts:121;
-    /// v16 coerceInputValue-test.ts:173
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLEnum > returns an error for incorrect
+    /// value type"; `coerceInputValue-test.ts` "invalid for incorrect value type", "returns an
+    /// error for incorrect value type"
     #[test]
     fn returns_an_error_for_incorrect_value_type_object() {
         rejects(
@@ -270,7 +276,7 @@ mod non_string_values {
         );
     }
 
-    /// graphql-js v17 enumType-test.ts:312; v16 enumType-test.ts:278
+    /// graphql-js `enumType-test.ts` "does not accept internal value as enum variable"
     #[test]
     fn does_not_accept_internal_value_as_enum_variable() {
         assert_rejected(
@@ -471,7 +477,8 @@ mod in_input_objects {
 mod defaults {
     use super::*;
 
-    /// graphql-js v17 coerceInputValue-test.ts:471, valueFromAST-test.ts:114
+    /// graphql-js `coerceInputValue-test.ts` "converts enum values according to input coercion
+    /// rules"; `valueFromAST-test.ts` "converts enum values according to input coercion rules"
     #[test]
     fn enum_literal_default_is_inserted() {
         assert_coerced(
@@ -481,7 +488,8 @@ mod defaults {
         );
     }
 
-    /// graphql-js v17 coerceInputValue-test.ts:476-477, valueFromAST-test.ts:119-120
+    /// graphql-js `coerceInputValue-test.ts` "converts enum values according to input coercion
+    /// rules"; `valueFromAST-test.ts` "converts enum values according to input coercion rules"
     #[test]
     fn enum_default_named_null_is_inserted_as_string() {
         assert_coerced(
@@ -491,7 +499,9 @@ mod defaults {
         );
     }
 
-    /// graphql-js v17 coerceInputValue-test.ts:475, valueFromAST-test.ts:118; spec §2.10.6
+    /// graphql-js `coerceInputValue-test.ts` "converts enum values according to input coercion
+    /// rules"; `valueFromAST-test.ts` "converts enum values according to input coercion rules";
+    /// spec §2.10.6
     #[test]
     fn null_keyword_default_is_not_enum_null() {
         assert_coerced(
@@ -511,9 +521,10 @@ mod defaults {
         );
     }
 
-    /// graphql-js v17 enumType-test.ts:184, coerceInputValue-test.ts:474,
-    /// valueFromAST-test.ts:117; v16 enumType-test.ts:167. spec §3.9: a string literal is
-    /// not an enum value.
+    /// graphql-js `enumType-test.ts` "does not accept string literals"; `coerceInputValue-test.ts`
+    /// "converts enum values according to input coercion rules"; `valueFromAST-test.ts` "converts
+    /// enum values according to input coercion rules". spec §3.9: a string literal is not an enum
+    /// value.
     #[test]
     fn string_literal_default_is_rejected_by_validation() {
         assert_rejected_by_validation(
@@ -531,8 +542,9 @@ mod defaults {
         );
     }
 
-    /// graphql-js v17 enumType-test.ts:258, coerceInputValue-test.ts:473,
-    /// valueFromAST-test.ts:116; v16 enumType-test.ts:224
+    /// graphql-js `enumType-test.ts` "does not accept internal value in place of enum literal";
+    /// `coerceInputValue-test.ts` "converts enum values according to input coercion rules";
+    /// `valueFromAST-test.ts` "converts enum values according to input coercion rules"
     #[test]
     fn int_literal_default_is_rejected_by_validation() {
         assert_rejected_by_validation(
@@ -541,7 +553,8 @@ mod defaults {
         );
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:717 (literal)
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLEnum > returns an error for unknown enum
+    /// value" (literal)
     #[test]
     fn unknown_enum_literal_default_is_rejected_by_validation() {
         assert_rejected_by_validation(
@@ -576,13 +589,13 @@ mod operation_types {
     const MUTATION: &str = "mutation ($color: Color!) { favoriteEnum(color: $color) }";
     const SUBSCRIPTION: &str = "subscription ($color: Color!) { subscribeToEnum(color: $color) }";
 
-    /// graphql-js v17 enumType-test.ts:293; v16 enumType-test.ts:259
+    /// graphql-js `enumType-test.ts` "accepts enum literals as input arguments to mutations"
     #[test]
     fn accepts_enum_literals_as_input_arguments_to_mutations() {
         assert_coerced(MUTATION, r#"{"color":"GREEN"}"#, r#"{"color":"GREEN"}"#);
     }
 
-    /// graphql-js v17 enumType-test.ts:302; v16 enumType-test.ts:268
+    /// graphql-js `enumType-test.ts` "accepts enum literals as input arguments to subscriptions"
     #[test]
     fn accepts_enum_literals_as_input_arguments_to_subscriptions() {
         assert_coerced(SUBSCRIPTION, r#"{"color":"GREEN"}"#, r#"{"color":"GREEN"}"#);
@@ -611,7 +624,7 @@ mod operation_types {
 mod variable_position {
     use super::*;
 
-    /// graphql-js v17 enumType-test.ts:327; v16 enumType-test.ts:293
+    /// graphql-js `enumType-test.ts` "does not accept string variables as enum input"
     #[test]
     fn does_not_accept_string_variables_as_enum_input() {
         assert_rejected_by_validation(
@@ -620,7 +633,7 @@ mod variable_position {
         );
     }
 
-    /// graphql-js v17 enumType-test.ts:345; v16 enumType-test.ts:311
+    /// graphql-js `enumType-test.ts` "does not accept internal value variable as enum input"
     #[test]
     fn does_not_accept_internal_value_variable_as_enum_input() {
         assert_rejected_by_validation(

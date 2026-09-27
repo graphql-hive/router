@@ -37,7 +37,8 @@ mod int {
         operation("Int", "int")
     }
 
-    /// graphql-js v17 scalars-test.ts:22-27, coerceInputValue-test.ts:126; v16 scalars-test.ts:21-23
+    /// graphql-js `scalars-test.ts` "GraphQLInt > coerceInputValue", "GraphQLInt > parseValue";
+    /// `coerceInputValue-test.ts` "converts BigInt values for numeric scalars"
     #[test]
     fn int_accepts_small_integers() {
         for value in ["1", "0", "-1"] {
@@ -53,7 +54,8 @@ mod int {
         }
     }
 
-    /// graphql-js v17 scalars-test.ts:35 (BigInt, as a JSON integer); spec §3.5.1
+    /// graphql-js `scalars-test.ts` "GraphQLInt > coerceInputValue" (BigInt, as a JSON integer);
+    /// spec §3.5.1
     #[test]
     fn int_rejects_2_pow_31() {
         rejects(
@@ -63,7 +65,8 @@ mod int {
         );
     }
 
-    /// graphql-js v17 scalars-test.ts:38 (BigInt, as a JSON integer); spec §3.5.1
+    /// graphql-js `scalars-test.ts` "GraphQLInt > coerceInputValue" (BigInt, as a JSON integer);
+    /// spec §3.5.1
     #[test]
     fn int_rejects_below_minus_2_pow_31() {
         rejects(
@@ -73,7 +76,7 @@ mod int {
         );
     }
 
-    /// graphql-js v17 scalars-test.ts:29; v16 scalars-test.ts:25
+    /// graphql-js `scalars-test.ts` "GraphQLInt > coerceInputValue", "GraphQLInt > parseValue"
     #[test]
     fn int_rejects_9876504321() {
         rejects(
@@ -83,7 +86,7 @@ mod int {
         );
     }
 
-    /// graphql-js v17 scalars-test.ts:32; v16 scalars-test.ts:28
+    /// graphql-js `scalars-test.ts` "GraphQLInt > coerceInputValue", "GraphQLInt > parseValue"
     #[test]
     fn int_rejects_minus_9876504321() {
         rejects(
@@ -142,7 +145,7 @@ mod int {
         }
     }
 
-    /// graphql-js v17 scalars-test.ts:41; v16 scalars-test.ts:31
+    /// graphql-js `scalars-test.ts` "GraphQLInt > coerceInputValue", "GraphQLInt > parseValue"
     #[test]
     fn int_rejects_0_1() {
         rejects(&op(), "0.1", "Int cannot represent non-integer value: 0.1");
@@ -154,7 +157,8 @@ mod int {
         rejects(&op(), "1.5", "Int cannot represent non-integer value: 1.5");
     }
 
-    /// graphql-js v17 scalars-test.ts:60; v16 scalars-test.ts:50; spec §3.5.1
+    /// graphql-js `scalars-test.ts` "GraphQLInt > coerceInputValue", "GraphQLInt > parseValue";
+    /// spec §3.5.1
     #[test]
     fn int_rejects_numeric_string() {
         rejects(
@@ -164,7 +168,7 @@ mod int {
         );
     }
 
-    /// graphql-js v17 scalars-test.ts:57; v16 scalars-test.ts:47
+    /// graphql-js `scalars-test.ts` "GraphQLInt > coerceInputValue", "GraphQLInt > parseValue"
     #[test]
     fn int_rejects_empty_string() {
         rejects(
@@ -174,7 +178,7 @@ mod int {
         );
     }
 
-    /// graphql-js v17 scalars-test.ts:63; v16 scalars-test.ts:53
+    /// graphql-js `scalars-test.ts` "GraphQLInt > coerceInputValue", "GraphQLInt > parseValue"
     #[test]
     fn int_rejects_false() {
         rejects(
@@ -184,7 +188,7 @@ mod int {
         );
     }
 
-    /// graphql-js v17 scalars-test.ts:66; v16 scalars-test.ts:56
+    /// graphql-js `scalars-test.ts` "GraphQLInt > coerceInputValue", "GraphQLInt > parseValue"
     #[test]
     fn int_rejects_true() {
         rejects(
@@ -194,13 +198,13 @@ mod int {
         );
     }
 
-    /// graphql-js v17 scalars-test.ts:69; v16 scalars-test.ts:59
+    /// graphql-js `scalars-test.ts` "GraphQLInt > coerceInputValue", "GraphQLInt > parseValue"
     #[test]
     fn int_rejects_list() {
         rejects(&op(), "[1]", "Int cannot represent non-integer value: [1]");
     }
 
-    /// graphql-js v17 scalars-test.ts:72; v16 scalars-test.ts:62
+    /// graphql-js `scalars-test.ts` "GraphQLInt > coerceInputValue", "GraphQLInt > parseValue"
     #[test]
     fn int_rejects_object() {
         rejects(
@@ -228,8 +232,8 @@ mod float {
         operation("Float", "float")
     }
 
-    /// graphql-js v17 scalars-test.ts:213-220, coerceInputValue-test.ts:127;
-    /// v16 scalars-test.ts:190-192; spec §3.5.2
+    /// graphql-js `scalars-test.ts` "GraphQLFloat > coerceInputValue", "GraphQLFloat > parseValue";
+    /// `coerceInputValue-test.ts` "converts BigInt values for numeric scalars"; spec §3.5.2
     #[test]
     fn float_accepts_integers() {
         for value in ["1", "0", "-1"] {
@@ -237,7 +241,7 @@ mod float {
         }
     }
 
-    /// graphql-js v17 scalars-test.ts:216-217; v16 scalars-test.ts:193-194
+    /// graphql-js `scalars-test.ts` "GraphQLFloat > coerceInputValue", "GraphQLFloat > parseValue"
     #[test]
     fn float_accepts_fractional_values() {
         for value in ["0.1", "3.141592653589793"] {
@@ -245,7 +249,7 @@ mod float {
         }
     }
 
-    /// graphql-js v17 scalars-test.ts:221 (BigInt, as a JSON integer)
+    /// graphql-js `scalars-test.ts` "GraphQLFloat > coerceInputValue" (BigInt, as a JSON integer)
     #[test]
     fn float_accepts_2_pow_53() {
         assert_forwarded(
@@ -255,8 +259,9 @@ mod float {
         );
     }
 
-    /// graphql-js v17 scalars-test.ts:229, coerceInputValue-test.ts:129 (BigInt, as a JSON
-    /// integer); spec §3.5.2. Every finite value is accepted and forwarded with its digits.
+    /// graphql-js `scalars-test.ts` "GraphQLFloat > coerceInputValue"; `coerceInputValue-test.ts`
+    /// "converts BigInt values for numeric scalars" (BigInt, as a JSON integer); spec §3.5.2. Every
+    /// finite value is accepted and forwarded with its digits.
     #[test]
     fn float_accepts_2_pow_53_plus_1() {
         assert_forwarded(
@@ -307,8 +312,8 @@ mod float {
         }
     }
 
-    /// graphql-js v17 scalars-test.ts:232 (`2n ** 1024n`, as a JSON integer). Rejected by the
-    /// JSON parser (HTTP 400).
+    /// graphql-js `scalars-test.ts` "GraphQLFloat > coerceInputValue" (`2n ** 1024n`, as a JSON
+    /// integer). Rejected by the JSON parser (HTTP 400).
     #[test]
     fn float_rejects_309_digit_integer_at_json_parse() {
         let two_pow_1024 = "179769313486231590772930519078902473361797697894230657273430081157732675805500963132708477322407536021120113879871393357658789768814416622492847430639474124377767893424865485276302219601246094119453082952085005768838150682342462881473913110540827237163350510684586298239947245938479716304835356329624224137216";
@@ -323,7 +328,7 @@ mod float {
         }
     }
 
-    /// graphql-js v17 scalars-test.ts:242; v16 scalars-test.ts:209
+    /// graphql-js `scalars-test.ts` "GraphQLFloat > coerceInputValue", "GraphQLFloat > parseValue"
     #[test]
     fn float_rejects_empty_string() {
         rejects(
@@ -333,7 +338,7 @@ mod float {
         );
     }
 
-    /// graphql-js v17 scalars-test.ts:245; v16 scalars-test.ts:212
+    /// graphql-js `scalars-test.ts` "GraphQLFloat > coerceInputValue", "GraphQLFloat > parseValue"
     #[test]
     fn float_rejects_numeric_string() {
         rejects(
@@ -343,7 +348,8 @@ mod float {
         );
     }
 
-    /// graphql-js v17 scalars-test.ts:248; v16 scalars-test.ts:215; spec §3.5.2
+    /// graphql-js `scalars-test.ts` "GraphQLFloat > coerceInputValue", "GraphQLFloat > parseValue";
+    /// spec §3.5.2
     #[test]
     fn float_rejects_decimal_string() {
         rejects(
@@ -363,7 +369,7 @@ mod float {
         );
     }
 
-    /// graphql-js v17 scalars-test.ts:251; v16 scalars-test.ts:218
+    /// graphql-js `scalars-test.ts` "GraphQLFloat > coerceInputValue", "GraphQLFloat > parseValue"
     #[test]
     fn float_rejects_false() {
         rejects(
@@ -373,7 +379,7 @@ mod float {
         );
     }
 
-    /// graphql-js v17 scalars-test.ts:254; v16 scalars-test.ts:221
+    /// graphql-js `scalars-test.ts` "GraphQLFloat > coerceInputValue", "GraphQLFloat > parseValue"
     #[test]
     fn float_rejects_true() {
         rejects(
@@ -383,7 +389,7 @@ mod float {
         );
     }
 
-    /// graphql-js v17 scalars-test.ts:257; v16 scalars-test.ts:224
+    /// graphql-js `scalars-test.ts` "GraphQLFloat > coerceInputValue", "GraphQLFloat > parseValue"
     #[test]
     fn float_rejects_list() {
         rejects(
@@ -393,7 +399,7 @@ mod float {
         );
     }
 
-    /// graphql-js v17 scalars-test.ts:260; v16 scalars-test.ts:227
+    /// graphql-js `scalars-test.ts` "GraphQLFloat > coerceInputValue", "GraphQLFloat > parseValue"
     #[test]
     fn float_rejects_object() {
         rejects(
@@ -445,13 +451,15 @@ mod string {
         assert_invalid_json(r#"{"v":"\uD800"}"#);
     }
 
-    /// graphql-js v17 scalars-test.ts:369; v16 scalars-test.ts:328; spec §3.5.3
+    /// graphql-js `scalars-test.ts` "GraphQLString > coerceInputValue", "GraphQLString >
+    /// parseValue"; spec §3.5.3
     #[test]
     fn string_rejects_integer() {
         rejects(&op(), "1", "String cannot represent a non string value: 1");
     }
 
-    /// graphql-js v17 scalars-test.ts:375; v16 scalars-test.ts:334
+    /// graphql-js `scalars-test.ts` "GraphQLString > coerceInputValue", "GraphQLString >
+    /// parseValue"
     #[test]
     fn string_rejects_false() {
         rejects(
@@ -461,7 +469,8 @@ mod string {
         );
     }
 
-    /// graphql-js v17 scalars-test.ts:378; v16 scalars-test.ts:337
+    /// graphql-js `scalars-test.ts` "GraphQLString > coerceInputValue", "GraphQLString >
+    /// parseValue"
     #[test]
     fn string_rejects_list() {
         rejects(
@@ -471,7 +480,8 @@ mod string {
         );
     }
 
-    /// graphql-js v17 scalars-test.ts:381; v16 scalars-test.ts:340
+    /// graphql-js `scalars-test.ts` "GraphQLString > coerceInputValue", "GraphQLString >
+    /// parseValue"
     #[test]
     fn string_rejects_object() {
         rejects(
@@ -481,7 +491,7 @@ mod string {
         );
     }
 
-    /// graphql-js v17 variables-test.ts:967; v16 variables-test.ts:754
+    /// graphql-js `variables-test.ts` "reports error for array passed into string input"
     #[test]
     fn reports_error_for_array_passed_into_string_input() {
         assert_rejected(
@@ -511,7 +521,8 @@ mod boolean {
         operation("Boolean", "boolean")
     }
 
-    /// graphql-js v17 scalars-test.ts:467-468; v16 scalars-test.ts:425-426
+    /// graphql-js `scalars-test.ts` "GraphQLBoolean > coerceInputValue", "GraphQLBoolean >
+    /// parseValue"
     #[test]
     fn boolean_accepts_true_and_false() {
         for value in ["true", "false"] {
@@ -519,7 +530,8 @@ mod boolean {
         }
     }
 
-    /// graphql-js v17 scalars-test.ts:476; v16 scalars-test.ts:434; spec §3.5.4
+    /// graphql-js `scalars-test.ts` "GraphQLBoolean > coerceInputValue", "GraphQLBoolean >
+    /// parseValue"; spec §3.5.4
     #[test]
     fn boolean_rejects_0() {
         rejects(
@@ -529,7 +541,8 @@ mod boolean {
         );
     }
 
-    /// graphql-js v17 scalars-test.ts:479; v16 scalars-test.ts:437; spec §3.5.4
+    /// graphql-js `scalars-test.ts` "GraphQLBoolean > coerceInputValue", "GraphQLBoolean >
+    /// parseValue"; spec §3.5.4
     #[test]
     fn boolean_rejects_1() {
         rejects(
@@ -539,7 +552,8 @@ mod boolean {
         );
     }
 
-    /// graphql-js v17 scalars-test.ts:485; v16 scalars-test.ts:443
+    /// graphql-js `scalars-test.ts` "GraphQLBoolean > coerceInputValue", "GraphQLBoolean >
+    /// parseValue"
     #[test]
     fn boolean_rejects_empty_string() {
         rejects(
@@ -549,7 +563,8 @@ mod boolean {
         );
     }
 
-    /// graphql-js v17 scalars-test.ts:488; v16 scalars-test.ts:446
+    /// graphql-js `scalars-test.ts` "GraphQLBoolean > coerceInputValue", "GraphQLBoolean >
+    /// parseValue"
     #[test]
     fn boolean_rejects_string_false() {
         rejects(
@@ -569,7 +584,8 @@ mod boolean {
         );
     }
 
-    /// graphql-js v17 scalars-test.ts:491; v16 scalars-test.ts:449
+    /// graphql-js `scalars-test.ts` "GraphQLBoolean > coerceInputValue", "GraphQLBoolean >
+    /// parseValue"
     #[test]
     fn boolean_rejects_list() {
         rejects(
@@ -579,7 +595,8 @@ mod boolean {
         );
     }
 
-    /// graphql-js v17 scalars-test.ts:494; v16 scalars-test.ts:452
+    /// graphql-js `scalars-test.ts` "GraphQLBoolean > coerceInputValue", "GraphQLBoolean >
+    /// parseValue"
     #[test]
     fn boolean_rejects_object() {
         rejects(
@@ -597,7 +614,8 @@ mod id {
         operation("ID", "id")
     }
 
-    /// graphql-js v17 scalars-test.ts:581-583; v16 scalars-test.ts:539-541; spec §3.5.5
+    /// graphql-js `scalars-test.ts` "GraphQLID > coerceInputValue", "GraphQLID > parseValue"; spec
+    /// §3.5.5
     #[test]
     fn id_accepts_strings() {
         for value in [r#""""#, r#""1""#, r#""foo""#] {
@@ -605,8 +623,9 @@ mod id {
         }
     }
 
-    /// graphql-js v17 scalars-test.ts:584-589, coerceInputValue-test.ts:128;
-    /// v16 scalars-test.ts:542-544; spec §3.5.5. Forwarded as a number, not as `"1"`.
+    /// graphql-js `scalars-test.ts` "GraphQLID > coerceInputValue", "GraphQLID > parseValue";
+    /// `coerceInputValue-test.ts` "converts BigInt values for numeric scalars"; spec §3.5.5.
+    /// Forwarded as a number, not as `"1"`.
     #[test]
     fn id_accepts_small_integers() {
         for value in ["1", "0", "-1"] {
@@ -614,7 +633,7 @@ mod id {
         }
     }
 
-    /// graphql-js v17 scalars-test.ts:592-593; v16 scalars-test.ts:547-548
+    /// graphql-js `scalars-test.ts` "GraphQLID > coerceInputValue", "GraphQLID > parseValue"
     #[test]
     fn id_accepts_max_safe_integers() {
         for value in ["9007199254740991", "-9007199254740991"] {
@@ -648,25 +667,26 @@ mod id {
         rejects(&op(), "4.5", "ID cannot represent value: 4.5");
     }
 
-    /// graphql-js v17 scalars-test.ts:601; v16 scalars-test.ts:556
+    /// graphql-js `scalars-test.ts` "GraphQLID > coerceInputValue", "GraphQLID > parseValue"
     #[test]
     fn id_rejects_0_1() {
         rejects(&op(), "0.1", "ID cannot represent value: 0.1");
     }
 
-    /// graphql-js v17 scalars-test.ts:610; v16 scalars-test.ts:561; spec §3.5.5
+    /// graphql-js `scalars-test.ts` "GraphQLID > coerceInputValue", "GraphQLID > parseValue"; spec
+    /// §3.5.5
     #[test]
     fn id_rejects_false() {
         rejects(&op(), "false", "ID cannot represent value: false");
     }
 
-    /// graphql-js v17 scalars-test.ts:613; v16 scalars-test.ts:564
+    /// graphql-js `scalars-test.ts` "GraphQLID > coerceInputValue", "GraphQLID > parseValue"
     #[test]
     fn id_rejects_list() {
         rejects(&op(), r#"["1"]"#, r#"ID cannot represent value: ["1"]"#);
     }
 
-    /// graphql-js v17 scalars-test.ts:616; v16 scalars-test.ts:567
+    /// graphql-js `scalars-test.ts` "GraphQLID > coerceInputValue", "GraphQLID > parseValue"
     #[test]
     fn id_rejects_object() {
         rejects(
@@ -685,7 +705,7 @@ mod custom_scalars {
         operation("JSONScalar", "fieldWithJSONScalarInput")
     }
 
-    /// graphql-js v17 variables-test.ts:1032
+    /// graphql-js `variables-test.ts` "allows custom scalars with non-embedded variables"
     #[test]
     fn allows_custom_scalars_with_non_embedded_variables() {
         assert_coerced(
@@ -695,13 +715,15 @@ mod custom_scalars {
         );
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:87, coerceInputValue-test.ts:77
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLScalar > returns no error for valid
+    /// input"; `coerceInputValue-test.ts` "for GraphQLScalar > returns for valid input"
     #[test]
     fn custom_scalar_accepts_object() {
         accepts(&op(), r#"{"value":1}"#);
     }
 
-    /// graphql-js v17 validateInputValue-test.ts:91, coerceInputValue-test.ts:81
+    /// graphql-js `validateInputValue-test.ts` "for GraphQLScalar > returns no error for null
+    /// result"; `coerceInputValue-test.ts` "returns for null result"
     #[test]
     fn custom_scalar_accepts_object_with_null_member() {
         accepts(&op(), r#"{"value":null}"#);
@@ -727,33 +749,35 @@ mod null_and_omitted {
     const NON_NULL_STRING: &str =
         "query ($value: String!) { fieldWithNonNullableStringInput(input: $value) }";
 
-    /// graphql-js v17 variables-test.ts:781; v16 variables-test.ts:568
+    /// graphql-js `variables-test.ts` "allows nullable inputs to be omitted in a variable"
     #[test]
     fn allows_nullable_inputs_to_be_omitted_in_a_variable() {
         assert_coerced(NULLABLE_STRING, "{}", "{}");
     }
 
-    /// graphql-js v17 variables-test.ts:809; v16 variables-test.ts:596
+    /// graphql-js `variables-test.ts` "allows nullable inputs to be set to null in a variable"
     #[test]
     fn allows_nullable_inputs_to_be_set_to_null_in_a_variable() {
         assert_coerced(NULLABLE_STRING, r#"{"value":null}"#, r#"{"value":null}"#);
     }
 
-    /// graphql-js v17 variables-test.ts:824, scalars-test.ts:361; v16 variables-test.ts:611,
-    /// scalars-test.ts:320
+    /// graphql-js `variables-test.ts` "allows nullable inputs to be set to a value in a variable";
+    /// `scalars-test.ts` "GraphQLString > coerceInputValue", "GraphQLString > parseValue"
     #[test]
     fn allows_nullable_inputs_to_be_set_to_a_value_in_a_variable() {
         assert_coerced(NULLABLE_STRING, r#"{"value":"a"}"#, r#"{"value":"a"}"#);
     }
 
-    /// graphql-js v17 variables-test.ts:920; v16 variables-test.ts:707
+    /// graphql-js `variables-test.ts` "allows non-nullable inputs to be set to a value in a
+    /// variable"
     #[test]
     fn allows_non_nullable_inputs_to_be_set_to_a_value_in_a_variable() {
         assert_coerced(NON_NULL_STRING, r#"{"value":"a"}"#, r#"{"value":"a"}"#);
     }
 
-    /// graphql-js v17 variables-test.ts:883, scalars-test.ts:363; v16 variables-test.ts:670,
-    /// scalars-test.ts:322
+    /// graphql-js `variables-test.ts` "does not allow non-nullable inputs to be omitted in a
+    /// variable"; `scalars-test.ts` "GraphQLString > coerceInputValue", "GraphQLString >
+    /// parseValue"
     #[test]
     fn does_not_allow_non_nullable_inputs_to_be_omitted_in_a_variable() {
         assert_rejected(
@@ -763,8 +787,9 @@ mod null_and_omitted {
         );
     }
 
-    /// graphql-js v17 variables-test.ts:901, scalars-test.ts:366; v16 variables-test.ts:688,
-    /// scalars-test.ts:325
+    /// graphql-js `variables-test.ts` "does not allow non-nullable inputs to be set to null in a
+    /// variable"; `scalars-test.ts` "GraphQLString > coerceInputValue", "GraphQLString >
+    /// parseValue"
     #[test]
     fn does_not_allow_non_nullable_inputs_to_be_set_to_null_in_a_variable() {
         assert_rejected(
@@ -796,25 +821,26 @@ mod null_and_omitted {
         assert_coerced(&nullable, "{}", "{}");
     }
 
-    /// graphql-js v17 scalars-test.ts:51, :54; v16 scalars-test.ts:41, :44
+    /// graphql-js `scalars-test.ts` "GraphQLInt > coerceInputValue", "GraphQLInt > parseValue"
     #[test]
     fn int_null_and_omitted() {
         check_scalar("Int", "int");
     }
 
-    /// graphql-js v17 scalars-test.ts:236, :239; v16 scalars-test.ts:203, :206
+    /// graphql-js `scalars-test.ts` "GraphQLFloat > coerceInputValue", "GraphQLFloat > parseValue"
     #[test]
     fn float_null_and_omitted() {
         check_scalar("Float", "float");
     }
 
-    /// graphql-js v17 scalars-test.ts:470, :473; v16 scalars-test.ts:428, :431
+    /// graphql-js `scalars-test.ts` "GraphQLBoolean > coerceInputValue", "GraphQLBoolean >
+    /// parseValue"
     #[test]
     fn boolean_null_and_omitted() {
         check_scalar("Boolean", "boolean");
     }
 
-    /// graphql-js v17 scalars-test.ts:595, :598; v16 scalars-test.ts:550, :553
+    /// graphql-js `scalars-test.ts` "GraphQLID > coerceInputValue", "GraphQLID > parseValue"
     #[test]
     fn id_null_and_omitted() {
         check_scalar("ID", "id");
@@ -831,7 +857,7 @@ mod null_and_omitted {
 mod defaults {
     use super::*;
 
-    /// graphql-js v17 variables-test.ts:855; v16 variables-test.ts:642
+    /// graphql-js `variables-test.ts` "allows non-nullable variable to be omitted given a default"
     #[test]
     fn allows_non_nullable_variable_to_be_omitted_given_a_default() {
         assert_coerced(
@@ -841,7 +867,7 @@ mod defaults {
         );
     }
 
-    /// graphql-js v17 variables-test.ts:869; v16 variables-test.ts:656
+    /// graphql-js `variables-test.ts` "allows non-nullable inputs to be omitted given a default"
     #[test]
     fn allows_non_nullable_inputs_to_be_omitted_given_a_default() {
         assert_coerced(
