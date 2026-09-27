@@ -198,9 +198,86 @@ fn cache_preparation(c: &mut Criterion) {
     group.finish();
 }
 
+/// `@provides` under one union member, with fields from both members and a `@requires` that
+/// reads the provided field.
+fn provides_planning(c: &mut Criterion) {
+    let schema = parse_schema(
+        &std::fs::read_to_string("./fixture/tests/provides-union-member.supergraph.graphql")
+            .unwrap(),
+    );
+    let supergraph_state = SupergraphState::new(&schema);
+    let graph = Graph::graph_from_supergraph_state(&supergraph_state).unwrap();
+    let document = parse_operation(
+        "{ user { orders { label item { ... on Book { isbn stock } ... on Movie { title } } } } }",
+    );
+    let operation = get_executable_operation(&document, &supergraph_state, None);
+    let override_context = PlannerOverrideContext::default();
+    let cancellation_token = CancellationToken::new();
+
+    c.bench_function("query_plan_provides_union", |b| {
+        b.iter(|| {
+            let best_paths_per_leaf = walk_operation(
+                black_box(&graph),
+                &supergraph_state,
+                &override_context,
+                black_box(&operation),
+                &cancellation_token,
+            )
+            .unwrap();
+            let query_tree =
+                find_best_combination(&graph, best_paths_per_leaf, &cancellation_token).unwrap();
+            let fetch_graph = build_fetch_graph_from_query_tree(
+                &graph,
+                &supergraph_state,
+                &override_context,
+                query_tree,
+                OperationKind::Query,
+                &QueryPlannerOptions::default(),
+                &cancellation_token,
+            )
+            .unwrap();
+            black_box(
+                build_query_plan_from_fetch_graph(
+                    fetch_graph,
+                    &supergraph_state,
+                    &cancellation_token,
+                )
+                .unwrap(),
+            );
+        })
+    });
+}
+
+fn graph_building(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_building");
+    for (name, schema_path) in [
+        ("bench", "../../bench/supergraph.graphql"),
+        (
+            "many_plans",
+            "./fixture/grafbase-many-plans/supergraph.graphql",
+        ),
+        ("spotify", "./fixture/spotify-supergraph.graphql"),
+        (
+            "provides_union",
+            "./fixture/tests/provides-union-member.supergraph.graphql",
+        ),
+    ] {
+        let schema = parse_schema(&std::fs::read_to_string(schema_path).unwrap());
+        let supergraph_state = SupergraphState::new(&schema);
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                black_box(Graph::graph_from_supergraph_state(black_box(&supergraph_state)).unwrap())
+            })
+        });
+    }
+    group.finish();
+}
+
 fn all_benchmarks(c: &mut Criterion) {
     query_plan_pipeline(c);
     cache_preparation(c);
+    graph_building(c);
+    provides_planning(c);
 }
 
 criterion_group!(benches, all_benchmarks);
