@@ -109,6 +109,54 @@ input DefaultSevenInput @join__type(graph: TEST) {
   foo: TestScalar = 7
 }
 
+input DefaultNullInput @join__type(graph: TEST) {
+  foo: TestScalar = null
+}
+
+# graphql-js's type-level `TestInputObject` from `validateInputValue-test.ts` and
+# `coerceInputValue-test.ts`, renamed to avoid a clash.
+input IntInputObject @join__type(graph: TEST) {
+  foo: Int!
+  bar: Int
+  nested: IntInputObject
+  deepObject: DeepObject
+}
+
+input DeepObject @join__type(graph: TEST) {
+  foo: Int!
+  bar: Int
+}
+
+input LengthObject @join__type(graph: TEST) {
+  length: Int
+}
+
+# The spec's `ExampleInputObject` (§3.10).
+input ExampleInputObject @join__type(graph: TEST) {
+  a: String
+  b: Int!
+}
+
+input DefaultedRequired @join__type(graph: TEST) {
+  x: Int! = 5
+  y: String
+}
+
+input Wrappers @join__type(graph: TEST) {
+  list: [Int!]
+  nested: [ExampleInputObject!]
+  inner: ExampleInputObject
+}
+
+input NNListField @join__type(graph: TEST) {
+  items: [String]!
+}
+
+input Filter @join__type(graph: TEST) {
+  and: [Filter!]
+  name: String
+}
+
 # From graphql-js `src/utilities/__tests__/validateInputValue-test.ts`.
 enum FooBarEnum @join__type(graph: TEST) {
   FOO @join__enumValue(graph: TEST)
@@ -121,6 +169,11 @@ enum Color @join__type(graph: TEST) {
   GREEN @join__enumValue(graph: TEST)
   BLUE @join__enumValue(graph: TEST)
   OLD_BLUE @join__enumValue(graph: TEST) @deprecated(reason: "gone")
+}
+
+input ColorInput @join__type(graph: TEST) {
+  color: Color
+  colors: [Color!]
 }
 
 type Query @join__type(graph: TEST) {
@@ -145,10 +198,19 @@ type Query @join__type(graph: TEST) {
   # router additions
   int(input: Int): String
   defaultSeven(input: DefaultSevenInput): String
+  defaultNull(input: DefaultNullInput): String
+  intInput(input: IntInputObject): String
+  lengthObjects(input: [LengthObject]): String
+  exampleInput(input: ExampleInputObject): String
+  defaultedRequired(input: DefaultedRequired): String
+  wrappers(input: Wrappers): String
+  nnListField(input: NNListField): String
+  filter(input: Filter): String
   fooBar(input: FooBarEnum): String
   colorEnum(fromEnum: Color): String
   color(input: Color): String
   colors(input: [Color]): String
+  colorInput(input: ColorInput): String
   colorsNN(input: [Color!]): String
   nestedColors(input: [[Color]]): String
 }

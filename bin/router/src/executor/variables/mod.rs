@@ -4,7 +4,7 @@ use std::fmt;
 use crate::query_planner::state::supergraph_state::TypeNode;
 use sonic_rs::{JsonNumberTrait, Value, ValueRef};
 
-use crate::executor::introspection::schema::SchemaMetadata;
+use crate::executor::introspection::schema::{InputFieldInfo, SchemaMetadata};
 
 /// A request error raised while coercing an operation's variable values
 /// (spec: "Coercing Variable Values"). Messages follow graphql-js.
@@ -14,14 +14,14 @@ pub enum VariableCoercionError {
     InvalidValue {
         name: String,
         path: ValuePath,
-        reason: InvalidValueReason,
+        reason: Box<InvalidValueReason>,
     },
 
     #[error("Variable \"${name}\" has invalid default value{path}: {reason}")]
     InvalidDefaultValue {
         name: String,
         path: ValuePath,
-        reason: InvalidValueReason,
+        reason: Box<InvalidValueReason>,
     },
 }
 
@@ -54,12 +54,40 @@ pub enum InvalidValueReason {
 
     #[error("Boolean cannot represent a non boolean value: {value}")]
     ExpectedBoolean { value: String },
+
+    #[error("Expected value of type \"{type_name}\" to be an object, found: {value}.")]
+    ExpectedObject { type_name: String, value: String },
+
+    #[error(
+        "Expected value of type \"{type_name}\" to include required field \"{field_name}\", found: {value}."
+    )]
+    MissingRequiredField {
+        type_name: String,
+        field_name: String,
+        value: String,
+    },
+
+    #[error(
+        "Expected value of type \"{type_name}\" not to include unknown field \"{field_name}\", found: {value}."
+    )]
+    UnknownField {
+        type_name: String,
+        field_name: String,
+        value: String,
+    },
 }
 
-/// Where the invalid value sits inside a variable's value, as list indices from the outside in.
-/// Displayed like graphql-js: empty for the variable itself, otherwise ` at [0][1]`.
+/// A step into a variable's value: a list index or an input object field.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PathSegment {
+    Index(usize),
+    Field(String),
+}
+
+/// Where the invalid value sits inside a variable's value, from the outside in.
+/// Displayed like graphql-js: empty for the variable itself, otherwise e.g. ` at .a[0].b`.
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct ValuePath(Vec<usize>);
+pub struct ValuePath(Vec<PathSegment>);
 
 impl fmt::Display for ValuePath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -67,18 +95,21 @@ impl fmt::Display for ValuePath {
             return Ok(());
         }
         f.write_str(" at ")?;
-        for index in &self.0 {
-            write!(f, "[{index}]")?;
+        for segment in &self.0 {
+            match segment {
+                PathSegment::Index(index) => write!(f, "[{index}]")?,
+                PathSegment::Field(name) => write!(f, ".{name}")?,
+            }
         }
         Ok(())
     }
 }
 
 /// An invalid value found by `validate_runtime_value`. The path is collected while the error
-/// travels up, so it holds the innermost index first.
+/// travels up, so it holds the innermost segment first.
 #[derive(Debug, PartialEq)]
 struct InvalidValue {
-    reversed_path: Vec<usize>,
+    reversed_path: Vec<PathSegment>,
     reason: InvalidValueReason,
 }
 
@@ -90,9 +121,9 @@ impl InvalidValue {
         }
     }
 
-    fn path(mut self) -> (ValuePath, InvalidValueReason) {
+    fn path(mut self) -> (ValuePath, Box<InvalidValueReason>) {
         self.reversed_path.reverse();
-        (ValuePath(self.reversed_path), self.reason)
+        (ValuePath(self.reversed_path), Box::new(self.reason))
     }
 }
 
@@ -150,9 +181,9 @@ pub fn collect_variables(
             return Err(VariableCoercionError::InvalidValue {
                 name: variable_name.to_string(),
                 path: ValuePath::default(),
-                reason: InvalidValueReason::MissingNonNullValue {
+                reason: Box::new(InvalidValueReason::MissingNonNullValue {
                     type_name: variable_type.to_string(),
-                },
+                }),
             });
         }
     }
@@ -195,6 +226,8 @@ fn validate_runtime_value(
                         value: inspect(value),
                     }));
                 }
+            } else if let Some(fields) = schema_metadata.input_object_fields.get(name) {
+                validate_input_object(value, name, fields, schema_metadata)?;
             } else {
                 let is_valid = match name.as_str() {
                     "String" => matches!(value, ValueRef::String(_)),
@@ -229,7 +262,7 @@ fn validate_runtime_value(
                 for (index, item) in arr.iter().enumerate() {
                     validate_runtime_value(item.as_ref(), inner_type, schema_metadata).map_err(
                         |mut invalid| {
-                            invalid.reversed_path.push(index);
+                            invalid.reversed_path.push(PathSegment::Index(index));
                             invalid
                         },
                     )?;
@@ -239,6 +272,60 @@ fn validate_runtime_value(
             }
         }
     }
+    Ok(())
+}
+
+/// Checks an input object value (spec: "Input Objects", input coercion), in graphql-js's order:
+/// the defined fields in schema order, then the keys the type doesn't define.
+fn validate_input_object(
+    value: ValueRef,
+    type_name: &str,
+    fields: &[InputFieldInfo],
+    schema_metadata: &SchemaMetadata,
+) -> Result<(), InvalidValue> {
+    let ValueRef::Object(object) = value else {
+        return Err(InvalidValue::new(InvalidValueReason::ExpectedObject {
+            type_name: type_name.to_string(),
+            value: inspect(value),
+        }));
+    };
+
+    for field in fields {
+        match object.get(&field.name) {
+            Some(field_value) => {
+                validate_runtime_value(field_value.as_ref(), &field.field_type, schema_metadata)
+                    .map_err(|mut invalid| {
+                        invalid
+                            .reversed_path
+                            .push(PathSegment::Field(field.name.clone()));
+                        invalid
+                    })?
+            }
+            // A field is required only when it is non-null and has no default.
+            None if field.field_type.is_non_null() && !field.has_default => {
+                return Err(InvalidValue::new(
+                    InvalidValueReason::MissingRequiredField {
+                        type_name: type_name.to_string(),
+                        field_name: field.name.clone(),
+                        value: inspect(value),
+                    },
+                ));
+            }
+            None => {}
+        }
+    }
+
+    if let Some((unknown_field, _)) = object
+        .iter()
+        .find(|(key, _)| !fields.iter().any(|field| field.name == *key))
+    {
+        return Err(InvalidValue::new(InvalidValueReason::UnknownField {
+            type_name: type_name.to_string(),
+            field_name: unknown_field.to_string(),
+            value: inspect(value),
+        }));
+    }
+
     Ok(())
 }
 

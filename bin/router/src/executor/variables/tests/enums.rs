@@ -423,6 +423,50 @@ mod lists {
     }
 }
 
+/// spec §3.10
+mod in_input_objects {
+    use super::*;
+
+    fn color_input() -> String {
+        operation("ColorInput", "colorInput")
+    }
+
+    #[test]
+    fn enum_fields_in_input_object_are_accepted() {
+        accepts(&color_input(), r#"{"color":"RED","colors":["GREEN"]}"#);
+    }
+
+    #[test]
+    fn enum_field_unknown_name() {
+        rejects_at(
+            &color_input(),
+            r#"{"color":"PURPLE"}"#,
+            " at .color",
+            r#"Value "PURPLE" does not exist in "Color" enum."#,
+        );
+    }
+
+    #[test]
+    fn enum_field_non_string() {
+        rejects_at(
+            &color_input(),
+            r#"{"color":1}"#,
+            " at .color",
+            r#"Enum "Color" cannot represent non-string value: 1."#,
+        );
+    }
+
+    #[test]
+    fn enum_list_field_bad_item() {
+        rejects_at(
+            &color_input(),
+            r#"{"colors":["RED","red"]}"#,
+            " at .colors[1]",
+            r#"Value "red" does not exist in "Color" enum."#,
+        );
+    }
+}
+
 /// spec §6.1.2: a default is coerced by the variable type when the variable is omitted.
 mod defaults {
     use super::*;

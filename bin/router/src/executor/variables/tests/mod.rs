@@ -10,6 +10,7 @@
 
 mod enums;
 mod harness;
+mod input_objects;
 mod variable_level;
 
 #[test]
