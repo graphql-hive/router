@@ -375,4 +375,156 @@ mod introspection_e2e_tests {
         }
         "#);
     }
+
+    #[ntex::test]
+    async fn should_not_duplicate_built_in_directives_defined_in_supergraph() {
+        // `supergraph.graphql` defines `directive @oneOf`, which the router also bundles
+        let router = TestRouter::builder()
+            .inline_config(&format!(
+                r#"supergraph:
+                source: file
+                path: "./supergraph.graphql"
+          "#,
+            ))
+            .build()
+            .start()
+            .await;
+
+        let resp = router
+            .send_graphql_request(
+                r#"
+                query {
+                  __schema {
+                    directives {
+                      name
+                    }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+
+        assert!(resp.status().is_success(), "Expected 200 OK");
+
+        insta::assert_snapshot!(resp.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "__schema": {
+              "directives": [
+                {
+                  "name": "oneOf"
+                },
+                {
+                  "name": "skip"
+                },
+                {
+                  "name": "include"
+                },
+                {
+                  "name": "deprecated"
+                },
+                {
+                  "name": "specifiedBy"
+                }
+              ]
+            }
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    async fn should_allow_deprecated_on_arguments_in_built_in_directive() {
+        // `supergraph-introspection-extended.graphql` does not define `@deprecated`,
+        // so the router's bundled definition is used
+        let router = TestRouter::builder()
+            .inline_config(&format!(
+                r#"supergraph:
+                source: file
+                path: "./supergraph-introspection-extended.graphql"
+          "#,
+            ))
+            .build()
+            .start()
+            .await;
+
+        let resp = router
+            .send_graphql_request(
+                r#"
+                query {
+                  __schema {
+                    directives {
+                      name
+                      locations
+                    }
+                  }
+                }"#,
+                None,
+                None,
+            )
+            .await;
+
+        assert!(resp.status().is_success(), "Expected 200 OK");
+
+        insta::assert_snapshot!(resp.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "__schema": {
+              "directives": [
+                {
+                  "name": "test_directive",
+                  "locations": [
+                    "FIELD_DEFINITION"
+                  ]
+                },
+                {
+                  "name": "test_repeatable_directive",
+                  "locations": [
+                    "FIELD_DEFINITION"
+                  ]
+                },
+                {
+                  "name": "skip",
+                  "locations": [
+                    "FIELD",
+                    "FRAGMENT_SPREAD",
+                    "INLINE_FRAGMENT"
+                  ]
+                },
+                {
+                  "name": "include",
+                  "locations": [
+                    "FIELD",
+                    "FRAGMENT_SPREAD",
+                    "INLINE_FRAGMENT"
+                  ]
+                },
+                {
+                  "name": "deprecated",
+                  "locations": [
+                    "FIELD_DEFINITION",
+                    "ARGUMENT_DEFINITION",
+                    "INPUT_FIELD_DEFINITION",
+                    "ENUM_VALUE"
+                  ]
+                },
+                {
+                  "name": "specifiedBy",
+                  "locations": [
+                    "SCALAR"
+                  ]
+                },
+                {
+                  "name": "oneOf",
+                  "locations": [
+                    "INPUT_OBJECT"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+        "#);
+    }
 }

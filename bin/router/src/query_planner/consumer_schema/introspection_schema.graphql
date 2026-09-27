@@ -10,7 +10,7 @@ directive @include(
 ) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
 directive @deprecated(
   reason: String = "No longer supported"
-) on FIELD_DEFINITION | ENUM_VALUE | INPUT_FIELD_DEFINITION
+) on FIELD_DEFINITION | ARGUMENT_DEFINITION | INPUT_FIELD_DEFINITION | ENUM_VALUE
 directive @specifiedBy(url: String!) on SCALAR
 directive @oneOf on INPUT_OBJECT
 
