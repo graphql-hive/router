@@ -3453,4 +3453,125 @@ mod issues_e2e_tests {
         }
         "#);
     }
+
+    #[ntex::test]
+    /// `usd` needs `price(currency: "USD")` and `eur` needs `price(currency: "EUR")`, both from
+    /// `orders`, and the `Order`s come out of an `_entities` fetch. The router asks `orders` for
+    /// both prices (the EUR one as `_internal_qp_alias_0`), and has to send each one to
+    /// `catalog` for the field that needs it.
+    ///
+    /// `catalog` answers with whatever price it gets, so `eur` must be `90`. We used to send
+    /// plain `price` - the USD value - for both, and returned `100`.
+    async fn requires_with_argument_conflict_after_entity_hop() {
+        use crate::testkit::{mock_subgraphs::mock_subgraphs, ResponseLike};
+        use serde_json::json;
+
+        let mocks = mock_subgraphs(json!({
+            "users": {
+                "query": { "user": { "__typename": "User", "id": "u1" } }
+            },
+            "catalog": {
+                // The mock picks the entity that matches the representation, so the price
+                // `catalog` receives decides which of these comes back.
+                "entities": [
+                    { "__typename": "Order", "id": "o1", "price": 100, "usd": 100, "eur": 100 },
+                    { "__typename": "Order", "id": "o1", "price": 90, "usd": 90, "eur": 90 }
+                ]
+            }
+        }));
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(move |req| {
+                if req.path != "/orders" {
+                    return mocks(req);
+                }
+                // `mock_subgraphs` ignores field arguments, so it can't return a different
+                // `price` per currency. Answer the one `orders` fetch by hand.
+                let mut headers = http::HeaderMap::new();
+                headers.insert(
+                    http::header::CONTENT_TYPE,
+                    http::HeaderValue::from_static("application/json"),
+                );
+                Some(ResponseLike::new(
+                    axum::http::StatusCode::OK,
+                    Some(
+                        json!({ "data": { "_entities": [{ "orders": [{
+                            "__typename": "Order",
+                            "id": "o1",
+                            "price": 100,
+                            "_internal_qp_alias_0": 90
+                        }] }] } })
+                        .to_string(),
+                    ),
+                    Some(headers),
+                ))
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.requires-argument-conflict-after-hop.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ user { orders { id usd eur } } }", None, None)
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "user": {
+              "orders": [
+                {
+                  "id": "o1",
+                  "usd": 100,
+                  "eur": 90
+                }
+              ]
+            }
+          }
+        }
+        "#);
+
+        let catalog_requests = subgraphs
+            .get_requests_log("catalog")
+            .expect("expected requests to catalog");
+        let variables: Vec<serde_json::Value> = catalog_requests
+            .iter()
+            .map(|req| {
+                let body: serde_json::Value =
+                    serde_json::from_slice(req.body.as_ref().expect("expected a body")).unwrap();
+                body["variables"].clone()
+            })
+            .collect();
+        insta::assert_snapshot!(serde_json::to_string_pretty(&variables).unwrap(), @r#"
+        [
+          {
+            "__batch_reps_0": [
+              {
+                "__typename": "Order",
+                "price": 90,
+                "id": "o1"
+              }
+            ],
+            "__batch_reps_1": [
+              {
+                "__typename": "Order",
+                "price": 100,
+                "id": "o1"
+              }
+            ]
+          }
+        ]
+        "#);
+    }
 }

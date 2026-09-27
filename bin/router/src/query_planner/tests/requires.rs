@@ -1236,3 +1236,286 @@ fn requires_reentry_selects_entity_typename() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+/// related: https://github.com/graphql-hive/router/issues/1539
+///
+/// `Order.name` requires `grade`, and `grade` requires `sku`.
+/// Each of them sits on an `Order` that came out of an `_entities` fetch,
+/// so each required field should be added to the fetch that already resolves its parent.
+#[test]
+fn chained_requires_after_entity_hop() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          user {
+            orders {
+              name
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/chained-requires-after-hop.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "users") {
+          {
+            user {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "user") {
+          Fetch(service: "orders") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on User {
+                orders {
+                  __typename
+                  id
+                  sku
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "user.orders.@") {
+          Fetch(service: "grading") {
+            {
+              ... on Order {
+                __typename
+                sku
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                grade
+              }
+            }
+          },
+        },
+        Flatten(path: "user.orders.@") {
+          Fetch(service: "catalog") {
+            {
+              ... on Order {
+                __typename
+                grade
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                name
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Related: https://github.com/graphql-hive/router/issues/1539
+///
+/// `@requires(fields: "sku weight")`, where `sku` comes from the subgraph that resolved the parent,
+/// and `weight` from a third one.
+/// Only `sku` can be added to the parent fetch.
+/// `weight` still needs a fetch of its own.
+#[test]
+fn requires_from_two_subgraphs_after_entity_hop() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          user {
+            orders {
+              name
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-from-two-subgraphs.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "users") {
+          {
+            user {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "user") {
+          Fetch(service: "orders") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on User {
+                orders {
+                  __typename
+                  id
+                  sku
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "user.orders.@") {
+          Fetch(service: "warehouse") {
+            {
+              ... on Order {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                weight
+              }
+            }
+          },
+        },
+        Flatten(path: "user.orders.@") {
+          Fetch(service: "catalog") {
+            {
+              ... on Order {
+                __typename
+                sku
+                weight
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                name
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Related: https://github.com/graphql-hive/router/issues/1539
+///
+/// The `@requires` sits two entity hops down (`user -> cart -> orders`).
+/// The required field should go into the fetch that resolved the last hop.
+#[test]
+fn requires_after_two_entity_hops() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          user {
+            cart {
+              orders {
+                name
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-after-two-hops.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            user {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "user") {
+          Fetch(service: "b") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on User {
+                cart {
+                  __typename
+                  id
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "user.cart") {
+          Fetch(service: "c") {
+            {
+              ... on Cart {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Cart {
+                orders {
+                  __typename
+                  id
+                  sku
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "user.cart.orders.@") {
+          Fetch(service: "catalog") {
+            {
+              ... on Order {
+                __typename
+                sku
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                name
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}

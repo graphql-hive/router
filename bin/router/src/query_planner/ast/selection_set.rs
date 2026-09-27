@@ -563,6 +563,62 @@ fn merge_field_omit_from_response(target: &mut FieldSelection, source: &FieldSel
     }
 }
 
+/// Does this path segment point at this selection item?
+fn segment_selects(segment: &Segment, item: &SelectionItem) -> bool {
+    match (segment, item) {
+        (
+            Segment::TypeCondition(type_names, condition),
+            SelectionItem::InlineFragment(fragment),
+        ) => {
+            type_names.contains(&fragment.type_condition)
+                && fragment_condition_equal(condition, fragment)
+        }
+        (Segment::Field(field_seg, args_hash, condition), SelectionItem::Field(field)) => {
+            field.selection_identifier() == field_seg.response_key()
+                && field.arguments_hash() == *args_hash
+                && field_condition_equal(condition, field)
+        }
+        _ => false,
+    }
+}
+
+fn item_selections(item: &SelectionItem) -> Option<&SelectionSet> {
+    match item {
+        SelectionItem::Field(field) => Some(&field.selections),
+        SelectionItem::InlineFragment(fragment) => Some(&fragment.selections),
+        SelectionItem::FragmentSpread(_) => None,
+    }
+}
+
+fn item_selections_mut(item: &mut SelectionItem) -> Option<&mut SelectionSet> {
+    match item {
+        SelectionItem::Field(field) => Some(&mut field.selections),
+        SelectionItem::InlineFragment(fragment) => Some(&mut fragment.selections),
+        SelectionItem::FragmentSpread(_) => None,
+    }
+}
+
+pub fn find_selection_set_by_path<'a>(
+    root_selection_set: &'a SelectionSet,
+    path: &MergePath,
+) -> Option<&'a SelectionSet> {
+    let mut current_selection_set = root_selection_set;
+
+    for path_element in path.inner.iter() {
+        if matches!(path_element, Segment::List) {
+            continue;
+        }
+
+        current_selection_set = current_selection_set
+            .items
+            .iter()
+            .find(|item| segment_selects(path_element, item))
+            .and_then(item_selections)?;
+    }
+
+    Some(current_selection_set)
+}
+
 pub fn find_selection_set_by_path_mut<'a>(
     root_selection_set: &'a mut SelectionSet,
     path: &MergePath,
@@ -570,69 +626,18 @@ pub fn find_selection_set_by_path_mut<'a>(
     let mut current_selection_set = root_selection_set;
 
     for path_element in path.inner.iter() {
-        match path_element {
-            Segment::List => {
-                continue;
-            }
-            Segment::TypeCondition(type_names, condition) => {
-                let next_selection_set_option =
-                    current_selection_set
-                        .items
-                        .iter_mut()
-                        .find_map(|item| match item {
-                            SelectionItem::Field(_) => None,
-                            SelectionItem::InlineFragment(f) => {
-                                if type_names.contains(&f.type_condition)
-                                    && fragment_condition_equal(condition, f)
-                                {
-                                    Some(&mut f.selections)
-                                } else {
-                                    None
-                                }
-                            }
-                            SelectionItem::FragmentSpread(_) => None,
-                        });
-
-                match next_selection_set_option {
-                    Some(next_set) => {
-                        current_selection_set = next_set;
-                    }
-                    None => {
-                        return None;
-                    }
-                }
-            }
-            Segment::Field(field_seg, args_hash, condition) => {
-                let next_selection_set_option =
-                    current_selection_set
-                        .items
-                        .iter_mut()
-                        .find_map(|item| match item {
-                            SelectionItem::Field(field) => {
-                                if field.selection_identifier() == field_seg.response_key()
-                                    && field.arguments_hash() == *args_hash
-                                    && field_condition_equal(condition, field)
-                                {
-                                    Some(&mut field.selections)
-                                } else {
-                                    None
-                                }
-                            }
-                            SelectionItem::InlineFragment(..) => None,
-                            SelectionItem::FragmentSpread(_) => None,
-                        });
-
-                match next_selection_set_option {
-                    Some(next_set) => {
-                        current_selection_set = next_set;
-                    }
-                    None => {
-                        return None;
-                    }
-                }
-            }
+        if matches!(path_element, Segment::List) {
+            continue;
         }
+
+        let index = current_selection_set
+            .items
+            .iter()
+            .position(|item| segment_selects(path_element, item))?;
+
+        current_selection_set = item_selections_mut(&mut current_selection_set.items[index])?;
     }
+
     Some(current_selection_set)
 }
 

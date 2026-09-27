@@ -508,6 +508,12 @@ impl FetchStepSelections<MultiTypeFetchStep> {
             );
 
             if !current_aliases_made.is_empty() {
+                // The merger only knows paths from where we merged, so we add the rest,
+                // to make them start at the step's root.
+                let current_aliases_made = current_aliases_made
+                    .into_iter()
+                    .map(|(alias_path, alias)| (fetch_path.concat(&alias_path), alias))
+                    .collect();
                 aliases_made.push((target_type.to_string(), current_aliases_made));
             }
         }

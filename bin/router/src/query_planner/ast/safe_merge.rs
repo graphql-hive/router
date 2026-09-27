@@ -108,7 +108,10 @@ impl SafeSelectionSetMerger {
                             decision = ConflictsLookupResult::Merged;
 
                             let next_path = response_path.push(Segment::Field(
-                                FieldPathSegment::named(source_field.name.clone()),
+                                FieldPathSegment::new(
+                                    source_field.name.clone(),
+                                    source_field.alias.clone(),
+                                ),
                                 source_field.arguments_hash(),
                                 source_field.into(),
                             ));

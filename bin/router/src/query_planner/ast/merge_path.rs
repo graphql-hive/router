@@ -222,6 +222,14 @@ impl MergePath {
         Self::new(new_segments)
     }
 
+    /// Appends another path to this one
+    pub fn concat(&self, other: &MergePath) -> Self {
+        let mut new_segments = Vec::with_capacity(self.inner.len() + other.inner.len());
+        new_segments.extend_from_slice(&self.inner);
+        new_segments.extend_from_slice(&other.inner);
+        Self::new(new_segments)
+    }
+
     pub fn len(&self) -> usize {
         self.inner.len()
     }

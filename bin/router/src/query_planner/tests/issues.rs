@@ -844,3 +844,277 @@ fn requires_self_dependency_false_positive() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+/// https://github.com/graphql-hive/router/issues/1539
+///
+/// `Order.name @requires(fields: "sku")`, where the `Order` came out of an `_entities` fetch.
+/// That same fetch should also ask for `sku`, instead of us going back to `orders` for it.
+#[test]
+fn issue_1539_requires_after_entity_hop() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          user {
+            orders {
+              name
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1539.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "users") {
+          {
+            user {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "user") {
+          Fetch(service: "orders") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on User {
+                orders {
+                  __typename
+                  id
+                  sku
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "user.orders.@") {
+          Fetch(service: "catalog") {
+            {
+              ... on Order {
+                __typename
+                sku
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                name
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Same as `issue_1539_requires_after_entity_hop`, but the query already asks for `sku`.
+#[test]
+fn issue_1539_requires_after_entity_hop_with_explicit_requirement() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          user {
+            orders {
+              sku
+              name
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1539.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "users") {
+          {
+            user {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "user") {
+          Fetch(service: "orders") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on User {
+                orders {
+                  __typename
+                  sku
+                  id
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "user.orders.@") {
+          Fetch(service: "catalog") {
+            {
+              ... on Order {
+                __typename
+                sku
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                name
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// The other half of `issue_1539_requires_after_entity_hop`.
+/// Here the parent comes straight from a root field, so there is no entity hop,
+/// and `sku` was always added to the fetch that resolves the parent.
+#[test]
+fn issue_1539_requires_on_root_parent() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          order {
+            name
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1539.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "orders") {
+          {
+            order {
+              __typename
+              id
+              sku
+            }
+          }
+        },
+        Flatten(path: "order") {
+          Fetch(service: "catalog") {
+            {
+              ... on Order {
+                __typename
+                sku
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                name
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// The parent entity call and the nested one can be the same type (`Order.related: Order`).
+/// This still has to work, and we must not copy the nested call's keys up into the parent,
+/// as they belong to a different path.
+#[test]
+fn issue_1539_requires_on_self_referential_entity() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          order {
+            related {
+              name
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/issues/1539-self-referential.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "users") {
+          {
+            order {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "order") {
+          Fetch(service: "orders") {
+            {
+              ... on Order {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                related {
+                  __typename
+                  id
+                  sku
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "order.related") {
+          Fetch(service: "catalog") {
+            {
+              ... on Order {
+                __typename
+                sku
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                name
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
