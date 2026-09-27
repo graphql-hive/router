@@ -159,6 +159,32 @@ impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for ValuesOfCorrectTyp
                 }
             });
         }
+
+        if let Some(input_object_type @ TypeDefinition::InputObject(input_object_def)) =
+            visitor_context.current_input_type()
+        {
+            if input_object_type.is_one_of() {
+                match object_value {
+                    [(_, Value::Null)] => user_context.report_error(ValidationError {
+                        error_code: self.error_code(),
+                        message: format!(
+                            "Field \"{}.{}\" must be non-null.",
+                            input_object_def.name, object_value[0].0
+                        ),
+                        locations: vec![],
+                    }),
+                    [_] => {}
+                    _ => user_context.report_error(ValidationError {
+                        error_code: self.error_code(),
+                        message: format!(
+                            "OneOf Input Object \"{}\" must specify exactly one key.",
+                            input_object_def.name
+                        ),
+                        locations: vec![],
+                    }),
+                }
+            }
+        }
     }
 
     fn enter_list_value(
@@ -2046,4 +2072,56 @@ fn list_literal_for_custom_scalar() {
     );
     let messages = get_messages(&errors);
     assert_eq!(messages.len(), 0);
+}
+
+#[cfg(test)]
+static ONE_OF_SCHEMA: &str = "
+    directive @oneOf on INPUT_OBJECT
+    input OneOfInput @oneOf { a: String b: Int }
+    type Query { oneOf(input: OneOfInput): String }";
+
+#[test]
+fn oneof_literal_with_exactly_one_key() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(ValuesOfCorrectType::new()));
+    let errors = test_operation_with_schema(
+        r#"{ a: oneOf(input: { a: "abc" }) b: oneOf(input: { b: 0 }) }"#,
+        ONE_OF_SCHEMA,
+        &mut plan,
+    );
+    assert_eq!(get_messages(&errors).len(), 0);
+}
+
+#[test]
+fn oneof_literal_with_no_or_several_keys() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(ValuesOfCorrectType::new()));
+    let errors = test_operation_with_schema(
+        r#"query ($v: OneOfInput = { a: "abc", b: 1 }) { a: oneOf(input: {}) b: oneOf(input: { a: "abc", b: null }) c: oneOf(input: $v) }"#,
+        ONE_OF_SCHEMA,
+        &mut plan,
+    );
+    assert_eq!(
+        get_messages(&errors),
+        vec![
+            "OneOf Input Object \"OneOfInput\" must specify exactly one key.",
+            "OneOf Input Object \"OneOfInput\" must specify exactly one key.",
+            "OneOf Input Object \"OneOfInput\" must specify exactly one key.",
+        ]
+    );
+}
+
+#[test]
+fn oneof_literal_with_null_value() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(ValuesOfCorrectType::new()));
+    let errors =
+        test_operation_with_schema("{ oneOf(input: { a: null }) }", ONE_OF_SCHEMA, &mut plan);
+    assert_eq!(
+        get_messages(&errors),
+        vec!["Field \"OneOfInput.a\" must be non-null."]
+    );
 }

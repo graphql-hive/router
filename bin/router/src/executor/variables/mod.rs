@@ -4,7 +4,7 @@ use std::fmt;
 use crate::query_planner::state::supergraph_state::TypeNode;
 use sonic_rs::{JsonNumberTrait, Value, ValueRef};
 
-use crate::executor::introspection::schema::{InputFieldInfo, SchemaMetadata};
+use crate::executor::introspection::schema::{InputObjectInfo, SchemaMetadata};
 
 /// A request error raised while coercing an operation's variable values
 /// (spec: "Coercing Variable Values"). Messages follow graphql-js.
@@ -66,6 +66,11 @@ pub enum InvalidValueReason {
         field_name: String,
         value: String,
     },
+
+    #[error(
+        "Within OneOf Input Object type \"{type_name}\", exactly one field must be specified, and the value for that field must be non-null."
+    )]
+    InvalidOneOf { type_name: String },
 
     #[error(
         "Expected value of type \"{type_name}\" not to include unknown field \"{field_name}\", found: {value}."
@@ -226,8 +231,8 @@ fn validate_runtime_value(
                         value: inspect(value),
                     }));
                 }
-            } else if let Some(fields) = schema_metadata.input_object_fields.get(name) {
-                validate_input_object(value, name, fields, schema_metadata)?;
+            } else if let Some(input_object) = schema_metadata.input_objects.get(name) {
+                validate_input_object(value, name, input_object, schema_metadata)?;
             } else {
                 let is_valid = match name.as_str() {
                     "String" => matches!(value, ValueRef::String(_)),
@@ -276,11 +281,12 @@ fn validate_runtime_value(
 }
 
 /// Checks an input object value (spec: "Input Objects", input coercion), in graphql-js's order:
-/// the defined fields in schema order, then the keys the type doesn't define.
+/// the defined fields in schema order, then the keys the type doesn't define. For a OneOf type,
+/// the number of keys is checked first, as the spec's "OneOf Input Objects" coercion does.
 fn validate_input_object(
     value: ValueRef,
     type_name: &str,
-    fields: &[InputFieldInfo],
+    input_object: &InputObjectInfo,
     schema_metadata: &SchemaMetadata,
 ) -> Result<(), InvalidValue> {
     let ValueRef::Object(object) = value else {
@@ -289,6 +295,26 @@ fn validate_input_object(
             value: inspect(value),
         }));
     };
+    let fields = &input_object.fields;
+
+    if input_object.is_one_of {
+        let mut entries = object.iter();
+        let invalid_one_of = || InvalidValueReason::InvalidOneOf {
+            type_name: type_name.to_string(),
+        };
+        match (entries.next(), entries.next()) {
+            (Some((key, entry_value)), None) => {
+                if matches!(entry_value.as_ref(), ValueRef::Null) {
+                    let mut invalid = InvalidValue::new(invalid_one_of());
+                    invalid
+                        .reversed_path
+                        .push(PathSegment::Field(key.to_string()));
+                    return Err(invalid);
+                }
+            }
+            _ => return Err(InvalidValue::new(invalid_one_of())),
+        }
+    }
 
     for field in fields {
         match object.get(&field.name) {

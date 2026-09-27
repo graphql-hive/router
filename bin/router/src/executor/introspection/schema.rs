@@ -9,6 +9,15 @@ use graphql_tools::parser::{
     schema::{Definition, TypeDefinition},
 };
 
+/// An input object type.
+#[derive(Debug)]
+pub struct InputObjectInfo {
+    /// The fields, in schema order.
+    pub fields: Vec<InputFieldInfo>,
+    /// Whether the type has `@oneOf`: exactly one field must be given, and not as `null`.
+    pub is_one_of: bool,
+}
+
 /// A field of an input object type.
 #[derive(Debug)]
 pub struct InputFieldInfo {
@@ -82,8 +91,7 @@ pub struct SchemaMetadata {
     pub scalar_types: HashSet<String>,
     pub union_types: HashSet<String>,
     pub interface_types: HashSet<String>,
-    /// The fields of each input object type, in schema order.
-    pub input_object_fields: HashMap<String, Vec<InputFieldInfo>>,
+    pub input_objects: HashMap<String, InputObjectInfo>,
     pub query_type_name: Option<String>,
     pub mutation_type_name: Option<String>,
     pub subscription_type_name: Option<String>,
@@ -181,7 +189,7 @@ impl SchemaWithMetadata for ConsumerSchema {
         let mut object_types: HashSet<String> = HashSet::default();
         let mut union_types: HashSet<String> = HashSet::default();
         let mut interface_types: HashSet<String> = HashSet::default();
-        let mut input_object_fields: HashMap<String, Vec<InputFieldInfo>> = HashMap::default();
+        let mut input_objects: HashMap<String, InputObjectInfo> = HashMap::default();
 
         for definition in &self.document.definitions {
             match definition {
@@ -260,7 +268,14 @@ impl SchemaWithMetadata for ConsumerSchema {
                             has_default: field.default_value.is_some(),
                         })
                         .collect();
-                    input_object_fields.insert(input_object_type.name.to_string(), fields);
+                    let is_one_of = input_object_type
+                        .directives
+                        .iter()
+                        .any(|directive| directive.name == "oneOf");
+                    input_objects.insert(
+                        input_object_type.name.to_string(),
+                        InputObjectInfo { fields, is_one_of },
+                    );
                 }
                 _ => {}
             }
@@ -296,7 +311,7 @@ impl SchemaWithMetadata for ConsumerSchema {
             scalar_types,
             union_types,
             interface_types,
-            input_object_fields,
+            input_objects,
             query_type_name,
             mutation_type_name,
             subscription_type_name,

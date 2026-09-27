@@ -144,6 +144,15 @@ impl<'a> OperationVisitorContext<'a> {
         self.type_literal_stack.last().unwrap_or(&None).as_ref()
     }
 
+    /// The input type that encloses the current one: the input object type while visiting one
+    /// of its fields' values.
+    pub fn parent_input_type(&self) -> Option<&'a schema::TypeDefinition> {
+        self.input_type_stack
+            .len()
+            .checked_sub(2)
+            .and_then(|index| self.input_type_stack[index])
+    }
+
     pub fn current_input_type_literal(&self) -> Option<&'a Type> {
         *self.input_type_literal_stack.last().unwrap_or(&None)
     }

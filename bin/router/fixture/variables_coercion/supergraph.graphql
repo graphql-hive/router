@@ -157,6 +157,35 @@ input Filter @join__type(graph: TEST) {
   name: String
 }
 
+# graphql-js `oneof-test.ts`, also the spec's `ExampleOneOfInputObject` (§3.10.1).
+input OneOfTestInput @oneOf @join__type(graph: TEST) {
+  a: String
+  b: Int
+}
+
+type OneOfTestObject @join__type(graph: TEST) {
+  a: String
+  b: Int
+}
+
+# graphql-js's type-level OneOf `TestInputObject` from `validateInputValue-test.ts`.
+input IntOneOf @oneOf @join__type(graph: TEST) {
+  foo: Int
+  bar: Int
+}
+
+input OneOfHolder @join__type(graph: TEST) {
+  one: OneOfTestInput
+  many: [OneOfTestInput!]
+  name: String
+}
+
+input RecursiveOneOf @oneOf @join__type(graph: TEST) {
+  leaf: Int
+  and: [RecursiveOneOf!]
+  not: RecursiveOneOf
+}
+
 # From graphql-js `src/utilities/__tests__/validateInputValue-test.ts`.
 enum FooBarEnum @join__type(graph: TEST) {
   FOO @join__enumValue(graph: TEST)
@@ -206,6 +235,11 @@ type Query @join__type(graph: TEST) {
   wrappers(input: Wrappers): String
   nnListField(input: NNListField): String
   filter(input: Filter): String
+  test(input: OneOfTestInput!): OneOfTestObject
+  intOneOf(input: IntOneOf): String
+  oneOfList(input: [OneOfTestInput!]): String
+  oneOfHolder(input: OneOfHolder): String
+  recursiveOneOf(input: RecursiveOneOf): String
   fooBar(input: FooBarEnum): String
   colorEnum(fromEnum: Color): String
   color(input: Color): String

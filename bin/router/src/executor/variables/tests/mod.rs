@@ -11,6 +11,7 @@
 mod enums;
 mod harness;
 mod input_objects;
+mod oneof;
 mod variable_level;
 
 #[test]
