@@ -255,12 +255,15 @@ impl TryInto<GraphQLParams> for GraphQLGetInput {
 
     fn try_into(self) -> Result<GraphQLParams, Self::Error> {
         let variables = match self.variables.as_deref() {
-            Some(v_str) if !v_str.is_empty() => match sonic_rs::from_str(v_str) {
-                Ok(vars) => vars,
-                Err(e) => {
-                    return Err(ClientPipelineError::FailedToParseVariables(e).into());
+            // `variables=null` means no variables, as it does in a POST body.
+            Some(v_str) if !v_str.is_empty() => {
+                match sonic_rs::from_str::<Option<HashMap<String, sonic_rs::Value>>>(v_str) {
+                    Ok(vars) => vars.unwrap_or_default(),
+                    Err(e) => {
+                        return Err(ClientPipelineError::FailedToParseVariables(e).into());
+                    }
                 }
-            },
+            }
             _ => HashMap::new(),
         };
 
@@ -657,7 +660,7 @@ mod tests {
     use ntex::web::test::TestRequest;
     use ntex::web::HttpRequest;
 
-    use super::{OperationPreparation, PreparedOperation};
+    use super::{GraphQLGetInput, OperationPreparation, PreparedOperation};
     use crate::pipeline::error::{ClientPipelineError, PipelineError};
     use crate::pipeline::persisted_documents::extract::DocumentIdResolver;
     use crate::pipeline::persisted_documents::resolve::{
@@ -745,6 +748,22 @@ mod tests {
             op.graphql_params.query.as_deref(),
             Some("query { me { id } }")
         );
+    }
+
+    fn get_variables(variables: &str) -> Result<HashMap<String, sonic_rs::Value>, PipelineError> {
+        let input = GraphQLGetInput {
+            variables: Some(variables.to_string()),
+            ..GraphQLGetInput::empty()
+        };
+        TryInto::<GraphQLParams>::try_into(input).map(|params| params.variables)
+    }
+
+    #[test]
+    fn get_variables_null_is_an_empty_map() {
+        assert!(get_variables("null").unwrap().is_empty());
+        assert!(get_variables("{}").unwrap().is_empty());
+        assert_eq!(get_variables(r#"{"a":1}"#).unwrap().len(), 1);
+        assert!(get_variables("[]").is_err());
     }
 
     #[test]

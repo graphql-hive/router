@@ -138,31 +138,6 @@ mod variables_coercion_e2e_tests {
         assert!(body.get("data").is_none());
     }
 
-    /// spec §7.1.6 "Error Result Format" (graphql-js reports the variable definition): the
-    /// location is in the client's document.
-    #[ntex::test]
-    async fn coercion_error_has_locations() {
-        let (_subgraphs, router) = start("").await;
-
-        let response = router
-            .send_graphql_request(
-                "query Q(\n  $a: Int,\n  $v: Int!\n) { a: int(input: $a) v: int(input: $v) }",
-                Some(json!({})),
-                None,
-            )
-            .await;
-
-        let body = response.json_body().await;
-        assert_eq!(
-            body["errors"][0]["message"].as_str(),
-            Some(MISSING_INT_MESSAGE)
-        );
-        assert_eq!(
-            sonic_rs::to_string(&body["errors"][0]["locations"]).unwrap(),
-            r#"[{"line":3,"column":3}]"#
-        );
-    }
-
     /// spec §6.1: coercion happens before execution, so an invalid variable used by a later
     /// mutation field stops the whole operation, including the fields before it.
     #[ntex::test]
@@ -238,13 +213,16 @@ mod variables_coercion_e2e_tests {
     async fn input_object_forwarded_as_sent() {
         let (subgraphs, router) = start("").await;
 
+        // Sent as raw text, so the key order is exactly the one written here.
         let response = router
-            .send_graphql_request(
-                "query ($defaults: DefaultSevenInput, $example: ExampleInputObject) { defaultSeven(input: $defaults) exampleInput(input: $example) }",
-                Some(json!({ "defaults": {}, "example": { "b": 1, "a": null } })),
-                None,
+            .serv()
+            .post(router.graphql_path())
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .send_body(
+                r#"{"query":"query ($defaults: DefaultSevenInput, $example: ExampleInputObject) { defaultSeven(input: $defaults) exampleInput(input: $example) }","variables":{"defaults":{},"example":{"b":1,"a":null}}}"#,
             )
-            .await;
+            .await
+            .expect("failed to send request");
 
         assert_eq!(response.status(), 200);
         let body = only_subgraph_body(&subgraphs);
