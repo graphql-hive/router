@@ -1,6 +1,6 @@
 use crate::parser::schema::TypeDefinition;
 
-use crate::static_graphql::query::Value;
+use crate::static_graphql::query::{Type, Value};
 use crate::validation::utils::ValidationError;
 use crate::{
     ast::{OperationVisitor, OperationVisitorContext},
@@ -158,6 +158,25 @@ impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for ValuesOfCorrectTyp
                     })
                 }
             });
+        }
+    }
+
+    fn enter_list_value(
+        &mut self,
+        visitor_context: &mut OperationVisitorContext<'doc>,
+        user_context: &mut ValidationErrorContext,
+        list: &Vec<Value>,
+    ) {
+        if let Some(input_type) = visitor_context.current_input_type_literal() {
+            let nullable_type = match input_type {
+                Type::NonNullType(inner_type) => inner_type.as_ref(),
+                t => t,
+            };
+            // A list literal outside a list position is only valid for a custom scalar,
+            // which `validate_value` allows.
+            if !matches!(nullable_type, Type::ListType(_)) {
+                self.validate_value(visitor_context, user_context, &Value::List(list.clone()));
+            }
         }
     }
 
@@ -1958,6 +1977,68 @@ fn reports_original_error_for_custom_scalar_which_throws() {
     let errors = test_operation_with_schema(
         "{
           someScalarArg(arg: 123)
+        }",
+        "scalar SomeScalar
+        type Query { someScalarArg(arg: SomeScalar): String }",
+        &mut plan,
+    );
+    let messages = get_messages(&errors);
+    assert_eq!(messages.len(), 0);
+}
+
+#[test]
+fn invalid_item_in_non_null_list() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(ValuesOfCorrectType::new()));
+    let errors = test_operation_with_schema(
+        "
+        query InvalidItem($a: [String]! = [\"one\", 2]) {
+          dog { name }
+        }",
+        TEST_SCHEMA,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(
+        messages,
+        vec!["Expected value of type \"String\", found 2."]
+    );
+}
+
+#[test]
+fn list_literal_in_non_list_position() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(ValuesOfCorrectType::new()));
+    let errors = test_operation_with_schema(
+        "
+        query ListForScalar($a: String = [\"one\"], $b: Int! = [1]) {
+          dog { name }
+        }",
+        TEST_SCHEMA,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(
+        messages,
+        vec![
+            "Expected value of type \"String\", found [\"one\"].",
+            "Expected value of type \"Int\", found [1].",
+        ]
+    );
+}
+
+#[test]
+fn list_literal_for_custom_scalar() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(ValuesOfCorrectType::new()));
+    let errors = test_operation_with_schema(
+        "{
+          someScalarArg(arg: [1, \"two\"])
         }",
         "scalar SomeScalar
         type Query { someScalarArg(arg: SomeScalar): String }",

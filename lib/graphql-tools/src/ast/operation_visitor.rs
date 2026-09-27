@@ -276,9 +276,15 @@ fn visit_input_value<'a, Visitor, UserContext>(
         Value::List(v) => {
             visitor.enter_list_value(context, user_context, v);
 
-            let input_type = context.current_input_type_literal().and_then(|t| match t {
-                Type::ListType(inner_type) => Some(inner_type.as_ref()),
-                _ => None,
+            let input_type = context.current_input_type_literal().and_then(|t| {
+                let nullable_type = match t {
+                    Type::NonNullType(inner_type) => inner_type.as_ref(),
+                    t => t,
+                };
+                match nullable_type {
+                    Type::ListType(inner_type) => Some(inner_type.as_ref()),
+                    _ => None,
+                }
             });
 
             context.with_input_type(input_type, |context| {

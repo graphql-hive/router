@@ -8,6 +8,7 @@
 //! (https://github.com/graphql/graphql-js), Copyright (c) GraphQL Contributors, MIT License.
 //! Each ported test names its upstream source in its doc comment.
 
+mod enums;
 mod harness;
 mod variable_level;
 

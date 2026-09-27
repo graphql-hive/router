@@ -7,6 +7,8 @@ schema
   @link(url: "https://specs.apollo.dev/link/v1.0")
   @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
   query: Query
+  mutation: Mutation
+  subscription: Subscription
 }
 
 directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
@@ -107,6 +109,20 @@ input DefaultSevenInput @join__type(graph: TEST) {
   foo: TestScalar = 7
 }
 
+# From graphql-js `src/utilities/__tests__/validateInputValue-test.ts`.
+enum FooBarEnum @join__type(graph: TEST) {
+  FOO @join__enumValue(graph: TEST)
+  BAR @join__enumValue(graph: TEST)
+}
+
+# From graphql-js `src/type/__tests__/enumType-test.ts`.
+enum Color @join__type(graph: TEST) {
+  RED @join__enumValue(graph: TEST)
+  GREEN @join__enumValue(graph: TEST)
+  BLUE @join__enumValue(graph: TEST)
+  OLD_BLUE @join__enumValue(graph: TEST) @deprecated(reason: "gone")
+}
+
 type Query @join__type(graph: TEST) {
   fieldWithEnumInput(input: TestEnum): String
   fieldWithNonNullableEnumInput(input: TestEnum!): String
@@ -129,4 +145,18 @@ type Query @join__type(graph: TEST) {
   # router additions
   int(input: Int): String
   defaultSeven(input: DefaultSevenInput): String
+  fooBar(input: FooBarEnum): String
+  colorEnum(fromEnum: Color): String
+  color(input: Color): String
+  colors(input: [Color]): String
+  colorsNN(input: [Color!]): String
+  nestedColors(input: [[Color]]): String
+}
+
+type Mutation @join__type(graph: TEST) {
+  favoriteEnum(color: Color): String
+}
+
+type Subscription @join__type(graph: TEST) {
+  subscribeToEnum(color: Color): String
 }
