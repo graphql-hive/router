@@ -1,0 +1,132 @@
+# Fixture for the runtime variable coercion tests (bin/router/src/executor/variables/tests).
+#
+# `Query` mirrors `TestType` from graphql-js `src/execution/__tests__/variables-test.ts`
+# (v17, commit ee5ce41), so ported tests can keep the upstream operations. Fields below the
+# "router additions" marker are not part of the upstream schema.
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
+  query: Query
+}
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__field(
+  graph: join__Graph
+  requires: join__FieldSet
+  provides: join__FieldSet
+  type: String
+  external: Boolean
+  override: String
+  usedOverridden: Boolean
+) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__implements(
+  graph: join__Graph!
+  interface: String!
+) repeatable on OBJECT | INTERFACE
+
+directive @join__type(
+  graph: join__Graph!
+  key: join__FieldSet
+  extension: Boolean! = false
+  resolvable: Boolean! = true
+  isInterfaceObject: Boolean! = false
+) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(
+  graph: join__Graph!
+  member: String!
+) repeatable on UNION
+
+directive @link(
+  url: String
+  as: String
+  for: link__Purpose
+  import: [link__Import]
+) repeatable on SCHEMA
+
+directive @oneOf on INPUT_OBJECT
+
+scalar join__FieldSet
+
+scalar link__Import
+
+enum link__Purpose {
+  SECURITY
+  EXECUTION
+}
+
+enum join__Graph {
+  TEST @join__graph(name: "test", url: "http://0.0.0.0:4200/test")
+}
+
+scalar ComplexScalar @join__type(graph: TEST)
+
+scalar FaultyScalar @join__type(graph: TEST)
+
+scalar JSONScalar @join__type(graph: TEST)
+
+scalar TestScalar @join__type(graph: TEST)
+
+type NestedType @join__type(graph: TEST) {
+  echo(input: String): String
+}
+
+input TestInputObject @join__type(graph: TEST) {
+  a: String
+  b: [String]
+  c: String!
+  d: ComplexScalar
+  e: FaultyScalar
+}
+
+input TestOneOfInputObject @oneOf @join__type(graph: TEST) {
+  a: String
+  b: String
+}
+
+input TestNestedInputObject @join__type(graph: TEST) {
+  na: TestInputObject!
+  nb: String!
+}
+
+enum TestEnum @join__type(graph: TEST) {
+  NULL @join__enumValue(graph: TEST)
+  UNDEFINED @join__enumValue(graph: TEST)
+  NAN @join__enumValue(graph: TEST)
+  FALSE @join__enumValue(graph: TEST)
+  CUSTOM @join__enumValue(graph: TEST)
+  DEFAULT_VALUE @join__enumValue(graph: TEST)
+}
+
+# From graphql-js `src/utilities/__tests__/coerceInputValue-test.ts`.
+input DefaultSevenInput @join__type(graph: TEST) {
+  foo: TestScalar = 7
+}
+
+type Query @join__type(graph: TEST) {
+  fieldWithEnumInput(input: TestEnum): String
+  fieldWithNonNullableEnumInput(input: TestEnum!): String
+  fieldWithObjectInput(input: TestInputObject): String
+  fieldWithOneOfObjectInput(input: TestOneOfInputObject): String
+  fieldWithNullableStringInput(input: String): String
+  fieldWithNonNullableStringInput(input: String!): String
+  fieldWithDefaultArgumentValue(input: String = "Hello World"): String
+  fieldWithNonNullableStringInputAndDefaultArgumentValue(
+    input: String! = "Hello World"
+  ): String
+  fieldWithNestedInputObject(input: TestNestedInputObject): String
+  fieldWithJSONScalarInput(input: JSONScalar): String
+  fieldWithPrototypeNamedArgument(toString: String): String
+  list(input: [String]): String
+  nested: NestedType
+  nnList(input: [String]!): String
+  listNN(input: [String!]): String
+  nnListNN(input: [String!]!): String
+  # router additions
+  int(input: Int): String
+  defaultSeven(input: DefaultSevenInput): String
+}

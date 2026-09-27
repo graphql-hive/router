@@ -1,14 +1,35 @@
 use std::collections::HashMap;
+use std::fmt;
 
 use crate::query_planner::state::supergraph_state::TypeNode;
 use sonic_rs::{JsonNumberTrait, Value, ValueRef};
 
 use crate::executor::introspection::schema::SchemaMetadata;
 
+/// A request error raised while coercing an operation's variable values
+/// (spec: "Coercing Variable Values"). Messages follow graphql-js.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum VariableCoercionError {
-    #[error("Variable \"${name}\" of required type \"{type_name}\" was not provided.")]
-    MissingNonNullableVariable { name: String, type_name: String },
+    #[error("Variable \"${name}\" has invalid value{path}: {reason}")]
+    InvalidValue {
+        name: String,
+        path: ValuePath,
+        reason: InvalidValueReason,
+    },
+
+    #[error("Variable \"${name}\" has invalid default value{path}: {reason}")]
+    InvalidDefaultValue {
+        name: String,
+        path: ValuePath,
+        reason: InvalidValueReason,
+    },
+}
+
+/// Why a value cannot be coerced to its expected type.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum InvalidValueReason {
+    #[error("Expected a value of non-null type \"{type_name}\" to be provided.")]
+    MissingNonNullValue { type_name: String },
 
     #[error("Expected value of non-null type \"{type_name}\" not to be null.")]
     UnexpectedNull { type_name: String },
@@ -19,29 +40,60 @@ pub enum VariableCoercionError {
     #[error("Enum \"{type_name}\" cannot represent non-string value: {value}.")]
     ExpectedEnumString { type_name: String, value: String },
 
-    #[error("Expected value of type \"{type_name}\" to include required field \"{field_name}\".")]
-    MissingField {
-        field_name: String,
-        type_name: String,
-    },
-
-    #[error("Expected value of type \"{type_name}\" to be an object, found: {value}.")]
-    ExpectedObject { type_name: String, value: String },
-
-    #[error("String cannot represent a non string value: {value}.")]
+    #[error("String cannot represent a non string value: {value}")]
     ExpectedString { value: String },
 
-    #[error("ID cannot represent value: {value}.")]
+    #[error("ID cannot represent value: {value}")]
     ExpectedId { value: String },
 
-    #[error("Int cannot represent non-integer value: {value}.")]
+    #[error("Int cannot represent non-integer value: {value}")]
     ExpectedInteger { value: String },
 
-    #[error("Float cannot represent non numeric value: {value}.")]
+    #[error("Float cannot represent non numeric value: {value}")]
     ExpectedFloat { value: String },
 
-    #[error("Boolean cannot represent a non boolean value: {value}.")]
+    #[error("Boolean cannot represent a non boolean value: {value}")]
     ExpectedBoolean { value: String },
+}
+
+/// Where the invalid value sits inside a variable's value, as list indices from the outside in.
+/// Displayed like graphql-js: empty for the variable itself, otherwise ` at [0][1]`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ValuePath(Vec<usize>);
+
+impl fmt::Display for ValuePath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.is_empty() {
+            return Ok(());
+        }
+        f.write_str(" at ")?;
+        for index in &self.0 {
+            write!(f, "[{index}]")?;
+        }
+        Ok(())
+    }
+}
+
+/// An invalid value found by `validate_runtime_value`. The path is collected while the error
+/// travels up, so it holds the innermost index first.
+#[derive(Debug, PartialEq)]
+struct InvalidValue {
+    reversed_path: Vec<usize>,
+    reason: InvalidValueReason,
+}
+
+impl InvalidValue {
+    fn new(reason: InvalidValueReason) -> Self {
+        InvalidValue {
+            reversed_path: Vec::new(),
+            reason,
+        }
+    }
+
+    fn path(mut self) -> (ValuePath, InvalidValueReason) {
+        self.reversed_path.reverse();
+        (ValuePath(self.reversed_path), self.reason)
+    }
 }
 
 #[inline]
@@ -50,45 +102,60 @@ pub fn collect_variables(
     variables_map: &mut HashMap<String, Value>,
     schema_metadata: &SchemaMetadata,
 ) -> Result<Option<HashMap<String, Value>>, VariableCoercionError> {
-    if operation.variable_definitions.is_none() {
+    let Some(variable_definitions) = operation.variable_definitions.as_ref() else {
         return Ok(None);
-    }
-    let variable_definitions = operation.variable_definitions.as_ref().unwrap();
+    };
 
-    let collected_variables: Result<Vec<Option<(String, Value)>>, VariableCoercionError> =
-        variable_definitions
-            .iter()
-            .map(|variable_definition| {
-                let variable_name = variable_definition.name.as_str();
-                if let Some(variable_value) = variables_map.remove(variable_name) {
-                    validate_runtime_value(
-                        variable_value.as_ref(),
-                        &variable_definition.variable_type,
-                        schema_metadata,
-                    )?;
-                    return Ok(Some((variable_name.to_string(), variable_value)));
-                }
-                if let Some(default_value) = &variable_definition.default_value {
-                    let default_value_coerced: Value = default_value.into();
-                    validate_runtime_value(
-                        default_value_coerced.as_ref(),
-                        &variable_definition.variable_type,
-                        schema_metadata,
-                    )?;
-                    return Ok(Some((variable_name.to_string(), default_value_coerced)));
-                }
-                if variable_definition.variable_type.is_non_null() {
-                    return Err(VariableCoercionError::MissingNonNullableVariable {
+    let mut variable_values: HashMap<String, Value> =
+        HashMap::with_capacity(variable_definitions.len());
+
+    for variable_definition in variable_definitions {
+        let variable_name = variable_definition.name.as_str();
+        let variable_type = &variable_definition.variable_type;
+
+        if let Some(variable_value) = variables_map.remove(variable_name) {
+            validate_runtime_value(variable_value.as_ref(), variable_type, schema_metadata)
+                .map_err(|invalid| {
+                    let (path, reason) = invalid.path();
+                    VariableCoercionError::InvalidValue {
                         name: variable_name.to_string(),
-                        type_name: variable_definition.variable_type.to_string(),
-                    });
-                }
-                Ok(None)
-            })
-            .collect();
+                        path,
+                        reason,
+                    }
+                })?;
+            variable_values.insert(variable_name.to_string(), variable_value);
+            continue;
+        }
 
-    let variable_values: HashMap<String, Value> =
-        collected_variables?.into_iter().flatten().collect();
+        if let Some(default_value) = &variable_definition.default_value {
+            let default_value_coerced: Value = default_value.into();
+            validate_runtime_value(
+                default_value_coerced.as_ref(),
+                variable_type,
+                schema_metadata,
+            )
+            .map_err(|invalid| {
+                let (path, reason) = invalid.path();
+                VariableCoercionError::InvalidDefaultValue {
+                    name: variable_name.to_string(),
+                    path,
+                    reason,
+                }
+            })?;
+            variable_values.insert(variable_name.to_string(), default_value_coerced);
+            continue;
+        }
+
+        if variable_type.is_non_null() {
+            return Err(VariableCoercionError::InvalidValue {
+                name: variable_name.to_string(),
+                path: ValuePath::default(),
+                reason: InvalidValueReason::MissingNonNullValue {
+                    type_name: variable_type.to_string(),
+                },
+            });
+        }
+    }
 
     if variable_values.is_empty() {
         Ok(None)
@@ -102,12 +169,12 @@ fn validate_runtime_value(
     value: ValueRef,
     type_node: &TypeNode,
     schema_metadata: &SchemaMetadata,
-) -> Result<(), VariableCoercionError> {
+) -> Result<(), InvalidValue> {
     if let ValueRef::Null = value {
         return if type_node.is_non_null() {
-            Err(VariableCoercionError::UnexpectedNull {
+            Err(InvalidValue::new(InvalidValueReason::UnexpectedNull {
                 type_name: type_node.to_string(),
-            })
+            }))
         } else {
             Ok(())
         };
@@ -115,95 +182,42 @@ fn validate_runtime_value(
     match type_node {
         TypeNode::Named(name) => {
             if let Some(enum_values) = schema_metadata.enum_values.get(name) {
-                if let ValueRef::String(ref s) = value {
-                    if !enum_values.contains(&s.to_string()) {
-                        return Err(VariableCoercionError::InvalidEnumValue {
+                if let ValueRef::String(s) = value {
+                    if !enum_values.contains(s) {
+                        return Err(InvalidValue::new(InvalidValueReason::InvalidEnumValue {
                             value: s.to_string(),
                             type_name: name.clone(),
-                        });
+                        }));
                     }
                 } else {
-                    return Err(VariableCoercionError::ExpectedEnumString {
+                    return Err(InvalidValue::new(InvalidValueReason::ExpectedEnumString {
                         type_name: name.clone(),
-                        value: format!("{:?}", value),
-                    });
-                }
-            } else if let Some(fields) = schema_metadata.type_fields.get(name) {
-                if let ValueRef::Object(obj) = value {
-                    for (field_name, field_info) in fields {
-                        if let Some(field_value) = obj.get(field_name) {
-                            validate_runtime_value(
-                                field_value.as_ref(),
-                                &TypeNode::Named(field_info.output_type_name.to_string()),
-                                schema_metadata,
-                            )?;
-                        } else {
-                            return Err(VariableCoercionError::MissingField {
-                                field_name: field_name.clone(),
-                                type_name: name.clone(),
-                            });
-                        }
-                    }
-                } else {
-                    return Err(VariableCoercionError::ExpectedObject {
-                        type_name: name.clone(),
-                        value: format!("{:?}", value),
-                    });
+                        value: inspect(value),
+                    }));
                 }
             } else {
-                return match name.as_str() {
-                    "String" => {
-                        if let ValueRef::String(_) = value {
-                            Ok(())
-                        } else {
-                            Err(VariableCoercionError::ExpectedString {
-                                value: format!("{:?}", value),
-                            })
-                        }
-                    }
-                    "ID" => {
-                        if let ValueRef::String(_) = value {
-                            Ok(())
-                        } else {
-                            Err(VariableCoercionError::ExpectedId {
-                                value: format!("{:?}", value),
-                            })
-                        }
-                    }
-                    "Int" => {
-                        let is_valid = matches!(value, ValueRef::Number(ref num) if num.is_i64());
-                        if is_valid {
-                            Ok(())
-                        } else {
-                            Err(VariableCoercionError::ExpectedInteger {
-                                value: format!("{:?}", value),
-                            })
-                        }
-                    }
-                    "Float" => {
-                        let is_valid = matches!(
-                            value,
-                            ValueRef::Number(ref num) if num.is_f64() || num.is_i64()
-                        );
-                        if is_valid {
-                            Ok(())
-                        } else {
-                            Err(VariableCoercionError::ExpectedFloat {
-                                value: format!("{:?}", value),
-                            })
-                        }
-                    }
-                    "Boolean" => {
-                        if let ValueRef::Bool(_) = value {
-                            Ok(())
-                        } else {
-                            Err(VariableCoercionError::ExpectedBoolean {
-                                value: format!("{:?}", value),
-                            })
-                        }
-                    }
-                    _ => Ok(()),
+                let is_valid = match name.as_str() {
+                    "String" => matches!(value, ValueRef::String(_)),
+                    "ID" => matches!(value, ValueRef::String(_)),
+                    "Int" => matches!(value, ValueRef::Number(ref num) if num.is_i64()),
+                    "Float" => matches!(
+                        value,
+                        ValueRef::Number(ref num) if num.is_f64() || num.is_i64()
+                    ),
+                    "Boolean" => matches!(value, ValueRef::Bool(_)),
+                    // Custom scalars and input objects
+                    _ => true,
                 };
+                if !is_valid {
+                    let value = inspect(value);
+                    return Err(InvalidValue::new(match name.as_str() {
+                        "String" => InvalidValueReason::ExpectedString { value },
+                        "ID" => InvalidValueReason::ExpectedId { value },
+                        "Int" => InvalidValueReason::ExpectedInteger { value },
+                        "Float" => InvalidValueReason::ExpectedFloat { value },
+                        _ => InvalidValueReason::ExpectedBoolean { value },
+                    }));
+                }
             }
         }
         TypeNode::NonNull(inner_type) => {
@@ -212,8 +226,13 @@ fn validate_runtime_value(
         }
         TypeNode::List(inner_type) => {
             if let ValueRef::Array(arr) = value {
-                for item in arr.iter() {
-                    validate_runtime_value(item.as_ref(), inner_type, schema_metadata)?;
+                for (index, item) in arr.iter().enumerate() {
+                    validate_runtime_value(item.as_ref(), inner_type, schema_metadata).map_err(
+                        |mut invalid| {
+                            invalid.reversed_path.push(index);
+                            invalid
+                        },
+                    )?;
                 }
             } else {
                 validate_runtime_value(value, inner_type, schema_metadata)?;
@@ -223,50 +242,72 @@ fn validate_runtime_value(
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn allow_null_values_for_nullable_scalar_types() {
-        let schema_metadata = crate::executor::introspection::schema::SchemaMetadata::default();
+/// How graphql-js prints a value in error messages (its `inspect` utility).
+fn inspect(value: ValueRef) -> String {
+    let mut output = String::new();
+    write_inspected(&mut output, value, 0);
+    output
+}
 
-        let scalars = vec!["String", "Int", "Float", "Boolean", "ID"];
-        for scalar in scalars {
-            let type_node = crate::executor::variables::TypeNode::Named(scalar.to_string());
+/// graphql-js prints at most this many list items, and replaces lists and objects nested
+/// deeper than `MAX_INSPECT_DEPTH` with `[Array]` / `[Object]`.
+const MAX_INSPECT_LIST_ITEMS: usize = 10;
+const MAX_INSPECT_DEPTH: usize = 2;
 
-            let value = sonic_rs::ValueRef::Null;
-
-            let result = super::validate_runtime_value(value, &type_node, &schema_metadata);
-            assert_eq!(result, Ok(()));
+fn write_inspected(output: &mut String, value: ValueRef, depth: usize) {
+    match value {
+        ValueRef::Null => output.push_str("null"),
+        ValueRef::Bool(b) => output.push_str(if b { "true" } else { "false" }),
+        ValueRef::Number(num) => match (num.as_i64(), num.as_u64(), num.as_f64()) {
+            (Some(n), _, _) => output.push_str(&n.to_string()),
+            (_, Some(n), _) => output.push_str(&n.to_string()),
+            (_, _, Some(n)) => output.push_str(&n.to_string()),
+            _ => output.push_str(&num.to_string()),
+        },
+        ValueRef::String(s) => {
+            output.push_str(&sonic_rs::to_string(s).unwrap_or_else(|_| format!("{s:?}")))
+        }
+        ValueRef::Array(arr) => {
+            if arr.is_empty() {
+                output.push_str("[]");
+            } else if depth >= MAX_INSPECT_DEPTH {
+                output.push_str("[Array]");
+            } else {
+                output.push('[');
+                for (index, item) in arr.iter().take(MAX_INSPECT_LIST_ITEMS).enumerate() {
+                    if index > 0 {
+                        output.push_str(", ");
+                    }
+                    write_inspected(output, item.as_ref(), depth + 1);
+                }
+                match arr.len().saturating_sub(MAX_INSPECT_LIST_ITEMS) {
+                    0 => {}
+                    1 => output.push_str(", ... 1 more item"),
+                    remaining => output.push_str(&format!(", ... {remaining} more items")),
+                }
+                output.push(']');
+            }
+        }
+        ValueRef::Object(obj) => {
+            if obj.is_empty() {
+                output.push_str("{}");
+            } else if depth >= MAX_INSPECT_DEPTH {
+                output.push_str("[Object]");
+            } else {
+                output.push_str("{ ");
+                for (index, (key, item)) in obj.iter().enumerate() {
+                    if index > 0 {
+                        output.push_str(", ");
+                    }
+                    output.push_str(key);
+                    output.push_str(": ");
+                    write_inspected(output, item.as_ref(), depth + 1);
+                }
+                output.push_str(" }");
+            }
         }
     }
-    #[test]
-    fn allow_null_values_for_nullable_list_types() {
-        let schema_metadata = crate::executor::introspection::schema::SchemaMetadata::default();
-        let type_node = crate::executor::variables::TypeNode::List(Box::new(
-            crate::executor::variables::TypeNode::Named("String".to_string()),
-        ));
-        let value = sonic_rs::ValueRef::Null;
-        let result = super::validate_runtime_value(value, &type_node, &schema_metadata);
-        assert_eq!(result, Ok(()));
-    }
-    #[test]
-    fn allow_matching_non_list_values_for_list_types() {
-        let schema_metadata = crate::executor::introspection::schema::SchemaMetadata::default();
-        let type_node = crate::executor::variables::TypeNode::List(Box::new(
-            crate::executor::variables::TypeNode::Named("String".to_string()),
-        ));
-        let value = sonic_rs::ValueRef::String("not a list");
-        let result = super::validate_runtime_value(value, &type_node, &schema_metadata);
-        assert_eq!(result, Ok(()));
-    }
-    #[test]
-    fn disallow_non_matching_non_list_values_for_list_types() {
-        let schema_metadata = crate::executor::introspection::schema::SchemaMetadata::default();
-        let type_node = crate::executor::variables::TypeNode::List(Box::new(
-            crate::executor::variables::TypeNode::Named("String".to_string()),
-        ));
-        let value = sonic_rs::ValueRef::Number(sonic_rs::Number::from(123));
-        let result = super::validate_runtime_value(value, &type_node, &schema_metadata);
-        assert!(result.is_err());
-    }
 }
+
+#[cfg(test)]
+mod tests;
