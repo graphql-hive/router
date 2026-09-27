@@ -80,6 +80,34 @@ pub(super) fn assert_coerced(operation: &str, variables: &str, expected: &str) {
     );
 }
 
+/// Asserts that coercion accepts `variables` and that the coerced variables serialize to
+/// exactly `expected`, the JSON text sent to subgraphs (keys sorted). Unlike `assert_coerced`,
+/// this catches numbers whose digits change on the way through.
+#[track_caller]
+pub(super) fn assert_forwarded(operation: &str, variables: &str, expected: &str) {
+    match coerce(operation, variables) {
+        Outcome::Coerced(coerced) => assert_eq!(
+            sonic_rs::to_string(&coerced).unwrap(),
+            expected,
+            "\noperation: {operation}\nvariables: {variables}"
+        ),
+        rejected => panic!(
+            "expected the variables to be accepted, got {rejected:?}\noperation: {operation}\nvariables: {variables}"
+        ),
+    }
+}
+
+/// Asserts that the router's JSON parser rejects `variables`, so the request fails before
+/// coercion runs.
+#[track_caller]
+pub(super) fn assert_invalid_json(variables: &str) {
+    let parsed = sonic_rs::from_str::<HashMap<String, Value>>(variables);
+    assert!(
+        parsed.is_err(),
+        "expected invalid JSON, parsed {parsed:?}\nvariables: {variables}"
+    );
+}
+
 /// Asserts that coercion rejects `variables` with exactly one request error, `expected`.
 #[track_caller]
 pub(super) fn assert_rejected(operation: &str, variables: &str, expected: &str) {

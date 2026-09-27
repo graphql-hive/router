@@ -49,6 +49,18 @@ impl ValuesOfCorrectType {
 
                 if let TypeDefinition::Scalar(scalar_type_def) = &type_def {
                     match (scalar_type_def.name.as_ref(), raw_value) {
+                        ("Int", Value::Int(value))
+                            if value.as_i64().is_some_and(|n| i32::try_from(n).is_err()) =>
+                        {
+                            user_context.report_error(ValidationError {
+                                error_code: self.error_code(),
+                                message: format!(
+                                    "Int cannot represent non 32-bit signed integer value: {}",
+                                    raw_value
+                                ),
+                                locations: vec![],
+                            })
+                        }
                         ("Int", Value::Int(_))
                         | ("ID", Value::Int(_))
                         | ("ID", Value::String(_))
@@ -2123,5 +2135,29 @@ fn oneof_literal_with_null_value() {
     assert_eq!(
         get_messages(&errors),
         vec!["Field \"OneOfInput.a\" must be non-null."]
+    );
+}
+
+#[test]
+fn int_out_of_32_bit_range() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(ValuesOfCorrectType::new()));
+    let errors = test_operation_with_schema(
+        "
+        query OutOfRange($a: Int = 2147483648, $b: Int = -2147483649, $c: Int = 2147483647, $d: Float = 2147483648) {
+          dog { name }
+        }",
+        TEST_SCHEMA,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(
+        messages,
+        vec![
+            "Int cannot represent non 32-bit signed integer value: 2147483648",
+            "Int cannot represent non 32-bit signed integer value: -2147483649",
+        ]
     );
 }

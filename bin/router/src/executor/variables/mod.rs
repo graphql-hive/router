@@ -49,6 +49,9 @@ pub enum InvalidValueReason {
     #[error("Int cannot represent non-integer value: {value}")]
     ExpectedInteger { value: String },
 
+    #[error("Int cannot represent non 32-bit signed integer value: {value}")]
+    IntegerOutOfRange { value: String },
+
     #[error("Float cannot represent non numeric value: {value}")]
     ExpectedFloat { value: String },
 
@@ -234,28 +237,7 @@ fn validate_runtime_value(
             } else if let Some(input_object) = schema_metadata.input_objects.get(name) {
                 validate_input_object(value, name, input_object, schema_metadata)?;
             } else {
-                let is_valid = match name.as_str() {
-                    "String" => matches!(value, ValueRef::String(_)),
-                    "ID" => matches!(value, ValueRef::String(_)),
-                    "Int" => matches!(value, ValueRef::Number(ref num) if num.is_i64()),
-                    "Float" => matches!(
-                        value,
-                        ValueRef::Number(ref num) if num.is_f64() || num.is_i64()
-                    ),
-                    "Boolean" => matches!(value, ValueRef::Bool(_)),
-                    // Custom scalars and input objects
-                    _ => true,
-                };
-                if !is_valid {
-                    let value = inspect(value);
-                    return Err(InvalidValue::new(match name.as_str() {
-                        "String" => InvalidValueReason::ExpectedString { value },
-                        "ID" => InvalidValueReason::ExpectedId { value },
-                        "Int" => InvalidValueReason::ExpectedInteger { value },
-                        "Float" => InvalidValueReason::ExpectedFloat { value },
-                        _ => InvalidValueReason::ExpectedBoolean { value },
-                    }));
-                }
+                validate_scalar(name, value).map_err(InvalidValue::new)?;
             }
         }
         TypeNode::NonNull(inner_type) => {
@@ -355,6 +337,47 @@ fn validate_input_object(
     Ok(())
 }
 
+/// Checks a value against a built-in scalar. Like Apollo Router, Int and ID only accept JSON
+/// numbers written as integers: `1.0` or `1e3` are floats, even with no fractional part.
+#[inline]
+fn validate_scalar(name: &str, value: ValueRef) -> Result<(), InvalidValueReason> {
+    let is_integer = |num: &sonic_rs::Number| num.is_i64() || num.is_u64();
+    match (name, &value) {
+        ("String", ValueRef::String(_))
+        | ("Boolean", ValueRef::Bool(_))
+        // The JSON parser only produces finite numbers.
+        | ("Float", ValueRef::Number(_)) => Ok(()),
+        ("ID", ValueRef::String(_)) => Ok(()),
+        ("ID", ValueRef::Number(num)) if is_integer(num) => Ok(()),
+        ("Int", ValueRef::Number(num)) if is_integer(num) => {
+            if num.as_i64().is_some_and(|n| i32::try_from(n).is_ok()) {
+                Ok(())
+            } else {
+                Err(InvalidValueReason::IntegerOutOfRange {
+                    value: inspect(value),
+                })
+            }
+        }
+        ("String", _) => Err(InvalidValueReason::ExpectedString {
+            value: inspect(value),
+        }),
+        ("ID", _) => Err(InvalidValueReason::ExpectedId {
+            value: inspect(value),
+        }),
+        ("Int", _) => Err(InvalidValueReason::ExpectedInteger {
+            value: inspect(value),
+        }),
+        ("Float", _) => Err(InvalidValueReason::ExpectedFloat {
+            value: inspect(value),
+        }),
+        ("Boolean", _) => Err(InvalidValueReason::ExpectedBoolean {
+            value: inspect(value),
+        }),
+        // Custom scalars and input objects
+        _ => Ok(()),
+    }
+}
+
 /// How graphql-js prints a value in error messages (its `inspect` utility).
 fn inspect(value: ValueRef) -> String {
     let mut output = String::new();
@@ -374,6 +397,9 @@ fn write_inspected(output: &mut String, value: ValueRef, depth: usize) {
         ValueRef::Number(num) => match (num.as_i64(), num.as_u64(), num.as_f64()) {
             (Some(n), _, _) => output.push_str(&n.to_string()),
             (_, Some(n), _) => output.push_str(&n.to_string()),
+            // Unlike graphql-js, a float with no fractional part keeps its `.0`: Int and ID
+            // reject it, and `Int cannot represent non-integer value: 1` would be confusing.
+            (_, _, Some(n)) if n.fract() == 0.0 => output.push_str(&format!("{n}.0")),
             (_, _, Some(n)) => output.push_str(&n.to_string()),
             _ => output.push_str(&num.to_string()),
         },
