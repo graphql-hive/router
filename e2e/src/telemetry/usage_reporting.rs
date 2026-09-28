@@ -1088,3 +1088,152 @@ async fn usage_reporting_process_variables_reports_only_provided_input_fields() 
         );
     }
 }
+
+/// A document with multiple operations must report only the operation selected by
+/// `operationName`: its body, its name and its schema coordinates.
+///
+/// Related: https://github.com/graphql-hive/console/issues/8161
+#[ntex::test]
+async fn usage_reporting_multi_operation_document_reports_selected_operation() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
+
+    let mock = MockUsageEndpoint::start();
+    let usage_endpoint = &mock.address;
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+            supergraph:
+              source: file
+              path: {supergraph_path}
+
+            telemetry:
+              hive:
+                token: test-token
+                usage_reporting:
+                  enabled: true
+                  endpoint: {usage_endpoint}
+                  buffer_size: 1
+                  flush_interval: 100ms
+            "#,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    let document = "query first { users { id } } query second { topProducts { upc } }";
+
+    let res = router
+        .send_post_request(
+            "/graphql",
+            sonic_rs::json!({ "query": document, "operationName": "second" }),
+            None,
+        )
+        .await;
+    assert!(res.status().is_success());
+
+    mock.wait_for_reports(1).await;
+    let reports = mock.reports().await;
+    let report = &reports[0];
+
+    let operations = report["operations"]
+        .as_array()
+        .expect("report should contain operations");
+    assert_eq!(operations.len(), 1, "{report}");
+    let key = operations[0]["operationMapKey"]
+        .as_str()
+        .expect("operation should have a map key");
+    let record = &report["map"][key];
+
+    assert_eq!(record["operationName"].as_str(), Some("second"), "{report}");
+
+    let body = record["operation"]
+        .as_str()
+        .expect("record should have an operation body");
+    assert!(
+        body.contains("topProducts"),
+        "reported body should contain the selected operation: {body}"
+    );
+    assert!(
+        !body.contains("first") && !body.contains("users"),
+        "reported body should not contain the non-selected operation: {body}"
+    );
+
+    let fields: HashSet<&str> = record["fields"]
+        .as_array()
+        .expect("record should have fields")
+        .iter()
+        .filter_map(|f| f.as_str())
+        .collect();
+    assert!(fields.contains("Query.topProducts"), "{fields:?}");
+    assert!(
+        !fields.contains("Query.users"),
+        "coordinates of the non-selected operation should not be reported: {fields:?}"
+    );
+}
+
+/// Selecting different operations from the same document must produce distinct
+/// operation map keys, otherwise Hive Console merges them into one operation.
+/// https://github.com/graphql-hive/console/issues/8161
+#[ntex::test]
+async fn usage_reporting_multi_operation_document_distinct_keys_per_operation() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+    let supergraph_path = supergraph_path.to_str().unwrap();
+
+    let mock = MockUsageEndpoint::start();
+    let usage_endpoint = &mock.address;
+
+    let subgraphs = TestSubgraphs::builder().build().start().await;
+
+    let router = TestRouter::builder()
+        .inline_config(format!(
+            r#"
+            supergraph:
+              source: file
+              path: {supergraph_path}
+
+            telemetry:
+              hive:
+                token: test-token
+                usage_reporting:
+                  enabled: true
+                  endpoint: {usage_endpoint}
+                  buffer_size: 1
+                  flush_interval: 100ms
+            "#,
+        ))
+        .with_subgraphs(&subgraphs)
+        .build()
+        .start()
+        .await;
+
+    let document = "query first { users { id } } query second { topProducts { upc } }";
+
+    for (i, operation_name) in ["first", "second"].into_iter().enumerate() {
+        let res = router
+            .send_post_request(
+                "/graphql",
+                sonic_rs::json!({ "query": document, "operationName": operation_name }),
+                None,
+            )
+            .await;
+        assert!(res.status().is_success());
+        mock.wait_for_reports(i + 1).await;
+    }
+
+    let reports = mock.reports().await;
+    let keys: Vec<&str> = reports
+        .iter()
+        .map(|r| r["operations"][0]["operationMapKey"].as_str().unwrap())
+        .collect();
+    assert_ne!(
+        keys[0], keys[1],
+        "different selected operations must not share an operation map key: {reports:?}"
+    );
+}
