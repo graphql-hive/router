@@ -718,6 +718,59 @@ mod hive_usage_tests {
         mock.assert_hits(1);
     }
 
+    /// Whether the report carries only the `second` operation of a multi-operation document:
+    /// its name, its body and its schema coordinates.
+    fn matches_selected_operation_report(r: &httpmock::prelude::HttpMockRequest) -> bool {
+        let body: serde_json::Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+        let records: Vec<&serde_json::Value> = body["map"]
+            .as_object()
+            .into_iter()
+            .flat_map(|map| map.values())
+            .collect();
+        let matches = records.len() == 1 && {
+            let record = records[0];
+            let operation = record["operation"].as_str().unwrap_or_default();
+            let fields: std::collections::HashSet<&str> = record["fields"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|field| field.as_str())
+                .collect();
+            record["operationName"] == "second"
+                && operation.contains("second")
+                && !operation.contains("first")
+                && fields.contains("Query.secondField")
+                && !fields.contains("Query.firstField")
+        };
+        if !matches {
+            eprintln!("usage report does not carry only the selected operation: {body}");
+        }
+        matches
+    }
+
+    /// https://github.com/graphql-hive/console/issues/8161
+    #[tokio::test]
+    async fn multiple_operations_reports_selected_operation() {
+        let instance = UsageTestHelper::with_options(
+            "type Query { firstField: String secondField: String }",
+            false,
+        )
+        .await;
+        let req = supergraph::Request::fake_builder()
+            .query("query first { firstField } query second { secondField }")
+            .operation_name("second")
+            .build()
+            .unwrap();
+        let mock = instance.activate_usage_mock_with(matches_selected_operation_report);
+
+        instance.execute_operation(req).await.next_response().await;
+
+        instance.wait_for_processing().await;
+
+        mock.assert();
+        mock.assert_hits(1);
+    }
+
     const FILTER_SDL: &str =
         "type Query { search(filter: Filter): String } input Filter { name: String, limit: Int }";
 
