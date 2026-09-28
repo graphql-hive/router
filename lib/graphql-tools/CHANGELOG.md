@@ -1,3 +1,30 @@
+## 0.5.9 (2026-09-28)
+
+### Features
+
+#### Validate `@oneOf` literals and variables
+
+Validation now enforces the GraphQL spec's rules for `@oneOf` input objects in operations:
+
+- `ValuesOfCorrectType` rejects a `@oneOf` literal that doesn't set exactly one field (`OneOf Input Object "OneOfInput" must specify exactly one key.`), or sets it to `null` (`Field "OneOfInput.a" must be non-null.`). This covers arguments and variable default values.
+- `VariablesInAllowedPosition` rejects a nullable variable used as the field of a `@oneOf` literal, such as `query ($a: String) { field(input: { a: $a }) }`, even when the variable has a default value (`Variable "$a" is of type "String" but must be non-nullable to be used for OneOf Input Object "OneOfInput".`).
+
+#### Variable definitions can now have a description
+
+As allowed by the September 2025 GraphQL spec (`query ("The user ID" $id: ID!) { ... }`)
+
+### Fixes
+
+#### Validate the range of `Int` literals
+
+`ValuesOfCorrectType` validation rule now rejects `Int` literals outside the 32-bit range, for example `query ($v: Int = 2147483648)`, with `Int cannot represent non 32-bit signed integer value: 2147483648`.
+
+#### Validate list literals in more positions
+
+Validation now checks the items of a list literal whose type is a non-null list. For example, `query ($v: [Color]! = [PURPLE])` is rejected when `PURPLE` is not a `Color` value. Before, those items were not checked, so an invalid default was only caught when it was used, or was sent to the subgraph unchecked.
+
+A list literal in a position that doesn't expect a list, like `query ($v: Color = [RED])` or `query ($v: Int = [1])`, is now rejected with a `ValuesOfCorrectType` error. Custom scalars still accept any literal, as described by the GraphQL specification.
+
 ## 0.5.8 (2026-07-26)
 
 ### Fixes

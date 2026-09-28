@@ -1,3 +1,11 @@
+## 0.3.23 (2026-09-28)
+
+### Fixes
+
+#### Variable definitions can now have a description
+
+As allowed by the September 2025 GraphQL spec (`query ("The user ID" $id: ID!) { ... }`)
+
 ## 0.3.22 (2026-09-16)
 
 ### Features
