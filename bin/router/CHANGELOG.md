@@ -116,6 +116,124 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.3.0 (2026-09-28)
+
+### Breaking Changes
+
+#### Validate input object variables
+
+Variable values of input object types are now validated before the operation runs, as the GraphQL spec requires. Before, any value was accepted and forwarded to the subgraphs as-is.
+
+The Router now rejects an input object variable when:
+
+- the value is not an object: `Expected value of type "ReviewInput" to be an object, found: "great".`
+- a required field is missing (a non-null field without a default value): `Expected value of type "ReviewInput" to include required field "stars", found: { comment: "great" }.`
+- it contains a field the type doesn't define: `Expected value of type "ReviewInput" not to include unknown field "rating", found: { stars: 5, rating: 5 }.`
+- a field's value is invalid for its type. The error points to the field, including inside nested objects and lists: `Variable "$review" has invalid value at .tags[1]: String cannot represent a non string value: 1`
+
+Field default values are still applied by the subgraph: the Router forwards the object as sent. The ensures the subgraph has the ability to identify a non-provided variable.
+
+#### Validate `@oneOf` input object variables
+
+Variable values of `@oneOf` input object types are now validated before the operation runs. A value must set exactly one field, and that field must not be `null`. Before, any value was accepted and forwarded to the subgraphs.
+
+For example, `{"input": {}}`, `{"input": {"a": "abc", "b": 123}}` and `{"input": {"a": null}}` are now rejected with:
+
+```
+Variable "$input" has invalid value: Within OneOf Input Object type "OneOfInput", exactly one field must be specified, and the value for that field must be non-null.
+```
+
+This also applies to `@oneOf` objects nested in other input objects or lists, and to variable default values.
+
+Closes https://github.com/graphql-hive/router/issues/1390
+
+### Fixes
+
+#### Avoid duplicate built-in directive definitions in introspection
+
+Supergraphs that already define a built-in directive, like `@oneOf` (emitted by composition whenever a subgraph uses it), no longer end up with that directive defined twice in the consumer schema.
+
+#### Allow `@deprecated` on arguments in introspection results
+
+The router's built-in `@deprecated` definition now includes the `ARGUMENT_DEFINITION` location, as the GraphQL spec requires.
+
+#### Accept `variables=null` in GET requests
+
+A GET request with `variables=null` in the query string no longer fails with `400 Failed to parse GraphQL variables JSON`. Like `"variables": null` in a POST body, it now means the operation has no variables, so their default values apply.
+
+#### Validate the range of `Int` literals
+
+`ValuesOfCorrectType` validation rule now rejects `Int` literals outside the 32-bit range, for example `query ($v: Int = 2147483648)`, with `Int cannot represent non 32-bit signed integer value: 2147483648`.
+
+#### Fix type conditions on a list of an `@interfaceObject`
+
+Queries with a type condition on a list of an `@interfaceObject`, like `friends { ... on User { name } }`, no longer fail with `No paths found for selection item`.
+
+#### Faster Processing of Large Subgraph Responses
+
+The Router no longer sorts the fields of every object in a subgraph response. Objects now keep the order the subgraph sent them in, and the Router finds each field by checking the next one first, since responses follow the order of the query.
+
+This removes a sort per object and a search per field. In our test with a single subgraph returning a 2.8MB response, the time the Router spends on each request dropped by about 10%, and throughput increased by about 5%.
+
+#### Validate list literals in more positions
+
+Validation now checks the items of a list literal whose type is a non-null list. For example, `query ($v: [Color]! = [PURPLE])` is rejected when `PURPLE` is not a `Color` value. Before, those items were not checked, so an invalid default was only caught when it was used, or was sent to the subgraph unchecked.
+
+A list literal in a position that doesn't expect a list, like `query ($v: Color = [RED])` or `query ($v: Int = [1])`, is now rejected with a `ValuesOfCorrectType` error. Custom scalars still accept any literal, as described by the GraphQL specification.
+
+#### Validate `@oneOf` literals and variables
+
+Validation now enforces the GraphQL spec's rules for `@oneOf` input objects in operations:
+
+- `ValuesOfCorrectType` rejects a `@oneOf` literal that doesn't set exactly one field (`OneOf Input Object "OneOfInput" must specify exactly one key.`), or sets it to `null` (`Field "OneOfInput.a" must be non-null.`). This covers arguments and variable default values.
+- `VariablesInAllowedPosition` rejects a nullable variable used as the field of a `@oneOf` literal, such as `query ($a: String) { field(input: { a: $a }) }`, even when the variable has a default value (`Variable "$a" is of type "String" but must be non-nullable to be used for OneOf Input Object "OneOfInput".`).
+
+#### Keep `@provides` fields on the path that provides them
+
+Fields made available by `@provides` could leak to another field returning the same type, like `Store.orders` getting the fields `User.orders` provides. The planner then skipped a fetch it needed. Provided fields now only count on the path of the field that provides them.
+
+#### Fix extra fetches for `@requires` after an entity hop
+
+- `@requires` after an entity hop no longer adds an extra fetch to the same subgraph ([#1539](https://github.com/graphql-hive/router/issues/1539)).
+- Aliased `@requires` fields with different arguments (like `price(currency: USD)` and `price(currency: EUR)`) now get the right values after an entity hop.
+
+Closes https://github.com/graphql-hive/router/issues/1539
+
+#### Use `@provides` fields for `@requires`
+
+When the fields a `@requires` needs are made available by a `@provides` on the way, the field is now fetched together with them, from the same subgraph. Previously the planner ignored the provided fields and made extra `_entities` calls to get them again.
+
+#### Fix `@requires` on an object of the same type nested in an entity call
+
+A `@requires` field on an object nested inside an entity of the same type, like `user { other { label } }` where both `user` and `other` are a `User`, no longer fails with `MissingPathInSelection`.
+
+#### Stricter and more complete coercion of scalar variables
+
+Scalar variable values are now checked and validation using the following rules:
+
+- `Int` accepts only 32-bit integers. A value like `2147483648` is now rejected with `Int cannot represent non 32-bit signed integer value: 2147483648`, instead of being forwarded to the subgraph.
+- `ID` now accepts integers as well as strings, as the GraphQL spec requires. This also fixes operations like `query ($id: ID = 1)`, which failed whenever `$id` was omitted.
+- `Float` now accepts every JSON number, including integers larger than `9223372036854775807`.
+- `Int` and `ID` still reject JSON numbers written as floats, like `1.0` or `1e3`. Error messages now print these values with their `.0` (`Int cannot represent non-integer value: 1.0`).
+
+#### Fix progressive `@override` on fields returning a union
+
+When a field returning a union was progressively overridden (`@override(from: ..., label: ...)`), the overriding subgraph was still used when the label was off. The label is now respected, like it is for other fields.
+
+#### Variable Coercion Errors Follow the GraphQL Spec
+
+Errors for invalid variable values now use the graphql-js wording, name the variable, and point to the invalid list item. For example, `$input: [String!]` given `[0, 1]` now returns:
+
+```
+Variable "$input" has invalid value at [0]: String cannot represent a non string value: 0
+```
+
+Values in these messages are printed the way graphql-js prints them (for example `[1]`), not as internal router values. Errors caused by a variable's default value say `has invalid default value`.
+
+#### Variable definitions can now have a description
+
+As allowed by the September 2025 GraphQL spec (`query ("The user ID" $id: ID!) { ... }`)
+
 ## 0.2.19 (2026-09-23)
 
 ### Features
