@@ -1,5 +1,5 @@
 # Minimum recommended version
-nextest-version = "0.9.133"
+nextest-version = "0.9.146"
 
 [profile.default]
 # Show output (stdout/stderr) of failed tests

@@ -16,6 +16,9 @@ permissions:
   checks: write
   pull-requests: write
 
+env:
+  NEXTEST_VERSION: 0.9.146
+
 jobs:
   unit:
     name: test / unit
@@ -24,7 +27,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
-      - uses: ./.github/actions/install-tools
+      - name: install cargo-nextest
+        uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
+        with:
+          tool: cargo-nextest@${{ env.NEXTEST_VERSION }}
       - name: test all
         run: cargo test_all
         timeout-minutes: 15
@@ -38,7 +44,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
-      - uses: ./.github/actions/install-tools
+      - name: install cargo-nextest
+        uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
+        with:
+          tool: cargo-nextest@${{ env.NEXTEST_VERSION }}
       - name: build hive_router binary
         # Needed for the e2e tests that spawn the real compiled binary as a subprocess
         # (e.g. to send it a real SIGTERM) instead of running it in-process.
@@ -68,7 +77,10 @@ jobs:
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
-      - uses: ./.github/actions/install-tools
+      - name: install cargo-nextest
+        uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
+        with:
+          tool: cargo-nextest@${{ env.NEXTEST_VERSION }}
       - name: test plugin examples
         run: cargo test_plugin_examples
         timeout-minutes: 15
