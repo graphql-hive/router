@@ -13,6 +13,11 @@ updates:
         patterns:
           - "reqwest"
           - "reqwest-*"
+      sonic:
+        patterns:
+          - "sonic-number"
+          - "sonic-rs"
+          - "sonic-simd"
       futures:
         patterns:
           - "futures"
