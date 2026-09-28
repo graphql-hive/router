@@ -8,7 +8,6 @@ members = [
   "context_data",
   "forbid_anonymous_operations",
   "multipart",
-  "one_of",
   "propagate_status_code",
   "response_cache",
   "root_field_limit",

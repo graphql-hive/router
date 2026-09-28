@@ -271,7 +271,11 @@ mod cache_control_e2e_tests {
             .await;
 
         let res = router
-            .send_graphql_request(r#"mutation { oneofTest(input: {}) { id } }"#, None, None)
+            .send_graphql_request(
+                r#"mutation { oneofTest(input: { string: "dummy" }) { id } }"#,
+                None,
+                None,
+            )
             .await;
 
         assert_eq!(res.status(), 200);

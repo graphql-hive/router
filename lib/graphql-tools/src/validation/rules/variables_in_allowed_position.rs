@@ -16,7 +16,7 @@ use super::ValidationRule;
 #[derive(Default)]
 pub struct VariablesInAllowedPosition<'doc> {
     spreads: HashMap<Scope<'doc>, HashSet<&'doc str>>,
-    variable_usages: HashMap<Scope<'doc>, Vec<(&'doc str, &'doc Type, bool)>>,
+    variable_usages: HashMap<Scope<'doc>, Vec<VariableUsage<'doc>>>,
     variable_defs: HashMap<Scope<'doc>, Vec<&'doc VariableDefinition>>,
     current_scope: Option<Scope<'doc>>,
 }
@@ -49,7 +49,7 @@ impl<'doc> VariablesInAllowedPosition<'doc> {
             Some(usages) => usages.as_slice(),
             None => &[],
         };
-        for (var_name, location_type, has_default) in usages {
+        for (var_name, location_type, has_default, one_of_parent) in usages {
             let Some(var_def) = var_defs.iter().find(|var_def| var_def.name == *var_name) else {
                 continue;
             };
@@ -91,6 +91,22 @@ impl<'doc> VariablesInAllowedPosition<'doc> {
                     locations: vec![var_def.position],
                 });
             }
+
+            // https://spec.graphql.org/draft/#sec-All-Variable-Usages-Are-Allowed
+            // A OneOf field must never be null, so its variable must be non-nullable,
+            // even with a default value.
+            if let Some(one_of_type) = one_of_parent {
+                if !matches!(var_def.var_type, Type::NonNullType(_)) {
+                    user_context.report_error(ValidationError {
+                        error_code: self.error_code(),
+                        message: format!(
+                            "Variable \"${}\" is of type \"{}\" but must be non-nullable to be used for OneOf Input Object \"{}\".",
+                            var_name, var_def.var_type, one_of_type,
+                        ),
+                        locations: vec![var_def.position],
+                    });
+                }
+            }
         }
 
         if let Some(spreads) = self.spreads.get(from) {
@@ -106,6 +122,10 @@ impl<'doc> VariablesInAllowedPosition<'doc> {
         }
     }
 }
+
+/// A variable used as a value: its name, the type expected there, whether that location has a
+/// default, and the OneOf input object it is a field of (if any).
+type VariableUsage<'doc> = (&'doc str, &'doc Type, bool, Option<&'doc str>);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Scope<'doc> {
@@ -188,10 +208,14 @@ impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for VariablesInAllowed
             visitor_context.current_input_type_literal(),
         ) {
             let has_default = visitor_context.current_input_type_has_default();
+            let one_of_parent = visitor_context
+                .parent_input_type()
+                .filter(|parent| parent.is_one_of())
+                .map(|parent| parent.name());
             self.variable_usages
                 .entry(scope.clone())
                 .or_default()
-                .push((variable_name, input_type, has_default));
+                .push((variable_name, input_type, has_default, one_of_parent));
         }
     }
 }
@@ -827,4 +851,45 @@ fn string_to_non_null_int_with_default_on_argument() {
             "Variable \"$stringVar\" of type \"String\" used in position expecting type \"Int!\"."
         ]
     )
+}
+
+#[cfg(test)]
+static ONE_OF_SCHEMA: &str = "
+    directive @oneOf on INPUT_OBJECT
+    input OneOfInput @oneOf { a: String b: Int }
+    input Holder { one: OneOfInput name: String }
+    type Query { oneOf(input: OneOfInput): String holder(input: Holder): String }";
+
+#[test]
+fn non_null_variable_for_oneof_field() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(VariablesInAllowedPosition::new()));
+    let errors = test_operation_with_schema(
+        "query ($a: String!, $h: String) { oneOf(input: { a: $a }) holder(input: { name: $h }) }",
+        ONE_OF_SCHEMA,
+        &mut plan,
+    );
+    assert_eq!(get_messages(&errors).len(), 0);
+}
+
+#[test]
+fn nullable_variable_for_oneof_field() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(VariablesInAllowedPosition::new()));
+    let errors = test_operation_with_schema(
+        r#"query ($a: String, $b: Int = 1) { a: oneOf(input: { a: $a }) b: holder(input: { one: { b: $b } }) }"#,
+        ONE_OF_SCHEMA,
+        &mut plan,
+    );
+    let mut messages = get_messages(&errors);
+    messages.sort();
+    assert_eq!(
+        messages,
+        vec![
+            "Variable \"$a\" is of type \"String\" but must be non-nullable to be used for OneOf Input Object \"OneOfInput\".",
+            "Variable \"$b\" is of type \"Int\" but must be non-nullable to be used for OneOf Input Object \"OneOfInput\".",
+        ]
+    );
 }

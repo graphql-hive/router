@@ -38,6 +38,17 @@ impl TypeDefinition {
             _ => None,
         }
     }
+
+    /// Whether this is an input object type with `@oneOf`.
+    pub fn is_one_of(&self) -> bool {
+        match self {
+            TypeDefinition::InputObject(input_object) => input_object
+                .directives
+                .iter()
+                .any(|directive| directive.name == "oneOf"),
+            _ => false,
+        }
+    }
 }
 
 impl OperationDefinition {

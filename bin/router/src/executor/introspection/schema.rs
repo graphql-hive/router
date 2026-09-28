@@ -1,12 +1,30 @@
 use ahash::{HashMap, HashSet};
 
 use crate::query_planner::{
-    consumer_schema::ConsumerSchema, state::supergraph_state::OperationKind,
+    consumer_schema::ConsumerSchema,
+    state::supergraph_state::{OperationKind, TypeNode},
 };
 use graphql_tools::parser::{
     query::Type,
     schema::{Definition, TypeDefinition},
 };
+
+/// An input object type.
+#[derive(Debug)]
+pub struct InputObjectInfo {
+    /// The fields, in schema order.
+    pub fields: Vec<InputFieldInfo>,
+    /// Whether the type has `@oneOf`: exactly one field must be given, and not as `null`.
+    pub is_one_of: bool,
+}
+
+/// A field of an input object type.
+#[derive(Debug)]
+pub struct InputFieldInfo {
+    pub name: String,
+    pub field_type: TypeNode,
+    pub has_default: bool,
+}
 
 #[derive(Debug)]
 pub struct FieldTypeInfo {
@@ -73,6 +91,7 @@ pub struct SchemaMetadata {
     pub scalar_types: HashSet<String>,
     pub union_types: HashSet<String>,
     pub interface_types: HashSet<String>,
+    pub input_objects: HashMap<String, InputObjectInfo>,
     pub query_type_name: Option<String>,
     pub mutation_type_name: Option<String>,
     pub subscription_type_name: Option<String>,
@@ -170,6 +189,7 @@ impl SchemaWithMetadata for ConsumerSchema {
         let mut object_types: HashSet<String> = HashSet::default();
         let mut union_types: HashSet<String> = HashSet::default();
         let mut interface_types: HashSet<String> = HashSet::default();
+        let mut input_objects: HashMap<String, InputObjectInfo> = HashMap::default();
 
         for definition in &self.document.definitions {
             match definition {
@@ -238,6 +258,25 @@ impl SchemaWithMetadata for ConsumerSchema {
                 Definition::TypeDefinition(TypeDefinition::Scalar(scalar_type)) => {
                     scalar_types.insert(scalar_type.name.to_string());
                 }
+                Definition::TypeDefinition(TypeDefinition::InputObject(input_object_type)) => {
+                    let fields = input_object_type
+                        .fields
+                        .iter()
+                        .map(|field| InputFieldInfo {
+                            name: field.name.to_string(),
+                            field_type: (&field.value_type).into(),
+                            has_default: field.default_value.is_some(),
+                        })
+                        .collect();
+                    let is_one_of = input_object_type
+                        .directives
+                        .iter()
+                        .any(|directive| directive.name == "oneOf");
+                    input_objects.insert(
+                        input_object_type.name.to_string(),
+                        InputObjectInfo { fields, is_one_of },
+                    );
+                }
                 _ => {}
             }
         }
@@ -272,6 +311,7 @@ impl SchemaWithMetadata for ConsumerSchema {
             scalar_types,
             union_types,
             interface_types,
+            input_objects,
             query_type_name,
             mutation_type_name,
             subscription_type_name,

@@ -1,6 +1,6 @@
 use crate::parser::schema::TypeDefinition;
 
-use crate::static_graphql::query::Value;
+use crate::static_graphql::query::{Type, Value};
 use crate::validation::utils::ValidationError;
 use crate::{
     ast::{OperationVisitor, OperationVisitorContext},
@@ -49,6 +49,18 @@ impl ValuesOfCorrectType {
 
                 if let TypeDefinition::Scalar(scalar_type_def) = &type_def {
                     match (scalar_type_def.name.as_ref(), raw_value) {
+                        ("Int", Value::Int(value))
+                            if value.as_i64().is_some_and(|n| i32::try_from(n).is_err()) =>
+                        {
+                            user_context.report_error(ValidationError {
+                                error_code: self.error_code(),
+                                message: format!(
+                                    "Int cannot represent non 32-bit signed integer value: {}",
+                                    raw_value
+                                ),
+                                locations: vec![],
+                            })
+                        }
                         ("Int", Value::Int(_))
                         | ("ID", Value::Int(_))
                         | ("ID", Value::String(_))
@@ -158,6 +170,51 @@ impl<'doc> OperationVisitor<'doc, ValidationErrorContext> for ValuesOfCorrectTyp
                     })
                 }
             });
+        }
+
+        if let Some(input_object_type @ TypeDefinition::InputObject(input_object_def)) =
+            visitor_context.current_input_type()
+        {
+            if input_object_type.is_one_of() {
+                match object_value {
+                    [(_, Value::Null)] => user_context.report_error(ValidationError {
+                        error_code: self.error_code(),
+                        message: format!(
+                            "Field \"{}.{}\" must be non-null.",
+                            input_object_def.name, object_value[0].0
+                        ),
+                        locations: vec![],
+                    }),
+                    [_] => {}
+                    _ => user_context.report_error(ValidationError {
+                        error_code: self.error_code(),
+                        message: format!(
+                            "OneOf Input Object \"{}\" must specify exactly one key.",
+                            input_object_def.name
+                        ),
+                        locations: vec![],
+                    }),
+                }
+            }
+        }
+    }
+
+    fn enter_list_value(
+        &mut self,
+        visitor_context: &mut OperationVisitorContext<'doc>,
+        user_context: &mut ValidationErrorContext,
+        list: &Vec<Value>,
+    ) {
+        if let Some(input_type) = visitor_context.current_input_type_literal() {
+            let nullable_type = match input_type {
+                Type::NonNullType(inner_type) => inner_type.as_ref(),
+                t => t,
+            };
+            // A list literal outside a list position is only valid for a custom scalar,
+            // which `validate_value` allows.
+            if !matches!(nullable_type, Type::ListType(_)) {
+                self.validate_value(visitor_context, user_context, &Value::List(list.clone()));
+            }
         }
     }
 
@@ -1965,4 +2022,142 @@ fn reports_original_error_for_custom_scalar_which_throws() {
     );
     let messages = get_messages(&errors);
     assert_eq!(messages.len(), 0);
+}
+
+#[test]
+fn invalid_item_in_non_null_list() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(ValuesOfCorrectType::new()));
+    let errors = test_operation_with_schema(
+        "
+        query InvalidItem($a: [String]! = [\"one\", 2]) {
+          dog { name }
+        }",
+        TEST_SCHEMA,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(
+        messages,
+        vec!["Expected value of type \"String\", found 2."]
+    );
+}
+
+#[test]
+fn list_literal_in_non_list_position() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(ValuesOfCorrectType::new()));
+    let errors = test_operation_with_schema(
+        "
+        query ListForScalar($a: String = [\"one\"], $b: Int! = [1]) {
+          dog { name }
+        }",
+        TEST_SCHEMA,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(
+        messages,
+        vec![
+            "Expected value of type \"String\", found [\"one\"].",
+            "Expected value of type \"Int\", found [1].",
+        ]
+    );
+}
+
+#[test]
+fn list_literal_for_custom_scalar() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(ValuesOfCorrectType::new()));
+    let errors = test_operation_with_schema(
+        "{
+          someScalarArg(arg: [1, \"two\"])
+        }",
+        "scalar SomeScalar
+        type Query { someScalarArg(arg: SomeScalar): String }",
+        &mut plan,
+    );
+    let messages = get_messages(&errors);
+    assert_eq!(messages.len(), 0);
+}
+
+#[cfg(test)]
+static ONE_OF_SCHEMA: &str = "
+    directive @oneOf on INPUT_OBJECT
+    input OneOfInput @oneOf { a: String b: Int }
+    type Query { oneOf(input: OneOfInput): String }";
+
+#[test]
+fn oneof_literal_with_exactly_one_key() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(ValuesOfCorrectType::new()));
+    let errors = test_operation_with_schema(
+        r#"{ a: oneOf(input: { a: "abc" }) b: oneOf(input: { b: 0 }) }"#,
+        ONE_OF_SCHEMA,
+        &mut plan,
+    );
+    assert_eq!(get_messages(&errors).len(), 0);
+}
+
+#[test]
+fn oneof_literal_with_no_or_several_keys() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(ValuesOfCorrectType::new()));
+    let errors = test_operation_with_schema(
+        r#"query ($v: OneOfInput = { a: "abc", b: 1 }) { a: oneOf(input: {}) b: oneOf(input: { a: "abc", b: null }) c: oneOf(input: $v) }"#,
+        ONE_OF_SCHEMA,
+        &mut plan,
+    );
+    assert_eq!(
+        get_messages(&errors),
+        vec![
+            "OneOf Input Object \"OneOfInput\" must specify exactly one key.",
+            "OneOf Input Object \"OneOfInput\" must specify exactly one key.",
+            "OneOf Input Object \"OneOfInput\" must specify exactly one key.",
+        ]
+    );
+}
+
+#[test]
+fn oneof_literal_with_null_value() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(ValuesOfCorrectType::new()));
+    let errors =
+        test_operation_with_schema("{ oneOf(input: { a: null }) }", ONE_OF_SCHEMA, &mut plan);
+    assert_eq!(
+        get_messages(&errors),
+        vec!["Field \"OneOfInput.a\" must be non-null."]
+    );
+}
+
+#[test]
+fn int_out_of_32_bit_range() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(ValuesOfCorrectType::new()));
+    let errors = test_operation_with_schema(
+        "
+        query OutOfRange($a: Int = 2147483648, $b: Int = -2147483649, $c: Int = 2147483647, $d: Float = 2147483648) {
+          dog { name }
+        }",
+        TEST_SCHEMA,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(
+        messages,
+        vec![
+            "Int cannot represent non 32-bit signed integer value: 2147483648",
+            "Int cannot represent non 32-bit signed integer value: -2147483649",
+        ]
+    );
 }

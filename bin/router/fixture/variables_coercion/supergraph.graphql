@@ -1,0 +1,263 @@
+# Fixture for the runtime variable coercion tests (bin/router/src/executor/variables/tests).
+#
+# `Query` mirrors `TestType` from graphql-js `src/execution/__tests__/variables-test.ts`
+# (v17, commit ee5ce41), so ported tests can keep the upstream operations. Fields below the
+# "router additions" marker are not part of the upstream schema.
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
+  query: Query
+  mutation: Mutation
+  subscription: Subscription
+}
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__field(
+  graph: join__Graph
+  requires: join__FieldSet
+  provides: join__FieldSet
+  type: String
+  external: Boolean
+  override: String
+  usedOverridden: Boolean
+) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__implements(
+  graph: join__Graph!
+  interface: String!
+) repeatable on OBJECT | INTERFACE
+
+directive @join__type(
+  graph: join__Graph!
+  key: join__FieldSet
+  extension: Boolean! = false
+  resolvable: Boolean! = true
+  isInterfaceObject: Boolean! = false
+) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(
+  graph: join__Graph!
+  member: String!
+) repeatable on UNION
+
+directive @link(
+  url: String
+  as: String
+  for: link__Purpose
+  import: [link__Import]
+) repeatable on SCHEMA
+
+directive @oneOf on INPUT_OBJECT
+
+scalar join__FieldSet
+
+scalar link__Import
+
+enum link__Purpose {
+  SECURITY
+  EXECUTION
+}
+
+enum join__Graph {
+  TEST @join__graph(name: "test", url: "http://0.0.0.0:4200/test")
+}
+
+scalar ComplexScalar @join__type(graph: TEST)
+
+scalar FaultyScalar @join__type(graph: TEST)
+
+scalar JSONScalar @join__type(graph: TEST)
+
+scalar TestScalar @join__type(graph: TEST)
+
+type NestedType @join__type(graph: TEST) {
+  echo(input: String): String
+}
+
+input TestInputObject @join__type(graph: TEST) {
+  a: String
+  b: [String]
+  c: String!
+  d: ComplexScalar
+  e: FaultyScalar
+}
+
+input TestOneOfInputObject @oneOf @join__type(graph: TEST) {
+  a: String
+  b: String
+}
+
+input TestNestedInputObject @join__type(graph: TEST) {
+  na: TestInputObject!
+  nb: String!
+}
+
+enum TestEnum @join__type(graph: TEST) {
+  NULL @join__enumValue(graph: TEST)
+  UNDEFINED @join__enumValue(graph: TEST)
+  NAN @join__enumValue(graph: TEST)
+  FALSE @join__enumValue(graph: TEST)
+  CUSTOM @join__enumValue(graph: TEST)
+  DEFAULT_VALUE @join__enumValue(graph: TEST)
+}
+
+# From graphql-js `src/utilities/__tests__/coerceInputValue-test.ts`.
+input DefaultSevenInput @join__type(graph: TEST) {
+  foo: TestScalar = 7
+}
+
+input DefaultNullInput @join__type(graph: TEST) {
+  foo: TestScalar = null
+}
+
+# graphql-js's type-level `TestInputObject` from `validateInputValue-test.ts` and
+# `coerceInputValue-test.ts`, renamed to avoid a clash.
+input IntInputObject @join__type(graph: TEST) {
+  foo: Int!
+  bar: Int
+  nested: IntInputObject
+  deepObject: DeepObject
+}
+
+input DeepObject @join__type(graph: TEST) {
+  foo: Int!
+  bar: Int
+}
+
+input LengthObject @join__type(graph: TEST) {
+  length: Int
+}
+
+# The spec's `ExampleInputObject` (§3.10).
+input ExampleInputObject @join__type(graph: TEST) {
+  a: String
+  b: Int!
+}
+
+input DefaultedRequired @join__type(graph: TEST) {
+  x: Int! = 5
+  y: String
+}
+
+input Wrappers @join__type(graph: TEST) {
+  list: [Int!]
+  nested: [ExampleInputObject!]
+  inner: ExampleInputObject
+}
+
+input NNListField @join__type(graph: TEST) {
+  items: [String]!
+}
+
+input Filter @join__type(graph: TEST) {
+  and: [Filter!]
+  name: String
+}
+
+# graphql-js `oneof-test.ts`, also the spec's `ExampleOneOfInputObject` (§3.10.1).
+input OneOfTestInput @oneOf @join__type(graph: TEST) {
+  a: String
+  b: Int
+}
+
+type OneOfTestObject @join__type(graph: TEST) {
+  a: String
+  b: Int
+}
+
+# graphql-js's type-level OneOf `TestInputObject` from `validateInputValue-test.ts`.
+input IntOneOf @oneOf @join__type(graph: TEST) {
+  foo: Int
+  bar: Int
+}
+
+input OneOfHolder @join__type(graph: TEST) {
+  one: OneOfTestInput
+  many: [OneOfTestInput!]
+  name: String
+}
+
+input RecursiveOneOf @oneOf @join__type(graph: TEST) {
+  leaf: Int
+  and: [RecursiveOneOf!]
+  not: RecursiveOneOf
+}
+
+# From graphql-js `src/utilities/__tests__/validateInputValue-test.ts`.
+enum FooBarEnum @join__type(graph: TEST) {
+  FOO @join__enumValue(graph: TEST)
+  BAR @join__enumValue(graph: TEST)
+}
+
+# From graphql-js `src/type/__tests__/enumType-test.ts`.
+enum Color @join__type(graph: TEST) {
+  RED @join__enumValue(graph: TEST)
+  GREEN @join__enumValue(graph: TEST)
+  BLUE @join__enumValue(graph: TEST)
+  OLD_BLUE @join__enumValue(graph: TEST) @deprecated(reason: "gone")
+}
+
+input ColorInput @join__type(graph: TEST) {
+  color: Color
+  colors: [Color!]
+}
+
+type Query @join__type(graph: TEST) {
+  fieldWithEnumInput(input: TestEnum): String
+  fieldWithNonNullableEnumInput(input: TestEnum!): String
+  fieldWithObjectInput(input: TestInputObject): String
+  fieldWithOneOfObjectInput(input: TestOneOfInputObject): String
+  fieldWithNullableStringInput(input: String): String
+  fieldWithNonNullableStringInput(input: String!): String
+  fieldWithDefaultArgumentValue(input: String = "Hello World"): String
+  fieldWithNonNullableStringInputAndDefaultArgumentValue(
+    input: String! = "Hello World"
+  ): String
+  fieldWithNestedInputObject(input: TestNestedInputObject): String
+  fieldWithJSONScalarInput(input: JSONScalar): String
+  fieldWithPrototypeNamedArgument(toString: String): String
+  list(input: [String]): String
+  nested: NestedType
+  nnList(input: [String]!): String
+  listNN(input: [String!]): String
+  nnListNN(input: [String!]!): String
+  # router additions
+  int(input: Int): String
+  # The spec's Non-Null example (§3.12).
+  withNonNullArg(cannotBeNull: String!): String
+  float(input: Float): String
+  id(input: ID): String
+  boolean(input: Boolean): String
+  defaultSeven(input: DefaultSevenInput): String
+  defaultNull(input: DefaultNullInput): String
+  intInput(input: IntInputObject): String
+  lengthObjects(input: [LengthObject]): String
+  exampleInput(input: ExampleInputObject): String
+  defaultedRequired(input: DefaultedRequired): String
+  wrappers(input: Wrappers): String
+  nnListField(input: NNListField): String
+  filter(input: Filter): String
+  test(input: OneOfTestInput!): OneOfTestObject
+  intOneOf(input: IntOneOf): String
+  oneOfList(input: [OneOfTestInput!]): String
+  oneOfHolder(input: OneOfHolder): String
+  recursiveOneOf(input: RecursiveOneOf): String
+  fooBar(input: FooBarEnum): String
+  colorEnum(fromEnum: Color): String
+  color(input: Color): String
+  colors(input: [Color]): String
+  colorInput(input: ColorInput): String
+  colorsNN(input: [Color!]): String
+  nestedColors(input: [[Color]]): String
+}
+
+type Mutation @join__type(graph: TEST) {
+  favoriteEnum(color: Color): String
+}
+
+type Subscription @join__type(graph: TEST) {
+  subscribeToEnum(color: Color): String
+}

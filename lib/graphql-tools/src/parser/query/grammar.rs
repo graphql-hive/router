@@ -4,7 +4,7 @@ use combine::{parser, Parser};
 use super::ast::*;
 use super::error::ParseError;
 use crate::parser::common::Directive;
-use crate::parser::common::{arguments, default_value, directives, parse_type};
+use crate::parser::common::{arguments, default_value, directives, parse_type, string};
 use crate::parser::helpers::{ident, name, punct};
 use crate::parser::tokenizer::TokenStream;
 
@@ -136,7 +136,11 @@ pub fn operation_common<'a, T: Text<'a>>(
                     .with(many1(
                         (
                             position(),
-                            punct("$").with(name::<'a, T>()).skip(punct(":")),
+                            // The description has no meaning for execution, so it is not kept.
+                            optional(parser(string))
+                                .with(punct("$"))
+                                .with(name::<'a, T>())
+                                .skip(punct(":")),
                             parser(parse_type),
                             optional(punct("=").with(parser(default_value))),
                         )
@@ -374,6 +378,14 @@ mod test {
     #[should_panic(expected = "PosOverflow")]
     fn large_integer() {
         ast("{ a(x: 10000000000000000000000000000 }");
+    }
+
+    #[test]
+    fn variable_definition_descriptions() {
+        assert_eq!(
+            ast(r#"query ("a" $a: Int, """b""" $b: String = "x") { f(a: $a, b: $b) }"#).to_string(),
+            ast(r#"query ($a: Int, $b: String = "x") { f(a: $a, b: $b) }"#).to_string(),
+        );
     }
 
     #[test]

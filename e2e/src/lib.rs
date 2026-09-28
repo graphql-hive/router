@@ -97,6 +97,8 @@ mod tls;
 #[cfg(test)]
 mod traffic_shaping;
 #[cfg(test)]
+mod variables_coercion;
+#[cfg(test)]
 mod websocket;
 #[cfg(test)]
 mod websocket_pool;
