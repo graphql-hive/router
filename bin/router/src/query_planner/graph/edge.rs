@@ -12,7 +12,7 @@ use crate::query_planner::{
     state::supergraph_state::{OperationKind, SubgraphName},
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EntityMove {
     pub key: String,
     pub requirements: TypeAwareSelection,
@@ -24,14 +24,14 @@ pub struct EntityMove {
     pub is_interface: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InterfaceObjectTypeMove {
     pub object_type_name: String,
     pub requirements: TypeAwareSelection,
 }
 
 /// Represent a simple file move
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct FieldMove {
     pub name: String,
     pub type_name: String,
@@ -45,7 +45,7 @@ pub struct FieldMove {
 }
 
 /// Represent a simple file move
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct ReentryMove {
     pub name: String,
     pub type_name: String,
@@ -157,6 +157,7 @@ impl Display for OverrideLabel {
     }
 }
 
+#[derive(Clone)]
 pub enum Edge {
     SubgraphEntrypoint {
         name: SubgraphName,

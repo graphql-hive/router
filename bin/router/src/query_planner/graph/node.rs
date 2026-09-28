@@ -12,15 +12,12 @@ pub struct UnionMembersData {
     pub object_type_name: String,
     /// Represents all union members reachable for the same field in this subgraph.
     pub possible_members: Vec<String>,
-    pub provides: Option<u64>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum SubgraphTypeSpecialization {
     /// Root/entrypoint type for a subgraph.
     Root,
-    /// Node was created due to @provides path.
-    Provides(u64),
     /// Node represents a union member tail for a specific subgraph.
     ///
     /// For union-returning field moves, we may need a tail that only exposes the
@@ -45,6 +42,15 @@ pub struct SubgraphType {
     pub subgraph: SubgraphName,
     pub is_interface_object: bool,
     specialization: Option<SubgraphTypeSpecialization>,
+    /// What a `@provides` path makes available on top of the plain node, like `{sku}`.
+    /// Copies are keyed by it, so two paths that provide the same fields share a node.
+    provided: Option<String>,
+}
+
+impl SubgraphType {
+    pub fn plain_display_name(&self) -> String {
+        format!("{}/{}", self.name, self.subgraph.0)
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -62,25 +68,21 @@ impl Node {
             Node::QueryRoot(name) => format!("root({})", name),
             Node::MutationRoot(name) => format!("root({})", name),
             Node::SubscriptionRoot(name) => format!("root({})", name),
-            Node::SubgraphType(st) => match &st.specialization {
-                Some(spec) => match spec {
-                    SubgraphTypeSpecialization::Root => {
-                        format!("{}/{}", st.name, st.subgraph.0)
-                    }
-                    SubgraphTypeSpecialization::Provides(provides_id) => {
-                        format!("{}/{}/{}", st.name, st.subgraph.0, provides_id)
-                    }
-                    SubgraphTypeSpecialization::UnionMembers(u) => {
-                        // we rely on display_name when it comes to deduplicating nodes (upsert_node),
-                        // that's why the string produced here should "mimic" hashing
-                        format!(
-                            "{}/{} for {}.{}:{}",
-                            st.name, st.subgraph.0, u.type_name, u.field_name, u.object_type_name
-                        )
-                    }
-                },
-                None => format!("{}/{}", st.name, st.subgraph.0),
-            },
+            Node::SubgraphType(st) => {
+                // we rely on display_name when it comes to deduplicating nodes (upsert_node),
+                // that's why the string produced here should "mimic" hashing
+                let name = match &st.specialization {
+                    Some(SubgraphTypeSpecialization::UnionMembers(u)) => format!(
+                        "{}/{} for {}.{}:{}",
+                        st.name, st.subgraph.0, u.type_name, u.field_name, u.object_type_name
+                    ),
+                    Some(SubgraphTypeSpecialization::Root) | None => st.plain_display_name(),
+                };
+                match &st.provided {
+                    Some(provided) => format!("{}{}", name, provided),
+                    None => name,
+                }
+            }
         }
     }
 
@@ -98,11 +100,18 @@ impl Node {
             Node::QueryRoot(_) => false,
             Node::MutationRoot(_) => false,
             Node::SubscriptionRoot(_) => false,
-            Node::SubgraphType(st) => st
-                .specialization
-                .as_ref()
-                .is_some_and(|spec| matches!(spec, SubgraphTypeSpecialization::Provides(_))),
+            Node::SubgraphType(st) => st.provided.is_some(),
         }
+    }
+
+    /// A copy of this node for a `@provides` path that makes `provided` available.
+    /// Everything else stays, so a union member tail is still a union member tail.
+    pub fn provides_copy(&self, provided: String) -> Node {
+        let mut copy = self.clone();
+        if let Node::SubgraphType(st) = &mut copy {
+            st.provided = Some(provided);
+        }
+        copy
     }
 
     pub fn new_node(name: &str, subgraph: SubgraphName, is_interface_object: bool) -> Node {
@@ -111,6 +120,7 @@ impl Node {
             subgraph,
             is_interface_object,
             specialization: None,
+            provided: None,
         })
     }
 
@@ -120,6 +130,7 @@ impl Node {
             subgraph,
             is_interface_object: false,
             specialization: Some(SubgraphTypeSpecialization::Root),
+            provided: None,
         })
     }
 
@@ -134,6 +145,7 @@ impl Node {
             subgraph,
             is_interface_object,
             specialization: Some(specialization),
+            provided: None,
         })
     }
 

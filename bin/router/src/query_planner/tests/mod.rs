@@ -136,6 +136,7 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
               author {
                 __typename
                 id
+                username
                 reviews {
                   id
                   body
@@ -144,7 +145,6 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
                     upc
                   }
                 }
-                username
               }
             }
           },

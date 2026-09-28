@@ -512,8 +512,8 @@ fn provides_fieldset_with_typename_on_interface() -> Result<(), Box<dyn Error>> 
             animals {
               __typename
               ... on Dog {
-                name
                 __typename
+                name
               }
             }
           }
