@@ -219,7 +219,12 @@ impl UsageAgentInner {
         for op in reports {
             let operation =
                 self.processor
-                    .process(&op.operation_body, &op.schema, op.variables.as_ref());
+                    .process(
+                        &op.operation_body,
+                        op.operation_name.as_deref(),
+                        &op.schema,
+                        op.variables.as_ref(),
+                    );
 
             match operation {
                 Err(e) => {

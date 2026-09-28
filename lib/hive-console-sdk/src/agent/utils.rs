@@ -15,8 +15,8 @@ use std::hash::Hasher;
 use xxhash_rust::xxh3::Xxh3;
 
 use graphql_tools::ast::{
-    visit_document, OperationTransformer, OperationVisitor, OperationVisitorContext, Transformed,
-    TransformedValue,
+    visit_document, AstNodeWithName, OperationTransformer, OperationVisitor,
+    OperationVisitorContext, Transformed, TransformedValue,
 };
 use graphql_tools::parser::parse_query;
 use graphql_tools::parser::query::{
@@ -1007,6 +1007,94 @@ pub fn hash_graphql_value(value: &JsonValue, hasher: &mut Xxh3, include_values: 
     }
 }
 
+/// Keeps only the operation selected by `operation_name` and the fragments it spreads,
+/// transitively. Like GraphQL's GetOperation, a document with several operations needs a
+/// matching name. A single-operation document is kept as is, even when the name does not
+/// match it, so reporting never drops an operation it used to report.
+fn select_operation(
+    document: Document<'static, String>,
+    operation_name: Option<&str>,
+) -> Result<Document<'static, String>, String> {
+    let fragments: HashMap<&str, &SelectionSet<'static, String>> = document
+        .definitions
+        .iter()
+        .filter_map(|definition| match definition {
+            Definition::Fragment(fragment) => {
+                Some((fragment.name.as_str(), &fragment.selection_set))
+            }
+            Definition::Operation(_) => None,
+        })
+        .collect();
+
+    let operations: Vec<(usize, &OperationDefinition<'static, String>)> = document
+        .definitions
+        .iter()
+        .enumerate()
+        .filter_map(|(index, definition)| match definition {
+            Definition::Operation(operation) => Some((index, operation)),
+            Definition::Fragment(_) => None,
+        })
+        .collect();
+    let (selected_index, selected) = match (operations.as_slice(), operation_name) {
+        ([], _) => return Err("Document contains no operation".to_string()),
+        ([only], _) => *only,
+        (_, Some(name)) => *operations
+            .iter()
+            .find(|(_, operation)| operation.node_name() == Some(name))
+            .ok_or_else(|| format!("Unknown operation named \"{name}\""))?,
+        (_, None) => {
+            return Err("Operation name is required for a document with multiple operations".into())
+        }
+    };
+
+    // A worklist instead of recursion over fragments, and each fragment is expanded once,
+    // so fragment cycles (invalid, but possibly reported unvalidated) terminate.
+    let mut used_fragments: HashSet<&str> = HashSet::new();
+    let mut pending: Vec<&str> = Vec::new();
+    collect_fragment_spreads(selected.selection_set(), &mut pending);
+    while let Some(name) = pending.pop() {
+        if used_fragments.insert(name) {
+            if let Some(selection_set) = fragments.get(name) {
+                collect_fragment_spreads(selection_set, &mut pending);
+            }
+        }
+    }
+
+    let keep: Vec<bool> = document
+        .definitions
+        .iter()
+        .enumerate()
+        .map(|(index, definition)| match definition {
+            Definition::Operation(_) => index == selected_index,
+            Definition::Fragment(fragment) => used_fragments.contains(fragment.name.as_str()),
+        })
+        .collect();
+
+    Ok(Document {
+        definitions: document
+            .definitions
+            .into_iter()
+            .zip(keep)
+            .filter_map(|(definition, keep)| keep.then_some(definition))
+            .collect(),
+    })
+}
+
+fn collect_fragment_spreads<'a>(
+    selection_set: &'a SelectionSet<'static, String>,
+    out: &mut Vec<&'a str>,
+) {
+    for selection in &selection_set.items {
+        match selection {
+            Selection::Field(field) => collect_fragment_spreads(&field.selection_set, out),
+            Selection::InlineFragment(fragment) => {
+                collect_fragment_spreads(&fragment.selection_set, out)
+            }
+            Selection::FragmentSpread(spread) => out.push(spread.fragment_name.as_str()),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ProcessedOperation {
     pub operation: String,
@@ -1041,11 +1129,28 @@ impl OperationProcessor {
     pub fn process(
         &self,
         operation_body: &str,
+        operation_name: Option<&str>,
         schema: &SchemaDocument<'static, String>,
         variables: Option<&ReportVariables>,
     ) -> Result<Option<ProcessedOperation>, String> {
         let variables = variables.filter(|_| self.process_variables_enabled);
-        let key = self.cache_key(operation_body, variables);
+        let operation_name = operation_name.filter(|name| !name.is_empty());
+        // Seeds the reported hash. It leaves the operation name out, so hashes of
+        // single-operation documents stay stable: the printed selected operation already
+        // tells apart operations of the same document.
+        // We did not change the cache key now because it will cause Console to consider
+        // different operations with the same name as different operations, even if they
+        // are the same document.
+        let hash_seed = self.cache_key(operation_body, variables);
+        let key = match operation_name {
+            Some(name) => {
+                let mut hasher = Xxh3::default();
+                hasher.write_u64(hash_seed);
+                hasher.write(name.as_bytes());
+                hasher.finish()
+            }
+            None => hash_seed,
+        };
 
         if self.cache.contains_key(&key) {
             let entry = self
@@ -1055,7 +1160,8 @@ impl OperationProcessor {
 
             Ok(entry.clone())
         } else {
-            let result = self.transform(operation_body, schema, key, variables)?;
+            let result =
+                self.transform(operation_body, operation_name, schema, hash_seed, variables)?;
             self.cache.insert(key, result.clone());
             Ok(result)
         }
@@ -1064,13 +1170,15 @@ impl OperationProcessor {
     fn transform(
         &self,
         operation: &str,
+        operation_name: Option<&str>,
         schema: &SchemaDocument<'static, String>,
-        cache_key: u64,
+        hash_seed: u64,
         variables: Option<&ReportVariables>,
     ) -> Result<Option<ProcessedOperation>, String> {
         let parsed = parse_query(operation)
             .map_err(|e| e.to_string())?
             .into_static();
+        let parsed = select_operation(parsed, operation_name)?;
 
         let is_introspection = parsed.definitions.iter().find(|def| match def {
             Definition::Operation(OperationDefinition::Query(query)) => query
@@ -1096,7 +1204,7 @@ impl OperationProcessor {
 
         let normalized = normalize_operation(&parsed);
         let printed = minify_query_document(&normalized);
-        let hash = format!("{:x}", md5::compute(format!("{}_{}", printed, cache_key)));
+        let hash = format!("{:x}", md5::compute(format!("{}_{}", printed, hash_seed)));
 
         Ok(Some(ProcessedOperation {
             operation: printed,
@@ -2778,5 +2886,139 @@ mod variables_hashing_tests {
         let ba = r#"{ "b": 2, "a": 1 }"#;
         assert_eq!(hash(ab, true), hash(ba, true));
         assert_eq!(hash(ab, false), hash(ba, false));
+    }
+}
+
+#[cfg(test)]
+mod operation_selection_tests {
+    use graphql_tools::parser::{minify_query_document, parse_query, parse_schema};
+
+    use super::{select_operation, OperationProcessor};
+
+    fn select(document: &str, operation_name: Option<&str>) -> Result<String, String> {
+        let document = parse_query::<String>(document).unwrap().into_static();
+        select_operation(document, operation_name).map(|doc| minify_query_document(&doc))
+    }
+
+    #[test]
+    fn selects_non_first_operation() {
+        assert_eq!(
+            select("query first { a } query second { b }", Some("second")).unwrap(),
+            "query second{b}"
+        );
+    }
+
+    #[test]
+    fn selects_single_operation_without_matching_name() {
+        assert_eq!(select("{ a }", None).unwrap(), "{a}");
+        assert_eq!(select("query only { a }", None).unwrap(), "query only{a}");
+        assert_eq!(select("{ a }", Some("other")).unwrap(), "{a}");
+    }
+
+    #[test]
+    fn keeps_only_transitively_used_fragments() {
+        let document = "
+            query first { ...A }
+            query second { b { ...B } }
+            fragment A on Query { a }
+            fragment B on B { ... on B { ...C } }
+            fragment C on B { c }
+            fragment Unused on Query { a }
+        ";
+        assert_eq!(
+            select(document, Some("second")).unwrap(),
+            "query second{b{...B}}fragment B on B{...on B{...C}}fragment C on B{c}"
+        );
+        assert_eq!(
+            select(document, Some("first")).unwrap(),
+            "query first{...A}fragment A on Query{a}"
+        );
+    }
+
+    #[test]
+    fn terminates_on_fragment_cycles() {
+        assert_eq!(
+            select(
+                "query q { ...A } fragment A on Query { ...B } fragment B on Query { ...A }",
+                Some("q")
+            )
+            .unwrap(),
+            "query q{...A}fragment A on Query{...B}fragment B on Query{...A}"
+        );
+        assert_eq!(
+            select("query q { ...A } fragment A on Query { a ...A }", Some("q")).unwrap(),
+            "query q{...A}fragment A on Query{a...A}"
+        );
+    }
+
+    #[test]
+    fn rejects_ambiguous_or_unknown_operation() {
+        assert!(select("query first { a } query second { b }", None).is_err());
+        assert!(select("query first { a } query second { b }", Some("third")).is_err());
+        assert!(select("fragment A on Query { a }", None).is_err());
+    }
+
+    #[test]
+    fn process_reports_only_the_selected_operation() {
+        let schema = parse_schema::<String>("type Query { first: String second: String }").unwrap();
+        let processor = OperationProcessor::new(false);
+        let document = "query a { first } query b { second }";
+
+        let a = processor
+            .process(document, Some("a"), &schema, None)
+            .unwrap()
+            .unwrap();
+        let b = processor
+            .process(document, Some("b"), &schema, None)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(a.operation, "query a{first}");
+        assert_eq!(a.coordinates, vec!["Query.first".to_string()]);
+        assert_eq!(b.operation, "query b{second}");
+        assert_eq!(b.coordinates, vec!["Query.second".to_string()]);
+        assert_ne!(a.hash, b.hash);
+    }
+
+    #[test]
+    fn process_ignores_empty_operation_name() {
+        let schema = parse_schema::<String>("type Query { first: String }").unwrap();
+        let processor = OperationProcessor::new(false);
+
+        let operation = processor
+            .process("query a { first }", Some(""), &schema, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(operation.operation, "query a{first}");
+    }
+
+    #[test]
+    fn process_hash_of_single_operation_does_not_depend_on_name() {
+        let schema = parse_schema::<String>("type Query { first: String }").unwrap();
+        let named = OperationProcessor::new(false)
+            .process("query a { first }", Some("a"), &schema, None)
+            .unwrap()
+            .unwrap();
+        let unnamed = OperationProcessor::new(false)
+            .process("query a { first }", None, &schema, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(named.hash, unnamed.hash);
+    }
+
+    #[test]
+    fn process_does_not_drop_operation_next_to_introspection() {
+        let schema = parse_schema::<String>("type Query { first: String }").unwrap();
+        let processor = OperationProcessor::new(false);
+        let document = "query intro { __schema { queryType { name } } } query a { first }";
+
+        assert!(processor
+            .process(document, Some("a"), &schema, None)
+            .unwrap()
+            .is_some());
+        assert!(processor
+            .process(document, Some("intro"), &schema, None)
+            .unwrap()
+            .is_none());
     }
 }
