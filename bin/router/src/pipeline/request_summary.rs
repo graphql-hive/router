@@ -15,12 +15,12 @@ use ntex::{
 
 /// Matches whatever `graphql_endpoint_handler` serves
 fn build_graphql_matcher(graphql_path: &str) -> Router<()> {
-    let mut builder = Router::build();
+    let mut builder = Router::builder();
     builder.path(graphql_path, ());
     if graphql_path != "/" {
         builder.prefix(graphql_path, ());
     }
-    builder.finish()
+    builder.build()
 }
 
 /// Scopes the request summary as a task-local for the rest of the request, so every
