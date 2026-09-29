@@ -1,0 +1,36 @@
+query GeneratedQuery($v1: Boolean!, $v2: Boolean!, $v3: Boolean!, $v4: Boolean! = true) {
+  ... on Query {
+    ... {
+      listings @include(if: false) {
+        pet @include(if: false) {
+          ...GeneratedFragment1 @include(if: $v3) @skip(if: $v4)
+          id
+          __typename
+          name @include(if: $v1) @skip(if: false)
+        }
+        __typename
+        rank
+        id
+      }
+      __typename
+    }
+    listings {
+      rank @skip(if: false)
+      id
+      a2_id: id
+    }
+  }
+  __typename
+  a1_listings: listings {
+    id
+    id
+  }
+}
+
+fragment GeneratedFragment1 on Dog {
+  __typename
+  name
+  tricks @include(if: false) @skip(if: $v2)
+  id
+  tricks @include(if: true)
+}

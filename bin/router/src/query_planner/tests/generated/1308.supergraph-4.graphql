@@ -1,0 +1,48 @@
+query GeneratedQuery($v1: Boolean!, $v10: Boolean!, $v11: Boolean!, $v12: Boolean!, $v13: Boolean! = true, $v2: Boolean!, $v3: Boolean! = false, $v4: Boolean!, $v5: Boolean!, $v6: Boolean!, $v7: Boolean! = false, $v8: Boolean!, $v9: Boolean!) {
+  cage {
+    a1_listings: listings {
+      a7_rank: rank @skip(if: $v7) @include(if: $v8)
+      a2_id: id @skip(if: $v2)
+      pet {
+        a3_id: id @include(if: $v3)
+        ... on Animal @include(if: $v5) @skip(if: $v6) {
+          id @include(if: $v4) @skip(if: true)
+          a5_name: name @include(if: true)
+          id
+          __typename
+          a6_name: name
+        }
+        a4_name: name
+        ...GeneratedFragment1
+      }
+      ... {
+        __typename
+        a8_id: id @include(if: $v9) @skip(if: $v10)
+        rank @include(if: true) @skip(if: false)
+        pet @skip(if: false) {
+          __typename
+          a9_id: id
+          ... on Cat @skip(if: $v13) {
+            __typename
+            ... on Cat @skip(if: false) {
+              __typename
+            }
+            a10_whiskers: whiskers @include(if: true)
+            id @include(if: $v12)
+            name
+          }
+          name @skip(if: $v11)
+        }
+      }
+    }
+    id @include(if: $v1)
+    __typename
+  }
+  __typename
+}
+
+fragment GeneratedFragment1 on Bird {
+  __typename
+  name
+  id
+}

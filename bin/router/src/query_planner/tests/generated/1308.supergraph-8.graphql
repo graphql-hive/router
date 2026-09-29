@@ -1,0 +1,187 @@
+query GeneratedQuery($v1: Boolean!, $v10: Boolean! = false, $v11: Boolean!, $v12: Boolean!, $v13: Boolean!, $v14: Boolean!, $v15: Boolean!, $v16: Boolean!, $v17: Boolean! = true, $v18: Boolean! = false, $v19: Boolean!, $v2: Boolean! = true, $v20: Boolean!, $v21: Boolean! = true, $v22: Boolean!, $v23: Boolean!, $v24: Boolean!, $v25: Boolean! = true, $v26: Boolean! = false, $v27: Boolean!, $v28: Boolean! = false, $v29: Boolean!, $v3: Boolean! = true, $v30: Boolean! = false, $v4: Boolean! = true, $v5: Boolean!, $v6: Boolean!, $v7: Boolean! = true, $v8: Boolean!, $v9: Boolean!) {
+  ...GeneratedFragment3
+  __typename
+  cage {
+    listings {
+      ... {
+        id
+        pet {
+          name @include(if: $v9) @skip(if: $v10)
+          id @skip(if: $v11)
+        }
+        ...GeneratedFragment2
+        ... {
+          pet {
+            name
+            ... on Cat @include(if: $v12) {
+              __typename
+            }
+            a8_name: name
+          }
+          id
+        }
+        a7_rank: rank
+      }
+      pet {
+        ...GeneratedFragment1
+        id @include(if: $v4) @skip(if: false)
+        a2_name: name @include(if: $v3)
+        ... on Dog @include(if: $v7) {
+          tricks
+          a5_name: name
+          id @skip(if: $v6) @include(if: true)
+          a4_name: name
+          a3_tricks: tricks @include(if: $v5)
+          __typename
+        }
+        __typename
+      }
+      __typename
+      rank @skip(if: false) @include(if: true)
+      a1_id: id @skip(if: false) @include(if: true)
+    }
+    id @skip(if: $v1) @include(if: $v2)
+  }
+}
+
+fragment GeneratedFragment1 on Bird {
+  id
+  __typename
+  ... on Bird {
+    name @include(if: true) @skip(if: false)
+    a6_id: id
+    id @skip(if: $v8)
+    ... {
+      __typename
+    }
+  }
+}
+
+fragment GeneratedFragment2 on Listing {
+  ... on Listing {
+    a11_id: id
+  }
+  id
+  a10_rank: rank
+  pet {
+    a9_name: name
+    id
+    __typename
+  }
+}
+
+fragment GeneratedFragment4 on Listing {
+  pet {
+    id @skip(if: $v14) @include(if: $v15)
+    __typename
+  }
+  rank
+  pet {
+    ... @skip(if: true) @include(if: $v20) {
+      __typename
+    }
+    name @include(if: $v18) @skip(if: $v19)
+    id @include(if: $v16) @skip(if: $v17)
+    id
+  }
+  a13_id: id @include(if: true)
+}
+
+fragment GeneratedFragment5 on Animal {
+  __typename
+}
+
+fragment GeneratedFragment6 on Listing {
+  __typename
+}
+
+fragment GeneratedFragment7 on Listing {
+  pet {
+    __typename
+  }
+  rank @include(if: $v29)
+  ... on Listing {
+    __typename
+  }
+  id
+  __typename
+}
+
+fragment GeneratedFragment8 on Listing {
+  __typename
+  rank
+  a22_id: id
+  ... on Listing {
+    __typename
+  }
+  a23_pet: pet {
+    __typename
+  }
+}
+
+fragment GeneratedFragment3 on Query {
+  cage {
+    id @include(if: $v24)
+    __typename
+    ... on Cage {
+      id
+      listings {
+        ...GeneratedFragment7 @skip(if: false)
+        pet @include(if: false) {
+          a18_id: id @skip(if: false) @include(if: true)
+          name
+          ...GeneratedFragment5
+          ... on Animal {
+            __typename
+          }
+        }
+        __typename
+        ... on Listing @include(if: $v27) @skip(if: $v28) {
+          pet {
+            __typename
+          }
+          a19_id: id @include(if: true) @skip(if: $v26)
+          rank @include(if: $v25)
+          ...GeneratedFragment6
+        }
+      }
+    }
+    a14_listings: listings @skip(if: false) @include(if: $v21) {
+      rank @skip(if: $v22)
+      a16_pet: pet {
+        __typename
+        a17_name: name @skip(if: $v23) @include(if: true)
+      }
+      a15_id: id
+    }
+  }
+  __typename
+  cage @skip(if: $v13) {
+    id
+    __typename
+    listings {
+      pet {
+        a12_name: name
+        id @skip(if: false)
+      }
+      ...GeneratedFragment4
+      rank
+      id
+    }
+  }
+  ... {
+    cage {
+      listings @include(if: true) @skip(if: $v30) {
+        pet {
+          id
+        }
+        rank
+        a21_id: id
+        ...GeneratedFragment8
+        __typename
+      }
+      __typename
+      a20_id: id
+    }
+  }
+}

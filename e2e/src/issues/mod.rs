@@ -3574,4 +3574,139 @@ mod issues_e2e_tests {
         ]
         "#);
     }
+
+    #[ntex::test]
+    /// https://github.com/graphql-hive/router/issues/1311
+    ///
+    /// The same photo entity appears under both department types. The response must use the
+    /// requested width at each response path, including when either branch is conditional.
+    async fn issue_1311_each_department_gets_its_own_thumbnail_width() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mock_subgraphs(json!({
+                "catalog": {
+                    "query": { "storefront": { "departments": [
+                        { "__typename": "Aquatics", "id": "a1", "photo": { "__typename": "Photo", "id": "p1" } },
+                        { "__typename": "Reptiles", "id": "r1", "photo": { "__typename": "Photo", "id": "p1" } },
+                        { "__typename": "Aquatics", "id": "a2", "photo": { "__typename": "Photo", "id": "p2" } }
+                    ] } }
+                },
+                "media": {
+                    "entities": [
+                        { "__typename": "Photo", "id": "p1", "thumbnail(width: 100)": "p1@100", "thumbnail(width: 200)": "p1@200" },
+                        { "__typename": "Photo", "id": "p2", "thumbnail(width: 100)": "p2@100", "thumbnail(width: 200)": "p2@200" }
+                    ]
+                }
+            })))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.1311.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let unconditional = r#"{ storefront { departments {
+            ... on Aquatics { photo { thumbnail(width: 100) } }
+            ... on Reptiles { photo { thumbnail(width: 200) } }
+        } } }"#;
+        let conditional = r#"query($a: Boolean!, $b: Boolean!) { storefront { departments {
+            ... on Aquatics { photo { thumbnail(width: 100) @include(if: $a) } }
+            ... on Reptiles { photo { thumbnail(width: 200) @include(if: $b) } }
+        } } }"#;
+
+        let mut results = vec![];
+        let response = router.send_graphql_request(unconditional, None, None).await;
+        results.push(format!("no @include => {}", response.string_body().await));
+        for (a, b) in [(true, true), (true, false), (false, true), (false, false)] {
+            let variables = sonic_rs::json!({ "a": a, "b": b });
+            let response = router
+                .send_graphql_request(conditional, Some(variables), None)
+                .await;
+            results.push(format!("a={a} b={b} => {}", response.string_body().await));
+        }
+
+        insta::assert_snapshot!(results.join("\n"), @r#"
+        no @include => {"data":{"storefront":{"departments":[{"photo":{"thumbnail":"p1@100"}},{"photo":{"thumbnail":"p1@200"}},{"photo":{"thumbnail":"p2@100"}}]}}}
+        a=true b=true => {"data":{"storefront":{"departments":[{"photo":{"thumbnail":"p1@100"}},{"photo":{"thumbnail":"p1@200"}},{"photo":{"thumbnail":"p2@100"}}]}}}
+        a=true b=false => {"data":{"storefront":{"departments":[{"photo":{"thumbnail":"p1@100"}},{"photo":{}},{"photo":{"thumbnail":"p2@100"}}]}}}
+        a=false b=true => {"data":{"storefront":{"departments":[{"photo":{}},{"photo":{"thumbnail":"p1@200"}},{"photo":{}}]}}}
+        a=false b=false => {"data":{"storefront":{"departments":[{"photo":{}},{"photo":{}},{"photo":{}}]}}}
+        "#);
+    }
+
+    #[ntex::test]
+    /// Mutation fields run in order, including the entity fetches needed to finish a field.
+    /// Delaying subgraph `b` verifies that the next root mutation is not sent to `c` early.
+    async fn next_mutation_waits_for_entity_fetch_of_previous_one() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+
+        let mocks = mock_subgraphs(json!({
+            "a": {
+                "mutation": {
+                    "addProduct": { "__typename": "Product", "id": "1", "price": 599.99 }
+                }
+            },
+            "b": {
+                "entities": [
+                    { "__typename": "Product", "id": "1", "price": 599.99, "isExpensive": true }
+                ]
+            },
+            "c": {
+                "mutation": { "add": 1 }
+            }
+        }));
+        let answered = Arc::new(Mutex::new(Vec::new()));
+        let answered_by_mocks = answered.clone();
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(move |request| {
+                answered_by_mocks.lock().unwrap().push(request.path.clone());
+                mocks(request)
+            })
+            .with_path_delay("/b", Duration::from_millis(300))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.mutation-order.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let response = router
+            .send_graphql_request(
+                r#"mutation {
+                  create: addProduct(input: { name: "new", price: 599.99 }) { isExpensive }
+                  count: add(num: 1)
+                }"#,
+                None,
+                None,
+            )
+            .await;
+
+        insta::assert_snapshot!(response.string_body().await, @r#"{"data":{"create":{"isExpensive":true},"count":1}}"#);
+        assert_eq!(*answered.lock().unwrap(), vec!["/a", "/b", "/c"]);
+    }
 }

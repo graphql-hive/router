@@ -1,0 +1,260 @@
+query GeneratedQuery($v1: Boolean!, $v10: Boolean!, $v11: Boolean!, $v12: Boolean!, $v13: Boolean! = false, $v14: Boolean!, $v15: Boolean!, $v16: Boolean!, $v17: Boolean!, $v18: Boolean!, $v19: Boolean!, $v2: Boolean!, $v20: Boolean!, $v21: Boolean! = true, $v22: Boolean!, $v23: Boolean! = true, $v24: Boolean! = false, $v25: Boolean! = true, $v26: Boolean!, $v27: Boolean!, $v28: Boolean! = true, $v29: Boolean! = false, $v3: Boolean! = false, $v30: Boolean!, $v31: Boolean!, $v32: Boolean!, $v33: Boolean!, $v34: Boolean! = false, $v35: Boolean! = false, $v4: Boolean!, $v5: Boolean!, $v6: Boolean! = true, $v7: Boolean!, $v8: Boolean!, $v9: Boolean!) {
+  __typename
+  ...GeneratedFragment2
+  pet {
+    weight
+    id
+    __typename
+  }
+  ... on Query @skip(if: $v29) @include(if: $v30) {
+    ... {
+      pet {
+        a6_checkup: checkup {
+          __typename
+          a8_id: id
+          fee @include(if: $v18) @skip(if: $v19)
+          ... on Checkup {
+            fee
+            a9_fee: fee
+            ... on Checkup {
+              __typename
+            }
+          }
+          a7_grade: grade @include(if: true)
+          id @include(if: $v17)
+        }
+        id @skip(if: true) @include(if: true)
+        checkup @include(if: true) @skip(if: $v20) {
+          fee
+          id
+          __typename
+          ...GeneratedFragment1
+        }
+        age @skip(if: $v15) @include(if: $v16)
+        weight
+      }
+      ... @skip(if: $v28) {
+        pet {
+          __typename
+          age
+          checkup {
+            id @skip(if: $v24) @include(if: $v25)
+            a12_grade: grade @include(if: $v26) @skip(if: $v27)
+            fee
+            __typename
+          }
+          a11_id: id
+          weight
+        }
+      }
+      __typename
+    }
+    a1_pet: pet @skip(if: $v1) {
+      __typename
+      checkup @skip(if: true) @include(if: $v2) {
+        fee @skip(if: $v3) @include(if: false)
+        a2_id: id
+        id
+        a3_grade: grade
+      }
+      id
+      ... @skip(if: $v14) {
+        checkup @skip(if: $v5) @include(if: $v6) {
+          grade @skip(if: $v7) @include(if: $v8)
+          id @skip(if: $v9)
+          fee @include(if: $v10) @skip(if: $v11)
+        }
+        a4_id: id @skip(if: $v12) @include(if: $v13)
+        a5_weight: weight @include(if: true) @skip(if: false)
+        age
+      }
+      weight @include(if: true) @skip(if: $v4)
+      age
+    }
+    __typename
+  }
+}
+
+fragment GeneratedFragment1 on Checkup {
+  grade @include(if: false) @skip(if: $v21)
+  a10_fee: fee @skip(if: true)
+  id
+  fee @skip(if: $v22) @include(if: $v23)
+}
+
+fragment GeneratedFragment4 on Checkup {
+  a15_id: id
+  fee
+  __typename
+}
+
+fragment GeneratedFragment5 on Checkup {
+  grade
+  ... on Checkup {
+    __typename
+  }
+  id
+  a18_fee: fee
+}
+
+fragment GeneratedFragment3 on Pet {
+  checkup {
+    id @skip(if: $v35)
+    __typename
+    ... on Checkup {
+      a14_id: id
+    }
+    fee
+    ...GeneratedFragment4
+  }
+  id
+  __typename
+  weight @skip(if: $v34) @include(if: true)
+  checkup {
+    id
+    __typename
+    ... on Checkup {
+      a17_fee: fee
+      __typename
+      id
+      ... on Checkup {
+        __typename
+      }
+      a16_fee: fee
+      grade
+    }
+    ...GeneratedFragment5
+    fee
+    grade
+  }
+  age @skip(if: $v32) @include(if: $v33)
+}
+
+fragment GeneratedFragment6 on Checkup {
+  __typename
+}
+
+fragment GeneratedFragment7 on Pet {
+  ... on Pet {
+    __typename
+  }
+  id
+  a24_age: age
+  age
+}
+
+fragment GeneratedFragment8 on Pet {
+  __typename
+}
+
+fragment GeneratedFragment10 on Checkup {
+  __typename
+}
+
+fragment GeneratedFragment11 on Pet {
+  __typename
+}
+
+fragment GeneratedFragment9 on Query {
+  pet {
+    ... {
+      ... on Pet {
+        __typename
+      }
+      __typename
+      ...GeneratedFragment11
+      weight
+    }
+    a31_id: id
+    checkup {
+      a29_id: id
+      fee
+      ...GeneratedFragment10
+      grade
+      __typename
+    }
+    weight
+    age
+    a30_age: age
+  }
+}
+
+fragment GeneratedFragment2 on Query {
+  pet {
+    age
+    __typename
+    a13_id: id @include(if: true) @skip(if: $v31)
+    ...GeneratedFragment3
+  }
+  __typename
+  ... on Query {
+    __typename
+    ... on Query {
+      ... on Query {
+        pet {
+          a28_id: id
+          ... on Pet {
+            __typename
+          }
+          ...GeneratedFragment8
+          checkup {
+            __typename
+          }
+        }
+      }
+      pet {
+        age
+        id
+        ... on Pet {
+          a27_weight: weight
+          a26_id: id
+          __typename
+          age
+          checkup {
+            __typename
+          }
+          a25_checkup: checkup {
+            __typename
+          }
+        }
+      }
+    }
+    ...GeneratedFragment9
+    a19_pet: pet {
+      id
+      a21_checkup: checkup {
+        id
+        ... on Checkup {
+          ...GeneratedFragment6
+          __typename
+          grade
+          fee
+        }
+        fee
+      }
+      weight
+      a20_age: age
+      ... {
+        a22_id: id
+        ...GeneratedFragment7
+        age
+        weight
+        checkup {
+          ... on Checkup {
+            __typename
+          }
+          fee
+        }
+        ... on Pet {
+          age
+          a23_id: id
+          checkup {
+            __typename
+          }
+          weight
+        }
+        weight
+      }
+    }
+  }
+}

@@ -1,0 +1,229 @@
+query GeneratedQuery($v1: Boolean!, $v10: Boolean! = false, $v11: Boolean! = true, $v12: Boolean!, $v13: Boolean!, $v14: Boolean!, $v15: Boolean! = true, $v16: Boolean!, $v17: Boolean! = true, $v18: Boolean!, $v19: Boolean!, $v2: Boolean!, $v20: Boolean!, $v21: Boolean!, $v22: Boolean! = true, $v23: Boolean!, $v24: Boolean! = false, $v25: Boolean!, $v26: Boolean! = true, $v27: Boolean!, $v28: Boolean! = true, $v29: Boolean!, $v3: Boolean!, $v30: Boolean! = false, $v31: Boolean!, $v32: Boolean!, $v33: Boolean!, $v34: Boolean!, $v35: Boolean!, $v36: Boolean! = true, $v37: Boolean! = true, $v38: Boolean!, $v4: Boolean!, $v5: Boolean!, $v6: Boolean! = true, $v7: Boolean!, $v8: Boolean!, $v9: Boolean!) {
+  a1_cage: cage {
+    id
+    id
+  }
+  __typename
+  ... on Query {
+    cage {
+      a2_id: id
+      ... @skip(if: $v5) @include(if: $v6) {
+        id
+        id @skip(if: $v4)
+      }
+      id
+      listings @skip(if: false) {
+        id @include(if: $v3)
+        a3_rank: rank
+        pet {
+          __typename
+          id @include(if: $v1)
+          ...GeneratedFragment1
+          name
+        }
+      }
+    }
+    ...GeneratedFragment9
+    cage {
+      id @include(if: $v26) @skip(if: false)
+      listings {
+        rank @skip(if: $v7) @include(if: false)
+        ...GeneratedFragment3
+        id @include(if: $v11) @skip(if: false)
+        pet {
+          a4_id: id
+          __typename
+          ...GeneratedFragment2 @skip(if: true) @include(if: true)
+          name
+        }
+      }
+      listings {
+        rank @include(if: $v23)
+        __typename
+        id
+        pet {
+          id @skip(if: $v17)
+          a7_name: name
+          ... @include(if: $v22) {
+            a9_id: id
+            name @include(if: $v21)
+            a8_id: id @skip(if: $v19) @include(if: $v20)
+            ... {
+              __typename
+            }
+            __typename
+          }
+          id @skip(if: false) @include(if: $v18)
+        }
+        ... on Listing {
+          __typename
+          id
+          ... {
+            __typename
+            pet {
+              __typename
+            }
+            rank
+            id @skip(if: $v24) @include(if: $v25)
+            ... on Listing {
+              __typename
+            }
+          }
+        }
+      }
+      ...GeneratedFragment5 @include(if: $v37)
+    }
+  }
+}
+
+fragment GeneratedFragment1 on Cat {
+  id
+  whiskers
+  name @include(if: $v2)
+}
+
+fragment GeneratedFragment2 on Dog {
+  id @include(if: $v9) @skip(if: $v10)
+  tricks @skip(if: $v8)
+  name
+}
+
+fragment GeneratedFragment4 on Cat {
+  __typename
+}
+
+fragment GeneratedFragment3 on Listing {
+  ... on Listing {
+    pet {
+      __typename
+    }
+    a6_id: id
+    __typename
+    rank @include(if: $v15) @skip(if: $v16)
+  }
+  pet {
+    __typename
+    a5_id: id @skip(if: $v12) @include(if: $v13)
+    name
+    ...GeneratedFragment4 @include(if: $v14)
+  }
+  rank
+  __typename
+}
+
+fragment GeneratedFragment6 on Dog {
+  __typename
+}
+
+fragment GeneratedFragment7 on Listing {
+  __typename
+}
+
+fragment GeneratedFragment8 on Cage {
+  a11_id: id
+  a12_id: id
+}
+
+fragment GeneratedFragment5 on Cage {
+  listings @skip(if: $v27) @include(if: $v28) {
+    pet {
+      name
+      id @skip(if: $v29)
+      __typename
+      ...GeneratedFragment6 @skip(if: $v30)
+    }
+    ... on Listing {
+      rank @skip(if: false) @include(if: $v31)
+      ...GeneratedFragment7
+      ... on Listing @skip(if: $v34) @include(if: true) {
+        __typename
+      }
+      pet @skip(if: $v32) @include(if: $v33) {
+        __typename
+      }
+      __typename
+    }
+  }
+  id @include(if: false) @skip(if: $v35)
+  ... on Cage {
+    ...GeneratedFragment8
+    id
+    listings {
+      id
+      __typename
+      ... {
+        __typename
+      }
+      a10_pet: pet @include(if: $v36) {
+        __typename
+      }
+      rank
+    }
+    __typename
+  }
+}
+
+fragment GeneratedFragment9 on Query {
+  cage {
+    id
+    __typename
+    listings @skip(if: false) @include(if: $v38) {
+      a13_id: id
+      rank
+      pet {
+        id
+        ... {
+          __typename
+        }
+        name
+      }
+      ... on Listing {
+        a15_id: id
+        a14_pet: pet {
+          __typename
+        }
+        rank
+        ... {
+          __typename
+        }
+      }
+    }
+  }
+  __typename
+  cage {
+    id
+    __typename
+    ... on Cage {
+      id
+      listings {
+        __typename
+        a17_pet: pet {
+          __typename
+        }
+        rank
+        id
+        ... on Listing {
+          __typename
+        }
+      }
+    }
+    listings {
+      rank
+      __typename
+      ... on Listing {
+        pet {
+          __typename
+        }
+      }
+      id
+      pet {
+        id
+        name
+        ... on Cat {
+          __typename
+        }
+        a16_id: id
+      }
+    }
+  }
+}

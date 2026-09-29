@@ -4,6 +4,23 @@ use crate::query_planner::{
 };
 use std::error::Error;
 
+/// Reproducer retained from the generated-operation run (fixture `requires_requires`, seed 4).
+/// This valid operation currently reaches a stale fetch-step reference while planning the
+/// overlapping `@requires` chains selected through repeated product fields and fragments.
+#[test]
+fn generated_requires_requires_seed_4_plans() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(include_str!(
+        "generated/requires_requires.supergraph-4.graphql"
+    ));
+    let _query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires_requires.supergraph.graphql",
+        document,
+    )?;
+
+    Ok(())
+}
+
 #[test]
 fn one() -> Result<(), Box<dyn Error>> {
     init_logger();

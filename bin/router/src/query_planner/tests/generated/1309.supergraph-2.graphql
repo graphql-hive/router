@@ -1,0 +1,173 @@
+query GeneratedQuery($v1: Boolean!, $v10: Boolean!, $v11: Boolean! = false, $v12: Boolean!, $v13: Boolean!, $v14: Boolean!, $v15: Boolean! = true, $v16: Boolean! = true, $v17: Boolean!, $v18: Boolean!, $v19: Boolean!, $v2: Boolean!, $v20: Boolean!, $v21: Boolean! = false, $v22: Boolean!, $v23: Boolean!, $v24: Boolean!, $v25: Boolean!, $v26: Boolean! = false, $v27: Boolean! = true, $v28: Boolean!, $v29: Boolean! = false, $v3: Boolean!, $v4: Boolean! = false, $v5: Boolean! = true, $v6: Boolean! = false, $v7: Boolean!, $v8: Boolean!, $v9: Boolean!) {
+  listings {
+    __typename
+    id @skip(if: false) @include(if: true)
+    pet {
+      __typename
+      name @include(if: $v2) @skip(if: $v3)
+      ... on Animal {
+        name
+        id
+        ... {
+          __typename
+          name
+          name
+          ... on Dog @skip(if: $v4) @include(if: false) {
+            id
+            tricks
+            ... on Dog {
+              __typename
+            }
+            a1_name: name
+            name
+            __typename
+          }
+          id
+        }
+        ...GeneratedFragment1
+      }
+      id @skip(if: $v1)
+    }
+    a2_id: id
+    ...GeneratedFragment3 @include(if: $v16)
+    ... on Listing {
+      a3_pet: pet {
+        ... on Dog {
+          ... on Dog @skip(if: $v7) @include(if: $v8) {
+            name
+            ...GeneratedFragment2
+            __typename
+            a6_id: id @skip(if: true)
+            tricks
+          }
+          a4_name: name
+          a5_tricks: tricks
+          id
+          name
+        }
+        name @include(if: $v5) @skip(if: $v6)
+        id
+        id @include(if: true)
+      }
+      __typename
+      id @skip(if: $v9) @include(if: $v10)
+      rank
+      rank
+    }
+  }
+  listings {
+    ... on Listing {
+      ... on Listing {
+        id @include(if: true)
+        ... on Listing {
+          pet {
+            name
+            id
+            id
+            name
+          }
+          __typename
+          rank
+          rank
+        }
+        __typename
+        rank
+      }
+      id @include(if: true)
+      rank @skip(if: $v26) @include(if: $v27)
+      pet {
+        ... on Cat {
+          ...GeneratedFragment6
+          whiskers
+          a19_id: id @skip(if: $v29)
+        }
+        a18_name: name @skip(if: false)
+        __typename
+        id @skip(if: $v28) @include(if: true)
+        id
+      }
+      __typename
+    }
+    __typename
+    rank @include(if: true)
+    a12_id: id
+    pet @skip(if: $v17) {
+      ... @include(if: true) {
+        a14_name: name @include(if: false) @skip(if: $v21)
+        ... on Animal {
+          a15_name: name @skip(if: $v22) @include(if: $v23)
+          id @include(if: $v24)
+          a16_name: name
+          __typename
+        }
+        id @include(if: $v20)
+        __typename
+      }
+      ...GeneratedFragment5
+      id @skip(if: $v18) @include(if: true)
+      __typename
+      a13_id: id @include(if: $v19)
+      name
+    }
+  }
+  __typename
+}
+
+fragment GeneratedFragment1 on Animal {
+  name
+}
+
+fragment GeneratedFragment2 on Dog {
+  __typename
+}
+
+fragment GeneratedFragment4 on Bird {
+  __typename
+  name
+  id @include(if: $v13) @skip(if: false)
+}
+
+fragment GeneratedFragment3 on Listing {
+  pet @skip(if: false) {
+    __typename
+    id
+    ... on Cat {
+      a9_name: name
+      __typename
+      ... on Cat {
+        id
+        a10_whiskers: whiskers
+        __typename
+        ... @skip(if: $v12) @include(if: true) {
+          __typename
+        }
+        name @include(if: true) @skip(if: false)
+        a11_name: name @skip(if: false) @include(if: $v11)
+      }
+      name
+    }
+    ...GeneratedFragment4
+    a8_name: name
+  }
+  rank
+  ... on Listing {
+    id @skip(if: $v14) @include(if: $v15)
+  }
+  a7_id: id
+  __typename
+}
+
+fragment GeneratedFragment5 on Animal {
+  a17_name: name @skip(if: $v25)
+  __typename
+  id
+}
+
+fragment GeneratedFragment6 on Cat {
+  name
+  ... on Cat {
+    __typename
+  }
+  __typename
+  id
+}

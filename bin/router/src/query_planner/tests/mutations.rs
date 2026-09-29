@@ -198,3 +198,222 @@ fn many_fields_two_same_graph() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+/// Three mutations in a row on one subgraph go in one fetch. After the first two are merged,
+/// the third one has to still count as next to them.
+#[test]
+fn three_fields_in_a_row_same_graph() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation {
+          one: add(num: 1)
+          two: add(num: 2)
+          three: add(num: 3)
+          final: delete
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "c") {
+          mutation {
+            one: add(num: 1)
+            two: add(num: 2)
+            three: add(num: 3)
+          }
+        },
+        Fetch(service: "b") {
+          mutation {
+            final: delete
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `count` starts only once `create` is done, and that includes `isExpensive` from `b`.
+#[test]
+fn next_field_waits_for_entity_fetch_of_previous_one() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation {
+          create: addProduct(input: { name: "new", price: 599.99 }) {
+            isExpensive
+          }
+          count: add(num: 1)
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          mutation {
+            create: addProduct(input: {name: "new", price: 599.99}) {
+              __typename
+              id
+              price
+            }
+          }
+        },
+        Flatten(path: "create") {
+          Fetch(service: "b") {
+            {
+              ... on Product {
+                __typename
+                price
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                isExpensive
+              }
+            }
+          },
+        },
+        Fetch(service: "c") {
+          mutation {
+            count: add(num: 1)
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Same as above, with the entity fetch behind `@include`.
+#[test]
+fn next_field_waits_for_conditional_entity_fetch_of_previous_one() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation ($includeRemote: Boolean!) {
+          create: addProduct(input: { name: "new", price: 599.99 }) {
+            ... on Product @include(if: $includeRemote) {
+              isExpensive
+            }
+          }
+          count: add(num: 1)
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          mutation ($includeRemote:Boolean!) {
+            create: addProduct(input: {name: "new", price: 599.99}) {
+              ... on Product @include(if: $includeRemote) {
+                __typename
+                id
+                price
+              }
+            }
+          }
+        },
+        Include(if: $includeRemote) {
+          Flatten(path: "create|[Product]") {
+            Fetch(service: "b") {
+              {
+                ... on Product {
+                  __typename
+                  price
+                  id
+                }
+              } =>
+              {
+                ... on Product {
+                  isExpensive
+                }
+              }
+            },
+          },
+        },
+        Fetch(service: "c") {
+          mutation {
+            count: add(num: 1)
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `create` and `multiply` are both in `a`, but `create` needs `b` before it's done. So they
+/// can't go in one fetch, `multiply` would run before `isExpensive` is fetched.
+#[test]
+fn neighbours_in_one_graph_stay_apart_when_first_needs_another_fetch() -> Result<(), Box<dyn Error>>
+{
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation {
+          create: addProduct(input: { name: "new", price: 599.99 }) {
+            isExpensive
+          }
+          double: multiply(by: 2)
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          mutation {
+            create: addProduct(input: {name: "new", price: 599.99}) {
+              __typename
+              id
+              price
+            }
+          }
+        },
+        Flatten(path: "create") {
+          Fetch(service: "b") {
+            {
+              ... on Product {
+                __typename
+                price
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                isExpensive
+              }
+            }
+          },
+        },
+        Fetch(service: "a") {
+          mutation {
+            double: multiply(by: 2)
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
