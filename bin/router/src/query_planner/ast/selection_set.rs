@@ -778,17 +778,19 @@ pub fn response_keys_conflict(a: &SelectionSet, b: &SelectionSet) -> bool {
 
 /// The fields of an object: the ones in `selection_set` and in its inline fragments, at any depth.
 pub fn fields_through_fragments(selection_set: &SelectionSet) -> Vec<&FieldSelection> {
-    selection_set
-        .items
-        .iter()
-        .flat_map(|item| match item {
-            SelectionItem::Field(field) => vec![field],
-            SelectionItem::InlineFragment(fragment) => {
-                fields_through_fragments(&fragment.selections)
+    fn collect<'a>(selection_set: &'a SelectionSet, fields: &mut Vec<&'a FieldSelection>) {
+        for item in &selection_set.items {
+            match item {
+                SelectionItem::Field(field) => fields.push(field),
+                SelectionItem::InlineFragment(fragment) => collect(&fragment.selections, fields),
+                SelectionItem::FragmentSpread(_) => {}
             }
-            SelectionItem::FragmentSpread(_) => vec![],
-        })
-        .collect()
+        }
+    }
+
+    let mut fields = Vec::new();
+    collect(selection_set, &mut fields);
+    fields
 }
 
 #[cfg(test)]

@@ -136,6 +136,91 @@ fn client_alias_named_like_a_key_field() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Same as above, with the entity call behind `@include`. It merges into the root fetch, and
+/// its representation has to go in as the key it's written under, not as a field of that name.
+#[test]
+fn client_alias_named_like_a_key_field_under_a_condition() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document =
+        parse_operation(r#"query ($x: Boolean!) { userInA { id: name aName @include(if: $x) } }"#);
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/override_requires.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{query_plan}"), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          query ($x:Boolean!) {
+            userInA {
+              __typename
+              _internal_qp_alias_0: id
+              ... on User @include(if: $x) {
+                __typename
+                _internal_qp_alias_0: id
+              }
+            }
+          }
+        },
+        Parallel {
+          Include(if: $x) {
+            Flatten(path: "userInA") {
+              Fetch(service: "b") {
+                {
+                  ... on User {
+                    __typename
+                    id: _internal_qp_alias_0
+                  }
+                } =>
+                {
+                  ... on User {
+                    name
+                  }
+                }
+              },
+            },
+          },
+          Flatten(path: "userInA") {
+            Fetch(service: "b") {
+              {
+                ... on User {
+                  __typename
+                  id: _internal_qp_alias_0
+                }
+              } =>
+              {
+                ... on User {
+                  id: name
+                }
+              }
+            },
+          },
+        },
+        Include(if: $x) {
+          Flatten(path: "userInA") {
+            Fetch(service: "a") {
+              {
+                ... on User {
+                  __typename
+                  name
+                  id: _internal_qp_alias_0
+                }
+              } =>
+              {
+                ... on User {
+                  aName
+                }
+              }
+            },
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
+}
+
 /// `[Item]` on `Box` and `Item` on `Bag` cannot share one response key in the subgraph
 /// operation; the mismatched shape needs its own key and a response rewrite.
 #[test]

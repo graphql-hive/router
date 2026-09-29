@@ -15,6 +15,7 @@ use crate::query_planner::{
         error::FetchGraphError,
         fetch_graph::FetchGraph,
         fetch_step_data::{FetchStepData, FetchStepKind},
+        response_keys::read_as_written,
         selections::FetchStepSelections,
         state::MultiTypeFetchStep,
     },
@@ -67,9 +68,15 @@ fn merge_source_condition_into_non_entity_target(
     //
     // We do this only for non-entity target merges. Entity-to-entity merges use
     // different path/type rules and are handled in a separate branch.
+    // The input is written the way a representation reads it (`id: _internal_qp_alias_0`),
+    // so it goes in the way the fetch writes it (`_internal_qp_alias_0: id`).
+    let mut input = source.input.clone();
+    for (_, selection_set) in input.iter_selections_mut() {
+        read_as_written(selection_set);
+    }
     source
         .output
-        .migrate_from_another(&source.input, &MergePath::default())?;
+        .migrate_from_another(&input, &MergePath::default())?;
 
     // Check if the condition is already enforced by the path
     let condition_redundant = matches!(

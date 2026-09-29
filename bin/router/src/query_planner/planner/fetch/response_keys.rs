@@ -121,11 +121,11 @@ impl ResponseKeys {
         })
     }
 
-    fn map(
+    fn map<F: Fn(&mut FieldSelection, String)>(
         &mut self,
         place: &[String],
         selection_set: &SelectionSet,
-        apply: &dyn Fn(&mut FieldSelection, String),
+        apply: &F,
     ) -> SelectionSet {
         let items = selection_set
             .items
@@ -153,6 +153,23 @@ impl ResponseKeys {
             .collect();
 
         SelectionSet { items }
+    }
+}
+
+/// Turns a representation read back into the fetch that writes it: `price: _internal_qp_alias_0`
+/// becomes `_internal_qp_alias_0: price`. For when an input moves into an output.
+pub fn read_as_written(selection_set: &mut SelectionSet) {
+    for item in selection_set.items.iter_mut() {
+        match item {
+            SelectionItem::Field(field) => {
+                if let Some(alias) = field.alias.take() {
+                    field.alias = Some(std::mem::replace(&mut field.name, alias));
+                }
+                read_as_written(&mut field.selections);
+            }
+            SelectionItem::InlineFragment(fragment) => read_as_written(&mut fragment.selections),
+            SelectionItem::FragmentSpread(_) => {}
+        }
     }
 }
 
@@ -224,6 +241,17 @@ mod tests {
             gbp.to_string(),
             r#"{_internal_qp_alias_1: price(currency: "GBP")}"#
         );
+    }
+
+    #[test]
+    fn a_read_turns_back_into_the_write() {
+        let mut keys = keys(r#"{ me { price(currency: "GBP") } }"#);
+        let me = ["me".to_string()];
+        let written = keys.output(&me, &parse(r#"{ ... on Cat { price(currency: "EUR") } }"#));
+        let mut read = keys.input(&me, &parse(r#"{ ... on Cat { price(currency: "EUR") } }"#));
+
+        super::read_as_written(&mut read);
+        assert_eq!(read.to_string(), written.to_string());
     }
 
     /// Below an aliased object, places follow the alias.
