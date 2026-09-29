@@ -1156,16 +1156,6 @@ impl TypeNode {
             TypeNode::Named(name) => name,
         }
     }
-
-    /// Generally based on https://spec.graphql.org/draft/#SameResponseShape() algorithm
-    pub fn can_be_merged_with(&self, other: &TypeNode) -> bool {
-        match (self, other) {
-            (TypeNode::List(left), TypeNode::List(right)) => left.can_be_merged_with(right),
-            (TypeNode::NonNull(left), TypeNode::NonNull(right)) => left.can_be_merged_with(right),
-            (TypeNode::Named(left), TypeNode::Named(right)) => left == right,
-            _ => false,
-        }
-    }
 }
 
 impl Display for TypeNode {
