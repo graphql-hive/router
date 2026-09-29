@@ -154,7 +154,6 @@ fn try_lift_condition(
     let SelectionItem::InlineFragment(first_fragment) = first_item else {
         return None;
     };
-    debug_assert_eq!(first_fragment.type_condition, type_name);
 
     // Use the first fragment as baseline condition.
     // Valid means exactly one conditional directive:
@@ -174,8 +173,10 @@ fn try_lift_condition(
             return false;
         };
 
-        debug_assert_eq!(inline_fragment.type_condition, type_name);
-        inline_fragment_condition(inline_fragment).as_ref() == Some(&condition)
+        // `... on Cat @include(if: $x)` under `Animal` is a type condition as well, lifting
+        // only the `@include` would lose it.
+        inline_fragment.type_condition == type_name
+            && inline_fragment_condition(inline_fragment).as_ref() == Some(&condition)
     });
 
     if !all_match {
