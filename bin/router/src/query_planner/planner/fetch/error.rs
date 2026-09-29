@@ -17,8 +17,8 @@ pub enum FetchGraphError {
     MissingParent(usize),
     #[error("Expected an index, got None")]
     IndexNone,
-    #[error("Expected a single parent, but the FetchStep [{0}] has many")]
-    NonSingleParent(usize),
+    #[error("No step holds the object the entity call [{0}] extends")]
+    MissingEntityOwner(usize),
     #[error("Subgraph name: {0}")]
     MissingSubgraphName(Box<Node>),
     #[error("Missing requirement tree for @requires")]
