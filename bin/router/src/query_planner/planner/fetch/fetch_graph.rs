@@ -1048,8 +1048,6 @@ fn process_subgraph_entrypoint_edge(
         None,
     );
 
-    fetch_graph.connect(parent_fetch_step_index, fetch_step_index);
-
     process_children_for_fetch_steps(
         graph,
         fetch_graph,
@@ -1162,8 +1160,6 @@ fn process_subgraph_reentry(
         &child_response_path,
         condition,
     );
-
-    fetch_graph.connect(parent_fetch_step_index, fetch_step_index);
 
     process_children_for_fetch_steps(
         graph,
