@@ -470,23 +470,34 @@ pub fn selection_items_are_subset_of(source: &[SelectionItem], target: &[Selecti
     })
 }
 
+/// Whether `source` gives the same value `target` asks for. Same response key, field and
+/// arguments, and the same `@skip`/`@include`: `price(currency: "GBP")` isn't
+/// `price(currency: "EUR")`, and a field fetched only under `$x` isn't there under `$y`.
+/// Conditions have to be equal, not just implied, which is stricter than needed but never wrong.
 fn selection_item_is_subset_of(source: &SelectionItem, target: &SelectionItem) -> bool {
     match (source, target) {
         (SelectionItem::Field(source_field), SelectionItem::Field(target_field)) => {
-            if source_field.name != target_field.name {
-                return false;
-            }
-
-            if source_field.is_leaf() != target_field.is_leaf() {
-                return false;
-            }
-
-            selection_items_are_subset_of(
-                &source_field.selections.items,
-                &target_field.selections.items,
-            )
+            source_field == target_field
+                && source_field.skip_if == target_field.skip_if
+                && source_field.include_if == target_field.include_if
+                && source_field.is_leaf() == target_field.is_leaf()
+                && selection_items_are_subset_of(
+                    &source_field.selections.items,
+                    &target_field.selections.items,
+                )
         }
-        // TODO: support fragments
+        (
+            SelectionItem::InlineFragment(source_fragment),
+            SelectionItem::InlineFragment(target_fragment),
+        ) => {
+            source_fragment.type_condition == target_fragment.type_condition
+                && source_fragment.skip_if == target_fragment.skip_if
+                && source_fragment.include_if == target_fragment.include_if
+                && selection_items_are_subset_of(
+                    &source_fragment.selections.items,
+                    &target_fragment.selections.items,
+                )
+        }
         _ => false,
     }
 }
@@ -1021,5 +1032,35 @@ mod tests {
         assert!(!fragment_condition_equal(&skip_cond, &fragment));
         assert!(!fragment_condition_equal(&include_cond, &fragment));
         assert!(fragment_condition_equal(&skip_and_include_cond, &fragment));
+    }
+
+    fn parse(query: &str) -> SelectionSet {
+        use graphql_tools::parser::query::{Definition, OperationDefinition};
+
+        match crate::query_planner::utils::parsing::parse_operation(query)
+            .definitions
+            .first()
+        {
+            Some(Definition::Operation(OperationDefinition::SelectionSet(s))) => s.clone().into(),
+            _ => panic!("expected a selection set"),
+        }
+    }
+
+    /// Another argument, alias or condition is another value, and the same field under the
+    /// same type condition is found inside the fragment.
+    #[test]
+    fn contains_only_the_same_values() {
+        let fetched = parse(
+            r#"{ price(currency: "GBP") a @include(if: $x) ... on Cat { whiskers } }"#,
+        );
+
+        assert!(fetched.contains(&parse(r#"{ price(currency: "GBP") }"#)));
+        assert!(!fetched.contains(&parse(r#"{ price(currency: "EUR") }"#)));
+        assert!(!fetched.contains(&parse(r#"{ gbp: price(currency: "GBP") }"#)));
+        assert!(fetched.contains(&parse("{ a @include(if: $x) }")));
+        assert!(!fetched.contains(&parse("{ a @include(if: $y) }")));
+        assert!(!fetched.contains(&parse("{ a }")));
+        assert!(fetched.contains(&parse("{ ... on Cat { whiskers } }")));
+        assert!(!fetched.contains(&parse("{ ... on Dog { whiskers } }")));
     }
 }
