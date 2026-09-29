@@ -5,6 +5,8 @@ use petgraph::{graph::NodeIndex, Direction};
 use tracing::{instrument, trace};
 
 use crate::query_planner::ast::merge_path::Condition;
+use crate::query_planner::ast::selection_set::response_keys_conflict;
+use crate::query_planner::planner::fetch::selections::FetchStepSelections;
 use crate::query_planner::state::supergraph_state::{SupergraphDefinition, SupergraphState};
 use crate::query_planner::planner::fetch::fetch_step_data::{
     type_condition_types_from_response_path, FetchStepFlags,
@@ -511,6 +513,21 @@ impl FetchStepData<MultiTypeFetchStep> {
         }
 
         if self.has_arguments_conflicts_with(other) {
+            return false;
+        }
+
+        // Batched, both outputs go in one selection set per type, even though they come from
+        // different places in the response. `thumbnail(width: 100)` under `Aquatics.photo` and
+        // `thumbnail(width: 200)` under `Reptiles.photo` can't both be `Photo.thumbnail`.
+        // `BatchFetch` can still send the two in one request.
+        let output_conflicts = FetchStepSelections::<MultiTypeFetchStep>::iter_matching_types(
+            &self.output,
+            &other.output,
+            |_, self_selections, other_selections| {
+                response_keys_conflict(self_selections, other_selections)
+            },
+        );
+        if output_conflicts.iter().any(|(_, conflict)| *conflict) {
             return false;
         }
 
