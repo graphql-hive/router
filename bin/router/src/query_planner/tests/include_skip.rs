@@ -1684,3 +1684,91 @@ fn qp_abstract_union_member_conditions_stay_scoped() -> Result<(), Box<dyn Error
 
     Ok(())
 }
+
+/// Reduced from generated `override_requires` seed 33 (and `interface-object-with-requires`
+/// seed 110). Both `@requires` fields send entity calls whose paths go through
+/// `... on Query @include(if: $x)`. Merging the first one into the root fetch lifted that
+/// condition to the whole fetch and dropped the fragment, so the second one had no path left to
+/// land on.
+#[test]
+fn conditional_root_fragment_survives_merges() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($x: Boolean!) {
+          ... on Query @include(if: $x) {
+            userInB {
+              aName
+              cName
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/override_requires.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          query ($x:Boolean!) {
+            ... on Query @include(if: $x) {
+              userInB {
+                __typename
+                id
+                ... on User @include(if: $x) {
+                  name
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+        },
+        Parallel {
+          Include(if: $x) {
+            Flatten(path: "|[Query].userInB") {
+              Fetch(service: "c") {
+                {
+                  ... on User {
+                    __typename
+                    name
+                    id
+                  }
+                } =>
+                {
+                  ... on User {
+                    cName
+                  }
+                }
+              },
+            },
+          },
+          Include(if: $x) {
+            Flatten(path: "|[Query].userInB") {
+              Fetch(service: "a") {
+                {
+                  ... on User {
+                    __typename
+                    name
+                    id
+                  }
+                } =>
+                {
+                  ... on User {
+                    aName
+                  }
+                }
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
