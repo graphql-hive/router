@@ -108,16 +108,21 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
-        for (output_def_name, output_selections) in other.output.iter_selections() {
-            if let Some(input_selections) = other.input.selections_for_definition(output_def_name) {
-                if selection_items_are_subset_of(&input_selections.items, &output_selections.items)
-                {
-                    return true;
-                }
-            }
-        }
-
-        false
+        // Every type it fetches has to be in its input already, not just one of them.
+        other
+            .output
+            .iter_selections()
+            .all(|(output_def_name, output_selections)| {
+                other
+                    .input
+                    .selections_for_definition(output_def_name)
+                    .is_some_and(|input_selections| {
+                        selection_items_are_subset_of(
+                            &input_selections.items,
+                            &output_selections.items,
+                        )
+                    })
+            })
     }
 }
 

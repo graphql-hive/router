@@ -589,4 +589,33 @@ mod tests {
         assert_eq!(merged.resolve(c), c);
         assert_eq!(merged.resolve(d), d);
     }
+
+    /// A child is a passthrough only when its input already has what it fetches for every
+    /// type. Here it has the `User` fields but not the `Admin` ones.
+    #[test]
+    fn passthrough_needs_every_type_covered() {
+        let mut graph =
+            FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
+
+        let parent = graph.add_step(entity_step(
+            "accounts",
+            path(&["accounts", "@"]),
+            selections(&[("User", "{ __typename id }")]),
+            selections(&[("User", "{ id }")]),
+        ));
+        let child = graph.add_step(entity_step(
+            "accounts",
+            path(&["accounts", "@"]),
+            selections(&[
+                ("User", "{ __typename id }"),
+                ("Admin", "{ __typename id }"),
+            ]),
+            selections(&[("User", "{ id }"), ("Admin", "{ name }")]),
+        ));
+        graph.connect(parent, child);
+
+        let parent_data = graph.get_step_data(parent).unwrap();
+        let child_data = graph.get_step_data(child).unwrap();
+        assert!(!parent_data.can_merge_passthrough_child(parent, child, child_data, &graph));
+    }
 }
