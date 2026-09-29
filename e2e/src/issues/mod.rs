@@ -3727,6 +3727,67 @@ mod issues_e2e_tests {
     }
 
     #[ntex::test]
+    /// `eur` sits under two type conditions (`Node`, then `Cat`), so the `pricing` fetch is
+    /// flattened along `things.@|[Node]|[Cat]`. The Cat has to get its `eur` back.
+    async fn requires_alias_under_stacked_type_conditions_reaches_the_response() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+
+        let mocks = mock_subgraphs(json!({
+            "shop": {
+                "query": { "things": [
+                    { "__typename": "Cat", "id": "c1", "price(currency: \"EUR\")": 11 },
+                    { "__typename": "Dog", "id": "d1", "price(currency: \"EUR\")": 33 }
+                ] }
+            },
+            "pricing": {
+                "entities": [
+                    { "__typename": "Node", "id": "c1", "price": 11, "eur": 1100 }
+                ]
+            }
+        }));
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mocks)
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.requires-alias-interface-object.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"query($y: Boolean!) { things { ... on Node @include(if: $y) { ... on Cat { eur } } } }"#,
+                Some(sonic_rs::json!({ "y": true })),
+                None,
+            )
+            .await;
+
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "things": [
+              {
+                "eur": 1100
+              },
+              {}
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
     /// `perms` resolves `label` from the admin team, and the client asks for the user team on
     /// the same `me`. `perms` only finds the user when the representation carries the admin
     /// team, so a mixed-up team shows up as `label: null`, and the client's team has to stay
