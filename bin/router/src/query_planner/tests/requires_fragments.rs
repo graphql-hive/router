@@ -76,3 +76,61 @@ fn requires_with_fragments_on_interfaces() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+#[test]
+fn requires_with_union_type_condition() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // Media only lives in pricing, so `... on Media` has to keep Book there,
+    // otherwise the whole requirement goes away and pricing never gets the title
+    let document = parse_operation(
+        r#"
+        query {
+          products {
+            price
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-union-type-condition.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "catalog") {
+          {
+            products {
+              __typename
+              id
+              book {
+                title
+              }
+            }
+          }
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "pricing") {
+            {
+              ... on Product {
+                __typename
+                book {
+                  title
+                }
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                price
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
