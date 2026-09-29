@@ -93,6 +93,49 @@ fn client_alias_named_internal_requires() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// The client uses `id` for a price, and the planner needs the real `id` there as the key for
+/// `shop`. The key gets a key of its own, and `shop` reads it back as `id`.
+#[test]
+fn client_alias_named_like_a_key_field() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(r#"{ things { id: price(currency: "USD") } }"#);
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-alias-entity-calls.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{query_plan}"), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "catalog") {
+          {
+            things {
+              __typename
+              _internal_qp_alias_0: id
+            }
+          }
+        },
+        Flatten(path: "things.@") {
+          Fetch(service: "shop") {
+            {
+              ... on Thing {
+                __typename
+                id: _internal_qp_alias_0
+              }
+            } =>
+            {
+              ... on Thing {
+                id: price(currency: "USD")
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
+}
+
 /// `[Item]` on `Box` and `Item` on `Bag` cannot share one response key in the subgraph
 /// operation; the mismatched shape needs its own key and a response rewrite.
 #[test]
