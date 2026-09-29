@@ -737,6 +737,35 @@ pub fn find_arguments_conflicts(
         .collect()
 }
 
+/// Whether `a` and `b` in one selection set would give a response key two values: the same key
+/// for another field or other arguments, at any depth. Inline fragments are looked through,
+/// their fields write the same object.
+pub fn response_keys_conflict(a: &SelectionSet, b: &SelectionSet) -> bool {
+    let (a_fields, b_fields) = (fields_through_fragments(a), fields_through_fragments(b));
+    a_fields.iter().any(|a_field| {
+        b_fields.iter().any(|b_field| {
+            a_field.selection_identifier() == b_field.selection_identifier()
+                && (a_field.name != b_field.name
+                    || a_field.arguments() != b_field.arguments()
+                    || response_keys_conflict(&a_field.selections, &b_field.selections))
+        })
+    })
+}
+
+fn fields_through_fragments(selection_set: &SelectionSet) -> Vec<&FieldSelection> {
+    selection_set
+        .items
+        .iter()
+        .flat_map(|item| match item {
+            SelectionItem::Field(field) => vec![field],
+            SelectionItem::InlineFragment(fragment) => {
+                fields_through_fragments(&fragment.selections)
+            }
+            SelectionItem::FragmentSpread(_) => vec![],
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::query_planner::ast::value::Value;
