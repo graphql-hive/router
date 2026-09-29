@@ -1,4 +1,5 @@
 use crate::query_planner::{
+    ast::selection_set::ResponseKeyConflict,
     graph::{error::GraphError, node::Node},
     planner::fetch::selections::FetchStepSelectionsError,
     planner::walker::error::WalkOperationError,
@@ -47,6 +48,8 @@ pub enum FetchGraphError {
     MissingRequires,
     #[error(transparent)]
     SelectionSetManipulationError(#[from] FetchStepSelectionsError),
+    #[error(transparent)]
+    ResponseKeyConflict(#[from] ResponseKeyConflict),
     #[error(transparent)]
     CancellationError(#[from] CancellationError),
 }
