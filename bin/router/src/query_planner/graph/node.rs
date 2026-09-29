@@ -40,6 +40,8 @@ impl SubgraphTypeSpecialization {
 pub struct SubgraphType {
     pub name: String,
     pub subgraph: SubgraphName,
+    /// `subgraph`'s index in `SupergraphState::subgraph_names`. Set once the graph is built.
+    pub(super) subgraph_index: u16,
     pub is_interface_object: bool,
     specialization: Option<SubgraphTypeSpecialization>,
     /// What a `@provides` path makes available on top of the plain node, like `{sku}`.
@@ -118,6 +120,7 @@ impl Node {
         Node::SubgraphType(SubgraphType {
             name: name.to_string(),
             subgraph,
+            subgraph_index: 0,
             is_interface_object,
             specialization: None,
             provided: None,
@@ -128,6 +131,7 @@ impl Node {
         Node::SubgraphType(SubgraphType {
             name: name.to_string(),
             subgraph,
+            subgraph_index: 0,
             is_interface_object: false,
             specialization: Some(SubgraphTypeSpecialization::Root),
             provided: None,
@@ -143,6 +147,7 @@ impl Node {
         Node::SubgraphType(SubgraphType {
             name: name.to_string(),
             subgraph,
+            subgraph_index: 0,
             is_interface_object,
             specialization: Some(specialization),
             provided: None,
@@ -156,6 +161,10 @@ impl Node {
             Node::SubscriptionRoot(_) => None,
             Node::SubgraphType(st) => Some(&st.subgraph.0),
         }
+    }
+
+    pub fn subgraph_index(&self) -> Option<u16> {
+        self.subgraph_type().map(|st| st.subgraph_index)
     }
 
     pub fn subgraph_type(&self) -> Option<&SubgraphType> {
