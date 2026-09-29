@@ -1,4 +1,5 @@
 use crate::query_planner::ast::merge_path::{Condition, FieldPathSegment, MergePath, Segment};
+use crate::query_planner::ast::operation::OperationDefinition;
 use crate::query_planner::ast::selection_item::SelectionItem;
 use crate::query_planner::ast::selection_set::{
     FieldSelection, InlineFragmentSelection, SelectionSet,
@@ -9,7 +10,6 @@ use crate::query_planner::graph::edge::{
 };
 use crate::query_planner::graph::node::Node;
 use crate::query_planner::graph::Graph;
-use crate::query_planner::ast::operation::OperationDefinition;
 use crate::query_planner::planner::fetch::fetch_step_data::{
     FetchStepData, FetchStepFlags, FetchStepKind,
 };
@@ -371,6 +371,7 @@ fn create_noop_fetch_step(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create_fetch_step_for_entity_call(
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     owner_index: NodeIndex,
@@ -1566,9 +1567,10 @@ fn process_requires_field_edge(
     // What the entity calls read, and the keys the step holding the objects writes.
     let requires_input = fetch_graph.read_at(response_path, requires);
     let key_input = fetch_graph.read_at(response_path, key_to_reenter_subgraph);
-    let key_output = fetch_graph
-        .response_keys
-        .output(&place_of(response_path), &key_to_reenter_subgraph.selection_set);
+    let key_output = fetch_graph.response_keys.output(
+        &place_of(response_path),
+        &key_to_reenter_subgraph.selection_set,
+    );
     let field_alias = fetch_graph.alias_at(
         response_path,
         query_node,
@@ -2135,8 +2137,12 @@ pub fn build_fetch_graph_from_query_tree(
     options: &QueryPlannerOptions,
     cancellation_token: &CancellationToken,
 ) -> Result<FetchGraph<MultiTypeFetchStep>, FetchGraphError> {
-    let mut fetch_graph =
-        FetchGraph::new(operation.operation_kind.clone().unwrap_or(OperationKind::Query));
+    let mut fetch_graph = FetchGraph::new(
+        operation
+            .operation_kind
+            .clone()
+            .unwrap_or(OperationKind::Query),
+    );
     fetch_graph.response_keys = ResponseKeys::from_operation(&operation.selection_set);
 
     process_query_node(

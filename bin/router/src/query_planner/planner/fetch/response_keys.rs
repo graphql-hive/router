@@ -220,7 +220,10 @@ mod tests {
         let things = ["things".to_string()];
 
         let gbp = keys.output(&things, &parse(r#"{ price(currency: "GBP") }"#));
-        assert_eq!(gbp.to_string(), r#"{_internal_qp_alias_1: price(currency: "GBP")}"#);
+        assert_eq!(
+            gbp.to_string(),
+            r#"{_internal_qp_alias_1: price(currency: "GBP")}"#
+        );
     }
 
     /// Below an aliased object, places follow the alias.
@@ -235,6 +238,9 @@ mod tests {
             r#"{_internal_qp_alias_0: team(role: "admin"){name}}"#
         );
         let nested = ["me".to_string(), "_internal_qp_alias_0".to_string()];
-        assert_eq!(keys.output(&nested, &parse("{ name }")).to_string(), "{name}");
+        assert_eq!(
+            keys.output(&nested, &parse("{ name }")).to_string(),
+            "{name}"
+        );
     }
 }

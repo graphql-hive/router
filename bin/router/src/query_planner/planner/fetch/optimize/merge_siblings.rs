@@ -4,7 +4,9 @@ use petgraph::{graph::NodeIndex, Direction};
 use tracing::{instrument, trace};
 
 use crate::query_planner::planner::fetch::{
-    error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
+    error::FetchGraphError,
+    fetch_graph::FetchGraph,
+    fetch_step_data::FetchStepData,
     optimize::utils::{perform_fetch_step_merge, MergedSteps},
     state::MultiTypeFetchStep,
 };
