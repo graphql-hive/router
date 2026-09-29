@@ -1080,9 +1080,8 @@ mod tests {
     /// same type condition is found inside the fragment.
     #[test]
     fn contains_only_the_same_values() {
-        let fetched = parse(
-            r#"{ price(currency: "GBP") a @include(if: $x) ... on Cat { whiskers } }"#,
-        );
+        let fetched =
+            parse(r#"{ price(currency: "GBP") a @include(if: $x) ... on Cat { whiskers } }"#);
 
         assert!(fetched.contains(&parse(r#"{ price(currency: "GBP") }"#)));
         assert!(!fetched.contains(&parse(r#"{ price(currency: "EUR") }"#)));

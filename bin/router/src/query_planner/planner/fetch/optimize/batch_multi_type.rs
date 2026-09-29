@@ -6,15 +6,17 @@ use tracing::{instrument, trace};
 
 use crate::query_planner::ast::merge_path::Condition;
 use crate::query_planner::ast::selection_set::response_keys_conflict;
-use crate::query_planner::planner::fetch::selections::FetchStepSelections;
-use crate::query_planner::state::supergraph_state::{SupergraphDefinition, SupergraphState};
 use crate::query_planner::planner::fetch::fetch_step_data::{
     type_condition_types_from_response_path, FetchStepFlags,
 };
+use crate::query_planner::planner::fetch::selections::FetchStepSelections;
+use crate::query_planner::state::supergraph_state::{SupergraphDefinition, SupergraphState};
 use crate::query_planner::{
     ast::merge_path::{MergePath, Segment},
     planner::fetch::{
-        error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
+        error::FetchGraphError,
+        fetch_graph::FetchGraph,
+        fetch_step_data::FetchStepData,
         optimize::utils::{perform_fetch_step_merge, MergedSteps},
         state::MultiTypeFetchStep,
     },
@@ -212,7 +214,10 @@ fn possible_types_by_position(
     result
 }
 
-fn possible_object_types(supergraph: &SupergraphState, type_name: &str) -> Option<BTreeSet<String>> {
+fn possible_object_types(
+    supergraph: &SupergraphState,
+    type_name: &str,
+) -> Option<BTreeSet<String>> {
     match supergraph.definitions.get(type_name)? {
         SupergraphDefinition::Object(_) => Some(BTreeSet::from([type_name.to_string()])),
         SupergraphDefinition::Interface(_) => supergraph.interface_members(type_name).cloned(),
@@ -579,8 +584,7 @@ mod tests {
             ]),
         )]);
 
-        let merged =
-            merge_batched_response_paths(&me, &other, &possible_types_by_position);
+        let merged = merge_batched_response_paths(&me, &other, &possible_types_by_position);
 
         assert_eq!(
             format!("{}", FlattenNodePath::from(merged)),
@@ -598,8 +602,7 @@ mod tests {
             BTreeSet::from_iter(["Book".to_string(), "User".to_string()]),
         )]);
 
-        let merged =
-            merge_batched_response_paths(&me, &other, &possible_types_by_position);
+        let merged = merge_batched_response_paths(&me, &other, &possible_types_by_position);
 
         assert_eq!(
             format!("{}", FlattenNodePath::from(merged)),
