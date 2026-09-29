@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use petgraph::{
     graph::NodeIndex,
@@ -19,6 +19,25 @@ use crate::query_planner::{
         state::MultiTypeFetchStep,
     },
 };
+
+/// Where merged-away steps went, kept for a whole pass. Passes queue steps and pick merge pairs
+/// before merging, so a step they hold on to may be gone by the time they use it. A step merged
+/// into one that got merged again later resolves to the last one, the one still in the graph.
+#[derive(Default)]
+pub(crate) struct MergedSteps(HashMap<NodeIndex, NodeIndex>);
+
+impl MergedSteps {
+    pub(crate) fn resolve(&self, mut step: NodeIndex) -> NodeIndex {
+        while let Some(into) = self.0.get(&step) {
+            step = *into;
+        }
+        step
+    }
+
+    pub(crate) fn record(&mut self, merged: NodeIndex, into: NodeIndex) {
+        self.0.insert(merged, into);
+    }
+}
 
 /// Handles the "target is non-entity, source has step-level condition" case.
 /// When merging an entity fetch into a non-entity target, the condition must
@@ -359,7 +378,9 @@ mod tests {
         utils::parsing::parse_operation,
     };
 
-    use super::perform_fetch_step_merge;
+    use petgraph::graph::NodeIndex;
+
+    use super::{perform_fetch_step_merge, MergedSteps};
 
     /// Selections for one or more types, e.g. `&[("User", "{ id }"), ("Admin", "{ id }")]`.
     fn selections(types: &[(&str, &str)]) -> FetchStepSelections<MultiTypeFetchStep> {
@@ -526,5 +547,20 @@ mod tests {
                 )]
             )]
         );
+    }
+
+    /// The `requires_requires` seed 4 order: 98 goes into 144, then 144 into 104. A pair that
+    /// still names 98 has to land on 104, the one step left of the three.
+    #[test]
+    fn merged_steps_follow_the_whole_chain() {
+        let [a, b, c, d] = [98, 144, 104, 3].map(NodeIndex::new);
+        let mut merged = MergedSteps::default();
+        merged.record(a, b);
+        merged.record(b, c);
+
+        assert_eq!(merged.resolve(a), c);
+        assert_eq!(merged.resolve(b), c);
+        assert_eq!(merged.resolve(c), c);
+        assert_eq!(merged.resolve(d), d);
     }
 }
