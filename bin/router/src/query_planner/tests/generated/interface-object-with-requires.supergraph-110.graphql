@@ -1,0 +1,73 @@
+query GeneratedQuery($v1: Boolean! = false, $v10: Boolean!, $v11: Boolean! = true, $v12: Boolean! = true, $v13: Boolean! = false, $v14: Boolean!, $v15: Boolean! = false, $v16: Boolean!, $v17: Boolean!, $v18: Boolean!, $v19: Boolean!, $v2: Boolean!, $v20: Boolean!, $v3: Boolean! = false, $v4: Boolean!, $v5: Boolean!, $v6: Boolean! = true, $v7: Boolean!, $v8: Boolean!, $v9: Boolean! = false) {
+  anotherUsers @include(if: true) {
+    a2_id: id @include(if: true)
+    ... on NodeWithName {
+      id
+      username
+      a4_name: name @skip(if: false)
+      a5_username: username
+      __typename
+      a3_id: id @skip(if: false)
+      ... {
+        a6_name: name
+        id @include(if: $v4) @skip(if: $v5)
+        username
+        id @skip(if: $v3)
+      }
+    }
+    a1_name: name @skip(if: $v1) @include(if: $v2)
+    __typename
+    username
+    id
+  }
+  ... on Query @skip(if: false) @include(if: $v20) {
+    users @skip(if: false) {
+      username
+      name
+      a7_id: id @include(if: $v6) @skip(if: $v7)
+      name
+      a8_username: username
+    }
+    __typename
+    anotherUsers {
+      id
+      username @include(if: $v8) @skip(if: $v9)
+      ... @skip(if: $v18) @include(if: $v19) {
+        a10_username: username @include(if: $v10)
+        username @include(if: true) @skip(if: true)
+        __typename
+        name
+        a9_id: id
+        ...GeneratedFragment1 @include(if: $v16) @skip(if: $v17)
+      }
+      __typename
+      name
+      name @skip(if: false)
+    }
+  }
+}
+
+fragment GeneratedFragment2 on User {
+  __typename
+}
+
+fragment GeneratedFragment1 on User {
+  age @include(if: $v11)
+  name
+  id
+  __typename
+  id
+  ... on User {
+    ... on User @skip(if: $v15) @include(if: true) {
+      __typename
+    }
+    ...GeneratedFragment2
+    __typename
+    name
+    a11_name: name @include(if: $v12) @skip(if: $v13)
+    id @skip(if: true) @include(if: $v14)
+    username
+    age
+  }
+  username
+}

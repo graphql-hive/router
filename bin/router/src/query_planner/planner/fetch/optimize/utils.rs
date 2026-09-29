@@ -160,7 +160,9 @@ pub(crate) fn perform_fetch_step_merge(
     // Conditions may have been pushed down to keep the merge correct.
     // If the merged fetch is still guarded by one shared condition, lift it back to
     // step level.
-    target.lift_shared_output_condition_to_fetch();
+    if target.is_entity_call() {
+        target.lift_shared_output_condition_to_fetch();
+    }
 
     let mut children_indexes: Vec<NodeIndex> = vec![];
     let mut parents_indexes: Vec<NodeIndex> = vec![];
