@@ -1,4 +1,3 @@
-mod apply_internal_aliases_patching;
 mod batch_multi_type;
 mod deduplicate_and_prune_fetch_steps;
 mod fold_concrete_selections_to_interfaces;
@@ -61,9 +60,6 @@ impl FetchGraph<MultiTypeFetchStep> {
             }
         }
         self.fix_conflicting_type_mismatches(supergraph_state)?;
-
-        // We call this last, because it should be done after all other optimizations/merging are done
-        self.apply_internal_aliases_patching()?;
 
         Ok(())
     }

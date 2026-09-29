@@ -7,7 +7,6 @@ use crate::query_planner::{
     ast::{
         merge_path::{Condition, MergePath, Segment},
         operation::VariableDefinition,
-        safe_merge::AliasesRecords,
     },
     planner::{
         fetch::{
@@ -46,7 +45,6 @@ pub struct FetchStepData<State> {
     pub mutation_field_position: MutationFieldPosition,
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     pub output_rewrites: Option<Vec<FetchRewrite>>,
-    pub internal_aliases_locations: Vec<(String, AliasesRecords)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -231,7 +229,6 @@ impl FetchStepData<SingleTypeFetchStep> {
             mutation_field_position: self.mutation_field_position,
             input_rewrites: self.input_rewrites,
             output_rewrites: self.output_rewrites,
-            internal_aliases_locations: self.internal_aliases_locations,
         }
     }
 }

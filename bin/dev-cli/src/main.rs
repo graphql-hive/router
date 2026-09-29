@@ -17,7 +17,6 @@ use hive_router::query_planner::planner::query_plan::build_query_plan_from_fetch
 use hive_router::query_planner::planner::tree::query_tree::QueryTree;
 use hive_router::query_planner::planner::walker::walk_operation;
 use hive_router::query_planner::planner::QueryPlannerOptions;
-use hive_router::query_planner::state::supergraph_state::OperationKind;
 use hive_router::query_planner::state::supergraph_state::SupergraphState;
 use hive_router::query_planner::utils::cancellation::CancellationToken;
 use hive_router::query_planner::utils::parsing::parse_operation;
@@ -149,7 +148,7 @@ fn process_fetch_graph(
     supergraph_path: &str,
     operation_path: &str,
 ) -> FetchGraph<MultiTypeFetchStep> {
-    let (graph, query_tree, supergraph_state, operation_kind) =
+    let (graph, query_tree, supergraph_state, operation) =
         process_merged_tree(supergraph_path, operation_path);
 
     let override_context = PlannerOverrideContext::default();
@@ -159,7 +158,7 @@ fn process_fetch_graph(
         &supergraph_state,
         &override_context,
         query_tree,
-        operation_kind,
+        &operation,
         &QueryPlannerOptions::default(),
         &cancellation_token,
     )
@@ -186,10 +185,7 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
         &supergraph,
         &override_context,
         query_tree,
-        operation
-            .operation_kind
-            .clone()
-            .unwrap_or(OperationKind::Query),
+        &operation,
         &QueryPlannerOptions::default(),
         &cancellation_token,
     )
@@ -202,7 +198,7 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
 fn process_merged_tree(
     supergraph_path: &str,
     operation_path: &str,
-) -> (Graph, QueryTree, SupergraphState, OperationKind) {
+) -> (Graph, QueryTree, SupergraphState, OperationDefinition) {
     let (graph, operation, supergraph_state) =
         load_graph_operation(supergraph_path, operation_path);
     let override_context = PlannerOverrideContext::default();
@@ -218,15 +214,7 @@ fn process_merged_tree(
     let query_tree =
         find_best_combination(&graph, best_paths_per_leaf, &cancellation_token).unwrap();
 
-    (
-        graph,
-        query_tree,
-        supergraph_state,
-        operation
-            .operation_kind
-            .clone()
-            .unwrap_or(OperationKind::Query),
-    )
+    (graph, query_tree, supergraph_state, operation)
 }
 
 fn get_operation(operation_path: &str, supergraph: &SupergraphState) -> OperationDefinition {
