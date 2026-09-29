@@ -1,6 +1,8 @@
+use std::collections::{BTreeMap, HashSet};
+
 use petgraph::{
-    graph::{EdgeIndex, NodeIndex},
-    visit::{EdgeRef, NodeRef},
+    graph::NodeIndex,
+    visit::{Bfs, EdgeRef},
 };
 use tracing::instrument;
 
@@ -10,57 +12,65 @@ use crate::query_planner::{
 };
 
 impl FetchGraph<MultiTypeFetchStep> {
+    /// Root mutation fields run one after another, and a field is done only when every fetch it
+    /// needs is done, entity calls included. So the steps of field N+1 wait for the last steps of
+    /// field N, not for the root.
+    ///
+    /// Runs before any optimization. With the order in the graph, merges keep it like any other
+    /// dependency, and nothing else has to know about mutations.
     #[instrument(level = "trace", skip_all)]
     pub(crate) fn turn_mutations_into_sequence(&mut self) -> Result<(), FetchGraphError> {
-        let root_index = self
-            .root_index
-            .ok_or(FetchGraphError::NonSingleRootStep(0))?;
-
         if self.operation_kind != OperationKind::Mutation {
             return Ok(());
         }
 
-        let mut node_mutation_field_pos_pairs: Vec<(NodeIndex, usize)> = Vec::new();
-        let mut edge_ids_to_remove: Vec<EdgeIndex> = Vec::new();
+        let root_index = self
+            .root_index
+            .ok_or(FetchGraphError::NonSingleRootStep(0))?;
 
+        let mut fields = BTreeMap::<usize, Vec<NodeIndex>>::new();
         for edge_ref in self.children_of(root_index) {
-            edge_ids_to_remove.push(edge_ref.id());
-            let node_index = edge_ref.target().id();
-            let mutation_field_pos = self
-                .get_step_data(node_index)?
+            let step_index = edge_ref.target();
+            let position = self
+                .get_step_data(step_index)?
                 .mutation_field_position
                 .ok_or(FetchGraphError::MutationStepWithNoOrder)?;
-            node_mutation_field_pos_pairs.push((node_index, mutation_field_pos));
+            fields.entry(position).or_default().push(step_index);
         }
 
-        node_mutation_field_pos_pairs.sort_by_key(|&(_, pos)| pos);
+        let fields: Vec<Vec<NodeIndex>> = fields.into_values().collect();
+        for pair in fields.windows(2) {
+            let (previous, next) = (&pair[0], &pair[1]);
+            let next_steps = self.reachable_from(next);
+            let last_steps: Vec<NodeIndex> = self
+                .reachable_from(previous)
+                .into_iter()
+                .filter(|step| self.children_of(*step).next().is_none())
+                // A step both fields use can't wait for the second one.
+                .filter(|step| !next_steps.contains(step))
+                .collect();
 
-        let mut new_edges_pairs: Vec<(NodeIndex, NodeIndex)> = Vec::new();
-        let mut iter = node_mutation_field_pos_pairs.iter();
-        let mut current = iter.next();
-
-        for next_sequence_child in iter {
-            if let Some((current_node_index, _pos)) = current {
-                let next_node_index = next_sequence_child.0;
-                new_edges_pairs.push((current_node_index.id(), next_node_index));
+            for next_step in next {
+                if let Some(edge) = self.graph.find_edge(root_index, *next_step) {
+                    self.remove_edge(edge);
+                }
+                for last_step in &last_steps {
+                    self.connect(*last_step, *next_step);
+                }
             }
-            current = Some(next_sequence_child);
-        }
-
-        for edge_id in edge_ids_to_remove {
-            self.remove_edge(edge_id);
-        }
-
-        // Bring back the root -> Mutation edge
-        let first_pair = node_mutation_field_pos_pairs
-            .first()
-            .ok_or(FetchGraphError::EmptyFetchSteps)?;
-        self.connect(root_index, first_pair.0);
-
-        for (from_id, to_id) in new_edges_pairs {
-            self.connect(from_id, to_id);
         }
 
         Ok(())
+    }
+
+    fn reachable_from(&self, starts: &[NodeIndex]) -> HashSet<NodeIndex> {
+        let mut reachable = HashSet::new();
+        for start in starts {
+            let mut bfs = Bfs::new(&self.graph, *start);
+            while let Some(step) = bfs.next(&self.graph) {
+                reachable.insert(step);
+            }
+        }
+        reachable
     }
 }

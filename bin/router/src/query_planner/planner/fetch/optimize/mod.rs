@@ -30,6 +30,9 @@ impl FetchGraph<MultiTypeFetchStep> {
         options: &QueryPlannerOptions,
         cancellation_token: &CancellationToken,
     ) -> Result<(), FetchGraphError> {
+        // Before anything merges, so merges keep the order of mutation fields.
+        self.turn_mutations_into_sequence()?;
+
         // Run optimization passes repeatedly until the graph stabilizes, as one optimization can create
         // opportunities for others.
         loop {
@@ -57,7 +60,6 @@ impl FetchGraph<MultiTypeFetchStep> {
                 break;
             }
         }
-        self.turn_mutations_into_sequence()?;
         self.fix_conflicting_type_mismatches(supergraph_state)?;
 
         // We call this last, because it should be done after all other optimizations/merging are done

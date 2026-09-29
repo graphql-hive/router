@@ -27,23 +27,10 @@ impl FetchGraph<MultiTypeFetchStep> {
             // Key: original index, Value: potentially updated index after merges.
             let mut node_indexes: HashMap<NodeIndex, NodeIndex> = HashMap::new();
 
-            // Sort fetch steps by mutation's field position,
-            // to execute mutations in correct order.
-            let mut siblings_with_pos: Vec<(NodeIndex, Option<usize>)> = self
+            let siblings: Vec<NodeIndex> = self
                 .graph
                 .neighbors_directed(parent_index, Direction::Outgoing)
-                .map(|sibling| {
-                    self.get_step_data(sibling)
-                        .map(|data| (sibling, data.mutation_field_position))
-                })
-                .collect::<Result<_, _>>()?;
-
-            // Sort fetch steps by mutation's field position,
-            // to execute mutations in correct order.
-            siblings_with_pos.sort_by_key(|(_node, pos)| *pos);
-
-            let siblings: Vec<NodeIndex> =
-                siblings_with_pos.into_iter().map(|(idx, _)| idx).collect();
+                .collect();
 
             for (i, sibling_index) in siblings.iter().enumerate() {
                 // Add the current node to the queue for further processing (BFS).
@@ -119,19 +106,6 @@ impl FetchStepData<MultiTypeFetchStep> {
     ) -> bool {
         // First, check if the base conditions for merging are met.
         let can_merge_base = self.can_merge(self_index, other_index, other, fetch_graph);
-
-        if let (Some(self_mut_idx), Some(other_mut_index)) =
-            (self.mutation_field_position, other.mutation_field_position)
-        {
-            // If indexes are equal or one happens to be after the other,
-            // and we already know they belong to the same service,
-            // we shouldn't prevent merging.
-            if self_mut_idx != other_mut_index
-                && (self_mut_idx as i64 - other_mut_index as i64).abs() != 1
-            {
-                return false;
-            }
-        }
 
         if fetch_graph.is_ancestor_or_descendant(self_index, other_index) {
             // Looks like they depend on each other
