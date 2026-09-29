@@ -110,8 +110,9 @@ fn build_possible_types_map<'a>(ctx: &NormalizationContext<'a>) -> PossibleTypes
                     .union_members
                     .iter()
                     .filter_map(|m| {
+                        // Only the members this subgraph knows about.
                         if let Some(subgraph_name) = maybe_subgraph_name {
-                            if &m.graph == *subgraph_name {
+                            if &m.graph != *subgraph_name {
                                 return None;
                             }
                         }

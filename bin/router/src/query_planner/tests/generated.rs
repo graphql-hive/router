@@ -1,6 +1,7 @@
 //! Random operations, from `bin/differential`'s generator, planned against every fixture
-//! supergraph. Planning shouldn't panic or fail, the debug checks have to hold, and planning
-//! twice gives the same plan. A failing operation is written to `tests/generated/`, add it as a
+//! supergraph. Planning shouldn't panic or fail, the debug checks have to hold, and two planners
+//! built from the same supergraph give the same plan. Two planners, not one planner twice: each
+//! `HashMap` gets its own seed, so only a second planner catches plans that depend on it. A failing operation is written to `tests/generated/`, add it as a
 //! regular test.
 //!
 //! Two errors are left alone: the walker finding no path, which is search and not the fetch
@@ -79,6 +80,7 @@ fn generated_operations_plan() {
         let Ok(planner) = Planner::new_from_supergraph(&supergraph, Default::default()) else {
             continue;
         };
+        let other_planner = Planner::new_from_supergraph(&supergraph, Default::default()).unwrap();
         // The generator doesn't always make valid operations, and the router refuses those.
         // Validate against the client-visible schema, with built-in scalars and directives.
         let api =
@@ -92,9 +94,9 @@ fn generated_operations_plan() {
             planned += 1;
             let result = catch_unwind(AssertUnwindSafe(|| {
                 let first = plan(&planner, &case.document)?;
-                let second = plan(&planner, &case.document)?;
+                let second = plan(&other_planner, &case.document)?;
                 if first != second {
-                    return Err(format!("planned twice, got two plans:\n{first}\n{second}"));
+                    return Err(format!("two planners, two plans:\n{first}\n{second}"));
                 }
                 Ok(())
             }));
