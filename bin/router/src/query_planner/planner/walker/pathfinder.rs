@@ -80,7 +80,7 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
 pub enum NavigationTarget<'op> {
     Field {
         field: &'op FieldSelection,
-        target_subgraph_ids: Option<&'op HashSet<String>>,
+        target_subgraph_ids: Option<&'op [u16]>,
     },
     ConcreteType(&'op str, Option<Condition>),
 }
@@ -216,13 +216,16 @@ impl<'graph> PathSearch<'graph> {
                     graph.pretty_print_edge(edge_ref.id(), false)
                 );
 
-                let edge_tail_graph_id = graph.node(edge_ref.target().id())?.graph_id().unwrap();
+                let edge_tail = graph.node(edge_ref.target().id())?;
+                let edge_tail_graph_id = edge_tail.graph_id().unwrap();
 
                 let is_resolvable = match target {
                     NavigationTarget::Field {
                         target_subgraph_ids: Some(ids),
                         ..
-                    } => ids.contains(edge_tail_graph_id),
+                    } => edge_tail
+                        .subgraph_index()
+                        .is_some_and(|index| ids.contains(&index)),
                     _ => true,
                 };
 
@@ -731,7 +734,7 @@ impl<'graph> PathSearch<'graph> {
                     path,
                     &NavigationTarget::Field {
                         field,
-                        target_subgraph_ids: target_subgraph_ids.as_ref(),
+                        target_subgraph_ids: target_subgraph_ids.as_deref(),
                     },
                     excluded,
                 )?
