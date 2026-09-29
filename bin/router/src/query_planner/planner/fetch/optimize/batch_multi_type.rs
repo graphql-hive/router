@@ -12,7 +12,8 @@ use crate::query_planner::{
     ast::merge_path::{MergePath, Segment},
     planner::fetch::{
         error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
-        optimize::utils::perform_fetch_step_merge, state::MultiTypeFetchStep,
+        optimize::utils::{perform_fetch_step_merge, MergedSteps},
+        state::MultiTypeFetchStep,
     },
 };
 
@@ -36,11 +37,12 @@ impl FetchGraph<MultiTypeFetchStep> {
             .ok_or(FetchGraphError::NonSingleRootStep(0))?;
         // Breadth-First Search (BFS) starting from the root node.
         let mut queue = VecDeque::from([root_index]);
+        let mut merged_steps = MergedSteps::default();
 
         while let Some(parent_index) = queue.pop_front() {
+            let parent_index = merged_steps.resolve(parent_index);
             // We only batch child steps that share the same parent.
             let mut merges_to_perform = Vec::<(NodeIndex, NodeIndex)>::new();
-            let mut node_indexes: HashMap<NodeIndex, NodeIndex> = HashMap::new();
             let siblings_indices = self
                 .graph
                 .neighbors_directed(parent_index, Direction::Outgoing)
@@ -70,10 +72,6 @@ impl FetchGraph<MultiTypeFetchStep> {
                             sibling_index.index(),
                             other_sibling_index.index()
                         );
-                        // Register their original indexes in the map.
-                        node_indexes.insert(*sibling_index, *sibling_index);
-                        node_indexes.insert(*other_sibling_index, *other_sibling_index);
-
                         merges_to_perform.push((*sibling_index, *other_sibling_index));
                     }
                 }
@@ -81,13 +79,8 @@ impl FetchGraph<MultiTypeFetchStep> {
 
             // First find all merge candidates. Then apply merges.
             for (child_index, other_child_index) in merges_to_perform {
-                // Get the latest indexes for the nodes, accounting for previous merges.
-                let child_index_latest = node_indexes
-                    .get(&child_index)
-                    .ok_or(FetchGraphError::IndexMappingLost)?;
-                let other_child_index_latest = node_indexes
-                    .get(&other_child_index)
-                    .ok_or(FetchGraphError::IndexMappingLost)?;
+                let child_index_latest = &merged_steps.resolve(child_index);
+                let other_child_index_latest = &merged_steps.resolve(other_child_index);
 
                 if child_index_latest == other_child_index_latest {
                     continue;
@@ -160,10 +153,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                     }
                 }
 
-                // Because `other_child` was merged into `child`,
-                // then everything that was pointing to `other_child`
-                // has to point to the `child`.
-                node_indexes.insert(*other_child_index_latest, *child_index_latest);
+                merged_steps.record(*other_child_index_latest, *child_index_latest);
             }
         }
 
