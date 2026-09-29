@@ -1,0 +1,172 @@
+query GeneratedQuery($v1: Boolean!, $v10: Boolean!, $v11: Boolean!, $v12: Boolean!, $v13: Boolean!, $v14: Boolean!, $v15: Boolean! = true, $v16: Boolean!, $v17: Boolean!, $v18: Boolean!, $v19: Boolean!, $v2: Boolean!, $v20: Boolean!, $v21: Boolean! = false, $v22: Boolean! = false, $v23: Boolean! = true, $v24: Boolean!, $v25: Boolean! = true, $v26: Boolean!, $v27: Boolean!, $v28: Boolean!, $v29: Boolean!, $v3: Boolean! = true, $v30: Boolean!, $v4: Boolean!, $v5: Boolean!, $v6: Boolean!, $v7: Boolean!, $v8: Boolean!, $v9: Boolean!) {
+  product {
+    a1_canAffordWithAndWithoutDiscount: canAffordWithAndWithoutDiscount
+    ... on Product @include(if: $v2) @skip(if: false) {
+      canAfford2
+      __typename
+    }
+    __typename
+    isExpensiveWithDiscount @include(if: $v1)
+  }
+  ... on Query {
+    product {
+      fieldInD @skip(if: true) @include(if: false)
+      __typename
+      ... on Product @skip(if: $v5) @include(if: true) {
+        __typename
+        hasDiscount @skip(if: $v3) @include(if: $v4)
+      }
+      ...GeneratedFragment1 @include(if: $v17)
+      isExpensiveWithDiscount @skip(if: false)
+      canAffordWithAndWithoutDiscount
+      a3_hasDiscount: hasDiscount @skip(if: false)
+    }
+    ...GeneratedFragment5
+    ... on Query @skip(if: $v28) {
+      product {
+        __typename
+        fieldInD
+        id @skip(if: $v19)
+        isExpensiveWithDiscount @include(if: $v18)
+        canAfford2
+        ...GeneratedFragment3
+      }
+      ...GeneratedFragment4
+    }
+  }
+  __typename
+  ...GeneratedFragment7
+  product @include(if: true) {
+    id
+    a2_id: id
+    __typename
+  }
+}
+
+fragment GeneratedFragment2 on Product {
+  canAfford2 @skip(if: false) @include(if: $v14)
+  __typename
+  canAfford2
+  a6_id: id @include(if: $v13) @skip(if: false)
+}
+
+fragment GeneratedFragment1 on Product {
+  canAffordWithDiscount2 @include(if: $v8) @skip(if: $v9)
+  __typename
+  canAffordWithDiscount @skip(if: $v10)
+  ... on Product @skip(if: false) @include(if: $v16) {
+    ...GeneratedFragment2 @include(if: $v15)
+    canAffordWithDiscount2
+    __typename
+  }
+  a5_fieldInD: fieldInD @include(if: true) @skip(if: $v12)
+  canAffordWithAndWithoutDiscount @skip(if: $v6) @include(if: $v7)
+  a4_canAffordWithDiscount: canAffordWithDiscount @skip(if: $v11)
+}
+
+fragment GeneratedFragment3 on Product {
+  isExpensiveWithDiscount @include(if: $v21)
+  a8_fieldInD: fieldInD @skip(if: false)
+  a9_canAfford2: canAfford2
+  a10_id: id
+  __typename
+  canAffordWithDiscount @skip(if: $v20) @include(if: false)
+  a7_fieldInD: fieldInD @skip(if: true)
+}
+
+fragment GeneratedFragment4 on Query {
+  __typename
+  product {
+    a11_isExpensive: isExpensive
+    ... on Product @skip(if: $v26) @include(if: $v27) {
+      fieldInD
+      a14_isExpensiveWithDiscount: isExpensiveWithDiscount
+      canAffordWithAndWithoutDiscount @skip(if: $v23) @include(if: $v24)
+      canAffordWithAndWithoutDiscount @include(if: true) @skip(if: $v22)
+      ... on Product {
+        __typename
+      }
+      isExpensiveWithDiscount @skip(if: $v25)
+    }
+    a13_canAfford2: canAfford2
+    canAffordWithAndWithoutDiscount2
+    a12_isExpensive: isExpensive
+  }
+}
+
+fragment GeneratedFragment6 on Product {
+  canAffordWithDiscount
+  __typename
+}
+
+fragment GeneratedFragment5 on Query {
+  product {
+    isExpensive
+    canAffordWithAndWithoutDiscount2 @include(if: $v29)
+    ...GeneratedFragment6
+  }
+  ... on Query {
+    product @skip(if: true) @include(if: $v30) {
+      canAfford2 @include(if: false) @skip(if: false)
+      isExpensiveWithDiscount
+      isExpensive
+      isExpensiveWithDiscount
+      canAffordWithAndWithoutDiscount
+      isExpensive
+      a15_canAffordWithDiscount2: canAffordWithDiscount2
+      canAffordWithAndWithoutDiscount2
+    }
+    __typename
+    ... {
+      a16_product: product {
+        canAffordWithDiscount
+        __typename
+        a17_canAffordWithDiscount2: canAffordWithDiscount2
+        a18_canAffordWithDiscount: canAffordWithDiscount
+      }
+      __typename
+    }
+  }
+  __typename
+}
+
+fragment GeneratedFragment9 on Product {
+  __typename
+}
+
+fragment GeneratedFragment8 on Product {
+  fieldInD
+  isExpensive
+  __typename
+  canAffordWithDiscount2
+  a21_canAffordWithAndWithoutDiscount: canAffordWithAndWithoutDiscount
+  isExpensive
+  ... {
+    canAffordWithDiscount2
+    __typename
+    isExpensive
+    a23_canAffordWithAndWithoutDiscount2: canAffordWithAndWithoutDiscount2
+    canAfford
+    ...GeneratedFragment9
+    id
+    a24_canAffordWithDiscount: canAffordWithDiscount
+    a22_canAffordWithAndWithoutDiscount2: canAffordWithAndWithoutDiscount2
+  }
+}
+
+fragment GeneratedFragment7 on Query {
+  product {
+    ... {
+      __typename
+      canAffordWithDiscount2
+      ...GeneratedFragment8
+    }
+    a20_hasDiscount: hasDiscount
+    id
+    __typename
+    canAfford
+    a19_isExpensiveWithDiscount: isExpensiveWithDiscount
+    canAffordWithAndWithoutDiscount
+  }
+  __typename
+}

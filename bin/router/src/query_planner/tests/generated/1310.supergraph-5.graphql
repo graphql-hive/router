@@ -1,0 +1,39 @@
+query GeneratedQuery($v1: Boolean! = false, $v10: Boolean!, $v11: Boolean!, $v12: Boolean!, $v13: Boolean! = true, $v14: Boolean!, $v2: Boolean! = true, $v3: Boolean! = true, $v4: Boolean!, $v5: Boolean!, $v6: Boolean! = true, $v7: Boolean!, $v8: Boolean!, $v9: Boolean!) {
+  pet {
+    weight @include(if: $v6)
+    __typename
+    a1_checkup: checkup {
+      id @skip(if: $v1) @include(if: $v2)
+      a2_grade: grade @skip(if: true) @include(if: $v3)
+      a3_fee: fee
+      __typename
+    }
+    age
+    checkup {
+      a4_grade: grade
+      a5_id: id
+      fee @skip(if: $v4) @include(if: false)
+    }
+    a6_id: id @skip(if: $v5) @include(if: true)
+  }
+  pet @skip(if: false) @include(if: $v7) {
+    a7_checkup: checkup {
+      id @skip(if: $v10)
+      ... on Checkup {
+        grade
+        fee
+        grade @include(if: $v12) @skip(if: $v13)
+        a8_id: id @skip(if: $v11) @include(if: true)
+        __typename
+      }
+      grade
+      fee @skip(if: $v8) @include(if: $v9)
+    }
+    weight
+    id
+    age @include(if: $v14) @skip(if: false)
+    __typename
+    id
+  }
+  __typename
+}

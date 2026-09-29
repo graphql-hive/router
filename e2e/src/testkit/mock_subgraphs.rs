@@ -8,7 +8,8 @@
 //! * Parses the GraphQL request body, walks the operation's top-level
 //!   selection set and resolves each field against the subgraph's mock map
 //!   (with field aliases respected and full selection-set walking for nested
-//!   objects/lists).
+//!   objects/lists). Fields with arguments first look up a key such as
+//!   `price(currency: "EUR")`; `@skip` and `@include` are applied.
 //! * Handles federation's `_entities` resolver by matching each
 //!   `representations[i]` against the configured `entities: [..]` list using
 //!   the rule "entity has at least all of representation's fields".
@@ -23,7 +24,8 @@ use bytes::Bytes;
 use graphql_tools::parser::{
     parse_query,
     query::{
-        Definition, Field, FragmentDefinition, OperationDefinition, Selection, SelectionSet, Value,
+        Definition, Directive, Field, FragmentDefinition, OperationDefinition, Selection,
+        SelectionSet, Value,
     },
 };
 use serde_json::{json, Value as JsonValue};
@@ -186,6 +188,10 @@ impl SubgraphMock {
         out: &mut serde_json::Map<String, JsonValue>,
     ) {
         match selection {
+            Selection::Field(field) if !is_included(&field.directives, variables) => {}
+            Selection::InlineFragment(fragment)
+                if !is_included(&fragment.directives, variables) => {}
+            Selection::FragmentSpread(spread) if !is_included(&spread.directives, variables) => {}
             Selection::Field(field) => {
                 let key = field.alias.clone().unwrap_or_else(|| field.name.clone());
                 let value = self.resolve_field(field, parent, variables, fragments);
@@ -243,7 +249,10 @@ impl SubgraphMock {
             return parent.get("__typename").cloned().unwrap_or(JsonValue::Null);
         }
 
-        let raw = parent.get(field.name.as_str()).cloned();
+        let raw = arguments_key(field, variables)
+            .and_then(|key| parent.get(&key))
+            .or_else(|| parent.get(field.name.as_str()))
+            .cloned();
         let value = match raw {
             Some(v) => v,
             None => return JsonValue::Null,
@@ -289,6 +298,34 @@ impl SubgraphMock {
                 .all(|(k, v)| entity_obj.get(k).is_some_and(|ev| is_a_match(ev, v)))
         })
     }
+}
+
+/// Applies `@skip` and `@include` like a real subgraph.
+fn is_included(directives: &[Directive<'_, String>], variables: &JsonValue) -> bool {
+    directives.iter().all(|directive| {
+        let condition = directive
+            .arguments
+            .iter()
+            .find(|(name, _)| name == "if")
+            .map(|(_, value)| coerce_value(value, variables));
+        !matches!(
+            (directive.name.as_str(), condition),
+            ("skip", Some(JsonValue::Bool(true))) | ("include", Some(JsonValue::Bool(false)))
+        )
+    })
+}
+
+/// Renders an argument-bearing field as `name(arg: value, ...)` for keyed mock lookup.
+fn arguments_key(field: &Field<'_, String>, variables: &JsonValue) -> Option<String> {
+    if field.arguments.is_empty() {
+        return None;
+    }
+    let arguments: Vec<String> = field
+        .arguments
+        .iter()
+        .map(|(name, value)| format!("{name}: {}", coerce_value(value, variables)))
+        .collect();
+    Some(format!("{}({})", field.name, arguments.join(", ")))
 }
 
 /// "Entity contains at least every field of the representation" check.

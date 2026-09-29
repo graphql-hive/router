@@ -1,0 +1,268 @@
+query GeneratedQuery($v1: Boolean! = false, $v10: Boolean!, $v11: Boolean! = true, $v12: Boolean! = false, $v13: Boolean! = false, $v14: Boolean!, $v15: Boolean! = false, $v16: Boolean!, $v17: Boolean! = false, $v18: Boolean! = false, $v19: Boolean!, $v2: Boolean! = true, $v20: Boolean!, $v21: Boolean! = true, $v22: Boolean! = true, $v23: Boolean! = true, $v24: Boolean!, $v25: Boolean! = true, $v26: Boolean!, $v27: Boolean! = false, $v3: Boolean! = true, $v4: Boolean! = false, $v5: Boolean! = false, $v6: Boolean! = false, $v7: Boolean!, $v8: Boolean! = false, $v9: Boolean!) {
+  __typename
+  ... on Query {
+    ...GeneratedFragment5
+    a16_listings: listings {
+      ... {
+        a17_rank: rank
+        id
+        rank
+        id
+        pet {
+          id
+          name
+          __typename
+        }
+      }
+      __typename
+      id
+      id
+    }
+  }
+  listings {
+    ... on Listing {
+      a6_rank: rank @skip(if: false) @include(if: $v11)
+      rank @skip(if: true) @include(if: $v10)
+      pet @skip(if: $v12) @include(if: $v13) {
+        id
+        ...GeneratedFragment1 @include(if: true)
+        a7_name: name
+      }
+      ... on Listing @include(if: $v25) {
+        pet @skip(if: $v19) @include(if: false) {
+          id @skip(if: $v20) @include(if: $v21)
+          __typename
+          ...GeneratedFragment2
+        }
+        rank
+        __typename
+        ... on Listing {
+          id
+          id @skip(if: false) @include(if: $v24)
+        }
+      }
+      id @include(if: true)
+      ...GeneratedFragment3
+    }
+    __typename
+    id @skip(if: $v9) @include(if: true)
+    a5_id: id @include(if: true)
+    rank
+    a1_pet: pet {
+      ... on Dog {
+        id @skip(if: $v5) @include(if: true)
+        __typename
+        ... {
+          __typename
+          tricks
+          id
+          ... on Dog @skip(if: $v8) {
+            name
+            a4_tricks: tricks @include(if: $v7)
+            tricks
+            __typename
+            ... on Dog {
+              __typename
+            }
+          }
+          name @include(if: true) @skip(if: $v6)
+        }
+        a3_tricks: tricks @skip(if: $v4) @include(if: true)
+        name
+      }
+      a2_name: name @skip(if: true) @include(if: $v3)
+      id @skip(if: $v1) @include(if: $v2)
+      __typename
+    }
+  }
+}
+
+fragment GeneratedFragment1 on Cat {
+  ... on Cat @skip(if: false) @include(if: $v18) {
+    a9_id: id @skip(if: $v17)
+    name @skip(if: false) @include(if: true)
+    __typename
+    name
+    ... on Cat {
+      __typename
+    }
+    id @skip(if: false) @include(if: $v16)
+  }
+  a8_id: id @include(if: true) @skip(if: $v15)
+  whiskers @skip(if: $v14) @include(if: true)
+  name
+  whiskers
+}
+
+fragment GeneratedFragment2 on Dog {
+  name @include(if: $v23)
+  tricks @include(if: false)
+  id @include(if: $v22) @skip(if: false)
+}
+
+fragment GeneratedFragment4 on Listing {
+  pet {
+    __typename
+  }
+  a15_rank: rank
+  id
+}
+
+fragment GeneratedFragment3 on Listing {
+  rank
+  ... on Listing {
+    ...GeneratedFragment4
+    id
+    a13_pet: pet {
+      id
+      __typename
+      a14_name: name
+    }
+  }
+  pet {
+    a12_id: id
+    a11_name: name @skip(if: $v26) @include(if: $v27)
+    id
+    ... on Cat {
+      name
+      ... on Cat {
+        __typename
+      }
+      name
+      __typename
+      id
+      whiskers
+    }
+    a10_name: name @skip(if: false)
+  }
+  id
+  __typename
+}
+
+fragment GeneratedFragment6 on Cat {
+  __typename
+}
+
+fragment GeneratedFragment8 on Listing {
+  __typename
+}
+
+fragment GeneratedFragment7 on Listing {
+  id
+  ... on Listing {
+    pet {
+      __typename
+    }
+    ...GeneratedFragment8
+    id
+    rank
+  }
+  id
+  rank
+  __typename
+}
+
+fragment GeneratedFragment10 on Animal {
+  __typename
+}
+
+fragment GeneratedFragment9 on Listing {
+  id
+  pet {
+    a27_id: id
+    __typename
+    a26_id: id
+    a28_name: name
+    name
+  }
+  __typename
+  a25_rank: rank
+  a29_pet: pet {
+    ...GeneratedFragment10
+    ... on Dog {
+      __typename
+    }
+    name
+  }
+  ... on Listing {
+    rank
+    ... on Listing {
+      __typename
+    }
+  }
+}
+
+fragment GeneratedFragment5 on Query {
+  listings {
+    __typename
+    id
+    pet {
+      a21_name: name
+      id
+      __typename
+    }
+    a22_rank: rank
+    ...GeneratedFragment7
+    a18_pet: pet {
+      __typename
+      a19_id: id
+      name
+      ... on Cat {
+        a20_name: name
+        whiskers
+        whiskers
+        id
+        ...GeneratedFragment6
+      }
+    }
+  }
+  ... {
+    listings {
+      __typename
+      rank
+      a31_id: id
+      pet {
+        name
+        a30_id: id
+      }
+    }
+    ... on Query {
+      listings {
+        ... on Listing {
+          __typename
+        }
+        id
+        id
+        pet {
+          __typename
+        }
+        rank
+      }
+      __typename
+    }
+  }
+  listings {
+    ...GeneratedFragment9
+    rank
+    id
+    pet {
+      id
+      name
+    }
+    __typename
+    pet {
+      a23_id: id
+      __typename
+      name
+      ... {
+        __typename
+        ... on Dog {
+          __typename
+        }
+        a24_name: name
+        id
+        id
+      }
+    }
+  }
+}

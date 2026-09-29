@@ -8,6 +8,41 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
+/// https://github.com/graphql-hive/router/issues/1189
+///
+/// With a variable condition, the fetch is conditional and still contains the selected field.
+#[test]
+fn issue_1189_variable_skip_is_preserved_in_subgraph_operation() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($v: Boolean!) {
+          product @skip(if: $v) {
+            price
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/simple-include-skip.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($v:Boolean!) {
+          product @skip(if: $v) {
+            price
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
 #[test]
 fn issue_281_test() -> Result<(), Box<dyn Error>> {
     init_logger();
@@ -1115,6 +1150,151 @@ fn issue_1539_requires_on_self_referential_entity() -> Result<(), Box<dyn Error>
       },
     },
     "#);
+
+    Ok(())
+}
+
+/// https://github.com/graphql-hive/router/issues/1308
+/// Requirements crossing an entity interface must preserve their concrete type conditions
+/// after an additional entity hop.
+#[test]
+fn issue_1308_requires_through_entity_interface_after_entity_hop() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          cage {
+            listings {
+              rank
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1308.supergraph.graphql", document)?;
+    let query_plan = query_plan.to_string();
+
+    assert!(query_plan.contains("tricks"));
+    assert!(query_plan.contains("whiskers"));
+    assert!(query_plan.contains("rank"));
+
+    Ok(())
+}
+
+/// Reduced from generated fixture #1308, seed 0. The field-level condition reaches a different
+/// failure path than the unconditional issue query: planning loses the `Animal` definition while
+/// resolving the concrete-type requirements for `rank`.
+#[test]
+fn issue_1308_conditional_rank_keeps_concrete_requires_types() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($includeRank: Boolean!) {
+          cage {
+            listings {
+              rank @include(if: $includeRank)
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1308.supergraph.graphql", document)?;
+    let query_plan = query_plan.to_string();
+
+    assert!(query_plan.contains("rank"), "{query_plan}");
+    assert!(query_plan.contains("whiskers"), "{query_plan}");
+    Ok(())
+}
+
+/// https://github.com/graphql-hive/router/issues/1309
+/// Requirements through an entity interface must retain concrete-type field conditions.
+#[test]
+fn issue_1309_requires_through_entity_interface() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          listings {
+            rank
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1309.supergraph.graphql", document)?;
+    let query_plan = query_plan.to_string();
+
+    assert!(query_plan.contains("tricks"));
+    assert!(query_plan.contains("whiskers"));
+    assert!(query_plan.contains("rank"));
+
+    Ok(())
+}
+
+/// https://github.com/graphql-hive/router/issues/1310
+/// A nested `@requires` can depend on fields fetched from separate subgraphs.
+#[test]
+fn issue_1310_nested_requires_with_multiple_providers() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          pet {
+            checkup {
+              grade
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1310.supergraph.graphql", document)?;
+    let query_plan = query_plan.to_string();
+
+    for expected in ["age", "weight", "fee", "grade"] {
+        assert!(
+            query_plan.contains(expected),
+            "missing {expected}: {query_plan}"
+        );
+    }
+
+    Ok(())
+}
+
+/// https://github.com/graphql-hive/router/issues/1311
+/// Same field with different arguments under separate type conditions must not panic or lose
+/// either requested value while planning.
+#[test]
+fn issue_1311_different_arguments_under_type_conditions() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          storefront {
+            departments {
+              ... on Aquatics {
+                photo {
+                  thumbnail(width: 100)
+                }
+              }
+              ... on Reptiles {
+                photo {
+                  thumbnail(width: 200)
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1311.supergraph.graphql", document)?;
+    let query_plan = query_plan.to_string();
+
+    assert!(query_plan.contains("thumbnail(width: 100)"));
+    assert!(query_plan.contains("thumbnail(width: 200)"));
 
     Ok(())
 }
