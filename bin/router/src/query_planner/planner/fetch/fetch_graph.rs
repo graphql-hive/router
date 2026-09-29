@@ -29,7 +29,7 @@ use petgraph::visit::EdgeRef;
 use petgraph::visit::{Bfs, IntoNodeReferences};
 use petgraph::Directed;
 use petgraph::Direction;
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fmt::{Debug, Display};
 use tracing::{instrument, trace};
 
@@ -40,6 +40,10 @@ pub struct FetchGraph<State> {
     pub(crate) graph: StableDiGraph<FetchStepData<State>, ()>,
     pub root_index: Option<NodeIndex>,
     pub(crate) operation_kind: OperationKind,
+    /// The step whose output an entity call gets its representations from, so the step that
+    /// holds the object the entity call extends. Only kept while the graph is built: merges
+    /// would make the indexes stale, so `to_multi_type` drops it.
+    pub(crate) entity_owners: HashMap<NodeIndex, NodeIndex>,
 }
 
 impl FetchGraph<SingleTypeFetchStep> {
@@ -52,6 +56,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             graph: new_graph,
             root_index: self.root_index,
             operation_kind: self.operation_kind,
+            entity_owners: HashMap::new(),
         }
     }
 
@@ -60,6 +65,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             graph: StableDiGraph::new(),
             root_index: None,
             operation_kind: kind,
+            entity_owners: HashMap::new(),
         }
     }
 }
@@ -322,6 +328,7 @@ fn create_noop_fetch_step(
 
 fn create_fetch_step_for_entity_call(
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    owner_index: NodeIndex,
     subgraph_name: &SubgraphName,
     input_type_name: &str,
     output_type_name: &str,
@@ -341,7 +348,7 @@ fn create_fetch_step_for_entity_call(
         })
         .unwrap();
 
-    fetch_graph.add_step(FetchStepData {
+    let step_index = fetch_graph.add_step(FetchStepData {
         id: fetch_graph.create_fetch_id(),
         service_name: subgraph_name.clone(),
         response_path: response_path.clone(),
@@ -357,7 +364,10 @@ fn create_fetch_step_for_entity_call(
         variable_definitions: None,
         mutation_field_position: None,
         internal_aliases_locations: Vec::new(),
-    })
+    });
+    fetch_graph.entity_owners.insert(step_index, owner_index);
+
+    step_index
 }
 
 // TODO: simplfy args
@@ -473,6 +483,7 @@ fn ensure_fetch_step_for_subgraph(
         None => {
             let step_index = create_fetch_step_for_entity_call(
                 fetch_graph,
+                parent_fetch_step_index,
                 subgraph_name,
                 input_type_name,
                 output_type_name,
@@ -555,6 +566,7 @@ fn ensure_fetch_step_for_requirement(
         None => {
             let step_index = create_fetch_step_for_entity_call(
                 fetch_graph,
+                parent_fetch_step_index,
                 subgraph_name,
                 type_name,
                 type_name,
@@ -857,11 +869,6 @@ fn process_interface_object_type_move_edge(
     condition: Option<&Condition>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
-    if fetch_graph.parents_of(parent_fetch_step_index).count() != 1 {
-        return Err(FetchGraphError::NonSingleParent(
-            parent_fetch_step_index.index(),
-        ));
-    }
     let edge = graph.edge(edge_index)?;
     let requirement = match edge {
         Edge::InterfaceObjectTypeMove(m) => TypeAwareSelection {
@@ -948,6 +955,7 @@ fn process_interface_object_type_move_edge(
     trace!("Creating a fetch step for requirement of @interfaceObject");
     let step_for_requirements_index = create_fetch_step_for_entity_call(
         fetch_graph,
+        parent_fetch_step_index,
         head_subgraph_name,
         object_type_name,
         interface_type_name,
@@ -1483,18 +1491,6 @@ fn process_requires_field_edge(
     condition: Option<&Condition>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
-    if fetch_graph.parents_of(parent_fetch_step_index).count() != 1 {
-        return Err(FetchGraphError::NonSingleParent(
-            parent_fetch_step_index.index(),
-        ));
-    }
-
-    let parent_parent_index = fetch_graph
-        .parents_of(parent_fetch_step_index)
-        .next()
-        .map(|edge| edge.source())
-        .unwrap();
-
     let requires = field_move
         .requirements
         .as_ref()
@@ -1537,8 +1533,15 @@ fn process_requires_field_edge(
         //   baz
         // }
         //
-        // We need to stick to the parent of the parent.
-        false => parent_parent_index,
+        // We need to go to the step that holds the object that entity call extends. Not to
+        // "the parent of the parent": a step with `@requires` waits for every step that fetches
+        // one of the required fields, so it can have many parents.
+        false => *fetch_graph
+            .entity_owners
+            .get(&parent_fetch_step_index)
+            .ok_or(FetchGraphError::MissingEntityOwner(
+                parent_fetch_step_index.index(),
+            ))?,
     };
 
     // When a field (foo) is annotated with `@requires(fields: "bar")`
@@ -1640,6 +1643,7 @@ fn process_requires_field_edge(
         trace!("Creating a fetch step for requirement of @requires");
         let step_for_requirements_index = create_fetch_step_for_entity_call(
             fetch_graph,
+            real_parent_fetch_step_index,
             head_subgraph_name,
             head_type_name,
             head_type_name,
