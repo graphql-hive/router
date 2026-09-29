@@ -82,7 +82,7 @@ impl SelectionSetNormalizer<'_> {
                         let mut merged = SelectionSet {
                             items: std::mem::take(&mut normalized_items),
                         };
-                        merge_selection_set(&mut merged, &fragment.selections, false);
+                        merge_selection_set(&mut merged, &fragment.selections, false)?;
                         normalized_items = merged.items;
                     } else {
                         normalized_items.push(SelectionItem::InlineFragment(fragment));

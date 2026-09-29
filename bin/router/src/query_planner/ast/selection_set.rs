@@ -502,9 +502,21 @@ fn selection_item_is_subset_of(source: &SelectionItem, target: &SelectionItem) -
     }
 }
 
-pub fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_first: bool) {
+/// Two different fields under one response key, on the same object.
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("Response key '{0}' would hold two different fields")]
+pub struct ResponseKeyConflict(pub String);
+
+/// Merges `source` into `target`. Fails when a field of `source` lands next to another field
+/// with the same response key but another name or arguments: the object can't hold both.
+/// Fields in different fragments are never merged together, so they can't meet here.
+pub fn merge_selection_set(
+    target: &mut SelectionSet,
+    source: &SelectionSet,
+    as_first: bool,
+) -> Result<(), ResponseKeyConflict> {
     if source.items.is_empty() {
-        return;
+        return Ok(());
     }
 
     let mut pending_items = Vec::with_capacity(source.items.len());
@@ -512,6 +524,16 @@ pub fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_
         let mut found = false;
         for target_item in target.items.iter_mut() {
             match (source_item, target_item) {
+                (SelectionItem::Field(source_field), SelectionItem::Field(target_field))
+                    if source_field.selection_identifier()
+                        == target_field.selection_identifier()
+                        && (source_field.name != target_field.name
+                            || source_field.arguments() != target_field.arguments()) =>
+                {
+                    return Err(ResponseKeyConflict(
+                        source_field.selection_identifier().to_string(),
+                    ));
+                }
                 (SelectionItem::Field(source_field), SelectionItem::Field(target_field))
                     if source_field == target_field
                         && field_condition_equal(
@@ -525,7 +547,7 @@ pub fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_
                         &mut target_field.selections,
                         &source_field.selections,
                         as_first,
-                    );
+                    )?;
                     break;
                 }
                 (
@@ -542,7 +564,7 @@ pub fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_
                         &mut target_fragment.selections,
                         &source_fragment.selections,
                         as_first,
-                    );
+                    )?;
                     break;
                 }
                 _ => {}
@@ -563,6 +585,8 @@ pub fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_
             target.items.extend(pending_items);
         }
     }
+
+    Ok(())
 }
 
 #[inline]
@@ -917,7 +941,7 @@ mod tests {
             })],
         };
 
-        merge_selection_set(&mut target, &source, false);
+        merge_selection_set(&mut target, &source, false).unwrap();
 
         assert_eq!(target.items.len(), 2);
     }
@@ -967,7 +991,7 @@ mod tests {
             })],
         };
 
-        merge_selection_set(&mut target, &source, false);
+        merge_selection_set(&mut target, &source, false).unwrap();
 
         assert_eq!(target.items.len(), 1);
 
@@ -997,9 +1021,51 @@ mod tests {
             })],
         };
 
-        merge_selection_set(&mut target, &source, false);
+        merge_selection_set(&mut target, &source, false).unwrap();
 
         assert_eq!(target.items.len(), 2);
+    }
+
+    #[test]
+    fn merge_selection_set_refuses_two_fields_under_one_key() {
+        let parse = |query: &str| -> SelectionSet {
+            match crate::query_planner::utils::parsing::parse_operation(query)
+                .definitions
+                .first()
+            {
+                Some(query_ast::Definition::Operation(
+                    query_ast::OperationDefinition::SelectionSet(s),
+                )) => s.clone().into(),
+                _ => panic!("expected a selection set"),
+            }
+        };
+        let mut target = parse(r#"{ me { price(currency: "GBP") } }"#);
+
+        // Other arguments, or another field, under `price` on the same object.
+        for source in [
+            r#"{ me { price(currency: "EUR") } }"#,
+            "{ me { price: id } }",
+        ] {
+            let error = merge_selection_set(&mut target.clone(), &parse(source), false);
+            assert_eq!(error.unwrap_err().0, "price");
+        }
+        // The same value, and a different key, still merge.
+        merge_selection_set(
+            &mut target,
+            &parse(r#"{ me { price(currency: "GBP") } }"#),
+            false,
+        )
+        .unwrap();
+        merge_selection_set(
+            &mut target,
+            &parse(r#"{ me { eur: price(currency: "EUR") } }"#),
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            target.to_string(),
+            r#"{me{price(currency: "GBP") eur: price(currency: "EUR")}}"#
+        );
     }
 
     #[test]
@@ -1011,7 +1077,7 @@ mod tests {
             items: vec![SelectionItem::Field(FieldSelection::new_typename())],
         };
 
-        merge_selection_set(&mut target, &source, false);
+        merge_selection_set(&mut target, &source, false).unwrap();
 
         let [SelectionItem::Field(field)] = target.items.as_slice() else {
             panic!("expected exactly one __typename field");

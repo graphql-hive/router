@@ -10,7 +10,7 @@ use crate::query_planner::{
         selection_item::SelectionItem,
         selection_set::{
             find_selection_set_by_path_mut, merge_selection_set, selection_items_are_subset_of,
-            FieldSelection, InlineFragmentSelection, SelectionSet,
+            FieldSelection, InlineFragmentSelection, ResponseKeyConflict, SelectionSet,
         },
     },
     planner::fetch::state::{MultiTypeFetchStep, SingleTypeFetchStep},
@@ -22,6 +22,8 @@ pub enum FetchStepSelectionsError {
     UnexpectedMissingDefinition(String),
     #[error("Path '{0}' cannot be found in selection set of type {1}")]
     MissingPathInSelection(String, String),
+    #[error(transparent)]
+    ResponseKeyConflict(#[from] ResponseKeyConflict),
 }
 
 #[derive(Debug, Clone)]
@@ -355,7 +357,7 @@ impl<State> FetchStepSelections<State> {
                 )
             })?;
 
-        merge_selection_set(selection_set_at_path, &selection_set, as_first);
+        merge_selection_set(selection_set_at_path, &selection_set, as_first)?;
 
         Ok(())
     }
@@ -528,7 +530,7 @@ impl FetchStepSelections<MultiTypeFetchStep> {
 
 impl FetchStepSelections<SingleTypeFetchStep> {
     pub fn add(&mut self, selection_set: &SelectionSet) -> Result<(), FetchStepSelectionsError> {
-        merge_selection_set(self.selection_set_mut(), selection_set, false);
+        merge_selection_set(self.selection_set_mut(), selection_set, false)?;
 
         Ok(())
     }
