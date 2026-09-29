@@ -281,9 +281,15 @@ impl FetchStepData<MultiTypeFetchStep> {
         // The one exception is a nested entity call that we feed ourselves,
         // see `can_absorb_nested_entity_call`.
         if matches!(self.kind, FetchStepKind::Entity) && self.kind == other.kind {
-            if !self.response_path.eq(&other.response_path)
-                && !(is_only_parent && self.can_absorb_nested_entity_call(other))
-            {
+            if self.response_path.eq(&other.response_path) {
+                // Same objects, but their fields sit under other types: an `Animal` call next to
+                // a `Cat | Dog` one. Merged, the `Cat` fields would end up on `Animal`.
+                // Outputs, not inputs: an `@interfaceObject` call reads `User`s and writes
+                // `NodeWithName`, like the plain `NodeWithName` call next to it.
+                if !self.output.selecting_same_types(&other.output) {
+                    return false;
+                }
+            } else if !(is_only_parent && self.can_absorb_nested_entity_call(other)) {
                 return false;
             }
         } else {

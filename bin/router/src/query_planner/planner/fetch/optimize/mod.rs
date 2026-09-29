@@ -45,7 +45,7 @@ impl FetchGraph<MultiTypeFetchStep> {
             self.merge_siblings()?;
             self.merge_leafs()?;
             self.deduplicate_and_prune_fetch_steps()?;
-            self.batch_multi_type()?;
+            self.batch_multi_type(supergraph_state)?;
             self.normalize_selection_sets(supergraph_state)?;
             let abstract_type_converted =
                 self.fold_concrete_selections_to_interfaces(supergraph_state, options)?;
