@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use petgraph::graph::NodeIndex;
 use tracing::{instrument, trace};
 
@@ -5,9 +7,11 @@ use crate::query_planner::{
     ast::{
         merge_path::{MergePath, Segment},
         mismatch_finder::SelectionMismatchFinder,
-        safe_merge::SafeSelectionSetMerger,
         selection_item::SelectionItem,
-        selection_set::{field_condition_equal, find_selection_set_by_path_mut},
+        selection_set::{
+            field_condition_equal, fields_through_fragments, find_selection_set_by_path,
+            find_selection_set_by_path_mut, SelectionSet,
+        },
     },
     planner::{
         fetch::{error::FetchGraphError, fetch_graph::FetchGraph, state::MultiTypeFetchStep},
@@ -54,8 +58,6 @@ impl FetchGraph<MultiTypeFetchStep> {
             );
 
             for (root_def_name, mismatch_path) in mismatches_paths {
-                let mut merger = SafeSelectionSetMerger::default();
-
                 if let Some(Segment::Field(field_seg, args_hash_lookup, condition)) =
                     mismatch_path.last()
                 {
@@ -66,10 +68,10 @@ impl FetchGraph<MultiTypeFetchStep> {
                         .selections_for_definition_mut(&root_def_name)
                         .expect("missing definition in step");
 
+                    let next_alias = free_alias(root_def_selections, lookup_path);
                     if let Some(selection_set) =
                         find_selection_set_by_path_mut(root_def_selections, lookup_path)
                     {
-                        let next_alias = merger.safe_next_alias_name(&selection_set.items);
                         let item = selection_set
                           .items
                           .iter_mut()
@@ -119,4 +121,28 @@ impl FetchGraph<MultiTypeFetchStep> {
 
         Ok(())
     }
+}
+
+/// An alias no field of the object at `path` uses yet. The object's keys are all of its fields,
+/// in every fragment, not just the ones next to the field: `TypeB` and `TypeC` fragments on one
+/// object can't both get `_internal_qp_alias_0`, and neither can a field next to a client's
+/// `_internal_qp_alias_0: __typename`.
+fn free_alias(selections: &SelectionSet, path: &MergePath) -> String {
+    let mut object_path = path.clone();
+    while matches!(object_path.last(), Some(Segment::TypeCondition(..))) {
+        object_path = object_path.without_last();
+    }
+    let taken: HashSet<&str> = find_selection_set_by_path(selections, &object_path)
+        .map(|object| {
+            fields_through_fragments(object)
+                .into_iter()
+                .map(|field| field.selection_identifier())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    (0..)
+        .map(|index| format!("_internal_qp_alias_{index}"))
+        .find(|alias| !taken.contains(alias.as_str()))
+        .unwrap()
 }

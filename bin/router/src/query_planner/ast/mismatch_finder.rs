@@ -183,27 +183,16 @@ fn handle_field<'field, 'schema>(
         .unwrap();
 
     if let Some(maybe_conflicting_type) = encountered_field_to_type.get(field_identifier) {
-        if !maybe_conflicting_type.can_be_merged_with(field_type) {
-            let left_is_composite = state
-                .definitions
-                .get(maybe_conflicting_type.inner_type())
-                .is_some_and(|v| v.is_composite_type());
-            let right_is_composite = state
-                .definitions
-                .get(field_type.inner_type())
-                .is_some_and(|v| v.is_composite_type());
+        if !same_response_shape(state, maybe_conflicting_type, field_type) {
+            trace!(
+              "found a conflicting type for a selection field '{}', conflict is: '{}' <-> '{}', path: {}",
+              field_identifier,
+              maybe_conflicting_type,
+              field_type,
+              field_path,
+          );
 
-            if !left_is_composite || !right_is_composite {
-                trace!(
-                  "found a conflicting type for a selection field '{}', conflict is: '{}' <-> '{}', path: {}",
-                  field_identifier,
-                  maybe_conflicting_type,
-                  field_type,
-                  field_path,
-              );
-
-                mismatches_found.push((root_def_type_name.to_string(), field_path.clone()));
-            }
+            mismatches_found.push((root_def_type_name.to_string(), field_path.clone()));
         }
     } else {
         encountered_field_to_type.insert(field_identifier, field_type);
@@ -213,5 +202,28 @@ fn handle_field<'field, 'schema>(
         None
     } else {
         Some(field_type.inner_type())
+    }
+}
+
+/// GraphQL's "same response shape" (https://spec.graphql.org/draft/#SameResponseShape()):
+/// lists and non-nulls have to line up level by level, and the named types have to be equal,
+/// unless both are composite (their fields are compared on their own). `[Item]` and `Item`
+/// can't share a response key, even though both are objects.
+fn same_response_shape(state: &SupergraphState, left: &TypeNode, right: &TypeNode) -> bool {
+    match (left, right) {
+        (TypeNode::List(left), TypeNode::List(right))
+        | (TypeNode::NonNull(left), TypeNode::NonNull(right)) => {
+            same_response_shape(state, left, right)
+        }
+        (TypeNode::Named(left), TypeNode::Named(right)) => {
+            let is_composite = |name: &String| {
+                state
+                    .definitions
+                    .get(name)
+                    .is_some_and(|definition| definition.is_composite_type())
+            };
+            left == right || (is_composite(left) && is_composite(right))
+        }
+        _ => false,
     }
 }

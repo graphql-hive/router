@@ -752,7 +752,8 @@ pub fn response_keys_conflict(a: &SelectionSet, b: &SelectionSet) -> bool {
     })
 }
 
-fn fields_through_fragments(selection_set: &SelectionSet) -> Vec<&FieldSelection> {
+/// The fields of an object: the ones in `selection_set` and in its inline fragments, at any depth.
+pub fn fields_through_fragments(selection_set: &SelectionSet) -> Vec<&FieldSelection> {
     selection_set
         .items
         .iter()
