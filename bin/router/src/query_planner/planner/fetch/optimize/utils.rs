@@ -106,6 +106,26 @@ pub(crate) fn perform_fetch_step_merge(
     }
 
     let source_fetch_path = source.response_path.slice_from(target.response_path.len());
+    // At the same spot both steps write the same object. If the target fetches one type and
+    // the source another, the source's fields would land on the target's type: `Cat` fields
+    // on `Animal`. `can_merge` keeps such steps apart, so getting here is a bug.
+    if source_fetch_path.is_empty() {
+        if let Some(target_type) = target.output.try_as_single() {
+            if let Some((source_type, _)) = source
+                .output
+                .iter_selections()
+                .find(|(source_type, _)| source_type.as_str() != target_type)
+            {
+                return Err(FetchGraphError::Internal(format!(
+                    "can't merge the `{}` fields of step [{}] into the `{}` fields of step [{}]",
+                    source_type,
+                    source_index.index(),
+                    target_type,
+                    target_index.index(),
+                )));
+            }
+        }
+    }
     let scoped_aliases = target.output.safe_migrate_from_another(
         &source.output,
         &source_fetch_path,
