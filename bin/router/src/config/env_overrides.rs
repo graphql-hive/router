@@ -41,6 +41,10 @@ pub struct EnvVarOverrides {
     #[envconfig(from = "ROUTER_HTTP_SHUTDOWN_TIMEOUT")]
     pub http_shutdown_timeout: Option<String>,
 
+    // Cache overrides
+    #[envconfig(from = "ROUTER_CACHE_PLUGIN_SUPERGRAPH_RUNTIMES")]
+    pub plugin_supergraph_runtimes: Option<u64>,
+
     // Supergraph overrides
     #[envconfig(from = "SUPERGRAPH_FILE_PATH")]
     pub supergraph_file_path: Option<String>,
@@ -138,6 +142,14 @@ impl EnvVarOverrides {
         if let Some(http_shutdown_timeout) = self.http_shutdown_timeout.take() {
             debug!(target: CONFIG_LOGGING_TARGET, value = http_shutdown_timeout, "overriding 'http.shutdown_timeout'");
             config = config.set_override("http.shutdown_timeout", http_shutdown_timeout)?;
+        }
+
+        if let Some(plugin_supergraph_runtimes) = self.plugin_supergraph_runtimes.take() {
+            debug!(target: CONFIG_LOGGING_TARGET, value = plugin_supergraph_runtimes, "overriding 'cache.router.plugin_supergraph_runtimes'");
+            config = config.set_override(
+                "cache.router.plugin_supergraph_runtimes",
+                plugin_supergraph_runtimes,
+            )?;
         }
 
         let configured_supergraph_sources = [
