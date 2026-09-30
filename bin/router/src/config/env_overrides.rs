@@ -450,4 +450,23 @@ query_planner:
 
         assert!(config.query_planner.experimental_abstract_type_folding);
     }
+
+    #[test]
+    fn plugin_supergraph_runtimes_override_accepts_zero_and_wins_over_config_file() {
+        let config = EnvVarOverrides {
+            plugin_supergraph_runtimes: Some(0),
+            ..Default::default()
+        }
+        .apply_overrides(Config::builder().add_source(File::from_str(
+            "cache:\n  router:\n    plugin_supergraph_runtimes: 20\n",
+            FileFormat::Yaml,
+        )))
+        .unwrap()
+        .build()
+        .unwrap()
+        .try_deserialize::<HiveRouterConfig>()
+        .unwrap();
+
+        assert_eq!(config.cache.router.plugin_supergraph_runtimes, 0);
+    }
 }
