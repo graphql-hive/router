@@ -1,6 +1,5 @@
 ---
 hive-router: patch
-node-addon: patch
 ---
 
 # Configure the plugin-selected supergraph runtime cache
