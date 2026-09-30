@@ -387,8 +387,6 @@ impl From<&ConfiguredSupergraph> for SelectedSupergraph {
     }
 }
 
-const RUNTIME_CACHE_MAX_SIZE: usize = 10;
-
 type RouterSupergraphRuntimeCell = tokio::sync::OnceCell<Arc<RouterSupergraphRuntime>>;
 type RouterSupergraphRuntimeCache = Mutex<VecDeque<(u64, Arc<RouterSupergraphRuntimeCell>)>>;
 
@@ -400,6 +398,7 @@ pub struct SchemaState {
     configured: Arc<ArcSwap<Option<ConfiguredSupergraph>>>,
     // the cache of `RouterSupergraphRuntime`s for selected supergraphs, bounded by FIFO eviction
     runtime_cache: Arc<RouterSupergraphRuntimeCache>,
+    runtime_cache_max_size: usize,
     // sender half for `RuntimeCacheCleanupTask` - registers a cache entry's retirement token so
     // the cleanup task removes it from the cache once its owner retires, and notifies it of FIFO
     // evictions so it can drop the now-pointless waiter instead of leaving it dormant. `None`
@@ -664,6 +663,12 @@ impl SchemaState {
             return Ok(runtime);
         }
 
+        if self.runtime_cache_max_size == 0 {
+            return RouterSupergraphRuntime::build(snapshot, &self.runtime_context)
+                .await
+                .map(Arc::new);
+        }
+
         let (cell, evicted, inserted) = {
             // its ok for the lock to expire in this scope - we only need to check for an existing
             // entry and insert a new one if missing. the runtime itself is built asynchronously
@@ -673,7 +678,7 @@ impl SchemaState {
             if let Some((_, runtime)) = entries.iter().find(|(id, _)| *id == cache_id) {
                 (runtime.clone(), None, false)
             } else {
-                let evicted = (entries.len() >= RUNTIME_CACHE_MAX_SIZE)
+                let evicted = (entries.len() >= self.runtime_cache_max_size)
                     .then(|| entries.pop_front().map(|(id, _)| id))
                     .flatten();
                 let cell = Arc::new(RouterSupergraphRuntimeCell::new());
@@ -831,8 +836,11 @@ impl SchemaState {
         // itself by observing its own selected supergraph's retirement token.
         let _ = active_subscriptions;
 
+        let runtime_cache_max_size = router_config.cache.router.plugin_supergraph_runtimes;
+        // we're not allocating with capacity because we want to let this grow
+        // as needed so a large configured limit doesn't allocate up front
         let runtime_cache: Arc<RouterSupergraphRuntimeCache> =
-            Arc::new(Mutex::new(VecDeque::with_capacity(RUNTIME_CACHE_MAX_SIZE)));
+            Arc::new(Mutex::new(VecDeque::new()));
         let (cleanup_tx, cleanup_rx) = mpsc::unbounded_channel();
         bg_tasks_manager.register_task(RuntimeCacheCleanupTask {
             runtime_cache: runtime_cache.clone(),
@@ -842,6 +850,7 @@ impl SchemaState {
         Ok(Self {
             configured,
             runtime_cache,
+            runtime_cache_max_size,
             runtime_cache_cleanup: Some(cleanup_tx),
             telemetry_context: telemetry_context.clone(),
             callback_subscriptions,
@@ -1128,7 +1137,9 @@ mod plugin_runtime_cache_tests {
         });
         SchemaState {
             configured: Arc::new(ArcSwap::from(Arc::new(None))),
-            runtime_cache: Arc::new(Mutex::new(VecDeque::with_capacity(RUNTIME_CACHE_MAX_SIZE))),
+            runtime_cache: Arc::new(Mutex::new(VecDeque::new())),
+            runtime_cache_max_size: crate::config::cache::RouterCacheConfig::default()
+                .plugin_supergraph_runtimes,
             runtime_cache_cleanup: None,
             telemetry_context,
             callback_subscriptions,
@@ -1507,15 +1518,39 @@ mod plugin_runtime_cache_tests {
         }
         assert_eq!(
             state.runtime_cache.lock().unwrap().len(),
-            RUNTIME_CACHE_MAX_SIZE
+            state.runtime_cache_max_size
         );
 
         state.resolve_runtime(&owners[10].snapshot()).await.unwrap();
 
         let entries = state.runtime_cache.lock().unwrap();
-        assert_eq!(entries.len(), RUNTIME_CACHE_MAX_SIZE);
+        assert_eq!(entries.len(), state.runtime_cache_max_size);
         assert!(!entries.iter().any(|(id, _)| *id == owners[0].cache_id));
         assert!(entries.iter().any(|(id, _)| *id == owners[10].cache_id));
+    }
+
+    #[ntex::test]
+    async fn configured_runtime_cache_limit_evicts_oldest() {
+        let mut state = test_schema_state();
+        state.runtime_cache_max_size = 2;
+        let owners: Vec<_> = (0..3).map(|_| test_owner()).collect();
+        for owner in &owners {
+            state.resolve_runtime(&owner.snapshot()).await.unwrap();
+        }
+        let entries = state.runtime_cache.lock().unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(!entries.iter().any(|(id, _)| *id == owners[0].cache_id));
+    }
+
+    #[ntex::test]
+    async fn zero_runtime_cache_limit_rebuilds_plugin_runtime() {
+        let mut state = test_schema_state();
+        state.runtime_cache_max_size = 0;
+        let owner = test_owner();
+        let first = state.resolve_runtime(&owner.snapshot()).await.unwrap();
+        let second = state.resolve_runtime(&owner.snapshot()).await.unwrap();
+        assert!(!Arc::ptr_eq(&first, &second));
+        assert!(state.runtime_cache.lock().unwrap().is_empty());
     }
 
     #[ntex::test]

@@ -85,13 +85,30 @@ pub struct CacheConfig {
 }
 
 /// Caches with a single instance per router process.
-#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 #[non_exhaustive]
 pub struct RouterCacheConfig {
     /// Parsed GraphQL documents, keyed by the hash of the incoming query string.
     #[serde(default)]
     pub parsing: CacheLimitsConfig,
+    /// Maximum number of plugin-selected supergraph runtimes kept in the shared FIFO cache.
+    /// `0` disables caching for plugin-selected runtimes.
+    #[serde(default = "default_plugin_supergraph_runtimes")]
+    pub plugin_supergraph_runtimes: usize,
+}
+
+fn default_plugin_supergraph_runtimes() -> usize {
+    10
+}
+
+impl Default for RouterCacheConfig {
+    fn default() -> Self {
+        Self {
+            parsing: CacheLimitsConfig::default(),
+            plugin_supergraph_runtimes: default_plugin_supergraph_runtimes(),
+        }
+    }
 }
 
 /// Caches with one instance per supergraph the router serves.
@@ -229,6 +246,7 @@ mod tests {
         let from_empty: CacheConfig = serde_json::from_str("{}").unwrap();
         assert_eq!(from_empty, CacheConfig::default());
         assert_eq!(from_empty.router.parsing.max_entries, 1000);
+        assert_eq!(from_empty.router.plugin_supergraph_runtimes, 10);
         assert_eq!(from_empty.router.parsing.time_to_live, None);
         assert_eq!(from_empty.router.parsing.time_to_idle, None);
         assert_eq!(from_empty.supergraph.query_plans.max_entries, 1000);
