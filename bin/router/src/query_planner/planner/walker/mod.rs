@@ -5,7 +5,7 @@ pub(crate) mod path;
 pub(crate) mod pathfinder;
 pub(crate) mod utils;
 
-use std::collections::{HashSet, VecDeque};
+use std::{borrow::Cow, collections::VecDeque};
 
 use crate::query_planner::{
     ast::{
@@ -596,7 +596,7 @@ fn process_field<'graph, 'op: 'graph>(
                 path,
                 &NavigationTarget::Field {
                     field,
-                    target_subgraph_ids: target_subgraph_ids.as_ref(),
+                    target_subgraph_ids: target_subgraph_ids.as_deref(),
                 },
                 &excluded,
                 cancellation_token,
@@ -671,7 +671,7 @@ fn process_field<'graph, 'op: 'graph>(
                 .ok_or_else(|| WalkOperationError::TypeNotFound(tail.name_str().to_string()))?;
 
             if output_type.is_interface_type()
-                && field_def.resolvable_in_graphs(parent_def).len() > 1
+                && field_def.resolvable_in.len() > 1
                 // if there's one fragment, the query planner can decide which subgraph to use, based on the fragment's type condition
                 && field
                     .selections
@@ -758,39 +758,41 @@ fn process_field<'graph, 'op: 'graph>(
     Ok((next_stack_to_resolve, paths_per_leaf))
 }
 
-fn field_target_subgraph_ids<'graph>(
-    supergraph: &SupergraphState,
+/// The subgraphs that can resolve `field` on the types the paths end at, as sorted indices
+/// into `SupergraphState::subgraph_names`. Borrowed from the field when that's one type,
+/// merged when it's several.
+fn field_target_subgraph_ids<'s>(
+    supergraph: &'s SupergraphState,
     field: &FieldSelection,
-    paths: &[OperationPath<'graph>],
-    graph: &'graph Graph,
-) -> Result<Option<HashSet<String>>, WalkOperationError> {
-    let mut parent_type_names = HashSet::new();
+    paths: &[OperationPath<'_>],
+    graph: &Graph,
+) -> Result<Option<Cow<'s, [u16]>>, WalkOperationError> {
+    let mut target_subgraph_ids: Option<Cow<'s, [u16]>> = None;
 
     for path in paths {
-        let parent_node = graph.node(path.tail())?;
-        parent_type_names.insert(parent_node.name_str());
-    }
-
-    let mut target_subgraph_ids = HashSet::new();
-
-    for parent_type_name in parent_type_names {
-        let Some(parent_def) = supergraph.definitions.get(parent_type_name) else {
+        let parent_type_name = graph.node(path.tail())?.name_str();
+        let Some(field_def) = supergraph
+            .definitions
+            .get(parent_type_name)
+            .and_then(|parent_def| parent_def.fields().get(&field.name))
+        else {
             continue;
         };
-        let Some(field_def) = parent_def.fields().get(&field.name) else {
-            continue;
-        };
+        let field_ids = &field_def.resolvable_in[..];
 
-        for graph_id in field_def.resolvable_in_graphs(parent_def) {
-            if let Ok(subgraph_id) = supergraph.resolve_graph_id(&graph_id) {
-                target_subgraph_ids.insert(subgraph_id.0.to_string());
+        target_subgraph_ids = Some(match target_subgraph_ids {
+            None => Cow::Borrowed(field_ids),
+            // Paths mostly end at the same type, so there's nothing new to add.
+            Some(ids) if field_ids.iter().all(|id| ids.contains(id)) => ids,
+            Some(ids) => {
+                let mut merged = ids.into_owned();
+                merged.extend_from_slice(field_ids);
+                merged.sort_unstable();
+                merged.dedup();
+                Cow::Owned(merged)
             }
-        }
+        });
     }
 
-    if target_subgraph_ids.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(target_subgraph_ids))
-    }
+    Ok(target_subgraph_ids.filter(|ids| !ids.is_empty()))
 }

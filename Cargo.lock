@@ -2768,6 +2768,7 @@ dependencies = [
  "futures",
  "futures-timer",
  "futures-util",
+ "graphql-differential",
  "graphql-tools",
  "headers-accept",
  "hive-console-sdk",

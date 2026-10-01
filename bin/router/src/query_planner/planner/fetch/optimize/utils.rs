@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use petgraph::{
     graph::NodeIndex,
@@ -14,11 +14,31 @@ use crate::query_planner::{
     planner::fetch::{
         error::FetchGraphError,
         fetch_graph::FetchGraph,
-        fetch_step_data::{FetchStepData, FetchStepFlags, FetchStepKind},
+        fetch_step_data::{FetchStepData, FetchStepKind},
+        response_keys::read_as_written,
         selections::FetchStepSelections,
         state::MultiTypeFetchStep,
     },
 };
+
+/// Where merged-away steps went, kept for a whole pass. Passes queue steps and pick merge pairs
+/// before merging, so a step they hold on to may be gone by the time they use it. A step merged
+/// into one that got merged again later resolves to the last one, the one still in the graph.
+#[derive(Default)]
+pub(crate) struct MergedSteps(HashMap<NodeIndex, NodeIndex>);
+
+impl MergedSteps {
+    pub(crate) fn resolve(&self, mut step: NodeIndex) -> NodeIndex {
+        while let Some(into) = self.0.get(&step) {
+            step = *into;
+        }
+        step
+    }
+
+    pub(crate) fn record(&mut self, merged: NodeIndex, into: NodeIndex) {
+        self.0.insert(merged, into);
+    }
+}
 
 /// Handles the "target is non-entity, source has step-level condition" case.
 /// When merging an entity fetch into a non-entity target, the condition must
@@ -48,9 +68,15 @@ fn merge_source_condition_into_non_entity_target(
     //
     // We do this only for non-entity target merges. Entity-to-entity merges use
     // different path/type rules and are handled in a separate branch.
+    // The input is written the way a representation reads it (`id: _internal_qp_alias_0`),
+    // so it goes in the way the fetch writes it (`_internal_qp_alias_0: id`).
+    let mut input = source.input.clone();
+    for (_, selection_set) in input.iter_selections_mut() {
+        read_as_written(selection_set);
+    }
     source
         .output
-        .migrate_from_another(&source.input, &MergePath::default())?;
+        .migrate_from_another(&input, &MergePath::default())?;
 
     // Check if the condition is already enforced by the path
     let condition_redundant = matches!(
@@ -65,7 +91,6 @@ fn merge_source_condition_into_non_entity_target(
     Ok(true)
 }
 
-// Return true in case an alias was applied during the merge process.
 #[instrument(level = "trace", skip_all)]
 pub(crate) fn perform_fetch_step_merge(
     target_index: NodeIndex,
@@ -87,36 +112,29 @@ pub(crate) fn perform_fetch_step_merge(
     }
 
     let source_fetch_path = source.response_path.slice_from(target.response_path.len());
-    let scoped_aliases = target.output.safe_migrate_from_another(
-        &source.output,
-        &source_fetch_path,
-        (
-            target.flags.contains(FetchStepFlags::USED_FOR_REQUIRES),
-            source.flags.contains(FetchStepFlags::USED_FOR_REQUIRES),
-        ),
-    )?;
-
-    if !scoped_aliases.is_empty() {
-        trace!(
-            "Total of {} alises applied during safe merge of selections",
-            scoped_aliases.len()
-        );
-        // In cases where merging a step resulted in internal aliasing, keep a record of the aliases.
-        target.internal_aliases_locations.extend(scoped_aliases);
+    // At the same spot both steps write the same object. If the target fetches one type and
+    // the source another, the source's fields would land on the target's type: `Cat` fields
+    // on `Animal`. `can_merge` keeps such steps apart, so getting here is a bug.
+    if source_fetch_path.is_empty() {
+        if let Some(target_type) = target.output.try_as_single() {
+            if let Some((source_type, _)) = source
+                .output
+                .iter_selections()
+                .find(|(source_type, _)| source_type.as_str() != target_type)
+            {
+                return Err(FetchGraphError::Internal(format!(
+                    "can't merge the `{}` fields of step [{}] into the `{}` fields of step [{}]",
+                    source_type,
+                    source_index.index(),
+                    target_type,
+                    target_index.index(),
+                )));
+            }
+        }
     }
-
-    // The source may have made aliases in earlier merges. Its fields now sit at
-    // `source_fetch_path` in the target, so its records have to start there too.
-    let target_type = target.output.try_as_single().map(|t| t.to_string());
-    for (type_name, records) in std::mem::take(&mut source.internal_aliases_locations) {
-        target.internal_aliases_locations.push((
-            target_type.clone().unwrap_or(type_name),
-            records
-                .into_iter()
-                .map(|(alias_path, alias)| (source_fetch_path.concat(&alias_path), alias))
-                .collect(),
-        ));
-    }
+    target
+        .output
+        .migrate_from_another(&source.output, &source_fetch_path)?;
 
     if let Some(input_rewrites) = source.input_rewrites.take() {
         if !input_rewrites.is_empty() {
@@ -149,7 +167,9 @@ pub(crate) fn perform_fetch_step_merge(
     // Conditions may have been pushed down to keep the merge correct.
     // If the merged fetch is still guarded by one shared condition, lift it back to
     // step level.
-    target.lift_shared_output_condition_to_fetch();
+    if target.is_entity_call() {
+        target.lift_shared_output_condition_to_fetch();
+    }
 
     let mut children_indexes: Vec<NodeIndex> = vec![];
     let mut parents_indexes: Vec<NodeIndex> = vec![];
@@ -262,9 +282,15 @@ impl FetchStepData<MultiTypeFetchStep> {
         // The one exception is a nested entity call that we feed ourselves,
         // see `can_absorb_nested_entity_call`.
         if matches!(self.kind, FetchStepKind::Entity) && self.kind == other.kind {
-            if !self.response_path.eq(&other.response_path)
-                && !(is_only_parent && self.can_absorb_nested_entity_call(other))
-            {
+            if self.response_path.eq(&other.response_path) {
+                // Same objects, but their fields sit under other types: an `Animal` call next to
+                // a `Cat | Dog` one. Merged, the `Cat` fields would end up on `Animal`.
+                // Outputs, not inputs: an `@interfaceObject` call reads `User`s and writes
+                // `NodeWithName`, like the plain `NodeWithName` call next to it.
+                if !self.output.selecting_same_types(&other.output) {
+                    return false;
+                }
+            } else if !(is_only_parent && self.can_absorb_nested_entity_call(other)) {
                 return false;
             }
         } else {
@@ -359,7 +385,9 @@ mod tests {
         utils::parsing::parse_operation,
     };
 
-    use super::perform_fetch_step_merge;
+    use petgraph::graph::NodeIndex;
+
+    use super::{perform_fetch_step_merge, MergedSteps};
 
     /// Selections for one or more types, e.g. `&[("User", "{ id }"), ("Admin", "{ id }")]`.
     fn selections(types: &[(&str, &str)]) -> FetchStepSelections<MultiTypeFetchStep> {
@@ -417,7 +445,6 @@ mod tests {
             mutation_field_position: None,
             input_rewrites: None,
             output_rewrites: None,
-            internal_aliases_locations: Vec::new(),
         }
     }
 
@@ -481,50 +508,47 @@ mod tests {
         );
     }
 
-    /// A step that already made aliases in an earlier merge gets merged again. Its fields now sit
-    /// under `orders.@` in the target, so its alias records have to move there too - otherwise
-    /// the steps reading those fields never learn about the alias.
+    /// The `requires_requires` seed 4 order: 98 goes into 144, then 144 into 104. A pair that
+    /// still names 98 has to land on 104, the one step left of the three.
     #[test]
-    fn merge_keeps_alias_records_of_the_merged_step() {
+    fn merged_steps_follow_the_whole_chain() {
+        let [a, b, c, d] = [98, 144, 104, 3].map(NodeIndex::new);
+        let mut merged = MergedSteps::default();
+        merged.record(a, b);
+        merged.record(b, c);
+
+        assert_eq!(merged.resolve(a), c);
+        assert_eq!(merged.resolve(b), c);
+        assert_eq!(merged.resolve(c), c);
+        assert_eq!(merged.resolve(d), d);
+    }
+
+    /// A child is a passthrough only when its input already has what it fetches for every
+    /// type. Here it has the `User` fields but not the `Admin` ones.
+    #[test]
+    fn passthrough_needs_every_type_covered() {
         let mut graph =
             FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
 
-        let target = graph.add_step(entity_step(
-            "orders",
-            path(&["user"]),
+        let parent = graph.add_step(entity_step(
+            "accounts",
+            path(&["accounts", "@"]),
             selections(&[("User", "{ __typename id }")]),
-            selections(&[("User", "{ orders { __typename id } }")]),
+            selections(&[("User", "{ id }")]),
         ));
-        let source = graph.add_step(entity_step(
-            "orders",
-            path(&["user", "orders", "@"]),
-            selections(&[("Order", "{ __typename id }")]),
-            selections(&[("Order", "{ price _internal_qp_alias_0: price }")]),
+        let child = graph.add_step(entity_step(
+            "accounts",
+            path(&["accounts", "@"]),
+            selections(&[
+                ("User", "{ __typename id }"),
+                ("Admin", "{ __typename id }"),
+            ]),
+            selections(&[("User", "{ id }"), ("Admin", "{ name }")]),
         ));
-        graph.connect(target, source);
-        graph
-            .get_step_data_mut(source)
-            .unwrap()
-            .internal_aliases_locations
-            .push((
-                "Order".to_string(),
-                vec![(path(&["price"]), "_internal_qp_alias_0".to_string())],
-            ));
+        graph.connect(parent, child);
 
-        perform_fetch_step_merge(target, source, &mut graph, false).unwrap();
-
-        assert_eq!(
-            graph
-                .get_step_data(target)
-                .unwrap()
-                .internal_aliases_locations,
-            vec![(
-                "User".to_string(),
-                vec![(
-                    path(&["orders", "@", "price"]),
-                    "_internal_qp_alias_0".to_string()
-                )]
-            )]
-        );
+        let parent_data = graph.get_step_data(parent).unwrap();
+        let child_data = graph.get_step_data(child).unwrap();
+        assert!(!parent_data.can_merge_passthrough_child(parent, child, child_data, &graph));
     }
 }

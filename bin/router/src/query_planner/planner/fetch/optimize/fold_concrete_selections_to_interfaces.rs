@@ -300,7 +300,7 @@ impl<'a> StepConverter<'a> {
                 }));
         } else {
             // Otherwise merge the fields directly into the parent selection set
-            merge_selection_set(selection_set, &candidate.folded.selection_set, false);
+            merge_selection_set(selection_set, &candidate.folded.selection_set, false)?;
         }
 
         Ok(true)

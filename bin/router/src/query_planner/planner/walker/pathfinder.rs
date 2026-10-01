@@ -20,7 +20,7 @@ use crate::query_planner::{
     },
     planner::{
         tree::query_tree_node::QueryTreeNode,
-        walker::best_path::{find_best_paths, BestPathTracker},
+        walker::best_path::{find_best_paths, pick_shared_paths, BestPathTracker},
     },
     state::supergraph_state::SupergraphState,
 };
@@ -80,7 +80,7 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
 pub enum NavigationTarget<'op> {
     Field {
         field: &'op FieldSelection,
-        target_subgraph_ids: Option<&'op HashSet<String>>,
+        target_subgraph_ids: Option<&'op [u16]>,
     },
     ConcreteType(&'op str, Option<Condition>),
 }
@@ -216,13 +216,16 @@ impl<'graph> PathSearch<'graph> {
                     graph.pretty_print_edge(edge_ref.id(), false)
                 );
 
-                let edge_tail_graph_id = graph.node(edge_ref.target().id())?.graph_id().unwrap();
+                let edge_tail = graph.node(edge_ref.target().id())?;
+                let edge_tail_graph_id = edge_tail.graph_id().unwrap();
 
                 let is_resolvable = match target {
                     NavigationTarget::Field {
                         target_subgraph_ids: Some(ids),
                         ..
-                    } => ids.contains(edge_tail_graph_id),
+                    } => edge_tail
+                        .subgraph_index()
+                        .is_some_and(|index| ids.contains(&index)),
                     _ => true,
                 };
 
@@ -590,7 +593,7 @@ impl<'graph> PathSearch<'graph> {
                 );
 
                 let mut requirements: VecDeque<MoveRequirement> = VecDeque::new();
-                let mut paths_to_requirements: Vec<OperationPath<'graph>> = vec![];
+                let mut tied_paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
 
                 for selection in selections.selection_set.items.iter() {
                     requirements.push_front(MoveRequirement {
@@ -625,14 +628,7 @@ impl<'graph> PathSearch<'graph> {
                                             "Found {} best paths for this leaf requirement",
                                             best_paths.len()
                                         );
-
-                                        for best_path in best_paths {
-                                            paths_to_requirements.push(
-                                                path.build_requirement_continuation_path(
-                                                    &best_path,
-                                                ),
-                                            );
-                                        }
+                                        tied_paths_per_leaf.push(best_paths);
                                     }
 
                                     for req in next_requirements.into_iter().rev() {
@@ -673,6 +669,11 @@ impl<'graph> PathSearch<'graph> {
                         }
                     }
                 }
+
+                let paths_to_requirements: Vec<OperationPath<'graph>> =
+                    pick_shared_paths(tied_paths_per_leaf)
+                        .map(|best_path| path.build_requirement_continuation_path(&best_path))
+                        .collect();
 
                 for path in paths_to_requirements.iter() {
                     trace!("path {} is valid", path.pretty_print(graph));
@@ -733,7 +734,7 @@ impl<'graph> PathSearch<'graph> {
                     path,
                     &NavigationTarget::Field {
                         field,
-                        target_subgraph_ids: target_subgraph_ids.as_ref(),
+                        target_subgraph_ids: target_subgraph_ids.as_deref(),
                     },
                     excluded,
                 )?

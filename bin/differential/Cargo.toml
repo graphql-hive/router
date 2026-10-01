@@ -3,6 +3,9 @@ name = "graphql-differential"
 edition = "2021"
 publish = false
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "graphql-diff"
 path = "src/main.rs"

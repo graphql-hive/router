@@ -470,30 +470,53 @@ pub fn selection_items_are_subset_of(source: &[SelectionItem], target: &[Selecti
     })
 }
 
+/// Whether `source` gives the same value `target` asks for. Same response key, field and
+/// arguments, and the same `@skip`/`@include`: `price(currency: "GBP")` isn't
+/// `price(currency: "EUR")`, and a field fetched only under `$x` isn't there under `$y`.
+/// Conditions have to be equal, not just implied, which is stricter than needed but never wrong.
 fn selection_item_is_subset_of(source: &SelectionItem, target: &SelectionItem) -> bool {
     match (source, target) {
         (SelectionItem::Field(source_field), SelectionItem::Field(target_field)) => {
-            if source_field.name != target_field.name {
-                return false;
-            }
-
-            if source_field.is_leaf() != target_field.is_leaf() {
-                return false;
-            }
-
-            selection_items_are_subset_of(
-                &source_field.selections.items,
-                &target_field.selections.items,
-            )
+            source_field == target_field
+                && source_field.skip_if == target_field.skip_if
+                && source_field.include_if == target_field.include_if
+                && source_field.is_leaf() == target_field.is_leaf()
+                && selection_items_are_subset_of(
+                    &source_field.selections.items,
+                    &target_field.selections.items,
+                )
         }
-        // TODO: support fragments
+        (
+            SelectionItem::InlineFragment(source_fragment),
+            SelectionItem::InlineFragment(target_fragment),
+        ) => {
+            source_fragment.type_condition == target_fragment.type_condition
+                && source_fragment.skip_if == target_fragment.skip_if
+                && source_fragment.include_if == target_fragment.include_if
+                && selection_items_are_subset_of(
+                    &source_fragment.selections.items,
+                    &target_fragment.selections.items,
+                )
+        }
         _ => false,
     }
 }
 
-pub fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_first: bool) {
+/// Two different fields under one response key, on the same object.
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("Response key '{0}' would hold two different fields")]
+pub struct ResponseKeyConflict(pub String);
+
+/// Merges `source` into `target`. Fails when a field of `source` lands next to another field
+/// with the same response key but another name or arguments: the object can't hold both.
+/// Fields in different fragments are never merged together, so they can't meet here.
+pub fn merge_selection_set(
+    target: &mut SelectionSet,
+    source: &SelectionSet,
+    as_first: bool,
+) -> Result<(), ResponseKeyConflict> {
     if source.items.is_empty() {
-        return;
+        return Ok(());
     }
 
     let mut pending_items = Vec::with_capacity(source.items.len());
@@ -501,6 +524,16 @@ pub fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_
         let mut found = false;
         for target_item in target.items.iter_mut() {
             match (source_item, target_item) {
+                (SelectionItem::Field(source_field), SelectionItem::Field(target_field))
+                    if source_field.selection_identifier()
+                        == target_field.selection_identifier()
+                        && (source_field.name != target_field.name
+                            || source_field.arguments() != target_field.arguments()) =>
+                {
+                    return Err(ResponseKeyConflict(
+                        source_field.selection_identifier().to_string(),
+                    ));
+                }
                 (SelectionItem::Field(source_field), SelectionItem::Field(target_field))
                     if source_field == target_field
                         && field_condition_equal(
@@ -514,7 +547,7 @@ pub fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_
                         &mut target_field.selections,
                         &source_field.selections,
                         as_first,
-                    );
+                    )?;
                     break;
                 }
                 (
@@ -531,7 +564,7 @@ pub fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_
                         &mut target_fragment.selections,
                         &source_fragment.selections,
                         as_first,
-                    );
+                    )?;
                     break;
                 }
                 _ => {}
@@ -552,6 +585,8 @@ pub fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_
             target.items.extend(pending_items);
         }
     }
+
+    Ok(())
 }
 
 #[inline]
@@ -726,6 +761,38 @@ pub fn find_arguments_conflicts(
         .collect()
 }
 
+/// Whether `a` and `b` in one selection set would give a response key two values: the same key
+/// for another field or other arguments, at any depth. Inline fragments are looked through,
+/// their fields write the same object.
+pub fn response_keys_conflict(a: &SelectionSet, b: &SelectionSet) -> bool {
+    let (a_fields, b_fields) = (fields_through_fragments(a), fields_through_fragments(b));
+    a_fields.iter().any(|a_field| {
+        b_fields.iter().any(|b_field| {
+            a_field.selection_identifier() == b_field.selection_identifier()
+                && (a_field.name != b_field.name
+                    || a_field.arguments() != b_field.arguments()
+                    || response_keys_conflict(&a_field.selections, &b_field.selections))
+        })
+    })
+}
+
+/// The fields of an object: the ones in `selection_set` and in its inline fragments, at any depth.
+pub fn fields_through_fragments(selection_set: &SelectionSet) -> Vec<&FieldSelection> {
+    fn collect<'a>(selection_set: &'a SelectionSet, fields: &mut Vec<&'a FieldSelection>) {
+        for item in &selection_set.items {
+            match item {
+                SelectionItem::Field(field) => fields.push(field),
+                SelectionItem::InlineFragment(fragment) => collect(&fragment.selections, fields),
+                SelectionItem::FragmentSpread(_) => {}
+            }
+        }
+    }
+
+    let mut fields = Vec::new();
+    collect(selection_set, &mut fields);
+    fields
+}
+
 #[cfg(test)]
 mod tests {
     use crate::query_planner::ast::value::Value;
@@ -876,7 +943,7 @@ mod tests {
             })],
         };
 
-        merge_selection_set(&mut target, &source, false);
+        merge_selection_set(&mut target, &source, false).unwrap();
 
         assert_eq!(target.items.len(), 2);
     }
@@ -926,7 +993,7 @@ mod tests {
             })],
         };
 
-        merge_selection_set(&mut target, &source, false);
+        merge_selection_set(&mut target, &source, false).unwrap();
 
         assert_eq!(target.items.len(), 1);
 
@@ -956,9 +1023,51 @@ mod tests {
             })],
         };
 
-        merge_selection_set(&mut target, &source, false);
+        merge_selection_set(&mut target, &source, false).unwrap();
 
         assert_eq!(target.items.len(), 2);
+    }
+
+    #[test]
+    fn merge_selection_set_refuses_two_fields_under_one_key() {
+        let parse = |query: &str| -> SelectionSet {
+            match crate::query_planner::utils::parsing::parse_operation(query)
+                .definitions
+                .first()
+            {
+                Some(query_ast::Definition::Operation(
+                    query_ast::OperationDefinition::SelectionSet(s),
+                )) => s.clone().into(),
+                _ => panic!("expected a selection set"),
+            }
+        };
+        let mut target = parse(r#"{ me { price(currency: "GBP") } }"#);
+
+        // Other arguments, or another field, under `price` on the same object.
+        for source in [
+            r#"{ me { price(currency: "EUR") } }"#,
+            "{ me { price: id } }",
+        ] {
+            let error = merge_selection_set(&mut target.clone(), &parse(source), false);
+            assert_eq!(error.unwrap_err().0, "price");
+        }
+        // The same value, and a different key, still merge.
+        merge_selection_set(
+            &mut target,
+            &parse(r#"{ me { price(currency: "GBP") } }"#),
+            false,
+        )
+        .unwrap();
+        merge_selection_set(
+            &mut target,
+            &parse(r#"{ me { eur: price(currency: "EUR") } }"#),
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            target.to_string(),
+            r#"{me{price(currency: "GBP") eur: price(currency: "EUR")}}"#
+        );
     }
 
     #[test]
@@ -970,7 +1079,7 @@ mod tests {
             items: vec![SelectionItem::Field(FieldSelection::new_typename())],
         };
 
-        merge_selection_set(&mut target, &source, false);
+        merge_selection_set(&mut target, &source, false).unwrap();
 
         let [SelectionItem::Field(field)] = target.items.as_slice() else {
             panic!("expected exactly one __typename field");
@@ -1021,5 +1130,34 @@ mod tests {
         assert!(!fragment_condition_equal(&skip_cond, &fragment));
         assert!(!fragment_condition_equal(&include_cond, &fragment));
         assert!(fragment_condition_equal(&skip_and_include_cond, &fragment));
+    }
+
+    fn parse(query: &str) -> SelectionSet {
+        use graphql_tools::parser::query::{Definition, OperationDefinition};
+
+        match crate::query_planner::utils::parsing::parse_operation(query)
+            .definitions
+            .first()
+        {
+            Some(Definition::Operation(OperationDefinition::SelectionSet(s))) => s.clone().into(),
+            _ => panic!("expected a selection set"),
+        }
+    }
+
+    /// Another argument, alias or condition is another value, and the same field under the
+    /// same type condition is found inside the fragment.
+    #[test]
+    fn contains_only_the_same_values() {
+        let fetched =
+            parse(r#"{ price(currency: "GBP") a @include(if: $x) ... on Cat { whiskers } }"#);
+
+        assert!(fetched.contains(&parse(r#"{ price(currency: "GBP") }"#)));
+        assert!(!fetched.contains(&parse(r#"{ price(currency: "EUR") }"#)));
+        assert!(!fetched.contains(&parse(r#"{ gbp: price(currency: "GBP") }"#)));
+        assert!(fetched.contains(&parse("{ a @include(if: $x) }")));
+        assert!(!fetched.contains(&parse("{ a @include(if: $y) }")));
+        assert!(!fetched.contains(&parse("{ a }")));
+        assert!(fetched.contains(&parse("{ ... on Cat { whiskers } }")));
+        assert!(!fetched.contains(&parse("{ ... on Dog { whiskers } }")));
     }
 }

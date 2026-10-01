@@ -20,7 +20,7 @@ use crate::query_planner::{
     federation_spec::FederationRules,
     graph::node::{SubgraphTypeSpecialization, UnionMembersData},
     state::supergraph_state::{
-        OperationKind, SupergraphDefinition, SupergraphField, SupergraphState,
+        OperationKind, SupergraphDefinition, SupergraphField, SupergraphState, SupergraphStateError,
     },
 };
 use error::GraphError;
@@ -136,6 +136,15 @@ impl Graph {
         };
 
         instance.build_graph(supergraph_state)?;
+
+        for node in instance.graph.node_weights_mut() {
+            if let Node::SubgraphType(subgraph_type) = node {
+                let name = &subgraph_type.subgraph.0;
+                subgraph_type.subgraph_index = supergraph_state
+                    .subgraph_index(name)
+                    .ok_or_else(|| SupergraphStateError::SubgraphNotFound(name.clone()))?;
+            }
+        }
 
         Ok(instance)
     }

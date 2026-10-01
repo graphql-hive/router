@@ -1,11 +1,14 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 
 use petgraph::{graph::NodeIndex, Direction};
 use tracing::{instrument, trace};
 
 use crate::query_planner::planner::fetch::{
-    error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
-    optimize::utils::perform_fetch_step_merge, state::MultiTypeFetchStep,
+    error::FetchGraphError,
+    fetch_graph::FetchGraph,
+    fetch_step_data::FetchStepData,
+    optimize::utils::{perform_fetch_step_merge, MergedSteps},
+    state::MultiTypeFetchStep,
 };
 
 impl FetchGraph<MultiTypeFetchStep> {
@@ -16,34 +19,19 @@ impl FetchGraph<MultiTypeFetchStep> {
             .ok_or(FetchGraphError::NonSingleRootStep(0))?;
         // Breadth-First Search (BFS) starting from the root node.
         let mut queue = VecDeque::from([root_index]);
+        let mut merged_steps = MergedSteps::default();
 
         while let Some(parent_index) = queue.pop_front() {
+            let parent_index = merged_steps.resolve(parent_index);
             // Store pairs of sibling nodes that can be merged.
             // The additional Vec<usize> is an indicator for conflicting field indexes in the 2nd sibling.
             // If the Vec is empty, it means there are no conflicts.
             let mut merges_to_perform = Vec::<(NodeIndex, NodeIndex)>::new();
 
-            // HashMap to keep track of node index mappings, especially after merges.
-            // Key: original index, Value: potentially updated index after merges.
-            let mut node_indexes: HashMap<NodeIndex, NodeIndex> = HashMap::new();
-
-            // Sort fetch steps by mutation's field position,
-            // to execute mutations in correct order.
-            let mut siblings_with_pos: Vec<(NodeIndex, Option<usize>)> = self
+            let siblings: Vec<NodeIndex> = self
                 .graph
                 .neighbors_directed(parent_index, Direction::Outgoing)
-                .map(|sibling| {
-                    self.get_step_data(sibling)
-                        .map(|data| (sibling, data.mutation_field_position))
-                })
-                .collect::<Result<_, _>>()?;
-
-            // Sort fetch steps by mutation's field position,
-            // to execute mutations in correct order.
-            siblings_with_pos.sort_by_key(|(_node, pos)| *pos);
-
-            let siblings: Vec<NodeIndex> =
-                siblings_with_pos.into_iter().map(|(idx, _)| idx).collect();
+                .collect();
 
             for (i, sibling_index) in siblings.iter().enumerate() {
                 // Add the current node to the queue for further processing (BFS).
@@ -71,10 +59,6 @@ impl FetchGraph<MultiTypeFetchStep> {
                             sibling_index.index(),
                             other_sibling_index.index()
                         );
-                        // Register their original indexes in the map.
-                        node_indexes.insert(*sibling_index, *sibling_index);
-                        node_indexes.insert(*other_sibling_index, *other_sibling_index);
-
                         merges_to_perform.push((*sibling_index, *other_sibling_index));
 
                         // Since a merge is possible, move to the next child to avoid redundant checks.
@@ -84,25 +68,20 @@ impl FetchGraph<MultiTypeFetchStep> {
             }
 
             for (child_index, other_child_index) in merges_to_perform {
-                // Get the latest indexes for the nodes, accounting for previous merges.
-                let child_index_latest = node_indexes
-                    .get(&child_index)
-                    .ok_or(FetchGraphError::IndexMappingLost)?;
-                let other_child_index_latest = node_indexes
-                    .get(&other_child_index)
-                    .ok_or(FetchGraphError::IndexMappingLost)?;
+                let child_index = merged_steps.resolve(child_index);
+                let other_child_index = merged_steps.resolve(other_child_index);
+                // An earlier merge may have joined them already, or changed one of them.
+                if child_index == other_child_index {
+                    continue;
+                }
+                let child = self.get_step_data(child_index)?;
+                let other_child = self.get_step_data(other_child_index)?;
+                if !child.can_merge_siblings(child_index, other_child_index, other_child, self) {
+                    continue;
+                }
 
-                perform_fetch_step_merge(
-                    *child_index_latest,
-                    *other_child_index_latest,
-                    self,
-                    false,
-                )?;
-
-                // Because `other_child` was merged into `child`,
-                // then everything that was pointing to `other_child`
-                // has to point to the `child`.
-                node_indexes.insert(*other_child_index_latest, *child_index_latest);
+                perform_fetch_step_merge(child_index, other_child_index, self, false)?;
+                merged_steps.record(other_child_index, child_index);
             }
         }
         Ok(())
@@ -119,19 +98,6 @@ impl FetchStepData<MultiTypeFetchStep> {
     ) -> bool {
         // First, check if the base conditions for merging are met.
         let can_merge_base = self.can_merge(self_index, other_index, other, fetch_graph);
-
-        if let (Some(self_mut_idx), Some(other_mut_index)) =
-            (self.mutation_field_position, other.mutation_field_position)
-        {
-            // If indexes are equal or one happens to be after the other,
-            // and we already know they belong to the same service,
-            // we shouldn't prevent merging.
-            if self_mut_idx != other_mut_index
-                && (self_mut_idx as i64 - other_mut_index as i64).abs() != 1
-            {
-                return false;
-            }
-        }
 
         if fetch_graph.is_ancestor_or_descendant(self_index, other_index) {
             // Looks like they depend on each other

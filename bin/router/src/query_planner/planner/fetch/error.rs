@@ -1,4 +1,5 @@
 use crate::query_planner::{
+    ast::selection_set::ResponseKeyConflict,
     graph::{error::GraphError, node::Node},
     planner::fetch::selections::FetchStepSelectionsError,
     planner::walker::error::WalkOperationError,
@@ -17,8 +18,8 @@ pub enum FetchGraphError {
     MissingParent(usize),
     #[error("Expected an index, got None")]
     IndexNone,
-    #[error("Expected a single parent, but the FetchStep [{0}] has many")]
-    NonSingleParent(usize),
+    #[error("No step holds the object the entity call [{0}] extends")]
+    MissingEntityOwner(usize),
     #[error("Subgraph name: {0}")]
     MissingSubgraphName(Box<Node>),
     #[error("Missing requirement tree for @requires")]
@@ -33,8 +34,6 @@ pub enum FetchGraphError {
     SatisfiableKeyFailure(#[from] WalkOperationError),
     #[error("Expected a FetchStep with Mutation to have its order defined")]
     MutationStepWithNoOrder,
-    #[error("Index mapping got lost")]
-    IndexMappingLost,
     #[error("Expected Fetch Steps not to be empty")]
     EmptyFetchSteps,
     #[error("Unexpected case where two user-defined fields are conflicting!")]
@@ -49,6 +48,8 @@ pub enum FetchGraphError {
     MissingRequires,
     #[error(transparent)]
     SelectionSetManipulationError(#[from] FetchStepSelectionsError),
+    #[error(transparent)]
+    ResponseKeyConflict(#[from] ResponseKeyConflict),
     #[error(transparent)]
     CancellationError(#[from] CancellationError),
 }

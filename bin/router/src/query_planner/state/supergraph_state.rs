@@ -189,6 +189,8 @@ pub struct SupergraphState {
     pub definitions: DefinitionMap,
     /// A map of (SUBGRAPH_ID, subgraph_name) to make it easy to resolve
     pub known_subgraphs: HashMap<String, String>,
+    /// Subgraph names, sorted. A subgraph's index is its position here.
+    pub subgraph_names: Vec<String>,
     /// A set of all known scalars in this schema, including built-ins
     pub known_scalars: HashSet<String>,
     /// A map from subgraph name to a subgraph state
@@ -214,7 +216,10 @@ impl SupergraphState {
         let (known_subgraphs, subgraph_endpoint_map) =
             Self::extract_subgraph_names_and_endpoints(schema);
         let linked_specs = LinkedSpecifications::from_schema(schema);
-        let definitions = Self::build_map(schema, linked_specs);
+        let mut subgraph_names: Vec<String> = known_subgraphs.values().cloned().collect();
+        subgraph_names.sort();
+        let mut definitions = Self::build_map(schema, linked_specs);
+        Self::fill_resolvable_in(&mut definitions, &known_subgraphs, &subgraph_names);
         let interface_object_types_in_subgraphs =
             Self::create_interface_object_in_subgraph(&definitions);
         let interface_to_object_types = Self::create_interface_to_object_types(&definitions);
@@ -226,6 +231,7 @@ impl SupergraphState {
             interface_to_object_types,
             progressive_overrides,
             known_subgraphs,
+            subgraph_names,
             subgraph_endpoint_map,
             known_scalars: Self::extract_known_scalars(schema),
             subgraphs_state: HashMap::new(),
@@ -252,6 +258,57 @@ impl SupergraphState {
             Some(OperationKind::Subscription)
         } else {
             None
+        }
+    }
+
+    /// The subgraph's position in `subgraph_names`.
+    pub fn subgraph_index(&self, subgraph_name: &str) -> Option<u16> {
+        index_in(&self.subgraph_names, subgraph_name)
+    }
+
+    /// Which subgraphs resolve each field, worked out once, so planning doesn't rebuild it for
+    /// every field it walks.
+    fn fill_resolvable_in(
+        definitions: &mut DefinitionMap,
+        known_subgraphs: &HashMap<String, String>,
+        subgraph_names: &[String],
+    ) {
+        let index_of = |graph_id: &str| {
+            known_subgraphs
+                .get(graph_id)
+                .and_then(|name| index_in(subgraph_names, name))
+        };
+
+        for definition in definitions.values_mut() {
+            let (join_types, fields) = match definition {
+                SupergraphDefinition::Object(object) => (&object.join_type, &mut object.fields),
+                SupergraphDefinition::Interface(interface) => {
+                    (&interface.join_type, &mut interface.fields)
+                }
+                _ => continue,
+            };
+
+            for field in fields.values_mut() {
+                let mut indices: Vec<u16> = if field.join_field.is_empty() {
+                    // No @join__field: every subgraph that defines the type resolves it.
+                    join_types
+                        .iter()
+                        .filter_map(|join_type| index_of(&join_type.graph_id))
+                        .collect()
+                } else {
+                    // Otherwise the subgraphs where it's neither external nor overridden.
+                    field
+                        .join_field
+                        .iter()
+                        .filter(|jf| !jf.external && !jf.used_overridden)
+                        .filter(|jf| jf.override_label.is_none())
+                        .filter_map(|jf| jf.graph_id.as_deref().and_then(index_of))
+                        .collect()
+                };
+                indices.sort_unstable();
+                indices.dedup();
+                field.resolvable_in = indices.into_boxed_slice();
+            }
         }
     }
 
@@ -580,6 +637,7 @@ impl SupergraphState {
                         .is_empty(),
                         cost: linked_specs.extract_cost_directive(&field.directives),
                         list_size: linked_specs.extract_list_size_directive(&field.directives),
+                        resolvable_in: Box::default(),
                         cost_by_arguments: field
                             .arguments
                             .iter()
@@ -627,6 +685,7 @@ impl SupergraphState {
                             .into_iter()
                             .next(),
                         list_size: None,
+                        resolvable_in: Box::default(),
                         cost_by_arguments: Default::default(),
                         argument_types: Default::default(),
                     },
@@ -1092,34 +1151,11 @@ pub struct SupergraphField {
     pub authenticated: Vec<AuthenticatedDirective>,
     pub cost: Option<CostDirective>,
     pub list_size: Option<ListSizeDirective>,
+    /// The subgraphs that resolve this field, as sorted indices into
+    /// `SupergraphState::subgraph_names`.
+    pub resolvable_in: Box<[u16]>,
     pub cost_by_arguments: HashMap<String, CostDirective>,
     pub argument_types: HashMap<String, TypeNode>,
-}
-
-impl SupergraphField {
-    pub fn resolvable_in_graphs(&self, type_def: &SupergraphDefinition) -> HashSet<String> {
-        // A field is resolvable in all defining subgraph when it has no @join__field
-        if self.join_field.is_empty() {
-            return type_def
-                .join_types()
-                .iter()
-                .map(|j| j.graph_id.to_string())
-                .collect::<HashSet<_>>();
-        }
-
-        // A field is resolvable when it has @join__field and it's not external or overriden
-        self.join_field
-            .iter()
-            .filter_map(|jf| {
-                if let Some(graph_id) = &jf.graph_id {
-                    if !jf.external && !jf.used_overridden && jf.override_label.is_none() {
-                        return Some(graph_id.to_string());
-                    }
-                }
-                None
-            })
-            .collect::<HashSet<_>>()
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -1154,16 +1190,6 @@ impl TypeNode {
             TypeNode::List(inner) => inner.as_ref().inner_type(),
             TypeNode::NonNull(inner) => inner.as_ref().inner_type(),
             TypeNode::Named(name) => name,
-        }
-    }
-
-    /// Generally based on https://spec.graphql.org/draft/#SameResponseShape() algorithm
-    pub fn can_be_merged_with(&self, other: &TypeNode) -> bool {
-        match (self, other) {
-            (TypeNode::List(left), TypeNode::List(right)) => left.can_be_merged_with(right),
-            (TypeNode::NonNull(left), TypeNode::NonNull(right)) => left.can_be_merged_with(right),
-            (TypeNode::Named(left), TypeNode::Named(right)) => left == right,
-            _ => false,
         }
     }
 }
@@ -1222,5 +1248,42 @@ impl TryFrom<&str> for TypeNode {
         } else {
             Err("Invalid named type format")
         }
+    }
+}
+
+fn index_in(subgraph_names: &[String], subgraph_name: &str) -> Option<u16> {
+    subgraph_names
+        .binary_search_by(|name| name.as_str().cmp(subgraph_name))
+        .ok()
+        .map(|index| index as u16)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::query_planner::utils::parsing::parse_schema;
+
+    use super::SupergraphState;
+
+    #[test]
+    fn resolvable_in_skips_external_fields() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixture/tests/override_requires.supergraph.graphql"
+        );
+        let supergraph =
+            SupergraphState::new(&parse_schema(&std::fs::read_to_string(path).unwrap()));
+        let resolvable_in = |field: &str| -> Vec<&str> {
+            supergraph.definitions["User"].fields()[field]
+                .resolvable_in
+                .iter()
+                .map(|index| supergraph.subgraph_names[*index as usize].as_str())
+                .collect()
+        };
+
+        // No @join__field, so wherever `User` is.
+        assert_eq!(resolvable_in("id"), ["a", "b", "c"]);
+        // External in `a` and `c`.
+        assert_eq!(resolvable_in("name"), ["b"]);
+        assert_eq!(resolvable_in("aName"), ["a"]);
     }
 }

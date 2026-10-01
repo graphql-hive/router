@@ -1,4 +1,6 @@
-use std::collections::{btree_map::Entry, BTreeMap};
+use std::collections::{btree_map::Entry, BTreeMap, HashMap, HashSet};
+
+use petgraph::graph::EdgeIndex;
 
 use crate::query_planner::graph::Graph;
 
@@ -28,6 +30,40 @@ pub fn find_best_paths<'graph>(paths: Vec<OperationPath<'graph>>) -> Vec<Operati
     }
 
     best_paths
+}
+
+/// One path per requirement leaf. Any of a leaf's tied best paths reaches it, so keeping them
+/// all fetches the same value more than once. Picking one per leaf on its own can still send
+/// the leaves down different routes, like `whiskers` through `Animal`'s key and `tricks`
+/// through `Dog`'s. So each leaf takes the path whose edges the most leaves could use too,
+/// the first one on a tie.
+pub fn pick_shared_paths<'graph>(
+    tied_paths_per_leaf: Vec<Vec<OperationPath<'graph>>>,
+) -> impl Iterator<Item = OperationPath<'graph>> {
+    // Nothing to pick from when no leaf has a tie, and that's almost always.
+    let mut leaves_per_edge: HashMap<EdgeIndex, usize> = HashMap::new();
+    if tied_paths_per_leaf.iter().any(|paths| paths.len() > 1) {
+        for paths in &tied_paths_per_leaf {
+            let edges: HashSet<EdgeIndex> =
+                paths.iter().flat_map(|path| path.get_edges()).collect();
+            for edge in edges {
+                *leaves_per_edge.entry(edge).or_default() += 1;
+            }
+        }
+    }
+
+    tied_paths_per_leaf.into_iter().filter_map(move |paths| {
+        if paths.len() == 1 {
+            return paths.into_iter().next();
+        }
+        // `rev` so that `max_by_key`, which keeps the last maximum, keeps the first.
+        paths.into_iter().rev().max_by_key(|path| {
+            path.get_edges()
+                .iter()
+                .map(|edge| leaves_per_edge[edge])
+                .sum::<usize>()
+        })
+    })
 }
 
 impl<'graph> BestPathTracker<'graph> {
