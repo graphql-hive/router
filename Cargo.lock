@@ -2813,7 +2813,7 @@ dependencies = [
  "ntex-server 4.1.1",
  "ntex-service 5.0.1",
  "ntex-tls 4.0.0",
- "ntex-util 4.0.1",
+ "ntex-util 4.1.0",
  "object_store",
  "once_cell",
  "opentelemetry",
@@ -4684,7 +4684,7 @@ dependencies = [
  "ntex-codec",
  "ntex-io 4.0.1",
  "ntex-service 5.0.1",
- "ntex-util 4.0.1",
+ "ntex-util 4.1.0",
  "pin-project-lite",
 ]
 
@@ -4743,7 +4743,7 @@ dependencies = [
  "ntex-net 4.0.1",
  "ntex-server 4.1.1",
  "ntex-service 5.0.1",
- "ntex-util 4.0.1",
+ "ntex-util 4.1.0",
  "pin-project-lite",
  "thiserror 2.0.21",
 ]
@@ -4803,7 +4803,7 @@ dependencies = [
  "ntex-codec",
  "ntex-rt",
  "ntex-service 5.0.1",
- "ntex-util 4.0.1",
+ "ntex-util 4.1.0",
  "pin-project-lite",
  "slab",
 ]
@@ -4887,7 +4887,7 @@ dependencies = [
  "ntex-polling",
  "ntex-rt",
  "ntex-service 5.0.1",
- "ntex-util 4.0.1",
+ "ntex-util 4.1.0",
  "scoped-tls",
  "slab",
  "socket2",
@@ -4987,7 +4987,7 @@ dependencies = [
  "ntex-polling",
  "ntex-rt",
  "ntex-service 5.0.1",
- "ntex-util 4.0.1",
+ "ntex-util 4.1.0",
  "oneshot",
  "socket2",
  "uuid",
@@ -5043,7 +5043,7 @@ dependencies = [
  "ntex-io 4.0.1",
  "ntex-net 4.0.1",
  "ntex-service 5.0.1",
- "ntex-util 4.0.1",
+ "ntex-util 4.1.0",
  "thiserror 2.0.21",
 ]
 
@@ -5069,9 +5069,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-util"
-version = "4.0.1"
+version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8e10feb22de6a5a02e80e01f2561abde23dac7256ff7ae7714b08c9f2fedd0e"
+checksum = "b3f94bab8c22d240fdddb233da025d8773d6a1921a791e6e9dd916112ce26882"
 dependencies = [
  "bitflags 2.13.2",
  "foldhash 0.2.0",
