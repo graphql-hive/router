@@ -430,40 +430,6 @@ pub enum SupergraphManagerError {
     Configuration(String),
 }
 
-fn supergraph_options(
-    config: &HiveRouterConfig,
-) -> Result<SupergraphOptions, SupergraphManagerError> {
-    let hive_target = config
-        .telemetry
-        .hive
-        .as_ref()
-        .and_then(|hive| hive.target.as_ref())
-        .map(|target| {
-            resolve_value_or_expression(target, "Hive Telemetry target")
-                .map_err(|error| SupergraphManagerError::Configuration(error.to_string()))
-        })
-        .transpose()?;
-
-    Ok(SupergraphOptions {
-        query_planner: crate::query_planner::planner::QueryPlannerOptions {
-            experimental_abstract_type_folding: config
-                .query_planner
-                .experimental_abstract_type_folding,
-        },
-        traffic_shaping: (&config.traffic_shaping).into(),
-        override_subgraph_urls: config.override_subgraph_urls.clone(),
-        headers: config.headers.clone(),
-        override_labels: config.override_labels.clone(),
-        demand_control: config.demand_control.clone(),
-        subscriptions: (&config.subscriptions).into(),
-        error_masking: config.error_masking.clone(),
-        persisted_documents: config.persisted_documents.clone(),
-        hive_target,
-        // The configured supergraph inherits `cache.supergraph` by default
-        cache: Default::default(),
-    })
-}
-
 fn callback_runtime_config(
     config: &HiveRouterConfig,
 ) -> Result<Option<HttpCallbackRuntimeConfig>, SupergraphManagerError> {
@@ -529,7 +495,8 @@ impl ConfiguredSupergraph {
             new_ast = start_payload.new_ast;
         }
 
-        let options = supergraph_options(router_config)?;
+        let options = SupergraphOptions::try_from(router_config)
+            .map_err(|error| SupergraphManagerError::Configuration(error.to_string()))?;
         let mut new_supergraph = new_supergraph.unwrap_or_else(|| {
             Supergraph::from_document(DEFAULT_SUPERGRAPH_NAME, new_ast, options)
                 .map_err(SupergraphManagerError::from)

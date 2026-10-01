@@ -7,10 +7,11 @@ use crate::config::{
     error_masking::ErrorMaskingConfig, headers::HeadersConfig,
     override_labels::OverrideLabelsConfig, override_subgraph_urls::OverrideSubgraphUrlsConfig,
     persisted_documents::PersistedDocumentsConfig, subscriptions::SupergraphSubscriptionsConfig,
-    traffic_shaping::SupergraphTrafficShapingConfig,
+    traffic_shaping::SupergraphTrafficShapingConfig, HiveRouterConfig,
 };
 use crate::query_planner::planner::{Planner, PlannerError, QueryPlannerOptions};
 use crate::query_planner::utils::parsing::safe_parse_schema;
+use crate::telemetry::{error::TelemetryError, utils::resolve_value_or_expression};
 use graphql_tools::static_graphql::schema::Document;
 use tokio_util::sync::CancellationToken;
 
@@ -40,6 +41,11 @@ pub enum SupergraphBuildError {
 static NEXT_SUPERGRAPH_DATA_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Immutable configuration whose meaning belongs to one supergraph generation.
+///
+/// Plugins can inherit the router's graph-bound settings with
+/// `SupergraphOptions::try_from(payload.router_config())?`, then override individual fields.
+/// The conversion resolves the Hive telemetry target expression and leaves cache overrides
+/// unset so they inherit the router's `cache.supergraph` limits.
 #[derive(Clone, Default)]
 #[non_exhaustive]
 pub struct SupergraphOptions {
@@ -56,6 +62,39 @@ pub struct SupergraphOptions {
     /// Cache limits for this supergraph.
     /// Anything left unset inherits the router config's `cache.supergraph` value.
     pub cache: SupergraphCacheOverrides,
+}
+
+impl TryFrom<&HiveRouterConfig> for SupergraphOptions {
+    type Error = TelemetryError;
+
+    fn try_from(config: &HiveRouterConfig) -> Result<Self, Self::Error> {
+        let hive_target = config
+            .telemetry
+            .hive
+            .as_ref()
+            .and_then(|hive| hive.target.as_ref())
+            .map(|target| resolve_value_or_expression(target, "Hive Telemetry target"))
+            .transpose()?;
+
+        Ok(Self {
+            query_planner: QueryPlannerOptions {
+                experimental_abstract_type_folding: config
+                    .query_planner
+                    .experimental_abstract_type_folding,
+            },
+            traffic_shaping: (&config.traffic_shaping).into(),
+            override_subgraph_urls: config.override_subgraph_urls.clone(),
+            headers: config.headers.clone(),
+            override_labels: config.override_labels.clone(),
+            demand_control: config.demand_control.clone(),
+            subscriptions: (&config.subscriptions).into(),
+            error_masking: config.error_masking.clone(),
+            persisted_documents: config.persisted_documents.clone(),
+            hive_target,
+            // configured supergraph inherits `cache.supergraph` by default
+            cache: Default::default(),
+        })
+    }
 }
 
 /// The schema and immutable graph-bound options shared by a [`Supergraph`] owner and every
