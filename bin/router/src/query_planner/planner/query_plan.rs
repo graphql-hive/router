@@ -121,7 +121,17 @@ pub fn build_query_plan_from_fetch_graph(
                 )))?;
 
             let step_data = fetch_graph.get_step_data(step_index)?;
-            current_wave_nodes.push(PlanNode::from_fetch_step(step_data, supergraph));
+            // The wave we put this step into is only for presentation. The real
+            // dependencies come from the (already optimized) fetch graph, so the
+            // executor can run the DAG instead of the waves.
+            let depends_on = fetch_graph
+                .parents_of(step_index)
+                // skip roots, same as `InDegree::new`
+                .filter(|edge| edge.source() != root_index)
+                .map(|edge| Ok(fetch_graph.get_step_data(edge.source())?.id))
+                .collect::<Result<Vec<_>, QueryPlanError>>()?
+                .into_boxed_slice();
+            current_wave_nodes.push(PlanNode::from_fetch_step(step_data, depends_on, supergraph));
             planned_nodes_count += 1;
             in_degrees.mark_as_processed(step_index);
 

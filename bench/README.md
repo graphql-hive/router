@@ -67,3 +67,23 @@ BENCH_PERSISTED_MODE=true BENCH_DOCUMENT_ID=bench_test_query ./bench/run-benchma
 BENCH_VUS=69 ./bench/run-benchmark.sh
 BENCH_OVER_TIME=10s ./bench/run-benchmark.sh
 ```
+
+## Slow subgraphs
+
+`bench/subgraphs` can delay its responses. `SUBGRAPH_DELAY_MS` delays every subgraph,
+`SUBGRAPH_DELAY_MS_<NAME>` delays one of them:
+
+```bash
+SUBGRAPH_DELAY_MS_INVENTORY=50 ./target/release/subgraphs
+```
+
+Delaying a single subgraph is what exposes query-plan scheduling behaviour. A uniform
+delay makes every fetch equally slow, so the plan's shape stops mattering.
+
+This is how `bench/configs/dependency-aware.config.yaml` is compared against
+`default.config.yaml`: in `bench/operation.graphql`'s plan, the `inventory` fetch over
+`topProducts` sits in a wave that nothing downstream needs, so wave execution waits for
+it twice and dependency-aware execution waits for it once.
+
+Run each config against the same delayed subgraphs, and note that the first run of a
+freshly started machine is not comparable - warm up before trusting the numbers.
