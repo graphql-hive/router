@@ -8,13 +8,25 @@ use tracing::instrument;
 
 use crate::query_planner::{
     planner::fetch::{error::FetchGraphError, fetch_graph::FetchGraph, state::MultiTypeFetchStep},
-    state::supergraph_state::OperationKind,
+    state::supergraph_state::{OperationKind, SubgraphName},
 };
 
 impl FetchGraph<MultiTypeFetchStep> {
-    /// Root mutation fields run one after another, and a field is done only when every fetch it
-    /// needs is done, entity calls included. So the steps of field N+1 wait for the last steps of
-    /// field N, not for the root.
+    /// Root mutation fields run one after another. Consecutive fields of one
+    /// subgraph form a group that goes in one request, and the subgraph runs them in order.
+    /// A group is done only when every fetch it needs is done, entity calls included, so the
+    /// first field of the next group waits for the last steps of the group, not for the root.
+    ///
+    /// In a group, a field waits only for the root fetch of the field before it, so
+    /// `merge_children_with_parents` puts their root fetches in one request, in order. The
+    /// entity calls of the group run after that request: in
+    /// `create { isExpensive } double: multiply(by: 2)`, `double` runs before `b` fetches
+    /// `isExpensive`.
+    ///
+    /// The idea with grouping is here to validate two things:
+    /// 1 - mutations fields are always running as sequence (serially), even if they are from different subgraphs
+    /// 2 - grouping happens only if it's helping with efficiency (same subgraph)
+    /// 3 - entity/requires calls are still happening within the same group
     ///
     /// Runs before any optimization. With the order in the graph, merges keep it like any other
     /// dependency, and nothing else has to know about mutations.
@@ -38,29 +50,75 @@ impl FetchGraph<MultiTypeFetchStep> {
             fields.entry(position).or_default().push(step_index);
         }
 
-        let fields: Vec<Vec<NodeIndex>> = fields.into_values().collect();
-        for pair in fields.windows(2) {
-            let (previous, next) = (&pair[0], &pair[1]);
-            let next_steps = self.reachable_from(next);
-            let last_steps: Vec<NodeIndex> = self
-                .reachable_from(previous)
-                .into_iter()
-                .filter(|step| self.children_of(*step).next().is_none())
-                // A step both fields use can't wait for the second one.
-                .filter(|step| !next_steps.contains(step))
-                .collect();
-
-            for next_step in next {
-                if let Some(edge) = self.graph.find_edge(root_index, *next_step) {
-                    self.remove_edge(edge);
+        // Consecutive fields whose root fetches go to one subgraph.
+        let mut groups: Vec<Vec<Vec<NodeIndex>>> = Vec::new();
+        let mut group_subgraph = None;
+        for steps in fields.into_values() {
+            let subgraph = self.single_subgraph(&steps)?;
+            match groups.last_mut() {
+                Some(group) if subgraph.is_some() && subgraph == group_subgraph => {
+                    group.push(steps)
                 }
-                for last_step in &last_steps {
-                    self.connect(*last_step, *next_step);
+                _ => {
+                    group_subgraph = subgraph;
+                    groups.push(vec![steps]);
                 }
             }
         }
 
+        for group in &groups {
+            for pair in group.windows(2) {
+                self.wait_for(root_index, &pair[0], &pair[1]);
+            }
+        }
+
+        for pair in groups.windows(2) {
+            let previous: Vec<NodeIndex> = pair[0].iter().flatten().copied().collect();
+            let next = &pair[1][0];
+            let next_steps = self.reachable_from(next);
+            let last_steps: Vec<NodeIndex> = self
+                .reachable_from(&previous)
+                .into_iter()
+                .filter(|step| self.children_of(*step).next().is_none())
+                // A step both groups use can't wait for the second one.
+                .filter(|step| !next_steps.contains(step))
+                .collect();
+            self.wait_for(root_index, &last_steps, next);
+        }
+
         Ok(())
+    }
+
+    /// The steps of `next` wait for `previous` instead of the root. With nothing to wait for,
+    /// they stay where they are.
+    fn wait_for(&mut self, root_index: NodeIndex, previous: &[NodeIndex], next: &[NodeIndex]) {
+        if previous.is_empty() {
+            return;
+        }
+        for next_step in next {
+            if let Some(edge) = self.graph.find_edge(root_index, *next_step) {
+                self.remove_edge(edge);
+            }
+            for previous_step in previous {
+                self.connect(*previous_step, *next_step);
+            }
+        }
+    }
+
+    /// The subgraph all `steps` go to, `None` when they go to more than one.
+    fn single_subgraph(
+        &self,
+        steps: &[NodeIndex],
+    ) -> Result<Option<SubgraphName>, FetchGraphError> {
+        let mut subgraph: Option<&SubgraphName> = None;
+        for step in steps {
+            let service_name = &self.get_step_data(*step)?.service_name;
+            match subgraph {
+                Some(current) if current != service_name => return Ok(None),
+                _ => subgraph = Some(service_name),
+            }
+        }
+        Ok(subgraph.cloned())
     }
 
     fn reachable_from(&self, starts: &[NodeIndex]) -> HashSet<NodeIndex> {
