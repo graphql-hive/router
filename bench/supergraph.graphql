@@ -112,6 +112,27 @@ type Review @join__type(graph: REVIEWS, key: "id") {
   author: User @join__field(graph: REVIEWS, provides: "username")
 }
 
+interface SocialAccount @join__type(graph: ACCOUNTS) {
+  url: String!
+  handle: String!
+}
+
+type TwitterAccount implements SocialAccount
+  @join__implements(graph: ACCOUNTS, interface: "SocialAccount")
+  @join__type(graph: ACCOUNTS) {
+  url: String!
+  handle: String!
+  followers: Int!
+}
+
+type GitHubAccount implements SocialAccount
+  @join__implements(graph: ACCOUNTS, interface: "SocialAccount")
+  @join__type(graph: ACCOUNTS) {
+  url: String!
+  handle: String!
+  repoCount: Int!
+}
+
 type User
   @join__type(graph: ACCOUNTS, key: "id")
   @join__type(graph: REVIEWS, key: "id") {
@@ -121,5 +142,6 @@ type User
     @join__field(graph: ACCOUNTS)
     @join__field(graph: REVIEWS, external: true)
   birthday: Int @join__field(graph: ACCOUNTS)
+  socialAccounts: [SocialAccount!]! @join__field(graph: ACCOUNTS)
   reviews: [Review] @join__field(graph: REVIEWS)
 }
