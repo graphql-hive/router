@@ -107,10 +107,13 @@ pub struct CoerceVariablesPayload {
 }
 
 impl CoerceVariablesPayload {
+    /// The coerced value of `name`, including any default applied during coercion.
+    pub fn variable(&self, name: &str) -> Option<&sonic_rs::Value> {
+        self.variables_map.as_ref().and_then(|vars| vars.get(name))
+    }
+
     pub fn variable_equals_true(&self, name: &str) -> bool {
-        self.variables_map
-            .as_ref()
-            .and_then(|vars| vars.get(name))
+        self.variable(name)
             .and_then(|value| value.as_bool())
             .unwrap_or(false)
     }
