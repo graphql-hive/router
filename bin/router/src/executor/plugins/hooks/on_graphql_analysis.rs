@@ -28,7 +28,7 @@ pub struct OnGraphqlAnalysisHookPayload<'exec> {
     pub client_request_details: Arc<ClientRequestDetails<'exec>>,
     pub graphql_params: &'exec GraphQLParams,
     schema_metadata: &'exec SchemaMetadata,
-    variable_payload: &'exec CoerceVariablesPayload,
+    pub variable_payload: &'exec CoerceVariablesPayload,
     operation_filter_visitors: Vec<OperationFilterVisitor<'exec>>,
 }
 
