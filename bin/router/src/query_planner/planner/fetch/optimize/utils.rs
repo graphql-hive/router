@@ -280,11 +280,18 @@ impl FetchStepData<MultiTypeFetchStep> {
         // `listings { ... on Listing @include(if: $x) { pet } }`.
         //
         // See `issue_1308_conditional_rank_keeps_concrete_requires_types` test
+        //
+        // Two entity calls for the same objects can share a request when one of them has no
+        // condition, as that request goes out anyway: `... on User @include(if: $x) { name }`.
+        //
+        // See `client_alias_named_like_a_key_field_under_a_condition` test
         if self.is_entity_call() && other.is_entity_call() && self.condition != other.condition {
             let absorbs_conditional_child = self.condition.is_none()
                 && is_only_parent
                 && self.can_absorb_nested_entity_call(other);
-            if !absorbs_conditional_child {
+            let one_call_for_same_objects = self.response_path == other.response_path
+                && (self.condition.is_none() || other.condition.is_none());
+            if !absorbs_conditional_child && !one_call_for_same_objects {
                 return false;
             }
         }
