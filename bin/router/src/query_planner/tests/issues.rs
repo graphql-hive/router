@@ -1185,6 +1185,8 @@ fn issue_1308_requires_through_entity_interface_after_entity_hop() -> Result<(),
 /// Reduced from generated fixture #1308, seed 0. The field-level condition reaches a different
 /// failure path than the unconditional issue query: planning loses the `Animal` definition while
 /// resolving the concrete-type requirements for `rank`.
+/// The `search` call for `pet` only needs the `search` call above it, so it goes into that one,
+/// under `... on Listing @include(if: $includeRank)`.
 #[test]
 fn issue_1308_conditional_rank_keeps_concrete_requires_types() -> Result<(), Box<dyn Error>> {
     init_logger();
@@ -1201,10 +1203,106 @@ fn issue_1308_conditional_rank_keeps_concrete_requires_types() -> Result<(), Box
     );
     let query_plan =
         build_query_plan_with_defaults("fixture/issues/1308.supergraph.graphql", document)?;
-    let query_plan = query_plan.to_string();
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "catalog") {
+          {
+            cage {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "cage") {
+          Fetch(service: "search") {
+            {
+              ... on Cage {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Cage {
+                listings {
+                  __typename
+                  id
+                }
+              }
+            }
+          },
+        },
+        Include(if: $includeRank) {
+          Sequence {
+            Flatten(path: "cage.listings.@") {
+              Fetch(service: "search") {
+                {
+                  ... on Listing {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Listing {
+                    pet {
+                      __typename
+                      id
+                    }
+                  }
+                }
+              },
+            },
+            Flatten(path: "cage.listings.@.pet") {
+              Fetch(service: "catalog") {
+                {
+                  ... on Animal {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Animal {
+                    __typename
+                    ... on Cat {
+                      whiskers
+                    }
+                    ... on Dog {
+                      tricks
+                    }
+                  }
+                }
+              },
+            },
+            Flatten(path: "cage.listings.@") {
+              Fetch(service: "ranking") {
+                {
+                  ... on Listing {
+                    __typename
+                    pet {
+                      __typename
+                      ... on Dog {
+                        tricks
+                      }
+                      ... on Cat {
+                        whiskers
+                      }
+                    }
+                    id
+                  }
+                } =>
+                {
+                  ... on Listing {
+                    rank
+                  }
+                }
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
 
-    assert!(query_plan.contains("rank"), "{query_plan}");
-    assert!(query_plan.contains("whiskers"), "{query_plan}");
     Ok(())
 }
 
