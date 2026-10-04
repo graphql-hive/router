@@ -214,24 +214,20 @@ impl<State> FetchGraph<State> {
         None
     }
 
-    /// Checks whether the given step is an ancestor of a step that has the given condition
-    pub fn is_ancestor_of_condition(&self, step_index: NodeIndex, condition: &Condition) -> bool {
-        let mut bfs = Bfs::new(&self.graph, step_index);
-
-        while let Some(current_index) = bfs.next(&self.graph) {
-            let current_step = match self.get_step_data(current_index) {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-
-            if let Some(step_condition) = &current_step.condition {
-                if step_condition == condition {
-                    return true;
-                }
-            }
-        }
-
-        false
+    /// Whether a field or fragment that `step_index` gets under `condition` can leave the
+    /// condition out, because a step that has it is skipped when it's false: the step itself, or
+    /// the step the field is fetched for (a key or a `@requires` field)
+    pub fn is_condition_on_step(
+        &self,
+        step_index: NodeIndex,
+        requiring_step_index: Option<NodeIndex>,
+        condition: &Condition,
+    ) -> bool {
+        let has_condition = |index: NodeIndex| {
+            self.get_step_data(index)
+                .is_ok_and(|step| step.condition.as_ref() == Some(condition))
+        };
+        has_condition(step_index) || requiring_step_index.is_some_and(has_condition)
     }
 }
 
@@ -1160,12 +1156,11 @@ fn process_subgraph_reentry(
         false
     };
 
-    let ancestor_of_condition = match condition {
-        Some(c) => fetch_graph.is_ancestor_of_condition(parent_fetch_step_index, c),
-        None => false,
-    };
+    let condition_on_step = condition.is_some_and(|c| {
+        fetch_graph.is_condition_on_step(parent_fetch_step_index, requiring_fetch_step_index, c)
+    });
 
-    let should_strip_condition = condition_in_path || ancestor_of_condition;
+    let should_strip_condition = condition_in_path || condition_on_step;
     let field_alias = fetch_graph.alias_at(
         response_path,
         query_node,
@@ -1257,10 +1252,9 @@ fn process_selfie_edge(
     condition: Option<&Condition>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
-    let is_ancestor_of_condition = match condition {
-        Some(c) => fetch_graph.is_ancestor_of_condition(parent_fetch_step_index, c),
-        None => false,
-    };
+    let condition_on_step = condition.is_some_and(|c| {
+        fetch_graph.is_condition_on_step(parent_fetch_step_index, requiring_fetch_step_index, c)
+    });
 
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
     trace!(
@@ -1275,14 +1269,14 @@ fn process_selfie_edge(
                 type_condition: target_type_name.clone(),
                 selections: SelectionSet::default(),
                 skip_if: condition.and_then(|c| {
-                    if is_ancestor_of_condition {
+                    if condition_on_step {
                         None
                     } else {
                         c.to_skip_if()
                     }
                 }),
                 include_if: condition.and_then(|c| {
-                    if is_ancestor_of_condition {
+                    if condition_on_step {
                         None
                     } else {
                         c.to_include_if()
@@ -1292,7 +1286,7 @@ fn process_selfie_edge(
         },
     )?;
 
-    let segment_condition = if is_ancestor_of_condition {
+    let segment_condition = if condition_on_step {
         None
     } else {
         condition.cloned()
@@ -1439,12 +1433,11 @@ fn process_plain_field_edge(
         false
     };
 
-    let ancestor_of_condition = match condition {
-        Some(c) => fetch_graph.is_ancestor_of_condition(parent_fetch_step_index, c),
-        None => false,
-    };
+    let condition_on_step = condition.is_some_and(|c| {
+        fetch_graph.is_condition_on_step(parent_fetch_step_index, requiring_fetch_step_index, c)
+    });
 
-    let should_strip_condition = condition_in_path || ancestor_of_condition;
+    let should_strip_condition = condition_in_path || condition_on_step;
 
     let field_alias = fetch_graph.alias_at(
         response_path,
