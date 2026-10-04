@@ -1,0 +1,62 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION)
+{
+  query: Query
+}
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+directive @join__field(graph: join__Graph, requires: join__FieldSet, provides: join__FieldSet, type: String, external: Boolean, override: String, usedOverridden: Boolean) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+directive @join__implements(graph: join__Graph!, interface: String!) repeatable on OBJECT | INTERFACE
+directive @join__type(graph: join__Graph!, key: join__FieldSet, extension: Boolean! = false, resolvable: Boolean! = true, isInterfaceObject: Boolean! = false) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+directive @join__unionMember(graph: join__Graph!, member: String!) repeatable on UNION
+directive @link(url: String, as: String, for: link__Purpose, import: [link__Import]) repeatable on SCHEMA
+
+scalar join__FieldSet
+
+enum join__Graph {
+  ACCOUNTS @join__graph(name: "accounts", url: "http://127.0.0.1:14001/graphql")
+  BILLING @join__graph(name: "billing", url: "http://127.0.0.1:14002/graphql")
+}
+
+scalar link__Import
+
+enum link__Purpose {
+  SECURITY
+  EXECUTION
+}
+
+interface Node @join__type(graph: ACCOUNTS) {
+  id: ID!
+}
+
+type Item implements Node
+  @join__implements(graph: ACCOUNTS, interface: "Node")
+  @join__type(graph: ACCOUNTS, key: "id")
+{
+  id: ID!
+  label: String
+}
+
+type Query
+  @join__type(graph: ACCOUNTS)
+  @join__type(graph: BILLING)
+{
+  record(id: ID!): Node @join__field(graph: ACCOUNTS)
+  catalog: CatalogQuery @join__field(graph: ACCOUNTS)
+}
+
+type CatalogQuery @join__type(graph: ACCOUNTS) {
+  search(term: String!, kind: String!, source: String): [Node]
+}
+
+type User implements Node
+  @join__implements(graph: ACCOUNTS, interface: "Node")
+  @join__type(graph: ACCOUNTS, key: "id")
+  @join__type(graph: BILLING, key: "id")
+{
+  id: ID!
+  email: String @join__field(graph: ACCOUNTS)
+  invoices: [String!] @join__field(graph: BILLING)
+}

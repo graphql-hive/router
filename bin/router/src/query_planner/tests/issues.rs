@@ -1444,3 +1444,83 @@ fn issue_1311_different_arguments_under_type_conditions() -> Result<(), Box<dyn 
 
     Ok(())
 }
+
+/// https://github.com/graphql-hive/router/issues/1647
+/// `record` and `search` both sit under `@include(if: $withDetails)`, in one `accounts` fetch
+/// that runs either way. `invoices` sends `record` on to `billing`, and that call is under the
+/// condition. `search` has to keep its `@include`, or `accounts` resolves it when
+/// `$withDetails` is false.
+/// Not fixed yet: in this snapshot, `search` has no `@include`.
+#[test]
+fn issue_1647_include_on_field_after_conditional_entity_call() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($withDetails: Boolean!, $id: ID! = "", $term: String! = "") {
+          record(id: $id) @include(if: $withDetails) {
+            ... on User {
+              id
+              email
+              invoices
+            }
+          }
+          listed: catalog {
+            search(term: $term, kind: "item", source: "store") @include(if: $withDetails) {
+              ... on Item {
+                id
+                label
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1647.supergraph.graphql", document)?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "accounts") {
+          query ($id:ID!="",$term:String!="",$withDetails:Boolean!) {
+            record(id: $id) @include(if: $withDetails) {
+              __typename
+              ... on User {
+                __typename
+                id
+                email
+              }
+            }
+            listed: catalog {
+              search(kind: "item", source: "store", term: $term) {
+                __typename
+                ... on Item {
+                  id
+                  label
+                }
+              }
+            }
+          }
+        },
+        Include(if: $withDetails) {
+          Flatten(path: "record|[User]") {
+            Fetch(service: "billing") {
+              {
+                ... on User {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on User {
+                  invoices
+                }
+              }
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
