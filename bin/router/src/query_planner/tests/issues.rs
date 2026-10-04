@@ -1222,11 +1222,17 @@ fn issue_1308_conditional_rank_keeps_concrete_requires_types() -> Result<(), Box
                 id
               }
             } =>
-            {
+            ($includeRank:Boolean!) {
               ... on Cage {
                 listings {
                   __typename
                   id
+                  ... on Listing @include(if: $includeRank) {
+                    pet {
+                      __typename
+                      id
+                    }
+                  }
                 }
               }
             }
@@ -1234,24 +1240,6 @@ fn issue_1308_conditional_rank_keeps_concrete_requires_types() -> Result<(), Box
         },
         Include(if: $includeRank) {
           Sequence {
-            Flatten(path: "cage.listings.@") {
-              Fetch(service: "search") {
-                {
-                  ... on Listing {
-                    __typename
-                    id
-                  }
-                } =>
-                {
-                  ... on Listing {
-                    pet {
-                      __typename
-                      id
-                    }
-                  }
-                }
-              },
-            },
             Flatten(path: "cage.listings.@.pet") {
               Fetch(service: "catalog") {
                 {

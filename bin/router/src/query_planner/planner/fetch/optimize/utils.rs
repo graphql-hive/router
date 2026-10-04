@@ -266,16 +266,28 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
-        // We allow to merge root with entity calls by adding an inline fragment with the @include/@skip
-        if self.is_entity_call() && other.is_entity_call() && self.condition != other.condition {
-            return false;
-        }
-
         // Is `this` FetchStep the only one `other` waits for?
         let is_only_parent = fetch_graph.parents_of(other_index).count() == 1
             && fetch_graph
                 .parents_of(other_index)
                 .all(|edge| edge.source() == self_index);
+
+        // A step-level condition skips the whole request, so entity calls under different
+        // conditions stay apart. A root fetch takes a conditional entity call by putting its
+        // fields under `... on T @include(if: $x)`.
+        //
+        // An unconditional entity call can do the same with a nested entity call only it feeds:
+        // `listings { ... on Listing @include(if: $x) { pet } }`.
+        //
+        // See `issue_1308_conditional_rank_keeps_concrete_requires_types` test
+        if self.is_entity_call() && other.is_entity_call() && self.condition != other.condition {
+            let absorbs_conditional_child = self.condition.is_none()
+                && is_only_parent
+                && self.can_absorb_nested_entity_call(other);
+            if !absorbs_conditional_child {
+                return false;
+            }
+        }
 
         // If both are entities, their response_paths should match,
         // as we can't merge entity calls resolving different entities.
