@@ -253,6 +253,16 @@ impl MergePath {
         self.common_prefix_len(other) == other.len()
     }
 
+    /// The conditions along the path, outermost first.
+    pub fn conditions(&self) -> impl Iterator<Item = &Condition> {
+        self.inner.iter().filter_map(|segment| match segment {
+            Segment::TypeCondition(_, Some(condition)) | Segment::Field(_, _, Some(condition)) => {
+                Some(condition)
+            }
+            _ => None,
+        })
+    }
+
     pub fn without_type_castings(&self) -> Self {
         let new_segments = self
             .inner

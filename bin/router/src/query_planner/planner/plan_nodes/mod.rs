@@ -714,32 +714,51 @@ impl PlanNode<Planning> {
             PlanNode::Fetch(Box::new(fetch))
         };
 
-        match step.condition.as_ref() {
-            Some(condition) => match condition {
-                Condition::Include(var_name) => PlanNode::Condition(ConditionNode {
-                    condition: var_name.clone(),
-                    if_clause: Some(Box::new(node)),
+        // A fetch planned under fragments or fields with `@include`/`@skip` runs only when all
+        // of them hold. The step has the innermost condition, its path has the ones around it:
+        // `... on User @include(if: $a) { ... on User @include(if: $b) { name } }`.
+        let mut conditions: Vec<&Condition> = Vec::new();
+        for condition in step
+            .response_path
+            .conditions()
+            .chain(step.condition.as_ref())
+        {
+            if !conditions.contains(&condition) {
+                conditions.push(condition);
+            }
+        }
+
+        conditions
+            .into_iter()
+            .rev()
+            .fold(node, |node, condition| node.under_condition(condition))
+    }
+
+    /// The node, run only when `condition` holds.
+    fn under_condition(self, condition: &Condition) -> Self {
+        match condition {
+            Condition::Include(var_name) => PlanNode::Condition(ConditionNode {
+                condition: var_name.clone(),
+                if_clause: Some(Box::new(self)),
+                else_clause: None,
+            }),
+            Condition::Skip(var_name) => PlanNode::Condition(ConditionNode {
+                condition: var_name.clone(),
+                if_clause: None,
+                else_clause: Some(Box::new(self)),
+            }),
+            Condition::SkipAndInclude { skip, include } => {
+                let include_node = PlanNode::Condition(ConditionNode {
+                    condition: include.clone(),
+                    if_clause: Some(Box::new(self)),
                     else_clause: None,
-                }),
-                Condition::Skip(var_name) => PlanNode::Condition(ConditionNode {
-                    condition: var_name.clone(),
+                });
+                PlanNode::Condition(ConditionNode {
+                    condition: skip.clone(),
                     if_clause: None,
-                    else_clause: Some(Box::new(node)),
-                }),
-                Condition::SkipAndInclude { skip, include } => {
-                    let include_node = PlanNode::Condition(ConditionNode {
-                        condition: include.clone(),
-                        if_clause: Some(Box::new(node)),
-                        else_clause: None,
-                    });
-                    PlanNode::Condition(ConditionNode {
-                        condition: skip.clone(),
-                        if_clause: None,
-                        else_clause: Some(Box::new(include_node)),
-                    })
-                }
-            },
-            None => node,
+                    else_clause: Some(Box::new(include_node)),
+                })
+            }
         }
     }
 }
