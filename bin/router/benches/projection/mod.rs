@@ -259,6 +259,7 @@ fn bench_execution(
                 &mut buffer,
                 true,
                 None,
+                false,
             );
             black_box(&buffer);
         });
