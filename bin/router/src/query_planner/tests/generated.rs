@@ -6,7 +6,7 @@
 //!
 //! Two errors are left alone: the walker finding no path, which is search and not the fetch
 //! layer (and what `corrupted-supergraph-node-id` is for), and an empty plan, when every field
-//! is skipped. Both happen on `main` too.
+//! is skipped.
 //!
 //! `QP_GENERATED_OPS` sets how many operations per supergraph, 10 by default; set it to 200 for
 //! a larger investigation run.

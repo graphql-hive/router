@@ -32,27 +32,8 @@ fn write_typename_field(buffer: &mut Vec<u8>, type_name: &str) {
 
 /// Writes the representation of `entity`. Returns `false`, and writes nothing, when the entity
 /// can't be sent: it misses a selected field, or it's of none of the selection's types.
-pub fn project_requires(
-    possible_types: &PossibleTypes,
-    requires_selections: RequiresSelectionSetRef<'_>,
-    entity: &Value,
-    buffer: &mut Vec<u8>,
-    first: bool,
-    response_key: Option<&str>,
-) -> bool {
-    project_requires_value(
-        possible_types,
-        requires_selections,
-        entity,
-        buffer,
-        first,
-        response_key,
-        false,
-    )
-}
-
 /// `nested` is whether `entity` is inside the representation, in one of its fields.
-fn project_requires_value(
+pub(crate) fn project_requires_value(
     possible_types: &PossibleTypes,
     requires_selections: RequiresSelectionSetRef<'_>,
     entity: &Value,
