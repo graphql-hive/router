@@ -30,7 +30,7 @@ impl FetchGraph<MultiTypeFetchStep> {
     /// 3. Update response_path so Flatten(path) still extracts correct data
     ///
     /// We keep type conditions, and drop one only when the merged types are every type the
-    /// value at that path position can be.
+    /// value at that path position can be, and it has no `@include`/`@skip`.
     ///
     /// Example: at `products.@.reviews.@.product`, if `Product` is `Book | Magazine`, then
     /// merging `|[Book]` and `|[Magazine]` can drop the type condition at that slot.
@@ -253,23 +253,31 @@ fn merge_batched_response_paths(
     //   possible types: {Book, User, Magazine}
     //   result: keep |[Book|User] at this slot.
     //
+    // A type condition keeps its `@include`/`@skip`, and one that has it is never stripped.
+    // The fetch runs only when the condition holds, like `... on Product @include(if: $a)`.
+    // Its parent only fetches the keys when `$a` is true, so without `$a`, the fetch would
+    // send representations without `__typename`.
+    //
     // We merge only type-condition information and keep the rest of the path identical.
     fn consume_type_conditions<'a>(
         path: &'a MergePath,
         idx: &mut usize,
-    ) -> (bool, BTreeSet<&'a str>) {
+    ) -> (bool, BTreeSet<&'a str>, Option<&'a Condition>) {
         let mut had_type_condition = false;
         let mut type_condition_members = BTreeSet::new();
+        let mut condition = None;
 
-        while let Some(Segment::TypeCondition(type_names, _)) = path.inner.get(*idx) {
+        while let Some(Segment::TypeCondition(type_names, type_condition)) = path.inner.get(*idx) {
             had_type_condition = true;
             type_condition_members.extend(type_names.iter().map(|s| s.as_str()));
+            condition = condition.or(type_condition.as_ref());
             *idx += 1;
         }
 
-        (had_type_condition, type_condition_members)
+        (had_type_condition, type_condition_members, condition)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn merged_type_condition_segment(
         normalized_path_key: u64,
         non_type_condition_position: usize,
@@ -277,6 +285,7 @@ fn merge_batched_response_paths(
         me_had_type_condition: bool,
         other_had_type_condition: bool,
         merged_type_condition_members: BTreeSet<&str>,
+        condition: Option<&Condition>,
         possible_types_by_position: &HashMap<(u64, usize), BTreeSet<String>>,
     ) -> Option<Segment> {
         // We keep a type condition only when both sides had one at this position.
@@ -296,7 +305,7 @@ fn merge_batched_response_paths(
                     .iter()
                     .map(|s| s.to_string())
                     .collect(),
-                None,
+                condition.cloned(),
             ));
         }
 
@@ -305,11 +314,13 @@ fn merge_batched_response_paths(
         // `Cat | Dog | Bird`, dropping `|[Cat|Dog]` would send birds too.
         let possible_types =
             possible_types_by_position.get(&(normalized_path_key, non_type_condition_position));
-        if possible_types.is_some_and(|possible_types| {
-            possible_types
-                .iter()
-                .all(|type_name| merged_type_condition_members.contains(type_name.as_str()))
-        }) {
+        if condition.is_none()
+            && possible_types.is_some_and(|possible_types| {
+                possible_types
+                    .iter()
+                    .all(|type_name| merged_type_condition_members.contains(type_name.as_str()))
+            })
+        {
             return None;
         }
 
@@ -318,7 +329,7 @@ fn merge_batched_response_paths(
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
-            None,
+            condition.cloned(),
         ))
     }
 
@@ -338,9 +349,10 @@ fn merge_batched_response_paths(
 
     loop {
         // Read all type-condition segments at the current position from both paths.
-        let (me_had_type_condition, me_type_condition_members) =
+        // Both have the same `@include`/`@skip` there, see `can_be_batched_with`.
+        let (me_had_type_condition, me_type_condition_members, condition) =
             consume_type_conditions(me, &mut me_idx);
-        let (other_had_type_condition, mut other_type_condition_members) =
+        let (other_had_type_condition, mut other_type_condition_members, _) =
             consume_type_conditions(other, &mut other_idx);
         let type_condition_changed = me_type_condition_members != other_type_condition_members;
 
@@ -356,6 +368,7 @@ fn merge_batched_response_paths(
             me_had_type_condition,
             other_had_type_condition,
             merged_type_condition_members,
+            condition,
             possible_types_by_position,
         ) {
             merged.push(merged_type_condition_segment);
@@ -553,21 +566,60 @@ mod tests {
     use std::collections::{BTreeSet, HashMap};
 
     use crate::query_planner::{
-        ast::merge_path::{FieldPathSegment, MergePath, Segment},
+        ast::merge_path::{Condition, FieldPathSegment, MergePath, Segment},
         planner::plan_nodes::FlattenNodePath,
     };
 
     use super::{merge_batched_response_paths, normalized_path_hash};
 
     fn path(type_name: &str) -> MergePath {
+        path_with_condition(&[type_name], None)
+    }
+
+    /// `products.@|[types] condition.reviews.@.product`
+    fn path_with_condition(type_names: &[&str], condition: Option<Condition>) -> MergePath {
         MergePath::new(vec![
             Segment::Field(FieldPathSegment::named("products".to_string()), 0, None),
             Segment::List,
-            Segment::TypeCondition(BTreeSet::from([type_name.to_string()]), None),
+            Segment::TypeCondition(
+                type_names.iter().map(|name| name.to_string()).collect(),
+                condition,
+            ),
             Segment::Field(FieldPathSegment::named("reviews".to_string()), 0, None),
             Segment::List,
             Segment::Field(FieldPathSegment::named("product".to_string()), 0, None),
         ])
+    }
+
+    /// Both calls are under `... on Book @include(if: $a)`, and so is the merged one.
+    /// Without `$a`, it would run when `$a` is false too, without the keys only fetched under it.
+    #[test]
+    fn keeps_condition_of_type_condition() {
+        let condition = Some(Condition::Include("a".to_string()));
+        let me = path_with_condition(&["Book"], condition.clone());
+        let other = path_with_condition(&["Book"], condition);
+
+        let merged = merge_batched_response_paths(&me, &other, &HashMap::new());
+
+        assert_eq!(merged, me);
+    }
+
+    /// `Book` and `User` are every type there, but the type condition has `@include(if: $a)`,
+    /// so it stays.
+    #[test]
+    fn keeps_exhaustive_type_list_with_condition() {
+        let condition = Some(Condition::Include("a".to_string()));
+        let me = path_with_condition(&["Book"], condition.clone());
+        let other = path_with_condition(&["User"], condition.clone());
+        let normalized_path_key = normalized_path_hash(&me);
+        let possible_types_by_position = HashMap::from([(
+            (normalized_path_key, 2),
+            BTreeSet::from_iter(["Book".to_string(), "User".to_string()]),
+        )]);
+
+        let merged = merge_batched_response_paths(&me, &other, &possible_types_by_position);
+
+        assert_eq!(merged, path_with_condition(&["Book", "User"], condition));
     }
 
     #[test]

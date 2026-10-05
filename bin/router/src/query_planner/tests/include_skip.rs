@@ -1846,3 +1846,91 @@ fn entity_call_under_nested_conditional_fragments() -> Result<(), Box<dyn Error>
 
     Ok(())
 }
+
+/// `notes` and `price` are in `... on Product @include(if: $a)`, and `reviews` only sends the
+/// `__typename` that the `products` call needs when `$a` is true. `price` has its own condition
+/// too, so it gets its own call, and batching the two calls into one used to drop `$a`.
+#[test]
+fn batched_entity_calls_keep_the_condition_of_their_fragment() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($a: Boolean!, $b: Boolean!) {
+          users {
+            reviews {
+              product {
+                upc
+                ... on Product @include(if: $a) {
+                  notes
+                  price @include(if: $b)
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults("../../bench/supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{query_plan}"), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "accounts") {
+          {
+            users {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "users.@") {
+          Fetch(service: "reviews") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            ($a:Boolean!) {
+              ... on User {
+                reviews {
+                  product {
+                    upc
+                    ... on Product @include(if: $a) {
+                      __typename
+                      upc
+                    }
+                  }
+                }
+              }
+            }
+          },
+        },
+        Include(if: $a) {
+          Flatten(path: "users.@.reviews.@.product|[Product]") {
+            Fetch(service: "products") {
+              {
+                ... on Product {
+                  __typename
+                  upc
+                }
+              } =>
+              ($a:Boolean!,$b:Boolean!) {
+                ... on Product {
+                  ... on Product @include(if: $b) {
+                    price
+                  }
+                  ... on Product @include(if: $a) {
+                    notes
+                  }
+                }
+              }
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}

@@ -4072,4 +4072,74 @@ mod issues_e2e_tests {
         200 OK {"data":{}}
         "#);
     }
+
+    #[ntex::test]
+    /// Found by the differential test, case 824.
+    ///
+    /// `notes` and `price` are in `... on Product @include(if: $a)`, so `products` is only called
+    /// for them when `$a` is true, and only then does `reviews` send the product's `__typename`.
+    /// `price` has its own condition too, so it gets its own call. Batching the two calls into
+    /// one dropped `$a`, so with `$a: false` the router still called `products`, with
+    /// `{"upc":"1"}` and no `__typename`. `products` rejected the whole request, so `me`'s
+    /// product `name`, sent in the same request, was null.
+    async fn batched_calls_keep_their_fragment_condition() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: supergraph.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"query ($a: Boolean!, $b: Boolean!) {
+                  me { reviews { product { name } } }
+                  user(id: "1") {
+                    reviews {
+                      product {
+                        upc
+                        ... on Product @include(if: $a) {
+                          notes
+                          price @include(if: $b)
+                        }
+                      }
+                    }
+                  }
+                }"#,
+                Some(sonic_rs::json!({ "a": false, "b": true })),
+                None,
+            )
+            .await;
+        let response = res.string_body().await;
+
+        // Every representation `products` got, whatever batch variable carries it.
+        let representations: Vec<String> = subgraphs
+            .get_requests_log("products")
+            .unwrap_or_default()
+            .into_iter()
+            .flat_map(|request| {
+                let body: serde_json::Value =
+                    serde_json::from_slice(request.body.as_deref().unwrap_or_default())
+                        .unwrap_or_default();
+                let variables = body["variables"].as_object().cloned().unwrap_or_default();
+                variables
+                    .into_iter()
+                    .flat_map(|(_, value)| value.as_array().cloned().unwrap_or_default())
+                    .map(|representation| representation.to_string())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
+        insta::assert_snapshot!(format!("{response}\n/products {}", representations.join(" ")), @r#"
+        {"data":{"me":{"reviews":[{"product":{"name":"Table"}},{"product":{"name":"Table"}}]},"user":{"reviews":[{"product":{"upc":"1"}},{"product":{"upc":"1"}}]}}}
+        /products {"__typename":"Product","upc":"1"}
+        "#);
+    }
 }
