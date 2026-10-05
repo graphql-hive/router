@@ -3581,70 +3581,12 @@ mod issues_e2e_tests {
     /// `rank` requires the pet's `whiskers` or `tricks`, which only `catalog` has. Both can
     /// come through `Animal`'s key or through their own type's key. They used to go both ways,
     /// so `catalog` got the Cat and the Dog twice, in one batch. Now it gets every pet once.
-    /// And `ranking` has to get each pet's own value, which the mock only answers when it's right.
+    ///
+    /// The subgraphs are the ones in `bench/subgraphs`, so `ranking` ranks each listing by the
+    /// pet it's sent. The Bird is neither a Dog nor a Cat, so its pet is only `__typename`,
+    /// and `ranking` still has to get it.
     async fn issue_1309_catalog_gets_every_pet_once() {
-        use crate::testkit::mock_subgraphs::mock_subgraphs;
-        use serde_json::json;
-        use std::sync::{Arc, Mutex};
-
-        let mocks = mock_subgraphs(json!({
-            "search": {
-                "query": { "listings": [
-                    { "__typename": "Listing", "id": "l1", "pet": { "__typename": "Cat", "id": "c1" } },
-                    { "__typename": "Listing", "id": "l2", "pet": { "__typename": "Dog", "id": "d1" } },
-                    { "__typename": "Listing", "id": "l3", "pet": { "__typename": "Bird", "id": "b1" } }
-                ] }
-            },
-            "catalog": {
-                "entities": [
-                    { "__typename": "Cat", "id": "c1", "whiskers": 12 },
-                    { "__typename": "Dog", "id": "d1", "tricks": 3 },
-                    { "__typename": "Bird", "id": "b1" }
-                ]
-            },
-            "ranking": {
-                "entities": [
-                    { "__typename": "Listing", "id": "l1", "pet": { "__typename": "Cat", "whiskers": 12 }, "rank": 1.5 },
-                    { "__typename": "Listing", "id": "l2", "pet": { "__typename": "Dog", "tricks": 3 }, "rank": 2.5 },
-                    { "__typename": "Listing", "id": "l3", "pet": { "__typename": "Bird" }, "rank": 0.5 }
-                ]
-            }
-        }));
-        let called = Arc::new(Mutex::new(Vec::new()));
-        let called_by_mocks = called.clone();
-        let subgraphs = TestSubgraphs::builder()
-            .with_on_request(move |mut request| {
-                let mut body: serde_json::Value =
-                    serde_json::from_slice(request.body.as_deref().unwrap_or_default())
-                        .unwrap_or_default();
-                // Every representation, whatever batch variable carries it.
-                let mut representations = vec![];
-                let variables = body["variables"].as_object_mut().into_iter();
-                for value in variables.flat_map(|variables| variables.values_mut()) {
-                    for representation in value.as_array_mut().into_iter().flatten() {
-                        representations.push(representation.to_string());
-                        // `catalog` owns the `Animal` entity interface, so like a real
-                        // subgraph it looks up which pet an `Animal` is.
-                        if representation["__typename"] == "Animal" {
-                            representation["__typename"] = match representation["id"].as_str() {
-                                Some("c1") => json!("Cat"),
-                                Some("d1") => json!("Dog"),
-                                _ => json!("Bird"),
-                            };
-                        }
-                    }
-                }
-                called_by_mocks.lock().unwrap().push(format!(
-                    "{} {}",
-                    request.path,
-                    representations.join(" ")
-                ));
-                request.body = Some(body.to_string().into());
-                mocks(request)
-            })
-            .build()
-            .start()
-            .await;
+        let subgraphs = TestSubgraphs::builder().build().start().await;
 
         let router = TestRouter::builder()
             .with_subgraphs(&subgraphs)
@@ -3668,22 +3610,42 @@ mod issues_e2e_tests {
           "data": {
             "listings": [
               {
-                "rank": 1.5
+                "rank": 12.0
               },
               {
-                "rank": 2.5
+                "rank": 3.0
               },
               {
-                "rank": 0.5
+                "rank": 1.0
               }
             ]
           }
         }
         "#);
-        insta::assert_snapshot!(called.lock().unwrap().join("\n"), @r#"
+
+        // Every representation each subgraph got, whatever batch variable carries it.
+        let called: Vec<String> = ["search", "catalog", "ranking"]
+            .into_iter()
+            .flat_map(|subgraph| {
+                let requests = subgraphs.get_requests_log(subgraph).unwrap_or_default();
+                requests.into_iter().map(move |request| {
+                    let body: serde_json::Value =
+                        serde_json::from_slice(request.body.as_deref().unwrap_or_default())
+                            .unwrap_or_default();
+                    let variables = body["variables"].as_object().into_iter();
+                    let representations: Vec<String> = variables
+                        .flat_map(|variables| variables.values())
+                        .flat_map(|value| value.as_array().into_iter().flatten())
+                        .map(|representation| representation.to_string())
+                        .collect();
+                    format!("/{subgraph} {}", representations.join(" "))
+                })
+            })
+            .collect();
+        insta::assert_snapshot!(called.join("\n"), @r#"
         /search 
         /catalog {"__typename":"Animal","id":"c1"} {"__typename":"Animal","id":"d1"} {"__typename":"Animal","id":"b1"}
-        /ranking {"__typename":"Listing","pet":{"__typename":"Cat","whiskers":12},"id":"l1"} {"__typename":"Listing","pet":{"__typename":"Dog","tricks":3},"id":"l2"} {"__typename":"Listing","id":"l3"}
+        /ranking {"__typename":"Listing","pet":{"__typename":"Cat","whiskers":12},"id":"l1"} {"__typename":"Listing","pet":{"__typename":"Dog","tricks":3},"id":"l2"} {"__typename":"Listing","pet":{"__typename":"Bird"},"id":"l3"}
         "#);
     }
 
