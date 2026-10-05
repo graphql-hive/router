@@ -443,10 +443,10 @@ pub async fn execute_query_plan<'exec>(
     // query or mutation
 
     let introspection_context_clone = Arc::clone(&opts.introspection_context);
+    // An operation without fields, like `{ topProducts @skip(if: true) { name } }`,
+    // still has `{}` as its data.
     let data = if let Some(introspection_query) = &introspection_context_clone.query {
         resolve_introspection(introspection_query, &introspection_context_clone)
-    } else if opts.projection_plan.is_empty() {
-        Value::Null
     } else {
         Value::Object(Vec::new())
     };

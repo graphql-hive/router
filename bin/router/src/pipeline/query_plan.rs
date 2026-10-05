@@ -15,6 +15,7 @@ use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
 use crate::query_planner::planner::plan_nodes::{Planning, QueryPlan};
 use crate::query_planner::planner::query_plan::QUERY_PLAN_KIND;
+use crate::query_planner::state::supergraph_state::OperationKind;
 use crate::query_planner::utils::cancellation::CancellationToken;
 use crate::schema_state::{SchemaState, SelectedSupergraph};
 use crate::telemetry::traces::spans::graphql::GraphQLPlanSpan;
@@ -111,6 +112,10 @@ pub async fn plan_operation_with_cache(
         let is_projection_plan_empty = normalized_operation.projection_plan.is_empty();
         let contains_introspection = normalized_operation.operation_for_introspection.is_some();
         let is_pure_introspection = is_plan_operation_empty && contains_introspection;
+        let is_subscription = matches!(
+            filtered_operation_for_plan.operation_kind,
+            Some(OperationKind::Subscription)
+        );
 
         let compile_demand_control = |plan: &QueryPlan<Planning>| {
             supergraph
@@ -153,7 +158,11 @@ pub async fn plan_operation_with_cache(
                 // but we still need to project nulls for them in the response.
                 // That's why we return an empty plan,
                 // and allow for response projection to happen later.
-                if is_plan_operation_empty && !is_projection_plan_empty {
+                //
+                // The same goes for a query or a mutation whose fields were all skipped,
+                // like `topProducts @skip(if: true)`: its data is `{}`.
+                // A subscription has to select one field, so that one still fails to plan.
+                if is_plan_operation_empty && (!is_projection_plan_empty || !is_subscription) {
                     return Ok(PlannedQuery {
                         plan: EMPTY_QUERY_PLAN.clone(),
                         demand_control: compile_demand_control(&empty_planning_plan()),

@@ -4013,4 +4013,63 @@ mod issues_e2e_tests {
         insta::assert_snapshot!(response.string_body().await, @r#"{"data":{"create":{"isExpensive":true},"count":1}}"#);
         assert_eq!(*answered.lock().unwrap(), vec!["/a", "/b", "/c"]);
     }
+
+    #[ntex::test]
+    /// https://github.com/graphql-hive/router/issues/1189
+    ///
+    /// When every field of a query or a mutation is skipped, there's nothing to plan, and the
+    /// data is `{}`. A static `@skip(if: true)` or `@include(if: false)` removes the fields
+    /// before planning, which used to fail with `QUERY_PLAN_BUILD_FAILED`.
+    async fn issue_1189_operation_with_every_field_skipped() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: supergraph.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let cases = [
+            ("{ topProducts @skip(if: true) { name } }", None),
+            ("{ topProducts @include(if: false) { name } }", None),
+            (
+                "{ ... on Query @skip(if: true) { topProducts { name } } }",
+                None,
+            ),
+            ("mutation { __typename @skip(if: true) }", None),
+            (
+                "query ($v: Boolean!) { topProducts @skip(if: $v) { name } }",
+                Some(sonic_rs::json!({ "v": true })),
+            ),
+        ];
+        let mut responses = vec![];
+        for (query, variables) in cases {
+            let res = router.send_graphql_request(query, variables, None).await;
+            let status = res.status();
+            responses.push(format!("{query}\n{status} {}", res.string_body().await));
+        }
+
+        insta::assert_snapshot!(responses.join("\n\n"), @r#"
+        { topProducts @skip(if: true) { name } }
+        200 OK {"data":{}}
+
+        { topProducts @include(if: false) { name } }
+        200 OK {"data":{}}
+
+        { ... on Query @skip(if: true) { topProducts { name } } }
+        200 OK {"data":{}}
+
+        mutation { __typename @skip(if: true) }
+        200 OK {"data":{}}
+
+        query ($v: Boolean!) { topProducts @skip(if: $v) { name } }
+        200 OK {"data":{}}
+        "#);
+    }
 }
