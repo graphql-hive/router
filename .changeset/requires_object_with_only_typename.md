@@ -1,6 +1,5 @@
 ---
 hive-router: patch
-node-addon: patch
 ---
 
 # Fix `@requires` dropping an object that only has `__typename`
@@ -11,7 +10,10 @@ When a subgraph needed a nested object through `@requires`, the router sent the 
 type Listing @key(fields: "id") {
   id: ID!
   pet: Animal @external
-  rank: Float @requires(fields: "pet { __typename ... on Dog { tricks } ... on Cat { whiskers } }")
+  rank: Float
+    @requires(
+      fields: "pet { __typename ... on Dog { tricks } ... on Cat { whiskers } }"
+    )
 }
 ```
 
