@@ -31,6 +31,8 @@ After:
 
 In a list, like `pets { __typename ... on Dog { tricks } ... on Cat { whiskers } }`, a Bird is now kept in its place instead of being removed.
 
+The same goes when the selection doesn't ask for `__typename`, like `pet { ... on Dog { tricks } ... on Cat { whiskers } }`: the Bird is sent as `{ "__typename": "Bird" }`, the way the Dog and the Cat get their `__typename` too.
+
 An object that misses a selected field is still left out, so an entity without its key isn't sent.
 
 Closes https://github.com/graphql-hive/router/issues/1308

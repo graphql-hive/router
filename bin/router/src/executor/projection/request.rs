@@ -30,6 +30,8 @@ fn write_typename_field(buffer: &mut Vec<u8>, type_name: &str) {
     write_and_escape_string(buffer, type_name);
 }
 
+/// Writes the representation of `entity`. Returns `false`, and writes nothing, when the entity
+/// can't be sent: it misses a selected field, or it's of none of the selection's types.
 pub fn project_requires(
     possible_types: &PossibleTypes,
     requires_selections: RequiresSelectionSetRef<'_>,
@@ -37,6 +39,27 @@ pub fn project_requires(
     buffer: &mut Vec<u8>,
     first: bool,
     response_key: Option<&str>,
+) -> bool {
+    project_requires_value(
+        possible_types,
+        requires_selections,
+        entity,
+        buffer,
+        first,
+        response_key,
+        false,
+    )
+}
+
+/// `nested` is whether `entity` is inside the representation, in one of its fields.
+fn project_requires_value(
+    possible_types: &PossibleTypes,
+    requires_selections: RequiresSelectionSetRef<'_>,
+    entity: &Value,
+    buffer: &mut Vec<u8>,
+    first: bool,
+    response_key: Option<&str>,
+    nested: bool,
 ) -> bool {
     match entity {
         Value::Null => {
@@ -72,13 +95,14 @@ pub fn project_requires(
 
             let mut first = true;
             for entity_item in entity_array {
-                let projected = project_requires(
+                let projected = project_requires_value(
                     possible_types,
                     requires_selections,
                     entity_item,
                     buffer,
                     first,
                     None,
+                    nested,
                 );
                 if projected {
                     // Only update `first` if we actually write something
@@ -109,10 +133,13 @@ pub fn project_requires(
                 response_key,
                 parent_first,
             );
-            // `__typename` is written along with the object's first field. When it's the only
-            // selected field that applies.
-            // An object that misses a selected field, like an entity without its key, is left out.
-            if first && applied.typename && !applied.missing_field {
+            // `__typename` is written along with the object's first field. When nothing else
+            // applies, it's written alone: for an object inside the representation, like a Bird in
+            // `pet { ... on Dog { tricks } ... on Cat { whiskers } }`, and for an entity whose
+            // selection asks for `__typename`.
+            // An object that misses a selected field, like an entity without its key, is left out,
+            // and so is an entity of none of the selection's types.
+            if first && !applied.missing_field && (nested || applied.typename) {
                 if let Some(type_name) =
                     Value::object_get(entity_obj, TYPENAME_FIELD_NAME).and_then(Value::as_str)
                 {
@@ -203,13 +230,14 @@ fn project_requires_map_mut(
                     continue;
                 }
 
-                let projected = project_requires(
+                let projected = project_requires_value(
                     possible_types,
                     selections,
                     original,
                     buffer,
                     *first,
                     Some(response_key),
+                    true,
                 );
 
                 if projected {
@@ -576,6 +604,75 @@ mod tests {
         let pretty = project_requires_pretty(
             "... on Book { __typename id }",
             json!({ "__typename": "Book", "upc": "b3" }),
+        );
+        assert_eq!(pretty, None);
+    }
+
+    /// The same when the selection doesn't ask for `__typename`: an object inside the
+    /// representation is kept with the `__typename` the other objects get too. An entity of none
+    /// of the selection's types still isn't sent.
+    #[test]
+    fn project_requires_object_of_none_of_the_fragment_types_without_typename() {
+        // A Bird is neither a Dog nor a Cat
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+              "... on Listing { __typename pet { ... on Dog { tricks } ... on Cat { whiskers } } id }",
+              json!({
+                  "__typename": "Listing",
+                  "id": "l3",
+                  "pet": { "__typename": "Bird", "id": "b1" }
+              }),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Listing",
+            "pet": {
+              "__typename": "Bird"
+            },
+            "id": "l3"
+          }
+        "#);
+
+        // In a list, the Bird keeps its place
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+              "... on Shelter { __typename pets { ... on Dog { tricks } ... on Cat { whiskers } } id }",
+              json!({
+                  "__typename": "Shelter",
+                  "id": "s1",
+                  "pets": [
+                      { "__typename": "Cat", "id": "c1", "whiskers": 12 },
+                      { "__typename": "Bird", "id": "b1" },
+                      { "__typename": "Dog", "id": "d1", "tricks": 3 }
+                  ]
+              }),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Shelter",
+            "pets": [
+              {
+                "__typename": "Cat",
+                "whiskers": 12
+              },
+              {
+                "__typename": "Bird"
+              },
+              {
+                "__typename": "Dog",
+                "tricks": 3
+              }
+            ],
+            "id": "s1"
+          }
+        "#);
+
+        // A Dog isn't sent for a selection on cats
+        let pretty = project_requires_pretty(
+            "... on Cat { __typename id }",
+            json!({ "__typename": "Dog", "id": "d1" }),
         );
         assert_eq!(pretty, None);
     }
