@@ -365,6 +365,8 @@ jobs:
             http://localhost:4000/graphql \
             bench/schema.graphql
         timeout-minutes: 5
+        env:
+          GRAPHQL_DIFF_QUERIES: 500
       - name: Stop services
         if: always()
         run: |
