@@ -61,7 +61,7 @@ ntex-error = { version = "=2.6.0" }
 ntex-h2 = { version = "=4.0.1" }
 ntex-rt = { version = "=3.17.3" }
 ntex-macros = { version = "=4.0.0" }
-ntex-httparse = { version = "=2.1.0" }
+ntex-httparse = { version = "=2.2.0" }
 ntex-server = { version = "=4.1.1" }
 ntex-service = { version = "=5.0.1" }
 ntex-tls = { version = "=4.0.0" }
