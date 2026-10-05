@@ -12,23 +12,25 @@ type Listing @key(fields: "id") {
   pet: Animal @external
   rank: Float
     @requires(
-      fields: "pet { __typename ... on Dog { tricks } ... on Cat { whiskers } }"
+      fields: "pet { __typename ... on Dog { tricks } ... on Cat { whiskers } }" # Pet can be a Bird, Dog, or Cat
     )
 }
 ```
 
-For a listing whose pet is a Bird, before, `ranking` got the listing without its pet:
+For a listing whose pet is a `Bird`, before, `ranking` got the listing without its pet:
 
 ```json
-{ "__typename": "Listing", "id": "l3" }
+{ "__typename": "Listing", "id": "l3" } # `pet` is fully missing here
 ```
 
 After:
 
 ```json
-{ "__typename": "Listing", "pet": { "__typename": "Bird" }, "id": "l3" }
+{ "__typename": "Listing", "pet": { "__typename": "Bird" }, "id": "l3" } # now it's here, only with __typename
 ```
 
 In a list, like `pets { __typename ... on Dog { tricks } ... on Cat { whiskers } }`, a Bird is now kept in its place instead of being removed.
 
 An object that misses a selected field is still left out, so an entity without its key isn't sent.
+
+Closes https://github.com/graphql-hive/router/issues/1308
