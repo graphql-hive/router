@@ -366,7 +366,7 @@ jobs:
             bench/schema.graphql
         timeout-minutes: 5
         env:
-          GRAPHQL_DIFF_QUERIES: 1000
+          GRAPHQL_DIFF_QUERIES: 5000
       - name: Stop services
         if: always()
         run: |
