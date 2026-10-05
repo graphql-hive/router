@@ -100,7 +100,7 @@ pub fn project_requires(
 
             let parent_first = first;
             let mut first = true;
-            project_requires_map_mut(
+            let applied = project_requires_map_mut(
                 possible_types,
                 requires_selections,
                 entity_obj,
@@ -109,6 +109,20 @@ pub fn project_requires(
                 response_key,
                 parent_first,
             );
+            // `__typename` is written along with the object's first field. When it's the only
+            // selected field that applies.
+            // An object that misses a selected field, like an entity without its key, is left out.
+            if first && applied.typename && !applied.missing_field {
+                if let Some(type_name) =
+                    Value::object_get(entity_obj, TYPENAME_FIELD_NAME).and_then(Value::as_str)
+                {
+                    write_response_key(parent_first, response_key, buffer);
+                    buffer.put(OPEN_BRACE);
+                    write_typename_field(buffer, type_name);
+                    first = false;
+                }
+            }
+
             if first {
                 // If no fields were projected, "first" is still true,
                 // so we skip writing the closing brace
@@ -121,6 +135,15 @@ pub fn project_requires(
     true
 }
 
+/// What the selections that apply to an object ask for.
+#[derive(Default)]
+struct AppliedSelections {
+    /// `__typename` is one of them.
+    typename: bool,
+    /// One of the fields isn't in the object.
+    missing_field: bool,
+}
+
 fn project_requires_map_mut(
     possible_types: &PossibleTypes,
     requires_selections: RequiresSelectionSetRef<'_>,
@@ -129,32 +152,10 @@ fn project_requires_map_mut(
     first: &mut bool,
     parent_response_key: Option<&str>,
     parent_first: bool,
-) {
+) -> AppliedSelections {
     // First, check if __typename is present in the entity object, we'll use it later
     let type_name = Value::object_get(entity_obj, TYPENAME_FIELD_NAME).and_then(Value::as_str);
-
-    // An indicator that only `__typename` is used for the key fields.
-    // This is an edge case that we need to identify, in order to detect when
-    // `__typename` alone is a valid key but other fields are also required
-    let only_typename = requires_selections.len() == 1
-        && requires_selections.iter().all(|selection| {
-            matches!(
-                selection,
-                RequiresSelection::Field { name, alias, .. } if alias.unwrap_or(name) == TYPENAME_FIELD_NAME
-            )
-        });
-
-    // If the requires selection is only `__typename`, we can skip the rest of the logic, and just write the `__typename` field
-    if only_typename {
-        if let Some(type_name) = type_name {
-            write_response_key(parent_first, parent_response_key, buffer);
-            buffer.put(OPEN_BRACE);
-            write_typename_field(buffer, type_name);
-            *first = false;
-
-            return;
-        }
-    }
+    let mut applied = AppliedSelections::default();
 
     for requires_selection in requires_selections.iter() {
         match requires_selection {
@@ -166,6 +167,7 @@ fn project_requires_map_mut(
             } => {
                 let response_key = alias.unwrap_or(field_name);
                 if response_key == TYPENAME_FIELD_NAME {
+                    applied.typename = true;
                     continue;
                 }
 
@@ -173,6 +175,7 @@ fn project_requires_map_mut(
                     .or_else(|| Value::object_get(entity_obj, response_key));
 
                 let Some(original) = original else {
+                    applied.missing_field = true;
                     continue;
                 };
 
@@ -229,7 +232,7 @@ fn project_requires_map_mut(
                 if possible_types.entity_satisfies_type_condition(type_name, type_condition)
                     || possible_types.entity_satisfies_type_condition(type_condition, type_name)
                 {
-                    project_requires_map_mut(
+                    let fragment = project_requires_map_mut(
                         possible_types,
                         selections,
                         entity_obj,
@@ -238,6 +241,8 @@ fn project_requires_map_mut(
                         parent_response_key,
                         parent_first,
                     );
+                    applied.typename |= fragment.typename;
+                    applied.missing_field |= fragment.missing_field;
                 }
             }
             RequiresSelection::FragmentSpread(_) => {
@@ -245,6 +250,7 @@ fn project_requires_map_mut(
             }
         }
     }
+    applied
 }
 
 #[cfg(test)]
@@ -483,5 +489,94 @@ mod tests {
             "id": "1"
           }
         "#);
+    }
+
+    /// An object of none of its fragments' types still has `__typename`, which is all the
+    /// selection asks of it, so it's kept, in a field or in a list. An object that misses a
+    /// selected field is still left out, so an entity without its key isn't sent.
+    #[test]
+    fn project_requires_object_of_none_of_the_fragment_types() {
+        let requires = "... on Listing { __typename pet { __typename ... on Dog { tricks } ... on Cat { whiskers } } id }";
+
+        // A Bird is neither a Dog nor a Cat
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+              requires,
+              json!({
+                  "__typename": "Listing",
+                  "id": "l3",
+                  "pet": { "__typename": "Bird", "id": "b1" }
+              }),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Listing",
+            "pet": {
+              "__typename": "Bird"
+            },
+            "id": "l3"
+          }
+        "#);
+
+        // In a list, the Bird keeps its place
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+              "... on Shelter { __typename pets { __typename ... on Dog { tricks } ... on Cat { whiskers } } id }",
+              json!({
+                  "__typename": "Shelter",
+                  "id": "s1",
+                  "pets": [
+                      { "__typename": "Cat", "id": "c1", "whiskers": 12 },
+                      { "__typename": "Bird", "id": "b1" },
+                      { "__typename": "Dog", "id": "d1", "tricks": 3 }
+                  ]
+              }),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Shelter",
+            "pets": [
+              {
+                "__typename": "Cat",
+                "whiskers": 12
+              },
+              {
+                "__typename": "Bird"
+              },
+              {
+                "__typename": "Dog",
+                "tricks": 3
+              }
+            ],
+            "id": "s1"
+          }
+        "#);
+
+        // A Cat without its whiskers is left out
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+              requires,
+              json!({
+                  "__typename": "Listing",
+                  "id": "l1",
+                  "pet": { "__typename": "Cat", "id": "c1" }
+              }),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Listing",
+            "id": "l1"
+          }
+        "#);
+
+        // A Book without its key isn't sent
+        let pretty = project_requires_pretty(
+            "... on Book { __typename id }",
+            json!({ "__typename": "Book", "upc": "b3" }),
+        );
+        assert_eq!(pretty, None);
     }
 }
