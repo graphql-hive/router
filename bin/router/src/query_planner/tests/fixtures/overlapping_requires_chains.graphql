@@ -1,0 +1,10 @@
+query {
+  product { requestedA: canAffordWithAndWithoutDiscount }
+  ... on Query { product { canAffordWithAndWithoutDiscount } }
+  ... on Query {
+    product {
+      ... { ... on Product { requestedB: canAffordWithAndWithoutDiscount } }
+      canAfford
+    }
+  }
+}

@@ -1353,22 +1353,26 @@ fn qp_nested_include_skip_conditions_in_complex_products_query() -> Result<(), B
           },
         },
         Parallel {
-          Include(if: $product) {
-            Flatten(path: "topProducts.@.reviews.@.author.reviews.@.product") {
-              Fetch(service: "products") {
-                {
-                  ... on Product {
-                    __typename
-                    upc
-                  }
-                } =>
-                {
-                  ... on Product {
-                    price
-                    weight
-                    name
-                  }
-                }
+          Skip(if: $skipAuthor) {
+            Include(if: $nestedReviews) {
+              Include(if: $product) {
+                Flatten(path: "topProducts.@.reviews.@.author.reviews.@.product") {
+                  Fetch(service: "products") {
+                    {
+                      ... on Product {
+                        __typename
+                        upc
+                      }
+                    } =>
+                    {
+                      ... on Product {
+                        price
+                        weight
+                        name
+                      }
+                    }
+                  },
+                },
               },
             },
           },
@@ -1390,22 +1394,26 @@ fn qp_nested_include_skip_conditions_in_complex_products_query() -> Result<(), B
             },
           },
         },
-        Include(if: $product) {
-          Flatten(path: "topProducts.@.reviews.@.author.reviews.@.product") {
-            Fetch(service: "inventory") {
-              {
-                ... on Product {
-                  __typename
-                  price
-                  weight
-                  upc
-                }
-              } =>
-              {
-                ... on Product {
-                  shippingEstimate
-                }
-              }
+        Skip(if: $skipAuthor) {
+          Include(if: $nestedReviews) {
+            Include(if: $product) {
+              Flatten(path: "topProducts.@.reviews.@.author.reviews.@.product") {
+                Fetch(service: "inventory") {
+                  {
+                    ... on Product {
+                      __typename
+                      price
+                      weight
+                      upc
+                    }
+                  } =>
+                  {
+                    ... on Product {
+                      shippingEstimate
+                    }
+                  }
+                },
+              },
             },
           },
         },
@@ -1675,6 +1683,248 @@ fn qp_abstract_union_member_conditions_stay_scoped() -> Result<(), Box<dyn Error
                   }
                 }
               },
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Reduced from generated `override_requires` seed 33 (and `interface-object-with-requires`
+/// seed 110). Both `@requires` fields send entity calls whose paths go through
+/// `... on Query @include(if: $x)`. Merging the first one into the root fetch lifted that
+/// condition to the whole fetch and dropped the fragment, so the second one had no path left to
+/// land on.
+#[test]
+fn conditional_root_fragment_survives_merges() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($x: Boolean!) {
+          ... on Query @include(if: $x) {
+            userInB {
+              aName
+              cName
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/override_requires.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          query ($x:Boolean!) {
+            ... on Query @include(if: $x) {
+              userInB {
+                __typename
+                id
+                ... on User @include(if: $x) {
+                  name
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+        },
+        Parallel {
+          Include(if: $x) {
+            Flatten(path: "|[Query].userInB") {
+              Fetch(service: "c") {
+                {
+                  ... on User {
+                    __typename
+                    name
+                    id
+                  }
+                } =>
+                {
+                  ... on User {
+                    cName
+                  }
+                }
+              },
+            },
+          },
+          Include(if: $x) {
+            Flatten(path: "|[Query].userInB") {
+              Fetch(service: "a") {
+                {
+                  ... on User {
+                    __typename
+                    name
+                    id
+                  }
+                } =>
+                {
+                  ... on User {
+                    aName
+                  }
+                }
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// The `b` call for `name` sits under two fragments, `@include(if: $a)` and `@include(if: $b)`,
+/// so it has to be skipped unless both are true.
+#[test]
+fn entity_call_under_nested_conditional_fragments() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($a: Boolean!, $b: Boolean!) {
+          userInA {
+            id
+            ... on User @include(if: $a) {
+              ... on User @include(if: $b) {
+                name
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/override_requires.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{query_plan}"), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          query ($a:Boolean!,$b:Boolean!) {
+            userInA {
+              id
+              ... on User @include(if: $a) {
+                ... on User @include(if: $b) {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+        },
+        Include(if: $a) {
+          Include(if: $b) {
+            Flatten(path: "userInA|[User]|[User]") {
+              Fetch(service: "b") {
+                {
+                  ... on User {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on User {
+                    name
+                  }
+                }
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `notes` and `price` are in `... on Product @include(if: $a)`, and `reviews` only sends the
+/// `__typename` that the `products` call needs when `$a` is true. `price` has its own condition
+/// too, so it gets its own call, and batching the two calls into one used to drop `$a`.
+#[test]
+fn batched_entity_calls_keep_the_condition_of_their_fragment() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($a: Boolean!, $b: Boolean!) {
+          users {
+            reviews {
+              product {
+                upc
+                ... on Product @include(if: $a) {
+                  notes
+                  price @include(if: $b)
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults("../../bench/supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{query_plan}"), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "accounts") {
+          {
+            users {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "users.@") {
+          Fetch(service: "reviews") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            ($a:Boolean!) {
+              ... on User {
+                reviews {
+                  product {
+                    upc
+                    ... on Product @include(if: $a) {
+                      __typename
+                      upc
+                    }
+                  }
+                }
+              }
+            }
+          },
+        },
+        Include(if: $a) {
+          Flatten(path: "users.@.reviews.@.product|[Product]") {
+            Fetch(service: "products") {
+              {
+                ... on Product {
+                  __typename
+                  upc
+                }
+              } =>
+              ($a:Boolean!,$b:Boolean!) {
+                ... on Product {
+                  ... on Product @include(if: $b) {
+                    price
+                  }
+                  ... on Product @include(if: $a) {
+                    notes
+                  }
+                }
+              }
             },
           },
         },

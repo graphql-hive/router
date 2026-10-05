@@ -3574,4 +3574,572 @@ mod issues_e2e_tests {
         ]
         "#);
     }
+
+    #[ntex::test]
+    /// https://github.com/graphql-hive/router/issues/1309
+    ///
+    /// `rank` requires the pet's `whiskers` or `tricks`, which only `catalog` has. Both can
+    /// come through `Animal`'s key or through their own type's key. They used to go both ways,
+    /// so `catalog` got the Cat and the Dog twice, in one batch. Now it gets every pet once.
+    ///
+    /// The subgraphs are the ones in `bench/subgraphs`, so `ranking` ranks each listing by the
+    /// pet it's sent. The Bird is neither a Dog nor a Cat, so its pet is only `__typename`,
+    /// and `ranking` still has to get it.
+    async fn issue_1309_catalog_gets_every_pet_once() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.1309.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ listings { rank } }", None, None)
+            .await;
+
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "listings": [
+              {
+                "rank": 12.0
+              },
+              {
+                "rank": 3.0
+              },
+              {
+                "rank": 1.0
+              }
+            ]
+          }
+        }
+        "#);
+
+        // Every representation each subgraph got, whatever batch variable carries it.
+        let called: Vec<String> = ["search", "catalog", "ranking"]
+            .into_iter()
+            .flat_map(|subgraph| {
+                let requests = subgraphs.get_requests_log(subgraph).unwrap_or_default();
+                requests.into_iter().map(move |request| {
+                    let body: serde_json::Value =
+                        serde_json::from_slice(request.body.as_deref().unwrap_or_default())
+                            .unwrap_or_default();
+                    let variables = body["variables"].as_object().into_iter();
+                    let representations: Vec<String> = variables
+                        .flat_map(|variables| variables.values())
+                        .flat_map(|value| value.as_array().into_iter().flatten())
+                        .map(|representation| representation.to_string())
+                        .collect();
+                    format!("/{subgraph} {}", representations.join(" "))
+                })
+            })
+            .collect();
+        insta::assert_snapshot!(called.join("\n"), @r#"
+        /search 
+        /catalog {"__typename":"Animal","id":"c1"} {"__typename":"Animal","id":"d1"} {"__typename":"Animal","id":"b1"}
+        /ranking {"__typename":"Listing","pet":{"__typename":"Cat","whiskers":12},"id":"l1"} {"__typename":"Listing","pet":{"__typename":"Dog","tricks":3},"id":"l2"} {"__typename":"Listing","pet":{"__typename":"Bird"},"id":"l3"}
+        "#);
+    }
+
+    #[ntex::test]
+    /// https://github.com/graphql-hive/router/issues/1311
+    ///
+    /// The same photo entity appears under both department types. The response must use the
+    /// requested width at each response path, including when either branch is conditional.
+    async fn issue_1311_each_department_gets_its_own_thumbnail_width() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mock_subgraphs(json!({
+                "catalog": {
+                    "query": { "storefront": { "departments": [
+                        { "__typename": "Aquatics", "id": "a1", "photo": { "__typename": "Photo", "id": "p1" } },
+                        { "__typename": "Reptiles", "id": "r1", "photo": { "__typename": "Photo", "id": "p1" } },
+                        { "__typename": "Aquatics", "id": "a2", "photo": { "__typename": "Photo", "id": "p2" } }
+                    ] } }
+                },
+                "media": {
+                    "entities": [
+                        { "__typename": "Photo", "id": "p1", "thumbnail(width: 100)": "p1@100", "thumbnail(width: 200)": "p1@200" },
+                        { "__typename": "Photo", "id": "p2", "thumbnail(width: 100)": "p2@100", "thumbnail(width: 200)": "p2@200" }
+                    ]
+                }
+            })))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.1311.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let unconditional = r#"{ storefront { departments {
+            ... on Aquatics { photo { thumbnail(width: 100) } }
+            ... on Reptiles { photo { thumbnail(width: 200) } }
+        } } }"#;
+        let conditional = r#"query($a: Boolean!, $b: Boolean!) { storefront { departments {
+            ... on Aquatics { photo { thumbnail(width: 100) @include(if: $a) } }
+            ... on Reptiles { photo { thumbnail(width: 200) @include(if: $b) } }
+        } } }"#;
+
+        let mut results = vec![];
+        let response = router.send_graphql_request(unconditional, None, None).await;
+        results.push(format!("no @include => {}", response.string_body().await));
+        for (a, b) in [(true, true), (true, false), (false, true), (false, false)] {
+            let variables = sonic_rs::json!({ "a": a, "b": b });
+            let response = router
+                .send_graphql_request(conditional, Some(variables), None)
+                .await;
+            results.push(format!("a={a} b={b} => {}", response.string_body().await));
+        }
+
+        insta::assert_snapshot!(results.join("\n"), @r#"
+        no @include => {"data":{"storefront":{"departments":[{"photo":{"thumbnail":"p1@100"}},{"photo":{"thumbnail":"p1@200"}},{"photo":{"thumbnail":"p2@100"}}]}}}
+        a=true b=true => {"data":{"storefront":{"departments":[{"photo":{"thumbnail":"p1@100"}},{"photo":{"thumbnail":"p1@200"}},{"photo":{"thumbnail":"p2@100"}}]}}}
+        a=true b=false => {"data":{"storefront":{"departments":[{"photo":{"thumbnail":"p1@100"}},{"photo":{}},{"photo":{"thumbnail":"p2@100"}}]}}}
+        a=false b=true => {"data":{"storefront":{"departments":[{"photo":{}},{"photo":{"thumbnail":"p1@200"}},{"photo":{}}]}}}
+        a=false b=false => {"data":{"storefront":{"departments":[{"photo":{}},{"photo":{}},{"photo":{}}]}}}
+        "#);
+    }
+
+    #[ntex::test]
+    /// `pricing` resolves `eur` from the EUR price, and the client asks for the GBP one on the
+    /// same objects, under `$x`, while Cats get `eur` again under `$y`. Whatever the variables,
+    /// every representation `pricing` gets has to carry the EUR price (11 for the cat, 33 for
+    /// the dog), never the GBP one (22, 44) or none.
+    async fn requires_alias_reaches_pricing_under_every_condition() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+        use std::sync::{Arc, Mutex};
+
+        let mocks = mock_subgraphs(json!({
+            "shop": {
+                "query": { "things": [
+                    { "__typename": "Cat", "id": "c1", "price(currency: \"GBP\")": 22, "price(currency: \"EUR\")": 11 },
+                    { "__typename": "Dog", "id": "d1", "price(currency: \"GBP\")": 44, "price(currency: \"EUR\")": 33 }
+                ] }
+            },
+            "pricing": {
+                "entities": [
+                    { "__typename": "Node", "id": "c1", "price": 11, "eur": 1100 },
+                    { "__typename": "Node", "id": "d1", "price": 33, "eur": 3300 }
+                ]
+            }
+        }));
+        let representations = Arc::new(Mutex::new(Vec::new()));
+        let seen_by_mocks = representations.clone();
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(move |request| {
+                if request.path == "/pricing" {
+                    let body: serde_json::Value =
+                        serde_json::from_slice(request.body.as_deref().unwrap_or_default())
+                            .unwrap_or_default();
+                    seen_by_mocks
+                        .lock()
+                        .unwrap()
+                        .push(body["variables"]["representations"].to_string());
+                }
+                mocks(request)
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.requires-alias-interface-object.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = r#"query($x: Boolean!, $y: Boolean!) { things {
+            ... on Node @include(if: $x) { price(currency: "GBP") eur }
+            ... on Node @include(if: $y) { ... on Cat { eur } }
+        } }"#;
+
+        let mut results = vec![];
+        for (x, y) in [(true, true), (true, false), (false, true), (false, false)] {
+            let variables = sonic_rs::json!({ "x": x, "y": y });
+            router
+                .send_graphql_request(query, Some(variables), None)
+                .await;
+            let mut sent = std::mem::take(&mut *representations.lock().unwrap());
+            sent.sort();
+            results.push(format!("x={x} y={y} => {}", sent.join(" ")));
+        }
+
+        insta::assert_snapshot!(results.join("\n"), @r#"
+        x=true y=true => [{"__typename":"Node","price":11,"id":"c1"},{"__typename":"Node","price":33,"id":"d1"}] [{"__typename":"Node","price":11,"id":"c1"}]
+        x=true y=false => [{"__typename":"Node","price":11,"id":"c1"},{"__typename":"Node","price":33,"id":"d1"}]
+        x=false y=true => [{"__typename":"Node","price":11,"id":"c1"}]
+        x=false y=false =>
+        "#);
+    }
+
+    #[ntex::test]
+    /// `eur` sits under two type conditions (`Node`, then `Cat`), so the `pricing` fetch is
+    /// flattened along `things.@|[Node]|[Cat]`. The Cat has to get its `eur` back.
+    async fn requires_alias_under_stacked_type_conditions_reaches_the_response() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+
+        let mocks = mock_subgraphs(json!({
+            "shop": {
+                "query": { "things": [
+                    { "__typename": "Cat", "id": "c1", "price(currency: \"EUR\")": 11 },
+                    { "__typename": "Dog", "id": "d1", "price(currency: \"EUR\")": 33 }
+                ] }
+            },
+            "pricing": {
+                "entities": [
+                    { "__typename": "Node", "id": "c1", "price": 11, "eur": 1100 }
+                ]
+            }
+        }));
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mocks)
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.requires-alias-interface-object.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"query($y: Boolean!) { things { ... on Node @include(if: $y) { ... on Cat { eur } } } }"#,
+                Some(sonic_rs::json!({ "y": true })),
+                None,
+            )
+            .await;
+
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "things": [
+              {
+                "eur": 1100
+              },
+              {}
+            ]
+          }
+        }
+        "#);
+    }
+
+    #[ntex::test]
+    /// `perms` resolves `label` from the admin team, and the client asks for the user team on
+    /// the same `me`. `perms` only finds the user when the representation carries the admin
+    /// team, so a mixed-up team shows up as `label: null`, and the client's team has to stay
+    /// the user one.
+    async fn requires_alias_keeps_object_values_apart_under_every_condition() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mock_subgraphs(json!({
+                "users": {
+                    "query": { "me": {
+                        "__typename": "User", "id": "u1",
+                        "team(role: \"user\")": { "__typename": "Team", "id": "t-user" },
+                        "team(role: \"admin\")": { "__typename": "Team", "id": "t-admin" }
+                    } },
+                    "entities": [
+                        {
+                            "__typename": "User", "id": "u1",
+                            "team(role: \"user\")": { "__typename": "Team", "id": "t-user" },
+                            "team(role: \"admin\")": { "__typename": "Team", "id": "t-admin" }
+                        }
+                    ]
+                },
+                "teams": {
+                    "entities": [
+                        { "__typename": "Team", "id": "t-user", "name": "Users" },
+                        { "__typename": "Team", "id": "t-admin", "name": "Admins" }
+                    ]
+                },
+                "perms": {
+                    "entities": [
+                        {
+                            "__typename": "User", "id": "u1",
+                            "team": { "__typename": "Team", "id": "t-admin", "name": "Admins" },
+                            "label": "label of an admin"
+                        }
+                    ]
+                }
+            })))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.requires-alias-object-field.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let queries = [
+            r#"query($x: Boolean!, $y: Boolean!) { me { team(role: "user") @include(if: $x) { name } label @include(if: $y) } }"#,
+            r#"query($x: Boolean!, $y: Boolean!) { me {
+                ... on User @include(if: $x) { team(role: "user") { name } label }
+                ... on User @include(if: $y) { label }
+            } }"#,
+        ];
+
+        let mut results = vec![];
+        for query in queries {
+            for (x, y) in [(true, true), (true, false), (false, true), (false, false)] {
+                let variables = sonic_rs::json!({ "x": x, "y": y });
+                let response = router
+                    .send_graphql_request(query, Some(variables), None)
+                    .await;
+                results.push(format!("x={x} y={y} => {}", response.string_body().await));
+            }
+        }
+
+        insta::assert_snapshot!(results.join("\n"), @r#"
+        x=true y=true => {"data":{"me":{"team":{"name":"Users"},"label":"label of an admin"}}}
+        x=true y=false => {"data":{"me":{"team":{"name":"Users"}}}}
+        x=false y=true => {"data":{"me":{"label":"label of an admin"}}}
+        x=false y=false => {"data":{"me":{}}}
+        x=true y=true => {"data":{"me":{"team":{"name":"Users"},"label":"label of an admin"}}}
+        x=true y=false => {"data":{"me":{"team":{"name":"Users"},"label":"label of an admin"}}}
+        x=false y=true => {"data":{"me":{"label":"label of an admin"}}}
+        x=false y=false => {"data":{"me":{}}}
+        "#);
+    }
+
+    #[ntex::test]
+    /// Mutation fields run in order, including the entity fetches needed to finish a field.
+    /// Delaying subgraph `b` verifies that the next root mutation is not sent to `c` early.
+    async fn next_mutation_waits_for_entity_fetch_of_previous_one() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+
+        let mocks = mock_subgraphs(json!({
+            "a": {
+                "mutation": {
+                    "addProduct": { "__typename": "Product", "id": "1", "price": 599.99 }
+                }
+            },
+            "b": {
+                "entities": [
+                    { "__typename": "Product", "id": "1", "price": 599.99, "isExpensive": true }
+                ]
+            },
+            "c": {
+                "mutation": { "add": 1 }
+            }
+        }));
+        let answered = Arc::new(Mutex::new(Vec::new()));
+        let answered_by_mocks = answered.clone();
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(move |request| {
+                answered_by_mocks.lock().unwrap().push(request.path.clone());
+                mocks(request)
+            })
+            .with_path_delay("/b", Duration::from_millis(300))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.mutation-order.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let response = router
+            .send_graphql_request(
+                r#"mutation {
+                  create: addProduct(input: { name: "new", price: 599.99 }) { isExpensive }
+                  count: add(num: 1)
+                }"#,
+                None,
+                None,
+            )
+            .await;
+
+        insta::assert_snapshot!(response.string_body().await, @r#"{"data":{"create":{"isExpensive":true},"count":1}}"#);
+        assert_eq!(*answered.lock().unwrap(), vec!["/a", "/b", "/c"]);
+    }
+
+    #[ntex::test]
+    /// https://github.com/graphql-hive/router/issues/1189
+    ///
+    /// When every field of a query or a mutation is skipped, there's nothing to plan, and the
+    /// data is `{}`. A static `@skip(if: true)` or `@include(if: false)` removes the fields
+    /// before planning, which used to fail with `QUERY_PLAN_BUILD_FAILED`.
+    async fn issue_1189_operation_with_every_field_skipped() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: supergraph.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let cases = [
+            ("{ topProducts @skip(if: true) { name } }", None),
+            ("{ topProducts @include(if: false) { name } }", None),
+            (
+                "{ ... on Query @skip(if: true) { topProducts { name } } }",
+                None,
+            ),
+            ("mutation { __typename @skip(if: true) }", None),
+            (
+                "query ($v: Boolean!) { topProducts @skip(if: $v) { name } }",
+                Some(sonic_rs::json!({ "v": true })),
+            ),
+        ];
+        let mut responses = vec![];
+        for (query, variables) in cases {
+            let res = router.send_graphql_request(query, variables, None).await;
+            let status = res.status();
+            responses.push(format!("{query}\n{status} {}", res.string_body().await));
+        }
+
+        insta::assert_snapshot!(responses.join("\n\n"), @r#"
+        { topProducts @skip(if: true) { name } }
+        200 OK {"data":{}}
+
+        { topProducts @include(if: false) { name } }
+        200 OK {"data":{}}
+
+        { ... on Query @skip(if: true) { topProducts { name } } }
+        200 OK {"data":{}}
+
+        mutation { __typename @skip(if: true) }
+        200 OK {"data":{}}
+
+        query ($v: Boolean!) { topProducts @skip(if: $v) { name } }
+        200 OK {"data":{}}
+        "#);
+    }
+
+    #[ntex::test]
+    /// Found by the differential test, case 824.
+    ///
+    /// `notes` and `price` are in `... on Product @include(if: $a)`, so `products` is only called
+    /// for them when `$a` is true, and only then does `reviews` send the product's `__typename`.
+    /// `price` has its own condition too, so it gets its own call. Batching the two calls into
+    /// one dropped `$a`, so with `$a: false` the router still called `products`, with
+    /// `{"upc":"1"}` and no `__typename`. `products` rejected the whole request, so `me`'s
+    /// product `name`, sent in the same request, was null.
+    async fn batched_calls_keep_their_fragment_condition() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: supergraph.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"query ($a: Boolean!, $b: Boolean!) {
+                  me { reviews { product { name } } }
+                  user(id: "1") {
+                    reviews {
+                      product {
+                        upc
+                        ... on Product @include(if: $a) {
+                          notes
+                          price @include(if: $b)
+                        }
+                      }
+                    }
+                  }
+                }"#,
+                Some(sonic_rs::json!({ "a": false, "b": true })),
+                None,
+            )
+            .await;
+        let response = res.string_body().await;
+
+        // Every representation `products` got, whatever batch variable carries it.
+        let representations: Vec<String> = subgraphs
+            .get_requests_log("products")
+            .unwrap_or_default()
+            .into_iter()
+            .flat_map(|request| {
+                let body: serde_json::Value =
+                    serde_json::from_slice(request.body.as_deref().unwrap_or_default())
+                        .unwrap_or_default();
+                let variables = body["variables"].as_object().cloned().unwrap_or_default();
+                variables
+                    .into_iter()
+                    .flat_map(|(_, value)| value.as_array().cloned().unwrap_or_default())
+                    .map(|representation| representation.to_string())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
+        insta::assert_snapshot!(format!("{response}\n/products {}", representations.join(" ")), @r#"
+        {"data":{"me":{"reviews":[{"product":{"name":"Table"}},{"product":{"name":"Table"}}]},"user":{"reviews":[{"product":{"upc":"1"}},{"product":{"upc":"1"}}]}}}
+        /products {"__typename":"Product","upc":"1"}
+        "#);
+    }
 }

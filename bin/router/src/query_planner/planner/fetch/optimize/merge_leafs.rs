@@ -34,11 +34,6 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
-        // otherwise we break the order of mutations
-        if self.mutation_field_position != other.mutation_field_position {
-            return false;
-        }
-
         // `other` must be a leaf node (no children).
         if fetch_graph.children_of(other_index).count() != 0 {
             return false;

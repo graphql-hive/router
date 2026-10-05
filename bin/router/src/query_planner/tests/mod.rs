@@ -1,6 +1,7 @@
 mod alias;
 mod arguments;
 mod fragments;
+mod generated;
 mod include_skip;
 mod interface;
 mod interface_object;
@@ -13,6 +14,7 @@ mod overrides;
 mod provides;
 mod renamed_root_types;
 mod requires;
+mod requires_alias_scopes;
 mod requires_circular;
 mod requires_fragments;
 mod requires_provides;

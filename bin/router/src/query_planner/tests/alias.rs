@@ -4,6 +4,256 @@ use crate::query_planner::{
 };
 use std::error::Error;
 
+/// A client alias can occupy the planner's usual internal alias name. The planner must choose
+/// another wire key rather than produce duplicate response keys in the subgraph operation.
+#[test]
+fn client_alias_named_internal_type_mismatch() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          i {
+            _internal_qp_alias_0: __typename
+            ... on TypeA { strField }
+            ... on TypeB { strField }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mismatch-mix.supergraph.graphql", document)?;
+
+    assert!(
+        !format!("{query_plan}").contains("_internal_qp_alias_0: strField"),
+        "{query_plan}"
+    );
+    Ok(())
+}
+
+/// The internal alias collision also occurs when an entity fetch needs another argumented
+/// field for `@requires`.
+#[test]
+fn client_alias_named_internal_requires() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          things {
+            _internal_qp_alias_0: id
+            price(currency: "GBP")
+            ... on Cat { eur }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-alias-entity-interface.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{query_plan}"), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "shop") {
+          {
+            things {
+              _internal_qp_alias_0: id
+              __typename
+              ... on Cat {
+                __typename
+                price(currency: "GBP")
+                id
+                _internal_qp_alias_1: price(currency: "EUR")
+              }
+              ... on Dog {
+                price(currency: "GBP")
+              }
+            }
+          }
+        },
+        Flatten(path: "things.@|[Cat]") {
+          Fetch(service: "pricing") {
+            {
+              ... on Cat {
+                __typename
+                price: _internal_qp_alias_1
+                id
+              }
+            } =>
+            {
+              ... on Cat {
+                eur
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
+}
+
+/// The client uses `id` for a price, and the planner needs the real `id` there as the key for
+/// `shop`. The key gets a key of its own, and `shop` reads it back as `id`.
+#[test]
+fn client_alias_named_like_a_key_field() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(r#"{ things { id: price(currency: "USD") } }"#);
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-alias-entity-calls.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{query_plan}"), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "catalog") {
+          {
+            things {
+              __typename
+              _internal_qp_alias_0: id
+            }
+          }
+        },
+        Flatten(path: "things.@") {
+          Fetch(service: "shop") {
+            {
+              ... on Thing {
+                __typename
+                id: _internal_qp_alias_0
+              }
+            } =>
+            {
+              ... on Thing {
+                id: price(currency: "USD")
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
+}
+
+/// Same as above, with the entity call behind `@include`. It merges into the root fetch, and
+/// its representation has to go in as the key it's written under, not as a field of that name.
+/// The `b` call for the `name` that `aName` needs goes into the `b` call for `id: name`, under
+/// `... on User @include(if: $x)`, as that one goes out anyway.
+#[test]
+fn client_alias_named_like_a_key_field_under_a_condition() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document =
+        parse_operation(r#"query ($x: Boolean!) { userInA { id: name aName @include(if: $x) } }"#);
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/override_requires.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{query_plan}"), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          query ($x:Boolean!) {
+            userInA {
+              __typename
+              _internal_qp_alias_0: id
+              ... on User @include(if: $x) {
+                __typename
+                _internal_qp_alias_0: id
+              }
+            }
+          }
+        },
+        Flatten(path: "userInA") {
+          Fetch(service: "b") {
+            {
+              ... on User {
+                __typename
+                id: _internal_qp_alias_0
+              }
+            } =>
+            ($x:Boolean!) {
+              ... on User {
+                ... on User @include(if: $x) {
+                  name
+                }
+                id: name
+              }
+            }
+          },
+        },
+        Include(if: $x) {
+          Flatten(path: "userInA") {
+            Fetch(service: "a") {
+              {
+                ... on User {
+                  __typename
+                  name
+                  id: _internal_qp_alias_0
+                }
+              } =>
+              {
+                ... on User {
+                  aName
+                }
+              }
+            },
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
+}
+
+/// `[Item]` on `Box` and `Item` on `Bag` cannot share one response key in the subgraph
+/// operation; the mismatched shape needs its own key and a response rewrite.
+#[test]
+fn composite_list_shape_mismatch_gets_wire_key() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          things {
+            ... on Box { items { name } }
+            ... on Bag { items { name } }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/adversarial/shape-mismatch.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{query_plan}"), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          things {
+            __typename
+            ... on Box {
+              items {
+                ...a
+              }
+            }
+            ... on Bag {
+              _internal_qp_alias_0: items {
+                ...a
+              }
+            }
+          }
+        }
+        fragment a on Item {
+          name
+        }
+      },
+    },
+    "#);
+    Ok(())
+}
+
 // In this test, we can checking for a conflict that could happen on interface.
 // The "samePriceProduct" field is selected on the interface, and then explicitly on "... on Book", but since it's a composite
 // type, we don't have a mismatch, so no aliasing is needed.
@@ -1585,6 +1835,101 @@ fn conflict_list_type_in_interface_with_distinct_response_keys() -> Result<(), B
         "serviceName": "a",
         "operationKind": "query",
         "operation": "{i{__typename ...on TypeA{typeAField: strField} ...on TypeB{typeBField: strField}}}"
+      }
+    }
+    "#);
+
+    Ok(())
+}
+
+/// `isScalar` is `Int` on `TypeA`, `Boolean` on `TypeB` and `Float` on `TypeC`. The last two
+/// each need a key of their own, and not the same one, `Boolean` and `Float` can't share a key
+/// either.
+#[test]
+fn mismatch_aliases_unique_across_sibling_fragments() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          getTypes {
+            ... on TypeA { isScalar }
+            ... on TypeB { isScalar }
+            ... on TypeC { isScalar }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/mismatch-mix-enum-scalar.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "service") {
+        {
+          getTypes {
+            __typename
+            ... on TypeA {
+              isScalar
+            }
+            ... on TypeB {
+              _internal_qp_alias_0: isScalar
+            }
+            ... on TypeC {
+              _internal_qp_alias_1: isScalar
+            }
+          }
+        }
+      },
+    },
+    "#);
+    insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Fetch",
+        "serviceName": "service",
+        "operationKind": "query",
+        "operation": "{getTypes{__typename ...on TypeA{isScalar} ...on TypeB{_internal_qp_alias_0: isScalar} ...on TypeC{_internal_qp_alias_1: isScalar}}}",
+        "outputRewrites": [
+          {
+            "KeyRenamer": {
+              "path": [
+                {
+                  "Key": "getTypes"
+                },
+                {
+                  "TypenameEquals": [
+                    "TypeB"
+                  ]
+                },
+                {
+                  "Key": "_internal_qp_alias_0"
+                }
+              ],
+              "renameKeyTo": "isScalar"
+            }
+          },
+          {
+            "KeyRenamer": {
+              "path": [
+                {
+                  "Key": "getTypes"
+                },
+                {
+                  "TypenameEquals": [
+                    "TypeC"
+                  ]
+                },
+                {
+                  "Key": "_internal_qp_alias_1"
+                }
+              ],
+              "renameKeyTo": "isScalar"
+            }
+          }
+        ]
       }
     }
     "#);

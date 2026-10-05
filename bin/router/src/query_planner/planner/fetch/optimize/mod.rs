@@ -1,4 +1,3 @@
-mod apply_internal_aliases_patching;
 mod batch_multi_type;
 mod deduplicate_and_prune_fetch_steps;
 mod fold_concrete_selections_to_interfaces;
@@ -30,6 +29,9 @@ impl FetchGraph<MultiTypeFetchStep> {
         options: &QueryPlannerOptions,
         cancellation_token: &CancellationToken,
     ) -> Result<(), FetchGraphError> {
+        // Before anything merges, so merges keep the order of mutation fields.
+        self.turn_mutations_into_sequence()?;
+
         // Run optimization passes repeatedly until the graph stabilizes, as one optimization can create
         // opportunities for others.
         loop {
@@ -42,7 +44,7 @@ impl FetchGraph<MultiTypeFetchStep> {
             self.merge_siblings()?;
             self.merge_leafs()?;
             self.deduplicate_and_prune_fetch_steps()?;
-            self.batch_multi_type()?;
+            self.batch_multi_type(supergraph_state)?;
             self.normalize_selection_sets(supergraph_state)?;
             let abstract_type_converted =
                 self.fold_concrete_selections_to_interfaces(supergraph_state, options)?;
@@ -57,11 +59,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                 break;
             }
         }
-        self.turn_mutations_into_sequence()?;
         self.fix_conflicting_type_mismatches(supergraph_state)?;
-
-        // We call this last, because it should be done after all other optimizations/merging are done
-        self.apply_internal_aliases_patching()?;
 
         Ok(())
     }

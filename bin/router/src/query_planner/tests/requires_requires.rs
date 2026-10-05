@@ -4,6 +4,104 @@ use crate::query_planner::{
 };
 use std::error::Error;
 
+/// Promoted from generated seed 4. Overlapping `@requires` chains selected through repeated
+/// product fields and fragments must survive fetch-step merges without stale step references.
+#[test]
+fn overlapping_requires_chains_survive_fetch_step_merges() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(include_str!("fixtures/overlapping_requires_chains.graphql"));
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires_requires.supergraph.graphql",
+        document,
+    )?;
+    insta::assert_snapshot!(format!("{query_plan}"), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {
+            product {
+              __typename
+              id
+              hasDiscount
+            }
+          }
+        },
+        Parallel {
+          Flatten(path: "product") {
+            Fetch(service: "c") {
+              {
+                ... on Product {
+                  __typename
+                  hasDiscount
+                  id
+                }
+              } =>
+              {
+                ... on Product {
+                  isExpensiveWithDiscount
+                }
+              }
+            },
+          },
+          Flatten(path: "product") {
+            Fetch(service: "a") {
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Product {
+                  price
+                }
+              }
+            },
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "c") {
+            {
+              ... on Product {
+                __typename
+                price
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                isExpensive
+              }
+            }
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "d") {
+            {
+              ... on Product {
+                __typename
+                isExpensive
+                id
+                isExpensiveWithDiscount
+              }
+            } =>
+            {
+              ... on Product {
+                canAfford
+                requestedB: canAffordWithAndWithoutDiscount
+                canAffordWithAndWithoutDiscount
+                requestedA: canAffordWithAndWithoutDiscount
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
 #[test]
 fn one() -> Result<(), Box<dyn Error>> {
     init_logger();

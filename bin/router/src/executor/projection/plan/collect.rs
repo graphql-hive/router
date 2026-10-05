@@ -61,7 +61,12 @@ impl<'arena> Collector<'arena> {
                         frag_cond,
                     );
                     for mut frag_field in frag_fields {
-                        frag_field.parent_scope = Some(fragment_scope);
+                        // Narrow, don't replace. In `... on Node { ... on Cat { x } }`,
+                        // `x` is only for Cats, not for every Node.
+                        frag_field.parent_scope = Some(match frag_field.parent_scope {
+                            Some(inner) => inner.intersect(fragment_scope, self.arena),
+                            None => fragment_scope,
+                        });
                         collected.push(frag_field);
                     }
                 }
@@ -351,5 +356,55 @@ mod tests {
         assert_eq!(project("A", "X"), expected);
         assert_eq!(project("A", "Y"), expected);
         assert_eq!(project("B", "X"), expected);
+    }
+
+    #[test]
+    fn nested_fragment_keeps_its_own_type_under_a_conditional_parent_fragment() {
+        let schema = parse_schema(
+            r#"
+                interface Node { id: ID! }
+                type Cat implements Node { id: ID! }
+                type Dog implements Node { id: ID! }
+                type Query { things: [Node!]! }
+                "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+        let planner = Planner::new_from_supergraph(&schema, Default::default()).unwrap();
+        // `@include` keeps normalization from dropping the `Node` fragment.
+        let operation = parse_operation(
+            r#"query($y: Boolean!) { things { ... on Node @include(if: $y) { ... on Cat { id } } } }"#,
+        );
+        let normalized = normalize_operation(&supergraph, &operation, None).unwrap();
+        let schema_metadata = planner.consumer_schema.schema_metadata();
+        let (_, plan) =
+            ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+
+        let thing = |type_name: &'static str, id: &'static str| {
+            JsonValue::Object(vec![
+                ("__typename", JsonValue::String(type_name.into())),
+                ("id", JsonValue::String(id.into())),
+            ])
+        };
+        let data = JsonValue::Object(vec![(
+            "things",
+            JsonValue::Array(vec![thing("Cat", "c1"), thing("Dog", "d1")]),
+        )]);
+        let variables = Some([("y".to_string(), sonic_rs::json!(true))].into());
+        let output = project_by_operation(
+            &data,
+            vec![],
+            &Default::default(),
+            "Query",
+            &plan,
+            &variables,
+            256,
+            &schema_metadata,
+        )
+        .unwrap();
+
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            r#"{"data":{"things":[{"id":"c1"},{}]}}"#
+        );
     }
 }

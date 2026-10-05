@@ -8,6 +8,41 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
+/// https://github.com/graphql-hive/router/issues/1189
+///
+/// With a variable condition, the fetch is conditional and still contains the selected field.
+#[test]
+fn issue_1189_variable_skip_is_preserved_in_subgraph_operation() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($v: Boolean!) {
+          product @skip(if: $v) {
+            price
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/simple-include-skip.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($v:Boolean!) {
+          product @skip(if: $v) {
+            price
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
 #[test]
 fn issue_281_test() -> Result<(), Box<dyn Error>> {
     init_logger();
@@ -1110,6 +1145,457 @@ fn issue_1539_requires_on_self_referential_entity() -> Result<(), Box<dyn Error>
                 name
               }
             }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// https://github.com/graphql-hive/router/issues/1308
+/// Requirements crossing an entity interface must preserve their concrete type conditions
+/// after an additional entity hop.
+#[test]
+fn issue_1308_requires_through_entity_interface_after_entity_hop() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          cage {
+            listings {
+              rank
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1308.supergraph.graphql", document)?;
+    let query_plan = query_plan.to_string();
+
+    assert!(query_plan.contains("tricks"));
+    assert!(query_plan.contains("whiskers"));
+    assert!(query_plan.contains("rank"));
+
+    Ok(())
+}
+
+/// Reduced from generated fixture #1308, seed 0. The field-level condition reaches a different
+/// failure path than the unconditional issue query: planning loses the `Animal` definition while
+/// resolving the concrete-type requirements for `rank`.
+/// The `search` call for `pet` only needs the `search` call above it, so it goes into that one,
+/// under `... on Listing @include(if: $includeRank)`.
+#[test]
+fn issue_1308_conditional_rank_keeps_concrete_requires_types() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($includeRank: Boolean!) {
+          cage {
+            listings {
+              rank @include(if: $includeRank)
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1308.supergraph.graphql", document)?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "catalog") {
+          {
+            cage {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "cage") {
+          Fetch(service: "search") {
+            {
+              ... on Cage {
+                __typename
+                id
+              }
+            } =>
+            ($includeRank:Boolean!) {
+              ... on Cage {
+                listings {
+                  __typename
+                  id
+                  ... on Listing @include(if: $includeRank) {
+                    pet {
+                      __typename
+                      id
+                    }
+                  }
+                }
+              }
+            }
+          },
+        },
+        Include(if: $includeRank) {
+          Sequence {
+            Flatten(path: "cage.listings.@.pet") {
+              Fetch(service: "catalog") {
+                {
+                  ... on Animal {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Animal {
+                    __typename
+                    ... on Cat {
+                      whiskers
+                    }
+                    ... on Dog {
+                      tricks
+                    }
+                  }
+                }
+              },
+            },
+            Flatten(path: "cage.listings.@") {
+              Fetch(service: "ranking") {
+                {
+                  ... on Listing {
+                    __typename
+                    pet {
+                      __typename
+                      ... on Dog {
+                        tricks
+                      }
+                      ... on Cat {
+                        whiskers
+                      }
+                    }
+                    id
+                  }
+                } =>
+                {
+                  ... on Listing {
+                    rank
+                  }
+                }
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// https://github.com/graphql-hive/router/issues/1309
+/// Requirements through an entity interface must retain concrete-type field conditions.
+/// `whiskers` and `tricks` can each come through `Animal`'s key or their own type's key, at
+/// the same cost. Both go one way, so `catalog` is called once.
+#[test]
+fn issue_1309_requires_through_entity_interface() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          listings {
+            rank
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1309.supergraph.graphql", document)?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "search") {
+          {
+            listings {
+              __typename
+              id
+              pet {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "listings.@.pet") {
+          Fetch(service: "catalog") {
+            {
+              ... on Animal {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Animal {
+                __typename
+                ... on Cat {
+                  whiskers
+                }
+                ... on Dog {
+                  tricks
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "listings.@") {
+          Fetch(service: "ranking") {
+            {
+              ... on Listing {
+                __typename
+                pet {
+                  __typename
+                  ... on Dog {
+                    tricks
+                  }
+                  ... on Cat {
+                    whiskers
+                  }
+                }
+                id
+              }
+            } =>
+            {
+              ... on Listing {
+                rank
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// https://github.com/graphql-hive/router/issues/1310
+/// A nested `@requires` can depend on fields fetched from separate subgraphs.
+#[test]
+fn issue_1310_nested_requires_with_multiple_providers() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          pet {
+            checkup {
+              grade
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1310.supergraph.graphql", document)?;
+    let query_plan = query_plan.to_string();
+
+    for expected in ["age", "weight", "fee", "grade"] {
+        assert!(
+            query_plan.contains(expected),
+            "missing {expected}: {query_plan}"
+        );
+    }
+
+    Ok(())
+}
+
+/// https://github.com/graphql-hive/router/issues/1311
+/// Same field with different arguments under separate type conditions must not panic or lose
+/// either requested value while planning.
+#[test]
+fn issue_1311_different_arguments_under_type_conditions() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          storefront {
+            departments {
+              ... on Aquatics {
+                photo {
+                  thumbnail(width: 100)
+                }
+              }
+              ... on Reptiles {
+                photo {
+                  thumbnail(width: 200)
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1311.supergraph.graphql", document)?;
+    let query_plan = query_plan.to_string();
+
+    assert!(query_plan.contains("thumbnail(width: 100)"));
+    assert!(query_plan.contains("thumbnail(width: 200)"));
+
+    Ok(())
+}
+
+/// https://github.com/graphql-hive/router/issues/1647
+/// `record` and `search` both sit under `@include(if: $withDetails)`, in one `accounts` fetch
+/// that runs either way. `invoices` sends `record` on to `billing`, and that call is under the
+/// condition. `search` has to keep its `@include`, or `accounts` resolves it when
+/// `$withDetails` is false.
+#[test]
+fn issue_1647_include_on_field_after_conditional_entity_call() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($withDetails: Boolean!, $id: ID! = "", $term: String! = "") {
+          record(id: $id) @include(if: $withDetails) {
+            ... on User {
+              id
+              email
+              invoices
+            }
+          }
+          listed: catalog {
+            search(term: $term, kind: "item", source: "store") @include(if: $withDetails) {
+              ... on Item {
+                id
+                label
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1647.supergraph.graphql", document)?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "accounts") {
+          query ($id:ID!="",$term:String!="",$withDetails:Boolean!) {
+            record(id: $id) @include(if: $withDetails) {
+              __typename
+              ... on User {
+                __typename
+                id
+                email
+              }
+            }
+            listed: catalog {
+              search(kind: "item", source: "store", term: $term) @include(if: $withDetails) {
+                __typename
+                ... on Item {
+                  id
+                  label
+                }
+              }
+            }
+          }
+        },
+        Include(if: $withDetails) {
+          Flatten(path: "record|[User]") {
+            Fetch(service: "billing") {
+              {
+                ... on User {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on User {
+                  invoices
+                }
+              }
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Same as above, with the condition on a `... on Query` fragment instead of on `search`.
+/// The fragment has to keep its `@include`, or `accounts` resolves `listed` when
+/// `$withDetails` is false.
+#[test]
+fn issue_1647_include_on_fragment_after_conditional_entity_call() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($withDetails: Boolean!, $id: ID! = "", $term: String! = "") {
+          record(id: $id) @include(if: $withDetails) {
+            ... on User {
+              id
+              email
+              invoices
+            }
+          }
+          ... on Query @include(if: $withDetails) {
+            listed: catalog {
+              search(term: $term, kind: "item", source: "store") {
+                ... on Item {
+                  id
+                  label
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1647.supergraph.graphql", document)?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "accounts") {
+          query ($id:ID!="",$term:String!="",$withDetails:Boolean!) {
+            record(id: $id) @include(if: $withDetails) {
+              __typename
+              ... on User {
+                __typename
+                id
+                email
+              }
+            }
+            ... on Query @include(if: $withDetails) {
+              listed: catalog {
+                search(kind: "item", source: "store", term: $term) {
+                  __typename
+                  ... on Item {
+                    id
+                    label
+                  }
+                }
+              }
+            }
+          }
+        },
+        Include(if: $withDetails) {
+          Flatten(path: "record|[User]") {
+            Fetch(service: "billing") {
+              {
+                ... on User {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on User {
+                  invoices
+                }
+              }
+            },
           },
         },
       },

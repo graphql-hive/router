@@ -1,10 +1,13 @@
 pub mod accounts;
 pub mod books;
+pub mod catalog;
 pub mod graphql_with_subscriptions;
 pub mod inventory;
 pub mod monolith;
 pub mod products;
+pub mod ranking;
 pub mod reviews;
+pub mod search;
 
 use std::sync::{atomic::AtomicUsize, Arc};
 
@@ -135,6 +138,18 @@ pub fn subgraphs_app(
         .route(
             "/monolith",
             post_service(GraphQL::new(monolith::get_schema())),
+        )
+        .route(
+            "/search",
+            post_service(GraphQL::new(search::get_subgraph())),
+        )
+        .route(
+            "/catalog",
+            post_service(GraphQL::new(catalog::get_subgraph())),
+        )
+        .route(
+            "/ranking",
+            post_service(GraphQL::new(ranking::get_subgraph())),
         )
         .route_layer(middleware::from_fn(add_subgraph_header))
         .route_layer(middleware::from_fn(delay_middleware));

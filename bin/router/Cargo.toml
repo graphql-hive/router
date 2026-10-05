@@ -206,4 +206,5 @@ insta = { workspace = true }
 mockito = { workspace = true }
 tracing-tree = { workspace = true }
 subgraphs = { path = "../../bench/subgraphs" }
+graphql-differential = { path = "../differential" }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }

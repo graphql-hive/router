@@ -7,11 +7,10 @@ use std::{
 use crate::query_planner::{
     ast::{
         merge_path::{Condition, MergePath},
-        safe_merge::{AliasesRecords, SafeSelectionSetMerger},
         selection_item::SelectionItem,
         selection_set::{
             find_selection_set_by_path_mut, merge_selection_set, selection_items_are_subset_of,
-            FieldSelection, InlineFragmentSelection, SelectionSet,
+            FieldSelection, InlineFragmentSelection, ResponseKeyConflict, SelectionSet,
         },
     },
     planner::fetch::state::{MultiTypeFetchStep, SingleTypeFetchStep},
@@ -23,6 +22,8 @@ pub enum FetchStepSelectionsError {
     UnexpectedMissingDefinition(String),
     #[error("Path '{0}' cannot be found in selection set of type {1}")]
     MissingPathInSelection(String, String),
+    #[error(transparent)]
+    ResponseKeyConflict(#[from] ResponseKeyConflict),
 }
 
 #[derive(Debug, Clone)]
@@ -154,7 +155,6 @@ fn try_lift_condition(
     let SelectionItem::InlineFragment(first_fragment) = first_item else {
         return None;
     };
-    debug_assert_eq!(first_fragment.type_condition, type_name);
 
     // Use the first fragment as baseline condition.
     // Valid means exactly one conditional directive:
@@ -174,8 +174,10 @@ fn try_lift_condition(
             return false;
         };
 
-        debug_assert_eq!(inline_fragment.type_condition, type_name);
-        inline_fragment_condition(inline_fragment).as_ref() == Some(&condition)
+        // `... on Cat @include(if: $x)` under `Animal` is a type condition as well, lifting
+        // only the `@include` would lose it.
+        inline_fragment.type_condition == type_name
+            && inline_fragment_condition(inline_fragment).as_ref() == Some(&condition)
     });
 
     if !all_match {
@@ -355,7 +357,7 @@ impl<State> FetchStepSelections<State> {
                 )
             })?;
 
-        merge_selection_set(selection_set_at_path, &selection_set, as_first);
+        merge_selection_set(selection_set_at_path, &selection_set, as_first)?;
 
         Ok(())
     }
@@ -474,53 +476,6 @@ impl FetchStepSelections<MultiTypeFetchStep> {
         Ok(())
     }
 
-    pub fn safe_migrate_from_another(
-        &mut self,
-        other: &Self,
-        fetch_path: &MergePath,
-        (self_used_for_requires, other_used_for_requires): (bool, bool),
-    ) -> Result<Vec<(String, AliasesRecords)>, FetchStepSelectionsError> {
-        let mut aliases_made: Vec<(String, AliasesRecords)> = Vec::new();
-        let maybe_merge_into = self.try_as_single().map(|str| str.to_string());
-
-        for (definition_name, selection_set) in other.iter_selections() {
-            let target_type = maybe_merge_into.as_ref().unwrap_or(definition_name);
-            let current = self
-                .selections_for_definition_mut(target_type)
-                .ok_or_else(|| {
-                    FetchStepSelectionsError::UnexpectedMissingDefinition(target_type.to_string())
-                })?;
-
-            let selection_at_path = find_selection_set_by_path_mut(current, fetch_path)
-                .ok_or_else(|| {
-                    FetchStepSelectionsError::MissingPathInSelection(
-                        fetch_path.to_string(),
-                        target_type.to_string(),
-                    )
-                })?;
-
-            let mut merger = SafeSelectionSetMerger::default();
-            let current_aliases_made = merger.merge_selection_set(
-                selection_at_path,
-                selection_set,
-                (self_used_for_requires, other_used_for_requires),
-                false,
-            );
-
-            if !current_aliases_made.is_empty() {
-                // The merger only knows paths from where we merged, so we add the rest,
-                // to make them start at the step's root.
-                let current_aliases_made = current_aliases_made
-                    .into_iter()
-                    .map(|(alias_path, alias)| (fetch_path.concat(&alias_path), alias))
-                    .collect();
-                aliases_made.push((target_type.to_string(), current_aliases_made));
-            }
-        }
-
-        Ok(aliases_made)
-    }
-
     pub fn wrap_with_condition(&mut self, condition: Condition) {
         for (def_name, selection_set) in self.selections.iter_mut() {
             Self::wrap_definition_selection_with_condition(def_name, selection_set, &condition);
@@ -575,7 +530,7 @@ impl FetchStepSelections<MultiTypeFetchStep> {
 
 impl FetchStepSelections<SingleTypeFetchStep> {
     pub fn add(&mut self, selection_set: &SelectionSet) -> Result<(), FetchStepSelectionsError> {
-        merge_selection_set(self.selection_set_mut(), selection_set, false);
+        merge_selection_set(self.selection_set_mut(), selection_set, false)?;
 
         Ok(())
     }
