@@ -70,9 +70,7 @@ use crate::executor::{
     plugin_context::PluginRequestState,
     plugin_trait::{EarlyHTTPResponse, EndControlFlow, StartControlFlow},
     plugins::hooks,
-    projection::{
-        plan::ProjectionPlan, request::project_requires_value, response::project_by_operation,
-    },
+    projection::{plan::ProjectionPlan, request::project_requires, response::project_by_operation},
     response::{
         graphql_error::{GraphQLError, GraphQLErrorPath, GraphQLErrorPathSegment},
         merge::deep_merge,
@@ -1017,7 +1015,7 @@ impl<'exec> Executor<'exec> {
                             entity
                         };
 
-                        let is_projected = project_requires_value(
+                        let is_projected = project_requires(
                             possible_types,
                             required_selections,
                             entity,
@@ -1557,7 +1555,7 @@ impl<'exec> Executor<'exec> {
                         entity
                     };
 
-                    let is_projected = project_requires_value(
+                    let is_projected = project_requires(
                         possible_types,
                         required_selections,
                         entity,

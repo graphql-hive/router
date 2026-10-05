@@ -33,7 +33,7 @@ fn write_typename_field(buffer: &mut Vec<u8>, type_name: &str) {
 /// Writes the representation of `entity`. Returns `false`, and writes nothing, when the entity
 /// can't be sent: it misses a selected field, or it's of none of the selection's types.
 /// `nested` is whether `entity` is inside the representation, in one of its fields.
-pub(crate) fn project_requires_value(
+pub(crate) fn project_requires(
     possible_types: &PossibleTypes,
     requires_selections: RequiresSelectionSetRef<'_>,
     entity: &Value,
@@ -76,7 +76,7 @@ pub(crate) fn project_requires_value(
 
             let mut first = true;
             for entity_item in entity_array {
-                let projected = project_requires_value(
+                let projected = project_requires(
                     possible_types,
                     requires_selections,
                     entity_item,
@@ -211,7 +211,7 @@ fn project_requires_map_mut(
                     continue;
                 }
 
-                let projected = project_requires_value(
+                let projected = project_requires(
                     possible_types,
                     selections,
                     original,
