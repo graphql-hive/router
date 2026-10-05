@@ -307,6 +307,7 @@ mod tests {
             &mut buffer,
             true,
             None,
+            false,
         );
 
         if !projected {
