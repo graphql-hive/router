@@ -91,6 +91,10 @@ jobs:
         with:
           target: ${{ matrix.rust_target }}
           cache-key: cache_v2_${{ matrix.name }}
+          # zig's linker warns about the `-O1` flag rustc passes ("ignoring deprecated linker
+          # optimization setting"), which `build.warnings = "deny"` (the v2 default) turns into a
+          # build failure. Warnings are enforced by the check jobs in ci.yaml, not by release builds.
+          build-warnings: warn
 
       # Only if using Zigbuild
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
