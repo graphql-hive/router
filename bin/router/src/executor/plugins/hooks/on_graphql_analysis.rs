@@ -4,7 +4,7 @@ use crate::query_planner::ast::operation::OperationDefinition;
 use crate::query_planner::state::supergraph_state::OperationKind;
 
 use crate::executor::execution::client_request_details::ClientRequestDetails;
-use crate::executor::execution::plan::{CoerceVariablesPayload, PlanExecutionOutput};
+use crate::executor::execution::plan::{CoerceVariablesPayload, PlanExecutionOutput, VariablesMap};
 use crate::executor::hooks::on_graphql_params::GraphQLParams;
 use crate::executor::introspection::schema::SchemaMetadata;
 use crate::executor::operation_filter::{OperationFilter, OperationFilterOutput};
@@ -55,6 +55,16 @@ impl<'exec> OnGraphqlAnalysisHookPayload<'exec> {
             variable_payload,
             operation_filter_visitors: Vec::new(),
         }
+    }
+
+    /// All variables of the operation, after defaults and input coercion.
+    pub fn coerced_variables(&self) -> Option<&VariablesMap> {
+        self.variable_payload.variables()
+    }
+
+    /// The value of the variable `name`, after defaults and input coercion.
+    pub fn coerced_variable(&self, name: &str) -> Option<&sonic_rs::Value> {
+        self.variable_payload.variable(name)
     }
 
     /// Register a visitor that decides per-field and per-inline-fragment
