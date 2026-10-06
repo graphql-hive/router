@@ -41,6 +41,8 @@ pub struct GraphQLParams {
     /// The variables map parsed from the HTTP request body by the router
     /// This is a map of variable names to their values sent by the client in the request
     /// [Learn more about GraphQL variables](https://graphql.org/learn/queries/#variables)
+    ///
+    /// Variables are raw and unprocessed, and contains the values sent by the client in the request body.
     pub variables: HashMap<String, Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extensions: Option<HashMap<String, Value>>,
