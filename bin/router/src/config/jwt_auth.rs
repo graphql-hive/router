@@ -138,6 +138,19 @@ pub enum JwksProviderSourceConfig {
         /// If set to `true`, the JWKS will be fetched on startup and cached. In case of invalid JWKS, the error will be ignored and the plugin will try to fetch again when server receives the first request.
         /// If set to `false`, the JWKS will be fetched on-demand, when the first request comes in.
         prefetch: Option<bool>,
+        /// When set, a token whose `kid` is not in the cached JWKS triggers an immediate re-fetch,
+        /// so a rotated signing key is accepted without waiting for the next poll.
+        /// The value is the minimum time between two such re-fetches: concurrent misses share
+        /// one fetch, and unknown `kid`s (which the client controls) cannot make the router
+        /// hammer the JWKS endpoint. Disabled when not set.
+        #[serde(
+            default,
+            deserialize_with = "humantime_serde::deserialize",
+            serialize_with = "humantime_serde::serialize",
+            skip_serializing_if = "Option::is_none"
+        )]
+        #[schemars(with = "Option<String>")]
+        refresh_on_unknown_kid: Option<Duration>,
         /// Additional HTTP headers to send with the JWKS request.
         ///
         /// Useful when the JWKS endpoint is not reachable as a plain public URL:
