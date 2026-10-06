@@ -2812,7 +2812,7 @@ dependencies = [
  "ntex-router",
  "ntex-rt",
  "ntex-server 4.1.1",
- "ntex-service 5.0.1",
+ "ntex-service 5.1.0",
  "ntex-tls 4.0.0",
  "ntex-util 4.1.0",
  "object_store",
@@ -4684,7 +4684,7 @@ dependencies = [
  "log",
  "ntex-codec",
  "ntex-io 4.0.1",
- "ntex-service 5.0.1",
+ "ntex-service 5.1.0",
  "ntex-util 4.1.0",
  "pin-project-lite",
 ]
@@ -4743,7 +4743,7 @@ dependencies = [
  "ntex-io 4.0.1",
  "ntex-net 4.0.1",
  "ntex-server 4.1.1",
- "ntex-service 5.0.1",
+ "ntex-service 5.1.0",
  "ntex-util 4.1.0",
  "pin-project-lite",
  "thiserror 2.0.21",
@@ -4767,9 +4767,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-httparse"
-version = "2.1.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3cd04f3587bb190f11af135f652edff77f368d0940db134fa5a48c1f12c60b07"
+checksum = "5598889c5ca1343390da8d5a53ea04a3d2b65a21939989742e383f3666221f24"
 dependencies = [
  "simdutf8",
 ]
@@ -4803,7 +4803,7 @@ dependencies = [
  "ntex-bytes",
  "ntex-codec",
  "ntex-rt",
- "ntex-service 5.0.1",
+ "ntex-service 5.1.0",
  "ntex-util 4.1.0",
  "pin-project-lite",
  "slab",
@@ -4887,7 +4887,7 @@ dependencies = [
  "ntex-io-uring",
  "ntex-polling",
  "ntex-rt",
- "ntex-service 5.0.1",
+ "ntex-service 5.1.0",
  "ntex-util 4.1.0",
  "scoped-tls",
  "slab",
@@ -4987,7 +4987,7 @@ dependencies = [
  "ntex-net 4.0.1",
  "ntex-polling",
  "ntex-rt",
- "ntex-service 5.0.1",
+ "ntex-service 5.1.0",
  "ntex-util 4.1.0",
  "oneshot",
  "socket2",
@@ -5007,9 +5007,9 @@ dependencies = [
 
 [[package]]
 name = "ntex-service"
-version = "5.0.1"
+version = "5.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5b0cdaf04e04e38a644cfe05c744dcd993ef95687a856d2cc596c515a5fb512"
+checksum = "c19ad4393a74c8d15c885dd62a6f47192e9cab3611d0ea11b0b5d19651b3ee51"
 dependencies = [
  "foldhash 0.2.0",
  "log",
@@ -5043,7 +5043,7 @@ dependencies = [
  "ntex-error",
  "ntex-io 4.0.1",
  "ntex-net 4.0.1",
- "ntex-service 5.0.1",
+ "ntex-service 5.1.0",
  "ntex-util 4.1.0",
  "thiserror 2.0.21",
 ]
@@ -5083,7 +5083,7 @@ dependencies = [
  "ntex-bytes",
  "ntex-error",
  "ntex-rt",
- "ntex-service 5.0.1",
+ "ntex-service 5.1.0",
  "pin-project-lite",
  "slab",
  "thiserror 2.0.21",
