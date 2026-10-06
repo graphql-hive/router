@@ -116,6 +116,553 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.3.2 (2026-10-06)
+
+### Features
+
+#### Expose coerced variables in `on_graphql_analysis`
+
+`OnGraphqlAnalysisHookPayload` now has two methods for reading the operation's variables after defaults and input coercion:
+
+- `coerced_variable(name)` returns the value of a single variable.
+- `coerced_variables()` returns all variables.
+
+The raw values in `graphql_params` only hold what the client sent, so a variable the client left out is missing there even when the operation declares a default. These methods return the value that execution uses.
+
+Closes https://github.com/graphql-hive/router/issues/1650
+
+### Fixes
+
+#### Fix batched calls running when their fragment's condition is false
+
+Two calls to the same subgraph under the same conditional fragment can be batched into one. The batched call lost the fragment's condition, so it ran even when the condition was false.
+
+```graphql
+query ($a: Boolean!, $b: Boolean!) {
+  users {
+    reviews {
+      product {
+        upc
+        ... on Product @include(if: $a) {
+          notes # comes from subgraph `products`
+          price @include(if: $b) # comes from subgraph `products`
+        }
+      }
+    }
+  }
+}
+```
+
+Before, the call to `products` ran every time:
+
+```
+Flatten(path: "users.@.reviews.@.product|[Product]") {
+  Fetch(service: "products") { ... on Product { ... on Product @include(if: $b) { price } ... on Product @include(if: $a) { notes } } }
+}
+```
+
+After, it only runs when `$a` is true (condition is kept):
+
+```
+Include(if: $a) {
+  Flatten(path: "users.@.reviews.@.product|[Product]") {
+    Fetch(service: "products") { ... on Product { ... on Product @include(if: $b) { price } ... on Product @include(if: $a) { notes } } }
+  }
+}
+```
+
+`reviews` only sends the `__typename` that `products` needs when `$a` is true. With `$a: false`, the call went out without `__typename`, so `products` rejected the whole request, and every other field in that request came back `null`.
+
+#### Fix a client alias with the same name as a key field
+
+When a query used a key field's name as an alias for another field, like `id: name`, that field's value replaced the key. Later requests that needed the key then sent the wrong value, for example the user's name as their `id`.
+
+```graphql
+query ($x: Boolean!) {
+  userInA {
+    id: name
+    aName @include(if: $x) # needs `name`, looked up by the user's `id`
+  }
+}
+```
+
+Before, the call for `aName` read `id` after `id: name` had overwritten it:
+
+```graphql
+## a
+userInA { __typename id }
+## b
+... on User { id: name }
+## a, for aName
+... on User { __typename name id }
+```
+
+After, the key is kept under a name of its own:
+
+```graphql
+## a
+userInA { __typename _internal_qp_alias_0: id }
+## a, for aName
+... on User { __typename name id: _internal_qp_alias_0 }
+```
+
+#### Fix `@requires` fields under a conditional fragment on `Query`
+
+A query with two or more `@requires` fields under a conditional fragment on the root type failed to plan.
+
+```graphql
+query ($x: Boolean!) {
+  ... on Query @include(if: $x) {
+    userInB {
+      aName
+      cName
+    }
+  }
+}
+```
+
+Before: `MissingPathInSelection("|[Query] @include(if: $x).userInB", "Query")`. Moving the first `@requires` call into the root request removed the `... on Query @include(if: $x)` fragment that the second one needed.
+
+After: the query plans correctly and does not error.
+
+#### Fewer subgraph requests for fields under `@include` and `@skip`
+
+A call to another subgraph planned under `@include` or `@skip` always went out as a request of its own, so it could be skipped as a whole. Now it can go into a request to the same subgraph that is sent anyway: one for the same objects, or the one it gets its objects from. Its fields go under `... on T @include(if: $x)`, and the subgraph skips them when the condition is false. No variable value leads to more requests than before.
+
+For example, in this operation:
+
+```graphql
+query ($includeRank: Boolean!) {
+  cage {
+    listings {
+      rank @include(if: $includeRank)
+    }
+  }
+}
+```
+
+Before, `search` was called twice: once for the listings, and once more, under `$includeRank`, for each listing's `pet`.
+
+After, `pet` is part of the first call, and the condition goes inside the operation:
+
+```graphql
+... on Cage {
+  listings {
+    __typename
+    id
+    ... on Listing @include(if: $includeRank) { pet { __typename id } }
+  }
+}
+```
+
+#### Fix fields with different arguments, aliases or conditions counted as the same
+
+To decide whether a request already has a field, for example a key or a field a `@requires` needs, the router compared only field names. So it treated these as the same:
+
+| Request has               | Counted as also having, before | After |
+| ------------------------- | ------------------------------ | ----- |
+| `price(currency: "GBP")`  | `price(currency: "EUR")`       | no    |
+| `price(currency: "GBP")`  | `gbp: price(currency: "GBP")`  | no    |
+| `a @include(if: $x)`      | `a @include(if: $y)`, or `a`   | no    |
+| `... on Cat { whiskers }` | `... on Dog { whiskers }`      | no    |
+
+A request that was still needed could then be dropped as a duplicate, or another request could count on a field it didn't have.
+
+The comparison now fully checks the alias, the arguments, the conditions and the fragments.
+
+#### Fix `@include` dropped from a field after a conditional call to another subgraph
+
+When a field under `@include(if: $x)` needed another subgraph, a later field with the same condition in the same request lost its `@include`.
+
+The subgraph then resolved it even when `$x` was false. The same happened with a conditional fragment like `... on Query @include(if: $x)`.
+
+```graphql
+query ($withDetails: Boolean!, $term: String!) {
+  record(id: "1") @include(if: $withDetails) {
+    ... on User {
+      id
+      email
+      invoices
+    } # `invoices` comes from `billing`
+  }
+  listed: catalog {
+    search(term: $term, kind: "item") @include(if: $withDetails) {
+      ... on Item {
+        id
+        label
+      }
+    }
+  }
+}
+```
+
+Before, `accounts` got `search` without its condition:
+
+```graphql
+listed: catalog { search(kind: "item", term: $term) { ... } }
+```
+
+After:
+
+```graphql
+listed: catalog { search(kind: "item", term: $term) @include(if: $withDetails) { ... } }
+```
+
+Closes https://github.com/graphql-hive/router/issues/1647
+
+#### Ensure mutation run in sequence across subgraphs
+
+The fields of a mutation have to run one after another. The router started the next field as soon as the previous field's own request was done, without waiting for the other requests that field needed, like an entity call to another subgraph.
+
+```graphql
+mutation {
+  create: addProduct(input: { name: "new", price: 599.99 }) {
+    # c
+    isExpensive # comes from another subgraph
+  }
+  count: add(num: 1) #c
+}
+```
+
+Before, `count` ran at the same time as the `isExpensive` call for `create`, because they originated from different subgraphs:
+
+```
+Sequence {
+  Fetch(service: "a") { create: addProduct(...) }
+  Parallel {
+    Fetch(service: "c") { count: add(num: 1) }
+    Flatten(path: "create") { Fetch(service: "b") { isExpensive } }
+  }
+}
+```
+
+After, `count` waits for it:
+
+```
+Sequence {
+  Fetch(service: "a") { create: addProduct(...) }
+  Flatten(path: "create") { Fetch(service: "b") { isExpensive } }
+  Fetch(service: "c") { count: add(num: 1) }
+}
+```
+
+Consecutive fields that go to the same subgraph are still sent together in one request, in order, if applicable.
+
+#### Fix calls under nested conditions running when an outer condition is false
+
+A call to another subgraph, planned under several conditional fragments or fields, only checked the innermost condition. With an outer condition false and the inner one true, the router could still call the subgraph, for fields the client had skipped.
+
+```graphql
+query ($a: Boolean!, $b: Boolean!) {
+  userInA {
+    id
+    ... on User @include(if: $a) {
+      ... on User @include(if: $b) {
+        name # comes from subgraph `b`
+      }
+    }
+  }
+}
+```
+
+Before, the call to `b` only checked `$b`:
+
+```
+Include(if: $b) {
+  Flatten(path: "userInA|[User]|[User]") { Fetch(service: "b") { ... on User { name } } }
+}
+```
+
+After, it checks both:
+
+```
+Include(if: $a) {
+  Include(if: $b) {
+    Flatten(path: "userInA|[User]|[User]") { Fetch(service: "b") { ... on User { name } } }
+  }
+}
+```
+
+#### Fix `null` for a fragment inside a conditional fragment on an interface
+
+A fragment on an object type inside a conditional fragment on an interface, like `... on Node @include(if: $y) { ... on Cat { eur } }`, lost its own type when the router put the response together. So a field resolved through an `@interfaceObject` came back as `null`.
+
+```graphql
+query ($y: Boolean!) {
+  things {
+    ... on Node @include(if: $y) {
+      ... on Cat { eur }
+    }
+  }
+}
+```
+
+With `$y: true`, before:
+
+```json
+{ "data": { "things": [{ "eur": null }, {}] } }
+```
+
+After:
+
+```json
+{ "data": { "things": [{ "eur": 1100 }, {}] } }
+```
+
+#### Fix `@requires` nested inside another `@requires`
+
+A `@requires` field inside the result of another `@requires` field failed to plan when the outer one needed fields from two different subgraphs.
+
+With `checkup @requires(fields: "weight age")`, where `weight` and `age` come from two subgraphs, and `grade @requires(fields: "fee")` on `Checkup`:
+
+```graphql
+query {
+  pet {
+    checkup {
+      grade
+    }
+  }
+}
+```
+
+Before: `NonSingleParent(2)` (internal) error, so the router answered with `QUERY_PLAN_BUILD_FAILED`. The planner expected the request for `checkup` to wait for one other request, but it waits for two.
+
+After: the query plans correctly.
+
+Closes https://github.com/graphql-hive/router/issues/1310
+
+#### Fix an error for an operation whose fields are all skipped
+
+When `@skip(if: true)` or `@include(if: false)` removed every field of a query or a mutation, the router answered with an error instead of an empty result.
+
+```graphql
+query {
+  topProducts @skip(if: true) {
+    name
+  }
+}
+```
+
+Before: HTTP 500 with `QUERY_PLAN_BUILD_FAILED`, because there was nothing to plan.
+
+After: HTTP 200 with `{ "data": {} }`.
+
+Closes https://github.com/graphql-hive/router/issues/1189
+
+#### Fix `MissingStep` when several fields need the same `@requires` chain
+
+Queries asking for several fields that rely on the same chain of `@requires` fields, directly, through fragments or under aliases, could fail with `QUERY_PLAN_BUILD_FAILED`. The planner combines requests in several rounds, and a later round could still point at a request that an earlier round had already combined into another one.
+
+```graphql
+query {
+  product {
+    requestedA: canAffordWithAndWithoutDiscount
+  }
+  ... on Query {
+    product {
+      canAffordWithAndWithoutDiscount
+    }
+  }
+  ... on Query {
+    product {
+      ... {
+        ... on Product {
+          requestedB: canAffordWithAndWithoutDiscount
+        }
+      }
+      canAfford
+    }
+  }
+}
+```
+
+Before: `failed to build fetch graph: MissingStep(...)`. After: the query plans correctly.
+
+#### Fix invalid subgraph requests from temporary field names
+
+Sometimes the router sends a field to a subgraph under a temporary name, like `_internal_qp_alias_0`, and restores the real name in the response.
+
+For example, when the subgraph declares the field with a different type on two object types. Two problems could make the subgraph reject the request:
+
+- The router compared only the outer type, so `[Item]` and `Item` could end up under one name.
+- It checked only the fields right next to the renamed one. So it could reuse a temporary name that was already taken elsewhere in the same object, by another renamed field or by the client.
+
+```graphql
+query {
+  i {
+    _internal_qp_alias_0: __typename
+    ... on TypeA {
+      strField
+    }
+    ... on TypeB {
+      strField
+    }
+  }
+}
+```
+
+Before, two different fields went out under one name:
+
+```graphql
+_internal_qp_alias_0: __typename
+... on TypeB { _internal_qp_alias_0: strField }
+```
+
+After:
+
+```graphql
+_internal_qp_alias_0: __typename
+... on TypeB { _internal_qp_alias_1: strField }
+```
+
+If the planner would still put two different fields under one name, planning now fails with an error instead of sending an invalid request.
+
+#### Fix `@requires` dropping an object that only has `__typename`
+
+When a subgraph needed a nested object through `@requires`, the router sent the object's `__typename` only together with another of its fields. An object of a type that none of the selection's fragments are for has nothing else to send, so the router dropped it: the field went missing, or the list lost the item.
+
+```graphql
+type Listing @key(fields: "id") {
+  id: ID!
+  pet: Animal @external
+  rank: Float
+    @requires(
+      fields: "pet { __typename ... on Dog { tricks } ... on Cat { whiskers } }" # Pet can be a Bird, Dog, or Cat
+    )
+}
+```
+
+For a listing whose pet is a `Bird`, before, `ranking` got the listing without its pet:
+
+```json
+{ "__typename": "Listing", "id": "l3" } # `pet` is fully missing here
+```
+
+After:
+
+```json
+{ "__typename": "Listing", "pet": { "__typename": "Bird" }, "id": "l3" } # now it's here, only with __typename
+```
+
+In a list, like `pets { __typename ... on Dog { tricks } ... on Cat { whiskers } }`, a Bird is now kept in its place instead of being removed.
+
+The same goes when the selection doesn't ask for `__typename`, like `pet { ... on Dog { tricks } ... on Cat { whiskers } }`: the Bird is sent as `{ "__typename": "Bird" }`, the way the Dog and the Cat get their `__typename` too.
+
+An object that misses a selected field is still left out, so an entity without its key isn't sent.
+
+Closes https://github.com/graphql-hive/router/issues/1308
+
+#### Fix `@requires` that reads fields of an interface's types
+
+A `@requires` reading fields of specific types behind an interface, like `pet { __typename ... on Dog { tricks } ... on Cat { whiskers } }` where `pet` is an `Animal`, failed with `QUERY_PLAN_BUILD_FAILED`.
+
+The router looked up the cats and the dogs separately, then combined the two lookups and treated the result as covering every pet. But a pet can also be a `Bird`. So the combined lookup was then merged with the lookup for every `Animal`, which put `whiskers` and `tricks` on `Animal`, where they don't exist.
+
+```graphql
+query {
+  listings {
+    rank
+  }
+}
+```
+
+Before: `No field found for name 'whiskers' in type 'Animal'`, or `UnexpectedMissingDefinition("Animal")` with `@include` on `rank`. After: the query plans, and `catalog` gets each `pet` once.
+
+Closes https://github.com/graphql-hive/router/issues/1308
+Closes https://github.com/graphql-hive/router/issues/1309
+
+#### Fix `@requires` through a union losing its fields
+
+When a `@requires` selected fields through a union, the router kept the union members of the other subgraphs instead of the current one. The required fields were dropped, and the subgraph got an invalid request.
+
+For `price @requires(fields: "book { ... on Media { ... on Book { title } } }")` and this query:
+
+```graphql
+query {
+  products {
+    price
+  }
+}
+```
+
+Before, `catalog` was asked for `book` without any fields:
+
+```graphql
+{ products { __typename id book } }
+```
+
+After:
+
+```graphql
+{ products { __typename id book { title } } }
+```
+
+#### Fix wrong values for `@requires` fields with arguments
+
+When `@requires` fields needed the same field with different arguments, like `price(currency: "GBP")` for `gbp` and `price(currency: "EUR")` for `eur`, the router fetched one of them under a temporary name.
+
+It picked these names one request at a time, so a field could be fetched under one name and read under another. The subgraph then computed its field from the wrong value.
+
+In this example:
+
+```graphql
+query {
+  things {
+    ... on Cat {
+      gbp
+    }
+    eur
+  }
+}
+```
+
+Before, `pricing` computed `eur` for cats from `price`, which held the GBP price:
+
+```graphql
+## shop
+... on Cat { price(currency: "GBP") _internal_qp_alias_0: price(currency: "EUR") }
+## what pricing read
+... on Cat { price }
+```
+
+After, it reads the EUR price:
+
+```graphql
+## what pricing reads
+... on Cat { price: _internal_qp_alias_0 }
+```
+
+The router now picks these names once for the whole query, for each place in the response.
+
+#### Fix a crash when one field has different arguments under different types
+
+Asking for the same field with different arguments under two types crashed the router's worker, and the client got no response.
+
+```graphql
+query {
+  storefront {
+    departments {
+      ... on Aquatics {
+        photo {
+          thumbnail(width: 100)
+        }
+      }
+      ... on Reptiles {
+        photo {
+          thumbnail(width: 200)
+        }
+      }
+    }
+  }
+}
+```
+
+Before: `panicked at ... Unexpected conflict`.
+
+In the example above, the router combined the two `Photo` lookups into one, and the two `thumbnail` fields can't be combined. After: the two lookups stay separate, and they still go out in one request.
+
+Closes https://github.com/graphql-hive/router/issues/1311
+
 ## 0.3.1 (2026-10-01)
 
 ### Fixes
