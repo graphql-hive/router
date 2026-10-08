@@ -55,17 +55,17 @@ ntex-codec = { version = "=1.2.1"}
 ntex-io = { version = "=4.0.1"}
 ntex-net = { version = "=4.0.1"}
 ntex-router = { version = "=1.1.0"}
-ntex-bytes = { version = "=1.9.0"}
+ntex-bytes = { version = "=1.10.0"}
 ntex-dispatcher = { version = "=4.0.1"}
-ntex-error = { version = "=2.6.0" }
+ntex-error = { version = "=3.0.0" }
 ntex-h2 = { version = "=4.0.1" }
-ntex-rt = { version = "=3.17.3" }
+ntex-rt = { version = "=4.1.0" }
 ntex-macros = { version = "=4.0.0" }
 ntex-httparse = { version = "=2.2.0" }
 ntex-server = { version = "=4.1.1" }
 ntex-service = { version = "=5.1.0" }
 ntex-tls = { version = "=4.0.0" }
-ntex-util = { version = "=4.1.0" }
+ntex-util = { version = "=4.2.1" }
 tonic = { version = "0.14.6", features = ["tls-aws-lc"] }
 reqwest = { version = "0.12.23", default-features = false, features = ["http2", "rustls-tls"] }
 reqwest-retry = "0.8.0"
