@@ -1954,7 +1954,7 @@ dependencies = [
  "insta",
  "jsonwebtoken",
  "lazy_static",
- "libdd-trace-protobuf 5.0.1",
+ "libdd-trace-protobuf 5.1.0",
  "libdd-trace-utils 13.0.0",
  "mockito",
  "ntex",
@@ -3962,7 +3962,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b6d4eb38bba7fdda3c7dd590670197436edd55329d7353fd4d038f9592b9500"
 dependencies = [
  "anyhow",
- "libdd-trace-protobuf 5.0.1",
+ "libdd-trace-protobuf 5.1.0",
 ]
 
 [[package]]
@@ -3995,9 +3995,9 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-protobuf"
-version = "5.0.1"
+version = "5.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6100376614b7eb8b308ae66785d01c68c78cf65994dd6a48149b2ea795ed64ec"
+checksum = "df1d89060df0b6ad5dac493d43468de2550121d177c6334868c646038a5ffca0"
 dependencies = [
  "prost 0.14.4",
  "serde",
@@ -4093,7 +4093,7 @@ dependencies = [
  "libdd-common 7.0.0",
  "libdd-tinybytes",
  "libdd-trace-normalization 4.1.0",
- "libdd-trace-protobuf 5.0.1",
+ "libdd-trace-protobuf 5.1.0",
  "prost 0.14.4",
  "rand 0.8.6",
  "rmp",
