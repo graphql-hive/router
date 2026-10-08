@@ -116,6 +116,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.3.3 (2026-10-08)
+
+### Fixes
+
+#### Make query plan cache keys more robust
+
+The query plan cache now uses a 128-bit BLAKE3 digest over an injective encoding of the operation. This guarantees that distinct operations always map to distinct cache keys.
+
 ## 0.3.2 (2026-10-06)
 
 ### Features
