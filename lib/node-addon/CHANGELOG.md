@@ -1,4 +1,12 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.49 (2026-10-08)
+
+### Fixes
+
+#### Make query plan cache keys more robust
+
+The query plan cache now uses a 128-bit BLAKE3 digest over an injective encoding of the operation. This guarantees that distinct operations always map to distinct cache keys.
+
 ## 0.0.48 (2026-10-06)
 
 ### Fixes
