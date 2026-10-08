@@ -281,6 +281,18 @@ impl JwtAuthRuntime {
         Ok(token_data)
     }
 
+    fn has_unknown_kid(&self, token: &str, jwks: &[Arc<JwkSet>]) -> bool {
+        decode_header(token)
+            .ok()
+            .and_then(|h| h.kid)
+            .is_some_and(|kid| {
+                !jwks
+                    .iter()
+                    .flat_map(|set| &set.keys)
+                    .any(|k| k.common.key_id.as_deref() == Some(kid.as_str()))
+            })
+    }
+
     pub async fn validate_headers(
         &self,
         headers: &HeaderMap,
@@ -299,7 +311,11 @@ impl JwtAuthRuntime {
 
         let validation_result = cache
             .try_get_with(token.clone(), async {
-                let valid_jwks = self.jwks.all();
+                let mut valid_jwks = self.jwks.all();
+                if self.has_unknown_kid(&token, &valid_jwks) {
+                    self.jwks.refresh_for_unknown_kid().await;
+                    valid_jwks = self.jwks.all();
+                }
                 self.authenticate(&valid_jwks, headers)
                     .map(|(payload, _, _)| Arc::new(payload))
             })
