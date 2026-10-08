@@ -1973,8 +1973,8 @@ dependencies = [
  "insta",
  "jsonwebtoken",
  "lazy_static",
- "libdd-trace-protobuf 5.0.1",
- "libdd-trace-utils 13.0.0",
+ "libdd-trace-protobuf 5.1.0",
+ "libdd-trace-utils 14.0.0",
  "mockito",
  "ntex",
  "opentelemetry-otlp",
@@ -3700,9 +3700,9 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities"
-version = "4.0.0"
+version = "4.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f9cb2c9db9807ae5c3f2eca9ba14561f51c3a85d31837bd60a7baaeba7f5420"
+checksum = "ebd351a5b324c0dc9eaca9a78a6c86660e01154fc1bfbd3f8995365342a13861"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3760,11 +3760,12 @@ dependencies = [
 
 [[package]]
 name = "libdd-common"
-version = "7.0.0"
+version = "8.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07f750b5392281ae57764e1ad924d868d880f3b6c4f9529373adfb4823becff0"
+checksum = "6fe68e6dd16f4aa0b7b72fa7cf4c3ee5f6fd1cc9c9a569f08b712c9ef44750f3"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "bytes",
  "cc",
  "const_format",
@@ -3958,9 +3959,9 @@ dependencies = [
 
 [[package]]
 name = "libdd-tinybytes"
-version = "1.1.4"
+version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a590d3402b179059637d486e0ea1814b0403e2510b12b6cbc99c530f095b661"
+checksum = "861c7ffeb31a76638456c696d472651c7b413c8a366b4ae2c34afd788c861e2b"
 dependencies = [
  "serde",
 ]
@@ -3977,12 +3978,12 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-normalization"
-version = "4.1.0"
+version = "4.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b6d4eb38bba7fdda3c7dd590670197436edd55329d7353fd4d038f9592b9500"
+checksum = "4a3c8d6bc3cbf1f46d8bde7fe802e82603f3de3ebab5b1b3bc8036a81e4d7cea"
 dependencies = [
  "anyhow",
- "libdd-trace-protobuf 5.0.1",
+ "libdd-trace-protobuf 5.1.0",
 ]
 
 [[package]]
@@ -4015,9 +4016,9 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-protobuf"
-version = "5.0.1"
+version = "5.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6100376614b7eb8b308ae66785d01c68c78cf65994dd6a48149b2ea795ed64ec"
+checksum = "df1d89060df0b6ad5dac493d43468de2550121d177c6334868c646038a5ffca0"
 dependencies = [
  "prost 0.14.4",
  "serde",
@@ -4093,9 +4094,9 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "13.0.0"
+version = "14.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "143aef54b9a9c7569e5fc64cbfb09c6f6a2f3ab6b02233743fe5ec73c00a0070"
+checksum = "3a8a4fac534f744ab12645fcb2ef39c96ccc93d8ecf30f2469a89755fccee0de"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4109,11 +4110,11 @@ dependencies = [
  "http-body-util",
  "indexmap 2.14.2",
  "itoa",
- "libdd-capabilities 4.0.0",
- "libdd-common 7.0.0",
+ "libdd-capabilities 4.0.1",
+ "libdd-common 8.0.0",
  "libdd-tinybytes",
- "libdd-trace-normalization 4.1.0",
- "libdd-trace-protobuf 5.0.1",
+ "libdd-trace-normalization 4.2.0",
+ "libdd-trace-protobuf 5.1.0",
  "prost 0.14.4",
  "rand 0.8.6",
  "rmp",
