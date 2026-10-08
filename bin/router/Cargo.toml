@@ -74,6 +74,7 @@ thiserror = { workspace = true }
 lazy_static = { workspace = true }
 async-trait = { workspace = true }
 xxhash-rust = { workspace = true }
+blake3 = "1"
 rand = { workspace = true }
 ntex = { workspace = true }
 ntex-http = { workspace = true }

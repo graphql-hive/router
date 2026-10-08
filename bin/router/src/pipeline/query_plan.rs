@@ -1,4 +1,4 @@
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use std::sync::{Arc, LazyLock};
 
 use crate::cache_state::{CacheHitMiss, EntryResultHitMissExt};
@@ -13,6 +13,7 @@ use crate::pipeline::demand_control::formula::DemandControlFormulaPlan;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
+use crate::query_planner::ast::hash::Blake3Hasher;
 use crate::query_planner::planner::plan_nodes::{Planning, QueryPlan};
 use crate::query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use crate::query_planner::state::supergraph_state::OperationKind;
@@ -20,7 +21,6 @@ use crate::query_planner::utils::cancellation::CancellationToken;
 use crate::schema_state::{SchemaState, SelectedSupergraph};
 use crate::telemetry::traces::spans::graphql::GraphQLPlanSpan;
 use tracing::Instrument;
-use xxhash_rust::xxh3::Xxh3;
 
 pub enum QueryPlanResult {
     QueryPlan(PlannedQuery),
@@ -232,9 +232,11 @@ pub async fn plan_operation_with_cache(
 }
 
 #[inline]
-pub fn calculate_cache_key(operation_hash: u64, context: &StableOverrideContext) -> u64 {
-    let mut hasher = Xxh3::new();
+pub fn calculate_cache_key(operation_hash: u128, context: &StableOverrideContext) -> u128 {
+    // `operation_hash` is already a 128-bit BLAKE3, we use the same for calculating the final cache key
+    // that's based on the operation hash + the overrive context hash
+    let mut hasher = Blake3Hasher::default();
     operation_hash.hash(&mut hasher);
     context.hash(&mut hasher);
-    hasher.finish()
+    hasher.finish_u128()
 }

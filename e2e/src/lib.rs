@@ -79,6 +79,8 @@ mod persisted_documents;
 #[cfg(test)]
 mod probes;
 #[cfg(test)]
+mod query_plan_cache;
+#[cfg(test)]
 mod router_timeout;
 #[cfg(test)]
 mod storage;

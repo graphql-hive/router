@@ -42,7 +42,7 @@ impl OperationDefinition {
             &self.selection_set,
         )
     }
-    pub fn hash(&self) -> u64 {
+    pub fn hash(&self) -> u128 {
         ast_hash(self)
     }
 }

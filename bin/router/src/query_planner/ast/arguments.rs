@@ -101,6 +101,10 @@ impl ArgumentsMap {
         self.arguments_map.is_empty()
     }
 
+    pub fn len(&self) -> usize {
+        self.arguments_map.len()
+    }
+
     pub fn values(&self) -> impl Iterator<Item = &Value> {
         self.arguments_map.values()
     }

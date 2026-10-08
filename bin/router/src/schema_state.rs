@@ -113,7 +113,7 @@ pub struct RouterSupergraphRuntime {
     pub authorization: AuthorizationMetadata,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
-    pub plan_cache: Cache<u64, PlannedQuery>,
+    pub plan_cache: Cache<u128, PlannedQuery>,
     pub demand_control_runtime: Option<DemandControlRuntime>,
     /// Controls background work belonging to this selected supergraph runtime.
     ///

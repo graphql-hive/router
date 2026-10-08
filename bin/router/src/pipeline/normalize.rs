@@ -30,9 +30,9 @@ use tracing::{debug, Instrument};
 pub struct GraphQLNormalizationPayload {
     /// The operation to execute, without introspection fields.
     pub operation_for_plan: Arc<OperationDefinition>,
-    pub operation_for_plan_hash: u64,
+    pub operation_for_plan_hash: u128,
     pub operation_for_introspection: Option<Arc<OperationDefinition>>,
-    pub operation_for_introspection_hash: Option<u64>,
+    pub operation_for_introspection_hash: Option<u128>,
     pub normalized_operation_hash: u64,
     pub root_type_name: String,
     pub operation_kind: OperationKind,
@@ -127,8 +127,8 @@ pub fn hash_normalized_operation(
 }
 
 pub struct NormalizedOperationHashes {
-    pub operation_for_plan_hash: u64,
-    pub operation_for_introspection_hash: Option<u64>,
+    pub operation_for_plan_hash: u128,
+    pub operation_for_introspection_hash: Option<u128>,
     pub combined_operation_hash: u64,
 }
 
