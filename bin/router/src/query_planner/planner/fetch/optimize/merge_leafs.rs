@@ -14,6 +14,10 @@ impl FetchStepData<MultiTypeFetchStep> {
         other: &Self,
         fetch_graph: &FetchGraph<MultiTypeFetchStep>,
     ) -> bool {
+        if self.context_rewrites.is_some() || other.context_rewrites.is_some() {
+            return false;
+        }
+
         if self_index == other_index {
             return false;
         }

@@ -258,6 +258,10 @@ impl FetchStepData<MultiTypeFetchStep> {
         other: &Self,
         fetch_graph: &FetchGraph<MultiTypeFetchStep>,
     ) -> bool {
+        if self.context_rewrites.is_some() || other.context_rewrites.is_some() {
+            return false;
+        }
+
         if self_index == other_index {
             return false;
         }
@@ -464,6 +468,9 @@ mod tests {
             mutation_field_position: None,
             input_rewrites: None,
             output_rewrites: None,
+            context_rewrites: None,
+            context_variable_definitions: Vec::new(),
+            context_producers: Default::default(),
         }
     }
 

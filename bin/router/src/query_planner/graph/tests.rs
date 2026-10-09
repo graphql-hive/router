@@ -64,6 +64,9 @@ mod context_tests {
             amount: Int @join__field(graph: A, contextArguments: [
                 {name: "code", type: "String", context: "a__user", selection: "{ currency }"}
             ])
+            detail: User @join__field(graph: A, contextArguments: [
+                {name: "code", type: "String", context: "a__user", selection: "{ currency }"}
+            ])
             remote: Int @join__field(graph: B, contextArguments: [
                 {name: "code", type: "String", context: "a__user", selection: "{ currency }"}
             ])
@@ -94,7 +97,12 @@ mod context_tests {
         let mut paths = vec![OperationPath::new_entrypoint(&entrypoint)];
         for step in steps {
             let mut field = FieldSelection::new_typename();
-            field.name = step.to_string();
+            if let Some((alias, name)) = step.split_once(':') {
+                field.name = name.to_string();
+                field.alias = Some(alias.to_string());
+            } else {
+                field.name = step.to_string();
+            }
             let target = if let Some(type_name) = step.strip_prefix("... on ") {
                 NavigationTarget::ConcreteType(type_name, None)
             } else {
@@ -271,6 +279,228 @@ mod context_tests {
             ),
             (1, 2, "Outer")
         );
+    }
+
+    #[test]
+    fn contextual_fetches_wait_for_ancestors_and_keep_their_variables() {
+        use crate::query_planner::{
+            ast::{operation::OperationDefinition, selection_set::SelectionSet},
+            planner::{
+                add_variables_to_fetch_steps,
+                fetch::fetch_graph::build_fetch_graph_from_query_tree,
+                plan_nodes::FetchNodePathSegment, tree::query_tree::QueryTree, QueryPlannerOptions,
+            },
+            utils::parsing::parse_operation,
+        };
+        use graphql_tools::parser::query::Definition;
+
+        let supergraph = SupergraphState::new(&parse_schema(SUPERGRAPH));
+        let graph = Graph::graph_from_supergraph_state(&supergraph).unwrap();
+        let overrides = PlannerOverrideContext::default();
+        let cancellation = CancellationToken::new();
+        for (steps, levels, arguments) in [
+            (vec!["users", "txs", "amount"], vec![1], vec!["code"]),
+            (
+                vec!["users", "wrapper", "txs", "amount"],
+                vec![2],
+                vec!["code"],
+            ),
+            (
+                vec!["users", "child", "txs", "amount"],
+                vec![1],
+                vec!["code"],
+            ),
+            (vec!["users", "txs", "remote"], vec![1], vec!["code"]),
+            (
+                vec!["users", "txs", "detail", "currency"],
+                vec![1],
+                vec!["code"],
+            ),
+            (
+                vec!["users", "txs", "detail", "txs", "amount"],
+                vec![1],
+                vec!["code"],
+            ),
+            (vec!["users", "txs", "required"], vec![1], vec!["code"]),
+            (vec!["users", "txs", "fromInterface"], vec![1], vec!["code"]),
+            (
+                vec!["viewer", "... on User", "txs", "fromUnion"],
+                vec![1],
+                vec!["code"],
+            ),
+            (
+                vec!["outer", "user", "txs", "multiple"],
+                vec![1, 2],
+                vec!["code", "outer"],
+            ),
+        ] {
+            let path = walk(&graph, &supergraph, &overrides, &cancellation, &steps).unwrap();
+            let tree = QueryTree::from_path(&graph, &path, None).unwrap();
+            let tree = QueryTree::merge_trees(vec![tree.clone(), tree]);
+            let Definition::Operation(parsed) =
+                parse_operation("query($__context_0: String) { users { txs { amount } } }")
+                    .definitions
+                    .remove(0)
+            else {
+                panic!("expected operation")
+            };
+            let operation: OperationDefinition = parsed.into();
+            let operation = OperationDefinition {
+                selection_set: SelectionSet::default(),
+                ..operation
+            };
+            let mut fetch_graph = build_fetch_graph_from_query_tree(
+                &graph,
+                &supergraph,
+                &overrides,
+                tree,
+                &operation,
+                &QueryPlannerOptions::default(),
+                &cancellation,
+            )
+            .unwrap();
+            add_variables_to_fetch_steps(&mut fetch_graph, &operation.variable_definitions)
+                .unwrap();
+            let contextual = fetch_graph
+                .all_nodes()
+                .filter(|(_, step)| step.context_rewrites.is_some())
+                .collect::<Vec<_>>();
+            let expected_count = if steps.contains(&"detail") && steps.last() == Some(&"amount") {
+                2
+            } else {
+                1
+            };
+            assert_eq!(contextual.len(), expected_count, "{steps:?}");
+            if expected_count == 2 {
+                assert!(fetch_graph.is_descendant_of(contextual[1].0, contextual[0].0));
+                assert_eq!(
+                    contextual[1].1.context_variable_definitions[0].name,
+                    "__context_2"
+                );
+            }
+            let (index, step) = contextual[0];
+            assert!(step.is_entity_call());
+            assert_eq!(step.context_variable_definitions.len(), arguments.len());
+            assert!(!step.context_producers.is_empty());
+            for (argument_index, (argument, levels)) in arguments.iter().zip(levels).enumerate() {
+                let variable = &step.context_variable_definitions[argument_index];
+                assert_eq!(variable.name, format!("__context_{}", argument_index + 1));
+                assert!(step
+                    .variable_usages
+                    .as_ref()
+                    .unwrap()
+                    .contains(&variable.name));
+                assert!(step
+                    .variable_definitions
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .any(|definition| definition.name == variable.name));
+                assert!(step
+                    .output
+                    .to_non_root_selection_set()
+                    .to_string()
+                    .contains(&format!("{argument}: ${}", variable.name)));
+                let rewrite = step
+                    .context_rewrites
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .find(|rewrite| rewrite.rename_key_to == variable.name)
+                    .unwrap();
+                assert_eq!(
+                    rewrite
+                        .path
+                        .iter()
+                        .take_while(|segment| matches!(segment, FetchNodePathSegment::Parent))
+                        .count(),
+                    levels
+                );
+            }
+            for producer_id in &step.context_producers {
+                let (producer_index, producer) = fetch_graph
+                    .all_nodes()
+                    .find(|(_, producer)| producer.id == *producer_id)
+                    .unwrap();
+                assert_ne!(producer_index, index);
+                assert!(fetch_graph.is_descendant_of(index, producer_index));
+                assert!(producer
+                    .output
+                    .to_non_root_selection_set()
+                    .to_string()
+                    .contains("__typename"));
+            }
+            if steps.last() == Some(&"required") {
+                assert!(step
+                    .input
+                    .to_non_root_selection_set()
+                    .to_string()
+                    .contains("base"));
+            }
+        }
+    }
+
+    #[test]
+    fn context_rewrites_read_internal_keys_under_client_aliases() {
+        use crate::query_planner::{
+            ast::operation::OperationDefinition,
+            planner::{
+                fetch::fetch_graph::build_fetch_graph_from_query_tree,
+                plan_nodes::FetchNodePathSegment, tree::query_tree::QueryTree, QueryPlannerOptions,
+            },
+            utils::parsing::parse_operation,
+        };
+        use graphql_tools::parser::query::Definition;
+
+        let supergraph = SupergraphState::new(&parse_schema(SUPERGRAPH));
+        let graph = Graph::graph_from_supergraph_state(&supergraph).unwrap();
+        let overrides = PlannerOverrideContext::default();
+        let cancellation = CancellationToken::new();
+        let path = walk(
+            &graph,
+            &supergraph,
+            &overrides,
+            &cancellation,
+            &["me:users", "txs", "amount"],
+        )
+        .unwrap();
+        let tree = QueryTree::from_path(&graph, &path, None).unwrap();
+        let Definition::Operation(parsed) =
+            parse_operation("{ me: users { currency: id txs { amount } } }")
+                .definitions
+                .remove(0)
+        else {
+            panic!("expected operation")
+        };
+        let operation: OperationDefinition = parsed.into();
+        let fetch_graph = build_fetch_graph_from_query_tree(
+            &graph,
+            &supergraph,
+            &overrides,
+            tree,
+            &operation,
+            &QueryPlannerOptions::default(),
+            &cancellation,
+        )
+        .unwrap();
+        let (_, step) = fetch_graph
+            .all_nodes()
+            .find(|(_, step)| step.context_rewrites.is_some())
+            .unwrap();
+        assert_eq!(step.response_path.to_string(), "me.@.txs.@");
+        assert_eq!(
+            step.context_rewrites.as_ref().unwrap()[0].path,
+            vec![
+                FetchNodePathSegment::Parent,
+                FetchNodePathSegment::typename_equals_from_type("User".to_string()),
+                FetchNodePathSegment::Key("_internal_qp_alias_0".to_string()),
+            ]
+        );
+        assert!(fetch_graph.all_nodes().any(|(_, step)| step
+            .output
+            .to_non_root_selection_set()
+            .to_string()
+            .contains("_internal_qp_alias_0: currency")));
     }
 
     #[test]

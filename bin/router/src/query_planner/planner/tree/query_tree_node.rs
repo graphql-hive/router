@@ -5,7 +5,7 @@ use tracing::{instrument, trace};
 use crate::query_planner::{
     ast::{arguments::ArgumentsMap, merge_path::Condition},
     graph::{error::GraphError, Graph},
-    planner::walker::path::{OperationPath, PathSegment, SelectionAttributes},
+    planner::walker::path::{ContextRequirement, OperationPath, PathSegment, SelectionAttributes},
 };
 
 use super::query_tree::QueryTree;
@@ -22,6 +22,9 @@ pub struct QueryTreeNode {
     pub edge_from_parent: Option<EdgeIndex>,
     /// Nodes required to execute the move
     pub requirements: Vec<Rc<QueryTreeNode>>,
+    pub context_requirements: Vec<Rc<QueryTreeNode>>,
+    pub context_coordinate: Option<(EdgeIndex, usize)>,
+    pub resolved_context_requirements: Vec<Rc<ContextRequirement>>,
     pub children: Vec<Rc<QueryTreeNode>>,
     pub selection_attributes: Option<SelectionAttributes>,
     pub condition: Option<Condition>,
@@ -39,6 +42,7 @@ impl PartialEq for QueryTreeNode {
             && self.selection_attributes == other.selection_attributes
             && self.mutation_field_position == other.mutation_field_position
             && self.condition == other.condition
+            && self.context_coordinate == other.context_coordinate
     }
 }
 
@@ -79,6 +83,9 @@ impl QueryTreeNode {
             node_index: *node_index,
             edge_from_parent: edge_from_parent.cloned(),
             requirements: Vec::new(),
+            context_requirements: Vec::new(),
+            context_coordinate: None,
+            resolved_context_requirements: Vec::new(),
             children: Vec::new(),
             selection_attributes: selection_attributes.cloned(),
             mutation_field_position: None,
@@ -105,6 +112,17 @@ impl QueryTreeNode {
     pub fn merge_nodes(&mut self, other: &Self) {
         merge_query_tree_node_list(&mut self.children, &other.children);
         merge_query_tree_node_list(&mut self.requirements, &other.requirements);
+        merge_query_tree_node_list(&mut self.context_requirements, &other.context_requirements);
+        for requirement in &other.resolved_context_requirements {
+            if !self.resolved_context_requirements.iter().any(|existing| {
+                existing.argument == requirement.argument
+                    && existing.matched_type == requirement.matched_type
+                    && existing.levels == requirement.levels
+            }) {
+                self.resolved_context_requirements
+                    .push(Rc::clone(requirement));
+            }
+        }
     }
 
     pub fn from_paths(
@@ -173,6 +191,20 @@ impl QueryTreeNode {
             tree_node
                 .requirements
                 .push(Rc::clone(requirements_tree_arc));
+        }
+
+        tree_node.resolved_context_requirements = segment_at_index.context_requirements.clone();
+        for (index, segment) in segments.iter().enumerate().skip(current_index + 1) {
+            for requirement in &segment.context_requirements {
+                if index.checked_sub(requirement.segments_back) == Some(current_index) {
+                    let mut tree = requirement.tree.as_ref().clone();
+                    tree.context_coordinate = Some((segment.edge_index, requirement.argument));
+                    merge_query_tree_node_list(
+                        &mut tree_node.context_requirements,
+                        &[Rc::new(tree)],
+                    );
+                }
+            }
         }
 
         let subsequent_query_tree_node =

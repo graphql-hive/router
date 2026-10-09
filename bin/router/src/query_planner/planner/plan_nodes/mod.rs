@@ -462,6 +462,7 @@ pub struct KeyRenamer {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FetchNodePathSegment {
+    Parent,
     Key(String),
     TypenameEquals(BTreeSet<String>),
 }

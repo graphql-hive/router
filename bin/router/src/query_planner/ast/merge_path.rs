@@ -48,7 +48,7 @@ impl From<&FieldSelection> for FieldPathSegment {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Condition {
     Skip(String),
     Include(String),
@@ -126,7 +126,7 @@ impl From<&InlineFragmentSelection> for Option<Condition> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Segment {
     // A field with a unique identifier and the arguments hash
     // We used this to uniquely identify the field in the selection set.
@@ -158,7 +158,7 @@ impl Display for Segment {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct MergePath {
     pub inner: Rc<[Segment]>,
 }
