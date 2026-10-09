@@ -29,6 +29,15 @@ impl PartialEq for SelectionAttributes {
 }
 
 #[derive(Debug, Clone)]
+pub struct ContextRequirement {
+    pub argument: usize,
+    pub matched_type: String,
+    pub levels: usize,
+    pub segments_back: usize,
+    pub tree: Rc<QueryTreeNode>,
+}
+
+#[derive(Debug, Clone)]
 pub struct PathSegment {
     // Link to the previous step, null for the first segment originating from rootNode
     prev: Option<Rc<PathSegment>>,
@@ -36,6 +45,7 @@ pub struct PathSegment {
     tail_node: NodeIndex,
     cumulative_cost: u64,
     pub requirement_tree: Option<Rc<QueryTreeNode>>,
+    pub context_requirements: Vec<Rc<ContextRequirement>>,
     pub selection_attributes: Option<SelectionAttributes>,
     pub condition: Option<Condition>,
 }
@@ -77,6 +87,7 @@ impl PathSegment {
             tail_node: edge.target(),
             cumulative_cost: edge.weight().cost(),
             requirement_tree: None,
+            context_requirements: vec![],
             selection_attributes: None,
             condition: None,
         }
@@ -141,6 +152,7 @@ impl<'graph> OperationPath<'graph> {
         graph: &'graph Graph,
         edge_ref: &EdgeReference<'graph>,
         requirement: Option<Rc<QueryTreeNode>>,
+        context_requirements: Vec<Rc<ContextRequirement>>,
         target: &NavigationTarget,
     ) -> OperationPath<'graph> {
         let prev_cost = self.cost;
@@ -153,6 +165,7 @@ impl<'graph> OperationPath<'graph> {
             edge_index: edge_ref.id(),
             cumulative_cost: new_cost,
             requirement_tree: requirement,
+            context_requirements,
             selection_attributes: match target {
                 NavigationTarget::Field { field, .. } => Some(SelectionAttributes {
                     alias: field.alias.clone(),
@@ -217,6 +230,21 @@ impl<'graph> OperationPath<'graph> {
         self.last_segment
             .as_ref()
             .map_or(self.root_node, |segment| segment.tail_node)
+    }
+
+    pub fn before_segment(&self, graph: &'graph Graph, segment: &PathSegment) -> Self {
+        let mut prefix = Self::new(self.root_node, segment.prev.clone());
+        let tail = graph.node(prefix.tail()).expect("path node exists");
+        if let (Some(data), Some(graph_id)) = (tail.union_members_data(), tail.graph_id()) {
+            prefix.union_context = Some(UnionContext {
+                parent_type_name: &data.type_name,
+                field_name: &data.field_name,
+                graph_id,
+                member_name: &data.object_type_name,
+                possible_members: data.possible_members.iter().map(String::as_str).collect(),
+            });
+        }
+        prefix
     }
 
     pub fn get_segments(&self) -> Vec<Rc<PathSegment>> {
@@ -330,6 +358,7 @@ impl<'graph> OperationPath<'graph> {
                 cumulative_cost: new_cumulative_cost,
                 edge_index: original_segment.edge_index,
                 requirement_tree: original_segment.requirement_tree.clone(),
+                context_requirements: original_segment.context_requirements.clone(),
                 tail_node: original_segment.tail_node,
                 selection_attributes: original_segment.selection_attributes.clone(),
                 condition: original_segment.condition.clone(),

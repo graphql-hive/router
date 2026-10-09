@@ -22,10 +22,20 @@ use crate::query_planner::{
         tree::query_tree_node::QueryTreeNode,
         walker::best_path::{find_best_paths, pick_shared_paths, BestPathTracker},
     },
-    state::supergraph_state::SupergraphState,
+    state::supergraph_state::{SupergraphDefinition, SupergraphState},
 };
 
-use super::{error::WalkOperationError, excluded::ExcludedFromLookup, path::OperationPath};
+use super::{
+    error::WalkOperationError,
+    excluded::ExcludedFromLookup,
+    path::{ContextRequirement, OperationPath},
+};
+
+#[derive(Debug)]
+pub struct EdgeRequirements<'graph> {
+    pub paths: Vec<OperationPath<'graph>>,
+    pub context_requirements: Vec<Rc<ContextRequirement>>,
+}
 
 pub type VisitedGraphs<'graph> = HashSet<&'graph str>;
 type ActiveEdgeChecks = HashSet<(NodeIndex, EdgeIndex)>;
@@ -160,6 +170,8 @@ impl<'graph> PathSearch<'graph> {
             .interface_to_object_types
             .get(type_condition)
             .is_some_and(|object_types| object_types.contains(current_type_name))
+            || matches!(self.supergraph.definitions.get(type_condition),
+                Some(SupergraphDefinition::Union(union)) if union.types.iter().any(|name| name == current_type_name))
     }
 
     fn find_indirect_paths(
@@ -316,7 +328,8 @@ impl<'graph> PathSearch<'graph> {
                         let next_resolution_path = path.advance(
                             graph,
                             &edge_ref,
-                            QueryTreeNode::from_paths(graph, &paths, None)?,
+                            QueryTreeNode::from_paths(graph, &paths.paths, None)?,
+                            paths.context_requirements,
                             target,
                         );
 
@@ -400,7 +413,8 @@ impl<'graph> PathSearch<'graph> {
                 let next_resolution_path = path.advance(
                     graph,
                     edge_ref,
-                    QueryTreeNode::from_paths(graph, &paths, None)?,
+                    QueryTreeNode::from_paths(graph, &paths.paths, None)?,
+                    paths.context_requirements,
                     target,
                 );
 
@@ -528,7 +542,7 @@ pub fn can_satisfy_edge<'graph>(
     excluded: &ExcludedFromLookup<'graph>,
     use_only_direct_edges: bool,
     cancellation_token: &'graph CancellationToken,
-) -> Result<Option<Vec<OperationPath<'graph>>>, WalkOperationError> {
+) -> Result<Option<EdgeRequirements<'graph>>, WalkOperationError> {
     PathSearch::new(graph, supergraph, override_context, cancellation_token).can_satisfy_edge(
         edge_ref,
         path,
@@ -544,7 +558,7 @@ impl<'graph> PathSearch<'graph> {
         path: &OperationPath<'graph>,
         excluded: &ExcludedFromLookup<'graph>,
         use_only_direct_edges: bool,
-    ) -> Result<Option<Vec<OperationPath<'graph>>>, WalkOperationError> {
+    ) -> Result<Option<EdgeRequirements<'graph>>, WalkOperationError> {
         let graph = self.graph;
         let active_key = (path.tail(), edge_ref.id());
         if !self.active_edge_checks.insert(active_key) {
@@ -569,10 +583,9 @@ impl<'graph> PathSearch<'graph> {
         path: &OperationPath<'graph>,
         excluded: &ExcludedFromLookup<'graph>,
         use_only_direct_edges: bool,
-    ) -> Result<Option<Vec<OperationPath<'graph>>>, WalkOperationError> {
+    ) -> Result<Option<EdgeRequirements<'graph>>, WalkOperationError> {
         let graph = self.graph;
         let override_context = self.override_context;
-        let cancellation_token = self.cancellation_token;
         let edge = edge_ref.weight();
 
         if let Edge::FieldMove(field_move) = edge {
@@ -583,105 +596,212 @@ impl<'graph> PathSearch<'graph> {
             }
         }
 
-        match edge.requirements() {
-            None => Ok(Some(vec![])),
-            Some(selections) => {
-                trace!(
-                    "checking requirements {} for edge '{}'",
-                    selections,
-                    graph.pretty_print_edge(edge_ref.id(), false)
-                );
+        let paths = if let Some(selections) = edge.requirements() {
+            let Some(paths) = self.resolve_requirements(
+                path,
+                &selections.selection_set,
+                excluded,
+                use_only_direct_edges,
+            )?
+            else {
+                return Ok(None);
+            };
+            paths
+        } else {
+            vec![]
+        };
+        let mut context_requirements = vec![];
 
-                let mut requirements: VecDeque<MoveRequirement> = VecDeque::new();
-                let mut tied_paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
-
-                for selection in selections.selection_set.items.iter() {
-                    requirements.push_front(MoveRequirement {
-                        paths: Rc::new(vec![path.clone()]),
-                        selection,
-                    });
-                }
-
-                // it's important to pop from the end as we want to process the last added requirement first
-                while let Some(requirement) = requirements.pop_back() {
-                    cancellation_token.bail_if_cancelled()?;
-                    match &requirement.selection {
-                        SelectionItem::Field(selection_field_requirement) => {
-                            let result = self.validate_field_requirement(
-                                &requirement,
-                                selection_field_requirement,
-                                excluded,
-                                use_only_direct_edges,
-                            )?;
-
-                            match result {
-                                Some((next_paths, next_requirements)) => {
-                                    trace!("Paths for {}", selection_field_requirement);
-
-                                    for next_path in next_paths.iter() {
-                                        trace!("  Path {} is valid", next_path.pretty_print(graph));
-                                    }
-
-                                    if selection_field_requirement.is_leaf() {
-                                        let best_paths = find_best_paths(next_paths);
-                                        trace!(
-                                            "Found {} best paths for this leaf requirement",
-                                            best_paths.len()
-                                        );
-                                        tied_paths_per_leaf.push(best_paths);
-                                    }
-
-                                    for req in next_requirements.into_iter().rev() {
-                                        requirements.push_front(req);
-                                    }
-                                }
-                                None => {
-                                    return Ok(None);
-                                }
-                            };
-                        }
-                        SelectionItem::InlineFragment(fragment_selection) => {
-                            let fragment_requirements = self.validate_fragment_requirement(
-                                &requirement,
-                                fragment_selection,
-                                excluded,
-                            )?;
-
-                            match fragment_requirements {
-                                Some((next_paths, next_requirements)) => {
-                                    trace!("Paths for {}", fragment_selection);
-
-                                    for next_path in next_paths.iter() {
-                                        trace!("  Path {} is valid", next_path.pretty_print(graph));
-                                    }
-
-                                    for req in next_requirements.into_iter().rev() {
-                                        requirements.push_front(req);
-                                    }
-                                }
-                                None => {
-                                    return Ok(None);
-                                }
-                            };
-                        }
-                        SelectionItem::FragmentSpread(_) => {
-                            // No processing needed for FragmentSpread
-                        }
+        match edge {
+            Edge::FieldMove(field_move) if !field_move.context_arguments.is_empty() => {
+                let parent = graph.node(edge_ref.source())?;
+                let mut has_key = false;
+                for key_edge in graph.edges_from(edge_ref.source()) {
+                    if !matches!(key_edge.weight(), Edge::EntityMove(_)) {
+                        continue;
+                    }
+                    let destination = graph.node(key_edge.target())?;
+                    if destination.name_str() == parent.name_str()
+                        && destination.graph_id() == parent.graph_id()
+                        && self
+                            .can_satisfy_edge(&key_edge, path, excluded, true)?
+                            .is_some()
+                    {
+                        has_key = true;
+                        break;
                     }
                 }
-
-                let paths_to_requirements: Vec<OperationPath<'graph>> =
-                    pick_shared_paths(tied_paths_per_leaf)
-                        .map(|best_path| path.build_requirement_continuation_path(&best_path))
-                        .collect();
-
-                for path in paths_to_requirements.iter() {
-                    trace!("path {} is valid", path.pretty_print(graph));
+                if !has_key {
+                    return Ok(None);
                 }
 
-                Ok(Some(paths_to_requirements))
+                let segments = path.get_segments();
+                for (argument, context_argument) in field_move.context_arguments.iter().enumerate()
+                {
+                    let mut levels = 0;
+                    let mut matched = None;
+                    for (back, segment) in segments.iter().rev().enumerate() {
+                        if !matches!(
+                            graph.edge(segment.edge_index)?,
+                            Edge::FieldMove(_) | Edge::ReentryMove(_)
+                        ) {
+                            continue;
+                        }
+                        levels += 1;
+                        let head = graph.node(graph.get_edge_head(&segment.edge_index)?)?;
+                        if let Some(selection) =
+                            context_argument.selections.iter().find(|selection| {
+                                self.type_condition_matches(head.name_str(), &selection.type_name)
+                            })
+                        {
+                            matched = Some((back + 1, segment, selection));
+                            break;
+                        }
+                    }
+                    let Some((segments_back, segment, selection)) = matched else {
+                        return Ok(None);
+                    };
+                    let ancestor = path.before_segment(graph, segment);
+                    let Some(paths) = self.resolve_requirements(
+                        &ancestor,
+                        &selection.selection_set,
+                        excluded,
+                        use_only_direct_edges,
+                    )?
+                    else {
+                        return Ok(None);
+                    };
+                    let tree = QueryTreeNode::from_paths(graph, &paths, None)?
+                        .unwrap_or_else(|| Rc::new(QueryTreeNode::new_root(&ancestor.tail())));
+                    context_requirements.push(Rc::new(ContextRequirement {
+                        argument,
+                        matched_type: selection.type_name.clone(),
+                        levels,
+                        segments_back,
+                        tree,
+                    }));
+                }
+            }
+            _ => {}
+        }
+
+        Ok(Some(EdgeRequirements {
+            paths,
+            context_requirements,
+        }))
+    }
+
+    fn resolve_requirements(
+        &mut self,
+        path: &OperationPath<'graph>,
+        selection_set: &'graph SelectionSet,
+        excluded: &ExcludedFromLookup<'graph>,
+        use_only_direct_edges: bool,
+    ) -> Result<Option<Vec<OperationPath<'graph>>>, WalkOperationError> {
+        let graph = self.graph;
+        let cancellation_token = self.cancellation_token;
+        let mut requirements: VecDeque<MoveRequirement> = VecDeque::new();
+        let mut tied_paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
+
+        for selection in selection_set.items.iter() {
+            if let SelectionItem::InlineFragment(fragment) = selection {
+                let current_type = graph.node(path.tail())?.name_str();
+                if matches!(
+                    self.supergraph.definitions.get(current_type),
+                    Some(SupergraphDefinition::Object(_))
+                ) && !self.type_condition_matches(current_type, &fragment.type_condition)
+                {
+                    continue;
+                }
+                if !path.can_resolve_union_member(&fragment.type_condition) {
+                    continue;
+                }
+            }
+            requirements.push_front(MoveRequirement {
+                paths: Rc::new(vec![path.clone()]),
+                selection,
+            });
+        }
+
+        // it's important to pop from the end as we want to process the last added requirement first
+        while let Some(requirement) = requirements.pop_back() {
+            cancellation_token.bail_if_cancelled()?;
+            match &requirement.selection {
+                SelectionItem::Field(selection_field_requirement) => {
+                    let result = self.validate_field_requirement(
+                        &requirement,
+                        selection_field_requirement,
+                        excluded,
+                        use_only_direct_edges,
+                    )?;
+
+                    match result {
+                        Some((next_paths, next_requirements)) => {
+                            trace!("Paths for {}", selection_field_requirement);
+
+                            for next_path in next_paths.iter() {
+                                trace!("  Path {} is valid", next_path.pretty_print(graph));
+                            }
+
+                            if selection_field_requirement.is_leaf() {
+                                let best_paths = find_best_paths(next_paths);
+                                trace!(
+                                    "Found {} best paths for this leaf requirement",
+                                    best_paths.len()
+                                );
+                                tied_paths_per_leaf.push(best_paths);
+                            }
+
+                            for req in next_requirements.into_iter().rev() {
+                                requirements.push_front(req);
+                            }
+                        }
+                        None => {
+                            return Ok(None);
+                        }
+                    };
+                }
+                SelectionItem::InlineFragment(fragment_selection) => {
+                    let fragment_requirements = self.validate_fragment_requirement(
+                        &requirement,
+                        fragment_selection,
+                        excluded,
+                        use_only_direct_edges,
+                    )?;
+
+                    match fragment_requirements {
+                        Some((next_paths, next_requirements)) => {
+                            trace!("Paths for {}", fragment_selection);
+
+                            for next_path in next_paths.iter() {
+                                trace!("  Path {} is valid", next_path.pretty_print(graph));
+                            }
+
+                            for req in next_requirements.into_iter().rev() {
+                                requirements.push_front(req);
+                            }
+                        }
+                        None => {
+                            return Ok(None);
+                        }
+                    };
+                }
+                SelectionItem::FragmentSpread(_) => {
+                    // No processing needed for FragmentSpread
+                }
             }
         }
+
+        let paths_to_requirements: Vec<OperationPath<'graph>> =
+            pick_shared_paths(tied_paths_per_leaf)
+                .map(|best_path| path.build_requirement_continuation_path(&best_path))
+                .collect();
+
+        for path in paths_to_requirements.iter() {
+            trace!("path {} is valid", path.pretty_print(graph));
+        }
+
+        Ok(Some(paths_to_requirements))
     }
 }
 
@@ -797,6 +917,7 @@ impl<'graph> PathSearch<'graph> {
         requirement: &MoveRequirement<'graph>,
         fragment_selection: &InlineFragmentSelection,
         excluded: &ExcludedFromLookup<'graph>,
+        use_only_direct_edges: bool,
     ) -> Result<FragmentRequirementsResult<'graph>, WalkOperationError> {
         let type_name = &fragment_selection.type_condition;
         // Collect all Vec<OperationPath<'graph>> results from find_direct_paths
@@ -822,7 +943,7 @@ impl<'graph> PathSearch<'graph> {
         // Collect all Vec<OperationPath<'graph>> results from find_indirect_paths
         let mut indirect_path_results: Vec<Vec<OperationPath<'graph>>> =
             Vec::with_capacity(requirement.paths.len());
-        for path_from_rc in requirement.paths.iter() {
+        for path_from_rc in requirement.paths.iter().filter(|_| !use_only_direct_edges) {
             indirect_path_results.push(self.find_indirect_paths(
                 path_from_rc,
                 // @skip/@include can't be used in @requires and @provides,

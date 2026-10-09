@@ -1,4 +1,316 @@
 #[cfg(test)]
+mod context_tests {
+    use crate::query_planner::{
+        ast::selection_set::FieldSelection,
+        graph::{
+            edge::{Edge, PlannerOverrideContext},
+            Graph,
+        },
+        planner::walker::{
+            path::OperationPath,
+            pathfinder::{find_direct_paths, find_indirect_paths, NavigationTarget},
+        },
+        state::supergraph_state::SupergraphState,
+        utils::{cancellation::CancellationToken, parsing::parse_schema},
+    };
+    const SUPERGRAPH: &str = r#"
+        enum join__Graph {
+            A @join__graph(name: "a", url: "http://a")
+            B @join__graph(name: "b", url: "http://b")
+        }
+        type Query @join__type(graph: A) {
+            users: [User]
+            transaction: Transaction
+            account: Account
+            viewer: Viewer
+            outer: Outer
+            broken: Broken
+        }
+        interface Account @join__type(graph: A) @context(name: "a__account") {
+            currency: String
+            txs: [Transaction]
+        }
+        union Viewer @join__type(graph: A)
+            @join__unionMember(graph: A, member: "User")
+            @join__unionMember(graph: A, member: "Other")
+            @context(name: "a__viewer") = User | Other
+        type User implements Account
+            @join__type(graph: A, key: "id")
+            @join__implements(graph: A, interface: "Account")
+            @context(name: "a__user") {
+            id: ID!
+            currency: String
+            child: User
+            wrapper: Wrapper
+            broken: Broken
+            txs: [Transaction]
+        }
+        type Other @join__type(graph: A) {
+            currency: String
+            txs: [Transaction]
+        }
+        type Wrapper @join__type(graph: A) { txs: [Transaction] }
+        type Broken @join__type(graph: A) @context(name: "a__user") {
+            currency: String @join__field(graph: A, external: true)
+            txs: [Transaction]
+        }
+        type Outer @join__type(graph: A) @context(name: "a__outer") {
+            code: String
+            user: User
+        }
+        type Transaction @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
+            id: ID!
+            base: Int @join__field(graph: A)
+            amount: Int @join__field(graph: A, contextArguments: [
+                {name: "code", type: "String", context: "a__user", selection: "{ currency }"}
+            ])
+            remote: Int @join__field(graph: B, contextArguments: [
+                {name: "code", type: "String", context: "a__user", selection: "{ currency }"}
+            ])
+            fromInterface: Int @join__field(graph: A, contextArguments: [
+                {name: "code", type: "String", context: "a__account", selection: "{ currency }"}
+            ])
+            fromUnion: Int @join__field(graph: A, contextArguments: [
+                {name: "code", type: "String", context: "a__viewer", selection: "... on User { currency } ... on Other { currency }"}
+            ])
+            required: Int @join__field(graph: A, requires: "base", contextArguments: [
+                {name: "code", type: "String", context: "a__user", selection: "{ currency }"}
+            ])
+            multiple: Int @join__field(graph: A, contextArguments: [
+                {name: "code", type: "String", context: "a__user", selection: "{ currency }"},
+                {name: "outer", type: "String!", context: "a__outer", selection: "{ code }"}
+            ])
+        }
+    "#;
+
+    fn walk<'graph>(
+        graph: &'graph Graph,
+        supergraph: &'graph SupergraphState,
+        overrides: &'graph PlannerOverrideContext,
+        cancellation: &'graph CancellationToken,
+        steps: &[&str],
+    ) -> Option<OperationPath<'graph>> {
+        let entrypoint = graph.edges_from(graph.query_root).next().unwrap();
+        let mut paths = vec![OperationPath::new_entrypoint(&entrypoint)];
+        for step in steps {
+            let mut field = FieldSelection::new_typename();
+            field.name = step.to_string();
+            let target = if let Some(type_name) = step.strip_prefix("... on ") {
+                NavigationTarget::ConcreteType(type_name, None)
+            } else {
+                NavigationTarget::Field {
+                    field: &field,
+                    target_subgraph_ids: None,
+                }
+            };
+            let mut next_paths = vec![];
+            for path in &paths {
+                let mut direct =
+                    find_direct_paths(graph, supergraph, overrides, path, &target, cancellation)
+                        .unwrap();
+                if direct.is_empty() {
+                    direct = find_indirect_paths(
+                        graph,
+                        supergraph,
+                        overrides,
+                        path,
+                        &target,
+                        &Default::default(),
+                        cancellation,
+                    )
+                    .unwrap();
+                }
+                next_paths.extend(direct);
+            }
+            paths = next_paths;
+        }
+        paths.into_iter().next()
+    }
+
+    #[test]
+    fn context_metadata_and_cost_are_added_to_field_edges() {
+        let supergraph = SupergraphState::new(&parse_schema(SUPERGRAPH));
+        let graph = Graph::graph_from_supergraph_state(&supergraph).unwrap();
+        let node = graph.node_display_name_to_index["Transaction/a"];
+        let edge = graph
+            .edges_from(node)
+            .find(|edge| edge.weight().display_name() == "amount")
+            .unwrap();
+        let Edge::FieldMove(field) = edge.weight() else {
+            panic!("expected field move")
+        };
+        let argument = &field.context_arguments[0];
+        assert_eq!(argument.name, "code");
+        assert_eq!(argument.type_in_graph.to_string(), "String");
+        assert_eq!(argument.context, "a__user");
+        assert_eq!(argument.selections.len(), 2);
+        assert!(argument
+            .selections
+            .iter()
+            .any(|selection| selection.type_name == "User"));
+        assert_eq!(
+            edge.weight().cost(),
+            1 + argument
+                .selections
+                .iter()
+                .map(|selection| selection.selection_set.cost())
+                .sum::<u64>()
+        );
+    }
+
+    #[test]
+    fn context_uses_nearest_ancestor_and_counts_only_data_levels() {
+        let supergraph = SupergraphState::new(&parse_schema(SUPERGRAPH));
+        let graph = Graph::graph_from_supergraph_state(&supergraph).unwrap();
+        let overrides = PlannerOverrideContext::default();
+        let cancellation = CancellationToken::new();
+        for (steps, levels, back, subgraph) in [
+            (vec!["users", "txs", "amount"], 1, 1, "a"),
+            (vec!["users", "child", "txs", "amount"], 1, 1, "a"),
+            (vec!["users", "wrapper", "txs", "amount"], 2, 2, "a"),
+            (vec!["users", "txs", "remote"], 1, 2, "b"),
+        ] {
+            let path = walk(&graph, &supergraph, &overrides, &cancellation, &steps).unwrap();
+            assert_eq!(graph.node(path.tail()).unwrap().graph_id(), Some(subgraph));
+            let segment = path.last_segment.as_ref().unwrap();
+            let requirement = &segment.context_requirements[0];
+            assert_eq!(requirement.argument, 0);
+            assert_eq!(requirement.matched_type, "User");
+            assert_eq!(requirement.levels, levels);
+            assert_eq!(requirement.segments_back, back);
+            let ancestor_segment = &path.get_segments()[path.get_segments().len() - 1 - back];
+            assert_eq!(
+                requirement.tree.node_index,
+                graph.get_edge_head(&ancestor_segment.edge_index).unwrap()
+            );
+            assert_eq!(requirement.tree.children.len(), 1);
+            assert_eq!(
+                graph
+                    .edge(requirement.tree.children[0].edge_from_parent.unwrap())
+                    .unwrap()
+                    .display_name(),
+                "currency"
+            );
+        }
+    }
+
+    #[test]
+    fn context_matches_interfaces_and_union_members() {
+        let supergraph = SupergraphState::new(&parse_schema(SUPERGRAPH));
+        let graph = Graph::graph_from_supergraph_state(&supergraph).unwrap();
+        let overrides = PlannerOverrideContext::default();
+        let cancellation = CancellationToken::new();
+        for (steps, matched_type) in [
+            (vec!["users", "txs", "fromInterface"], "Account"),
+            (
+                vec!["account", "... on User", "txs", "fromInterface"],
+                "Account",
+            ),
+            (vec!["viewer", "... on User", "txs", "fromUnion"], "Viewer"),
+            (vec!["viewer", "... on Other", "txs", "fromUnion"], "Viewer"),
+        ] {
+            let path = walk(&graph, &supergraph, &overrides, &cancellation, &steps).unwrap();
+            let requirement = &path.last_segment.as_ref().unwrap().context_requirements[0];
+            assert_eq!(requirement.matched_type, matched_type);
+            assert_eq!(requirement.levels, 1);
+            assert!(!requirement.tree.children.is_empty());
+        }
+    }
+
+    #[test]
+    fn context_and_requires_are_kept_separate_and_multiple_arguments_are_resolved() {
+        let supergraph = SupergraphState::new(&parse_schema(SUPERGRAPH));
+        let graph = Graph::graph_from_supergraph_state(&supergraph).unwrap();
+        let overrides = PlannerOverrideContext::default();
+        let cancellation = CancellationToken::new();
+        let path = walk(
+            &graph,
+            &supergraph,
+            &overrides,
+            &cancellation,
+            &["users", "txs", "required"],
+        )
+        .unwrap();
+        let segment = path.last_segment.as_ref().unwrap();
+        assert_eq!(segment.context_requirements.len(), 1);
+        let tree = segment.requirement_tree.as_ref().unwrap();
+        assert_eq!(
+            graph.node(tree.node_index).unwrap().name_str(),
+            "Transaction"
+        );
+        assert_eq!(
+            graph
+                .edge(tree.children[0].edge_from_parent.unwrap())
+                .unwrap()
+                .display_name(),
+            "base"
+        );
+        let path = walk(
+            &graph,
+            &supergraph,
+            &overrides,
+            &cancellation,
+            &["outer", "user", "txs", "multiple"],
+        )
+        .unwrap();
+        let requirements = &path.last_segment.as_ref().unwrap().context_requirements;
+        assert_eq!(requirements.len(), 2);
+        assert_eq!(
+            (
+                requirements[0].argument,
+                requirements[0].levels,
+                requirements[0].matched_type.as_str()
+            ),
+            (0, 1, "User")
+        );
+        assert_eq!(
+            (
+                requirements[1].argument,
+                requirements[1].levels,
+                requirements[1].matched_type.as_str()
+            ),
+            (1, 2, "Outer")
+        );
+    }
+
+    #[test]
+    fn context_is_unsatisfiable_without_an_ancestor_or_a_resolvable_selection() {
+        let supergraph = SupergraphState::new(&parse_schema(SUPERGRAPH));
+        let graph = Graph::graph_from_supergraph_state(&supergraph).unwrap();
+        let overrides = PlannerOverrideContext::default();
+        let cancellation = CancellationToken::new();
+        for steps in [
+            vec!["transaction", "amount"],
+            vec!["broken", "txs", "amount"],
+            vec!["users", "broken", "txs", "amount"],
+        ] {
+            assert!(walk(&graph, &supergraph, &overrides, &cancellation, &steps).is_none());
+        }
+    }
+
+    #[test]
+    fn context_requires_a_locally_resolvable_entity_key() {
+        let overrides = PlannerOverrideContext::default();
+        let cancellation = CancellationToken::new();
+        for schema in [
+            SUPERGRAPH.replace(
+                "type Transaction @join__type(graph: A, key: \"id\") @join__type(graph: B, key: \"id\")",
+                "type Transaction @join__type(graph: A) @join__type(graph: B)",
+            ),
+            SUPERGRAPH.replace(
+                "type Transaction @join__type(graph: A, key: \"id\") @join__type(graph: B, key: \"id\")",
+                "type Transaction @join__type(graph: A, key: \"id\", resolvable: false) @join__type(graph: B, key: \"id\", resolvable: false)",
+            ),
+            SUPERGRAPH.replace("id: ID!\n            base:", "id: ID! @join__field(graph: A, external: true) @join__field(graph: B, external: true)\n            base:"),
+        ] {
+            let supergraph = SupergraphState::new(&parse_schema(&schema));
+            let graph = Graph::graph_from_supergraph_state(&supergraph).unwrap();
+            assert!(walk(&graph, &supergraph, &overrides, &cancellation, &["users", "txs", "amount"]).is_none());
+        }
+    }
+}
+
+#[cfg(test)]
 mod graph_tests {
     use crate::query_planner::{
         graph::{

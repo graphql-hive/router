@@ -13,7 +13,11 @@ use std::{
     fmt::{Debug, Display},
 };
 
-use super::graph::{edge::Edge, node::Node, provided::Provided};
+use super::graph::{
+    edge::{ContextArgument, Edge},
+    node::Node,
+    provided::Provided,
+};
 use crate::query_planner::planner::walker::utils::get_entrypoints;
 use crate::query_planner::{
     ast::type_aware_selection::TypeAwareSelection,
@@ -273,6 +277,7 @@ impl Graph {
                 false,
                 None,
                 None,
+                vec![],
                 None,
             ),
         );
@@ -717,6 +722,36 @@ impl Graph {
                               .into(),
                           });
 
+                    let context_arguments = maybe_join_field
+                        .map(|join_field| {
+                            join_field
+                                .context_arguments
+                                .iter()
+                                .map(|argument| ContextArgument {
+                                    name: argument.name.clone(),
+                                    type_in_graph: argument.type_in_graph.clone(),
+                                    context: argument.context.clone(),
+                                    selections: state
+                                        .contexts
+                                        .get(&argument.context)
+                                        .into_iter()
+                                        .flatten()
+                                        .map(|type_name| {
+                                            FederationRules::parse_context_selection(
+                                                state,
+                                                join_field.graph_id.as_ref().expect(
+                                                    "context arguments must have a subgraph",
+                                                ),
+                                                type_name,
+                                                &argument.selection,
+                                            )
+                                        })
+                                        .collect(),
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+
                     // Parsed once, a union field has an edge per member.
                     let provided = maybe_join_field
                         .and_then(|join_field| {
@@ -833,6 +868,7 @@ impl Graph {
                                     false,
                                     None,
                                     None,
+                                    vec![],
                                     None,
                                 ),
                             );
@@ -853,6 +889,7 @@ impl Graph {
                                     field_definition.field_type.is_list(),
                                     maybe_join_field.cloned(),
                                     requirements.clone(),
+                                    context_arguments.clone(),
                                     overridden_by.clone(),
                                 ),
                             );
@@ -905,6 +942,7 @@ impl Graph {
                             field_definition.field_type.is_list(),
                             maybe_join_field.cloned(),
                             requirements.clone(),
+                            context_arguments,
                             overridden_by.clone(),
                         ),
                     );
@@ -1124,6 +1162,7 @@ impl Graph {
                     field_definition.field_type.is_list(),
                     None,
                     None,
+                    vec![],
                     None,
                 ),
             );
