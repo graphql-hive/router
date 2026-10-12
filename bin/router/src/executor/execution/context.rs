@@ -9,11 +9,9 @@ use xxhash_rust::xxh3::Xxh3;
 
 use crate::{
     executor::{
-        execution::rewrites::FetchRewriteExt,
-        introspection::schema::PossibleTypes,
-        projection::request::project_requires,
-        response::value::Value,
-        utils::traverse::{traverse_and_callback, traverse_with_objects},
+        execution::rewrites::FetchRewriteExt, introspection::schema::PossibleTypes,
+        projection::request::project_requires, response::value::Value,
+        utils::traverse::traverse_and_callback,
     },
     query_planner::{
         ast::requires::RequiresSelectionSet,
@@ -64,9 +62,12 @@ fn select_value<'v>(
     }
 }
 
+/// Walks every flatten path, deduplicates the entities by hash and projects their
+/// representations. Entities are grouped by the tuple of their context values (one request per
+/// group), without `context_rewrites` there is at most one group. Identical paths share hashes.
 pub(super) fn collect_context_entities<'a>(
     data: &Value<'_>,
-    paths: &[ResponsePathRef<'a>],
+    paths: impl IntoIterator<Item = ResponsePathRef<'a>>,
     requires: &RequiresSelectionSet,
     input_rewrites: Option<&[FetchRewrite]>,
     context_rewrites: Option<&'a [KeyRenamer]>,
@@ -81,9 +82,14 @@ pub(super) fn collect_context_entities<'a>(
     }
     let mut groups: Vec<ContextGroup<'a>> = Vec::new();
     let mut group_by_values = HashMap::new();
-    let mut path_hashes = Vec::with_capacity(paths.len());
+    let mut path_hashes: Vec<RepresentationHashes> = Vec::new();
+    let mut seen_paths: Vec<(ResponsePathRef<'a>, RepresentationHashes)> = Vec::new();
     let required_selections = requires.root_selections();
     for path in paths {
+        if let Some((_, hashes)) = seen_paths.iter().find(|(seen, _)| *seen == path) {
+            path_hashes.push(Arc::clone(hashes));
+            continue;
+        }
         let mut hashes = Vec::new();
         let mut collect = |entity: &Value<'_>, objects: &[&Value<'_>]| {
             if entity.is_null() {
@@ -122,12 +128,15 @@ pub(super) fn collect_context_entities<'a>(
                 });
                 index
             });
-            let mut hasher = Xxh3::new();
-            entity
-                .to_hash(required_selections, possible_types)
-                .hash(&mut hasher);
-            values.hash(&mut hasher);
-            let hash = hasher.finish();
+            let entity_hash = entity.to_hash(required_selections, possible_types);
+            let hash = if values.is_empty() {
+                entity_hash
+            } else {
+                let mut hasher = Xxh3::new();
+                entity_hash.hash(&mut hasher);
+                values.hash(&mut hasher);
+                hasher.finish()
+            };
             hashes.push(Some(hash));
             let group = &mut groups[group_index];
             if group.hash_to_index.contains_key(&hash) {
@@ -155,20 +164,16 @@ pub(super) fn collect_context_entities<'a>(
                 group.hash_to_index.insert(hash, group.hash_to_index.len());
             }
         };
-        if context_rewrites.is_some() {
-            traverse_with_objects(
-                data,
-                path.as_slice(),
-                possible_types,
-                &mut Vec::new(),
-                &mut collect,
-            );
-        } else {
-            traverse_and_callback(data, path.as_slice(), possible_types, &mut |entity| {
-                collect(entity, &[])
-            });
-        }
-        path_hashes.push(Arc::new(hashes));
+        traverse_and_callback(
+            data,
+            path.as_slice(),
+            possible_types,
+            &mut Vec::new(),
+            &mut collect,
+        );
+        let hashes = Arc::new(hashes);
+        seen_paths.push((path, Arc::clone(&hashes)));
+        path_hashes.push(hashes);
     }
     for group in &mut groups {
         group.representations.push(b']');
@@ -276,7 +281,7 @@ mod tests {
         ];
         let (groups, hashes) = collect_context_entities(
             &data,
-            &[path.as_ref()],
+            [path.as_ref()],
             &requires,
             None,
             Some(&rewrites),

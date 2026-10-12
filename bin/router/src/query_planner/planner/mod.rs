@@ -129,10 +129,14 @@ pub fn add_variables_to_fetch_steps(
             );
         }
         if let Some(usage) = &step.variable_usages {
-            let mut relevant_variables = variables
+            let mut relevant_variables = usage
                 .iter()
-                .flatten()
-                .filter(|variable| usage.contains(&variable.name))
+                .filter_map(|used_var_name| {
+                    variables
+                        .iter()
+                        .flatten()
+                        .find(|op_var| op_var.name == *used_var_name)
+                })
                 .cloned()
                 .collect::<Vec<_>>();
             relevant_variables.extend(step.context_variable_definitions.iter().cloned());

@@ -602,6 +602,7 @@ impl<'graph> PathSearch<'graph> {
                 &selections.selection_set,
                 excluded,
                 use_only_direct_edges,
+                false,
             )?
             else {
                 return Ok(None);
@@ -667,6 +668,7 @@ impl<'graph> PathSearch<'graph> {
                         &selection.selection_set,
                         excluded,
                         use_only_direct_edges,
+                        true,
                     )?
                     else {
                         return Ok(None);
@@ -697,6 +699,7 @@ impl<'graph> PathSearch<'graph> {
         selection_set: &'graph SelectionSet,
         excluded: &ExcludedFromLookup<'graph>,
         use_only_direct_edges: bool,
+        skip_inapplicable_fragments: bool,
     ) -> Result<Option<Vec<OperationPath<'graph>>>, WalkOperationError> {
         let graph = self.graph;
         let cancellation_token = self.cancellation_token;
@@ -704,7 +707,11 @@ impl<'graph> PathSearch<'graph> {
         let mut tied_paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
 
         for selection in selection_set.items.iter() {
-            if let SelectionItem::InlineFragment(fragment) = selection {
+            // context selections can carry type conditions for other ancestor types,
+            // those don't apply here and get dropped instead of failing the edge
+            if let (true, SelectionItem::InlineFragment(fragment)) =
+                (skip_inapplicable_fragments, selection)
+            {
                 let current_type = graph.node(path.tail())?.name_str();
                 if matches!(
                     self.supergraph.definitions.get(current_type),

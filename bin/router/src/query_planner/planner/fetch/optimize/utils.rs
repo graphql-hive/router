@@ -273,7 +273,12 @@ impl FetchGraph<MultiTypeFetchStep> {
                 .flat_map(|step| step.context_producers.iter().copied())
                 .collect();
             let mut candidate = None;
+            // O(n^2 * path) scan over all step pairs, index steps by service_name if planning time shows up
             for source_index in self.graph.node_indices() {
+                // dropping incoming edges below is only safe when there's a single upstream dependency
+                if self.parents_of(source_index).count() != 1 {
+                    continue;
+                }
                 let source = self.get_step_data(source_index)?;
                 if !producer_ids.contains(&source.id)
                     || !source.is_entity_call()
@@ -321,6 +326,16 @@ impl FetchGraph<MultiTypeFetchStep> {
 }
 
 impl FetchStepData<MultiTypeFetchStep> {
+    fn field_levels_between(&self, other: &Self) -> usize {
+        let field_count = |path: &MergePath| {
+            path.inner
+                .iter()
+                .filter(|s| matches!(s, Segment::Field(..)))
+                .count()
+        };
+        field_count(&other.response_path).saturating_sub(field_count(&self.response_path))
+    }
+
     pub(crate) fn can_merge_context(&self, other: &Self) -> bool {
         if self.context_producers.contains(&other.id) || other.context_producers.contains(&self.id)
         {
@@ -332,19 +347,7 @@ impl FetchStepData<MultiTypeFetchStep> {
         if !self.is_entity_call() {
             return false;
         }
-        let levels = other
-            .response_path
-            .inner
-            .iter()
-            .filter(|s| matches!(s, Segment::Field(..)))
-            .count()
-            .saturating_sub(
-                self.response_path
-                    .inner
-                    .iter()
-                    .filter(|s| matches!(s, Segment::Field(..)))
-                    .count(),
-            );
+        let levels = self.field_levels_between(other);
         other.context_rewrites.as_ref().is_none_or(|rewrites| {
             rewrites.iter().all(|rewrite| {
                 rewrite
@@ -359,19 +362,7 @@ impl FetchStepData<MultiTypeFetchStep> {
 
     pub(crate) fn merge_context_metadata(&mut self, other: &mut Self) {
         if let Some(mut rewrites) = other.context_rewrites.take() {
-            let levels = other
-                .response_path
-                .inner
-                .iter()
-                .filter(|s| matches!(s, Segment::Field(..)))
-                .count()
-                .saturating_sub(
-                    self.response_path
-                        .inner
-                        .iter()
-                        .filter(|s| matches!(s, Segment::Field(..)))
-                        .count(),
-                );
+            let levels = self.field_levels_between(other);
             for rewrite in &mut rewrites {
                 rewrite.path.drain(..levels);
             }

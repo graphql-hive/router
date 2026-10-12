@@ -1,275 +1,825 @@
-use std::sync::{Arc, Mutex};
-
-use graphql_tools::parser::{
-    parse_query,
-    query::{Definition, OperationDefinition, Selection, SelectionSet, Value as QueryValue},
-};
+use crate::testkit::{ClientResponseExt, Started, TestRouter};
 use serde_json::{json, Value};
 
-use crate::testkit::{ClientResponseExt, TestRouter};
-
-fn render(
-    selection: &SelectionSet<'_, String>,
-    variables: &Value,
-    representation: &Value,
-) -> Value {
-    let mut result = serde_json::Map::new();
-    for item in &selection.items {
-        match item {
-            Selection::InlineFragment(fragment) => {
-                result.extend(
-                    render(&fragment.selection_set, variables, representation)
-                        .as_object()
-                        .unwrap()
-                        .clone(),
-                );
-            }
-            Selection::Field(field) => {
-                let value = if !field.selection_set.items.is_empty() {
-                    render(&field.selection_set, variables, representation)
-                } else if field.name == "base" {
-                    json!(10)
-                } else if field.arguments.is_empty() {
-                    representation[&field.name].clone()
-                } else {
-                    let values: Vec<_> = field
-                        .arguments
-                        .iter()
-                        .map(|(_, value)| {
-                            let QueryValue::Variable(name) = value else {
-                                panic!("context variable");
-                            };
-                            variables[name].clone()
-                        })
-                        .collect();
-                    json!(values
-                        .iter()
-                        .map(|value| match value.as_str() {
-                            Some("USD") => 1,
-                            Some("EUR") => 2,
-                            Some("outer") => 10,
-                            _ => 0,
-                        })
-                        .sum::<i32>())
-                };
-                result.insert(field.alias.as_ref().unwrap_or(&field.name).clone(), value);
-            }
-            Selection::FragmentSpread(_) => panic!("unexpected output fragment"),
-        }
-    }
-    Value::Object(result)
+fn body(request: &mockito::Request) -> Value {
+    serde_json::from_slice(request.body().unwrap()).unwrap()
 }
 
-async fn run_case(
-    fixture: &str,
-    query: &str,
-    root_data: Value,
-    expected: Value,
-    requests: usize,
-) -> Vec<Value> {
-    let mut server = mockito::Server::new_async().await;
+async fn start_router(fixture: &str, server: &mockito::Server) -> TestRouter<Started> {
     let host = server.host_with_port();
-    let log = Arc::new(Mutex::new(Vec::new()));
-    let calls = log.clone();
-    let mock = server
-        .mock("POST", mockito::Matcher::Any)
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body_from_request(move |request| {
-            let body: Value = serde_json::from_slice(request.body().unwrap()).unwrap();
-            if !body["query"].as_str().unwrap().contains("_entities") {
-                return json!({"data": root_data}).to_string().into_bytes();
-            }
-            calls.lock().unwrap().push(body.clone());
-            let document = parse_query::<String>(body["query"].as_str().unwrap()).unwrap();
-            let Definition::Operation(OperationDefinition::Query(operation)) =
-                &document.definitions[0]
-            else {
-                panic!("entity query");
-            };
-            let mut data = serde_json::Map::new();
-            for item in &operation.selection_set.items {
-                let Selection::Field(field) = item else {
-                    panic!("entities field");
-                };
-                let QueryValue::Variable(name) = &field.arguments[0].1 else {
-                    panic!("representations variable");
-                };
-                let entities: Vec<_> = body["variables"][name]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|representation| {
-                        render(&field.selection_set, &body["variables"], representation)
-                    })
-                    .collect();
-                data.insert(
-                    field.alias.as_ref().unwrap_or(&field.name).clone(),
-                    json!(entities),
-                );
-            }
-            json!({"data": data}).to_string().into_bytes()
-        })
-        .expect(requests + 1)
-        .create_async()
-        .await;
-    let path = format!(
-        "{}/../bin/router/fixture/tests/{fixture}.supergraph.graphql",
-        env!("CARGO_MANIFEST_DIR")
-    );
-    let router = TestRouter::builder()
+    TestRouter::builder()
         .inline_config(format!(
             r#"
-        supergraph:
-          source: file
-          path: {path}
-        override_subgraph_urls:
-          subgraphs:
-            a:
-              url: "http://{host}/a"
-            b:
-              url: "http://{host}/b"
-    "#
+            supergraph:
+              source: file
+              path: ../bin/router/fixture/tests/{fixture}.supergraph.graphql
+            override_subgraph_urls:
+              subgraphs:
+                a:
+                  url: "http://{host}/a"
+                b:
+                  url: "http://{host}/b"
+            "#
         ))
         .build()
         .start()
-        .await;
-    let response = router.send_graphql_request(query, None, None).await;
-    let response: Value = serde_json::from_str(&response.json_body_string_pretty().await).unwrap();
-    assert_eq!(response, json!({"data": expected}), "{query}");
-    mock.assert_async().await;
-    let result = log.lock().unwrap().clone();
-    assert_eq!(result.len(), requests, "{query}");
-    result
+        .await
 }
 
 #[ntex::test]
-async fn context_groups_lists_nulls_and_deduplication() {
-    for (currencies, expected, groups) in [
-        (vec![json!("USD"), json!("USD")], vec![1, 1], 1),
-        (
-            vec![json!("USD"), json!("EUR"), Value::Null],
-            vec![1, 2, 0],
-            3,
-        ),
-    ] {
-        let data: Vec<_> = currencies.iter().map(|currency| json!({"__typename":"User", "currency":currency,
-            "txs":[{"__typename":"Transaction", "id":"same"}, {"__typename":"Transaction", "id":"same"}]})).collect();
-        let expected: Vec<_> = expected
-            .iter()
-            .map(|amount| json!({"txs":[{"amount":amount}, {"amount":amount}]}))
-            .collect();
-        let calls = run_case(
-            "context-basic",
-            "{ users { txs { amount } } }",
-            json!({"users":data}),
-            json!({"users":expected}),
-            groups,
+async fn dedupes_entities_with_equal_context_values() {
+    let mut server = mockito::Server::new_async().await;
+    let router = start_router("context-basic", &server).await;
+    let _root = server
+        .mock("POST", "/a")
+        .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"users":[{"__typename":"User","currency":"USD","txs":[{"__typename":"Transaction","id":"same"},{"__typename":"Transaction","id":"same"}]},{"__typename":"User","currency":"USD","txs":[{"__typename":"Transaction","id":"same"},{"__typename":"Transaction","id":"same"}]}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let entities = server
+        .mock("POST", "/a")
+        .match_request(|r| {
+            let body = body(r);
+            body["variables"]["__context_0"] == "USD"
+                && body["variables"]["representations"]
+                    == json!([{"__typename":"Transaction","id":"same"}])
+        })
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"_entities":[{"amount":1}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let res = router
+        .send_graphql_request(r#"{ users { txs { amount } } }"#, None, None)
+        .await;
+
+    insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+    {
+      "data": {
+        "users": [
+          {
+            "txs": [
+              {
+                "amount": 1
+              },
+              {
+                "amount": 1
+              }
+            ]
+          },
+          {
+            "txs": [
+              {
+                "amount": 1
+              },
+              {
+                "amount": 1
+              }
+            ]
+          }
+        ]
+      }
+    }
+    "#);
+    _root.assert_async().await;
+    entities.assert_async().await;
+}
+
+#[ntex::test]
+async fn groups_entities_by_context_value_including_null() {
+    let mut server = mockito::Server::new_async().await;
+    let router = start_router("context-basic", &server).await;
+    let _root = server
+        .mock("POST", "/a")
+        .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"users":[{"__typename":"User","currency":"USD","txs":[{"__typename":"Transaction","id":"same"},{"__typename":"Transaction","id":"same"}]},{"__typename":"User","currency":"EUR","txs":[{"__typename":"Transaction","id":"same"},{"__typename":"Transaction","id":"same"}]},{"__typename":"User","currency":null,"txs":[{"__typename":"Transaction","id":"same"},{"__typename":"Transaction","id":"same"}]}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let usd = server
+        .mock("POST", "/a")
+        .match_request(|r| {
+            let body = body(r);
+            body["variables"]["__context_0"] == "USD"
+        })
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"_entities":[{"amount":1}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let eur = server
+        .mock("POST", "/a")
+        .match_request(|r| {
+            let body = body(r);
+            body["variables"]["__context_0"] == "EUR"
+        })
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"_entities":[{"amount":2}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let null = server
+        .mock("POST", "/a")
+        .match_request(|r| {
+            let body = body(r);
+            body["query"].as_str().unwrap().contains("_entities")
+                && body["variables"]["__context_0"].is_null()
+        })
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"_entities":[{"amount":0}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let res = router
+        .send_graphql_request(r#"{ users { txs { amount } } }"#, None, None)
+        .await;
+
+    insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+    {
+      "data": {
+        "users": [
+          {
+            "txs": [
+              {
+                "amount": 1
+              },
+              {
+                "amount": 1
+              }
+            ]
+          },
+          {
+            "txs": [
+              {
+                "amount": 2
+              },
+              {
+                "amount": 2
+              }
+            ]
+          },
+          {
+            "txs": [
+              {
+                "amount": 0
+              },
+              {
+                "amount": 0
+              }
+            ]
+          }
+        ]
+      }
+    }
+    "#);
+    _root.assert_async().await;
+    usd.assert_async().await;
+    eur.assert_async().await;
+    null.assert_async().await;
+}
+
+#[ntex::test]
+async fn nested_ancestor_picks_nearest() {
+    let mut server = mockito::Server::new_async().await;
+    let router = start_router("context-basic", &server).await;
+    let _root = server
+        .mock("POST", "/a")
+        .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"users":[{"child":{"__typename":"User","currency":"USD","txs":[{"__typename":"Transaction","id":"1"}]}}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let entities = server
+        .mock("POST", "/a")
+        .match_request(|r| {
+            let body = body(r);
+            body["variables"]["__context_0"] == "USD"
+        })
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"_entities":[{"amount":1}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let res = router
+        .send_graphql_request(r#"{ users { child { txs { amount } } } }"#, None, None)
+        .await;
+
+    insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+    {
+      "data": {
+        "users": [
+          {
+            "child": {
+              "txs": [
+                {
+                  "amount": 1
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
+    _root.assert_async().await;
+    entities.assert_async().await;
+}
+
+#[ntex::test]
+async fn ancestor_through_non_context_wrapper() {
+    let mut server = mockito::Server::new_async().await;
+    let router = start_router("context-basic", &server).await;
+    let _root = server
+        .mock("POST", "/a")
+        .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"users":[{"__typename":"User","currency":"USD","wrapper":{"txs":[{"__typename":"Transaction","id":"1"}]}}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let entities = server
+        .mock("POST", "/a")
+        .match_request(|r| {
+            let body = body(r);
+            body["variables"]["__context_0"] == "USD"
+        })
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"_entities":[{"amount":1}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let res = router
+        .send_graphql_request(r#"{ users { wrapper { txs { amount } } } }"#, None, None)
+        .await;
+
+    insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+    {
+      "data": {
+        "users": [
+          {
+            "wrapper": {
+              "txs": [
+                {
+                  "amount": 1
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
+    _root.assert_async().await;
+    entities.assert_async().await;
+}
+
+#[ntex::test]
+async fn interface_context() {
+    let mut server = mockito::Server::new_async().await;
+    let router = start_router("context-basic", &server).await;
+    let _root = server
+        .mock("POST", "/a")
+        .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"account":{"__typename":"User","currency":"USD","txs":[{"__typename":"Transaction","id":"1"}]}}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let entities = server
+        .mock("POST", "/a")
+        .match_request(|r| {
+            let body = body(r);
+            body["variables"]["__context_0"] == "USD"
+        })
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"_entities":[{"fromInterface":1}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let res = router
+        .send_graphql_request(r#"{ account { txs { fromInterface } } }"#, None, None)
+        .await;
+
+    insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+    {
+      "data": {
+        "account": {
+          "txs": [
+            {
+              "fromInterface": 1
+            }
+          ]
+        }
+      }
+    }
+    "#);
+    _root.assert_async().await;
+    entities.assert_async().await;
+}
+
+#[ntex::test]
+async fn union_context_with_type_condition() {
+    let mut server = mockito::Server::new_async().await;
+    let router = start_router("context-basic", &server).await;
+    let _root = server
+        .mock("POST", "/a")
+        .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"viewer":{"__typename":"Other","currency":"EUR","txs":[{"__typename":"Transaction","id":"1"}]}}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let entities = server
+        .mock("POST", "/a")
+        .match_request(|r| {
+            let body = body(r);
+            body["variables"]["__context_0"] == "EUR"
+        })
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"_entities":[{"fromUnion":2}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let res = router
+        .send_graphql_request(
+            r#"{ viewer { ... on Other { txs { fromUnion } } } }"#,
+            None,
+            None,
         )
         .await;
-        for call in calls {
-            assert_eq!(
-                call["variables"]["representations"]
-                    .as_array()
-                    .unwrap()
-                    .len(),
-                1
-            );
+
+    insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+    {
+      "data": {
+        "viewer": {
+          "txs": [
+            {
+              "fromUnion": 2
+            }
+          ]
         }
+      }
     }
+    "#);
+    _root.assert_async().await;
+    entities.assert_async().await;
 }
 
 #[ntex::test]
-async fn context_nearest_nested_abstract_multiple_and_requires() {
-    let tx = json!({"__typename":"Transaction", "id":"1"});
-    let user = json!({"__typename":"User", "currency":"USD", "txs":[tx.clone()]});
-    for (query, data, expected, requests) in [
-        (
-            "{ users { child { txs { amount } } } }",
-            json!({"users":[{"__typename":"User", "currency":"EUR", "child":user.clone()}]}),
-            json!({"users":[{"child":{"txs":[{"amount":1}]}}]}),
-            1,
-        ),
-        (
-            "{ users { wrapper { txs { amount } } } }",
-            json!({"users":[{"__typename":"User", "currency":"USD", "wrapper":{"txs":[tx.clone()]}}]}),
-            json!({"users":[{"wrapper":{"txs":[{"amount":1}]}}]}),
-            1,
-        ),
-        (
-            "{ account { txs { fromInterface } } }",
-            json!({"account":user.clone()}),
-            json!({"account":{"txs":[{"fromInterface":1}]}}),
-            1,
-        ),
-        (
-            "{ viewer { ... on Other { txs { fromUnion } } } }",
-            json!({"viewer":{"__typename":"Other", "currency":"EUR", "txs":[tx.clone()]}}),
-            json!({"viewer":{"txs":[{"fromUnion":2}]}}),
-            1,
-        ),
-        (
-            "{ outer { user { txs { multiple } } } }",
-            json!({"outer":{"__typename":"Outer", "code":"outer", "user":user.clone()}}),
-            json!({"outer":{"user":{"txs":[{"multiple":11}]}}}),
-            1,
-        ),
-        (
-            "{ users { txs { required } } }",
-            json!({"users":[user.clone()]}),
-            json!({"users":[{"txs":[{"required":1}]}]}),
-            2,
-        ),
-        (
-            "{ renamed: users { currency: id txs { amount } } }",
-            json!({"renamed":[{"__typename":"User", "currency":"user-id", "_internal_qp_alias_0":"USD", "txs":[tx.clone()]}]}),
-            json!({"renamed":[{"currency":"user-id", "txs":[{"amount":1}]}]}),
-            1,
-        ),
-        (
-            "{ users { txs { amount @skip(if: true) } } }",
-            json!({"users":[{"txs":[tx.clone()]}]}),
-            json!({"users":[{"txs":[{}]}]}),
-            0,
-        ),
-    ] {
-        run_case("context-basic", query, data, expected, requests).await;
+async fn multiple_arguments_from_different_ancestors() {
+    let mut server = mockito::Server::new_async().await;
+    let router = start_router("context-basic", &server).await;
+    let _root = server
+        .mock("POST", "/a")
+        .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"outer":{"__typename":"Outer","code":"outer","user":{"__typename":"User","currency":"USD","txs":[{"__typename":"Transaction","id":"1"}]}}}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let entities = server
+        .mock("POST", "/a")
+        .match_request(|r| {
+            let body = body(r);
+            body["variables"]["__context_0"] == "USD" && body["variables"]["__context_1"] == "outer"
+        })
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"_entities":[{"multiple":11}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let res = router
+        .send_graphql_request(r#"{ outer { user { txs { multiple } } } }"#, None, None)
+        .await;
+
+    insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+    {
+      "data": {
+        "outer": {
+          "user": {
+            "txs": [
+              {
+                "multiple": 11
+              }
+            ]
+          }
+        }
+      }
     }
+    "#);
+    _root.assert_async().await;
+    entities.assert_async().await;
 }
 
 #[ntex::test]
-async fn context_cross_subgraph_merges_into_ancestor_fetch() {
-    let calls = run_case(
-        "context-cross",
-        "{ user { lastTransaction { amountInUserCurrency } } }",
-        json!({"user":{"__typename":"User", "id":"1", "userCurrency":{"isoCode":"EUR"}}}),
-        json!({"user":{"lastTransaction":{"amountInUserCurrency":2}}}),
-        1,
-    )
-    .await;
-    assert_eq!(calls[0]["variables"]["__context_0"], "EUR");
-    assert!(calls[0]["query"].as_str().unwrap().contains("...on User"));
+async fn requires_and_context_on_one_field() {
+    let mut server = mockito::Server::new_async().await;
+    let router = start_router("context-basic", &server).await;
+    let _root = server
+        .mock("POST", "/a")
+        .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"users":[{"__typename":"User","currency":"USD","txs":[{"__typename":"Transaction","id":"1"}]}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let base = server
+        .mock("POST", "/b")
+        .match_request(|r| {
+            let body = body(r);
+            body["query"].as_str().unwrap().contains("base")
+        })
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"_entities":[{"base":10}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let entities = server
+        .mock("POST", "/a")
+        .match_request(|r| {
+            let body = body(r);
+            body["variables"]["__context_0"] == "USD"
+                && body["variables"]["representations"]
+                    == json!([{"__typename":"Transaction","base":10,"id":"1"}])
+        })
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"_entities":[{"required":1}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let res = router
+        .send_graphql_request(r#"{ users { txs { required } } }"#, None, None)
+        .await;
+
+    insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+    {
+      "data": {
+        "users": [
+          {
+            "txs": [
+              {
+                "required": 1
+              }
+            ]
+          }
+        ]
+      }
+    }
+    "#);
+    _root.assert_async().await;
+    base.assert_async().await;
+    entities.assert_async().await;
 }
 
 #[ntex::test]
-async fn context_batch_aliases_have_different_group_counts() {
-    let tx = json!({"__typename":"Transaction", "id":"same"});
-    for second in [
-        json!([{"__typename":"User", "currency":"USD", "txs":[tx.clone()]}]),
-        json!([]),
-    ] {
-        let expected_second = if second.as_array().unwrap().is_empty() {
-            json!([])
-        } else {
-            json!([{"txs":[{"amount":1}]}])
-        };
-        let calls = run_case("context-basic", "{ users { txs { amount } } secondUsers { txs { amount } } }",
-            json!({"users":[{"__typename":"User", "currency":"USD", "txs":[tx.clone()]}, {"__typename":"User", "currency":"EUR", "txs":[tx.clone()]}], "secondUsers":second}),
-            json!({"users":[{"txs":[{"amount":1}]}, {"txs":[{"amount":2}]}], "secondUsers":expected_second}), 2).await;
-        assert!(calls.iter().any(|call| call["variables"]
-            .as_object()
-            .unwrap()
-            .iter()
-            .any(|(name, value)| name.starts_with("__batch_reps_") && value == &json!([]))));
+async fn client_alias_on_ancestor_and_colliding_with_context_key() {
+    let mut server = mockito::Server::new_async().await;
+    let router = start_router("context-basic", &server).await;
+    let _root = server
+        .mock("POST", "/a")
+        .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"renamed":[{"__typename":"User","currency":"user-id","_internal_qp_alias_0":"USD","txs":[{"__typename":"Transaction","id":"1"}]}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let entities = server
+        .mock("POST", "/a")
+        .match_request(|r| {
+            let body = body(r);
+            body["variables"]["__context_0"] == "USD"
+        })
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"_entities":[{"amount":1}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let res = router
+        .send_graphql_request(
+            r#"{ renamed: users { currency: id txs { amount } } }"#,
+            None,
+            None,
+        )
+        .await;
+
+    insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+    {
+      "data": {
+        "renamed": [
+          {
+            "currency": "user-id",
+            "txs": [
+              {
+                "amount": 1
+              }
+            ]
+          }
+        ]
+      }
     }
+    "#);
+    _root.assert_async().await;
+    entities.assert_async().await;
+}
+
+#[ntex::test]
+async fn skipped_context_field_sends_no_entity_request() {
+    let mut server = mockito::Server::new_async().await;
+    let router = start_router("context-basic", &server).await;
+    let _root = server
+        .mock("POST", "/a")
+        .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"users":[{"txs":[{"__typename":"Transaction","id":"1"}]}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let entities = server
+        .mock("POST", "/a")
+        .match_request(|r| {
+            let body = body(r);
+            body["query"].as_str().unwrap().contains("_entities")
+        })
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"_entities":[]}}"#)
+        .expect(0)
+        .create_async()
+        .await;
+
+    let res = router
+        .send_graphql_request(
+            r#"{ users { txs { amount @skip(if: true) } } }"#,
+            None,
+            None,
+        )
+        .await;
+
+    insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+    {
+      "data": {
+        "users": [
+          {
+            "txs": [
+              {}
+            ]
+          }
+        ]
+      }
+    }
+    "#);
+    _root.assert_async().await;
+    entities.assert_async().await;
+}
+
+#[ntex::test]
+async fn cross_subgraph_merges_into_ancestor_fetch() {
+    let mut server = mockito::Server::new_async().await;
+    let router = start_router("context-cross", &server).await;
+    let _root = server
+        .mock("POST", "/a")
+        .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"data":{"user":{"__typename":"User","id":"1","userCurrency":{"isoCode":"EUR"}}}}"#,
+        )
+        .expect(1)
+        .create_async()
+        .await;
+    let entities = server
+        .mock("POST", "/b")
+        .match_request(|r| {
+            let body = body(r);
+            body["variables"]["__context_0"] == "EUR"
+                && body["query"].as_str().unwrap().contains("...on User")
+        })
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"_entities":[{"lastTransaction":{"amountInUserCurrency":2}}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let res = router
+        .send_graphql_request(
+            r#"{ user { lastTransaction { amountInUserCurrency } } }"#,
+            None,
+            None,
+        )
+        .await;
+
+    insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+    {
+      "data": {
+        "user": {
+          "lastTransaction": {
+            "amountInUserCurrency": 2
+          }
+        }
+      }
+    }
+    "#);
+    _root.assert_async().await;
+    entities.assert_async().await;
+}
+
+#[ntex::test]
+async fn batch_aliases_with_unequal_group_counts() {
+    let mut server = mockito::Server::new_async().await;
+    let router = start_router("context-basic", &server).await;
+    let _root = server
+        .mock("POST", "/a")
+        .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"users":[{"__typename":"User","currency":"USD","txs":[{"__typename":"Transaction","id":"same"}]},{"__typename":"User","currency":"EUR","txs":[{"__typename":"Transaction","id":"same"}]}],"secondUsers":[{"__typename":"User","currency":"USD","txs":[{"__typename":"Transaction","id":"same"}]}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let usd = server
+        .mock("POST", "/a")
+        .match_request(|r| {
+            let body = body(r);
+            body["variables"]["__context_0"] == "USD"
+                && body["variables"]["__batch_reps_0"]
+                    == json!([{"__typename":"Transaction","id":"same"}])
+        })
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"_e0":[{"amount":1}],"_e1":[{"amount":1}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let eur = server
+        .mock("POST", "/a")
+        .match_request(|r| {
+            let body = body(r);
+            body["variables"]["__context_0"] == "EUR"
+                && body["variables"]["__batch_reps_0"] == json!([])
+        })
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"_e0":[],"_e1":[{"amount":2}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let res = router
+        .send_graphql_request(
+            r#"{ users { txs { amount } } secondUsers { txs { amount } } }"#,
+            None,
+            None,
+        )
+        .await;
+
+    insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+    {
+      "data": {
+        "users": [
+          {
+            "txs": [
+              {
+                "amount": 1
+              }
+            ]
+          },
+          {
+            "txs": [
+              {
+                "amount": 2
+              }
+            ]
+          }
+        ],
+        "secondUsers": [
+          {
+            "txs": [
+              {
+                "amount": 1
+              }
+            ]
+          }
+        ]
+      }
+    }
+    "#);
+    _root.assert_async().await;
+    usd.assert_async().await;
+    eur.assert_async().await;
+}
+
+#[ntex::test]
+async fn batch_alias_without_entities_is_dropped_from_the_query() {
+    let mut server = mockito::Server::new_async().await;
+    let router = start_router("context-basic", &server).await;
+    let _root = server
+        .mock("POST", "/a")
+        .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"users":[{"__typename":"User","currency":"USD","txs":[{"__typename":"Transaction","id":"same"}]},{"__typename":"User","currency":"EUR","txs":[{"__typename":"Transaction","id":"same"}]}],"secondUsers":[]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let usd = server
+        .mock("POST", "/a")
+        .match_request(|r| {
+            let body = body(r);
+            let query = body["query"].as_str().unwrap();
+            !query.contains("_e0")
+                && !query.contains("$__context_1")
+                && body["variables"]["__context_0"] == "USD"
+        })
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"_e1":[{"amount":1}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let eur = server
+        .mock("POST", "/a")
+        .match_request(|r| {
+            let body = body(r);
+            let query = body["query"].as_str().unwrap();
+            !query.contains("_e0")
+                && !query.contains("$__context_1")
+                && body["variables"]["__context_0"] == "EUR"
+        })
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"data":{"_e1":[{"amount":2}]}}"#)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let res = router
+        .send_graphql_request(
+            r#"{ users { txs { amount } } secondUsers { txs { amount } } }"#,
+            None,
+            None,
+        )
+        .await;
+
+    insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+    {
+      "data": {
+        "users": [
+          {
+            "txs": [
+              {
+                "amount": 1
+              }
+            ]
+          },
+          {
+            "txs": [
+              {
+                "amount": 2
+              }
+            ]
+          }
+        ],
+        "secondUsers": []
+      }
+    }
+    "#);
+    _root.assert_async().await;
+    usd.assert_async().await;
+    eur.assert_async().await;
 }

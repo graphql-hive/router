@@ -69,8 +69,8 @@ impl FetchGraph<SingleTypeFetchStep> {
             entity_owners: HashMap::new(),
             response_keys: ResponseKeys::default(),
             context_producers: HashMap::new(),
-            context_variable_counter: self.context_variable_counter,
-            operation_variables: self.operation_variables,
+            context_variable_counter: 0,
+            operation_variables: BTreeSet::new(),
         }
     }
 
@@ -1545,12 +1545,12 @@ fn process_plain_field_edge(
 }
 
 fn context_selection_rewrites(
-    selection: &SelectionSet,
+    items: &[SelectionItem],
     path: &[FetchNodePathSegment],
     variable: &str,
-) -> Vec<KeyRenamer> {
-    let mut rewrites = Vec::new();
-    for item in &selection.items {
+    rewrites: &mut Vec<KeyRenamer>,
+) {
+    for item in items {
         let mut path = path.to_vec();
         match item {
             SelectionItem::Field(field) => {
@@ -1563,33 +1563,18 @@ fn context_selection_rewrites(
                         rename_key_to: variable.to_string(),
                     });
                 } else {
-                    rewrites.extend(context_selection_rewrites(
-                        &field.selections,
-                        &path,
-                        variable,
-                    ));
+                    context_selection_rewrites(&field.selections.items, &path, variable, rewrites);
                 }
             }
             SelectionItem::InlineFragment(fragment) => {
-                if path
-                    .iter()
-                    .all(|segment| !matches!(segment, FetchNodePathSegment::Key(_)))
-                {
-                    path.pop();
-                }
                 path.push(FetchNodePathSegment::typename_equals_from_type(
                     fragment.type_condition.clone(),
                 ));
-                rewrites.extend(context_selection_rewrites(
-                    &fragment.selections,
-                    &path,
-                    variable,
-                ));
+                context_selection_rewrites(&fragment.selections.items, &path, variable, rewrites);
             }
             SelectionItem::FragmentSpread(_) => {}
         }
     }
-    rewrites
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1713,7 +1698,6 @@ fn process_requires_field_edge(
             true,
         )
     };
-    fetch_graph.connect(real_parent_fetch_step_index, step_for_children_index);
 
     let mut arguments = query_node
         .selection_arguments()
@@ -1737,7 +1721,7 @@ fn process_requires_field_edge(
             .context_producers
             .get(&(ancestor_path.clone(), (edge_index, requirement.argument)))
             .cloned()
-            .ok_or_else(|| FetchGraphError::Internal("Missing context producers".to_string()))?;
+            .ok_or(FetchGraphError::UnsupportedContextInRequirement)?;
         for producer in producers {
             let id = fetch_graph.get_step_data(producer)?.id;
             fetch_graph.connect(producer, step_for_children_index);
@@ -1762,11 +1746,20 @@ fn process_requires_field_edge(
         let selection = fetch_graph
             .response_keys
             .output(&place_of(&ancestor_path), &selection.selection_set);
-        let mut path = vec![FetchNodePathSegment::Parent; requirement.levels];
-        path.push(FetchNodePathSegment::typename_equals_from_type(
+        let prefix = vec![FetchNodePathSegment::Parent; requirement.levels];
+        let mut field_prefix = prefix.clone();
+        field_prefix.push(FetchNodePathSegment::typename_equals_from_type(
             requirement.matched_type.clone(),
         ));
-        let rewrites = context_selection_rewrites(&selection, &path, &variable);
+        let mut rewrites = Vec::new();
+        for item in &selection.items {
+            // root fields read from the matched ancestor type, root fragments carry their own type
+            let path = match item {
+                SelectionItem::Field(_) => &field_prefix,
+                _ => &prefix,
+            };
+            context_selection_rewrites(std::slice::from_ref(item), path, &variable, &mut rewrites);
+        }
         let step = fetch_graph.get_step_data_mut(step_for_children_index)?;
         step.context_rewrites
             .get_or_insert_default()
