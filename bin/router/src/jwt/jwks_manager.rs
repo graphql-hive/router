@@ -4,12 +4,16 @@ use crate::telemetry::logging::targets;
 use futures::future::join_all;
 use sonic_rs::from_str;
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::fs::read_to_string;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
 use jsonwebtoken::jwk::JwkSet;
+
+/// Bounds every remote JWKS fetch. A fetch triggered by an unknown `kid` runs in the request
+/// path, holding the source's refresh lock, so a hanging endpoint must not stall those requests.
+const REMOTE_JWKS_FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct JwksManager {
     sources: Vec<Arc<JwksSource>>,
@@ -53,16 +57,18 @@ impl JwksManager {
         Ok(())
     }
 
-    /// Re-fetches the sources that opted into `refresh_on_unknown_kid`, so a token signed with a
-    /// freshly rotated key can be verified. Returns once every such source is as fresh as its
-    /// cooldown allows.
-    pub async fn refresh_for_unknown_kid(&self) {
+    /// Re-fetches, concurrently, the sources that opted into `refresh_on_unknown_kid`, so a token
+    /// signed with a freshly rotated key can be verified. Returns once every such source is as
+    /// fresh as its cooldown allows, and whether any of them loaded a new key set.
+    pub async fn refresh_for_unknown_kid(&self) -> bool {
         join_all(
             self.sources
                 .iter()
                 .map(|source| source.refresh_for_unknown_kid()),
         )
-        .await;
+        .await
+        .into_iter()
+        .any(|refreshed| refreshed)
     }
 
     pub fn register_background_tasks(&self, background_tasks_mgr: &mut BackgroundTasksManager) {
@@ -147,6 +153,7 @@ impl JwksSource {
                 let response_text = client
                     .get(url)
                     .headers(headers.clone())
+                    .timeout(REMOTE_JWKS_FETCH_TIMEOUT)
                     .send()
                     .await
                     .map_err(JwksSourceError::RemoteJwksNetworkError)?
@@ -188,25 +195,34 @@ impl JwksSource {
         }
     }
 
-    async fn refresh_for_unknown_kid(&self) {
+    /// Returns whether a new key set was loaded.
+    async fn refresh_for_unknown_kid(&self) -> bool {
         let JwksProviderSourceConfig::Remote {
             refresh_on_unknown_kid: Some(cooldown),
             url,
             ..
         } = &self.config
         else {
-            return;
+            return false;
         };
 
         let mut last = self.last_unknown_kid_refresh.lock().await;
         if last.is_some_and(|at| at.elapsed() < *cooldown) {
-            return;
+            return false;
         }
-        // Stamped before the fetch so a failing endpoint is also rate-limited.
+
+        let result = self.load_and_store_jwks().await;
+        // Stamped after the fetch, whatever its outcome, so a failing endpoint is also
+        // rate-limited, while a fetch dropped mid-flight (e.g. the request was cancelled) leaves
+        // the next miss free to retry.
         *last = Some(Instant::now());
 
-        if let Err(err) = self.load_and_store_jwks().await {
-            error!(target: targets::JWT, error = ?err, url = ?url, "failed to refresh remote jwks for unknown kid");
+        match result {
+            Ok(_) => true,
+            Err(err) => {
+                error!(target: targets::JWT, error = ?err, url = ?url, "failed to refresh remote jwks for unknown kid");
+                false
+            }
         }
     }
 
@@ -242,7 +258,6 @@ impl JwksSource {
 mod tests {
     use super::*;
     use http::{HeaderMap, HeaderName, HeaderValue};
-    use std::time::Duration;
 
     const JWKS_BODY: &str = r#"{"keys":[]}"#;
 

@@ -288,8 +288,10 @@ impl JwtAuthRuntime {
                     Err(err) => return Err(JwtError::InvalidJwtHeader(err)),
                 };
                 let mut valid_jwks = self.jwks.all();
-                if has_unknown_kid(&header, &valid_jwks) {
-                    self.jwks.refresh_for_unknown_kid().await;
+                // Only re-read the key sets when a refresh loaded a new one.
+                if has_unknown_kid(&header, &valid_jwks)
+                    && self.jwks.refresh_for_unknown_kid().await
+                {
                     valid_jwks = self.jwks.all();
                 }
                 self.authenticate(&header, &token, &valid_jwks)
