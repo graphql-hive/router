@@ -204,6 +204,20 @@ pub(super) fn batch_operation_without_empty_aliases(
     if empty.is_empty() {
         return None;
     }
+    // we re-parse the batch operation text here instead of reusing a parsed document, and
+    // that's on purpose. the planner does hold a parsed `Document` (`PlanningFetchOperation`),
+    // but `into_executable` (plan_nodes/prepare.rs) drops it and keeps only the
+    // `SubgraphFetchOperation` (text, hash, name write position), so cached plans stay small.
+    // keeping the document on the executable plan would cost memory on every cached plan with
+    // a batch fetch, just for this path.
+    // this path is rare, it only runs when a batch has contextual aliases and at least one
+    // alias ended up with no entities (`empty` above is non-empty). the plain batch path never
+    // gets here.
+    // why rewrite at all: an empty alias has no context values, so its `__context_n`
+    // variables would be sent as null. if the argument is non-null the subgraph rejects the
+    // whole request, including the aliases that do have entities. dropping the alias and its
+    // unused variable definitions avoids that.
+    // TODO: maybe do thread the parsed document through
     let mut operation: Option<OperationDefinition> = None;
     let mut fragments: Vec<FragmentDefinition> = Vec::new();
     for definition in parse_operation(&batch.operation.document_str).definitions {
