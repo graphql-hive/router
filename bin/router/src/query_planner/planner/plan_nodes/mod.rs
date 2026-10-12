@@ -152,6 +152,8 @@ pub struct FetchNode<S: PlanState = Executable> {
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_rewrites: Option<Vec<FetchRewrite>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context_variables: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_rewrites: Option<Vec<KeyRenamer>>,
 }
@@ -389,6 +391,8 @@ pub struct EntityBatchAlias {
     pub output_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_rewrites: Option<Vec<KeyRenamer>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context_variables: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -668,6 +672,11 @@ impl FetchNode<Planning> {
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),
                     context_rewrites: step.context_rewrites.clone(),
+                    context_variables: step
+                        .context_variable_definitions
+                        .iter()
+                        .map(|var| var.name.clone())
+                        .collect(),
                 }
             }
             false => {
@@ -697,6 +706,11 @@ impl FetchNode<Planning> {
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),
                     context_rewrites: step.context_rewrites.clone(),
+                    context_variables: step
+                        .context_variable_definitions
+                        .iter()
+                        .map(|var| var.name.clone())
+                        .collect(),
                 }
             }
         }
@@ -1030,7 +1044,7 @@ mod stored_size_tests {
         for (name, actual, expected) in [
             ("PlanNode", size_of::<PlanNode>(), 40),
             ("ConditionNode", size_of::<ConditionNode>(), 40),
-            ("FetchNode", size_of::<FetchNode>(), 248),
+            ("FetchNode", size_of::<FetchNode>(), 272),
             ("BatchFetchNode", size_of::<BatchFetchNode>(), 160),
             (
                 "SubgraphFetchOperation",

@@ -27,6 +27,48 @@ async fn start_router(fixture: &str, server: &mockito::Server) -> TestRouter<Sta
 }
 
 #[ntex::test]
+async fn rejects_operations_exceeding_the_context_group_budget() {
+    let mut server = mockito::Server::new_async().await;
+    let router = start_router("context-basic", &server).await;
+    let users: Vec<_> = (0..1025)
+        .map(|index| {
+            json!({
+                "__typename": "User",
+                "currency": index.to_string(),
+                "txs": [{"__typename": "Transaction", "id": "same"}]
+            })
+        })
+        .collect();
+    let root = server
+        .mock("POST", "/a")
+        .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(json!({"data": {"users": users}}).to_string())
+        .expect(1)
+        .create_async()
+        .await;
+    let entities = server
+        .mock("POST", "/a")
+        .match_request(|r| body(r)["query"].as_str().unwrap().contains("_entities"))
+        .expect(0)
+        .create_async()
+        .await;
+
+    let res = router
+        .send_graphql_request("{ users { txs { amount } } }", None, None)
+        .await;
+    let response: Value = serde_json::from_str(&res.json_body_string_pretty().await).unwrap();
+    assert_eq!(response["data"], Value::Null);
+    assert_eq!(
+        response["errors"][0]["extensions"]["code"],
+        "CONTEXT_GROUP_LIMIT_EXCEEDED"
+    );
+    root.assert_async().await;
+    entities.assert_async().await;
+}
+
+#[ntex::test]
 async fn dedupes_entities_with_equal_context_values() {
     let mut server = mockito::Server::new_async().await;
     let router = start_router("context-basic", &server).await;

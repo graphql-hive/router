@@ -96,6 +96,7 @@ struct RepresentationsInputKey {
     requires: SelectionSet,
     input_rewrites: Option<Vec<FetchRewrite>>,
     context_rewrites: Option<Vec<KeyRenamer>>,
+    context_variables: Vec<String>,
     merge_paths: Vec<FlattenNodePath>,
 }
 
@@ -190,6 +191,7 @@ impl<'a> BatchFetchBuilder<'a> {
             input_rewrites: representative.input_rewrites.clone(),
             output_rewrites: representative.output_rewrites.clone(),
             context_rewrites: representative.context_rewrites.clone(),
+            context_variables: representative.context_variables.clone(),
         });
 
         Ok(())
@@ -218,6 +220,7 @@ impl<'a> BatchFetchBuilder<'a> {
             requires: representative.requires.clone(),
             input_rewrites: representative.input_rewrites.clone(),
             context_rewrites: representative.context_rewrites.clone(),
+            context_variables: representative.context_variables.clone(),
             merge_paths: merge_paths.to_vec(),
         };
 
@@ -322,6 +325,7 @@ struct EntityFetch {
     input_rewrites: Option<Vec<FetchRewrite>>,
     output_rewrites: Option<Vec<FetchRewrite>>,
     context_rewrites: Option<Vec<KeyRenamer>>,
+    context_variables: Vec<String>,
     shape_key: ShapeKey,
     non_representations_variable_definitions: Vec<VariableDefinition>,
 }
@@ -337,6 +341,7 @@ impl EntityFetch {
             && self.input_rewrites == right.input_rewrites
             && self.output_rewrites == right.output_rewrites
             && self.context_rewrites == right.context_rewrites
+            && self.context_variables == right.context_variables
     }
 
     fn from_node(index: usize, node: &PlanNode) -> Result<Option<Self>, QueryPlanError> {
@@ -375,11 +380,8 @@ impl EntityFetch {
         let input_rewrites = fetch_node.input_rewrites.clone();
         let output_rewrites = fetch_node.output_rewrites.clone();
         let context_rewrites = fetch_node.context_rewrites.clone();
-        if let Some(rewrites) = &context_rewrites {
-            let names: Vec<&str> = rewrites
-                .iter()
-                .map(|rewrite| rewrite.rename_key_to.as_str())
-                .collect();
+        let context_variables = fetch_node.context_variables.clone();
+        if !context_variables.is_empty() {
             // fetches with a non-null context argument are never batched, on purpose.
             // a batch with contexts is sent once per distinct set of context values. an alias
             // with no entities for that set still sits in the query text, so its context
@@ -400,7 +402,7 @@ impl EntityFetch {
                 .iter()
                 .flatten()
                 .any(|var| {
-                    names.contains(&var.name.as_str())
+                    context_variables.contains(&var.name)
                         && matches!(var.variable_type, TypeNode::NonNull(_))
                 })
             {
@@ -451,6 +453,7 @@ impl EntityFetch {
             input_rewrites,
             output_rewrites,
             context_rewrites,
+            context_variables,
             shape_key,
             non_representations_variable_definitions,
         }))
@@ -2318,6 +2321,7 @@ mod tests {
             input_rewrites: None,
             output_rewrites: None,
             context_rewrites: None,
+            context_variables: Vec::new(),
         };
 
         let path = FlattenNodePath::from(&MergePath::new(vec![
@@ -2387,6 +2391,7 @@ mod tests {
             input_rewrites: None,
             output_rewrites: None,
             context_rewrites: None,
+            context_variables: Vec::new(),
         }
     }
 

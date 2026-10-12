@@ -3,6 +3,29 @@ use crate::query_planner::utils::parsing::parse_operation;
 use std::error::Error;
 
 #[test]
+fn empty_context_selection_preserves_variable_names() -> Result<(), Box<dyn Error>> {
+    let supergraph = read_supergraph("fixture/tests/context-edge-cases.supergraph.graphql")
+        .replace(
+            "selection: \"{ currency }\"",
+            "selection: \"... on Other { currency }\"",
+        );
+    let plan = build_query_plan_from_sdl(
+        &supergraph,
+        parse_operation("{ users { txs { amount } } }"),
+        Default::default(),
+        Default::default(),
+    )?;
+    let plan = sonic_rs::to_value(&plan.into_executable())?;
+    let fetch = &plan["node"]["nodes"][1]["node"];
+    assert_eq!(sonic_rs::to_string(&fetch["contextRewrites"])?, "[]");
+    assert_eq!(
+        sonic_rs::to_string(&fetch["contextVariables"])?,
+        r#"["__context_0"]"#
+    );
+    Ok(())
+}
+
+#[test]
 fn single_subgraph_nearest_ancestor() -> Result<(), Box<dyn Error>> {
     let query_plan = build_query_plan_with_defaults(
         "fixture/tests/context-basic.supergraph.graphql",
@@ -89,6 +112,9 @@ fn single_subgraph_nearest_ancestor() -> Result<(), Box<dyn Error>> {
                     }
                   ]
                 }
+              ],
+              "contextVariables": [
+                "__context_0"
               ],
               "contextRewrites": [
                 {
@@ -417,6 +443,9 @@ fn union_context_with_type_conditions() -> Result<(), Box<dyn Error>> {
                       ],
                       "renameKeyTo": "__context_1"
                     }
+                  ],
+                  "contextVariables": [
+                    "__context_1"
                   ]
                 },
                 {
@@ -483,6 +512,9 @@ fn union_context_with_type_conditions() -> Result<(), Box<dyn Error>> {
                       ],
                       "renameKeyTo": "__context_0"
                     }
+                  ],
+                  "contextVariables": [
+                    "__context_0"
                   ]
                 }
               ]
@@ -1014,6 +1046,9 @@ fn cross_subgraph_merges_into_two_fetches() -> Result<(), Box<dyn Error>> {
                     }
                   ]
                 }
+              ],
+              "contextVariables": [
+                "__context_0"
               ],
               "contextRewrites": [
                 {

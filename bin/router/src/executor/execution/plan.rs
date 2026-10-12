@@ -1,4 +1,4 @@
-use super::context::collect_context_entities;
+use super::context::{collect_context_entities, MAX_CONTEXT_GROUPS};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::vec;
@@ -43,7 +43,9 @@ use crate::executor::headers::cache_control;
 use crate::executor::{
     execution::{
         client_request_details::ClientRequestDetails,
-        error::{IntoPlanExecutionError, LazyPlanContext, PlanExecutionError},
+        error::{
+            IntoPlanExecutionError, LazyPlanContext, PlanExecutionError, PlanExecutionErrorKind,
+        },
         jwt_forward::JwtAuthForwardingPlan,
         rewrites::FetchRewriteExt,
     },
@@ -537,8 +539,15 @@ async fn execute_query_plan_with_data<'exec>(
         connection_fingerprint: opts.connection_fingerprint,
     };
 
+    let mut remaining_context_groups = MAX_CONTEXT_GROUPS;
     if let Some(node) = &opts.query_plan.node {
-        executor.execute_plan_node(&mut exec_ctx, node).await;
+        if let Err(err) = executor
+            .execute_plan_node(&mut exec_ctx, node, &mut remaining_context_groups)
+            .await
+        {
+            exec_ctx.data = Value::Null;
+            executor.process_job_result(&mut exec_ctx, Err(err));
+        }
     }
 
     let error_count = exec_ctx.errors.len(); // Added for usage reporting
@@ -829,7 +838,12 @@ struct PrepareExecutionJobOpts<'exec> {
 }
 
 impl<'exec> Executor<'exec> {
-    async fn execute_plan_node(&self, ctx: &mut ExecutionContext<'exec>, node: &'exec PlanNode) {
+    async fn execute_plan_node(
+        &self,
+        ctx: &mut ExecutionContext<'exec>,
+        node: &'exec PlanNode,
+        remaining_context_groups: &mut usize,
+    ) -> Result<(), PlanExecutionError> {
         match node {
             PlanNode::Parallel(parallel_node) => {
                 let mut scope = FuturesUnordered::new();
@@ -837,7 +851,9 @@ impl<'exec> Executor<'exec> {
                 for child in &parallel_node.nodes {
                     // We borrow `ctx.data` only for sync preparation of the job future,
                     // and the actual execution of the job future is done without the borrow of `ctx.data`
-                    for fut in self.prepare_job_future(child, &ctx.data) {
+                    for fut in
+                        self.prepare_job_future(child, &ctx.data, remaining_context_groups)?
+                    {
                         scope.push(fut);
                     }
                 }
@@ -850,7 +866,7 @@ impl<'exec> Executor<'exec> {
                 for child in &sequence_node.nodes {
                     // We use `Box.pin` here to avoid the compiler error about recursive future,
                     // as `execute_plan_node` is calling itself recursively for sequence nodes
-                    Box::pin(self.execute_plan_node(ctx, child)).await;
+                    Box::pin(self.execute_plan_node(ctx, child, remaining_context_groups)).await?;
                 }
             }
             PlanNode::Condition(condition_node) => {
@@ -859,12 +875,13 @@ impl<'exec> Executor<'exec> {
                 {
                     // We use `Box.pin` here to avoid the compiler error about recursive future,
                     // as `execute_plan_node` is calling itself recursively for condition nodes
-                    Box::pin(self.execute_plan_node(ctx, next_node)).await;
+                    Box::pin(self.execute_plan_node(ctx, next_node, remaining_context_groups))
+                        .await?;
                 }
             }
             node => {
                 let mut scope: FuturesUnordered<_> = self
-                    .prepare_job_future(node, &ctx.data)
+                    .prepare_job_future(node, &ctx.data, remaining_context_groups)?
                     .into_iter()
                     .collect();
                 while let Some(job) = scope.next().await {
@@ -872,6 +889,7 @@ impl<'exec> Executor<'exec> {
                 }
             }
         }
+        Ok(())
     }
 
     fn prepare_root_reentry_fetch_job<'wave>(
@@ -907,8 +925,12 @@ impl<'exec> Executor<'exec> {
         &'wave self,
         node: &'exec PlanNode,
         data: &Value<'exec>,
-    ) -> Vec<BoxFuture<'wave, Result<ExecutionJob<'exec>, PlanExecutionError>>> {
-        match node {
+        remaining_context_groups: &mut usize,
+    ) -> Result<
+        Vec<BoxFuture<'wave, Result<ExecutionJob<'exec>, PlanExecutionError>>>,
+        PlanExecutionError,
+    > {
+        Ok(match node {
             PlanNode::Fetch(fetch_node) => vec![self
                 .prepare_execution_job(PrepareExecutionJobOpts {
                     subgraph_name: &fetch_node.service_name,
@@ -925,8 +947,21 @@ impl<'exec> Executor<'exec> {
                 })
                 .boxed()],
             PlanNode::BatchFetch(batch_fetch_node) => {
-                let waves =
-                    self.prepare_batch_fetch_job_state(&batch_fetch_node.entity_batch, data);
+                let waves = self
+                    .prepare_batch_fetch_job_state(
+                        &batch_fetch_node.entity_batch,
+                        data,
+                        remaining_context_groups,
+                    )
+                    .map_err(|kind| {
+                        PlanExecutionError::new(
+                            kind,
+                            LazyPlanContext {
+                                subgraph_name: || Some(batch_fetch_node.service_name.clone()),
+                                affected_path: || None,
+                            },
+                        )
+                    })?;
 
                 if waves.is_empty() {
                     // All alias lists are empty, so nothing to fetch.
@@ -967,14 +1002,16 @@ impl<'exec> Executor<'exec> {
             PlanNode::Flatten(flatten_node) => {
                 let fetch_node = match flatten_node.node.as_ref() {
                     PlanNode::Fetch(fetch_node) => fetch_node,
-                    _ => return Vec::new(),
+                    _ => return Ok(Vec::new()),
                 };
 
                 // If there are no requirements in the node (no _entities call), then we only need to make
                 // a regular call. This happens when we perform subgraph re-entry.
                 // So we can just create the fetch step future with the info we have
                 let Some(requires_nodes) = fetch_node.requires.as_ref() else {
-                    return vec![self.prepare_root_reentry_fetch_job(flatten_node, fetch_node)];
+                    return Ok(vec![
+                        self.prepare_root_reentry_fetch_job(flatten_node, fetch_node)
+                    ]);
                 };
 
                 let (groups, mut path_hashes) = collect_context_entities(
@@ -983,8 +1020,19 @@ impl<'exec> Executor<'exec> {
                     requires_nodes,
                     fetch_node.input_rewrites.as_deref(),
                     fetch_node.context_rewrites.as_deref(),
+                    &fetch_node.context_variables,
                     &self.schema_metadata.possible_types,
-                );
+                    remaining_context_groups,
+                )
+                .map_err(|kind| {
+                    PlanExecutionError::new(
+                        kind,
+                        LazyPlanContext {
+                            subgraph_name: || Some(fetch_node.service_name.clone()),
+                            affected_path: || Some(flatten_node.path.to_string()),
+                        },
+                    )
+                })?;
                 let representation_hashes = path_hashes.pop().unwrap_or_default();
 
                 groups
@@ -1020,12 +1068,14 @@ impl<'exec> Executor<'exec> {
                     })
                     .collect()
             }
-            PlanNode::Condition(node) => condition_node_by_variables(node, self.variable_values)
-                .map(|node| self.prepare_job_future(node, data))
-                .unwrap_or_default(),
+            PlanNode::Condition(node) => {
+                return condition_node_by_variables(node, self.variable_values)
+                    .map(|node| self.prepare_job_future(node, data, remaining_context_groups))
+                    .unwrap_or_else(|| Ok(Vec::new()))
+            }
             // Our Query Planner does not produce any other plan node types in ParallelNode
             _ => Vec::new(),
-        }
+        })
     }
 
     // We handle `Result` instead of passing `PlanExecutionError` directly
@@ -1453,7 +1503,11 @@ impl<'exec> Executor<'exec> {
         &self,
         entity_batch: &'exec EntityBatch,
         data: &Value<'exec>,
-    ) -> Vec<(Vec<(&'exec str, Vec<u8>)>, Vec<AliasBatchState<'exec>>)> {
+        remaining_context_groups: &mut usize,
+    ) -> Result<
+        Vec<(Vec<(&'exec str, Vec<u8>)>, Vec<AliasBatchState<'exec>>)>,
+        PlanExecutionErrorKind,
+    > {
         let mut prepared: Vec<_> = entity_batch
             .aliases
             .iter()
@@ -1464,10 +1518,12 @@ impl<'exec> Executor<'exec> {
                     &alias_spec.requires,
                     alias_spec.input_rewrites.as_deref(),
                     alias_spec.context_rewrites.as_deref(),
+                    &alias_spec.context_variables,
                     &self.schema_metadata.possible_types,
+                    remaining_context_groups,
                 )
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
 
         let wave_count = prepared
             .iter()
@@ -1485,14 +1541,24 @@ impl<'exec> Executor<'exec> {
                 // an alias with fewer groups still needs its context variables, it just sends no representations
                 if let Some(values) = groups.get(wave).or_else(|| groups.first()) {
                     raw_variable_values.extend(values.variables.clone());
-                } else if let Some(rewrites) = &alias_spec.context_rewrites {
-                    for rewrite in rewrites {
+                } else {
+                    for name in alias_spec
+                        .context_variables
+                        .iter()
+                        .map(String::as_str)
+                        .chain(
+                            alias_spec
+                                .context_rewrites
+                                .iter()
+                                .flatten()
+                                .map(|rewrite| rewrite.rename_key_to.as_str()),
+                        )
+                    {
                         if !raw_variable_values
                             .iter()
-                            .any(|(name, _)| *name == rewrite.rename_key_to)
+                            .any(|(existing, _)| *existing == name)
                         {
-                            raw_variable_values
-                                .push((rewrite.rename_key_to.as_str(), b"null".to_vec()));
+                            raw_variable_values.push((name, b"null".to_vec()));
                         }
                     }
                 }
@@ -1532,7 +1598,7 @@ impl<'exec> Executor<'exec> {
             }
         }
 
-        waves
+        Ok(waves)
     }
 
     async fn prepare_execution_job(
@@ -1692,7 +1758,7 @@ mod tests {
         SubgraphExecutorMap,
     };
 
-    use super::select_fetch_variables;
+    use super::{select_fetch_variables, PlanExecutionErrorKind, MAX_CONTEXT_GROUPS};
     use crate::query_planner::{
         ast::{
             document::Document, operation::PlanningFetchOperation, requires::RequiresSelectionSet,
@@ -1959,6 +2025,7 @@ mod tests {
                     input_rewrites: None,
                     output_rewrites: None,
                     context_rewrites: None,
+                    context_variables: Vec::new(),
                 },
                 EntityBatchAlias {
                     alias: "_e1".to_string(),
@@ -1968,17 +2035,43 @@ mod tests {
                     input_rewrites: None,
                     output_rewrites: None,
                     context_rewrites: None,
+                    context_variables: Vec::new(),
                 },
             ],
         };
 
-        let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data);
+        let mut budget = MAX_CONTEXT_GROUPS;
+        let waves = executor
+            .prepare_batch_fetch_job_state(&entity_batch, &data, &mut budget)
+            .unwrap();
+        assert_eq!(budget, MAX_CONTEXT_GROUPS);
 
         assert_eq!(waves.len(), 1);
         let (raw_variable_values, aliases) = &waves[0];
         assert_eq!(aliases.len(), 2);
         assert_eq!(raw_variable_values.len(), 1);
         assert_eq!(raw_variable_values[0].0, "__batch_reps_0");
+
+        let mut entity_batch = entity_batch;
+        for (index, alias) in entity_batch.aliases.iter_mut().enumerate() {
+            alias.context_variables = vec![format!("__context_{index}")];
+            alias.context_rewrites = Some(Vec::new());
+        }
+        let mut budget = 2;
+        let waves = executor
+            .prepare_batch_fetch_job_state(&entity_batch, &data, &mut budget)
+            .unwrap();
+        assert_eq!(budget, 0);
+        assert_eq!(waves.len(), 1);
+        assert!(waves[0].0.contains(&("__context_0", b"null".to_vec())));
+        assert!(waves[0].0.contains(&("__context_1", b"null".to_vec())));
+        for remaining in [0, 1] {
+            let mut budget = remaining;
+            assert!(matches!(
+                executor.prepare_batch_fetch_job_state(&entity_batch, &data, &mut budget),
+                Err(PlanExecutionErrorKind::ContextGroupLimitExceeded)
+            ));
+        }
     }
 
     #[tokio::test]
@@ -2082,6 +2175,7 @@ mod tests {
             })
             .create();
 
+        let mut budget = MAX_CONTEXT_GROUPS;
         executor
             .execute_plan_node(
                 &mut exec_ctx,
@@ -2092,6 +2186,7 @@ mod tests {
                             planner_requires: (),
                             service_name: "subgraph_a".to_string(),
                             context_rewrites: None,
+                            context_variables: Vec::new(),
                             operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_a }"),
                             )
@@ -2108,6 +2203,7 @@ mod tests {
                             planner_requires: (),
                             service_name: "subgraph_b".to_string(),
                             context_rewrites: None,
+                            context_variables: Vec::new(),
                             operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_b }"),
                             )
@@ -2121,8 +2217,10 @@ mod tests {
                         })),
                     ],
                 }),
+                &mut budget,
             )
-            .await;
+            .await
+            .unwrap();
         mock_a.assert();
         mock_b.assert();
 

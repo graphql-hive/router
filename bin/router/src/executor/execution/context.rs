@@ -8,8 +8,10 @@ use xxhash_rust::xxh3::Xxh3;
 
 use crate::{
     executor::{
-        execution::rewrites::FetchRewriteExt, introspection::schema::PossibleTypes,
-        projection::request::project_requires, response::value::Value,
+        execution::{error::PlanExecutionErrorKind, rewrites::FetchRewriteExt},
+        introspection::schema::PossibleTypes,
+        projection::request::project_requires,
+        response::value::Value,
         utils::traverse::traverse_and_callback,
     },
     query_planner::{
@@ -17,6 +19,8 @@ use crate::{
         planner::plan_nodes::{FetchNodePathSegment, FetchRewrite, KeyRenamer, ResponsePathRef},
     },
 };
+
+pub(super) const MAX_CONTEXT_GROUPS: usize = 1024;
 
 pub(super) type RepresentationHashes = Arc<Vec<Option<u64>>>;
 
@@ -63,16 +67,20 @@ fn select_value<'v>(
 
 /// Walks every flatten path, deduplicates the entities by hash and projects their
 /// representations. Entities are grouped by the tuple of their context values (one request per
-/// group), without `context_rewrites` there is at most one group. Identical paths share hashes.
+/// group), without context variables there is at most one group. Identical paths share hashes.
+/// Context groups consume the shared operation budget before allocating representations.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn collect_context_entities<'a>(
     data: &Value<'_>,
     paths: impl IntoIterator<Item = ResponsePathRef<'a>>,
     requires: &RequiresSelectionSet,
     input_rewrites: Option<&[FetchRewrite]>,
     context_rewrites: Option<&'a [KeyRenamer]>,
+    context_variables: &'a [String],
     possible_types: &PossibleTypes,
-) -> (Vec<ContextGroup<'a>>, Vec<RepresentationHashes>) {
-    let mut names = Vec::new();
+    remaining_context_groups: &mut usize,
+) -> Result<(Vec<ContextGroup<'a>>, Vec<RepresentationHashes>), PlanExecutionErrorKind> {
+    let mut names: Vec<&str> = context_variables.iter().map(String::as_str).collect();
     let rewrites = context_rewrites.unwrap_or_default();
     for rewrite in rewrites {
         if !names.contains(&rewrite.rename_key_to.as_str()) {
@@ -97,7 +105,11 @@ pub(super) fn collect_context_entities<'a>(
             continue;
         }
         let mut hashes = Vec::new();
+        let mut exceeded_budget = false;
         let mut collect = |entity: &Value<'_>, objects: &[&Value<'_>]| {
+            if exceeded_budget {
+                return;
+            }
             if entity.is_null() {
                 hashes.push(None);
                 return;
@@ -130,6 +142,11 @@ pub(super) fn collect_context_entities<'a>(
             } else if let Some(index) = group_by_values.get(&values) {
                 *index
             } else {
+                if *remaining_context_groups == 0 {
+                    exceeded_budget = true;
+                    return;
+                }
+                *remaining_context_groups -= 1;
                 let index = groups.len();
                 groups.push(ContextGroup {
                     variables: names.iter().copied().zip(values.iter().cloned()).collect(),
@@ -176,6 +193,9 @@ pub(super) fn collect_context_entities<'a>(
             }
         };
         traverse_and_callback(data, path.as_slice(), possible_types, &mut collect);
+        if exceeded_budget {
+            return Err(PlanExecutionErrorKind::ContextGroupLimitExceeded);
+        }
         let hashes = Arc::new(hashes);
         seen_paths.push((path, Arc::clone(&hashes)));
         path_hashes.push(hashes);
@@ -183,7 +203,7 @@ pub(super) fn collect_context_entities<'a>(
     for group in &mut groups {
         group.representations.push(b']');
     }
-    (groups, path_hashes)
+    Ok((groups, path_hashes))
 }
 
 #[cfg(test)]
@@ -237,15 +257,21 @@ mod tests {
                 rename_key_to: "__context_0".into(),
             },
         ];
+        let names = ["__context_0".into()];
+        let mut budget = 3;
         let (groups, hashes) = collect_context_entities(
             &data,
             [path.as_ref()],
             &requires,
             None,
             Some(&rewrites),
+            &names,
             &PossibleTypes::default(),
-        );
+            &mut budget,
+        )
+        .unwrap();
         assert_eq!(groups.len(), 3);
+        assert_eq!(budget, 0);
         assert_eq!(
             groups.iter().map(|g| &g.variables[0].1).collect::<Vec<_>>(),
             vec![
@@ -260,6 +286,54 @@ mod tests {
         assert_eq!(hashes[0][4], None);
         assert!(groups[0].hash_to_index.contains_key(&hashes[0][0].unwrap()));
         assert!(!groups[0].hash_to_index.contains_key(&hashes[0][2].unwrap()));
+        for remaining in [0, 2] {
+            let mut budget = remaining;
+            assert!(matches!(
+                collect_context_entities(
+                    &data,
+                    [path.as_ref()],
+                    &requires,
+                    None,
+                    Some(&rewrites),
+                    &names,
+                    &PossibleTypes::default(),
+                    &mut budget,
+                ),
+                Err(PlanExecutionErrorKind::ContextGroupLimitExceeded)
+            ));
+            assert_eq!(budget, 0);
+        }
+    }
+
+    #[test]
+    fn empty_context_selection_sends_null() {
+        let data = sonic_rs::from_str(r#"{"__typename":"Transaction","id":"1"}"#).unwrap();
+        let path = FlattenNodePath::default();
+        let definition = parse_operation("{ __typename id }").definitions.remove(0);
+        let graphql_tools::parser::query::Definition::Operation(
+            graphql_tools::parser::query::OperationDefinition::SelectionSet(selection),
+        ) = definition
+        else {
+            panic!("selection");
+        };
+        let requires = RequiresSelectionSet::from(&SelectionSet::from(selection));
+        let names = ["__context_0".into()];
+        let mut budget = MAX_CONTEXT_GROUPS;
+        let (groups, _) = collect_context_entities(
+            &data,
+            [path.as_ref()],
+            &requires,
+            None,
+            Some(&[]),
+            &names,
+            &PossibleTypes::default(),
+            &mut budget,
+        )
+        .unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].variables, vec![("__context_0", b"null".to_vec())]);
+        assert_eq!(groups[0].hash_to_index.len(), 1);
+        assert_eq!(budget, MAX_CONTEXT_GROUPS - 1);
     }
 
     #[test]

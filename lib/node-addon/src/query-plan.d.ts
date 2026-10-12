@@ -24,6 +24,7 @@ export interface FetchNode {
   inputRewrites?: InputRewrite[];
   outputRewrites?: OutputRewrite[];
   contextRewrites?: KeyRenamer[];
+  contextVariables?: string[];
 }
 
 export interface BatchFetchNode {
@@ -48,6 +49,7 @@ export interface EntityBatchAlias {
   inputRewrites?: InputRewrite[];
   outputRewrites?: OutputRewrite[];
   contextRewrites?: KeyRenamer[];
+  contextVariables?: string[];
 }
 
 export interface SubscriptionNode {
