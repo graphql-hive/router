@@ -156,6 +156,15 @@ pub fn traverse_and_callback<'a, 'v>(
     data: &'a Value<'v>,
     path: &[PathSegment],
     possible_types: &PossibleTypes,
+    callback: &mut impl FnMut(&'a Value<'v>, &[&'a Value<'v>]),
+) {
+    walk(data, path, possible_types, &mut Vec::new(), callback);
+}
+
+fn walk<'a, 'v>(
+    data: &'a Value<'v>,
+    path: &[PathSegment],
+    possible_types: &PossibleTypes,
     objects: &mut Vec<&'a Value<'v>>,
     callback: &mut impl FnMut(&'a Value<'v>, &[&'a Value<'v>]),
 ) {
@@ -174,7 +183,7 @@ pub fn traverse_and_callback<'a, 'v>(
             if let Value::Object(object) = data {
                 if let Some(child) = Value::object_get(object, key.as_ref()) {
                     objects.push(data);
-                    traverse_and_callback(child, &path[1..], possible_types, objects, callback);
+                    walk(child, &path[1..], possible_types, objects, callback);
                     objects.pop();
                 }
             }
@@ -182,7 +191,7 @@ pub fn traverse_and_callback<'a, 'v>(
         PathSegment::List => {
             if let Value::Array(items) = data {
                 for item in items {
-                    traverse_and_callback(item, &path[1..], possible_types, objects, callback);
+                    walk(item, &path[1..], possible_types, objects, callback);
                 }
             }
         }
@@ -194,11 +203,11 @@ pub fn traverse_and_callback<'a, 'v>(
                         entity_satisfies_any_type_condition(possible_types, name, condition)
                     })
                 {
-                    traverse_and_callback(data, &path[1..], possible_types, objects, callback);
+                    walk(data, &path[1..], possible_types, objects, callback);
                 }
             } else if let Value::Array(items) = data {
                 for item in items {
-                    traverse_and_callback(item, path, possible_types, objects, callback);
+                    walk(item, path, possible_types, objects, callback);
                 }
             }
         }
@@ -412,7 +421,6 @@ mod tests {
             &data,
             path.as_slice(),
             &Default::default(),
-            &mut Vec::new(),
             &mut |_value, _| {
                 matched = true;
             },
@@ -431,7 +439,6 @@ mod tests {
             &data,
             path.as_slice(),
             &Default::default(),
-            &mut Vec::new(),
             &mut |_value, _| {
                 matched = true;
             },

@@ -226,27 +226,7 @@ impl SupergraphState {
             Self::create_interface_object_in_subgraph(&definitions);
         let interface_to_object_types = Self::create_interface_to_object_types(&definitions);
         let progressive_overrides = Self::extract_progressive_overrides(&definitions);
-        let mut contexts: HashMap<String, Vec<String>> = HashMap::new();
-        for definition in &schema.definitions {
-            let (name, directives) = match definition {
-                input::Definition::TypeDefinition(input::TypeDefinition::Object(object)) => {
-                    (&object.name, &object.directives)
-                }
-                input::Definition::TypeDefinition(input::TypeDefinition::Interface(interface)) => {
-                    (&interface.name, &interface.directives)
-                }
-                input::Definition::TypeDefinition(input::TypeDefinition::Union(union)) => {
-                    (&union.name, &union.directives)
-                }
-                _ => continue,
-            };
-            for context in Self::extract_directives::<ContextDirective>(directives) {
-                let types = contexts.entry(context.name).or_default();
-                if !types.contains(name) {
-                    types.push(name.clone());
-                }
-            }
-        }
+        let contexts = Self::extract_contexts(&schema.definitions);
 
         let mut instance = Self {
             definitions,
@@ -453,6 +433,33 @@ impl SupergraphState {
             }
         }
         overrides
+    }
+
+    fn extract_contexts(
+        definitions: &[input::Definition<'static, String>],
+    ) -> HashMap<String, Vec<String>> {
+        let mut contexts: HashMap<String, Vec<String>> = HashMap::new();
+        for definition in definitions {
+            let (name, directives) = match definition {
+                input::Definition::TypeDefinition(input::TypeDefinition::Object(object)) => {
+                    (&object.name, &object.directives)
+                }
+                input::Definition::TypeDefinition(input::TypeDefinition::Interface(interface)) => {
+                    (&interface.name, &interface.directives)
+                }
+                input::Definition::TypeDefinition(input::TypeDefinition::Union(union)) => {
+                    (&union.name, &union.directives)
+                }
+                _ => continue,
+            };
+            for context in Self::extract_directives::<ContextDirective>(directives) {
+                let types = contexts.entry(context.name).or_default();
+                if !types.contains(name) {
+                    types.push(name.clone());
+                }
+            }
+        }
+        contexts
     }
 
     fn extract_known_scalars(schema: &SchemaDocument) -> HashSet<String> {

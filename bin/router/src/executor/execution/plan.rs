@@ -1,4 +1,4 @@
-use super::context::{batch_operation_without_empty_aliases, collect_context_entities};
+use super::context::collect_context_entities;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::vec;
@@ -11,7 +11,7 @@ use crate::query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use crate::query_planner::{
     ast::operation::OperationDefinition,
     planner::plan_nodes::{
-        BatchFetchNode, ConditionNode, EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
+        ConditionNode, EntityBatch, EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
         QueryPlan, SequenceNode,
     },
     state::supergraph_state::OperationKind,
@@ -468,8 +468,6 @@ async fn execute_query_plan_with_data<'exec>(
 
     let dedupe_subgraph_requests = opts.operation_kind.is_query();
 
-    // declared before anything that may borrow the queries it holds
-    let query_arena = QueryArena::default();
     let mut on_end_callbacks = vec![];
 
     // TODO: coprocessor.on_execution_request
@@ -537,7 +535,6 @@ async fn execute_query_plan_with_data<'exec>(
         plugin_req_state: opts.plugin_req_state.as_ref(),
         operation_name_factory: &opts.operation_name_factory,
         connection_fingerprint: opts.connection_fingerprint,
-        query_arena: &query_arena,
     };
 
     if let Some(node) = &opts.query_plan.node {
@@ -717,24 +714,6 @@ pub struct Executor<'exec> {
     pub plugin_req_state: Option<&'exec PluginRequestState<'exec>>,
     pub operation_name_factory: &'exec OperationNameFactory,
     pub connection_fingerprint: Option<ConnectionFingerprint>,
-    /// Owns subgraph queries built during execution, so they can be borrowed for `'exec`.
-    pub query_arena: &'exec QueryArena,
-}
-
-/// Append-only store for subgraph queries built during execution. Subgraph responses may borrow
-/// the query they were requested with, so the query has to live as long as the execution.
-#[derive(Default)]
-pub struct QueryArena(std::sync::Mutex<Vec<String>>);
-
-impl QueryArena {
-    pub fn alloc(&self, query: String) -> &str {
-        let mut queries = self.0.lock().expect("query arena lock");
-        queries.push(query);
-        let query: *const str = queries.last().expect("just pushed").as_str();
-        // SAFETY: strings are never removed or mutated until the arena drops, and moving a
-        // `String` within the vec doesn't move its heap buffer
-        unsafe { &*query }
-    }
 }
 
 pub enum ExecutionJob<'exec> {
@@ -839,8 +818,6 @@ struct PrepareExecutionJobOpts<'exec> {
     operation_kind: Option<&'exec OperationKind>,
     // Operation
     operation: &'exec SubgraphFetchOperation,
-    // The query sent to the subgraph, usually `operation.document_str`
-    query: &'exec str,
     // Output rewrites
     output_rewrites: Option<&'exec [FetchRewrite]>,
     // Response paths whose values should stay raw JSON in `data`
@@ -910,7 +887,6 @@ impl<'exec> Executor<'exec> {
                 .generate(&fetch_node.service_name, fetch_node.id),
             operation_kind: fetch_node.operation_kind.as_ref(),
             operation: &fetch_node.operation,
-            query: &fetch_node.operation.document_str,
             output_rewrites: fetch_node.output_rewrites.as_deref(),
             custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
             raw_variable_values: None,
@@ -942,7 +918,6 @@ impl<'exec> Executor<'exec> {
                         .generate(&fetch_node.service_name, fetch_node.id),
                     operation_kind: fetch_node.operation_kind.as_ref(),
                     operation: &fetch_node.operation,
-                    query: &fetch_node.operation.document_str,
                     output_rewrites: fetch_node.output_rewrites.as_deref(),
                     custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
                     raw_variable_values: None,
@@ -950,7 +925,8 @@ impl<'exec> Executor<'exec> {
                 })
                 .boxed()],
             PlanNode::BatchFetch(batch_fetch_node) => {
-                let (waves, query) = self.prepare_batch_fetch_job_state(batch_fetch_node, data);
+                let waves =
+                    self.prepare_batch_fetch_job_state(&batch_fetch_node.entity_batch, data);
 
                 if waves.is_empty() {
                     // All alias lists are empty, so nothing to fetch.
@@ -973,7 +949,6 @@ impl<'exec> Executor<'exec> {
                                 .generate(&batch_fetch_node.service_name, batch_fetch_node.id),
                             operation_kind: batch_fetch_node.operation_kind.as_ref(),
                             operation: &batch_fetch_node.operation,
-                            query,
                             output_rewrites: None,
                             custom_scalar_paths: batch_fetch_node.custom_scalar_paths.as_ref(),
                             raw_variable_values: Some(raw_variable_values),
@@ -1027,7 +1002,6 @@ impl<'exec> Executor<'exec> {
                                 .generate(&fetch_node.service_name, fetch_node.id),
                             operation_kind: fetch_node.operation_kind.as_ref(),
                             operation: &fetch_node.operation,
-                            query: &fetch_node.operation.document_str,
                             output_rewrites: fetch_node.output_rewrites.as_deref(),
                             custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
                             raw_variable_values: Some(raw_variable_values),
@@ -1473,17 +1447,13 @@ impl<'exec> Executor<'exec> {
     // - remembering where each item came from (so we can put results back)
     //
     // Returns one request ("wave") per group of contextual argument values, without contexts
-    // that's at most one, and the query to send.
+    // that's at most one.
     #[allow(clippy::type_complexity)]
     fn prepare_batch_fetch_job_state(
         &self,
-        batch_fetch_node: &'exec BatchFetchNode,
+        entity_batch: &'exec EntityBatch,
         data: &Value<'exec>,
-    ) -> (
-        Vec<(Vec<(&'exec str, Vec<u8>)>, Vec<AliasBatchState<'exec>>)>,
-        &'exec str,
-    ) {
-        let entity_batch = &batch_fetch_node.entity_batch;
+    ) -> Vec<(Vec<(&'exec str, Vec<u8>)>, Vec<AliasBatchState<'exec>>)> {
         let mut prepared: Vec<_> = entity_batch
             .aliases
             .iter()
@@ -1498,18 +1468,6 @@ impl<'exec> Executor<'exec> {
                 )
             })
             .collect();
-
-        let query = if entity_batch
-            .aliases
-            .iter()
-            .any(|alias_spec| alias_spec.context_rewrites.is_some())
-        {
-            batch_operation_without_empty_aliases(batch_fetch_node, &prepared)
-                .map(|query| self.query_arena.alloc(query))
-        } else {
-            None
-        }
-        .unwrap_or(&batch_fetch_node.operation.document_str);
 
         let wave_count = prepared
             .iter()
@@ -1574,7 +1532,7 @@ impl<'exec> Executor<'exec> {
             }
         }
 
-        (waves, query)
+        waves
     }
 
     async fn prepare_execution_job(
@@ -1602,7 +1560,7 @@ impl<'exec> Executor<'exec> {
             let variable_refs = select_fetch_variables(self.variable_values, opts.variable_usages);
 
             let mut subgraph_request = SubgraphExecutionRequest {
-                query: opts.query,
+                query: &opts.operation.document_str,
                 document_name_write_pos: opts.operation.name_write_position,
                 dedupe: self.dedupe_subgraph_requests,
                 operation_name: opts.operation_name,
@@ -1632,7 +1590,7 @@ impl<'exec> Executor<'exec> {
                 );
             }
 
-            let response = self
+            let mut response = self
                 .executors
                 .execute(
                     opts.subgraph_name,
@@ -1641,11 +1599,11 @@ impl<'exec> Executor<'exec> {
                     self.plugin_req_state,
                     self.demand_control_context.as_deref(),
                 )
-                .await;
-            let mut response = response.with_plan_context(LazyPlanContext {
-                subgraph_name: subgraph_name_factory,
-                affected_path: affected_path_factory,
-            })?;
+                .await
+                .with_plan_context(LazyPlanContext {
+                    subgraph_name: subgraph_name_factory,
+                    affected_path: affected_path_factory,
+                })?;
 
             if let Some(errors) = &response.errors {
                 if !errors.is_empty() {
@@ -1721,7 +1679,7 @@ mod tests {
         execution::{
             client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
             operation_name::OperationNameFactory,
-            plan::{Executor, QueryArena},
+            plan::Executor,
         },
         execution_context::ExecutionContext,
         extensions::plan::ExtensionsPlan,
@@ -1740,8 +1698,8 @@ mod tests {
             document::Document, operation::PlanningFetchOperation, requires::RequiresSelectionSet,
         },
         planner::plan_nodes::{
-            BatchFetchNode, EntityBatch, EntityBatchAlias, FetchNode, FlattenNodePath,
-            ParallelNode, PathSegment, PlanNode,
+            EntityBatch, EntityBatchAlias, FetchNode, FlattenNodePath, ParallelNode, PathSegment,
+            PlanNode,
         },
         utils::parsing::parse_operation,
     };
@@ -1942,7 +1900,6 @@ mod tests {
             plugin_req_state: None,
             operation_name_factory: &OperationNameFactory::default(),
             connection_fingerprint: None,
-            query_arena: &QueryArena::default(),
         };
 
         let data: ResponseValue = sonic_rs::from_str(
@@ -1992,15 +1949,7 @@ mod tests {
             ])]
             .into()
         };
-        let mut batch_fetch_node: BatchFetchNode = serde_json::from_value(serde_json::json!({
-            "id": 0, "serviceName": "inventory", "operation": {
-                "document_str": "query($__batch_reps_0:[_Any!]!){_e0:_entities(representations:$__batch_reps_0){... on Product{upc}} _e1:_entities(representations:$__batch_reps_0){... on Product{upc}}}",
-                "hash": 0, "name_write_position": 5,
-            },
-            "entityBatch": {"aliases": []}
-        }))
-        .unwrap();
-        batch_fetch_node.entity_batch = EntityBatch {
+        let entity_batch = EntityBatch {
             aliases: vec![
                 EntityBatchAlias {
                     alias: "_e0".to_string(),
@@ -2023,9 +1972,8 @@ mod tests {
             ],
         };
 
-        let (waves, query) = executor.prepare_batch_fetch_job_state(&batch_fetch_node, &data);
+        let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data);
 
-        assert_eq!(query, &*batch_fetch_node.operation.document_str);
         assert_eq!(waves.len(), 1);
         let (raw_variable_values, aliases) = &waves[0];
         assert_eq!(aliases.len(), 2);
@@ -2089,7 +2037,6 @@ mod tests {
             plugin_req_state: None,
             operation_name_factory: &OperationNameFactory::default(),
             connection_fingerprint: None,
-            query_arena: &QueryArena::default(),
         };
 
         let mock_a = subgraph_a

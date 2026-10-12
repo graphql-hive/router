@@ -24,7 +24,6 @@ mod context_tests {
         let argument = &field.context_arguments[0];
         assert_eq!(argument.name, "code");
         assert_eq!(argument.type_in_graph.to_string(), "String");
-        assert_eq!(argument.context, "a__user");
         assert_eq!(argument.selections.len(), 2);
         assert!(argument
             .selections

@@ -375,6 +375,38 @@ impl EntityFetch {
         let input_rewrites = fetch_node.input_rewrites.clone();
         let output_rewrites = fetch_node.output_rewrites.clone();
         let context_rewrites = fetch_node.context_rewrites.clone();
+        if let Some(rewrites) = &context_rewrites {
+            let names: Vec<&str> = rewrites
+                .iter()
+                .map(|rewrite| rewrite.rename_key_to.as_str())
+                .collect();
+            // fetches with a non-null context argument are never batched, on purpose.
+            // a batch with contexts is sent once per distinct set of context values. an alias
+            // with no entities for that set still sits in the query text, so its context
+            // variable has to be sent, and there's no value for it, so it goes out as null.
+            // fine for a nullable argument, but for a non-null one the subgraph rejects the whole
+            // request, failing the aliases that do have entities too.
+            // declaring the variable nullable doesn't work, validation rejects a nullable
+            // variable in a non-null position. dropping the empty aliases per request would
+            // mean re-printing the operation at execution time and keeping the new string alive
+            // for as long as the response borrows it, which costs every batch fetch for a rare
+            // case. so these stay separate fetches, they still run in parallel, and you-know-who
+            // doesn't batch at all anyway...
+            if fetch_node
+                .operation
+                .document
+                .operation
+                .variable_definitions
+                .iter()
+                .flatten()
+                .any(|var| {
+                    names.contains(&var.name.as_str())
+                        && matches!(var.variable_type, TypeNode::NonNull(_))
+                })
+            {
+                return Ok(None);
+            }
+        }
         let non_representations_variable_definitions = fetch_node
             .operation
             .document

@@ -771,6 +771,73 @@ fn two_root_fields_batch_into_one_fetch() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn non_null_context_argument_is_not_batched() -> Result<(), Box<dyn Error>> {
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/context-basic.supergraph.graphql",
+        parse_operation(r#"{ users { txs { strict } } secondUsers { txs { strict } } }"#),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            users {
+              ...a
+            }
+            secondUsers {
+              ...a
+            }
+          }
+          fragment a on User {
+            __typename
+            currency
+            txs {
+              __typename
+              id
+            }
+          }
+        },
+        Parallel {
+          Flatten(path: "secondUsers.@.txs.@") {
+            Fetch(service: "a") {
+              {
+                ... on Transaction {
+                  __typename
+                  id
+                }
+              } =>
+              ($__context_1:String!) {
+                ... on Transaction {
+                  strict(code: $__context_1)
+                }
+              }
+            },
+          },
+          Flatten(path: "users.@.txs.@") {
+            Fetch(service: "a") {
+              {
+                ... on Transaction {
+                  __typename
+                  id
+                }
+              } =>
+              ($__context_0:String!) {
+                ... on Transaction {
+                  strict(code: $__context_0)
+                }
+              }
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
 fn context_field_under_skip() -> Result<(), Box<dyn Error>> {
     let query_plan = build_query_plan_with_defaults(
         "fixture/tests/context-basic.supergraph.graphql",

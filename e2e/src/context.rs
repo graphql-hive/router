@@ -745,7 +745,7 @@ async fn batch_aliases_with_unequal_group_counts() {
 }
 
 #[ntex::test]
-async fn batch_alias_without_entities_is_dropped_from_the_query() {
+async fn batch_alias_without_entities_sends_empty_representations() {
     let mut server = mockito::Server::new_async().await;
     let router = start_router("context-basic", &server).await;
     let _root = server
@@ -761,9 +761,9 @@ async fn batch_alias_without_entities_is_dropped_from_the_query() {
         .mock("POST", "/a")
         .match_request(|r| {
             let body = body(r);
-            let query = body["query"].as_str().unwrap();
-            !query.contains("_e0")
-                && !query.contains("$__context_1")
+            body["query"].as_str().unwrap().contains("_e0")
+                && body["variables"]["__batch_reps_0"] == json!([])
+                && body["variables"].get("__context_1") == Some(&Value::Null)
                 && body["variables"]["__context_0"] == "USD"
         })
         .with_status(200)
@@ -776,9 +776,9 @@ async fn batch_alias_without_entities_is_dropped_from_the_query() {
         .mock("POST", "/a")
         .match_request(|r| {
             let body = body(r);
-            let query = body["query"].as_str().unwrap();
-            !query.contains("_e0")
-                && !query.contains("$__context_1")
+            body["query"].as_str().unwrap().contains("_e0")
+                && body["variables"]["__batch_reps_0"] == json!([])
+                && body["variables"].get("__context_1") == Some(&Value::Null)
                 && body["variables"]["__context_0"] == "EUR"
         })
         .with_status(200)

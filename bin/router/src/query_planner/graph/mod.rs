@@ -730,7 +730,6 @@ impl Graph {
                                 .map(|argument| ContextArgument {
                                     name: argument.name.clone(),
                                     type_in_graph: argument.type_in_graph.clone(),
-                                    context: argument.context.clone(),
                                     selections: state
                                         .contexts
                                         .get(&argument.context)

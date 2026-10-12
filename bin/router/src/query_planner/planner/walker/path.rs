@@ -31,7 +31,7 @@ impl PartialEq for SelectionAttributes {
 #[derive(Debug, Clone)]
 pub struct ContextRequirement {
     pub argument: usize,
-    pub matched_type: String,
+    pub selection: usize,
     pub levels: usize,
     pub segments_back: usize,
     pub tree: Rc<QueryTreeNode>,

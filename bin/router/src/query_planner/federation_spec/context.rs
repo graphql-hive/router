@@ -9,6 +9,7 @@ pub struct ContextDirective {
 
 impl ContextDirective {
     pub const NAME: &str = "context";
+    pub const FROM_CONTEXT_NAME: &str = "context__fromContext";
 }
 
 impl FederationDirective for ContextDirective {

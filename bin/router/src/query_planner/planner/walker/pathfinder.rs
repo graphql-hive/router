@@ -650,16 +650,19 @@ impl<'graph> PathSearch<'graph> {
                         }
                         levels += 1;
                         let head = graph.node(graph.get_edge_head(&segment.edge_index)?)?;
-                        if let Some(selection) =
-                            context_argument.selections.iter().find(|selection| {
+                        if let Some((index, selection)) = context_argument
+                            .selections
+                            .iter()
+                            .enumerate()
+                            .find(|(_, selection)| {
                                 self.type_condition_matches(head.name_str(), &selection.type_name)
                             })
                         {
-                            matched = Some((back + 1, segment, selection));
+                            matched = Some((back + 1, segment, index, selection));
                             break;
                         }
                     }
-                    let Some((segments_back, segment, selection)) = matched else {
+                    let Some((segments_back, segment, selection_index, selection)) = matched else {
                         return Ok(None);
                     };
                     let ancestor = path.before_segment(graph, segment);
@@ -673,14 +676,16 @@ impl<'graph> PathSearch<'graph> {
                     else {
                         return Ok(None);
                     };
-                    let tree = QueryTreeNode::from_paths(graph, &paths, None)?
-                        .unwrap_or_else(|| Rc::new(QueryTreeNode::new_root(&ancestor.tail())));
+                    let mut tree = QueryTreeNode::from_paths(graph, &paths, None)?
+                        .map(|tree| Rc::try_unwrap(tree).unwrap_or_else(|tree| (*tree).clone()))
+                        .unwrap_or_else(|| QueryTreeNode::new_root(&ancestor.tail()));
+                    tree.context_coordinate = Some((edge_ref.id(), argument));
                     context_requirements.push(Rc::new(ContextRequirement {
                         argument,
-                        matched_type: selection.type_name.clone(),
+                        selection: selection_index,
                         levels,
                         segments_back,
-                        tree,
+                        tree: Rc::new(tree),
                     }));
                 }
             }

@@ -34,7 +34,7 @@ use petgraph::visit::EdgeRef;
 use petgraph::visit::{Bfs, IntoNodeReferences};
 use petgraph::Directed;
 use petgraph::Direction;
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt::{Debug, Display};
 use tracing::{instrument, trace};
 
@@ -53,7 +53,7 @@ pub struct FetchGraph<State> {
     pub(crate) response_keys: ResponseKeys,
     pub(crate) context_producers: HashMap<(MergePath, (EdgeIndex, usize)), Vec<NodeIndex>>,
     pub(crate) context_variable_counter: usize,
-    pub(crate) operation_variables: BTreeSet<String>,
+    pub(crate) operation_variables: HashSet<String>,
 }
 
 impl FetchGraph<SingleTypeFetchStep> {
@@ -70,7 +70,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             response_keys: ResponseKeys::default(),
             context_producers: HashMap::new(),
             context_variable_counter: 0,
-            operation_variables: BTreeSet::new(),
+            operation_variables: HashSet::new(),
         }
     }
 
@@ -83,7 +83,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             response_keys: ResponseKeys::default(),
             context_producers: HashMap::new(),
             context_variable_counter: 0,
-            operation_variables: BTreeSet::new(),
+            operation_variables: HashSet::new(),
         }
     }
 }
@@ -984,7 +984,7 @@ fn process_interface_object_type_move_edge(
         graph,
         supergraph,
         override_context,
-        query_node.requirements.first().unwrap(),
+        query_node.requirements.first().unwrap().node_index,
         false,
     )?;
     let key_to_reenter_subgraph = &fetch_graph.read_at(response_path, key_to_reenter_subgraph);
@@ -1605,19 +1605,11 @@ fn process_requires_field_edge(
         _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
 
-    let context_parent = QueryTreeNode::new_root(&head_node_index);
     let key_to_reenter_subgraph = find_satisfiable_key(
         graph,
         supergraph,
         override_context,
-        if field_move.context_arguments.is_empty() {
-            query_node
-                .requirements
-                .first()
-                .ok_or(FetchGraphError::MissingRequires)?
-        } else {
-            &context_parent
-        },
+        head_node_index,
         !field_move.context_arguments.is_empty(),
     )?;
     // What the entity calls read, and the keys the step holding the objects writes.
@@ -1713,9 +1705,7 @@ fn process_requires_field_edge(
             .filter(|(_, segment)| matches!(segment, Segment::Field(..)))
             .nth(requirement.levels - 1)
             .map(|(index, _)| index)
-            .ok_or_else(|| {
-                FetchGraphError::Internal("Missing context ancestor path".to_string())
-            })?;
+            .ok_or(FetchGraphError::UnsupportedContextInRequirement)?;
         let ancestor_path = MergePath::new(response_path.inner[..ancestor_index].to_vec());
         let producers = fetch_graph
             .context_producers
@@ -1738,21 +1728,17 @@ fn process_requires_field_edge(
             }
         };
         arguments.add_argument(argument.name.clone(), Value::Variable(variable.clone()));
-        let selection = argument
-            .selections
-            .iter()
-            .find(|selection| selection.type_name == requirement.matched_type)
-            .ok_or_else(|| FetchGraphError::Internal("Missing context selection".to_string()))?;
-        let selection = fetch_graph
+        let selection = &argument.selections[requirement.selection];
+        let output = fetch_graph
             .response_keys
             .output(&place_of(&ancestor_path), &selection.selection_set);
         let prefix = vec![FetchNodePathSegment::Parent; requirement.levels];
         let mut field_prefix = prefix.clone();
         field_prefix.push(FetchNodePathSegment::typename_equals_from_type(
-            requirement.matched_type.clone(),
+            selection.type_name.clone(),
         ));
         let mut rewrites = Vec::new();
-        for item in &selection.items {
+        for item in &output.items {
             // root fields read from the matched ancestor type, root fragments carry their own type
             let path = match item {
                 SelectionItem::Field(_) => &field_prefix,
@@ -1984,13 +1970,13 @@ fn process_requires_field_edge(
 /// The key fields need to be added to the output of the parent,
 /// and input of the entity move.
 #[instrument(level = "trace",skip_all, fields(
-  node = graph.node(query_node.node_index).unwrap().to_string()
+  node = graph.node(node_index).unwrap().to_string()
 ))]
 fn find_satisfiable_key<'a>(
     graph: &'a Graph,
     supergraph: &'a SupergraphState,
     override_context: &'a PlannerOverrideContext,
-    query_node: &QueryTreeNode,
+    node_index: NodeIndex,
     local_only: bool,
 ) -> Result<&'a TypeAwareSelection, FetchGraphError> {
     // This could be improved...
@@ -1999,12 +1985,12 @@ fn find_satisfiable_key<'a>(
     let mut entity_moves_edges_to_self: Vec<
         EdgeReference<crate::query_planner::graph::edge::Edge>,
     > = graph
-        .edges_from(query_node.node_index)
+        .edges_from(node_index)
         .filter(|edge_reference| {
             let edge = graph.edge(edge_reference.id()).unwrap();
             matches!(edge, Edge::EntityMove(_))
                 && (!local_only || {
-                    let source = graph.node(query_node.node_index).unwrap();
+                    let source = graph.node(node_index).unwrap();
                     let target = graph.node(edge_reference.target()).unwrap();
                     source.name_str() == target.name_str() && source.graph_id() == target.graph_id()
                 })
@@ -2019,7 +2005,7 @@ fn find_satisfiable_key<'a>(
             override_context,
             &edge_ref,
             &OperationPath {
-                root_node: query_node.node_index,
+                root_node: node_index,
                 last_segment: None,
                 cost: 0,
                 union_context: None,
@@ -2272,10 +2258,6 @@ fn requirements_resolve_in_place(
     graph: &Graph,
     query_node: &QueryTreeNode,
 ) -> Result<bool, FetchGraphError> {
-    if !query_node.resolved_context_requirements.is_empty() {
-        return Ok(false);
-    }
-
     fn stays_in_subgraph(graph: &Graph, node: &QueryTreeNode) -> Result<bool, FetchGraphError> {
         if !node.requirements.is_empty() || !node.resolved_context_requirements.is_empty() {
             return Ok(false);

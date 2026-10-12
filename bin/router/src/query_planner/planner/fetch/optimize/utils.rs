@@ -272,15 +272,18 @@ impl FetchGraph<MultiTypeFetchStep> {
                 .node_weights()
                 .flat_map(|step| step.context_producers.iter().copied())
                 .collect();
+            if producer_ids.is_empty() {
+                return Ok(());
+            }
             let mut candidate = None;
             // scan over all step pairs, index steps by service_name if planning time shows up
             for source_index in self.graph.node_indices() {
-                // dropping incoming edges below is only safe when there's a single upstream dependency
-                if self.parents_of(source_index).count() != 1 {
+                let source = self.get_step_data(source_index)?;
+                if !producer_ids.contains(&source.id) {
                     continue;
                 }
-                let source = self.get_step_data(source_index)?;
-                if !producer_ids.contains(&source.id)
+                // dropping incoming edges below is only safe when there's a single upstream dependency
+                if self.parents_of(source_index).count() != 1
                     || !source.is_entity_call()
                     || source.context_rewrites.is_some()
                     || source.input_rewrites.is_some()

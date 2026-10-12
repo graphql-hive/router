@@ -121,6 +121,7 @@ type Transaction @join__type(graph: A, key: "id") @join__type(graph: B, key: "id
     graph: A
     contextArguments: [{context: "a__user", name: "code", type: "String", selection: " { currency }"}, {context: "a__outer", name: "outer", type: "String", selection: " { code }"}]
   )
+  strict: Int @join__field(graph: A, contextArguments: [{context: "a__user", name: "code", type: "String!", selection: " { currency }"}])
 }
 
 interface Account @join__type(graph: A) @context(name: "a__account") {

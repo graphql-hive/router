@@ -4,7 +4,8 @@ use graphql_tools::parser::schema::*;
 use crate::query_planner::{
     federation_spec::{
         definitions::{
-            CorePurposesEnum, JoinDirectiveArgumentsScalar, JoinFieldSetScalar, JoinGraphEnum,
+            ContextFieldValueScalar, CorePurposesEnum, JoinContextArgumentInput,
+            JoinDirectiveArgumentsScalar, JoinFieldSetScalar, JoinFieldValueScalar, JoinGraphEnum,
             LinkImportScalar, LinkPurposeEnum, PolicyPolicyScalar, RequiresScopesScopeScalar,
         },
         demand_control::{CostDirective, ListSizeDirective},
@@ -42,7 +43,7 @@ static DIRECTIVES_TO_STRIP: [&str; 19] = [
     CostDirective::NAME,
     ListSizeDirective::NAME,
     ContextDirective::NAME,
-    "context__fromContext",
+    ContextDirective::FROM_CONTEXT_NAME,
 ];
 
 static DEFINITIONS_TO_STRIP: [&str; 11] = [
@@ -54,9 +55,9 @@ static DEFINITIONS_TO_STRIP: [&str; 11] = [
     CorePurposesEnum::NAME,
     RequiresScopesScopeScalar::NAME,
     PolicyPolicyScalar::NAME,
-    "context__ContextFieldValue",
-    "join__ContextArgument",
-    "join__FieldValue",
+    ContextFieldValueScalar::NAME,
+    JoinContextArgumentInput::NAME,
+    JoinFieldValueScalar::NAME,
 ];
 
 impl StripSchemaInternals {

@@ -34,7 +34,6 @@ pub struct InterfaceObjectTypeMove {
 pub struct ContextArgument {
     pub name: String,
     pub type_in_graph: TypeNode,
-    pub context: String,
     /// The selection parsed once for each type that declares this context.
     pub selections: Vec<TypeAwareSelection>,
 }

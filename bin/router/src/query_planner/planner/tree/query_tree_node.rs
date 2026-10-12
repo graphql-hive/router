@@ -116,7 +116,7 @@ impl QueryTreeNode {
         for requirement in &other.resolved_context_requirements {
             if !self.resolved_context_requirements.iter().any(|existing| {
                 existing.argument == requirement.argument
-                    && existing.matched_type == requirement.matched_type
+                    && existing.selection == requirement.selection
                     && existing.levels == requirement.levels
             }) {
                 self.resolved_context_requirements
@@ -197,11 +197,9 @@ impl QueryTreeNode {
         for (index, segment) in segments.iter().enumerate().skip(current_index + 1) {
             for requirement in &segment.context_requirements {
                 if index.checked_sub(requirement.segments_back) == Some(current_index) {
-                    let mut tree = requirement.tree.as_ref().clone();
-                    tree.context_coordinate = Some((segment.edge_index, requirement.argument));
                     merge_query_tree_node_list(
                         &mut tree_node.context_requirements,
-                        &[Rc::new(tree)],
+                        &[Rc::clone(&requirement.tree)],
                     );
                 }
             }

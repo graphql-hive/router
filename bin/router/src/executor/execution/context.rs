@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     hash::{Hash, Hasher},
     sync::Arc,
 };
@@ -81,7 +80,14 @@ pub(super) fn collect_context_entities<'a>(
         }
     }
     let mut groups: Vec<ContextGroup<'a>> = Vec::new();
-    let mut group_by_values = HashMap::new();
+    if names.is_empty() {
+        groups.push(ContextGroup {
+            variables: Vec::new(),
+            representations: vec![b'['],
+            hash_to_index: AHashMap::new(),
+        });
+    }
+    let mut group_by_values: AHashMap<Vec<Vec<u8>>, usize> = AHashMap::new();
     let mut path_hashes: Vec<RepresentationHashes> = Vec::new();
     let mut seen_paths: Vec<(ResponsePathRef<'a>, RepresentationHashes)> = Vec::new();
     let required_selections = requires.root_selections();
@@ -119,15 +125,20 @@ pub(super) fn collect_context_entities<'a>(
                     sonic_rs::to_vec(&value.unwrap_or_default()).expect("context value serializes")
                 })
                 .collect();
-            let group_index = *group_by_values.entry(values.clone()).or_insert_with(|| {
+            let group_index = if names.is_empty() {
+                0
+            } else if let Some(index) = group_by_values.get(&values) {
+                *index
+            } else {
                 let index = groups.len();
                 groups.push(ContextGroup {
                     variables: names.iter().copied().zip(values.iter().cloned()).collect(),
                     representations: vec![b'['],
                     hash_to_index: AHashMap::new(),
                 });
+                group_by_values.insert(values.clone(), index);
                 index
-            });
+            };
             let entity_hash = entity.to_hash(required_selections, possible_types);
             let hash = if values.is_empty() {
                 entity_hash
@@ -164,13 +175,7 @@ pub(super) fn collect_context_entities<'a>(
                 group.hash_to_index.insert(hash, group.hash_to_index.len());
             }
         };
-        traverse_and_callback(
-            data,
-            path.as_slice(),
-            possible_types,
-            &mut Vec::new(),
-            &mut collect,
-        );
+        traverse_and_callback(data, path.as_slice(), possible_types, &mut collect);
         let hashes = Arc::new(hashes);
         seen_paths.push((path, Arc::clone(&hashes)));
         path_hashes.push(hashes);
@@ -179,67 +184,6 @@ pub(super) fn collect_context_entities<'a>(
         group.representations.push(b']');
     }
     (groups, path_hashes)
-}
-
-pub(super) fn batch_operation_without_empty_aliases(
-    batch: &crate::query_planner::planner::plan_nodes::BatchFetchNode,
-    prepared: &[(Vec<ContextGroup<'_>>, Vec<RepresentationHashes>)],
-) -> Option<String> {
-    use crate::query_planner::{
-        ast::{
-            fragment::FragmentDefinition, operation::OperationDefinition,
-            selection_item::SelectionItem,
-        },
-        utils::parsing::parse_operation,
-    };
-    use graphql_tools::parser::query::Definition;
-    let empty: Vec<_> = batch
-        .entity_batch
-        .aliases
-        .iter()
-        .zip(prepared)
-        .filter(|(_, (groups, _))| groups.is_empty())
-        .map(|(alias, _)| alias)
-        .collect();
-    if empty.is_empty() {
-        return None;
-    }
-    // we re-parse the batch operation text here instead of reusing a parsed document, and
-    // that's on purpose. the planner does hold a parsed `Document` (`PlanningFetchOperation`),
-    // but `into_executable` (plan_nodes/prepare.rs) drops it and keeps only the
-    // `SubgraphFetchOperation` (text, hash, name write position), so cached plans stay small.
-    // keeping the document on the executable plan would cost memory on every cached plan with
-    // a batch fetch, just for this path.
-    // this path is rare, it only runs when a batch has contextual aliases and at least one
-    // alias ended up with no entities (`empty` above is non-empty). the plain batch path never
-    // gets here.
-    // why rewrite at all: an empty alias has no context values, so its `__context_n`
-    // variables would be sent as null. if the argument is non-null the subgraph rejects the
-    // whole request, including the aliases that do have entities. dropping the alias and its
-    // unused variable definitions avoids that.
-    // TODO: maybe do thread the parsed document through
-    let mut operation: Option<OperationDefinition> = None;
-    let mut fragments: Vec<FragmentDefinition> = Vec::new();
-    for definition in parse_operation(&batch.operation.document_str).definitions {
-        match definition {
-            Definition::Operation(op) => operation = Some(op.into()),
-            Definition::Fragment(fragment) => fragments.push(fragment.into()),
-        }
-    }
-    let mut operation = operation.expect("batch operation");
-    operation.selection_set = operation
-        .selection_set
-        .inline_fragment_spreads(&fragments)
-        .expect("batch fragments");
-    operation.selection_set.items.retain(|item| {
-        !matches!(item, SelectionItem::Field(field) if empty.iter().any(|alias| field.alias.as_deref() == Some(&alias.alias)))
-    });
-    let usages = operation.selection_set.variable_usages();
-    if let Some(variables) = &mut operation.variable_definitions {
-        variables.retain(|variable| usages.contains(&variable.name));
-    }
-    // an empty alias has no context value, so omit its non-null variables rather than invalidating the other aliases
-    Some(operation.to_string())
 }
 
 #[cfg(test)]
@@ -316,38 +260,6 @@ mod tests {
         assert_eq!(hashes[0][4], None);
         assert!(groups[0].hash_to_index.contains_key(&hashes[0][0].unwrap()));
         assert!(!groups[0].hash_to_index.contains_key(&hashes[0][2].unwrap()));
-    }
-
-    #[test]
-    fn empty_batch_aliases_drop_non_null_context_and_unused_client_variables() {
-        use crate::query_planner::planner::plan_nodes::BatchFetchNode;
-        let batch: BatchFetchNode = serde_json::from_value(serde_json::json!({
-            "id": 0, "serviceName": "a", "operation": {
-                "document_str": "query($r0:[_Any!]!,$r1:[_Any!]!,$c0:String!,$c1:String!,$locale:String){_e0:_entities(representations:$r0){... on Transaction{amount(code:$c0,locale:$locale)}} _e1:_entities(representations:$r1){... on Transaction{amount(code:$c1)}}}",
-                "hash": 0, "name_write_position": 5,
-            },
-            "entityBatch": {"aliases": [
-                {"alias":"_e0", "representationsVariableName":"r0", "paths":[], "requires":[], "contextRewrites":[{"path":[], "renameKeyTo":"c0"}]},
-                {"alias":"_e1", "representationsVariableName":"r1", "paths":[], "requires":[], "contextRewrites":[{"path":[], "renameKeyTo":"c1"}]}
-            ]}
-        })).unwrap();
-        let prepared = vec![
-            (Vec::new(), Vec::new()),
-            (
-                vec![ContextGroup {
-                    variables: vec![("c1", b"\"USD\"".to_vec())],
-                    representations: b"[]".to_vec(),
-                    hash_to_index: AHashMap::new(),
-                }],
-                Vec::new(),
-            ),
-        ];
-        let operation = batch_operation_without_empty_aliases(&batch, &prepared).unwrap();
-        assert!(!operation.contains("_e0"));
-        assert!(!operation.contains("$c0"));
-        assert!(!operation.contains("$locale"));
-        assert!(operation.contains("$c1:String!"));
-        assert!(operation.contains("_e1"));
     }
 
     #[test]

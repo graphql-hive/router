@@ -139,7 +139,7 @@ pub fn add_variables_to_fetch_steps(
                 })
                 .cloned()
                 .collect::<Vec<_>>();
-            relevant_variables.extend(step.context_variable_definitions.iter().cloned());
+            relevant_variables.extend(std::mem::take(&mut step.context_variable_definitions));
             if variables.is_some() || !relevant_variables.is_empty() {
                 step.variable_definitions = Some(relevant_variables);
             }
