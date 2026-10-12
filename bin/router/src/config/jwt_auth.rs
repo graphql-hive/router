@@ -143,6 +143,7 @@ pub enum JwksProviderSourceConfig {
         /// The value is the minimum time between two such re-fetches: concurrent misses share
         /// one fetch, and unknown `kid`s (which the client controls) cannot make the router
         /// hammer the JWKS endpoint. Must be at least `1s`. Disabled when not set.
+        /// Tokens without a `kid` never trigger a re-fetch.
         #[serde(
             default,
             deserialize_with = "deserialize_unknown_kid_cooldown",
