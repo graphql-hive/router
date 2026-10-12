@@ -298,12 +298,8 @@ impl Graph {
                                 state.resolve_graph_id(&join_type2.graph_id)?,
                                 join_type2.is_interface_object,
                             ));
-                            let key_selection = FederationRules::parse_key(
-                                state,
-                                &join_type2.graph_id,
-                                def_name,
-                                key,
-                            );
+                            let key_selection =
+                                parsed_key(state, &join_type2.graph_id, def_name, key)?;
 
                             trace!(
                                 "Creating entity move edge from '{}/{}' to '{}/{}' via key '{}'",
@@ -321,8 +317,7 @@ impl Graph {
                             );
                         }
                     } else if let (true, Some(key)) = (&join_type1.resolvable, &join_type1.key) {
-                        let key_selection =
-                            FederationRules::parse_key(state, &join_type1.graph_id, def_name, key);
+                        let key_selection = parsed_key(state, &join_type1.graph_id, def_name, key)?;
 
                         trace!(
                             "Creating self-referencing entity move edge in '{}/{}' via key '{}'",
@@ -419,12 +414,8 @@ impl Graph {
                         .as_ref()
                         .expect("@interfaceObject to have a key");
 
-                    let key_selection = FederationRules::parse_key(
-                        state,
-                        &join_type1.graph_id,
-                        interface_object_name,
-                        key,
-                    );
+                    let key_selection =
+                        parsed_key(state, &join_type1.graph_id, interface_object_name, key)?;
 
                     for join_type2 in object_type_definition.join_types() {
                         if join_type1.graph_id == join_type2.graph_id {
@@ -1280,6 +1271,25 @@ fn field_definition<'a>(
         .get(field_name)
         .ok_or_else(|| {
             GraphError::FieldDefinitionNotFound(field_name.to_string(), type_name.to_string())
+        })
+}
+
+/// The `@key(fields: key)` of `type_name` in the subgraph `graph_id`, as `EntityKeys` parsed it.
+fn parsed_key(
+    state: &SupergraphState,
+    graph_id: &str,
+    type_name: &str,
+    key: &str,
+) -> Result<TypeAwareSelection, GraphError> {
+    let subgraph = state.resolve_graph_id(graph_id)?;
+    state
+        .entity_keys
+        .selection(&subgraph.0, type_name, key)
+        .cloned()
+        .ok_or_else(|| GraphError::EntityKeyNotFound {
+            type_name: type_name.to_string(),
+            subgraph: subgraph.0,
+            key: key.to_string(),
         })
 }
 

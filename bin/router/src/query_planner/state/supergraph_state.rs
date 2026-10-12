@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fmt::{Debug, Display},
+    sync::Arc,
 };
 
 use graphql_tools::parser::query::Directive;
@@ -21,7 +22,7 @@ use crate::query_planner::{
     graph::edge::{OverrideLabel, Percentage},
 };
 
-use super::subgraph_state::SubgraphState;
+use super::{entity_keys::EntityKeys, subgraph_state::SubgraphState};
 
 static BUILTIN_SCALARS: [&str; 5] = ["String", "Int", "Float", "Boolean", "ID"];
 
@@ -208,6 +209,9 @@ pub struct SupergraphState {
     pub interface_to_object_types: InterfaceToObjectTypesMap,
     /// A pre-computed set of all progressive override labels in the supergraph
     pub progressive_overrides: ProgressiveOverrides,
+    /// Each subgraph's resolvable `@key`s, by entity type, parsed once. The graph's entity moves
+    /// use them, and the executor's `SchemaMetadata` shares them.
+    pub entity_keys: Arc<EntityKeys>,
 }
 
 impl SupergraphState {
@@ -238,6 +242,7 @@ impl SupergraphState {
             query_type: schema.query_type().name.to_string(),
             mutation_type: schema.mutation_type().map(|t| t.name.to_string()),
             subscription_type: schema.subscription_type().map(|t| t.name.to_string()),
+            entity_keys: Arc::default(),
         };
 
         for subgraph_id in instance.known_subgraphs.keys() {
@@ -245,6 +250,7 @@ impl SupergraphState {
             let subgraph_name = instance.resolve_graph_id(subgraph_id).unwrap();
             instance.subgraphs_state.insert(subgraph_name, state);
         }
+        instance.entity_keys = Arc::new(EntityKeys::new(&instance));
 
         instance
     }

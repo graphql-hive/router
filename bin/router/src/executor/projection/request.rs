@@ -1,4 +1,6 @@
 use crate::query_planner::ast::requires::{RequiresSelection, RequiresSelectionSetRef};
+use crate::query_planner::state::entity_keys::KeysByType;
+use ahash::HashSet;
 use bytes::BufMut;
 
 use crate::executor::{
@@ -31,8 +33,13 @@ fn write_typename_field(buffer: &mut Vec<u8>, type_name: &str) {
 }
 
 /// Writes the representation of `entity`. Returns `false`, and writes nothing, when the entity
-/// can't be sent: it misses a selected field, or it's of none of the selection's types.
+/// can't be sent: it misses a key field, or it's of none of the selection's types.
 /// `nested` is whether `entity` is inside the representation, in one of its fields.
+/// `subgraph_keys` are the keys of each entity type in the subgraph the representation goes to.
+/// A missing field that isn't a key field, like a `@requires` field whose subgraph returned
+/// `null` for the entity, is sent as `null`. Without them, any missing field leaves the entity
+/// out.
+#[allow(clippy::too_many_arguments)]
 pub fn project_requires(
     possible_types: &PossibleTypes,
     requires_selections: RequiresSelectionSetRef<'_>,
@@ -41,6 +48,7 @@ pub fn project_requires(
     first: bool,
     response_key: Option<&str>,
     nested: bool,
+    subgraph_keys: Option<&KeysByType>,
 ) -> bool {
     match entity {
         Value::Null => {
@@ -84,6 +92,7 @@ pub fn project_requires(
                     first,
                     None,
                     nested,
+                    subgraph_keys,
                 );
                 if projected {
                     // Only update `first` if we actually write something
@@ -105,6 +114,12 @@ pub fn project_requires(
 
             let parent_first = first;
             let mut first = true;
+            let key_fields = subgraph_keys.and_then(|subgraph_keys| {
+                Value::object_get(entity_obj, TYPENAME_FIELD_NAME)
+                    .and_then(Value::as_str)
+                    .and_then(|type_name| subgraph_keys.get(type_name))
+                    .map(|keys| &keys.fields)
+            });
             let applied = project_requires_map_mut(
                 possible_types,
                 requires_selections,
@@ -113,13 +128,15 @@ pub fn project_requires(
                 &mut first,
                 response_key,
                 parent_first,
+                key_fields,
             );
             // `__typename` is written along with the object's first field. When nothing else
             // applies, it's written alone: for an object inside the representation, like a Bird in
             // `pet { ... on Dog { tricks } ... on Cat { whiskers } }`, and for an entity whose
             // selection asks for `__typename`.
             // An object that misses a selected field, like an entity without its key, is left out,
-            // and so is an entity of none of the selection's types.
+            // and so is an entity of none of the selection's types. An entity misses only key
+            // fields here when its subgraph's keys are known.
             if first && !applied.missing_field && (nested || applied.typename) {
                 if let Some(type_name) =
                     Value::object_get(entity_obj, TYPENAME_FIELD_NAME).and_then(Value::as_str)
@@ -152,6 +169,9 @@ struct AppliedSelections {
     missing_field: bool,
 }
 
+/// `key_fields` are the key fields of the entity's type in the subgraph the representation goes
+/// to, when `entity_obj` is the entity and they're known.
+#[allow(clippy::too_many_arguments)]
 fn project_requires_map_mut(
     possible_types: &PossibleTypes,
     requires_selections: RequiresSelectionSetRef<'_>,
@@ -160,6 +180,7 @@ fn project_requires_map_mut(
     first: &mut bool,
     parent_response_key: Option<&str>,
     parent_first: bool,
+    key_fields: Option<&HashSet<String>>,
 ) -> AppliedSelections {
     // First, check if __typename is present in the entity object, we'll use it later
     let type_name = Value::object_get(entity_obj, TYPENAME_FIELD_NAME).and_then(Value::as_str);
@@ -182,9 +203,19 @@ fn project_requires_map_mut(
                 let original = Value::object_get(entity_obj, field_name)
                     .or_else(|| Value::object_get(entity_obj, response_key));
 
-                let Some(original) = original else {
-                    applied.missing_field = true;
-                    continue;
+                let original = match original {
+                    Some(original) => original,
+                    // Not a key field, so the subgraph can still find the entity: a `@requires`
+                    // field whose subgraph returned `null` for the entity is `null`.
+                    None if key_fields
+                        .is_some_and(|key_fields| !key_fields.contains(field_name)) =>
+                    {
+                        &Value::Null
+                    }
+                    None => {
+                        applied.missing_field = true;
+                        continue;
+                    }
                 };
 
                 // In most requests, required fields are present and projection succeeds.
@@ -219,6 +250,7 @@ fn project_requires_map_mut(
                     *first,
                     Some(response_key),
                     true,
+                    None,
                 );
 
                 if projected {
@@ -249,6 +281,7 @@ fn project_requires_map_mut(
                         first,
                         parent_response_key,
                         parent_first,
+                        key_fields,
                     );
                     applied.typename |= fragment.typename;
                     applied.missing_field |= fragment.missing_field;
@@ -267,6 +300,7 @@ mod tests {
     use super::project_requires;
     use crate::executor::{introspection::schema::PossibleTypes, response::value::Value};
     use crate::query_planner::ast::{requires::RequiresSelectionSet, selection_set::SelectionSet};
+    use crate::query_planner::state::entity_keys::{KeysByType, TypeKeys};
     use crate::query_planner::utils::parsing::parse_operation;
     use graphql_tools::parser::query;
     use sonic_rs::json;
@@ -295,7 +329,12 @@ mod tests {
         RequiresSelectionSet::from(&selection_set)
     }
 
-    fn project_requires_pretty(requires: &str, entity_json: sonic_rs::Value) -> Option<String> {
+    /// `keys` are the keys of each type in the subgraph the representation goes to.
+    fn project_requires_pretty_with_keys(
+        requires: &str,
+        entity_json: sonic_rs::Value,
+        keys: Option<&KeysByType>,
+    ) -> Option<String> {
         let requires = requires_from_str(requires);
         let entity = Value::from(entity_json.as_ref());
 
@@ -308,6 +347,7 @@ mod tests {
             true,
             None,
             false,
+            keys,
         );
 
         if !projected {
@@ -655,6 +695,70 @@ mod tests {
         let pretty = project_requires_pretty(
             "... on Cat { __typename id }",
             json!({ "__typename": "Dog", "id": "d1" }),
+        );
+        assert_eq!(pretty, None);
+    }
+
+    fn key_fields(types: &[(&str, &[&str])]) -> KeysByType {
+        types
+            .iter()
+            .map(|(type_name, fields)| {
+                let keys = TypeKeys {
+                    fields: fields.iter().map(|field| field.to_string()).collect(),
+                    ..Default::default()
+                };
+                (type_name.to_string(), keys)
+            })
+            .collect()
+    }
+
+    /// https://github.com/graphql-hive/router/issues/1669
+    ///
+    /// The subgraph that has `petCount` returned `null` for the page, so the page has no
+    /// `petCount`. It isn't a key field, so the subgraph can still find the page, and it gets
+    /// `petCount: null`.
+    #[test]
+    fn project_requires_missing_requires_field_is_null() {
+        // The page is keyed by `__typename` alone
+        insta::assert_snapshot!(
+          &project_requires_pretty_with_keys(
+              "... on FavoritesPage { __typename petCount }",
+              json!({ "__typename": "FavoritesPage" }),
+              Some(&key_fields(&[("FavoritesPage", &[])])),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "FavoritesPage",
+            "petCount": null
+          }
+        "#);
+
+        // The same with a key that isn't `__typename`
+        insta::assert_snapshot!(
+          &project_requires_pretty_with_keys(
+              "... on FavoritesPage { __typename id petCount }",
+              json!({ "__typename": "FavoritesPage", "id": "p1" }),
+              Some(&key_fields(&[("FavoritesPage", &["id"])])),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "FavoritesPage",
+            "id": "p1",
+            "petCount": null
+          }
+        "#);
+    }
+
+    /// A Book without its key `id`, like when the subgraph that has `id` returned `null` for it,
+    /// isn't sent: the subgraph couldn't find it.
+    #[test]
+    fn project_requires_missing_key_field_leaves_entity_out() {
+        let pretty = project_requires_pretty_with_keys(
+            "... on Book { __typename id }",
+            json!({ "__typename": "Book", "upc": "b3" }),
+            Some(&key_fields(&[("Book", &["id"])])),
         );
         assert_eq!(pretty, None);
     }
