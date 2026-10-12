@@ -329,6 +329,10 @@ mod tests {
         RequiresSelectionSet::from(&selection_set)
     }
 
+    fn project_requires_pretty(requires: &str, entity_json: sonic_rs::Value) -> Option<String> {
+        project_requires_pretty_with_keys(requires, entity_json, None)
+    }
+
     /// `keys` are the keys of each type in the subgraph the representation goes to.
     fn project_requires_pretty_with_keys(
         requires: &str,
