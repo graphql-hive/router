@@ -1,6 +1,7 @@
 use crate::background_tasks::{BackgroundTask, BackgroundTasksManager};
 use crate::config::jwt_auth::{JwksProviderSourceConfig, JwtAuthConfig};
 use crate::telemetry::logging::targets;
+use futures::future::join_all;
 use sonic_rs::from_str;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -56,9 +57,12 @@ impl JwksManager {
     /// freshly rotated key can be verified. Returns once every such source is as fresh as its
     /// cooldown allows.
     pub async fn refresh_for_unknown_kid(&self) {
-        for source in &self.sources {
-            source.refresh_for_unknown_kid().await;
-        }
+        join_all(
+            self.sources
+                .iter()
+                .map(|source| source.refresh_for_unknown_kid()),
+        )
+        .await;
     }
 
     pub fn register_background_tasks(&self, background_tasks_mgr: &mut BackgroundTasksManager) {
