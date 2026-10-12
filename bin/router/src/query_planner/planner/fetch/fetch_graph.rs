@@ -1697,6 +1697,13 @@ fn process_requires_field_edge(
         .unwrap_or_default();
     for requirement in &query_node.resolved_context_requirements {
         let argument = &field_move.context_arguments[requirement.argument];
+        // a contextual field inside a @requires or context selection only sees ancestors from
+        // the root of that selection down, that root is where the selection gets planned and
+        // where its context producers get registered. a context set above the root has no
+        // ancestor path or producer here, so we error out. this is on purpose and matches
+        // the federation "spec", which resolves those selections as fresh paths from the requiring
+        // entity and treats a context above it as not set. composition reports such a query as
+        // unsatisfiable, so a valid supergraph never gets here
         let ancestor_index = response_path
             .inner
             .iter()
