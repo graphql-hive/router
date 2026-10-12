@@ -130,14 +130,8 @@ impl JwtAuthRuntime {
         jwks: &'a Vec<Arc<JwkSet>>,
     ) -> Result<&'a JwkSet, JwtError> {
         // If `kid` is vailable on the header, we can try to match it to the `kid` on the available JWKs.
-        if let Some(jwt_kid) = &jwt_header.kid {
-            for jwk in jwks {
-                for key in &jwk.keys {
-                    if key.common.key_id.as_ref().is_some_and(|v| v == jwt_kid) {
-                        return Ok(jwk);
-                    }
-                }
-            }
+        if let Some(jwk) = find_jwks_by_kid(jwt_header, jwks) {
+            return Ok(jwk);
         }
 
         // If we don't have `kid` on the token, we should try to match the `alg` field.
@@ -158,24 +152,13 @@ impl JwtAuthRuntime {
 
     fn authenticate(
         &self,
+        header: &Header,
+        token: &str,
         jwks: &Vec<Arc<JwkSet>>,
-        headers: &HeaderMap,
-    ) -> Result<(JwtTokenPayload, Option<String>, String), JwtError> {
-        match self.lookup(headers) {
-            Ok((maybe_prefix, token)) => {
-                // First, we need to decode the header to determine which provider to use.
-                let header = decode_header(&token).map_err(JwtError::InvalidJwtHeader)?;
-                let jwk = self.find_matching_jwks(&header, jwks)?;
+    ) -> Result<JwtTokenPayload, JwtError> {
+        let jwk = self.find_matching_jwks(header, jwks)?;
 
-                self.decode_and_validate_token(&header, &token, &jwk.keys)
-                    .map(|token_data| (token_data, maybe_prefix, token))
-            }
-            Err(e) => {
-                warn!(target: targets::JWT, error = ?e, "jwt plugin failed to lookup token");
-
-                Err(JwtError::LookupFailed(e))
-            }
-        }
+        self.decode_and_validate_token(header, token, &jwk.keys)
     }
 
     fn decode_and_validate_token(
@@ -299,9 +282,20 @@ impl JwtAuthRuntime {
 
         let validation_result = cache
             .try_get_with(token.clone(), async {
-                let valid_jwks = self.jwks.all();
-                self.authenticate(&valid_jwks, headers)
-                    .map(|(payload, _, _)| Arc::new(payload))
+                // First, we need to decode the header to determine which provider to use.
+                let header = match decode_header(&token) {
+                    Ok(header) => header,
+                    Err(err) => return Err(JwtError::InvalidJwtHeader(err)),
+                };
+                let mut valid_jwks = self.jwks.all();
+                // Only re-read the key sets when a refresh loaded a new one.
+                if has_unknown_kid(&header, &valid_jwks)
+                    && self.jwks.refresh_for_unknown_kid().await
+                {
+                    valid_jwks = self.jwks.all();
+                }
+                self.authenticate(&header, &token, &valid_jwks)
+                    .map(Arc::new)
             })
             .await;
 
@@ -322,4 +316,20 @@ impl JwtAuthRuntime {
             }
         }
     }
+}
+
+/// The key set holding a key with the token's `kid`, if the token has one.
+fn find_jwks_by_kid<'a>(header: &Header, jwks: &'a [Arc<JwkSet>]) -> Option<&'a JwkSet> {
+    let kid = header.kid.as_deref()?;
+    jwks.iter().map(Arc::as_ref).find(|set| {
+        set.keys
+            .iter()
+            .any(|key| key.common.key_id.as_deref() == Some(kid))
+    })
+}
+
+/// Whether the token names a `kid` that none of the key sets hold, e.g. one signed with a
+/// freshly rotated key.
+fn has_unknown_kid(header: &Header, jwks: &[Arc<JwkSet>]) -> bool {
+    header.kid.is_some() && find_jwks_by_kid(header, jwks).is_none()
 }

@@ -138,6 +138,20 @@ pub enum JwksProviderSourceConfig {
         /// If set to `true`, the JWKS will be fetched on startup and cached. In case of invalid JWKS, the error will be ignored and the plugin will try to fetch again when server receives the first request.
         /// If set to `false`, the JWKS will be fetched on-demand, when the first request comes in.
         prefetch: Option<bool>,
+        /// When set, a token whose `kid` is not in the cached JWKS triggers an immediate re-fetch,
+        /// so a rotated signing key is accepted without waiting for the next poll.
+        /// The value is the minimum time between two such re-fetches: concurrent misses share
+        /// one fetch, and unknown `kid`s (which the client controls) cannot make the router
+        /// hammer the JWKS endpoint. Must be at least `1s`. Disabled when not set.
+        /// Tokens without a `kid` never trigger a re-fetch.
+        #[serde(
+            default,
+            deserialize_with = "deserialize_unknown_kid_cooldown",
+            serialize_with = "humantime_serde::serialize",
+            skip_serializing_if = "Option::is_none"
+        )]
+        #[schemars(with = "Option<String>")]
+        refresh_on_unknown_kid: Option<Duration>,
         /// Additional HTTP headers to send with the JWKS request.
         ///
         /// Useful when the JWKS endpoint is not reachable as a plain public URL:
@@ -172,6 +186,24 @@ fn default_polling_interval() -> Option<Duration> {
     // and allow users to adjust it if needed.
     // See https://community.auth0.com/t/caching-jwks-signing-key/17654/2
     Some(Duration::from_secs(10 * 60))
+}
+
+/// Below this, `refresh_on_unknown_kid` would no longer rate-limit the re-fetches that
+/// client-controlled `kid`s can trigger.
+const MIN_UNKNOWN_KID_REFRESH_COOLDOWN: Duration = Duration::from_secs(1);
+
+fn deserialize_unknown_kid_cooldown<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let cooldown: Option<Duration> = humantime_serde::deserialize(deserializer)?;
+    if cooldown.is_some_and(|cooldown| cooldown < MIN_UNKNOWN_KID_REFRESH_COOLDOWN) {
+        return Err(serde::de::Error::custom(format!(
+            "`refresh_on_unknown_kid` must be at least {}",
+            humantime::format_duration(MIN_UNKNOWN_KID_REFRESH_COOLDOWN)
+        )));
+    }
+    Ok(cooldown)
 }
 
 pub fn default_lookup_location() -> Vec<JwtAuthPluginLookupLocation> {
@@ -215,7 +247,7 @@ pub enum JwtAuthPluginLookupLocation {
 
 #[cfg(test)]
 mod tests {
-    use super::{JwksProviderSourceConfig, JwtAuthConfig};
+    use super::{Duration, JwksProviderSourceConfig, JwtAuthConfig};
 
     #[test]
     fn scopes_claim_defaults_to_none() {
@@ -275,5 +307,32 @@ mod tests {
             r#"{"jwks_providers":[{"source":"remote","url":"https://example.com/jwks.json","headers":{"Invalid Header":"value"}}]}"#,
         );
         assert!(result.is_err(), "a header name with a space must not parse");
+    }
+
+    #[test]
+    fn refresh_on_unknown_kid_is_parsed() {
+        let config = serde_json::from_str::<JwtAuthConfig>(
+            r#"{"jwks_providers":[{"source":"remote","url":"https://example.com/jwks.json","refresh_on_unknown_kid":"30s"}]}"#,
+        )
+        .expect("config should parse");
+
+        match &config.jwks_providers[0] {
+            JwksProviderSourceConfig::Remote {
+                refresh_on_unknown_kid,
+                ..
+            } => assert_eq!(*refresh_on_unknown_kid, Some(Duration::from_secs(30))),
+            other => panic!("expected a remote provider, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn refresh_on_unknown_kid_rejects_cooldown_below_one_second() {
+        for cooldown in ["0s", "500ms"] {
+            let result = serde_json::from_str::<JwtAuthConfig>(&format!(
+                r#"{{"jwks_providers":[{{"source":"remote","url":"https://example.com/jwks.json","refresh_on_unknown_kid":"{cooldown}"}}]}}"#
+            ));
+            let err = result.expect_err("a cooldown below 1s must not parse");
+            assert!(err.to_string().contains("must be at least 1s"), "{err}");
+        }
     }
 }

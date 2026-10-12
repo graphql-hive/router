@@ -1,13 +1,19 @@
 use crate::background_tasks::{BackgroundTask, BackgroundTasksManager};
 use crate::config::jwt_auth::{JwksProviderSourceConfig, JwtAuthConfig};
 use crate::telemetry::logging::targets;
+use futures::future::join_all;
 use sonic_rs::from_str;
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 use tokio::fs::read_to_string;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
 use jsonwebtoken::jwk::JwkSet;
+
+/// Bounds every remote JWKS fetch. A fetch triggered by an unknown `kid` runs in the request
+/// path, holding the source's refresh lock, so a hanging endpoint must not stall those requests.
+const REMOTE_JWKS_FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct JwksManager {
     sources: Vec<Arc<JwksSource>>,
@@ -51,6 +57,20 @@ impl JwksManager {
         Ok(())
     }
 
+    /// Re-fetches, concurrently, the sources that opted into `refresh_on_unknown_kid`, so a token
+    /// signed with a freshly rotated key can be verified. Returns once every such source is as
+    /// fresh as its cooldown allows, and whether any of them loaded a new key set.
+    pub async fn refresh_for_unknown_kid(&self) -> bool {
+        join_all(
+            self.sources
+                .iter()
+                .map(|source| source.refresh_for_unknown_kid()),
+        )
+        .await
+        .into_iter()
+        .any(|refreshed| refreshed)
+    }
+
     pub fn register_background_tasks(&self, background_tasks_mgr: &mut BackgroundTasksManager) {
         for source in &self.sources {
             if source.should_poll_in_background() {
@@ -64,6 +84,9 @@ impl JwksManager {
 pub struct JwksSource {
     config: JwksProviderSourceConfig,
     jwk: RwLock<Option<Arc<JwkSet>>>,
+    /// Held across an on-demand fetch so concurrent misses queue behind one fetch, then see it
+    /// in the cooldown check instead of fetching again.
+    last_unknown_kid_refresh: tokio::sync::Mutex<Option<Instant>>,
 }
 
 struct JwksSourceTask(Arc<JwksSource>);
@@ -130,6 +153,7 @@ impl JwksSource {
                 let response_text = client
                     .get(url)
                     .headers(headers.clone())
+                    .timeout(REMOTE_JWKS_FETCH_TIMEOUT)
                     .send()
                     .await
                     .map_err(JwksSourceError::RemoteJwksNetworkError)?
@@ -167,6 +191,38 @@ impl JwksSource {
         Self {
             config,
             jwk: RwLock::new(None),
+            last_unknown_kid_refresh: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    /// Returns whether a new key set was loaded.
+    async fn refresh_for_unknown_kid(&self) -> bool {
+        let JwksProviderSourceConfig::Remote {
+            refresh_on_unknown_kid: Some(cooldown),
+            url,
+            ..
+        } = &self.config
+        else {
+            return false;
+        };
+
+        let mut last = self.last_unknown_kid_refresh.lock().await;
+        if last.is_some_and(|at| at.elapsed() < *cooldown) {
+            return false;
+        }
+
+        let result = self.load_and_store_jwks().await;
+        // Stamped after the fetch, whatever its outcome, so a failing endpoint is also
+        // rate-limited, while a fetch dropped mid-flight (e.g. the request was cancelled) leaves
+        // the next miss free to retry.
+        *last = Some(Instant::now());
+
+        match result {
+            Ok(_) => true,
+            Err(err) => {
+                error!(target: targets::JWT, error = ?err, url = ?url, "failed to refresh remote jwks for unknown kid");
+                false
+            }
         }
     }
 
@@ -211,10 +267,91 @@ mod tests {
                 url,
                 polling_interval: None,
                 prefetch: Some(false),
+                refresh_on_unknown_kid: None,
                 headers,
             },
             jwk: RwLock::new(None),
+            last_unknown_kid_refresh: tokio::sync::Mutex::new(None),
         }
+    }
+
+    fn refreshing_source(url: String, cooldown: Duration) -> JwksSource {
+        JwksSource::new(JwksProviderSourceConfig::Remote {
+            url,
+            polling_interval: None,
+            prefetch: Some(false),
+            refresh_on_unknown_kid: Some(cooldown),
+            headers: HeaderMap::new(),
+        })
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unknown_kid_refresh_is_rate_limited_and_coalesced() {
+        crate::init_rustls_crypto_provider();
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/jwks.json")
+            .expect(1)
+            .with_status(200)
+            .with_body(JWKS_BODY)
+            .create_async()
+            .await;
+
+        let source = Arc::new(refreshing_source(
+            format!("{}/jwks.json", server.url()),
+            Duration::from_secs(60),
+        ));
+        let calls = (0..10).map(|_| {
+            let s = source.clone();
+            tokio::spawn(async move { s.refresh_for_unknown_kid().await })
+        });
+        for c in calls {
+            c.await.unwrap();
+        }
+        source.refresh_for_unknown_kid().await;
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unknown_kid_refresh_runs_again_after_cooldown() {
+        crate::init_rustls_crypto_provider();
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/jwks.json")
+            .expect(2)
+            .with_status(200)
+            .with_body(JWKS_BODY)
+            .create_async()
+            .await;
+
+        let cooldown = Duration::from_secs(60);
+        let source = refreshing_source(format!("{}/jwks.json", server.url()), cooldown);
+        source.refresh_for_unknown_kid().await;
+        // Still within the cooldown: skipped.
+        source.refresh_for_unknown_kid().await;
+        // Backdate the last refresh instead of sleeping, so the test does not depend on how
+        // long a fetch takes.
+        *source.last_unknown_kid_refresh.lock().await = Instant::now().checked_sub(cooldown);
+        source.refresh_for_unknown_kid().await;
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unknown_kid_refresh_is_off_by_default() {
+        crate::init_rustls_crypto_provider();
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/jwks.json")
+            .expect(0)
+            .create_async()
+            .await;
+
+        let source = remote_source(format!("{}/jwks.json", server.url()), HeaderMap::new());
+        source.refresh_for_unknown_kid().await;
+
+        mock.assert_async().await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
