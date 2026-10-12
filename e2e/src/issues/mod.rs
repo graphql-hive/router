@@ -4142,4 +4142,60 @@ mod issues_e2e_tests {
         /products {"__typename":"Product","upc":"1"}
         "#);
     }
+
+    #[ntex::test]
+    /// https://github.com/graphql-hive/router/issues/1669
+    ///
+    /// `searchBox` requires `petCount` from `favorites`, on a page keyed by `__typename` alone.
+    /// `favorites` returns `null` for the page, so `petCount` is missing. `petsearch` can still
+    /// resolve the page, since its key is only `__typename`, so it has to get the page with
+    /// `petCount: null`. The router used to leave the page out, so `searchBox` was missing, and
+    /// being non-null, it nulled the whole page without an error.
+    async fn issue_1669_requires_from_null_entity_keyed_by_typename() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.1669.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                "{ favoritesPage { searchBox { placeholder } } }",
+                None,
+                None,
+            )
+            .await;
+        let response = res.string_body().await;
+
+        // Every representation `petsearch` got.
+        let representations: Vec<String> = subgraphs
+            .get_requests_log("petsearch")
+            .unwrap_or_default()
+            .into_iter()
+            .flat_map(|request| {
+                let body: serde_json::Value =
+                    serde_json::from_slice(request.body.as_deref().unwrap_or_default())
+                        .unwrap_or_default();
+                let variables = body["variables"].as_object().cloned().unwrap_or_default();
+                variables
+                    .into_iter()
+                    .flat_map(|(_, value)| value.as_array().cloned().unwrap_or_default())
+                    .map(|representation| representation.to_string())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
+        insta::assert_snapshot!(format!("{response}\n/petsearch {}", representations.join(" ")), @r#"
+        {"data":{"favoritesPage":{"searchBox":{"placeholder":"Find a pet"}}}}
+        /petsearch {"__typename":"FavoritesPage","petCount":null}
+        "#);
+    }
 }
