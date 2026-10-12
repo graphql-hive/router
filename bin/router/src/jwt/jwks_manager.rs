@@ -299,11 +299,44 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn unknown_kid_refresh_is_off_by_default() {
-        let source = remote_source("http://127.0.0.1:1/jwks.json".into(), HeaderMap::new());
-        // Would fail loudly (and hit the network) if it were not a no-op.
+    async fn unknown_kid_refresh_runs_again_after_cooldown() {
+        crate::init_rustls_crypto_provider();
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/jwks.json")
+            .expect(2)
+            .with_status(200)
+            .with_body(JWKS_BODY)
+            .create_async()
+            .await;
+
+        let cooldown = Duration::from_secs(60);
+        let source = refreshing_source(format!("{}/jwks.json", server.url()), cooldown);
         source.refresh_for_unknown_kid().await;
-        assert!(source.get_jwk_set().is_err());
+        // Still within the cooldown: skipped.
+        source.refresh_for_unknown_kid().await;
+        // Backdate the last refresh instead of sleeping, so the test does not depend on how
+        // long a fetch takes.
+        *source.last_unknown_kid_refresh.lock().await = Instant::now().checked_sub(cooldown);
+        source.refresh_for_unknown_kid().await;
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unknown_kid_refresh_is_off_by_default() {
+        crate::init_rustls_crypto_provider();
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/jwks.json")
+            .expect(0)
+            .create_async()
+            .await;
+
+        let source = remote_source(format!("{}/jwks.json", server.url()), HeaderMap::new());
+        source.refresh_for_unknown_kid().await;
+
+        mock.assert_async().await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
