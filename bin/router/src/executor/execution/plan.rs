@@ -82,6 +82,7 @@ use crate::executor::{
         traverse::{traverse_and_callback, traverse_and_callback_mut},
     },
 };
+use crate::query_planner::state::entity_keys::KeysByType;
 
 pub type VariablesMap = HashMap<String, sonic_rs::Value>;
 
@@ -927,8 +928,13 @@ impl<'exec> Executor<'exec> {
                 .boxed(),
             ),
             PlanNode::BatchFetch(batch_fetch_node) => {
-                let (raw_variable_values, aliases) =
-                    self.prepare_batch_fetch_job_state(&batch_fetch_node.entity_batch, data);
+                let (raw_variable_values, aliases) = self.prepare_batch_fetch_job_state(
+                    &batch_fetch_node.entity_batch,
+                    data,
+                    self.schema_metadata
+                        .entity_keys
+                        .of_subgraph(&batch_fetch_node.service_name),
+                );
 
                 if aliases
                     .iter()
@@ -986,6 +992,10 @@ impl<'exec> Executor<'exec> {
                 let mut filtered_representations = Vec::new();
                 filtered_representations.put(OPEN_BRACKET);
                 let possible_types = &self.schema_metadata.possible_types;
+                let subgraph_keys = self
+                    .schema_metadata
+                    .entity_keys
+                    .of_subgraph(&fetch_node.service_name);
                 let mut representation_hashes: Vec<Option<u64>> = Vec::new();
                 let mut representation_hash_to_index: AHashMap<u64, usize> = AHashMap::new();
                 let arena = bumpalo::Bump::new();
@@ -1031,6 +1041,7 @@ impl<'exec> Executor<'exec> {
                             is_first_representation,
                             None,
                             false,
+                            subgraph_keys,
                         );
 
                         if is_projected {
@@ -1504,6 +1515,7 @@ impl<'exec> Executor<'exec> {
         &self,
         entity_batch: &'exec EntityBatch,
         data: &Value<'exec>,
+        subgraph_keys: Option<&KeysByType>,
     ) -> (Vec<(&'exec str, Vec<u8>)>, Vec<AliasBatchState<'exec>>) {
         let mut raw_variable_values: Vec<(&'exec str, Vec<u8>)> =
             Vec::with_capacity(entity_batch.aliases.len());
@@ -1571,6 +1583,7 @@ impl<'exec> Executor<'exec> {
                         is_first_representation,
                         None,
                         false,
+                        subgraph_keys,
                     );
 
                     if is_projected {
@@ -2040,7 +2053,7 @@ mod tests {
         };
 
         let (raw_variable_values, aliases) =
-            executor.prepare_batch_fetch_job_state(&entity_batch, &data);
+            executor.prepare_batch_fetch_job_state(&entity_batch, &data, None);
 
         assert_eq!(aliases.len(), 2);
         assert_eq!(raw_variable_values.len(), 1);

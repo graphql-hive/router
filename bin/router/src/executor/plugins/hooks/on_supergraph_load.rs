@@ -208,7 +208,10 @@ impl Supergraph {
         options: SupergraphOptions,
     ) -> Result<Self, SupergraphBuildError> {
         let planner = Planner::new_from_supergraph(&document, options.query_planner.clone())?;
-        let metadata = Arc::new(planner.consumer_schema.schema_metadata());
+        let metadata = Arc::new(SchemaMetadata {
+            entity_keys: Arc::clone(&planner.supergraph.entity_keys),
+            ..planner.consumer_schema.schema_metadata()
+        });
 
         let public_schema = PublicSchema {
             document: planner.consumer_schema.document.clone(),
