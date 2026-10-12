@@ -1,3 +1,4 @@
+use super::context::collect_context_entities;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -822,6 +823,7 @@ struct PrepareExecutionJobOpts<'exec> {
     operation_kind: Option<&'exec OperationKind>,
     // Operation
     operation: &'exec SubgraphFetchOperation,
+    request_operation: Option<String>,
     // Output rewrites
     output_rewrites: Option<&'exec [FetchRewrite]>,
     // Response paths whose values should stay raw JSON in `data`
@@ -841,7 +843,7 @@ impl<'exec> Executor<'exec> {
                 for child in &parallel_node.nodes {
                     // We borrow `ctx.data` only for sync preparation of the job future,
                     // and the actual execution of the job future is done without the borrow of `ctx.data`
-                    if let Some(fut) = self.prepare_job_future(child, &ctx.data) {
+                    for fut in self.prepare_job_future(child, &ctx.data) {
                         scope.push(fut);
                     }
                 }
@@ -867,8 +869,11 @@ impl<'exec> Executor<'exec> {
                 }
             }
             node => {
-                if let Some(fut) = self.prepare_job_future(node, &ctx.data) {
-                    let job = fut.await;
+                let mut scope: FuturesUnordered<_> = self
+                    .prepare_job_future(node, &ctx.data)
+                    .into_iter()
+                    .collect();
+                while let Some(job) = scope.next().await {
                     self.process_job_result(ctx, job);
                 }
             }
@@ -888,12 +893,189 @@ impl<'exec> Executor<'exec> {
                 .generate(&fetch_node.service_name, fetch_node.id),
             operation_kind: fetch_node.operation_kind.as_ref(),
             operation: &fetch_node.operation,
+            request_operation: None,
             output_rewrites: fetch_node.output_rewrites.as_deref(),
             custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
             raw_variable_values: None,
             affected_path: Some(flatten_node.path.as_ref()),
         })
         .boxed()
+    }
+
+    fn prepare_job_future<'wave>(
+        &'wave self,
+        node: &'exec PlanNode,
+        data: &Value<'exec>,
+    ) -> Vec<BoxFuture<'wave, Result<ExecutionJob<'exec>, PlanExecutionError>>> {
+        if let PlanNode::Condition(condition) = node {
+            return condition_node_by_variables(condition, self.variable_values)
+                .map(|node| self.prepare_job_future(node, data))
+                .unwrap_or_default();
+        }
+        if let PlanNode::Flatten(flatten) = node {
+            if let PlanNode::Fetch(fetch) = flatten.node.as_ref() {
+                if let (Some(rewrites), Some(requires)) = (&fetch.context_rewrites, &fetch.requires)
+                {
+                    let (groups, hashes) = collect_context_entities(
+                        data,
+                        &[flatten.path.as_ref()],
+                        requires,
+                        fetch.input_rewrites.as_deref(),
+                        Some(rewrites),
+                        &self.schema_metadata.possible_types,
+                    );
+                    return groups
+                        .into_iter()
+                        .filter(|group| !group.hash_to_index.is_empty())
+                        .map(|group| {
+                            let mut variables = group.variables;
+                            variables.push(("representations", group.representations));
+                            let representation_hashes = hashes[0].as_ref().clone();
+                            self.prepare_execution_job(PrepareExecutionJobOpts {
+                                subgraph_name: &fetch.service_name,
+                                variable_usages: fetch.variable_usages.as_ref(),
+                                operation_name: self
+                                    .operation_name_factory
+                                    .generate(&fetch.service_name, fetch.id),
+                                operation_kind: fetch.operation_kind.as_ref(),
+                                operation: &fetch.operation,
+                                request_operation: None,
+                                output_rewrites: fetch.output_rewrites.as_deref(),
+                                custom_scalar_paths: fetch.custom_scalar_paths.as_ref(),
+                                raw_variable_values: Some(variables),
+                                affected_path: Some(flatten.path.as_ref()),
+                            })
+                            .map_ok(move |job| ExecutionJob::FlattenFetch {
+                                operation: job.operation(),
+                                subgraph_name: job.subgraph_name(),
+                                response: job.response(),
+                                flatten_node_path: &flatten.path,
+                                representation_hashes,
+                                representation_hash_to_index: group.hash_to_index,
+                                output_rewrites: fetch.output_rewrites.as_deref(),
+                            })
+                            .boxed()
+                        })
+                        .collect();
+                }
+            }
+        }
+        if let PlanNode::BatchFetch(batch) = node {
+            if batch
+                .entity_batch
+                .aliases
+                .iter()
+                .any(|alias| alias.context_rewrites.is_some())
+            {
+                let mut prepared: Vec<_> = batch
+                    .entity_batch
+                    .aliases
+                    .iter()
+                    .map(|alias| {
+                        let paths: Vec<_> = alias.merge_paths.iter().collect();
+                        collect_context_entities(
+                            data,
+                            &paths,
+                            &alias.requires,
+                            alias.input_rewrites.as_deref(),
+                            alias.context_rewrites.as_deref(),
+                            &self.schema_metadata.possible_types,
+                        )
+                    })
+                    .collect();
+                let count = prepared
+                    .iter()
+                    .map(|(groups, _)| groups.len())
+                    .max()
+                    .unwrap_or_default();
+                let request_operation =
+                    super::context::batch_operation_without_empty_aliases(batch, &prepared);
+                let mut futures = Vec::with_capacity(count);
+                for wave in 0..count {
+                    let mut variables = Vec::new();
+                    let mut aliases = Vec::new();
+                    for (alias, (groups, hashes)) in
+                        batch.entity_batch.aliases.iter().zip(&mut prepared)
+                    {
+                        let group = groups.get(wave);
+                        if let Some(values) = group.or_else(|| groups.first()) {
+                            variables.extend(values.variables.clone());
+                        } else if let Some(rewrites) = &alias.context_rewrites {
+                            for rewrite in rewrites {
+                                if !variables
+                                    .iter()
+                                    .any(|(name, _)| *name == rewrite.rename_key_to)
+                                {
+                                    variables
+                                        .push((rewrite.rename_key_to.as_str(), b"null".to_vec()));
+                                }
+                            }
+                        }
+                        let representations = group
+                            .map(|g| g.representations.clone())
+                            .unwrap_or_else(|| b"[]".to_vec());
+                        if !variables
+                            .iter()
+                            .any(|(name, _)| *name == alias.representations_variable_name)
+                        {
+                            variables.push((
+                                alias.representations_variable_name.as_str(),
+                                representations,
+                            ));
+                        }
+                        aliases.push(AliasBatchState {
+                            alias_spec: alias,
+                            representation_hash_to_index: groups
+                                .get_mut(wave)
+                                .map(|g| std::mem::take(&mut g.hash_to_index))
+                                .unwrap_or_default(),
+                            paths: alias
+                                .merge_paths
+                                .iter()
+                                .zip(hashes.iter())
+                                .map(|(merge_path, hashes)| AliasPathState {
+                                    merge_path,
+                                    representation_hashes: Arc::clone(hashes),
+                                })
+                                .collect(),
+                        });
+                    }
+                    if aliases
+                        .iter()
+                        .all(|alias| alias.representation_hash_to_index.is_empty())
+                    {
+                        continue;
+                    }
+                    futures.push(
+                        self.prepare_execution_job(PrepareExecutionJobOpts {
+                            subgraph_name: &batch.service_name,
+                            variable_usages: batch.variable_usages.as_ref(),
+                            operation_name: self
+                                .operation_name_factory
+                                .generate(&batch.service_name, batch.id),
+                            operation_kind: batch.operation_kind.as_ref(),
+                            operation: &batch.operation,
+                            request_operation: request_operation.clone(),
+                            output_rewrites: None,
+                            custom_scalar_paths: batch.custom_scalar_paths.as_ref(),
+                            raw_variable_values: Some(variables),
+                            affected_path: None,
+                        })
+                        .map_ok(move |job| ExecutionJob::BatchFetch {
+                            operation: job.operation(),
+                            subgraph_name: job.subgraph_name(),
+                            response: job.response(),
+                            aliases,
+                        })
+                        .boxed(),
+                    );
+                }
+                return futures;
+            }
+        }
+        self.prepare_single_job_future(node, data)
+            .into_iter()
+            .collect()
     }
 
     /**
@@ -904,7 +1086,7 @@ impl<'exec> Executor<'exec> {
      * The return type is not a future of `Option`, but `Option` of future because the only case when we don't have a future,
      * and the result(`None`) is when the plan node is flatten node with no data.
      */
-    fn prepare_job_future<'wave>(
+    fn prepare_single_job_future<'wave>(
         &'wave self,
         node: &'exec PlanNode,
         data: &Value<'exec>,
@@ -919,6 +1101,7 @@ impl<'exec> Executor<'exec> {
                         .generate(&fetch_node.service_name, fetch_node.id),
                     operation_kind: fetch_node.operation_kind.as_ref(),
                     operation: &fetch_node.operation,
+                    request_operation: None,
                     output_rewrites: fetch_node.output_rewrites.as_deref(),
                     custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
                     raw_variable_values: None,
@@ -954,6 +1137,7 @@ impl<'exec> Executor<'exec> {
                             .generate(&batch_fetch_node.service_name, batch_fetch_node.id),
                         operation_kind: batch_fetch_node.operation_kind.as_ref(),
                         operation: &batch_fetch_node.operation,
+                        request_operation: None,
                         output_rewrites: None,
                         custom_scalar_paths: batch_fetch_node.custom_scalar_paths.as_ref(),
                         raw_variable_values: Some(raw_variable_values),
@@ -1056,6 +1240,7 @@ impl<'exec> Executor<'exec> {
                             .generate(&fetch_node.service_name, fetch_node.id),
                         operation_kind: fetch_node.operation_kind.as_ref(),
                         operation: &fetch_node.operation,
+                        request_operation: None,
                         output_rewrites: fetch_node.output_rewrites.as_deref(),
                         custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
                         raw_variable_values: Some(vec![(
@@ -1077,7 +1262,7 @@ impl<'exec> Executor<'exec> {
                 )
             }
             PlanNode::Condition(node) => condition_node_by_variables(node, self.variable_values)
-                .and_then(|node| self.prepare_job_future(node, data)),
+                .and_then(|node| self.prepare_single_job_future(node, data)),
             // Our Query Planner does not produce any other plan node types in ParallelNode
             _ => None,
         }
@@ -1669,20 +1854,62 @@ impl<'exec> Executor<'exec> {
                 );
             }
 
-            let mut response = self
-                .executors
-                .execute(
-                    opts.subgraph_name,
-                    subgraph_request,
-                    self.client_request,
-                    self.plugin_req_state,
-                    self.demand_control_context.as_deref(),
-                )
-                .await
-                .with_plan_context(LazyPlanContext {
-                    subgraph_name: subgraph_name_factory,
-                    affected_path: affected_path_factory,
-                })?;
+            let response = if let Some(query) = &opts.request_operation {
+                let request = SubgraphExecutionRequest {
+                    query,
+                    ..subgraph_request
+                };
+                match self
+                    .executors
+                    .execute(
+                        opts.subgraph_name,
+                        request,
+                        self.client_request,
+                        self.plugin_req_state,
+                        self.demand_control_context.as_deref(),
+                    )
+                    .await
+                {
+                    Ok(response) => {
+                        // plugins may borrow the temporary query, so give this rare response its own backing bytes
+                        let mut payload = serde_json::json!({"data": response.data});
+                        if let Some(errors) = &response.errors {
+                            payload["errors"] =
+                                serde_json::to_value(errors).expect("errors serialize");
+                        }
+                        if let Some(extensions) = &response.extensions {
+                            payload["extensions"] =
+                                serde_json::to_value(extensions).expect("extensions serialize");
+                        }
+                        let bytes =
+                            sonic_rs::to_vec(&payload).expect("subgraph response serializes");
+                        SubgraphResponse::deserialize_from_bytes(
+                            bytes.into(),
+                            opts.custom_scalar_paths,
+                        )
+                        .map(|mut owned| {
+                            owned.headers = response.headers;
+                            owned.status = response.status;
+                            owned
+                        })
+                    }
+                    Err(error) => Err(error),
+                }
+            } else {
+                self.executors
+                    .execute(
+                        opts.subgraph_name,
+                        subgraph_request,
+                        self.client_request,
+                        self.plugin_req_state,
+                        self.demand_control_context.as_deref(),
+                    )
+                    .await
+            };
+            let mut response = response.with_plan_context(LazyPlanContext {
+                subgraph_name: subgraph_name_factory,
+                affected_path: affected_path_factory,
+            })?;
 
             if let Some(errors) = &response.errors {
                 if !errors.is_empty() {
@@ -2027,6 +2254,7 @@ mod tests {
                     requires: requires_from(requires_selection.clone()),
                     input_rewrites: None,
                     output_rewrites: None,
+                    context_rewrites: None,
                 },
                 EntityBatchAlias {
                     alias: "_e1".to_string(),
@@ -2035,6 +2263,7 @@ mod tests {
                     requires: requires_from(requires_selection),
                     input_rewrites: None,
                     output_rewrites: None,
+                    context_rewrites: None,
                 },
             ],
         };
@@ -2157,6 +2386,7 @@ mod tests {
                             id: 1,
                             planner_requires: (),
                             service_name: "subgraph_a".to_string(),
+                            context_rewrites: None,
                             operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_a }"),
                             )
@@ -2172,6 +2402,7 @@ mod tests {
                             id: 2,
                             planner_requires: (),
                             service_name: "subgraph_b".to_string(),
+                            context_rewrites: None,
                             operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_b }"),
                             )

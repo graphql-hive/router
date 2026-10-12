@@ -208,6 +208,59 @@ pub fn traverse_and_callback<'a, Callback>(
     }
 }
 
+pub fn traverse_with_objects<'a, 'v>(
+    data: &'a Value<'v>,
+    path: &[PathSegment],
+    possible_types: &PossibleTypes,
+    objects: &mut Vec<&'a Value<'v>>,
+    callback: &mut impl FnMut(&'a Value<'v>, &[&'a Value<'v>]),
+) {
+    if path.is_empty() {
+        if let Value::Array(items) = data {
+            for item in items {
+                callback(item, objects);
+            }
+        } else {
+            callback(data, objects);
+        }
+        return;
+    }
+    match &path[0] {
+        PathSegment::Field(key) => {
+            if let Value::Object(object) = data {
+                if let Some(child) = Value::object_get(object, key.as_ref()) {
+                    objects.push(data);
+                    traverse_with_objects(child, &path[1..], possible_types, objects, callback);
+                    objects.pop();
+                }
+            }
+        }
+        PathSegment::List => {
+            if let Value::Array(items) = data {
+                for item in items {
+                    traverse_with_objects(item, &path[1..], possible_types, objects, callback);
+                }
+            }
+        }
+        PathSegment::TypeCondition(condition) => {
+            if let Value::Object(object) = data {
+                if Value::object_get(object, TYPENAME_FIELD_NAME)
+                    .and_then(Value::as_str)
+                    .is_none_or(|name| {
+                        entity_satisfies_any_type_condition(possible_types, name, condition)
+                    })
+                {
+                    traverse_with_objects(data, &path[1..], possible_types, objects, callback);
+                }
+            } else if let Value::Array(items) = data {
+                for item in items {
+                    traverse_with_objects(item, path, possible_types, objects, callback);
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::query_planner::planner::plan_nodes::{FlattenNodePath, PathSegment, TypeCondition};

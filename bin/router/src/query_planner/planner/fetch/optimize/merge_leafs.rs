@@ -14,7 +14,7 @@ impl FetchStepData<MultiTypeFetchStep> {
         other: &Self,
         fetch_graph: &FetchGraph<MultiTypeFetchStep>,
     ) -> bool {
-        if self.context_rewrites.is_some() || other.context_rewrites.is_some() {
+        if !self.can_merge_context(other) {
             return false;
         }
 

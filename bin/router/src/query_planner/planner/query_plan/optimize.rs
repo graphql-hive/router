@@ -71,7 +71,7 @@ use crate::query_planner::{
     planner::error::QueryPlanError,
     planner::plan_nodes::planning::{
         custom_scalar_paths_for_entities_selection, BatchFetchNode, CustomScalarPaths, EntityBatch,
-        EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
+        EntityBatchAlias, FetchRewrite, FlattenNodePath, KeyRenamer, PlanNode,
     },
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
 };
@@ -88,12 +88,14 @@ struct ShapeKey {
     entities_selection_hash: u64,
     input_rewrites_hash: u64,
     output_rewrites_hash: u64,
+    context_rewrites_hash: u64,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct RepresentationsInputKey {
     requires: SelectionSet,
     input_rewrites: Option<Vec<FetchRewrite>>,
+    context_rewrites: Option<Vec<KeyRenamer>>,
     merge_paths: Vec<FlattenNodePath>,
 }
 
@@ -187,6 +189,7 @@ impl<'a> BatchFetchBuilder<'a> {
             requires: RequiresSelectionSet::from(&representative.requires),
             input_rewrites: representative.input_rewrites.clone(),
             output_rewrites: representative.output_rewrites.clone(),
+            context_rewrites: representative.context_rewrites.clone(),
         });
 
         Ok(())
@@ -214,6 +217,7 @@ impl<'a> BatchFetchBuilder<'a> {
         let representations_input_key = RepresentationsInputKey {
             requires: representative.requires.clone(),
             input_rewrites: representative.input_rewrites.clone(),
+            context_rewrites: representative.context_rewrites.clone(),
             merge_paths: merge_paths.to_vec(),
         };
 
@@ -317,6 +321,7 @@ struct EntityFetch {
     entities_selection: SelectionSet,
     input_rewrites: Option<Vec<FetchRewrite>>,
     output_rewrites: Option<Vec<FetchRewrite>>,
+    context_rewrites: Option<Vec<KeyRenamer>>,
     shape_key: ShapeKey,
     non_representations_variable_definitions: Vec<VariableDefinition>,
 }
@@ -331,6 +336,7 @@ impl EntityFetch {
             && self.entities_selection == right.entities_selection
             && self.input_rewrites == right.input_rewrites
             && self.output_rewrites == right.output_rewrites
+            && self.context_rewrites == right.context_rewrites
     }
 
     fn from_node(index: usize, node: &PlanNode) -> Result<Option<Self>, QueryPlanError> {
@@ -368,6 +374,7 @@ impl EntityFetch {
             .inline_fragment_spreads(&fetch_node.operation.document.fragments)?;
         let input_rewrites = fetch_node.input_rewrites.clone();
         let output_rewrites = fetch_node.output_rewrites.clone();
+        let context_rewrites = fetch_node.context_rewrites.clone();
         let non_representations_variable_definitions = fetch_node
             .operation
             .document
@@ -398,6 +405,7 @@ impl EntityFetch {
             entities_selection_hash,
             input_rewrites_hash: fetch_rewrites_hash(input_rewrites.as_deref()),
             output_rewrites_hash: fetch_rewrites_hash(output_rewrites.as_deref()),
+            context_rewrites_hash: fetch_rewrites_hash(context_rewrites.as_deref()),
         };
 
         Ok(Some(EntityFetch {
@@ -410,6 +418,7 @@ impl EntityFetch {
             entities_selection,
             input_rewrites,
             output_rewrites,
+            context_rewrites,
             shape_key,
             non_representations_variable_definitions,
         }))
@@ -622,7 +631,7 @@ fn partition_by_subgraph(
     Ok(candidates_by_subgraph)
 }
 
-fn fetch_rewrites_hash(rewrites: Option<&[FetchRewrite]>) -> u64 {
+fn fetch_rewrites_hash<T: Hash>(rewrites: Option<&[T]>) -> u64 {
     let mut hasher = Xxh3::new();
 
     if let Some(rewrites) = rewrites {
@@ -2276,6 +2285,7 @@ mod tests {
             planner_requires: Some(Box::new(requires)),
             input_rewrites: None,
             output_rewrites: None,
+            context_rewrites: None,
         };
 
         let path = FlattenNodePath::from(&MergePath::new(vec![
@@ -2344,6 +2354,7 @@ mod tests {
             planner_requires: None,
             input_rewrites: None,
             output_rewrites: None,
+            context_rewrites: None,
         }
     }
 

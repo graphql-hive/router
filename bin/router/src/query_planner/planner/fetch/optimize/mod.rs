@@ -39,6 +39,7 @@ impl FetchGraph<MultiTypeFetchStep> {
             let node_count_before = self.graph.node_count();
             let edge_count_before = self.graph.edge_count();
 
+            self.merge_context_producers()?;
             self.merge_passthrough_child()?;
             self.merge_children_with_parents()?;
             self.merge_siblings()?;

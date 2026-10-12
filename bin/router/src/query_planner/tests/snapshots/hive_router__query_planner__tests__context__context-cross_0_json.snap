@@ -1,0 +1,69 @@
+---
+source: bin/router/src/query_planner/tests/context.rs
+expression: plan
+---
+{
+  "kind": "QueryPlan",
+  "node": {
+    "kind": "Sequence",
+    "nodes": [
+      {
+        "kind": "Fetch",
+        "serviceName": "a",
+        "operationKind": "query",
+        "operation": "{user{__typename id userCurrency{isoCode}}}"
+      },
+      {
+        "kind": "Flatten",
+        "path": [
+          {
+            "Field": "user"
+          }
+        ],
+        "node": {
+          "kind": "Fetch",
+          "serviceName": "b",
+          "variableUsages": [
+            "__context_0"
+          ],
+          "operationKind": "query",
+          "operation": "query($representations:[_Any!]!, $__context_0:String){_entities(representations: $representations){...on User{__typename id lastTransaction{__typename id amountInUserCurrency(currencyCode: $__context_0)}}}}",
+          "requires": [
+            {
+              "kind": "InlineFragment",
+              "typeCondition": "User",
+              "selections": [
+                {
+                  "kind": "Field",
+                  "name": "__typename"
+                },
+                {
+                  "kind": "Field",
+                  "name": "id"
+                }
+              ]
+            }
+          ],
+          "contextRewrites": [
+            {
+              "path": [
+                {
+                  "TypenameEquals": [
+                    "User"
+                  ]
+                },
+                {
+                  "Key": "userCurrency"
+                },
+                {
+                  "Key": "isoCode"
+                }
+              ],
+              "renameKeyTo": "__context_0"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

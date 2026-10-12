@@ -152,6 +152,8 @@ pub struct FetchNode<S: PlanState = Executable> {
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_rewrites: Option<Vec<FetchRewrite>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_rewrites: Option<Vec<KeyRenamer>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -385,6 +387,8 @@ pub struct EntityBatchAlias {
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_rewrites: Option<Vec<FetchRewrite>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_rewrites: Option<Vec<KeyRenamer>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -663,6 +667,7 @@ impl FetchNode<Planning> {
                     planner_requires: Some(Box::new(planner_requires)),
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),
+                    context_rewrites: step.context_rewrites.clone(),
                 }
             }
             false => {
@@ -691,6 +696,7 @@ impl FetchNode<Planning> {
                     requires: None,
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),
+                    context_rewrites: step.context_rewrites.clone(),
                 }
             }
         }
@@ -1024,7 +1030,7 @@ mod stored_size_tests {
         for (name, actual, expected) in [
             ("PlanNode", size_of::<PlanNode>(), 40),
             ("ConditionNode", size_of::<ConditionNode>(), 40),
-            ("FetchNode", size_of::<FetchNode>(), 224),
+            ("FetchNode", size_of::<FetchNode>(), 248),
             ("BatchFetchNode", size_of::<BatchFetchNode>(), 160),
             (
                 "SubgraphFetchOperation",

@@ -1,0 +1,62 @@
+[
+  {
+    "query": "{ user { lastTransaction { amountInUserCurrency } } }",
+    "plan": {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "variableUsages": [],
+            "operation": "{user{__typename id userCurrency{isoCode}}}",
+            "operationKind": "query"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "user"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "b",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "User",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "variableUsages": [
+                "contextualArgument_2_0"
+              ],
+              "operation": "query($representations:[_Any!]!$contextualArgument_2_0:String){_entities(representations:$representations){...on User{lastTransaction{amountInUserCurrency(currencyCode:$contextualArgument_2_0)}}}}",
+              "operationKind": "query",
+              "contextRewrites": [
+                {
+                  "kind": "KeyRenamer",
+                  "path": [
+                    "userCurrency",
+                    "isoCode"
+                  ],
+                  "renameKeyTo": "contextualArgument_2_0"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "pretty": "QueryPlan {\n  Sequence {\n    Fetch(service: \"a\") {\n      {\n        user {\n          __typename\n          id\n          userCurrency {\n            isoCode\n          }\n        }\n      }\n    },\n    Flatten(path: \"user\") {\n      Fetch(service: \"b\") {\n        {\n          ... on User {\n            __typename\n            id\n          }\n        } =>\n        {\n          ... on User {\n            lastTransaction {\n              amountInUserCurrency(currencyCode: $contextualArgument_2_0)\n            }\n          }\n        }\n      },\n    },\n  },\n}"
+  }
+]

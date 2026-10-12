@@ -1,0 +1,90 @@
+---
+source: bin/router/src/query_planner/tests/context.rs
+expression: plan
+---
+{
+  "kind": "QueryPlan",
+  "node": {
+    "kind": "Sequence",
+    "nodes": [
+      {
+        "kind": "Fetch",
+        "serviceName": "a",
+        "operationKind": "query",
+        "operation": "{outer{__typename code user{__typename currency txs{__typename id}}}}"
+      },
+      {
+        "kind": "Flatten",
+        "path": [
+          {
+            "Field": "outer"
+          },
+          {
+            "Field": "user"
+          },
+          {
+            "Field": "txs"
+          },
+          "@"
+        ],
+        "node": {
+          "kind": "Fetch",
+          "serviceName": "a",
+          "variableUsages": [
+            "__context_0",
+            "__context_1"
+          ],
+          "operationKind": "query",
+          "operation": "query($representations:[_Any!]!, $__context_0:String, $__context_1:String){_entities(representations: $representations){...on Transaction{multiple(code: $__context_0, outer: $__context_1)}}}",
+          "requires": [
+            {
+              "kind": "InlineFragment",
+              "typeCondition": "Transaction",
+              "selections": [
+                {
+                  "kind": "Field",
+                  "name": "__typename"
+                },
+                {
+                  "kind": "Field",
+                  "name": "id"
+                }
+              ]
+            }
+          ],
+          "contextRewrites": [
+            {
+              "path": [
+                "Parent",
+                {
+                  "TypenameEquals": [
+                    "User"
+                  ]
+                },
+                {
+                  "Key": "currency"
+                }
+              ],
+              "renameKeyTo": "__context_0"
+            },
+            {
+              "path": [
+                "Parent",
+                "Parent",
+                {
+                  "TypenameEquals": [
+                    "Outer"
+                  ]
+                },
+                {
+                  "Key": "code"
+                }
+              ],
+              "renameKeyTo": "__context_1"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

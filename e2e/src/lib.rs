@@ -19,6 +19,8 @@ mod compression;
 #[cfg(test)]
 mod conditional_directives;
 #[cfg(test)]
+mod context;
+#[cfg(test)]
 mod coprocessor;
 #[cfg(test)]
 mod demand_control;

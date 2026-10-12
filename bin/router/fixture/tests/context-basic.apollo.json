@@ -1,0 +1,885 @@
+[
+  {
+    "query": "{ users { txs { amount } } }",
+    "plan": {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "variableUsages": [],
+            "operation": "{users{__typename currency txs{__typename id}}}",
+            "operationKind": "query"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "users",
+              "@",
+              "txs",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "a",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Transaction",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "variableUsages": [
+                "contextualArgument_1_0"
+              ],
+              "operation": "query($representations:[_Any!]!$contextualArgument_1_0:String){_entities(representations:$representations){...on Transaction{amount(code:$contextualArgument_1_0)}}}",
+              "operationKind": "query",
+              "contextRewrites": [
+                {
+                  "kind": "KeyRenamer",
+                  "path": [
+                    "..",
+                    "... on User",
+                    "currency"
+                  ],
+                  "renameKeyTo": "contextualArgument_1_0"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "pretty": "QueryPlan {\n  Sequence {\n    Fetch(service: \"a\") {\n      {\n        users {\n          __typename\n          currency\n          txs {\n            __typename\n            id\n          }\n        }\n      }\n    },\n    Flatten(path: \"users.@.txs.@\") {\n      Fetch(service: \"a\") {\n        {\n          ... on Transaction {\n            __typename\n            id\n          }\n        } =>\n        {\n          ... on Transaction {\n            amount(code: $contextualArgument_1_0)\n          }\n        }\n      },\n    },\n  },\n}"
+  },
+  {
+    "query": "{ users { child { txs { amount } } } }",
+    "plan": {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "variableUsages": [],
+            "operation": "{users{child{__typename currency txs{__typename id}}}}",
+            "operationKind": "query"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "users",
+              "@",
+              "child",
+              "txs",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "a",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Transaction",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "variableUsages": [
+                "contextualArgument_1_0"
+              ],
+              "operation": "query($representations:[_Any!]!$contextualArgument_1_0:String){_entities(representations:$representations){...on Transaction{amount(code:$contextualArgument_1_0)}}}",
+              "operationKind": "query",
+              "contextRewrites": [
+                {
+                  "kind": "KeyRenamer",
+                  "path": [
+                    "..",
+                    "... on User",
+                    "currency"
+                  ],
+                  "renameKeyTo": "contextualArgument_1_0"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "pretty": "QueryPlan {\n  Sequence {\n    Fetch(service: \"a\") {\n      {\n        users {\n          child {\n            __typename\n            currency\n            txs {\n              __typename\n              id\n            }\n          }\n        }\n      }\n    },\n    Flatten(path: \"users.@.child.txs.@\") {\n      Fetch(service: \"a\") {\n        {\n          ... on Transaction {\n            __typename\n            id\n          }\n        } =>\n        {\n          ... on Transaction {\n            amount(code: $contextualArgument_1_0)\n          }\n        }\n      },\n    },\n  },\n}"
+  },
+  {
+    "query": "{ users { wrapper { txs { amount } } } }",
+    "plan": {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "variableUsages": [],
+            "operation": "{users{__typename currency wrapper{txs{__typename id}}}}",
+            "operationKind": "query"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "users",
+              "@",
+              "wrapper",
+              "txs",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "a",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Transaction",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "variableUsages": [
+                "contextualArgument_1_0"
+              ],
+              "operation": "query($representations:[_Any!]!$contextualArgument_1_0:String){_entities(representations:$representations){...on Transaction{amount(code:$contextualArgument_1_0)}}}",
+              "operationKind": "query",
+              "contextRewrites": [
+                {
+                  "kind": "KeyRenamer",
+                  "path": [
+                    "..",
+                    "..",
+                    "... on User",
+                    "currency"
+                  ],
+                  "renameKeyTo": "contextualArgument_1_0"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "pretty": "QueryPlan {\n  Sequence {\n    Fetch(service: \"a\") {\n      {\n        users {\n          __typename\n          currency\n          wrapper {\n            txs {\n              __typename\n              id\n            }\n          }\n        }\n      }\n    },\n    Flatten(path: \"users.@.wrapper.txs.@\") {\n      Fetch(service: \"a\") {\n        {\n          ... on Transaction {\n            __typename\n            id\n          }\n        } =>\n        {\n          ... on Transaction {\n            amount(code: $contextualArgument_1_0)\n          }\n        }\n      },\n    },\n  },\n}"
+  },
+  {
+    "query": "{ account { txs { fromInterface } } }",
+    "plan": {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "variableUsages": [],
+            "operation": "{account{__typename currency txs{__typename id}}}",
+            "operationKind": "query"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "account",
+              "txs",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "a",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Transaction",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "variableUsages": [
+                "contextualArgument_1_1"
+              ],
+              "operation": "query($representations:[_Any!]!$contextualArgument_1_1:String){_entities(representations:$representations){...on Transaction{fromInterface(code:$contextualArgument_1_1)}}}",
+              "operationKind": "query",
+              "contextRewrites": [
+                {
+                  "kind": "KeyRenamer",
+                  "path": [
+                    "..",
+                    "... on User",
+                    "currency"
+                  ],
+                  "renameKeyTo": "contextualArgument_1_1"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "pretty": "QueryPlan {\n  Sequence {\n    Fetch(service: \"a\") {\n      {\n        account {\n          __typename\n          currency\n          txs {\n            __typename\n            id\n          }\n        }\n      }\n    },\n    Flatten(path: \"account.txs.@\") {\n      Fetch(service: \"a\") {\n        {\n          ... on Transaction {\n            __typename\n            id\n          }\n        } =>\n        {\n          ... on Transaction {\n            fromInterface(code: $contextualArgument_1_1)\n          }\n        }\n      },\n    },\n  },\n}"
+  },
+  {
+    "query": "{ viewer { ... on User { txs { fromUnion } } ... on Other { txs { fromUnion } } } }",
+    "plan": {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "variableUsages": [],
+            "operation": "{viewer{__typename ...on User{__typename currency txs{__typename id}}...on Other{__typename currency txs{__typename id}}}}",
+            "operationKind": "query"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "viewer",
+              "txs",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "a",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Transaction",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "variableUsages": [
+                "contextualArgument_1_2"
+              ],
+              "operation": "query($representations:[_Any!]!$contextualArgument_1_2:String){_entities(representations:$representations){...on Transaction{fromUnion(code:$contextualArgument_1_2)}}}",
+              "operationKind": "query",
+              "contextRewrites": [
+                {
+                  "kind": "KeyRenamer",
+                  "path": [
+                    "..",
+                    "... on User",
+                    "currency"
+                  ],
+                  "renameKeyTo": "contextualArgument_1_2"
+                },
+                {
+                  "kind": "KeyRenamer",
+                  "path": [
+                    "..",
+                    "... on Other",
+                    "currency"
+                  ],
+                  "renameKeyTo": "contextualArgument_1_2"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "pretty": "QueryPlan {\n  Sequence {\n    Fetch(service: \"a\") {\n      {\n        viewer {\n          __typename\n          ... on User {\n            __typename\n            currency\n            txs {\n              __typename\n              id\n            }\n          }\n          ... on Other {\n            __typename\n            currency\n            txs {\n              __typename\n              id\n            }\n          }\n        }\n      }\n    },\n    Flatten(path: \"viewer.txs.@\") {\n      Fetch(service: \"a\") {\n        {\n          ... on Transaction {\n            __typename\n            id\n          }\n        } =>\n        {\n          ... on Transaction {\n            fromUnion(code: $contextualArgument_1_2)\n          }\n        }\n      },\n    },\n  },\n}"
+  },
+  {
+    "query": "{ outer { user { txs { multiple } } } }",
+    "plan": {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "variableUsages": [],
+            "operation": "{outer{__typename code user{__typename currency txs{__typename id}}}}",
+            "operationKind": "query"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "outer",
+              "user",
+              "txs",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "a",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Transaction",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "variableUsages": [
+                "contextualArgument_1_3",
+                "contextualArgument_1_4"
+              ],
+              "operation": "query($representations:[_Any!]!$contextualArgument_1_3:String$contextualArgument_1_4:String){_entities(representations:$representations){...on Transaction{multiple(code:$contextualArgument_1_3 outer:$contextualArgument_1_4)}}}",
+              "operationKind": "query",
+              "contextRewrites": [
+                {
+                  "kind": "KeyRenamer",
+                  "path": [
+                    "..",
+                    "... on User",
+                    "currency"
+                  ],
+                  "renameKeyTo": "contextualArgument_1_3"
+                },
+                {
+                  "kind": "KeyRenamer",
+                  "path": [
+                    "..",
+                    "..",
+                    "... on Outer",
+                    "code"
+                  ],
+                  "renameKeyTo": "contextualArgument_1_4"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "pretty": "QueryPlan {\n  Sequence {\n    Fetch(service: \"a\") {\n      {\n        outer {\n          __typename\n          code\n          user {\n            __typename\n            currency\n            txs {\n              __typename\n              id\n            }\n          }\n        }\n      }\n    },\n    Flatten(path: \"outer.user.txs.@\") {\n      Fetch(service: \"a\") {\n        {\n          ... on Transaction {\n            __typename\n            id\n          }\n        } =>\n        {\n          ... on Transaction {\n            multiple(code: $contextualArgument_1_3, outer: $contextualArgument_1_4)\n          }\n        }\n      },\n    },\n  },\n}"
+  },
+  {
+    "query": "{ users { txs { required } } }",
+    "plan": {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "variableUsages": [],
+            "operation": "{users{__typename currency txs{__typename id}}}",
+            "operationKind": "query"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "users",
+              "@",
+              "txs",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "b",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Transaction",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "variableUsages": [],
+              "operation": "query($representations:[_Any!]!){_entities(representations:$representations){...on Transaction{base}}}",
+              "operationKind": "query"
+            }
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "users",
+              "@",
+              "txs",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "a",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Transaction",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "base"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "variableUsages": [
+                "contextualArgument_1_5"
+              ],
+              "operation": "query($representations:[_Any!]!$contextualArgument_1_5:String){_entities(representations:$representations){...on Transaction{required(code:$contextualArgument_1_5)}}}",
+              "operationKind": "query",
+              "contextRewrites": [
+                {
+                  "kind": "KeyRenamer",
+                  "path": [
+                    "..",
+                    "... on User",
+                    "currency"
+                  ],
+                  "renameKeyTo": "contextualArgument_1_5"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "pretty": "QueryPlan {\n  Sequence {\n    Fetch(service: \"a\") {\n      {\n        users {\n          __typename\n          currency\n          txs {\n            __typename\n            id\n          }\n        }\n      }\n    },\n    Flatten(path: \"users.@.txs.@\") {\n      Fetch(service: \"b\") {\n        {\n          ... on Transaction {\n            __typename\n            id\n          }\n        } =>\n        {\n          ... on Transaction {\n            base\n          }\n        }\n      },\n    },\n    Flatten(path: \"users.@.txs.@\") {\n      Fetch(service: \"a\") {\n        {\n          ... on Transaction {\n            __typename\n            base\n            id\n          }\n        } =>\n        {\n          ... on Transaction {\n            required(code: $contextualArgument_1_5)\n          }\n        }\n      },\n    },\n  },\n}"
+  },
+  {
+    "query": "query($include: Boolean!) { users { txs { amount @include(if: $include) } } }",
+    "plan": {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "variableUsages": [],
+            "operation": "{users{__typename currency txs{__typename id}}}",
+            "operationKind": "query"
+          },
+          {
+            "kind": "Condition",
+            "condition": "include",
+            "ifClause": {
+              "kind": "Flatten",
+              "path": [
+                "users",
+                "@",
+                "txs",
+                "@"
+              ],
+              "node": {
+                "kind": "Fetch",
+                "serviceName": "a",
+                "requires": [
+                  {
+                    "kind": "InlineFragment",
+                    "typeCondition": "Transaction",
+                    "selections": [
+                      {
+                        "kind": "Field",
+                        "name": "__typename"
+                      },
+                      {
+                        "kind": "Field",
+                        "name": "id"
+                      }
+                    ]
+                  }
+                ],
+                "variableUsages": [
+                  "contextualArgument_1_0"
+                ],
+                "operation": "query($representations:[_Any!]!$contextualArgument_1_0:String){_entities(representations:$representations){...on Transaction{amount(code:$contextualArgument_1_0)}}}",
+                "operationKind": "query",
+                "contextRewrites": [
+                  {
+                    "kind": "KeyRenamer",
+                    "path": [
+                      "..",
+                      "... on User",
+                      "currency"
+                    ],
+                    "renameKeyTo": "contextualArgument_1_0"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "pretty": "QueryPlan {\n  Sequence {\n    Fetch(service: \"a\") {\n      {\n        users {\n          __typename\n          currency\n          txs {\n            __typename\n            id\n          }\n        }\n      }\n    },\n    Include(if: $include) {\n      Flatten(path: \"users.@.txs.@\") {\n        Fetch(service: \"a\") {\n          {\n            ... on Transaction {\n              __typename\n              id\n            }\n          } =>\n          {\n            ... on Transaction {\n              amount(code: $contextualArgument_1_0)\n            }\n          }\n        },\n      }\n    },\n  },\n}"
+  },
+  {
+    "query": "{ users { currency: id txs { amount } } }",
+    "plan": {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "variableUsages": [],
+            "operation": "{users{__typename currency txs{__typename id}}}",
+            "operationKind": "query"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "users",
+              "@",
+              "txs",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "a",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Transaction",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "variableUsages": [
+                "contextualArgument_1_0"
+              ],
+              "operation": "query($representations:[_Any!]!$contextualArgument_1_0:String){_entities(representations:$representations){...on Transaction{amount(code:$contextualArgument_1_0)}}}",
+              "operationKind": "query",
+              "contextRewrites": [
+                {
+                  "kind": "KeyRenamer",
+                  "path": [
+                    "..",
+                    "... on User",
+                    "currency"
+                  ],
+                  "renameKeyTo": "contextualArgument_1_0"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "pretty": "QueryPlan {\n  Sequence {\n    Fetch(service: \"a\") {\n      {\n        users {\n          __typename\n          currency\n          txs {\n            __typename\n            id\n          }\n        }\n      }\n    },\n    Flatten(path: \"users.@.txs.@\") {\n      Fetch(service: \"a\") {\n        {\n          ... on Transaction {\n            __typename\n            id\n          }\n        } =>\n        {\n          ... on Transaction {\n            amount(code: $contextualArgument_1_0)\n          }\n        }\n      },\n    },\n  },\n}"
+  },
+  {
+    "query": "{ users { txs { amount } } secondUsers { txs { amount } } }",
+    "plan": {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "variableUsages": [],
+            "operation": "{users{__typename currency txs{__typename id}}secondUsers{__typename currency txs{__typename id}}}",
+            "operationKind": "query"
+          },
+          {
+            "kind": "Parallel",
+            "nodes": [
+              {
+                "kind": "Flatten",
+                "path": [
+                  "users",
+                  "@",
+                  "txs",
+                  "@"
+                ],
+                "node": {
+                  "kind": "Fetch",
+                  "serviceName": "a",
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "Transaction",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "id"
+                        }
+                      ]
+                    }
+                  ],
+                  "variableUsages": [
+                    "contextualArgument_1_0"
+                  ],
+                  "operation": "query($representations:[_Any!]!$contextualArgument_1_0:String){_entities(representations:$representations){...on Transaction{amount(code:$contextualArgument_1_0)}}}",
+                  "operationKind": "query",
+                  "contextRewrites": [
+                    {
+                      "kind": "KeyRenamer",
+                      "path": [
+                        "..",
+                        "... on User",
+                        "currency"
+                      ],
+                      "renameKeyTo": "contextualArgument_1_0"
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "Flatten",
+                "path": [
+                  "secondUsers",
+                  "@",
+                  "txs",
+                  "@"
+                ],
+                "node": {
+                  "kind": "Fetch",
+                  "serviceName": "a",
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "Transaction",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "id"
+                        }
+                      ]
+                    }
+                  ],
+                  "variableUsages": [
+                    "contextualArgument_1_0"
+                  ],
+                  "operation": "query($representations:[_Any!]!$contextualArgument_1_0:String){_entities(representations:$representations){...on Transaction{amount(code:$contextualArgument_1_0)}}}",
+                  "operationKind": "query",
+                  "contextRewrites": [
+                    {
+                      "kind": "KeyRenamer",
+                      "path": [
+                        "..",
+                        "... on User",
+                        "currency"
+                      ],
+                      "renameKeyTo": "contextualArgument_1_0"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "pretty": "QueryPlan {\n  Sequence {\n    Fetch(service: \"a\") {\n      {\n        users {\n          __typename\n          currency\n          txs {\n            __typename\n            id\n          }\n        }\n        secondUsers {\n          __typename\n          currency\n          txs {\n            __typename\n            id\n          }\n        }\n      }\n    },\n    Parallel {\n      Flatten(path: \"users.@.txs.@\") {\n        Fetch(service: \"a\") {\n          {\n            ... on Transaction {\n              __typename\n              id\n            }\n          } =>\n          {\n            ... on Transaction {\n              amount(code: $contextualArgument_1_0)\n            }\n          }\n        },\n      },\n      Flatten(path: \"secondUsers.@.txs.@\") {\n        Fetch(service: \"a\") {\n          {\n            ... on Transaction {\n              __typename\n              id\n            }\n          } =>\n          {\n            ... on Transaction {\n              amount(code: $contextualArgument_1_0)\n            }\n          }\n        },\n      },\n    },\n  },\n}"
+  },
+  {
+    "query": "query($skip: Boolean!) { users { txs { amount @skip(if: $skip) } } }",
+    "plan": {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "variableUsages": [],
+            "operation": "{users{__typename currency txs{__typename id}}}",
+            "operationKind": "query"
+          },
+          {
+            "kind": "Condition",
+            "condition": "skip",
+            "elseClause": {
+              "kind": "Flatten",
+              "path": [
+                "users",
+                "@",
+                "txs",
+                "@"
+              ],
+              "node": {
+                "kind": "Fetch",
+                "serviceName": "a",
+                "requires": [
+                  {
+                    "kind": "InlineFragment",
+                    "typeCondition": "Transaction",
+                    "selections": [
+                      {
+                        "kind": "Field",
+                        "name": "__typename"
+                      },
+                      {
+                        "kind": "Field",
+                        "name": "id"
+                      }
+                    ]
+                  }
+                ],
+                "variableUsages": [
+                  "contextualArgument_1_0"
+                ],
+                "operation": "query($representations:[_Any!]!$contextualArgument_1_0:String){_entities(representations:$representations){...on Transaction{amount(code:$contextualArgument_1_0)}}}",
+                "operationKind": "query",
+                "contextRewrites": [
+                  {
+                    "kind": "KeyRenamer",
+                    "path": [
+                      "..",
+                      "... on User",
+                      "currency"
+                    ],
+                    "renameKeyTo": "contextualArgument_1_0"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "pretty": "QueryPlan {\n  Sequence {\n    Fetch(service: \"a\") {\n      {\n        users {\n          __typename\n          currency\n          txs {\n            __typename\n            id\n          }\n        }\n      }\n    },\n    Skip(if: $skip) {\n      Flatten(path: \"users.@.txs.@\") {\n        Fetch(service: \"a\") {\n          {\n            ... on Transaction {\n              __typename\n              id\n            }\n          } =>\n          {\n            ... on Transaction {\n              amount(code: $contextualArgument_1_0)\n            }\n          }\n        },\n      }\n    },\n  },\n}"
+  },
+  {
+    "query": "{ renamed: users { txs { amount } } }",
+    "plan": {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "variableUsages": [],
+            "operation": "{renamed:users{__typename currency txs{__typename id}}}",
+            "operationKind": "query"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "renamed",
+              "@",
+              "txs",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "a",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Transaction",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "variableUsages": [
+                "contextualArgument_1_0"
+              ],
+              "operation": "query($representations:[_Any!]!$contextualArgument_1_0:String){_entities(representations:$representations){...on Transaction{amount(code:$contextualArgument_1_0)}}}",
+              "operationKind": "query",
+              "contextRewrites": [
+                {
+                  "kind": "KeyRenamer",
+                  "path": [
+                    "..",
+                    "... on User",
+                    "currency"
+                  ],
+                  "renameKeyTo": "contextualArgument_1_0"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "pretty": "QueryPlan {\n  Sequence {\n    Fetch(service: \"a\") {\n      {\n        renamed: users {\n          __typename\n          currency\n          txs {\n            __typename\n            id\n          }\n        }\n      }\n    },\n    Flatten(path: \"renamed.@.txs.@\") {\n      Fetch(service: \"a\") {\n        {\n          ... on Transaction {\n            __typename\n            id\n          }\n        } =>\n        {\n          ... on Transaction {\n            amount(code: $contextualArgument_1_0)\n          }\n        }\n      },\n    },\n  },\n}"
+  }
+]

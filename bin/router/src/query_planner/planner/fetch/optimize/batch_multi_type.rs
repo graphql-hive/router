@@ -436,7 +436,7 @@ fn normalized_path_hash(path: &MergePath) -> u64 {
 
 impl FetchStepData<MultiTypeFetchStep> {
     pub fn can_be_batched_with(&self, other: &Self) -> bool {
-        if self.context_rewrites.is_some() || other.context_rewrites.is_some() {
+        if !self.can_merge_context(other) {
             return false;
         }
 

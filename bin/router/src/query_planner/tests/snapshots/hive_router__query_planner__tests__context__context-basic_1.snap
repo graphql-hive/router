@@ -1,0 +1,37 @@
+---
+source: bin/router/src/query_planner/tests/context.rs
+expression: plan.to_string()
+---
+QueryPlan {
+  Sequence {
+    Fetch(service: "a") {
+      {
+        users {
+          child {
+            __typename
+            currency
+            txs {
+              __typename
+              id
+            }
+          }
+        }
+      }
+    },
+    Flatten(path: "users.@.child.txs.@") {
+      Fetch(service: "a") {
+        {
+          ... on Transaction {
+            __typename
+            id
+          }
+        } =>
+        ($__context_0:String) {
+          ... on Transaction {
+            amount(code: $__context_0)
+          }
+        }
+      },
+    },
+  },
+},
