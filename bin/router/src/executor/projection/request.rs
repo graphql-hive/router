@@ -761,6 +761,50 @@ mod tests {
         "#);
     }
 
+    #[test]
+    fn project_requires_missing_alternative_key_field_is_null() {
+        use crate::query_planner::{
+            state::supergraph_state::SupergraphState, utils::parsing::parse_schema,
+        };
+
+        let supergraph = SupergraphState::new(&parse_schema(
+            r#"
+            enum join__Graph {
+              CONTENT @join__graph(name: "content", url: "")
+              SEARCH @join__graph(name: "search", url: "")
+            }
+            type Query @join__type(graph: CONTENT) {
+              favoritesPage: FavoritesPage @join__field(graph: CONTENT)
+            }
+            type FavoritesPage
+              @join__type(graph: CONTENT, key: "id")
+              @join__type(graph: SEARCH, key: "id")
+              @join__type(graph: SEARCH, key: "petCount") {
+              id: ID!
+              petCount: Int @join__field(graph: CONTENT) @join__field(graph: SEARCH, external: true)
+              placeholder: String @join__field(graph: SEARCH, requires: "petCount")
+            }
+            "#,
+        ));
+        let keys = supergraph.entity_keys.of_subgraph("search").unwrap();
+        assert_eq!(keys["FavoritesPage"].selections.len(), 2);
+
+        insta::assert_snapshot!(
+          &project_requires_pretty_with_keys(
+              "... on FavoritesPage { __typename id petCount }",
+              json!({ "__typename": "FavoritesPage", "id": "p1" }),
+              Some(keys),
+          )
+          .expect("the complete id key should keep the entity resolvable"),
+          @r#"
+          {
+            "__typename": "FavoritesPage",
+            "id": "p1",
+            "petCount": null
+          }
+        "#);
+    }
+
     /// A Book without its key `id`, like when the subgraph that has `id` returned `null` for it,
     /// isn't sent: the subgraph couldn't find it.
     #[test]
