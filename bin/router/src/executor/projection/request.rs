@@ -120,6 +120,7 @@ pub fn project_requires(
                     .and_then(|type_name| subgraph_keys.get(type_name))
                     .map(|keys| &keys.fields)
             });
+            let object_start_offset = buffer.len();
             let applied = project_requires_map_mut(
                 possible_types,
                 requires_selections,
@@ -130,13 +131,18 @@ pub fn project_requires(
                 parent_first,
                 key_fields,
             );
+            // With its subgraph's keys known, an entity misses only key fields here. The subgraph
+            // can't find it without them, so it's left out, whatever else was written for it.
+            if key_fields.is_some() && applied.missing_field {
+                buffer.truncate(object_start_offset);
+                return false;
+            }
             // `__typename` is written along with the object's first field. When nothing else
             // applies, it's written alone: for an object inside the representation, like a Bird in
             // `pet { ... on Dog { tricks } ... on Cat { whiskers } }`, and for an entity whose
             // selection asks for `__typename`.
             // An object that misses a selected field, like an entity without its key, is left out,
-            // and so is an entity of none of the selection's types. An entity misses only key
-            // fields here when its subgraph's keys are known.
+            // and so is an entity of none of the selection's types.
             if first && !applied.missing_field && (nested || applied.typename) {
                 if let Some(type_name) =
                     Value::object_get(entity_obj, TYPENAME_FIELD_NAME).and_then(Value::as_str)
@@ -765,5 +771,56 @@ mod tests {
             Some(&key_fields(&[("Book", &["id"])])),
         );
         assert_eq!(pretty, None);
+    }
+
+    /// The same when the selection has `@requires` fields too: a Product without its key `upc`
+    /// isn't sent, neither with `price` and `weight` missing as well, nor with `price` present.
+    #[test]
+    fn project_requires_missing_key_field_leaves_entity_out_with_other_fields() {
+        let requires = "... on Product { __typename upc price weight }";
+        let keys = key_fields(&[("Product", &["upc"])]);
+
+        let pretty = project_requires_pretty_with_keys(
+            requires,
+            json!({ "__typename": "Product" }),
+            Some(&keys),
+        );
+        assert_eq!(pretty, None);
+
+        let pretty = project_requires_pretty_with_keys(
+            requires,
+            json!({ "__typename": "Product", "price": 899 }),
+            Some(&keys),
+        );
+        assert_eq!(pretty, None);
+
+        // In a list, the products with their key are still sent, in their order
+        insta::assert_snapshot!(
+          &project_requires_pretty_with_keys(
+              requires,
+              json!([
+                  { "__typename": "Product", "upc": "1", "price": 899, "weight": 100 },
+                  { "__typename": "Product", "price": 899 },
+                  { "__typename": "Product", "upc": "2" }
+              ]),
+              Some(&keys),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          [
+            {
+              "__typename": "Product",
+              "upc": "1",
+              "price": 899,
+              "weight": 100
+            },
+            {
+              "__typename": "Product",
+              "upc": "2",
+              "price": null,
+              "weight": null
+            }
+          ]
+        "#);
     }
 }

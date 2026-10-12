@@ -4198,4 +4198,69 @@ mod issues_e2e_tests {
         /petsearch {"__typename":"FavoritesPage","petCount":null}
         "#);
     }
+
+    #[ntex::test]
+    /// From the differential test, with the `@requires` fix. `$a` is false, so the second
+    /// `reviews` is left out and the product at `me.reviews.@.product` has only the `__typename`
+    /// of the first one, no `upc`. The `inventory` call for `shippingEstimate` still runs there,
+    /// as the planner gives it `$b` but not `$a`, so it finds a product without its key. The
+    /// router sent it anyway, as `{"__typename":"Product","price":null,"weight":null}`, and
+    /// `inventory` answered "Entity not found". A product without its key stays out.
+    async fn entity_without_its_key_is_not_sent_with_its_requires_fields() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: supergraph.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"query ($a: Boolean!, $b: Boolean!) {
+                  me {
+                    reviews { product { __typename } }
+                    reviews @include(if: $a) { product @include(if: $b) { shippingEstimate } }
+                  }
+                }"#,
+                Some(sonic_rs::json!({ "a": false, "b": true })),
+                None,
+            )
+            .await;
+        let response = res.string_body().await;
+
+        // Every representation `inventory` got.
+        let representations: Vec<String> = subgraphs
+            .get_requests_log("inventory")
+            .unwrap_or_default()
+            .into_iter()
+            .flat_map(|request| {
+                let body: serde_json::Value =
+                    serde_json::from_slice(request.body.as_deref().unwrap_or_default())
+                        .unwrap_or_default();
+                let variables = body["variables"].as_object().cloned().unwrap_or_default();
+                variables
+                    .into_iter()
+                    .flat_map(|(_, value)| value.as_array().cloned().unwrap_or_default())
+                    .map(|representation| representation.to_string())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let inventory = if representations.is_empty() {
+            "not called".to_string()
+        } else {
+            representations.join(" ")
+        };
+
+        insta::assert_snapshot!(format!("{response}\n/inventory {inventory}"), @r#"
+        {"data":{"me":{"reviews":[{"product":{"__typename":"Product"}},{"product":{"__typename":"Product"}}]}}}
+        /inventory not called
+        "#);
+    }
 }
