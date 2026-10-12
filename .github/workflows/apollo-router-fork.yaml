@@ -390,7 +390,7 @@ jobs:
         if: ${{ runner.os == 'Linux' }}
         run: strip ./target/${{ matrix.target }}/release/${{ matrix.file }}
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         name: upload router artifact
         with:
           name: apollo_router_${{ matrix.binary_name }}
