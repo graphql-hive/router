@@ -29,7 +29,7 @@ Before: `favorites` answered `_entities: [null]`, so the page had no `petCount`.
 { "data": { "favoritesPage": null } }
 ```
 
-After: only a missing key field leaves an entity out, as the subgraph can't find it without its key. A missing `@requires` field is sent as `null`, so `search` gets `{ "__typename": "FavoritesPage", "petCount": null }`:
+After: an entity is left out only when none of its keys in that subgraph is complete, as the subgraph can't find it then. A missing `@requires` field is sent as `null`, so `search` gets `{ "__typename": "FavoritesPage", "petCount": null }`:
 
 ```json
 { "data": { "favoritesPage": { "searchBox": { "placeholder": "Find a pet" } } } }

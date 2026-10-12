@@ -1,24 +1,22 @@
-use ahash::{HashMap, HashSet};
+use ahash::HashMap;
 
 use crate::query_planner::{
-    ast::{selection_item::SelectionItem, type_aware_selection::TypeAwareSelection},
-    federation_spec::FederationRules,
+    ast::selection_item::SelectionItem, federation_spec::FederationRules,
     state::supergraph_state::SupergraphState,
 };
 
-/// One subgraph's resolvable `@key`s for one entity type.
-#[derive(Debug, Default)]
-pub struct TypeKeys {
-    /// Each `@key`, parsed, by its `fields`. The planner's entity moves use them.
-    pub selections: HashMap<String, TypeAwareSelection>,
-    /// The top-level fields of all of them: `id` and `org` for `@key(fields: "id org { id }")`.
-    pub fields: HashSet<String>,
-}
+/// The top-level fields of one resolvable `@key`, without `__typename`: `id` and `org` for
+/// `@key(fields: "id org { id }")`. The subgraph can't find an entity by this key without all of
+/// them. Empty for a key of `__typename` alone.
+pub type KeyFields = Vec<String>;
+
+/// One type's keys in one subgraph.
+pub type TypeKeys = Vec<KeyFields>;
 
 /// One subgraph's keys, by entity type.
 pub type KeysByType = HashMap<String, TypeKeys>;
 
-/// Each subgraph's resolvable `@key`s, by entity type. Every key is parsed once, here.
+/// Each subgraph's resolvable `@key`s, by entity type.
 #[derive(Debug, Default)]
 pub struct EntityKeys(HashMap<String, KeysByType>);
 
@@ -35,23 +33,24 @@ impl EntityKeys {
                 };
                 let selection =
                     FederationRules::parse_key(supergraph, &join_type.graph_id, type_name, key);
+                let fields = selection
+                    .selection_set
+                    .items
+                    .iter()
+                    .filter_map(|item| match item {
+                        SelectionItem::Field(field) if field.name != "__typename" => {
+                            Some(field.name.clone())
+                        }
+                        _ => None,
+                    })
+                    .collect();
 
-                // A type keyed by `__typename` alone gets no fields.
-                let keys = subgraphs
+                subgraphs
                     .entry(subgraph.clone())
                     .or_default()
                     .entry(type_name.clone())
-                    .or_default();
-
-                for item in &selection.selection_set.items {
-                    if let SelectionItem::Field(field) = item {
-                        if field.name != "__typename" {
-                            keys.fields.insert(field.name.clone());
-                        }
-                    }
-                }
-
-                keys.selections.insert(key.clone(), selection);
+                    .or_default()
+                    .push(fields);
             }
         }
 
@@ -61,16 +60,6 @@ impl EntityKeys {
     /// The keys of each entity type in `subgraph`.
     pub fn of_subgraph(&self, subgraph: &str) -> Option<&KeysByType> {
         self.0.get(subgraph)
-    }
-
-    /// The parsed `@key(fields: key)` of `type_name` in `subgraph`.
-    pub fn selection(
-        &self,
-        subgraph: &str,
-        type_name: &str,
-        key: &str,
-    ) -> Option<&TypeAwareSelection> {
-        self.0.get(subgraph)?.get(type_name)?.selections.get(key)
     }
 }
 
@@ -83,16 +72,22 @@ mod tests {
         state::supergraph_state::SupergraphState, utils::parsing::parse_schema,
     };
 
-    fn type_keys<'a>(keys: &'a EntityKeys, subgraph: &str, type_name: &str) -> &'a TypeKeys {
-        keys.of_subgraph(subgraph)
+    /// The keys of `type_name` in `subgraph`, each with its fields sorted.
+    fn keys_of<'a>(keys: &'a EntityKeys, subgraph: &str, type_name: &str) -> Vec<Vec<&'a str>> {
+        let type_keys: &TypeKeys = keys
+            .of_subgraph(subgraph)
             .and_then(|types| types.get(type_name))
-            .unwrap_or_else(|| panic!("no keys of {type_name} in {subgraph}"))
-    }
-
-    fn sorted<'a>(names: impl Iterator<Item = &'a String>) -> Vec<&'a str> {
-        let mut names: Vec<&str> = names.map(String::as_str).collect();
-        names.sort_unstable();
-        names
+            .unwrap_or_else(|| panic!("no keys of {type_name} in {subgraph}"));
+        let mut keys: Vec<Vec<&str>> = type_keys
+            .iter()
+            .map(|fields| {
+                let mut fields: Vec<&str> = fields.iter().map(String::as_str).collect();
+                fields.sort_unstable();
+                fields
+            })
+            .collect();
+        keys.sort();
+        keys
     }
 
     /// `A` has four keys in each subgraph, one of them resolvable. Only that one counts, and
@@ -105,20 +100,15 @@ mod tests {
         let supergraph = SupergraphState::new(&parse_schema(&sdl));
         let keys = &supergraph.entity_keys;
 
-        let in_a = type_keys(keys, "a", "A");
-        assert_eq!(sorted(in_a.selections.keys()), ["id"]);
-        assert_eq!(sorted(in_a.fields.iter()), ["id"]);
-
-        let in_b = type_keys(keys, "b", "A");
-        assert_eq!(
-            sorted(in_b.selections.keys()),
-            ["id compositeId { two three }"]
-        );
-        assert_eq!(sorted(in_b.fields.iter()), ["compositeId", "id"]);
+        assert_eq!(keys_of(keys, "a", "A"), [["id"]]);
+        // `id compositeId { two three }`
+        assert_eq!(keys_of(keys, "b", "A"), [["compositeId", "id"]]);
 
         // `B` is an entity in `b` only
-        assert!(keys.selection("a", "B", "id").is_none());
-        assert_eq!(sorted(type_keys(keys, "b", "B").fields.iter()), ["id"]);
+        assert!(keys
+            .of_subgraph("a")
+            .is_some_and(|types| !types.contains_key("B")));
+        assert_eq!(keys_of(keys, "b", "B"), [["id"]]);
     }
 
     /// A key of `__typename` alone has no fields: the subgraph finds the entity without any.
@@ -144,11 +134,8 @@ mod tests {
         let supergraph = SupergraphState::new(&schema);
         let keys = &supergraph.entity_keys;
 
-        let in_petsearch = type_keys(keys, "petsearch", "FavoritesPage");
-        assert_eq!(sorted(in_petsearch.selections.keys()), ["__typename"]);
-        assert!(in_petsearch.fields.is_empty());
-        assert!(keys
-            .selection("content", "FavoritesPage", "__typename")
-            .is_some());
+        let no_fields: [[&str; 0]; 1] = [[]];
+        assert_eq!(keys_of(keys, "petsearch", "FavoritesPage"), no_fields);
+        assert_eq!(keys_of(keys, "content", "FavoritesPage"), no_fields);
     }
 }

@@ -13,12 +13,6 @@ pub enum GraphError {
     DefinitionNotFound(String),
     #[error("Field named '{0}' was not found in definition name '{1}'")]
     FieldDefinitionNotFound(String, String),
-    #[error("Key '{key}' of '{type_name}' in subgraph '{subgraph}' was not parsed")]
-    EntityKeyNotFound {
-        type_name: String,
-        subgraph: String,
-        key: String,
-    },
     #[error("Supergraph state error: {0}")]
     SupergraphStateError(#[from] SupergraphStateError),
 }
