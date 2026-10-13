@@ -202,6 +202,11 @@ pub async fn graphql_request_handler(
                 .limits
                 .max_request_body_size
                 .to_bytes() as usize,
+            shared_state
+                .router_config
+                .traffic_shaping
+                .router
+                .body_read_timeout,
             content_encoding,
         )
         .await?;

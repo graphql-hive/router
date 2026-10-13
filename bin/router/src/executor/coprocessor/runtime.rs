@@ -8,6 +8,7 @@ use ntex::http::HeaderMap;
 use ntex::web::{self, DefaultError};
 use std::ops::ControlFlow;
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{debug, error, Instrument};
 
 use crate::executor::coprocessor::client::CoprocessorClient;
@@ -34,6 +35,7 @@ pub struct CoprocessorRuntime {
     graphql_analysis: Option<StageRuntime<GraphqlAnalysisStage>>,
     graphql_response: Option<StageRuntime<GraphqlResponseStage>>,
     body_size_limit: usize,
+    body_read_timeout: Duration,
 }
 
 #[derive(Default)]
@@ -194,6 +196,7 @@ impl CoprocessorRuntime {
         config: &CoprocessorConfig,
         telemetry_context: Arc<TelemetryContext>,
         body_size_limit: usize,
+        body_read_timeout: Duration,
     ) -> Result<Self, CoprocessorError> {
         let client = Arc::new(CoprocessorClient::new(
             config.clone(),
@@ -252,6 +255,7 @@ impl CoprocessorRuntime {
             graphql_analysis,
             graphql_response,
             body_size_limit,
+            body_read_timeout,
         })
     }
 
@@ -266,14 +270,26 @@ impl CoprocessorRuntime {
         // We read the request body only when this stage needs to include body
         let request_body = if stage.stage.include_body() {
             let body_stream = web::types::Payload(req.take_payload());
-            let new_body = match read_body_stream(&req, body_stream, self.body_size_limit, None)
-                .await
+            let new_body = match read_body_stream(
+                &req,
+                body_stream,
+                self.body_size_limit,
+                self.body_read_timeout,
+                None,
+            )
+            .await
             {
                 Ok(body) => body,
                 // We deliberately do not map to CoprocessorError here,
                 // to follow the same logic for status codes
                 Err(err) => {
                     error!(target: targets::COPROCESSOR, error = %err, coprocessor_stage = stage.stage.stage_name(), "coprocessor stage failed");
+                    // this response skips the handler, where the pipeline errors are counted
+                    stage
+                        .telemetry_context
+                        .metrics
+                        .graphql
+                        .record_error(err.error_code(), None);
 
                     let response =
                         build_router_stage_error_response(err.status_code(), err.error_code());
