@@ -28,6 +28,9 @@ impl FetchGraph<MultiTypeFetchStep> {
     /// 2 - grouping happens only if it's helping with efficiency (same subgraph)
     /// 3 - entity/requires calls are still happening within the same group
     ///
+    /// A field with contextual results ends its group so its context-dependent fetches finish
+    /// before the next root field runs.
+    ///
     /// Runs before any optimization. With the order in the graph, merges keep it like any other
     /// dependency, and nothing else has to know about mutations.
     #[instrument(level = "trace", skip_all)]
@@ -53,10 +56,17 @@ impl FetchGraph<MultiTypeFetchStep> {
         // Consecutive fields whose root fetches go to one subgraph.
         let mut groups: Vec<Vec<Vec<NodeIndex>>> = Vec::new();
         let mut group_subgraph = None;
+        let mut group_has_context = false;
         for steps in fields.into_values() {
             let subgraph = self.single_subgraph(&steps)?;
+            let has_context = self.reachable_from(&steps).iter().any(|index| {
+                self.get_step_data(*index)
+                    .is_ok_and(|step| !step.context_variable_definitions.is_empty())
+            });
             match groups.last_mut() {
-                Some(group) if subgraph.is_some() && subgraph == group_subgraph => {
+                Some(group)
+                    if subgraph.is_some() && subgraph == group_subgraph && !group_has_context =>
+                {
                     group.push(steps)
                 }
                 _ => {
@@ -64,6 +74,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                     groups.push(vec![steps]);
                 }
             }
+            group_has_context = has_context;
         }
 
         for group in &groups {

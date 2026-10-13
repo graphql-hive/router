@@ -289,17 +289,10 @@ impl Edge {
             None => 0,
         };
 
-        let context_cost = match self {
-            Self::FieldMove(field_move) => field_move
-                .context_arguments
-                .iter()
-                .flat_map(|argument| &argument.selections)
-                .map(|selection| selection.selection_set.cost())
-                .sum::<u64>(),
-            _ => 0,
-        };
+        // context cost depends on the matched ancestor, so pathfinder costs the resolved
+        // selection instead of charging every possible declaring type here.
 
-        move_cost + requirement_cost + context_cost
+        move_cost + requirement_cost
     }
 }
 

@@ -679,12 +679,26 @@ impl<'graph> PathSearch<'graph> {
                     let mut tree = QueryTreeNode::from_paths(graph, &paths, None)?
                         .map(|tree| Rc::try_unwrap(tree).unwrap_or_else(|tree| (*tree).clone()))
                         .unwrap_or_else(|| QueryTreeNode::new_root(&ancestor.tail()));
+                    let mut cost = 0;
+                    let mut nodes = vec![&tree];
+                    while let Some(node) = nodes.pop() {
+                        if let Some(edge) = node.edge_from_parent {
+                            cost += graph.edge(edge)?.cost();
+                        }
+                        cost += node
+                            .resolved_context_requirements
+                            .iter()
+                            .map(|requirement| requirement.cost)
+                            .sum::<u64>();
+                        nodes.extend(node.children.iter().map(Rc::as_ref));
+                    }
                     tree.context_coordinate = Some((edge_ref.id(), argument));
                     context_requirements.push(Rc::new(ContextRequirement {
                         argument,
                         selection: selection_index,
                         levels,
                         segments_back,
+                        cost,
                         tree: Rc::new(tree),
                     }));
                 }

@@ -1,5 +1,6 @@
 schema @link(url: "https://specs.apollo.dev/link/v1.0") @link(url: "https://specs.apollo.dev/join/v0.5", for: EXECUTION) @link(url: "https://specs.apollo.dev/context/v0.1", for: SECURITY) {
   query: Query
+  mutation: Mutation
 }
 
 directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
@@ -75,11 +76,16 @@ type Query @join__type(graph: A) @join__type(graph: B) {
   outer: Outer @join__field(graph: A)
 }
 
+type Mutation @join__type(graph: A) {
+  updateUser(id: ID!): User
+}
+
 type User implements Account @join__type(graph: A, key: "id") @join__implements(graph: A, interface: "Account") @context(name: "a__user") {
   id: ID!
   currency: String
   child: User
   wrapper: Wrapper
+  entries: [Entry]
   txs: [Transaction]
 }
 
@@ -100,11 +106,11 @@ type Outer @join__type(graph: A) @context(name: "a__outer") {
 type Transaction @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
   id: ID!
   base: Int @join__field(graph: A, external: true) @join__field(graph: B)
-  amount: Int @join__field(
+  amount(multiplier: Int): Int @join__field(
     graph: A
     contextArguments: [{context: "a__user", name: "code", type: "String", selection: " { currency }"}]
   )
-  required: Int @join__field(
+  required(multiplier: Int): Int @join__field(
     graph: A
     requires: "base"
     contextArguments: [{context: "a__user", name: "code", type: "String", selection: " { currency }"}]
@@ -130,3 +136,12 @@ interface Account @join__type(graph: A) @context(name: "a__account") {
 }
 
 union Viewer @join__type(graph: A) @join__unionMember(graph: A, member: "User") @join__unionMember(graph: A, member: "Other") @context(name: "a__viewer") = User | Other
+
+union Entry @join__type(graph: A) @join__unionMember(graph: A, member: "Transaction") @join__unionMember(graph: A, member: "Adjustment") = Transaction | Adjustment
+
+type Adjustment @join__type(graph: A, key: "id") {
+  id: ID!
+  amount: Int @join__field(graph: A, contextArguments: [
+    {context: "a__outer", name: "code", type: "String", selection: " { code }"}
+  ])
+}

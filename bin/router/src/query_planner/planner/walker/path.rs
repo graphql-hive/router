@@ -34,6 +34,7 @@ pub struct ContextRequirement {
     pub selection: usize,
     pub levels: usize,
     pub segments_back: usize,
+    pub cost: u64,
     pub tree: Rc<QueryTreeNode>,
 }
 
@@ -157,7 +158,12 @@ impl<'graph> OperationPath<'graph> {
     ) -> OperationPath<'graph> {
         let prev_cost = self.cost;
         let edge_cost = edge_ref.weight().cost();
-        let new_cost = prev_cost + edge_cost;
+        let new_cost = prev_cost
+            + edge_cost
+            + context_requirements
+                .iter()
+                .map(|requirement| requirement.cost)
+                .sum::<u64>();
 
         let new_segment_data = PathSegment {
             prev: self.last_segment.clone(),

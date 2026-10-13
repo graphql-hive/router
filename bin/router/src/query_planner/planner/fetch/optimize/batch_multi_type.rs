@@ -10,7 +10,9 @@ use crate::query_planner::planner::fetch::fetch_step_data::{
     type_condition_types_from_response_path, FetchStepFlags,
 };
 use crate::query_planner::planner::fetch::selections::FetchStepSelections;
-use crate::query_planner::state::supergraph_state::{SupergraphDefinition, SupergraphState};
+use crate::query_planner::state::supergraph_state::{
+    SupergraphDefinition, SupergraphState, TypeNode,
+};
 use crate::query_planner::{
     ast::merge_path::{MergePath, Segment},
     planner::fetch::{
@@ -437,6 +439,17 @@ fn normalized_path_hash(path: &MergePath) -> u64 {
 impl FetchStepData<MultiTypeFetchStep> {
     pub fn can_be_batched_with(&self, other: &Self) -> bool {
         if !self.can_merge_context(other) {
+            return false;
+        }
+
+        // merged type branches still declare every variable, even when an entity's ancestor
+        // only supplies one branch's context. keep non-null contexts in separate calls.
+        if self
+            .context_variable_definitions
+            .iter()
+            .chain(&other.context_variable_definitions)
+            .any(|variable| matches!(variable.variable_type, TypeNode::NonNull(_)))
+        {
             return false;
         }
 

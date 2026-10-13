@@ -3,6 +3,458 @@ use crate::query_planner::utils::parsing::parse_operation;
 use std::error::Error;
 
 #[test]
+fn mutation_results_supply_context_in_root_field_order() -> Result<(), Box<dyn Error>> {
+    let plan = build_query_plan_with_defaults(
+        "fixture/tests/context-basic.supergraph.graphql",
+        parse_operation(
+            r#"mutation { first: updateUser(id: "1") { txs { amount } } second: updateUser(id: "2") { txs { amount } } }"#,
+        ),
+    )?;
+    insta::assert_snapshot!(plan.to_string(), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          mutation {
+            first: updateUser(id: "1") {
+              __typename
+              currency
+              txs {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "first.txs.@") {
+          Fetch(service: "a") {
+            {
+              ... on Transaction {
+                __typename
+                id
+              }
+            } =>
+            ($__context_0:String) {
+              ... on Transaction {
+                amount(code: $__context_0)
+              }
+            }
+          },
+        },
+        Fetch(service: "a") {
+          mutation {
+            second: updateUser(id: "2") {
+              __typename
+              currency
+              txs {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "second.txs.@") {
+          Fetch(service: "a") {
+            {
+              ... on Transaction {
+                __typename
+                id
+              }
+            } =>
+            ($__context_1:String) {
+              ... on Transaction {
+                amount(code: $__context_1)
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
+}
+
+#[test]
+fn multi_type_fetch_preserves_contexts_from_different_ancestors() -> Result<(), Box<dyn Error>> {
+    let plan = build_query_plan_with_defaults(
+        "fixture/tests/context-basic.supergraph.graphql",
+        parse_operation("{ outer { user { entries { ... on Transaction { amount } ... on Adjustment { amount } } } } }"),
+    )?;
+    insta::assert_snapshot!(plan.to_string(), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            outer {
+              __typename
+              code
+              user {
+                __typename
+                currency
+                entries {
+                  __typename
+                  ... on Transaction {
+                    __typename
+                    id
+                  }
+                  ... on Adjustment {
+                    __typename
+                    id
+                  }
+                }
+              }
+            }
+          }
+        },
+        Flatten(path: "outer.user.entries.@") {
+          Fetch(service: "a") {
+            {
+              ... on Adjustment {
+                __typename
+                id
+              }
+              ... on Transaction {
+                __typename
+                id
+              }
+            } =>
+            ($__context_1:String,$__context_0:String) {
+              ... on Adjustment {
+                amount(code: $__context_1)
+              }
+              ... on Transaction {
+                amount(code: $__context_0)
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    insta::assert_json_snapshot!(plan, @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "operationKind": "query",
+            "operation": "{outer{__typename code user{__typename currency entries{__typename ...on Transaction{__typename id} ...on Adjustment{__typename id}}}}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              {
+                "Field": "outer"
+              },
+              {
+                "Field": "user"
+              },
+              {
+                "Field": "entries"
+              },
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "a",
+              "variableUsages": [
+                "__context_0",
+                "__context_1"
+              ],
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!, $__context_1:String, $__context_0:String){_entities(representations: $representations){...on Adjustment{amount(code: $__context_1)} ...on Transaction{amount(code: $__context_0)}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Adjustment",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                },
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Transaction",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "contextVariables": [
+                "__context_1",
+                "__context_0"
+              ],
+              "contextRewrites": [
+                {
+                  "path": [
+                    "Parent",
+                    "Parent",
+                    {
+                      "TypenameEquals": [
+                        "Outer"
+                      ]
+                    },
+                    {
+                      "Key": "code"
+                    }
+                  ],
+                  "renameKeyTo": "__context_1"
+                },
+                {
+                  "path": [
+                    "Parent",
+                    {
+                      "TypenameEquals": [
+                        "User"
+                      ]
+                    },
+                    {
+                      "Key": "currency"
+                    }
+                  ],
+                  "renameKeyTo": "__context_0"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
+    Ok(())
+}
+
+#[test]
+fn context_variables_do_not_collide_with_client_variables_or_requires() -> Result<(), Box<dyn Error>>
+{
+    let plan = build_query_plan_with_defaults(
+        "fixture/tests/context-basic.supergraph.graphql",
+        parse_operation("query($__context_0: Int = 2, $__context_1: Boolean!, $__context_3: Int) { users { txs { required(multiplier: $__context_0) @include(if: $__context_1) amount(multiplier: $__context_3) } } }"),
+    )?;
+    insta::assert_snapshot!(plan.to_string(), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            users {
+              __typename
+              currency
+              txs {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Include(if: $__context_1) {
+          Flatten(path: "users.@.txs.@") {
+            Fetch(service: "b") {
+              {
+                ... on Transaction {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Transaction {
+                  base
+                }
+              }
+            },
+          },
+        },
+        Flatten(path: "users.@.txs.@") {
+          Fetch(service: "a") {
+            {
+              ... on Transaction {
+                __typename
+                id
+                base
+              }
+            } =>
+            ($__context_0:Int=2,$__context_1:Boolean!,$__context_3:Int,$__context_4:String,$__context_2:String) {
+              ... on Transaction {
+                amount(code: $__context_4, multiplier: $__context_3)
+                ... on Transaction @include(if: $__context_1) {
+                  required(code: $__context_2, multiplier: $__context_0)
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
+}
+
+#[test]
+fn batch_context_variables_do_not_collide_with_client_variables() -> Result<(), Box<dyn Error>> {
+    let plan = build_query_plan_with_defaults(
+        "fixture/tests/context-basic.supergraph.graphql",
+        parse_operation("query($__context_0: Int!, $__batch_reps_0: Int!) { users { txs { amount(multiplier: $__context_0) } } secondUsers { txs { amount(multiplier: $__batch_reps_0) } } }"),
+    )?;
+    insta::assert_snapshot!(plan.to_string(), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            users {
+              ...a
+            }
+            secondUsers {
+              ...a
+            }
+          }
+          fragment a on User {
+            __typename
+            currency
+            txs {
+              __typename
+              id
+            }
+          }
+        },
+        BatchFetch(service: "a") {
+          {
+            _e0 {
+              paths: [
+                "secondUsers.@.txs.@"
+              ]
+              {
+                ... on Transaction {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e1 {
+              paths: [
+                "users.@.txs.@"
+              ]
+              {
+                ... on Transaction {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          ($__batch_reps_0:Int!,$__context_2:String,$__context_0:Int!,$__context_1:String) {
+            _e0: _entities(representations: $__batch_reps_1) {
+              ... on Transaction {
+                amount(code: $__context_2, multiplier: $__batch_reps_0)
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_2) {
+              ... on Transaction {
+                amount(code: $__context_1, multiplier: $__context_0)
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+    Ok(())
+}
+
+#[test]
+fn context_under_conditional_ancestor_fragments() -> Result<(), Box<dyn Error>> {
+    let plan = build_query_plan_with_defaults(
+        "fixture/tests/context-basic.supergraph.graphql",
+        parse_operation("query($skip: Boolean!, $include: Boolean!) { viewer { ... on User @include(if: $include) { txs { fromUnion @skip(if: $skip) } } ... on Other @skip(if: $skip) { txs { fromUnion @include(if: $include) } } } }"),
+    )?;
+    insta::assert_snapshot!(plan.to_string(), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          query ($include:Boolean!,$skip:Boolean!) {
+            viewer {
+              __typename
+              ... on User {
+                __typename
+                currency @include(if: $include)
+                txs @include(if: $include) {
+                  ...a
+                }
+              }
+              ... on Other {
+                __typename
+                currency @skip(if: $skip)
+                txs @skip(if: $skip) {
+                  ...a
+                }
+              }
+            }
+          }
+          fragment a on Transaction {
+            __typename
+            id
+          }
+        },
+        Parallel {
+          Skip(if: $skip) {
+            Include(if: $include) {
+              Flatten(path: "viewer|[Other].txs.@") {
+                Fetch(service: "a") {
+                  {
+                    ... on Transaction {
+                      __typename
+                      id
+                    }
+                  } =>
+                  ($__context_1:String) {
+                    ... on Transaction {
+                      fromUnion(code: $__context_1)
+                    }
+                  }
+                },
+              },
+            },
+          },
+          Include(if: $include) {
+            Skip(if: $skip) {
+              Flatten(path: "viewer|[User].txs.@") {
+                Fetch(service: "a") {
+                  {
+                    ... on Transaction {
+                      __typename
+                      id
+                    }
+                  } =>
+                  ($__context_0:String) {
+                    ... on Transaction {
+                      fromUnion(code: $__context_0)
+                    }
+                  }
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
+}
+
+#[test]
 fn empty_context_selection_preserves_variable_names() -> Result<(), Box<dyn Error>> {
     let supergraph = read_supergraph("fixture/tests/context-edge-cases.supergraph.graphql")
         .replace(
@@ -799,6 +1251,28 @@ fn two_root_fields_batch_into_one_fetch() -> Result<(), Box<dyn Error>> {
     },
     "#);
 
+    Ok(())
+}
+
+#[test]
+fn multi_type_fetch_does_not_require_contexts_from_mutually_exclusive_ancestors(
+) -> Result<(), Box<dyn Error>> {
+    let plan = build_query_plan_with_defaults(
+        "fixture/tests/context-multi-type.supergraph.graphql",
+        parse_operation(
+            "{ viewer { ... on User { txs { amount } } ... on Other { txs { amount } } } }",
+        ),
+    )?;
+    let plan = plan.to_string();
+    assert!(!plan.contains("BatchFetch"));
+    assert!(
+        plan.contains("Flatten(path: \"viewer|[User].txs.@\")"),
+        "{plan}"
+    );
+    assert!(
+        plan.contains("Flatten(path: \"viewer|[Other].txs.@\")"),
+        "{plan}"
+    );
     Ok(())
 }
 
