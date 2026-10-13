@@ -116,6 +116,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.3.4 (2026-10-12)
+
+### Features
+
+#### Refresh the remote JWKS when a token's `kid` is unknown
+
+A token signed with a freshly rotated key was rejected until the next `polling_interval` tick. With `refresh_on_unknown_kid` set on a remote JWKS provider, an unknown `kid` re-fetches the JWKS right away. The value is the minimum time between two such re-fetches, so concurrent misses share one fetch and arbitrary `kid`s cannot hammer the endpoint. It must be at least `1s`. Disabled by default.
+
+```yaml
+jwt:
+  jwks_providers:
+    - source: remote
+      url: https://auth.example.com/.well-known/jwks.json
+      refresh_on_unknown_kid: 30s
+```
+
+### Fixes
+
+#### Fix `@requires` fields from an entity resolved to `null`
+
+When the subgraph providing a `@requires` field returned `null` for the entity, the router could skip the call that needed that field, and silently drop data.
+
+```graphql
+type FavoritesPage @key(fields: "__typename") {
+  petCount: Int # from `favorites`
+  searchBox: SearchBox! @requires(fields: "petCount") # from `search`
+}
+```
+
+```graphql
+query {
+  favoritesPage {
+    searchBox {
+      placeholder
+    }
+  }
+}
+```
+
+Before: `favorites` answered `_entities: [null]`, so the page had no `petCount`. The router left the page out of the call to `search`, `searchBox` was missing, and being non-null, it turned the whole page into `null`, without an error:
+
+```json
+{ "data": { "favoritesPage": null } }
+```
+
+After: an entity is left out only when none of its keys in that subgraph is complete, as the subgraph can't find it then. A missing `@requires` field is sent as `null`, so `search` gets `{ "__typename": "FavoritesPage", "petCount": null }`:
+
+```json
+{ "data": { "favoritesPage": { "searchBox": { "placeholder": "Find a pet" } } } }
+```
+
+With a key other than `__typename`, the entity was already sent, without the field. It now has the field, set to `null`.
+
+Closes https://github.com/graphql-hive/router/issues/1669
+
 ## 0.3.3 (2026-10-08)
 
 ### Fixes

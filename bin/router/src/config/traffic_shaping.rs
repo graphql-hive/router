@@ -604,8 +604,8 @@ pub struct TrafficShapingRouterConfig {
     pub dedupe: TrafficShapingRouterDedupeConfig,
 
     /// Optional timeout configuration for incoming requests to the router.
-    /// It starts from the moment the request is received by the router,
-    /// and includes the entire processing of the request (validation, execution, etc.) until a response is sent back to the client.
+    /// It starts once the request headers are received (`header_read_timeout` bounds the time before that),
+    /// and includes the entire processing of the request (reading the body, validation, execution, etc.) until a response is sent back to the client.
     /// If a request takes longer than the specified duration, it will be aborted and a timeout error will be returned to the client.
     #[serde(
         default = "default_router_request_timeout",
@@ -650,6 +650,57 @@ pub struct TrafficShapingRouterConfig {
     )]
     #[schemars(with = "String")]
     pub keep_alive: Duration,
+
+    /// How long the HTTP server waits for a client to send the complete request
+    /// headers before closing the connection.
+    ///
+    /// Defaults to 10 seconds. Set to `0s` to disable.
+    ///
+    /// Bounds clients that open a connection and send the headers slowly, or not
+    /// at all, so they cannot hold sockets and memory indefinitely.
+    ///
+    /// It runs before `request_timeout` starts, so a request can take up to
+    /// `header_read_timeout` + `request_timeout` in total.
+    ///
+    /// ```yaml
+    /// traffic_shaping:
+    ///   router:
+    ///     header_read_timeout: 10s
+    /// ```
+    #[serde(
+        default = "default_router_header_read_timeout",
+        deserialize_with = "humantime_serde::deserialize",
+        serialize_with = "humantime_serde::serialize"
+    )]
+    #[schemars(with = "String")]
+    pub header_read_timeout: Duration,
+
+    /// How long the router waits to receive the complete request body, from the
+    /// moment it starts reading it. When exceeded, the request is rejected with
+    /// `408 Request Timeout` and the connection is closed.
+    ///
+    /// Defaults to 10 seconds. Set to `0s` to disable.
+    ///
+    /// Bounds clients that send the headers and then send the body slowly, or not
+    /// at all, so they cannot hold sockets and memory until `request_timeout`.
+    /// Raise it if clients upload large bodies over slow links.
+    ///
+    /// It runs within `request_timeout`, so it only takes effect when it is shorter.
+    /// The exception is the coprocessor `router.request` stage with `include_body`,
+    /// which reads the body before `request_timeout` starts.
+    ///
+    /// ```yaml
+    /// traffic_shaping:
+    ///   router:
+    ///     body_read_timeout: 10s
+    /// ```
+    #[serde(
+        default = "default_router_body_read_timeout",
+        deserialize_with = "humantime_serde::deserialize",
+        serialize_with = "humantime_serde::serialize"
+    )]
+    #[schemars(with = "String")]
+    pub body_read_timeout: Duration,
 
     /// HTTP compression between the client and the router: compressing responses sent to the
     /// client, and decompressing requests received from the client.
@@ -754,6 +805,14 @@ fn default_max_long_lived_clients() -> usize {
     128
 }
 
+fn default_router_header_read_timeout() -> Duration {
+    Duration::from_secs(10)
+}
+
+fn default_router_body_read_timeout() -> Duration {
+    Duration::from_secs(10)
+}
+
 impl Default for TrafficShapingRouterConfig {
     fn default() -> Self {
         Self {
@@ -762,6 +821,8 @@ impl Default for TrafficShapingRouterConfig {
             tls: None,
             max_long_lived_clients: default_max_long_lived_clients(),
             keep_alive: http_server_keep_alive_default(),
+            header_read_timeout: default_router_header_read_timeout(),
+            body_read_timeout: default_router_body_read_timeout(),
             compression: Default::default(),
         }
     }

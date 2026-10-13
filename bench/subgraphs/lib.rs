@@ -1,9 +1,12 @@
 pub mod accounts;
 pub mod books;
 pub mod catalog;
+pub mod content;
+pub mod favorites;
 pub mod graphql_with_subscriptions;
 pub mod inventory;
 pub mod monolith;
+pub mod petsearch;
 pub mod products;
 pub mod ranking;
 pub mod reviews;
@@ -150,6 +153,18 @@ pub fn subgraphs_app(
         .route(
             "/ranking",
             post_service(GraphQL::new(ranking::get_subgraph())),
+        )
+        .route(
+            "/content",
+            post_service(GraphQL::new(content::get_subgraph())),
+        )
+        .route(
+            "/favorites",
+            post_service(GraphQL::new(favorites::get_subgraph())),
+        )
+        .route(
+            "/petsearch",
+            post_service(GraphQL::new(petsearch::get_subgraph())),
         )
         .route_layer(middleware::from_fn(add_subgraph_header))
         .route_layer(middleware::from_fn(delay_middleware));

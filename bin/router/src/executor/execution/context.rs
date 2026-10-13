@@ -17,6 +17,7 @@ use crate::{
     query_planner::{
         ast::requires::RequiresSelectionSet,
         planner::plan_nodes::{FetchNodePathSegment, FetchRewrite, KeyRenamer, ResponsePathRef},
+        state::entity_keys::KeysByType,
     },
 };
 
@@ -78,6 +79,7 @@ pub(super) fn collect_context_entities<'a>(
     context_rewrites: Option<&'a [KeyRenamer]>,
     context_variables: &'a [String],
     possible_types: &PossibleTypes,
+    subgraph_keys: Option<&KeysByType>,
     remaining_context_groups: &mut usize,
 ) -> Result<(Vec<ContextGroup<'a>>, Vec<RepresentationHashes>), PlanExecutionErrorKind> {
     let mut names: Vec<&str> = context_variables.iter().map(String::as_str).collect();
@@ -188,6 +190,7 @@ pub(super) fn collect_context_entities<'a>(
                 group.hash_to_index.is_empty(),
                 None,
                 false,
+                subgraph_keys,
             ) {
                 group.hash_to_index.insert(hash, group.hash_to_index.len());
             }
@@ -267,6 +270,7 @@ mod tests {
             Some(&rewrites),
             &names,
             &PossibleTypes::default(),
+            None,
             &mut budget,
         )
         .unwrap();
@@ -297,6 +301,7 @@ mod tests {
                     Some(&rewrites),
                     &names,
                     &PossibleTypes::default(),
+                    None,
                     &mut budget,
                 ),
                 Err(PlanExecutionErrorKind::ContextGroupLimitExceeded)
@@ -309,7 +314,7 @@ mod tests {
     fn empty_context_selection_sends_null() {
         let data = sonic_rs::from_str(r#"{"__typename":"Transaction","id":"1"}"#).unwrap();
         let path = FlattenNodePath::default();
-        let definition = parse_operation("{ __typename id }").definitions.remove(0);
+        let definition = parse_operation("{ __typename id missing }").definitions.remove(0);
         let graphql_tools::parser::query::Definition::Operation(
             graphql_tools::parser::query::OperationDefinition::SelectionSet(selection),
         ) = definition
@@ -317,6 +322,9 @@ mod tests {
             panic!("selection");
         };
         let requires = RequiresSelectionSet::from(&SelectionSet::from(selection));
+        let keys: KeysByType = [("Transaction".into(), vec![vec!["id".into()]])]
+            .into_iter()
+            .collect();
         let names = ["__context_0".into()];
         let mut budget = MAX_CONTEXT_GROUPS;
         let (groups, _) = collect_context_entities(
@@ -327,12 +335,17 @@ mod tests {
             Some(&[]),
             &names,
             &PossibleTypes::default(),
+            Some(&keys),
             &mut budget,
         )
         .unwrap();
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].variables, vec![("__context_0", b"null".to_vec())]);
         assert_eq!(groups[0].hash_to_index.len(), 1);
+        assert_eq!(
+            std::str::from_utf8(&groups[0].representations).unwrap(),
+            r#"[{"__typename":"Transaction","id":"1","missing":null}]"#
+        );
         assert_eq!(budget, MAX_CONTEXT_GROUPS - 1);
     }
 

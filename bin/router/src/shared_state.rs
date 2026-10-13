@@ -364,6 +364,7 @@ impl RouterSharedState {
                     coprocessor_config,
                     telemetry_context.clone(),
                     router_config.limits.max_request_body_size.to_bytes() as usize,
+                    router_config.traffic_shaping.router.body_read_timeout,
                 )
                 .map_err(Box::new)
             })

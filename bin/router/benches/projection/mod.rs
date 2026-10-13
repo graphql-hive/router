@@ -260,6 +260,7 @@ fn bench_execution(
                 true,
                 None,
                 false,
+                None,
             );
             black_box(&buffer);
         });

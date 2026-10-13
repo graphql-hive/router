@@ -1,4 +1,4 @@
-use std::{cell::RefMut, io::Write};
+use std::{cell::RefMut, io::Write, time::Duration};
 
 use http::header::CONTENT_LENGTH;
 use ntex::{
@@ -50,6 +50,10 @@ pub enum ReadBodyStreamError {
     #[error("Failed to decompress request body: {0}")]
     #[strum(serialize = "DECOMPRESSION_FAILED")]
     DecompressionFailed(String),
+
+    #[error("Request body was not received in time")]
+    #[strum(serialize = "PAYLOAD_READ_TIMEOUT")]
+    ReadTimeout,
 }
 
 impl ReadBodyStreamError {
@@ -61,6 +65,7 @@ impl ReadBodyStreamError {
                 http::StatusCode::PAYLOAD_TOO_LARGE
             }
             Self::DecompressionFailed(_) => http::StatusCode::BAD_REQUEST,
+            Self::ReadTimeout => http::StatusCode::REQUEST_TIMEOUT,
         }
     }
 
@@ -100,8 +105,31 @@ pub async fn drain_body_stream(body_stream: &mut web::types::Payload) {
     }
 }
 
+/// Reads the whole request body, giving up after `read_timeout` (zero disables it).
+///
+/// Without a deadline, a client that sends the headers and then stalls holds the
+/// socket and its buffers until the request timeout, and nothing bounds how many
+/// such requests pile up.
 #[inline]
 pub async fn read_body_stream<R: RequestLike>(
+    req: &R,
+    body_stream: web::types::Payload,
+    max_size: usize,
+    read_timeout: Duration,
+    content_encoding: Option<CompressionAlgorithm>,
+) -> Result<Bytes, ReadBodyStreamError> {
+    let read = read_body(req, body_stream, max_size, content_encoding);
+
+    if read_timeout.is_zero() {
+        return read.await;
+    }
+
+    tokio::time::timeout(read_timeout, read)
+        .await
+        .map_err(|_| ReadBodyStreamError::ReadTimeout)?
+}
+
+async fn read_body<R: RequestLike>(
     req: &R,
     mut body_stream: web::types::Payload,
     max_size: usize,

@@ -377,38 +377,35 @@ async fn graphql_endpoint_dispatch(
     .await
 }
 
-/// ntex expresses HTTP/1 keep-alive in whole seconds. Sub-second values round
+/// ntex expresses HTTP/1 timeouts in whole seconds. Sub-second values round
 /// up so a configured timeout cannot collapse to "close immediately", and
-/// oversized values clamp instead of wrapping. Zero disables keep-alive.
-fn to_ntex_keep_alive(duration: std::time::Duration) -> KeepAlive {
+/// oversized values clamp instead of wrapping.
+fn to_ntex_seconds(duration: std::time::Duration) -> Seconds {
     let secs = duration.as_secs() + u64::from(duration.subsec_nanos() > 0);
 
-    match u16::try_from(secs) {
-        Ok(0) => KeepAlive::Disabled,
-        Ok(secs) => KeepAlive::Timeout(Seconds(secs)),
-        Err(_) => KeepAlive::Timeout(Seconds(u16::MAX)),
+    Seconds(u16::try_from(secs).unwrap_or(u16::MAX))
+}
+
+/// Zero disables keep-alive.
+fn to_ntex_keep_alive(duration: std::time::Duration) -> KeepAlive {
+    match to_ntex_seconds(duration) {
+        Seconds(0) => KeepAlive::Disabled,
+        secs => KeepAlive::Timeout(secs),
     }
 }
 
 pub fn build_http_service_config(router_config: &HiveRouterConfig) -> HttpServiceConfig {
     let keep_alive = to_ntex_keep_alive(router_config.keep_alive());
 
-    let ntex_timeout = u16::try_from(
-        router_config
-            .traffic_shaping
-            .router
-            .request_timeout
-            .as_secs()
-            .saturating_add(1),
-    )
-    .unwrap_or(u16::MAX);
-
     let max_request_header_size = router_config.limits.max_request_header_size.to_bytes() as usize;
 
     HttpServiceConfig::new()
         .set_keepalive(keep_alive)
-        // ntex HTTP timeout is set as a safe-guard on top of Hive Router's timeout
-        .set_client_timeout(Seconds(ntex_timeout))
+        // time allowed to receive the complete request head, zero disables it.
+        // the body has its own deadline, see `read_body_stream`
+        .set_client_timeout(to_ntex_seconds(
+            router_config.traffic_shaping.router.header_read_timeout,
+        ))
         // ntex's parse buffer must fit the whole request head, otherwise limits
         // above its 64KiB default would be unreachable; the exact per-request
         // limit is enforced in the pipeline (`graphql_request_handler`)

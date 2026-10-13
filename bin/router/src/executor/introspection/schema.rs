@@ -1,8 +1,13 @@
+use std::sync::Arc;
+
 use ahash::{HashMap, HashSet};
 
 use crate::query_planner::{
     consumer_schema::ConsumerSchema,
-    state::supergraph_state::{OperationKind, TypeNode},
+    state::{
+        entity_keys::EntityKeys,
+        supergraph_state::{OperationKind, TypeNode},
+    },
 };
 use graphql_tools::parser::{
     query::Type,
@@ -95,6 +100,9 @@ pub struct SchemaMetadata {
     pub query_type_name: Option<String>,
     pub mutation_type_name: Option<String>,
     pub subscription_type_name: Option<String>,
+    /// Each subgraph's keys, from the supergraph: the consumer schema doesn't have them.
+    /// The same `Arc` as the planner's `SupergraphState::entity_keys`, empty if not given.
+    pub entity_keys: Arc<EntityKeys>,
 }
 
 impl SchemaMetadata {
@@ -315,6 +323,7 @@ impl SchemaWithMetadata for ConsumerSchema {
             query_type_name,
             mutation_type_name,
             subscription_type_name,
+            entity_keys: Arc::default(),
         }
     }
 }

@@ -80,6 +80,7 @@ use crate::executor::{
     },
     utils::traverse::traverse_and_callback_mut,
 };
+use crate::query_planner::state::entity_keys::KeysByType;
 
 pub type VariablesMap = HashMap<String, sonic_rs::Value>;
 
@@ -951,6 +952,9 @@ impl<'exec> Executor<'exec> {
                     .prepare_batch_fetch_job_state(
                         &batch_fetch_node.entity_batch,
                         data,
+                        self.schema_metadata
+                            .entity_keys
+                            .of_subgraph(&batch_fetch_node.service_name),
                         remaining_context_groups,
                     )
                     .map_err(|kind| {
@@ -1022,6 +1026,9 @@ impl<'exec> Executor<'exec> {
                     fetch_node.context_rewrites.as_deref(),
                     &fetch_node.context_variables,
                     &self.schema_metadata.possible_types,
+                    self.schema_metadata
+                        .entity_keys
+                        .of_subgraph(&fetch_node.service_name),
                     remaining_context_groups,
                 )
                 .map_err(|kind| {
@@ -1503,6 +1510,7 @@ impl<'exec> Executor<'exec> {
         &self,
         entity_batch: &'exec EntityBatch,
         data: &Value<'exec>,
+        subgraph_keys: Option<&KeysByType>,
         remaining_context_groups: &mut usize,
     ) -> Result<
         Vec<(Vec<(&'exec str, Vec<u8>)>, Vec<AliasBatchState<'exec>>)>,
@@ -1520,6 +1528,7 @@ impl<'exec> Executor<'exec> {
                     alias_spec.context_rewrites.as_deref(),
                     &alias_spec.context_variables,
                     &self.schema_metadata.possible_types,
+                    subgraph_keys,
                     remaining_context_groups,
                 )
             })
@@ -2042,7 +2051,7 @@ mod tests {
 
         let mut budget = MAX_CONTEXT_GROUPS;
         let waves = executor
-            .prepare_batch_fetch_job_state(&entity_batch, &data, &mut budget)
+            .prepare_batch_fetch_job_state(&entity_batch, &data, None, &mut budget)
             .unwrap();
         assert_eq!(budget, MAX_CONTEXT_GROUPS);
 
@@ -2059,7 +2068,7 @@ mod tests {
         }
         let mut budget = 2;
         let waves = executor
-            .prepare_batch_fetch_job_state(&entity_batch, &data, &mut budget)
+            .prepare_batch_fetch_job_state(&entity_batch, &data, None, &mut budget)
             .unwrap();
         assert_eq!(budget, 0);
         assert_eq!(waves.len(), 1);
@@ -2068,7 +2077,7 @@ mod tests {
         for remaining in [0, 1] {
             let mut budget = remaining;
             assert!(matches!(
-                executor.prepare_batch_fetch_job_state(&entity_batch, &data, &mut budget),
+                executor.prepare_batch_fetch_job_state(&entity_batch, &data, None, &mut budget),
                 Err(PlanExecutionErrorKind::ContextGroupLimitExceeded)
             ));
         }

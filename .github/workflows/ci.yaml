@@ -186,7 +186,7 @@ jobs:
         working-directory: ${{ matrix.package }}
       - name: Upload benchmark results
         if: always() # Upload results even if benchmarks fail
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{matrix.package}}-benchmark-results
           path: ${{matrix.package}}/target/criterion
@@ -377,7 +377,7 @@ jobs:
           done
       - name: Upload failed test cases
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: differential-failed-tests
           path: failed-tests/
@@ -416,7 +416,7 @@ jobs:
         continue-on-error: true # continue even if the test fails
       - name: Upload logs
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: federation-audit-logs
           path: |
