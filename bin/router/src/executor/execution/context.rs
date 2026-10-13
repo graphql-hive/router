@@ -314,7 +314,9 @@ mod tests {
     fn empty_context_selection_sends_null() {
         let data = sonic_rs::from_str(r#"{"__typename":"Transaction","id":"1"}"#).unwrap();
         let path = FlattenNodePath::default();
-        let definition = parse_operation("{ __typename id missing }").definitions.remove(0);
+        let definition = parse_operation("{ __typename id missing }")
+            .definitions
+            .remove(0);
         let graphql_tools::parser::query::Definition::Operation(
             graphql_tools::parser::query::OperationDefinition::SelectionSet(selection),
         ) = definition
