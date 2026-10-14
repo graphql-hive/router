@@ -19,7 +19,8 @@ use crate::query_planner::{
     federation_spec::{CachedFederationRules, FederationRules},
     graph::node::{SubgraphTypeSpecialization, UnionMembersData},
     state::supergraph_state::{
-        OperationKind, SupergraphDefinition, SupergraphField, SupergraphState, SupergraphStateError,
+        OperationKind, SubgraphName as ResolvedSubgraphName, SupergraphDefinition, SupergraphField,
+        SupergraphState, SupergraphStateError,
     },
 };
 use error::GraphError;
@@ -38,6 +39,37 @@ type SubgraphName<'a> = &'a str;
 type UnionMemberTypes<'a> = HashSet<&'a str>;
 type UnionRegistyHashMap<'a> =
     HashMap<UnionTypeName<'a>, HashMap<SubgraphName<'a>, UnionMemberTypes<'a>>>;
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct SubgraphNodeKey<'state> {
+    type_name: &'state str,
+    graph_id: &'state str,
+    is_interface_object: bool,
+}
+
+#[derive(Default)]
+struct GraphBuildContext<'state> {
+    resolved_graph_ids: HashMap<&'state str, ResolvedSubgraphName>,
+    subgraph_nodes: HashMap<SubgraphNodeKey<'state>, NodeIndex>,
+}
+
+impl<'state> GraphBuildContext<'state> {
+    fn resolve_graph_id(
+        &mut self,
+        state: &SupergraphState,
+        graph_id: &'state str,
+    ) -> Result<&ResolvedSubgraphName, GraphError> {
+        if !self.resolved_graph_ids.contains_key(graph_id) {
+            self.resolved_graph_ids
+                .insert(graph_id, state.resolve_graph_id(graph_id)?);
+        }
+
+        Ok(self
+            .resolved_graph_ids
+            .get(graph_id)
+            .expect("resolved graph ID should be cached"))
+    }
+}
 
 #[derive(Debug, Default)]
 struct UnionDefinitions<'a> {
@@ -175,19 +207,20 @@ impl Graph {
     }
 
     #[instrument(level = "trace", skip(self, state))]
-    fn build_graph(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
+    fn build_graph<'state>(&mut self, state: &'state SupergraphState) -> Result<(), GraphError> {
         trace!(
             "Building graph for supergraph with {} definitions",
             state.definitions.len()
         );
 
+        let mut build_context = GraphBuildContext::default();
         let mut cached_rules = CachedFederationRules::default();
 
         self.build_root_nodes(state)?;
-        self.link_root_edges(state)?;
-        let provides = self.build_field_edges(state, &mut cached_rules)?;
-        self.build_interface_implementation_edges(state)?;
-        self.build_entity_reference_edges(state, &mut cached_rules)?;
+        self.link_root_edges(state, &mut build_context)?;
+        let provides = self.build_field_edges(state, &mut build_context, &mut cached_rules)?;
+        self.build_interface_implementation_edges(state, &mut build_context)?;
+        self.build_entity_reference_edges(state, &mut build_context, &mut cached_rules)?;
         self.build_provides_edges(state, provides)?;
 
         Ok(())
@@ -240,6 +273,29 @@ impl Graph {
         index
     }
 
+    fn upsert_subgraph_node<'state>(
+        &mut self,
+        build_context: &mut GraphBuildContext<'state>,
+        state: &SupergraphState,
+        type_name: &'state str,
+        graph_id: &'state str,
+        is_interface_object: bool,
+    ) -> Result<NodeIndex, GraphError> {
+        let key = SubgraphNodeKey {
+            type_name,
+            graph_id,
+            is_interface_object,
+        };
+        if let Some(&node_index) = build_context.subgraph_nodes.get(&key) {
+            return Ok(node_index);
+        }
+
+        let subgraph = build_context.resolve_graph_id(state, graph_id)?.clone();
+        let node_index = self.upsert_node(Node::new_node(type_name, subgraph, is_interface_object));
+        build_context.subgraph_nodes.insert(key, node_index);
+        Ok(node_index)
+    }
+
     pub fn upsert_edge(&mut self, head: NodeIndex, tail: NodeIndex, edge: Edge) -> EdgeIndex {
         let existing_edge = self
             .graph
@@ -279,10 +335,11 @@ impl Graph {
         );
     }
 
-    #[instrument(level = "trace", skip(self, state, cached_rules))]
+    #[instrument(level = "trace", skip(self, state, build_context, cached_rules))]
     fn build_entity_reference_edges<'state>(
         &mut self,
         state: &'state SupergraphState,
+        build_context: &mut GraphBuildContext<'state>,
         cached_rules: &mut CachedFederationRules<'state>,
     ) -> Result<(), GraphError> {
         for (def_name, definition) in state.definitions.iter() {
@@ -290,19 +347,23 @@ impl Graph {
             for join_type1 in definition.join_types() {
                 // Connects object and interface entities of the same name by @key
                 for join_type2 in definition.join_types() {
-                    let head = self.upsert_node(Node::new_node(
+                    let head = self.upsert_subgraph_node(
+                        build_context,
+                        state,
                         def_name,
-                        state.resolve_graph_id(&join_type1.graph_id)?,
+                        &join_type1.graph_id,
                         join_type1.is_interface_object,
-                    ));
+                    )?;
 
                     if join_type1.graph_id != join_type2.graph_id {
                         if let (true, Some(key)) = (&join_type2.resolvable, &join_type2.key) {
-                            let tail = self.upsert_node(Node::new_node(
+                            let tail = self.upsert_subgraph_node(
+                                build_context,
+                                state,
                                 def_name,
-                                state.resolve_graph_id(&join_type2.graph_id)?,
+                                &join_type2.graph_id,
                                 join_type2.is_interface_object,
-                            ));
+                            )?;
                             let key_selection =
                                 cached_rules.parse_key(state, &join_type2.graph_id, def_name, key);
 
@@ -356,11 +417,13 @@ impl Graph {
                 }
 
                 let interface_object_name = def_name;
-                let tail = self.upsert_node(Node::new_node(
+                let tail = self.upsert_subgraph_node(
+                    build_context,
+                    state,
                     interface_object_name,
-                    state.resolve_graph_id(&join_type1.graph_id)?,
+                    &join_type1.graph_id,
                     join_type1.is_interface_object,
-                ));
+                )?;
 
                 let typename_selection = cached_rules.parse_key(
                     state,
@@ -435,11 +498,13 @@ impl Graph {
                             continue;
                         }
 
-                        let head = self.upsert_node(Node::new_node(
+                        let head = self.upsert_subgraph_node(
+                            build_context,
+                            state,
                             object_type_name,
-                            state.resolve_graph_id(&join_type2.graph_id)?,
+                            &join_type2.graph_id,
                             join_type2.is_interface_object,
-                        ));
+                        )?;
 
                         trace!(
                             "Creating entity move edge from '{}/{}' to '{}/{}' via key '{}'",
@@ -463,10 +528,11 @@ impl Graph {
         Ok(())
     }
 
-    #[instrument(level = "trace", skip(self, state))]
-    fn build_interface_implementation_edges(
+    #[instrument(level = "trace", skip(self, state, build_context))]
+    fn build_interface_implementation_edges<'state>(
         &mut self,
-        state: &SupergraphState,
+        state: &'state SupergraphState,
+        build_context: &mut GraphBuildContext<'state>,
     ) -> Result<(), GraphError> {
         for (def_name, definition) in state
             .definitions
@@ -474,20 +540,24 @@ impl Graph {
             .filter(|(_, d)| matches!(d, SupergraphDefinition::Object(_)))
         {
             for join_implements in definition.join_implements() {
-                let tail = self.upsert_node(Node::new_node(
+                let tail = self.upsert_subgraph_node(
+                    build_context,
+                    state,
                     def_name,
-                    state.resolve_graph_id(&join_implements.graph_id)?,
+                    &join_implements.graph_id,
                     // The definition are object types,
                     // so it can't be @interfaceObject (it'd has be Interface).
                     false,
-                ));
-                let head = self.upsert_node(Node::new_node(
+                )?;
+                let head = self.upsert_subgraph_node(
+                    build_context,
+                    state,
                     &join_implements.interface,
-                    state.resolve_graph_id(&join_implements.graph_id)?,
+                    &join_implements.graph_id,
                     // The definition are object types,
                     // so it can't be @interfaceObject (it'd has be Interface).
                     false,
-                ));
+                )?;
 
                 trace!(
                     "Building interface implementation edge from '{}/{}' to '{}/{}'",
@@ -536,8 +606,12 @@ impl Graph {
         self.graph.edges_directed(node_index, Direction::Outgoing)
     }
 
-    #[instrument(level = "trace", skip(self, state))]
-    fn link_root_edges(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
+    #[instrument(level = "trace", skip(self, state, build_context))]
+    fn link_root_edges<'state>(
+        &mut self,
+        state: &'state SupergraphState,
+        build_context: &mut GraphBuildContext<'state>,
+    ) -> Result<(), GraphError> {
         for (def_name, definition) in state.definitions.iter() {
             if let Some(root_type) = definition.try_into_root_type() {
                 for graph_id in definition.subgraphs().iter() {
@@ -568,16 +642,15 @@ impl Graph {
                         }
                         .ok_or(GraphError::MissingRootType(root_type.clone()))?;
 
-                        let tail = self.upsert_node(Node::new_root_node(
-                            def_name,
-                            state.resolve_graph_id(graph_id)?,
-                        ));
+                        let subgraph = build_context.resolve_graph_id(state, graph_id)?.clone();
+                        let tail =
+                            self.upsert_node(Node::new_root_node(def_name, subgraph.clone()));
 
                         self.upsert_edge(
                             head,
                             tail,
                             Edge::SubgraphEntrypoint {
-                                name: state.resolve_graph_id(graph_id)?,
+                                name: subgraph,
                                 operation_kind: root_type.clone(),
                             },
                         );
@@ -590,10 +663,11 @@ impl Graph {
     }
 
     /// Returns the `@provides` of each field edge that has one, for `build_provides_edges`.
-    #[instrument(level = "trace", skip(self, state, cached_rules))]
+    #[instrument(level = "trace", skip(self, state, build_context, cached_rules))]
     fn build_field_edges<'state>(
         &mut self,
         state: &'state SupergraphState,
+        build_context: &mut GraphBuildContext<'state>,
         cached_rules: &mut CachedFederationRules<'state>,
     ) -> Result<HashMap<EdgeIndex, Provided>, GraphError> {
         let unions = UnionDefinitions::new(state);
@@ -601,7 +675,7 @@ impl Graph {
 
         for (def_name, definition) in state.definitions.iter() {
             for graph_id in definition.subgraphs().iter() {
-                let graph_name = state.resolve_graph_id(graph_id)?;
+                let graph_name = build_context.resolve_graph_id(state, graph_id)?.0.clone();
                 if !definition.is_defined_in_subgraph(graph_id) {
                     continue;
                 }
@@ -623,18 +697,22 @@ impl Graph {
                         def_name,
                         graph_id
                     );
-                    let head = self.upsert_node(Node::new_node(
+                    let head = self.upsert_subgraph_node(
+                        build_context,
+                        state,
                         def_name,
-                        state.resolve_graph_id(graph_id)?,
+                        graph_id,
                         // __typename is not resolable for @interfaceObject so it's not it
                         false,
-                    ));
-                    let tail = self.upsert_node(Node::new_node(
+                    )?;
+                    let tail = self.upsert_subgraph_node(
+                        build_context,
+                        state,
                         "String",
-                        state.resolve_graph_id(graph_id)?,
+                        graph_id,
                         // String is not an @interfaceObject
                         false,
-                    ));
+                    )?;
 
                     self.upsert_typename_edge(head, tail, def_name);
                 }
@@ -644,11 +722,13 @@ impl Graph {
                     def_name,
                     graph_id
                 );
-                let head = self.upsert_node(Node::new_node(
+                let head = self.upsert_subgraph_node(
+                    build_context,
+                    state,
                     def_name,
-                    state.resolve_graph_id(graph_id)?,
+                    graph_id,
                     state.is_interface_object_in_subgraph(def_name, graph_id),
-                ));
+                )?;
                 self.upsert_edge(head, head, Edge::Selfie(def_name.clone()));
 
                 for (field_name, field_definition) in definition.fields().iter() {
@@ -674,7 +754,7 @@ impl Graph {
                     // This prevents the current subgraph from creating a resolvable edge for a field it no longer owns.
                     let overridden_by = field_definition.join_field.iter().find_map(|jf| {
                         if let Some(override_from) = &jf.override_value {
-                            if override_from == &graph_name.0 {
+                            if override_from == &graph_name {
                                 let overriding_subgraph_name = state
                                     .resolve_graph_id(jf.graph_id.as_ref().expect(
                                         "@override must be on a @join__field with a graph argument",
@@ -762,11 +842,13 @@ impl Graph {
                     //
                     let target_type_is_union = unions.contains(target_type);
                     if target_type_is_union {
-                        let head = self.upsert_node(Node::new_node(
+                        let head = self.upsert_subgraph_node(
+                            build_context,
+                            state,
                             def_name,
-                            state.resolve_graph_id(graph_id)?,
+                            graph_id,
                             state.is_interface_object_in_subgraph(def_name, graph_id),
-                        ));
+                        )?;
 
                         // Build union-member edges for the current subgraph only. Doing a global
                         // intersection here strips valid members from pinned paths such as
@@ -792,7 +874,7 @@ impl Graph {
                         for member in member_types {
                             let tail = self.upsert_node(Node::new_specialized_node(
                                 target_type,
-                                state.resolve_graph_id(graph_id)?,
+                                build_context.resolve_graph_id(state, graph_id)?.clone(),
                                 state.is_interface_object_in_subgraph(target_type, graph_id),
                                 SubgraphTypeSpecialization::UnionMembers(UnionMembersData {
                                     type_name: def_name.clone(),
@@ -801,17 +883,21 @@ impl Graph {
                                     possible_members: possible_members.clone(),
                                 }),
                             ));
-                            let abstract_tail = self.upsert_node(Node::new_node(
+                            let abstract_tail = self.upsert_subgraph_node(
+                                build_context,
+                                state,
                                 member,
-                                state.resolve_graph_id(graph_id)?,
+                                graph_id,
                                 state.is_interface_object_in_subgraph(member, graph_id),
-                            ));
+                            )?;
                             // because we duplicate tails, we need to add __typename to all of them
-                            let typename_tail = self.upsert_node(Node::new_node(
+                            let typename_tail = self.upsert_subgraph_node(
+                                build_context,
+                                state,
                                 "String",
-                                state.resolve_graph_id(graph_id)?,
+                                graph_id,
                                 false,
-                            ));
+                            )?;
 
                             trace!(
                                 "  [x] Creating field move edge '{}.__typename/{}' (type: String)",
@@ -877,18 +963,20 @@ impl Graph {
                         target_type
                     );
 
-                    let current_subgraph_resolved_id = state.resolve_graph_id(graph_id)?;
-
-                    let head = self.upsert_node(Node::new_node(
+                    let head = self.upsert_subgraph_node(
+                        build_context,
+                        state,
                         def_name,
-                        current_subgraph_resolved_id.clone(),
+                        graph_id,
                         state.is_interface_object_in_subgraph(def_name, graph_id),
-                    ));
-                    let tail = self.upsert_node(Node::new_node(
+                    )?;
+                    let tail = self.upsert_subgraph_node(
+                        build_context,
+                        state,
                         target_type,
-                        current_subgraph_resolved_id.clone(),
+                        graph_id,
                         state.is_interface_object_in_subgraph(target_type, graph_id),
-                    ));
+                    )?;
 
                     let edge = self.upsert_edge(
                         head,
@@ -926,7 +1014,7 @@ impl Graph {
                                 continue;
                             };
 
-                            if graph_id == current_subgraph_resolved_id.0 {
+                            if graph_id == graph_name {
                                 continue;
                             }
 
