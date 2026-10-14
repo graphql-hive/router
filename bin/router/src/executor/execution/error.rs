@@ -7,10 +7,6 @@ use crate::executor::{
 
 #[derive(thiserror::Error, Debug, IntoStaticStr)]
 pub enum PlanExecutionErrorKind {
-    #[error("Context group budget exceeded")]
-    #[strum(serialize = "CONTEXT_GROUP_LIMIT_EXCEEDED")]
-    ContextGroupLimitExceeded,
-
     #[error("Projection failure: {0}")]
     #[strum(serialize = "PROJECTION_FAILURE")]
     ProjectionFailure(#[from] ProjectionError),

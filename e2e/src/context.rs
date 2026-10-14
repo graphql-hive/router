@@ -34,10 +34,11 @@ mod context_e2e_tests {
     }
 
     #[ntex::test]
-    async fn rejects_operations_exceeding_the_context_group_budget() {
+    async fn chunks_context_groups_into_aliased_requests() {
         let mut server = mockito::Server::new_async().await;
         let router = start_router("context-basic", &server).await;
-        let users: Vec<_> = (0..1025)
+        // one more group than fits in one request
+        let users: Vec<_> = (0..16)
             .map(|index| {
                 json!({
                     "__typename": "User",
@@ -55,10 +56,41 @@ mod context_e2e_tests {
             .expect(1)
             .create_async()
             .await;
-        let entities = server
+        let aliased_data: serde_json::Map<_, _> = (0..15)
+            .map(|index| (format!("_entities_{index}"), json!([{"amount": index}])))
+            .collect();
+        let aliased = server
             .mock("POST", "/a")
-            .match_request(|r| body(r)["query"].as_str().unwrap().contains("_entities"))
-            .expect(0)
+            .match_request(|r| {
+                let body = body(r);
+                body["query"].as_str().unwrap().contains("_entities_14:")
+                    && !body["query"].as_str().unwrap().contains("_entities_15:")
+                    && (0..15).all(|index| {
+                        body["variables"][format!("__context_0_{index}")] == index.to_string()
+                            && body["variables"][format!("representations_{index}")]
+                                == json!([{"__typename": "Transaction", "id": "same"}])
+                    })
+            })
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({"data": aliased_data}).to_string())
+            .expect(1)
+            .create_async()
+            .await;
+        let single = server
+            .mock("POST", "/a")
+            .match_request(|r| {
+                let body = body(r);
+                body["variables"]
+                    == json!({
+                        "__context_0": "15",
+                        "representations": [{"__typename": "Transaction", "id": "same"}]
+                    })
+            })
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":{"_entities":[{"amount":15}]}}"#)
+            .expect(1)
             .create_async()
             .await;
 
@@ -66,13 +98,13 @@ mod context_e2e_tests {
             .send_graphql_request("{ users { txs { amount } } }", None, None)
             .await;
         let response: Value = serde_json::from_str(&res.json_body_string_pretty().await).unwrap();
-        assert_eq!(response["data"], Value::Null);
-        assert_eq!(
-            response["errors"][0]["extensions"]["code"],
-            "CONTEXT_GROUP_LIMIT_EXCEEDED"
-        );
+        let expected: Vec<_> = (0..16)
+            .map(|index| json!({"txs": [{"amount": index}]}))
+            .collect();
+        assert_eq!(response, json!({"data": {"users": expected}}));
         root.assert_async().await;
-        entities.assert_async().await;
+        aliased.assert_async().await;
+        single.assert_async().await;
     }
 
     #[ntex::test]
@@ -178,40 +210,23 @@ mod context_e2e_tests {
             .expect(1)
             .create_async()
             .await;
-        let usd = server
+        let entities = server
             .mock("POST", "/a")
             .match_request(|r| {
                 let body = body(r);
-                body["variables"]["__context_0"] == "USD"
+                body["variables"]["__context_0_0"] == "USD"
+                    && body["variables"]["__context_0_1"] == "EUR"
+                    && body["variables"].get("__context_0_2") == Some(&Value::Null)
+                    && (0..3).all(|index| {
+                        body["variables"][format!("representations_{index}")]
+                            == json!([{"__typename":"Transaction","id":"same"}])
+                    })
             })
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"data":{"_entities":[{"amount":1}]}}"#)
-            .expect(1)
-            .create_async()
-            .await;
-        let eur = server
-            .mock("POST", "/a")
-            .match_request(|r| {
-                let body = body(r);
-                body["variables"]["__context_0"] == "EUR"
-            })
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"data":{"_entities":[{"amount":2}]}}"#)
-            .expect(1)
-            .create_async()
-            .await;
-        let null = server
-            .mock("POST", "/a")
-            .match_request(|r| {
-                let body = body(r);
-                body["query"].as_str().unwrap().contains("_entities")
-                    && body["variables"]["__context_0"].is_null()
-            })
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"data":{"_entities":[{"amount":0}]}}"#)
+            .with_body(
+                r#"{"data":{"_entities_0":[{"amount":1}],"_entities_1":[{"amount":2}],"_entities_2":[{"amount":0}]}}"#,
+            )
             .expect(1)
             .create_async()
             .await;
@@ -259,9 +274,7 @@ mod context_e2e_tests {
     }
     "#);
         _root.assert_async().await;
-        usd.assert_async().await;
-        eur.assert_async().await;
-        null.assert_async().await;
+        entities.assert_async().await;
     }
 
     #[ntex::test]
@@ -818,30 +831,21 @@ mod context_e2e_tests {
         .expect(1)
         .create_async()
         .await;
-        let usd = server
+        let entities = server
             .mock("POST", "/a")
             .match_request(|r| {
                 let body = body(r);
-                body["variables"]["__context_0"] == "USD"
-                    && body["variables"]["__batch_reps_0"]
+                body["variables"]["__context_0_0"] == "USD"
+                    && body["variables"]["__batch_reps_0_0"]
                         == json!([{"__typename":"Transaction","id":"same"}])
+                    && body["variables"]["__context_0_1"] == "EUR"
+                    && body["variables"]["__batch_reps_0_1"] == json!([])
             })
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"data":{"_e0":[{"amount":1}],"_e1":[{"amount":1}]}}"#)
-            .expect(1)
-            .create_async()
-            .await;
-        let eur = server
-            .mock("POST", "/a")
-            .match_request(|r| {
-                let body = body(r);
-                body["variables"]["__context_0"] == "EUR"
-                    && body["variables"]["__batch_reps_0"] == json!([])
-            })
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"data":{"_e0":[],"_e1":[{"amount":2}]}}"#)
+            .with_body(
+                r#"{"data":{"_e0_0":[{"amount":1}],"_e1_0":[{"amount":1}],"_e0_1":[],"_e1_1":[{"amount":2}]}}"#,
+            )
             .expect(1)
             .create_async()
             .await;
@@ -886,8 +890,7 @@ mod context_e2e_tests {
     }
     "#);
         _root.assert_async().await;
-        usd.assert_async().await;
-        eur.assert_async().await;
+        entities.assert_async().await;
     }
 
     #[ntex::test]
@@ -911,33 +914,22 @@ mod context_e2e_tests {
         .expect(1)
         .create_async()
         .await;
-        let usd = server
+        let entities = server
             .mock("POST", "/a")
             .match_request(|r| {
                 let body = body(r);
-                body["query"].as_str().unwrap().contains("_e0")
-                    && body["variables"]["__batch_reps_0"] == json!([])
-                    && body["variables"].get("__context_1") == Some(&Value::Null)
-                    && body["variables"]["__context_0"] == "USD"
+                body["query"].as_str().unwrap().contains("_e0_0")
+                    && (0..2).all(|wave| {
+                        body["variables"][format!("__batch_reps_0_{wave}")] == json!([])
+                            && body["variables"].get(format!("__context_1_{wave}"))
+                                == Some(&Value::Null)
+                    })
+                    && body["variables"]["__context_0_0"] == "USD"
+                    && body["variables"]["__context_0_1"] == "EUR"
             })
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"data":{"_e1":[{"amount":1}]}}"#)
-            .expect(1)
-            .create_async()
-            .await;
-        let eur = server
-            .mock("POST", "/a")
-            .match_request(|r| {
-                let body = body(r);
-                body["query"].as_str().unwrap().contains("_e0")
-                    && body["variables"]["__batch_reps_0"] == json!([])
-                    && body["variables"].get("__context_1") == Some(&Value::Null)
-                    && body["variables"]["__context_0"] == "EUR"
-            })
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"data":{"_e1":[{"amount":2}]}}"#)
+            .with_body(r#"{"data":{"_e1_0":[{"amount":1}],"_e1_1":[{"amount":2}]}}"#)
             .expect(1)
             .create_async()
             .await;
@@ -974,8 +966,7 @@ mod context_e2e_tests {
     }
     "#);
         _root.assert_async().await;
-        usd.assert_async().await;
-        eur.assert_async().await;
+        entities.assert_async().await;
     }
 
     #[ntex::test]
