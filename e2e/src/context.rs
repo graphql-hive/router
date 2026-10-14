@@ -491,7 +491,7 @@ mod context_e2e_tests {
     #[ntex::test]
     async fn multiple_arguments_from_different_ancestors() {
         let mut server = mockito::Server::new_async().await;
-        let router = start_router("context-basic", &server).await;
+        let router = start_router("context-outer", &server).await;
         let _root = server
             .mock("POST", "/a")
             .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
@@ -1232,7 +1232,7 @@ mod context_e2e_tests {
     #[ntex::test]
     async fn multi_type_fetch_reads_each_context_from_its_own_ancestor() {
         let mut server = mockito::Server::new_async().await;
-        let router = start_router("context-basic", &server).await;
+        let router = start_router("context-outer", &server).await;
         let root = server
             .mock("POST", "/a")
             .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))

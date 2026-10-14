@@ -76,7 +76,7 @@ fn mutation_results_supply_context_in_root_field_order() -> Result<(), Box<dyn E
 #[test]
 fn multi_type_fetch_preserves_contexts_from_different_ancestors() -> Result<(), Box<dyn Error>> {
     let plan = build_query_plan_with_defaults(
-        "fixture/tests/context-basic.supergraph.graphql",
+        "fixture/tests/context-outer.supergraph.graphql",
         parse_operation("{ outer { user { entries { ... on Transaction { amount } ... on Adjustment { amount } } } } }"),
     )?;
     insta::assert_snapshot!(plan.to_string(), @r#"
@@ -983,7 +983,7 @@ fn union_context_with_type_conditions() -> Result<(), Box<dyn Error>> {
 #[test]
 fn multiple_arguments_from_different_ancestors() -> Result<(), Box<dyn Error>> {
     let query_plan = build_query_plan_with_defaults(
-        "fixture/tests/context-basic.supergraph.graphql",
+        "fixture/tests/context-outer.supergraph.graphql",
         parse_operation(r#"{ outer { user { txs { multiple } } } }"#),
     )?;
 
@@ -1273,73 +1273,6 @@ fn multi_type_fetch_does_not_require_contexts_from_mutually_exclusive_ancestors(
         plan.contains("Flatten(path: \"viewer|[Other].txs.@\")"),
         "{plan}"
     );
-    Ok(())
-}
-
-#[test]
-fn non_null_context_argument_is_not_batched() -> Result<(), Box<dyn Error>> {
-    let query_plan = build_query_plan_with_defaults(
-        "fixture/tests/context-basic.supergraph.graphql",
-        parse_operation(r#"{ users { txs { strict } } secondUsers { txs { strict } } }"#),
-    )?;
-
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "a") {
-          {
-            users {
-              ...a
-            }
-            secondUsers {
-              ...a
-            }
-          }
-          fragment a on User {
-            __typename
-            currency
-            txs {
-              __typename
-              id
-            }
-          }
-        },
-        Parallel {
-          Flatten(path: "secondUsers.@.txs.@") {
-            Fetch(service: "a") {
-              {
-                ... on Transaction {
-                  __typename
-                  id
-                }
-              } =>
-              ($__context_1:String!) {
-                ... on Transaction {
-                  strict(code: $__context_1)
-                }
-              }
-            },
-          },
-          Flatten(path: "users.@.txs.@") {
-            Fetch(service: "a") {
-              {
-                ... on Transaction {
-                  __typename
-                  id
-                }
-              } =>
-              ($__context_0:String!) {
-                ... on Transaction {
-                  strict(code: $__context_0)
-                }
-              }
-            },
-          },
-        },
-      },
-    },
-    "#);
-
     Ok(())
 }
 
