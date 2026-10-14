@@ -25,7 +25,7 @@ use crate::query_planner::{
         selection_set::{InlineFragmentSelection, SelectionSet},
         type_aware_selection::TypeAwareSelection,
     },
-    federation_spec::FederationRules,
+    federation_spec::{CachedFederationRules, FederationRules},
     graph::node::{SubgraphTypeSpecialization, UnionMembersData},
     state::supergraph_state::{
         OperationKind, SupergraphDefinition, SupergraphField, SupergraphState, SupergraphStateError,
@@ -190,11 +190,13 @@ impl Graph {
             state.definitions.len()
         );
 
+        let mut cached_rules = CachedFederationRules::default();
+
         self.build_root_nodes(state)?;
         self.link_root_edges(state)?;
-        let provides = self.build_field_edges(state)?;
+        let provides = self.build_field_edges(state, &mut cached_rules)?;
         self.build_interface_implementation_edges(state)?;
-        self.build_entity_reference_edges(state)?;
+        self.build_entity_reference_edges(state, &mut cached_rules)?;
         self.build_provides_edges(state, provides)?;
 
         Ok(())
@@ -287,8 +289,12 @@ impl Graph {
         );
     }
 
-    #[instrument(level = "trace", skip(self, state))]
-    fn build_entity_reference_edges(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
+    #[instrument(level = "trace", skip(self, state, cached_rules))]
+    fn build_entity_reference_edges<'state>(
+        &mut self,
+        state: &'state SupergraphState,
+        cached_rules: &mut CachedFederationRules<'state>,
+    ) -> Result<(), GraphError> {
         for (def_name, definition) in state.definitions.iter() {
             let is_interface = definition.is_interface_type();
             for join_type1 in definition.join_types() {
@@ -307,12 +313,8 @@ impl Graph {
                                 state.resolve_graph_id(&join_type2.graph_id)?,
                                 join_type2.is_interface_object,
                             ));
-                            let key_selection = FederationRules::parse_key(
-                                state,
-                                &join_type2.graph_id,
-                                def_name,
-                                key,
-                            );
+                            let key_selection =
+                                cached_rules.parse_key(state, &join_type2.graph_id, def_name, key);
 
                             trace!(
                                 "Creating entity move edge from '{}/{}' to '{}/{}' via key '{}'",
@@ -331,7 +333,7 @@ impl Graph {
                         }
                     } else if let (true, Some(key)) = (&join_type1.resolvable, &join_type1.key) {
                         let key_selection =
-                            FederationRules::parse_key(state, &join_type1.graph_id, def_name, key);
+                            cached_rules.parse_key(state, &join_type1.graph_id, def_name, key);
 
                         trace!(
                             "Creating self-referencing entity move edge in '{}/{}' via key '{}'",
@@ -370,11 +372,11 @@ impl Graph {
                     join_type1.is_interface_object,
                 ));
 
-                let typename_selection = FederationRules::parse_key(
+                let typename_selection = cached_rules.parse_key(
                     state,
                     &join_type1.graph_id,
                     interface_object_name,
-                    &"__typename".to_string(),
+                    "__typename",
                 );
 
                 for (object_type_name, object_type_definition) in state
@@ -428,7 +430,7 @@ impl Graph {
                         .as_ref()
                         .expect("@interfaceObject to have a key");
 
-                    let key_selection = FederationRules::parse_key(
+                    let key_selection = cached_rules.parse_key(
                         state,
                         &join_type1.graph_id,
                         interface_object_name,
@@ -598,10 +600,11 @@ impl Graph {
     }
 
     /// Returns the `@provides` of each field edge that has one, for `build_provides_edges`.
-    #[instrument(level = "trace", skip(self, state))]
-    fn build_field_edges(
+    #[instrument(level = "trace", skip(self, state, cached_rules))]
+    fn build_field_edges<'state>(
         &mut self,
-        state: &SupergraphState,
+        state: &'state SupergraphState,
+        cached_rules: &mut CachedFederationRules<'state>,
     ) -> Result<HashMap<EdgeIndex, Provided>, GraphError> {
         let unions = UnionDefinitions::new(state);
         let mut provides = HashMap::new();
@@ -713,18 +716,16 @@ impl Graph {
 
                     let requirements = maybe_join_field.and_then(|join_field| {
                         join_field.requires.as_ref().map(|requires_str| {
-                          (requires_str, join_field.graph_id.as_ref().expect("join__field(graph:) should exist when join__field(requires:) exists"))
-                        })
-                    }).map(|(requires_str, graph_id)| TypeAwareSelection {
-                              type_name: def_name.to_string(),
-                              selection_set: FederationRules::parse_requires(
+                            cached_rules.parse_requires(
                                 state,
-                                graph_id,
+                                join_field.graph_id.as_ref().expect(
+                                    "join__field(graph:) should exist when join__field(requires:) exists",
+                                ),
                                 def_name,
                                 requires_str,
-                              )
-                              .into(),
-                          });
+                            )
+                        })
+                    });
 
                     let context_arguments = maybe_join_field
                         .map(|join_field| {
@@ -797,12 +798,7 @@ impl Graph {
                     let provided = maybe_join_field
                         .and_then(|join_field| {
                             let graph_id = join_field.graph_id.as_ref()?;
-                            FederationRules::parse_provides(
-                                state,
-                                join_field,
-                                graph_id,
-                                target_type,
-                            )
+                            cached_rules.parse_provides(state, join_field, graph_id, target_type)
                         })
                         .map(|selection_set| Provided::from_selection_set(&selection_set));
 
