@@ -13,7 +13,7 @@ use crate::query_planner::{
     federation_spec::{
         demand_control::{CostDirective, ListSizeDirective},
         directives::{
-            AuthenticatedDirective, FederationDirective, InaccessibleDirective,
+            AuthenticatedDirective, ContextDirective, FederationDirective, InaccessibleDirective,
             JoinEnumValueDirective, JoinFieldDirective, JoinGraphDirective,
             JoinImplementsDirective, JoinTypeDirective, JoinUnionMemberDirective, PolicyDirective,
             RequiresScopesDirective,
@@ -209,6 +209,8 @@ pub struct SupergraphState {
     pub interface_to_object_types: InterfaceToObjectTypesMap,
     /// A pre-computed set of all progressive override labels in the supergraph
     pub progressive_overrides: ProgressiveOverrides,
+    /// Maps each context name to the object, interface, or union types that declare it.
+    pub contexts: HashMap<String, Vec<String>>,
     /// Each subgraph's resolvable `@key`s, by entity type, parsed once. The graph's entity moves
     /// use them, and the executor's `SchemaMetadata` shares them.
     pub entity_keys: Arc<EntityKeys>,
@@ -228,12 +230,14 @@ impl SupergraphState {
             Self::create_interface_object_in_subgraph(&definitions);
         let interface_to_object_types = Self::create_interface_to_object_types(&definitions);
         let progressive_overrides = Self::extract_progressive_overrides(&definitions);
+        let contexts = Self::extract_contexts(&schema.definitions);
 
         let mut instance = Self {
             definitions,
             interface_object_types_in_subgraphs,
             interface_to_object_types,
             progressive_overrides,
+            contexts,
             known_subgraphs,
             subgraph_names,
             subgraph_endpoint_map,
@@ -435,6 +439,33 @@ impl SupergraphState {
             }
         }
         overrides
+    }
+
+    fn extract_contexts(
+        definitions: &[input::Definition<'static, String>],
+    ) -> HashMap<String, Vec<String>> {
+        let mut contexts: HashMap<String, Vec<String>> = HashMap::new();
+        for definition in definitions {
+            let (name, directives) = match definition {
+                input::Definition::TypeDefinition(input::TypeDefinition::Object(object)) => {
+                    (&object.name, &object.directives)
+                }
+                input::Definition::TypeDefinition(input::TypeDefinition::Interface(interface)) => {
+                    (&interface.name, &interface.directives)
+                }
+                input::Definition::TypeDefinition(input::TypeDefinition::Union(union)) => {
+                    (&union.name, &union.directives)
+                }
+                _ => continue,
+            };
+            for context in Self::extract_directives::<ContextDirective>(directives) {
+                let types = contexts.entry(context.name).or_default();
+                if !types.contains(name) {
+                    types.push(name.clone());
+                }
+            }
+        }
+        contexts
     }
 
     fn extract_known_scalars(schema: &SchemaDocument) -> HashSet<String> {

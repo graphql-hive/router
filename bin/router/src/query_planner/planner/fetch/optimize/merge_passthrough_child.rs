@@ -88,6 +88,10 @@ impl FetchStepData<MultiTypeFetchStep> {
         other: &Self,
         fetch_graph: &FetchGraph<MultiTypeFetchStep>,
     ) -> bool {
+        if !self.can_merge_context(other) {
+            return false;
+        }
+
         if self_index == other_index {
             return false;
         }
@@ -143,6 +147,9 @@ fn perform_passthrough_child_merge(
     );
 
     me.output.migrate_from_another(&other.output, &path)?;
+    me.merge_context_metadata(other);
+    let source_id = other.id;
+    let target_id = me.id;
 
     let mut children_indexes: Vec<NodeIndex> = vec![];
     let mut parents_indexes: Vec<NodeIndex> = vec![];
@@ -182,6 +189,11 @@ fn perform_passthrough_child_merge(
 
     // 3. Drop other -> child and parent -> other
     trace!("removing other [{}] from graph", other_index.index());
+    for step in fetch_graph.graph.node_weights_mut() {
+        if step.context_producers.remove(&source_id) {
+            step.context_producers.insert(target_id);
+        }
+    }
     fetch_graph.remove_step(other_index);
 
     Ok(())

@@ -1,4 +1,4 @@
-use std::collections::hash_map::Entry;
+use super::context::{collect_context_entities, MAX_CONTEXT_GROUPS};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::vec;
@@ -23,7 +23,6 @@ use crate::telemetry::traces::spans::graphql::{
 };
 use crate::telemetry::traces::spans::observed_error::ObservedError;
 use ahash::{HashMap as AHashMap, HashMapExt};
-use bytes::BufMut;
 use futures::TryFutureExt;
 use futures::{
     future::BoxFuture,
@@ -44,7 +43,9 @@ use crate::executor::headers::cache_control;
 use crate::executor::{
     execution::{
         client_request_details::ClientRequestDetails,
-        error::{IntoPlanExecutionError, LazyPlanContext, PlanExecutionError},
+        error::{
+            IntoPlanExecutionError, LazyPlanContext, PlanExecutionError, PlanExecutionErrorKind,
+        },
         jwt_forward::JwtAuthForwardingPlan,
         rewrites::FetchRewriteExt,
     },
@@ -70,17 +71,14 @@ use crate::executor::{
     plugin_context::PluginRequestState,
     plugin_trait::{EarlyHTTPResponse, EndControlFlow, StartControlFlow},
     plugins::hooks,
-    projection::{plan::ProjectionPlan, request::project_requires, response::project_by_operation},
+    projection::{plan::ProjectionPlan, response::project_by_operation},
     response::{
         graphql_error::{GraphQLError, GraphQLErrorPath, GraphQLErrorPathSegment},
         merge::deep_merge,
         subgraph_response::SubgraphResponse,
         value::Value,
     },
-    utils::{
-        consts::{CLOSE_BRACKET, OPEN_BRACKET},
-        traverse::{traverse_and_callback, traverse_and_callback_mut},
-    },
+    utils::traverse::traverse_and_callback_mut,
 };
 use crate::query_planner::state::entity_keys::KeysByType;
 
@@ -542,8 +540,15 @@ async fn execute_query_plan_with_data<'exec>(
         connection_fingerprint: opts.connection_fingerprint,
     };
 
+    let mut remaining_context_groups = MAX_CONTEXT_GROUPS;
     if let Some(node) = &opts.query_plan.node {
-        executor.execute_plan_node(&mut exec_ctx, node).await;
+        if let Err(err) = executor
+            .execute_plan_node(&mut exec_ctx, node, &mut remaining_context_groups)
+            .await
+        {
+            exec_ctx.data = Value::Null;
+            executor.process_job_result(&mut exec_ctx, Err(err));
+        }
     }
 
     let error_count = exec_ctx.errors.len(); // Added for usage reporting
@@ -736,7 +741,7 @@ pub enum ExecutionJob<'exec> {
         operation: &'exec SubgraphFetchOperation,
         response: SubgraphResponse<'exec>,
         flatten_node_path: &'exec FlattenNodePath,
-        representation_hashes: Vec<Option<u64>>,
+        representation_hashes: Arc<Vec<Option<u64>>>,
         representation_hash_to_index: AHashMap<u64, usize>,
         output_rewrites: Option<&'exec [FetchRewrite]>,
     },
@@ -834,7 +839,12 @@ struct PrepareExecutionJobOpts<'exec> {
 }
 
 impl<'exec> Executor<'exec> {
-    async fn execute_plan_node(&self, ctx: &mut ExecutionContext<'exec>, node: &'exec PlanNode) {
+    async fn execute_plan_node(
+        &self,
+        ctx: &mut ExecutionContext<'exec>,
+        node: &'exec PlanNode,
+        remaining_context_groups: &mut usize,
+    ) -> Result<(), PlanExecutionError> {
         match node {
             PlanNode::Parallel(parallel_node) => {
                 let mut scope = FuturesUnordered::new();
@@ -842,7 +852,9 @@ impl<'exec> Executor<'exec> {
                 for child in &parallel_node.nodes {
                     // We borrow `ctx.data` only for sync preparation of the job future,
                     // and the actual execution of the job future is done without the borrow of `ctx.data`
-                    if let Some(fut) = self.prepare_job_future(child, &ctx.data) {
+                    for fut in
+                        self.prepare_job_future(child, &ctx.data, remaining_context_groups)?
+                    {
                         scope.push(fut);
                     }
                 }
@@ -855,7 +867,7 @@ impl<'exec> Executor<'exec> {
                 for child in &sequence_node.nodes {
                     // We use `Box.pin` here to avoid the compiler error about recursive future,
                     // as `execute_plan_node` is calling itself recursively for sequence nodes
-                    Box::pin(self.execute_plan_node(ctx, child)).await;
+                    Box::pin(self.execute_plan_node(ctx, child, remaining_context_groups)).await?;
                 }
             }
             PlanNode::Condition(condition_node) => {
@@ -864,16 +876,21 @@ impl<'exec> Executor<'exec> {
                 {
                     // We use `Box.pin` here to avoid the compiler error about recursive future,
                     // as `execute_plan_node` is calling itself recursively for condition nodes
-                    Box::pin(self.execute_plan_node(ctx, next_node)).await;
+                    Box::pin(self.execute_plan_node(ctx, next_node, remaining_context_groups))
+                        .await?;
                 }
             }
             node => {
-                if let Some(fut) = self.prepare_job_future(node, &ctx.data) {
-                    let job = fut.await;
+                let mut scope: FuturesUnordered<_> = self
+                    .prepare_job_future(node, &ctx.data, remaining_context_groups)?
+                    .into_iter()
+                    .collect();
+                while let Some(job) = scope.next().await {
                     self.process_job_result(ctx, job);
                 }
             }
         }
+        Ok(())
     }
 
     fn prepare_root_reentry_fetch_job<'wave>(
@@ -900,19 +917,23 @@ impl<'exec> Executor<'exec> {
     /**
      * This function is sync, because we only need the immutable borrow of `ctx.data` to prepare the subgraph request,
      * and the actual execution of the subgraph request is done in `prepare_fetch_job` which is async.
-     * So we do everything in sync with `ctx.data` and return a future for the actual execution of the subgraph request.
+     * So we do everything in sync with `ctx.data` and return futures for the actual execution of the subgraph requests.
      *
-     * The return type is not a future of `Option`, but `Option` of future because the only case when we don't have a future,
-     * and the result(`None`) is when the plan node is flatten node with no data.
+     * A node can produce no futures (a flatten node with no data) or many (one per group of
+     * contextual argument values).
      */
     fn prepare_job_future<'wave>(
         &'wave self,
         node: &'exec PlanNode,
         data: &Value<'exec>,
-    ) -> Option<BoxFuture<'wave, Result<ExecutionJob<'exec>, PlanExecutionError>>> {
-        match node {
-            PlanNode::Fetch(fetch_node) => Some(
-                self.prepare_execution_job(PrepareExecutionJobOpts {
+        remaining_context_groups: &mut usize,
+    ) -> Result<
+        Vec<BoxFuture<'wave, Result<ExecutionJob<'exec>, PlanExecutionError>>>,
+        PlanExecutionError,
+    > {
+        Ok(match node {
+            PlanNode::Fetch(fetch_node) => vec![self
+                .prepare_execution_job(PrepareExecutionJobOpts {
                     subgraph_name: &fetch_node.service_name,
                     variable_usages: fetch_node.variable_usages.as_ref(),
                     operation_name: self
@@ -925,173 +946,143 @@ impl<'exec> Executor<'exec> {
                     raw_variable_values: None,
                     affected_path: None,
                 })
-                .boxed(),
-            ),
+                .boxed()],
             PlanNode::BatchFetch(batch_fetch_node) => {
-                let (raw_variable_values, aliases) = self.prepare_batch_fetch_job_state(
-                    &batch_fetch_node.entity_batch,
-                    data,
-                    self.schema_metadata
-                        .entity_keys
-                        .of_subgraph(&batch_fetch_node.service_name),
-                );
+                let waves = self
+                    .prepare_batch_fetch_job_state(
+                        &batch_fetch_node.entity_batch,
+                        data,
+                        self.schema_metadata
+                            .entity_keys
+                            .of_subgraph(&batch_fetch_node.service_name),
+                        remaining_context_groups,
+                    )
+                    .map_err(|kind| {
+                        PlanExecutionError::new(
+                            kind,
+                            LazyPlanContext {
+                                subgraph_name: || Some(batch_fetch_node.service_name.clone()),
+                                affected_path: || None,
+                            },
+                        )
+                    })?;
 
-                if aliases
-                    .iter()
-                    .all(|alias| alias.representation_hash_to_index.is_empty())
-                {
+                if waves.is_empty() {
                     // All alias lists are empty, so nothing to fetch.
                     // We skip the network call to save time.
                     debug!(
                         target: targets::GRAPHQL_EXECUTION,
-                        alias_count = aliases.len(),
+                        alias_count = batch_fetch_node.entity_batch.aliases.len(),
                         "Skipping batched entity fetch with no representations"
                     );
-
-                    return None;
                 }
 
-                Some(
-                    self.prepare_execution_job(PrepareExecutionJobOpts {
-                        subgraph_name: &batch_fetch_node.service_name,
-                        variable_usages: batch_fetch_node.variable_usages.as_ref(),
-                        operation_name: self
-                            .operation_name_factory
-                            .generate(&batch_fetch_node.service_name, batch_fetch_node.id),
-                        operation_kind: batch_fetch_node.operation_kind.as_ref(),
-                        operation: &batch_fetch_node.operation,
-                        output_rewrites: None,
-                        custom_scalar_paths: batch_fetch_node.custom_scalar_paths.as_ref(),
-                        raw_variable_values: Some(raw_variable_values),
-                        affected_path: None,
+                waves
+                    .into_iter()
+                    .map(|(raw_variable_values, aliases)| {
+                        self.prepare_execution_job(PrepareExecutionJobOpts {
+                            subgraph_name: &batch_fetch_node.service_name,
+                            variable_usages: batch_fetch_node.variable_usages.as_ref(),
+                            operation_name: self
+                                .operation_name_factory
+                                .generate(&batch_fetch_node.service_name, batch_fetch_node.id),
+                            operation_kind: batch_fetch_node.operation_kind.as_ref(),
+                            operation: &batch_fetch_node.operation,
+                            output_rewrites: None,
+                            custom_scalar_paths: batch_fetch_node.custom_scalar_paths.as_ref(),
+                            raw_variable_values: Some(raw_variable_values),
+                            affected_path: None,
+                        })
+                        .map_ok(|fetch_job| ExecutionJob::BatchFetch {
+                            operation: fetch_job.operation(),
+                            subgraph_name: fetch_job.subgraph_name(),
+                            response: fetch_job.response(),
+                            aliases,
+                        })
+                        .boxed()
                     })
-                    .map_ok(|fetch_job| ExecutionJob::BatchFetch {
-                        operation: fetch_job.operation(),
-                        subgraph_name: fetch_job.subgraph_name(),
-                        response: fetch_job.response(),
-                        aliases,
-                    })
-                    .boxed(),
-                )
+                    .collect()
             }
             PlanNode::Flatten(flatten_node) => {
                 let fetch_node = match flatten_node.node.as_ref() {
                     PlanNode::Fetch(fetch_node) => fetch_node,
-                    _ => return None,
+                    _ => return Ok(Vec::new()),
                 };
 
                 // If there are no requirements in the node (no _entities call), then we only need to make
                 // a regular call. This happens when we perform subgraph re-entry.
                 // So we can just create the fetch step future with the info we have
                 let Some(requires_nodes) = fetch_node.requires.as_ref() else {
-                    return Some(self.prepare_root_reentry_fetch_job(flatten_node, fetch_node));
+                    return Ok(vec![
+                        self.prepare_root_reentry_fetch_job(flatten_node, fetch_node)
+                    ]);
                 };
 
-                let mut index = 0;
-                let normalized_path = flatten_node.path.as_slice();
-                let mut filtered_representations = Vec::new();
-                filtered_representations.put(OPEN_BRACKET);
-                let possible_types = &self.schema_metadata.possible_types;
-                let subgraph_keys = self
-                    .schema_metadata
-                    .entity_keys
-                    .of_subgraph(&fetch_node.service_name);
-                let mut representation_hashes: Vec<Option<u64>> = Vec::new();
-                let mut representation_hash_to_index: AHashMap<u64, usize> = AHashMap::new();
-                let arena = bumpalo::Bump::new();
-
-                // The `requires` selections to walk for each entity. Take the view once here
-                // instead of once per entity. It only borrows the plan, so this costs nothing.
-                let required_selections = requires_nodes.root_selections();
-
-                traverse_and_callback(
+                let (groups, mut path_hashes) = collect_context_entities(
                     data,
-                    normalized_path,
+                    [flatten_node.path.as_ref()],
+                    requires_nodes,
+                    fetch_node.input_rewrites.as_deref(),
+                    fetch_node.context_rewrites.as_deref(),
+                    &fetch_node.context_variables,
                     &self.schema_metadata.possible_types,
-                    &mut |entity| {
-                        if entity.is_null() {
-                            representation_hashes.push(None);
-                            return;
-                        }
-
-                        let hash = entity.to_hash(required_selections, possible_types);
-                        representation_hashes.push(Some(hash));
-                        let is_first_representation = representation_hash_to_index.is_empty();
-                        let vacant_entry = match representation_hash_to_index.entry(hash) {
-                            Entry::Occupied(_) => return,
-                            Entry::Vacant(vacant_entry) => vacant_entry,
-                        };
-
-                        let entity = if let Some(input_rewrites) = &fetch_node.input_rewrites {
-                            let new_entity = arena.alloc(entity.clone());
-                            for input_rewrite in input_rewrites {
-                                input_rewrite
-                                    .rewrite(&self.schema_metadata.possible_types, new_entity);
-                            }
-                            new_entity
-                        } else {
-                            entity
-                        };
-
-                        let is_projected = project_requires(
-                            possible_types,
-                            required_selections,
-                            entity,
-                            &mut filtered_representations,
-                            is_first_representation,
-                            None,
-                            false,
-                            subgraph_keys,
-                        );
-
-                        if is_projected {
-                            vacant_entry.insert(index);
-                            index += 1;
-                        }
-                    },
-                );
-
-                filtered_representations.put(CLOSE_BRACKET);
-
-                if representation_hash_to_index.is_empty() {
-                    return None;
-                }
-
-                // This is the future for the actual fetch job
-                Some(
-                    self.prepare_execution_job(PrepareExecutionJobOpts {
-                        subgraph_name: &fetch_node.service_name,
-                        variable_usages: fetch_node.variable_usages.as_ref(),
-                        operation_name: self
-                            .operation_name_factory
-                            .generate(&fetch_node.service_name, fetch_node.id),
-                        operation_kind: fetch_node.operation_kind.as_ref(),
-                        operation: &fetch_node.operation,
-                        output_rewrites: fetch_node.output_rewrites.as_deref(),
-                        custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
-                        raw_variable_values: Some(vec![(
-                            "representations",
-                            filtered_representations,
-                        )]),
-                        affected_path: Some(flatten_node.path.as_ref()),
-                    })
-                    .map_ok(|fetch_job| ExecutionJob::FlattenFetch {
-                        operation: fetch_job.operation(),
-                        flatten_node_path: &flatten_node.path,
-                        response: fetch_job.response(),
-                        subgraph_name: fetch_node.service_name.as_str(),
-                        representation_hashes,
-                        representation_hash_to_index,
-                        output_rewrites: fetch_node.output_rewrites.as_deref(),
-                    })
-                    .boxed(),
+                    self.schema_metadata
+                        .entity_keys
+                        .of_subgraph(&fetch_node.service_name),
+                    remaining_context_groups,
                 )
+                .map_err(|kind| {
+                    PlanExecutionError::new(
+                        kind,
+                        LazyPlanContext {
+                            subgraph_name: || Some(fetch_node.service_name.clone()),
+                            affected_path: || Some(flatten_node.path.to_string()),
+                        },
+                    )
+                })?;
+                let representation_hashes = path_hashes.pop().unwrap_or_default();
+
+                groups
+                    .into_iter()
+                    .filter(|group| !group.hash_to_index.is_empty())
+                    .map(|group| {
+                        let mut raw_variable_values = group.variables;
+                        raw_variable_values.push(("representations", group.representations));
+                        let representation_hashes = Arc::clone(&representation_hashes);
+                        self.prepare_execution_job(PrepareExecutionJobOpts {
+                            subgraph_name: &fetch_node.service_name,
+                            variable_usages: fetch_node.variable_usages.as_ref(),
+                            operation_name: self
+                                .operation_name_factory
+                                .generate(&fetch_node.service_name, fetch_node.id),
+                            operation_kind: fetch_node.operation_kind.as_ref(),
+                            operation: &fetch_node.operation,
+                            output_rewrites: fetch_node.output_rewrites.as_deref(),
+                            custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
+                            raw_variable_values: Some(raw_variable_values),
+                            affected_path: Some(flatten_node.path.as_ref()),
+                        })
+                        .map_ok(move |fetch_job| ExecutionJob::FlattenFetch {
+                            operation: fetch_job.operation(),
+                            flatten_node_path: &flatten_node.path,
+                            response: fetch_job.response(),
+                            subgraph_name: fetch_node.service_name.as_str(),
+                            representation_hashes,
+                            representation_hash_to_index: group.hash_to_index,
+                            output_rewrites: fetch_node.output_rewrites.as_deref(),
+                        })
+                        .boxed()
+                    })
+                    .collect()
             }
-            PlanNode::Condition(node) => condition_node_by_variables(node, self.variable_values)
-                .and_then(|node| self.prepare_job_future(node, data)),
+            PlanNode::Condition(node) => {
+                return condition_node_by_variables(node, self.variable_values)
+                    .map(|node| self.prepare_job_future(node, data, remaining_context_groups))
+                    .unwrap_or_else(|| Ok(Vec::new()))
+            }
             // Our Query Planner does not produce any other plan node types in ParallelNode
-            _ => None,
-        }
+            _ => Vec::new(),
+        })
     }
 
     // We handle `Result` instead of passing `PlanExecutionError` directly
@@ -1511,120 +1502,112 @@ impl<'exec> Executor<'exec> {
     // The preperation includes:
     // - building one `_entities` input list for each alias
     // - remembering where each item came from (so we can put results back)
+    //
+    // Returns one request ("wave") per group of contextual argument values, without contexts
+    // that's at most one.
+    #[allow(clippy::type_complexity)]
     fn prepare_batch_fetch_job_state(
         &self,
         entity_batch: &'exec EntityBatch,
         data: &Value<'exec>,
         subgraph_keys: Option<&KeysByType>,
-    ) -> (Vec<(&'exec str, Vec<u8>)>, Vec<AliasBatchState<'exec>>) {
-        let mut raw_variable_values: Vec<(&'exec str, Vec<u8>)> =
-            Vec::with_capacity(entity_batch.aliases.len());
-        let mut raw_variable_indices_by_name: AHashMap<&'exec str, usize> =
-            AHashMap::with_capacity(entity_batch.aliases.len());
-        let mut aliases = Vec::with_capacity(entity_batch.aliases.len());
+        remaining_context_groups: &mut usize,
+    ) -> Result<
+        Vec<(Vec<(&'exec str, Vec<u8>)>, Vec<AliasBatchState<'exec>>)>,
+        PlanExecutionErrorKind,
+    > {
+        let mut prepared: Vec<_> = entity_batch
+            .aliases
+            .iter()
+            .map(|alias_spec| {
+                collect_context_entities(
+                    data,
+                    alias_spec.merge_paths.iter(),
+                    &alias_spec.requires,
+                    alias_spec.input_rewrites.as_deref(),
+                    alias_spec.context_rewrites.as_deref(),
+                    &alias_spec.context_variables,
+                    &self.schema_metadata.possible_types,
+                    subgraph_keys,
+                    remaining_context_groups,
+                )
+            })
+            .collect::<Result<_, _>>()?;
 
-        let possible_types = &self.schema_metadata.possible_types;
-
-        for alias_spec in &entity_batch.aliases {
-            let mut index = 0;
-            let mut filtered_representations = Vec::new();
-            filtered_representations.put(OPEN_BRACKET);
-            let mut representation_hash_to_index: AHashMap<u64, usize> = AHashMap::new();
-            let arena = bumpalo::Bump::new();
-            let mut path_hashes_by_index: Vec<Option<Arc<Vec<Option<u64>>>>> =
-                vec![None; alias_spec.merge_paths.len()];
-
-            let mut path_groups: Vec<(ResponsePathRef<'_>, Vec<usize>)> =
-                Vec::with_capacity(alias_spec.merge_paths.len());
-            for (path_index, merge_path) in alias_spec.merge_paths.iter().enumerate() {
-                if let Some((_, target_indices)) =
-                    path_groups.iter_mut().find(|(path, _)| *path == merge_path)
-                {
-                    target_indices.push(path_index);
+        let wave_count = prepared
+            .iter()
+            .map(|(groups, _)| groups.len())
+            .max()
+            .unwrap_or_default();
+        let mut waves = Vec::with_capacity(wave_count);
+        for wave in 0..wave_count {
+            let mut raw_variable_values: Vec<(&'exec str, Vec<u8>)> =
+                Vec::with_capacity(entity_batch.aliases.len());
+            let mut aliases = Vec::with_capacity(entity_batch.aliases.len());
+            for (alias_spec, (groups, path_hashes)) in
+                entity_batch.aliases.iter().zip(&mut prepared)
+            {
+                // an alias with fewer groups still needs its context variables, it just sends no representations
+                if let Some(values) = groups.get(wave).or_else(|| groups.first()) {
+                    raw_variable_values.extend(values.variables.clone());
                 } else {
-                    path_groups.push((merge_path, vec![path_index]));
-                }
-            }
-
-            for (merge_path, grouped_target_indices) in path_groups {
-                let mut representation_hashes: Vec<Option<u64>> = Vec::new();
-
-                let required_selections = alias_spec.requires.root_selections();
-
-                traverse_and_callback(data, merge_path.as_slice(), possible_types, &mut |entity| {
-                    if entity.is_null() {
-                        representation_hashes.push(None);
-                        return;
-                    }
-
-                    let hash = entity.to_hash(required_selections, possible_types);
-                    representation_hashes.push(Some(hash));
-                    let is_first_representation = representation_hash_to_index.is_empty();
-                    let vacant_entry = match representation_hash_to_index.entry(hash) {
-                        Entry::Occupied(_) => return,
-                        Entry::Vacant(vacant_entry) => vacant_entry,
-                    };
-
-                    let entity = if let Some(input_rewrites) = &alias_spec.input_rewrites {
-                        let new_entity = arena.alloc(entity.clone());
-                        for input_rewrite in input_rewrites {
-                            input_rewrite.rewrite(&self.schema_metadata.possible_types, new_entity);
+                    for name in alias_spec
+                        .context_variables
+                        .iter()
+                        .map(String::as_str)
+                        .chain(
+                            alias_spec
+                                .context_rewrites
+                                .iter()
+                                .flatten()
+                                .map(|rewrite| rewrite.rename_key_to.as_str()),
+                        )
+                    {
+                        if !raw_variable_values
+                            .iter()
+                            .any(|(existing, _)| *existing == name)
+                        {
+                            raw_variable_values.push((name, b"null".to_vec()));
                         }
-                        new_entity
-                    } else {
-                        entity
-                    };
-
-                    let is_projected = project_requires(
-                        possible_types,
-                        required_selections,
-                        entity,
-                        &mut filtered_representations,
-                        is_first_representation,
-                        None,
-                        false,
-                        subgraph_keys,
-                    );
-
-                    if is_projected {
-                        vacant_entry.insert(index);
-                        index += 1;
                     }
-                });
-
-                let representation_hashes = Arc::new(representation_hashes);
-
-                for path_index in grouped_target_indices {
-                    path_hashes_by_index[path_index] = Some(Arc::clone(&representation_hashes));
                 }
-            }
-
-            filtered_representations.put(CLOSE_BRACKET);
-
-            let mut paths = Vec::with_capacity(alias_spec.merge_paths.len());
-            for (path_index, merge_path) in alias_spec.merge_paths.iter().enumerate() {
-                paths.push(AliasPathState {
-                    merge_path,
-                    representation_hashes: path_hashes_by_index[path_index]
-                        .take()
-                        .unwrap_or_else(|| Arc::new(Vec::new())),
+                let mut group = groups.get_mut(wave);
+                let variable_name = alias_spec.representations_variable_name.as_str();
+                if !raw_variable_values
+                    .iter()
+                    .any(|(name, _)| *name == variable_name)
+                {
+                    let representations = group
+                        .as_mut()
+                        .map(|group| std::mem::take(&mut group.representations))
+                        .unwrap_or_else(|| b"[]".to_vec());
+                    raw_variable_values.push((variable_name, representations));
+                }
+                aliases.push(AliasBatchState {
+                    alias_spec,
+                    representation_hash_to_index: group
+                        .map(|group| std::mem::take(&mut group.hash_to_index))
+                        .unwrap_or_default(),
+                    paths: alias_spec
+                        .merge_paths
+                        .iter()
+                        .zip(path_hashes.iter())
+                        .map(|(merge_path, representation_hashes)| AliasPathState {
+                            merge_path,
+                            representation_hashes: Arc::clone(representation_hashes),
+                        })
+                        .collect(),
                 });
             }
-
-            let variable_name = alias_spec.representations_variable_name.as_str();
-            if !raw_variable_indices_by_name.contains_key(variable_name) {
-                raw_variable_indices_by_name.insert(variable_name, raw_variable_values.len());
-                raw_variable_values.push((variable_name, filtered_representations));
+            if aliases
+                .iter()
+                .any(|alias| !alias.representation_hash_to_index.is_empty())
+            {
+                waves.push((raw_variable_values, aliases));
             }
-
-            aliases.push(AliasBatchState {
-                alias_spec,
-                representation_hash_to_index,
-                paths,
-            });
         }
 
-        (raw_variable_values, aliases)
+        Ok(waves)
     }
 
     async fn prepare_execution_job(
@@ -1784,12 +1767,15 @@ mod tests {
         SubgraphExecutorMap,
     };
 
-    use super::select_fetch_variables;
+    use super::{select_fetch_variables, PlanExecutionErrorKind, MAX_CONTEXT_GROUPS};
     use crate::query_planner::{
         ast::{
             document::Document, operation::PlanningFetchOperation, requires::RequiresSelectionSet,
         },
-        planner::plan_nodes::{EntityBatch, EntityBatchAlias, FetchNode, ParallelNode, PlanNode},
+        planner::plan_nodes::{
+            EntityBatch, EntityBatchAlias, FetchNode, FlattenNodePath, ParallelNode, PathSegment,
+            PlanNode,
+        },
         utils::parsing::parse_operation,
     };
     use crate::telemetry::TelemetryContext;
@@ -2031,33 +2017,70 @@ mod tests {
         let requires_selection = document_into_selection(requires_query);
 
         let shared_var = "__batch_reps_0".to_string();
+        let products_path = || -> crate::query_planner::planner::plan_nodes::MergePaths {
+            vec![FlattenNodePath::from(vec![
+                PathSegment::Field("products".into()),
+                PathSegment::List,
+            ])]
+            .into()
+        };
         let entity_batch = EntityBatch {
             aliases: vec![
                 EntityBatchAlias {
                     alias: "_e0".to_string(),
                     representations_variable_name: shared_var.clone(),
-                    merge_paths: Default::default(),
+                    merge_paths: products_path(),
                     requires: requires_from(requires_selection.clone()),
                     input_rewrites: None,
                     output_rewrites: None,
+                    context_rewrites: None,
+                    context_variables: Vec::new(),
                 },
                 EntityBatchAlias {
                     alias: "_e1".to_string(),
                     representations_variable_name: shared_var,
-                    merge_paths: Default::default(),
+                    merge_paths: products_path(),
                     requires: requires_from(requires_selection),
                     input_rewrites: None,
                     output_rewrites: None,
+                    context_rewrites: None,
+                    context_variables: Vec::new(),
                 },
             ],
         };
 
-        let (raw_variable_values, aliases) =
-            executor.prepare_batch_fetch_job_state(&entity_batch, &data, None);
+        let mut budget = MAX_CONTEXT_GROUPS;
+        let waves = executor
+            .prepare_batch_fetch_job_state(&entity_batch, &data, None, &mut budget)
+            .unwrap();
+        assert_eq!(budget, MAX_CONTEXT_GROUPS);
 
+        assert_eq!(waves.len(), 1);
+        let (raw_variable_values, aliases) = &waves[0];
         assert_eq!(aliases.len(), 2);
         assert_eq!(raw_variable_values.len(), 1);
         assert_eq!(raw_variable_values[0].0, "__batch_reps_0");
+
+        let mut entity_batch = entity_batch;
+        for (index, alias) in entity_batch.aliases.iter_mut().enumerate() {
+            alias.context_variables = vec![format!("__context_{index}")];
+            alias.context_rewrites = Some(Vec::new());
+        }
+        let mut budget = 2;
+        let waves = executor
+            .prepare_batch_fetch_job_state(&entity_batch, &data, None, &mut budget)
+            .unwrap();
+        assert_eq!(budget, 0);
+        assert_eq!(waves.len(), 1);
+        assert!(waves[0].0.contains(&("__context_0", b"null".to_vec())));
+        assert!(waves[0].0.contains(&("__context_1", b"null".to_vec())));
+        for remaining in [0, 1] {
+            let mut budget = remaining;
+            assert!(matches!(
+                executor.prepare_batch_fetch_job_state(&entity_batch, &data, None, &mut budget),
+                Err(PlanExecutionErrorKind::ContextGroupLimitExceeded)
+            ));
+        }
     }
 
     #[tokio::test]
@@ -2161,6 +2184,7 @@ mod tests {
             })
             .create();
 
+        let mut budget = MAX_CONTEXT_GROUPS;
         executor
             .execute_plan_node(
                 &mut exec_ctx,
@@ -2170,6 +2194,8 @@ mod tests {
                             id: 1,
                             planner_requires: (),
                             service_name: "subgraph_a".to_string(),
+                            context_rewrites: None,
+                            context_variables: Vec::new(),
                             operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_a }"),
                             )
@@ -2185,6 +2211,8 @@ mod tests {
                             id: 2,
                             planner_requires: (),
                             service_name: "subgraph_b".to_string(),
+                            context_rewrites: None,
+                            context_variables: Vec::new(),
                             operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_b }"),
                             )
@@ -2198,8 +2226,10 @@ mod tests {
                         })),
                     ],
                 }),
+                &mut budget,
             )
-            .await;
+            .await
+            .unwrap();
         mock_a.assert();
         mock_b.assert();
 

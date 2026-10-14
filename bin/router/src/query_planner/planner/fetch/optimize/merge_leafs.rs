@@ -14,6 +14,10 @@ impl FetchStepData<MultiTypeFetchStep> {
         other: &Self,
         fetch_graph: &FetchGraph<MultiTypeFetchStep>,
     ) -> bool {
+        if !self.can_merge_context(other) {
+            return false;
+        }
+
         if self_index == other_index {
             return false;
         }

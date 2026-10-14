@@ -4,15 +4,16 @@ use graphql_tools::parser::schema::*;
 use crate::query_planner::{
     federation_spec::{
         definitions::{
-            CorePurposesEnum, JoinDirectiveArgumentsScalar, JoinFieldSetScalar, JoinGraphEnum,
+            ContextFieldValueScalar, CorePurposesEnum, JoinContextArgumentInput,
+            JoinDirectiveArgumentsScalar, JoinFieldSetScalar, JoinFieldValueScalar, JoinGraphEnum,
             LinkImportScalar, LinkPurposeEnum, PolicyPolicyScalar, RequiresScopesScopeScalar,
         },
         demand_control::{CostDirective, ListSizeDirective},
         directives::{
-            AuthenticatedDirective, CoreDirective, InaccessibleDirective, JoinEnumValueDirective,
-            JoinFieldDirective, JoinGraphDirective, JoinImplementsDirective, JoinTypeDirective,
-            JoinUnionMemberDirective, LinkDirective, PolicyDirective, RequiresScopesDirective,
-            TagDirective,
+            AuthenticatedDirective, ContextDirective, CoreDirective, InaccessibleDirective,
+            JoinEnumValueDirective, JoinFieldDirective, JoinGraphDirective,
+            JoinImplementsDirective, JoinTypeDirective, JoinUnionMemberDirective, LinkDirective,
+            PolicyDirective, RequiresScopesDirective, TagDirective,
         },
         join_directive::JoinDirectiveDirective,
         join_owner::JoinOwnerDirective,
@@ -23,7 +24,7 @@ use crate::query_planner::{
 // directive @inaccessible on FIELD_DEFINITION | OBJECT | INTERFACE | UNION | ENUM | ENUM_VALUE | SCALAR | INPUT_OBJECT | INPUT_FIELD_DEFINITION | ARGUMENT_DEFINITION
 pub(crate) struct StripSchemaInternals;
 
-static DIRECTIVES_TO_STRIP: [&str; 17] = [
+static DIRECTIVES_TO_STRIP: [&str; 19] = [
     JoinTypeDirective::NAME,
     JoinEnumValueDirective::NAME,
     JoinFieldDirective::NAME,
@@ -41,9 +42,11 @@ static DIRECTIVES_TO_STRIP: [&str; 17] = [
     PolicyDirective::NAME,
     CostDirective::NAME,
     ListSizeDirective::NAME,
+    ContextDirective::NAME,
+    ContextDirective::FROM_CONTEXT_NAME,
 ];
 
-static DEFINITIONS_TO_STRIP: [&str; 8] = [
+static DEFINITIONS_TO_STRIP: [&str; 11] = [
     LinkPurposeEnum::NAME,
     LinkImportScalar::NAME,
     JoinGraphEnum::NAME,
@@ -52,6 +55,9 @@ static DEFINITIONS_TO_STRIP: [&str; 8] = [
     CorePurposesEnum::NAME,
     RequiresScopesScopeScalar::NAME,
     PolicyPolicyScalar::NAME,
+    ContextFieldValueScalar::NAME,
+    JoinContextArgumentInput::NAME,
+    JoinFieldValueScalar::NAME,
 ];
 
 impl StripSchemaInternals {
@@ -142,12 +148,28 @@ mod test {
   @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION)
   @link(url: "https://specs.apollo.dev/tag/v0.3")
   @link(url: "https://specs.apollo.dev/inaccessible/v0.2", for: SECURITY)
+  @link(url: "https://specs.apollo.dev/context/v0.1", for: SECURITY)
   @link(
     url: "https://myspecs.dev/myDirective/v1.0"
     import: ["@myDirective", { name: "@anotherDirective", as: "@hello" }]
   ) {
   query: Query
 }
+
+directive @context(name: String!) repeatable on OBJECT | INTERFACE | UNION
+
+directive @context__fromContext(field: context__ContextFieldValue) on ARGUMENT_DEFINITION
+
+scalar context__ContextFieldValue
+
+input join__ContextArgument {
+  name: String!
+  type: String!
+  context: String!
+  selection: join__FieldValue!
+}
+
+scalar join__FieldValue
 
 directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
 
@@ -159,6 +181,7 @@ directive @join__field(
   external: Boolean
   override: String
   usedOverridden: Boolean
+  contextArguments: [join__ContextArgument!]
 ) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
 
 directive @join__graph(name: String!, url: String!) on ENUM_VALUE
@@ -234,6 +257,7 @@ directive @myDirective(a: String!) on FIELD_DEFINITION
 directive @hello on FIELD_DEFINITION
 
 type Product implements ProductItf & SkuItf
+  @context(name: "products__product")
   @join__type(graph: INVENTORY, key: "id")
   @join__type(graph: PRODUCTS, key: "id")
   @join__type(graph: PRODUCTS, key: "sku package")
@@ -247,7 +271,7 @@ type Product implements ProductItf & SkuItf
   dimensions: ProductDimension
     @join__field(graph: INVENTORY, external: true)
     @join__field(graph: PRODUCTS)
-  delivery(zip: String): DeliveryEstimates
+  delivery(zip: String @context__fromContext(field: "$products__product { sku }")): DeliveryEstimates
     @join__field(
       graph: INVENTORY
       requires: "dimensions{...on ProductDimension{size weight}}"
@@ -319,6 +343,7 @@ type Review @join__type(graph: REVIEWS) {
 }
 
 interface ProductItf implements SkuItf
+  @context(name: "products__product")
   @join__type(graph: INVENTORY)
   @join__type(graph: PRODUCTS)
   @join__type(graph: REVIEWS)

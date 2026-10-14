@@ -118,28 +118,31 @@ pub fn add_variables_to_fetch_steps(
     graph: &mut FetchGraph<MultiTypeFetchStep>,
     variables: &Option<Vec<VariableDefinition>>,
 ) -> Result<(), PlannerError> {
-    if let Some(variables) = variables {
-        let mut nodes_to_patch: Vec<(NodeIndex, Vec<VariableDefinition>)> = Vec::new();
-
-        for (node_index, node_weight) in graph.all_nodes() {
-            if let Some(usage) = &node_weight.variable_usages {
-                let relevant_variables = usage
+    let indices: Vec<NodeIndex> = graph.step_indices().collect();
+    for node_index in indices {
+        let step = graph.get_step_data_mut(node_index)?;
+        if !step.context_variable_definitions.is_empty() {
+            step.variable_usages.get_or_insert_default().extend(
+                step.context_variable_definitions
                     .iter()
-                    .filter_map(|used_var_name| {
-                        variables
-                            .iter()
-                            .find(|op_var| op_var.name == *used_var_name)
-                    })
-                    .cloned()
-                    .collect::<Vec<VariableDefinition>>();
-
-                nodes_to_patch.push((node_index, relevant_variables));
-            }
+                    .map(|variable| variable.name.clone()),
+            );
         }
-
-        for (node_index, relevant_variables) in nodes_to_patch {
-            let step = graph.get_step_data_mut(node_index)?;
-            step.variable_definitions = Some(relevant_variables);
+        if let Some(usage) = &step.variable_usages {
+            let mut relevant_variables = usage
+                .iter()
+                .filter_map(|used_var_name| {
+                    variables
+                        .iter()
+                        .flatten()
+                        .find(|op_var| op_var.name == *used_var_name)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            relevant_variables.extend(step.context_variable_definitions.iter().cloned());
+            if variables.is_some() || !relevant_variables.is_empty() {
+                step.variable_definitions = Some(relevant_variables);
+            }
         }
     }
 

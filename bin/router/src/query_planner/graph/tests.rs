@@ -1,4 +1,118 @@
 #[cfg(test)]
+mod context_tests {
+    use crate::query_planner::{
+        graph::{edge::Edge, Graph},
+        state::supergraph_state::SupergraphState,
+        tests::testkit::read_supergraph,
+        utils::parsing::parse_schema,
+    };
+
+    #[test]
+    fn context_cost_only_charges_the_resolved_ancestor_selection() {
+        use crate::query_planner::{
+            ast::normalization::normalize_operation,
+            planner::walker::walk_operation,
+            utils::{cancellation::CancellationToken, parsing::parse_operation},
+        };
+
+        let sdl = r#"
+            enum join__Graph {
+                A @join__graph(name: "a", url: "")
+                B @join__graph(name: "b", url: "")
+            }
+            type Query @join__type(graph: A) { user: User }
+            type User @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") @context(name: "a__ctx") {
+                id: ID!
+                currency: String @join__field(graph: A)
+                tx: Transaction @join__field(graph: A)
+            }
+            type Other @join__type(graph: A) @context(name: "a__ctx") { currency: String }
+            type Transaction @join__type(graph: A, key: "id") {
+                id: ID!
+                amount: Int @join__field(graph: A, contextArguments: [
+                    {context: "a__ctx", name: "code", type: "String", selection: "{ currency }"}
+                ])
+            }
+        "#;
+        for (sdl, expected_cost) in [
+            (sdl.to_string(), 1),
+            (
+                sdl.replace(
+                    "currency: String @join__field(graph: A)",
+                    "currency: String @join__field(graph: B)",
+                ),
+                1003,
+            ),
+            (
+                sdl.replace(
+                    "selection: \"{ currency }\"",
+                    "selection: \"... on Other { currency }\"",
+                ),
+                0,
+            ),
+        ] {
+            let supergraph = SupergraphState::new(&parse_schema(&sdl));
+            let graph = Graph::graph_from_supergraph_state(&supergraph).unwrap();
+            let query = normalize_operation(
+                &supergraph,
+                &parse_operation("{ user { tx { amount } } }"),
+                None,
+            )
+            .unwrap();
+            let override_context = Default::default();
+            let cancellation = CancellationToken::new();
+            let paths = walk_operation(
+                &graph,
+                &supergraph,
+                &override_context,
+                query.executable_operation(),
+                &cancellation,
+            )
+            .unwrap();
+            let path = &paths.root_field_groups[0][0][0];
+            let segments = path.get_segments();
+            let context = &segments.last().unwrap().context_requirements[0];
+            assert_eq!(context.cost, expected_cost);
+            assert_eq!(path.cost, 1003 + expected_cost);
+        }
+    }
+
+    #[test]
+    fn context_metadata_is_added_without_charging_all_ancestor_types() {
+        let supergraph = SupergraphState::new(&parse_schema(&read_supergraph(
+            "fixture/tests/context-edge-cases.supergraph.graphql",
+        )));
+        let graph = Graph::graph_from_supergraph_state(&supergraph).unwrap();
+        let node = graph.node_display_name_to_index["Transaction/a"];
+        let edge = graph
+            .edges_from(node)
+            .find(|edge| edge.weight().display_name() == "amount")
+            .unwrap();
+        let Edge::FieldMove(field) = edge.weight() else {
+            panic!("expected field move")
+        };
+        let argument = &field.context_arguments[0];
+        assert_eq!(argument.name, "code");
+        assert_eq!(argument.type_in_graph.to_string(), "String");
+        assert_eq!(argument.selections.len(), 3);
+        let interface_selection = argument
+            .selections
+            .iter()
+            .find(|selection| selection.type_name == "Account")
+            .unwrap();
+        assert_eq!(
+            interface_selection.selection_set.to_string(),
+            "{...on User{currency}}"
+        );
+        assert!(argument
+            .selections
+            .iter()
+            .any(|selection| selection.type_name == "User"));
+        assert_eq!(edge.weight().cost(), 1);
+    }
+}
+
+#[cfg(test)]
 mod graph_tests {
     use crate::query_planner::{
         graph::{

@@ -1,5 +1,6 @@
 mod alias;
 mod arguments;
+mod context;
 mod fragments;
 mod generated;
 mod include_skip;
@@ -21,7 +22,7 @@ mod requires_provides;
 mod requires_requires;
 mod root_reentry;
 mod root_types;
-mod testkit;
+pub(crate) mod testkit;
 mod union;
 
 use crate::query_planner::{

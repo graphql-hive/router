@@ -61,6 +61,7 @@ impl RewriteApplier for KeyRenamer {
                 }
             }
             Value::Object(obj) => match current_segment {
+                FetchNodePathSegment::Parent => (),
                 FetchNodePathSegment::TypenameEquals(type_condition) => {
                     let type_name = obj
                         .iter()
@@ -123,6 +124,7 @@ impl RewriteApplier for ValueSetter {
                 let remaining_path = &path[1..];
 
                 match current_segment {
+                    FetchNodePathSegment::Parent => (),
                     FetchNodePathSegment::TypenameEquals(type_condition) => {
                         let type_name = map
                             .iter()
