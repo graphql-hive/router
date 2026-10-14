@@ -326,6 +326,11 @@ impl Graph {
         }
     }
 
+    /// Add an edge without scanning the graph for an identical edge.
+    fn push_edge(&mut self, head: NodeIndex, tail: NodeIndex, edge: Edge) -> EdgeIndex {
+        self.graph.add_edge(head, tail, edge)
+    }
+
     // __typename is a meta-field: it carries no declared field definition, so unlike
     // other fields it always resolves to a plain "String" move, regardless of parent type.
     fn upsert_typename_edge(&mut self, head: NodeIndex, tail: NodeIndex, parent_type_name: &str) {
@@ -624,27 +629,35 @@ impl Graph {
     ) -> Result<(), GraphError> {
         for (def_name, definition) in state.definitions.iter() {
             if let Some(root_type) = definition.try_into_root_type() {
-                for graph_id in definition.subgraphs().iter() {
-                    let relevant_fields = definition
-                        .fields()
+                let mut graph_ids = definition.subgraphs();
+                graph_ids.dedup();
+
+                // Collect the graphs with at least one available root field in one pass. The
+                // entrypoint only needs to know whether any field is available in each graph.
+                let mut graphs_without_fields: HashSet<_> = graph_ids.iter().copied().collect();
+                for field in definition.fields().values() {
+                    if field.join_field.is_empty() {
+                        // A field without join metadata is available in every graph containing
+                        // its parent type.
+                        graphs_without_fields.clear();
+                        break;
+                    }
+
+                    for graph_id in field
+                        .join_field
                         .iter()
-                        .filter_map(|(field_name, field_definition)| {
-                            let (is_available, _) =
-                                FederationRules::check_field_subgraph_availability(
-                                    field_definition,
-                                    graph_id,
-                                    definition,
-                                );
+                        .filter_map(|join_field| join_field.graph_id.as_deref())
+                    {
+                        graphs_without_fields.remove(graph_id);
+                    }
 
-                            if is_available {
-                                Some(field_name.to_string())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Vec<_>>();
+                    if graphs_without_fields.is_empty() {
+                        break;
+                    }
+                }
 
-                    if !relevant_fields.is_empty() {
+                for graph_id in graph_ids {
+                    if !graphs_without_fields.contains(graph_id) {
                         let head = match root_type {
                             OperationKind::Query => Some(self.query_root),
                             OperationKind::Mutation => self.mutation_root,
@@ -656,7 +669,7 @@ impl Graph {
                         let tail =
                             self.upsert_node(Node::new_root_node(def_name, subgraph.clone()));
 
-                        self.upsert_edge(
+                        self.push_edge(
                             head,
                             tail,
                             Edge::SubgraphEntrypoint {
