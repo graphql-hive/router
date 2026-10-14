@@ -47,7 +47,7 @@ pub struct FetchStepData<State> {
     pub output_rewrites: Option<Vec<FetchRewrite>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FetchStepKind {
     Entity,
     Root,
