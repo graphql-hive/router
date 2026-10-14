@@ -530,7 +530,7 @@ fn process_field<'graph, 'op: 'graph>(
     override_context: &'graph PlannerOverrideContext,
     field: &'op FieldSelection,
     paths: &[OperationPath<'graph>],
-    fields_to_resolve_locally: &[String],
+    _fields_to_resolve_locally: &[String],
     cancellation_token: &'graph CancellationToken,
 ) -> Result<
     (
@@ -551,12 +551,7 @@ fn process_field<'graph, 'op: 'graph>(
 
     cancellation_token.bail_if_cancelled()?;
 
-    let target_subgraph_ids =
-        if !paths.is_empty() && !fields_to_resolve_locally.contains(&field.name) {
-            field_target_subgraph_ids(supergraph, field, paths, graph)?
-        } else {
-            None
-        };
+    let mut target_subgraph_ids_cache = None;
 
     for path in paths {
         let path_span = span!(
@@ -591,7 +586,7 @@ fn process_field<'graph, 'op: 'graph>(
             }
         }
 
-        if !fields_to_resolve_locally.contains(&field.name) && !found_direct_paths_to_leaf {
+        if !found_direct_paths_to_leaf {
             let has_indirect_candidates = graph.edges_from(path.tail()).any(|edge| {
                 matches!(
                     edge.weight(),
@@ -600,6 +595,14 @@ fn process_field<'graph, 'op: 'graph>(
             });
 
             if has_indirect_candidates {
+                if target_subgraph_ids_cache.is_none() {
+                    target_subgraph_ids_cache =
+                        Some(field_target_subgraph_ids(supergraph, field, paths, graph)?);
+                }
+                let target_subgraph_ids = target_subgraph_ids_cache
+                    .as_ref()
+                    .and_then(|ids| ids.as_deref());
+
                 let indirect_paths = find_indirect_paths(
                     graph,
                     supergraph,
@@ -607,7 +610,7 @@ fn process_field<'graph, 'op: 'graph>(
                     path,
                     &NavigationTarget::Field {
                         field,
-                        target_subgraph_ids: target_subgraph_ids.as_deref(),
+                        target_subgraph_ids,
                     },
                     &excluded,
                     cancellation_token,
