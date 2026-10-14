@@ -13,6 +13,14 @@ mod context_e2e_tests {
     }
 
     async fn start_router(fixture: &str, server: &mockito::Server) -> TestRouter<Started> {
+        start_router_with_config(fixture, server, "").await
+    }
+
+    async fn start_router_with_config(
+        fixture: &str,
+        server: &mockito::Server,
+        config: &str,
+    ) -> TestRouter<Started> {
         let host = server.host_with_port();
         TestRouter::builder()
             .inline_config(format!(
@@ -26,6 +34,7 @@ mod context_e2e_tests {
                   url: "http://{host}/a"
                 b:
                   url: "http://{host}/b"
+            {config}
             "#
             ))
             .build()
@@ -102,6 +111,76 @@ mod context_e2e_tests {
             .map(|index| json!({"txs": [{"amount": index}]}))
             .collect();
         assert_eq!(response, json!({"data": {"users": expected}}));
+        root.assert_async().await;
+        aliased.assert_async().await;
+        single.assert_async().await;
+    }
+
+    #[ntex::test]
+    async fn max_context_aliases_per_request_is_configurable_per_subgraph() {
+        let mut server = mockito::Server::new_async().await;
+        let router = start_router_with_config(
+            "context-basic",
+            &server,
+            r#"
+            traffic_shaping:
+              subgraphs:
+                a:
+                  max_context_aliases_per_request: 2
+            "#,
+        )
+        .await;
+        let root = server
+            .mock("POST", "/a")
+            .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"users":[
+                {"__typename":"User","currency":"USD","txs":[{"__typename":"Transaction","id":"same"}]},
+                {"__typename":"User","currency":"EUR","txs":[{"__typename":"Transaction","id":"same"}]},
+                {"__typename":"User","currency":"GBP","txs":[{"__typename":"Transaction","id":"same"}]}
+            ]}}"#,
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let aliased = server
+            .mock("POST", "/a")
+            .match_request(|r| {
+                let body = body(r);
+                !body["query"].as_str().unwrap().contains("_entities_2:")
+                    && body["variables"]["__context_0_0"] == "USD"
+                    && body["variables"]["__context_0_1"] == "EUR"
+            })
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":{"_entities_0":[{"amount":1}],"_entities_1":[{"amount":2}]}}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let single = server
+            .mock("POST", "/a")
+            .match_request(|r| body(r)["variables"]["__context_0"] == "GBP")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":{"_entities":[{"amount":3}]}}"#)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ users { txs { amount } } }", None, None)
+            .await;
+        let response: Value = serde_json::from_str(&res.json_body_string_pretty().await).unwrap();
+        assert_eq!(
+            response,
+            json!({"data": {"users": [
+                {"txs": [{"amount": 1}]},
+                {"txs": [{"amount": 2}]},
+                {"txs": [{"amount": 3}]}
+            ]}})
+        );
         root.assert_async().await;
         aliased.assert_async().await;
         single.assert_async().await;

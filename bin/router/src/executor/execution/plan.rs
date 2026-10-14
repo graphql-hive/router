@@ -3,7 +3,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::vec;
 
-use crate::query_planner::ast::operation::{SubgraphFetchOperation, MAX_CONTEXT_ALIASES};
+use crate::query_planner::ast::operation::SubgraphFetchOperation;
 use crate::query_planner::planner::plan_nodes::{
     CustomScalarPaths, FetchNode, FlattenNode, ResponsePathRef,
 };
@@ -945,7 +945,9 @@ impl<'exec> Executor<'exec> {
                 }
 
                 // every wave repeats all batch aliases, so fewer waves fit in one request
-                let waves_per_request = (MAX_CONTEXT_ALIASES
+                let waves_per_request = (self
+                    .executors
+                    .max_context_aliases_per_request(&batch_fetch_node.service_name)
                     / batch_fetch_node.entity_batch.aliases.len().max(1))
                 .max(1);
                 let mut requests = Vec::new();
@@ -953,10 +955,11 @@ impl<'exec> Executor<'exec> {
                 while waves.peek().is_some() {
                     let chunk: Vec<_> = waves.by_ref().take(waves_per_request).collect();
                     let variables: Vec<&str> = chunk[0].0.iter().map(|(name, _)| *name).collect();
-                    let Some(aliased) = batch_fetch_node
-                        .operation
-                        .context_aliased(chunk.len(), &variables)
-                    else {
+                    let Some(aliased) = batch_fetch_node.operation.context_aliased(
+                        chunk.len(),
+                        waves_per_request,
+                        &variables,
+                    ) else {
                         requests.extend(chunk.into_iter().map(|(raw_variable_values, aliases)| {
                             (
                                 &batch_fetch_node.operation,
@@ -1069,23 +1072,28 @@ impl<'exec> Executor<'exec> {
                 );
                 let representation_hashes = path_hashes.pop().unwrap_or_default();
 
+                let groups_per_request = self
+                    .executors
+                    .max_context_aliases_per_request(&fetch_node.service_name)
+                    .max(1);
                 let mut requests = Vec::new();
                 let mut groups = groups
                     .into_iter()
                     .filter(|group| !group.hash_to_index.is_empty())
                     .peekable();
                 while groups.peek().is_some() {
-                    let chunk: Vec<_> = groups.by_ref().take(MAX_CONTEXT_ALIASES).collect();
+                    let chunk: Vec<_> = groups.by_ref().take(groups_per_request).collect();
                     let variables: Vec<&str> = chunk[0]
                         .variables
                         .iter()
                         .map(|(name, _)| *name)
                         .chain(["representations"])
                         .collect();
-                    let Some(aliased) = fetch_node
-                        .operation
-                        .context_aliased(chunk.len(), &variables)
-                    else {
+                    let Some(aliased) = fetch_node.operation.context_aliased(
+                        chunk.len(),
+                        groups_per_request,
+                        &variables,
+                    ) else {
                         requests.extend(chunk.into_iter().map(|group| {
                             let mut raw_variable_values = group.variables;
                             raw_variable_values.push(("representations", group.representations));

@@ -99,6 +99,17 @@ impl SupergraphTrafficShapingConfig {
             .unwrap_or_else(|| self.all.compression.clone())
     }
 
+    /// Returns the most top-level aliased fields one entity request to a subgraph may carry when
+    /// entities need different contextual argument values.
+    ///
+    /// A per-subgraph value takes precedence over the value configured in `all`.
+    pub fn max_context_aliases_per_request(&self, subgraph_name: &str) -> usize {
+        self.subgraphs
+            .get(subgraph_name)
+            .and_then(|config| config.max_context_aliases_per_request)
+            .unwrap_or(self.all.max_context_aliases_per_request)
+    }
+
     /// Returns whether any configured traffic-shaping rule can reuse WebSocket connections.
     ///
     /// This is used to avoid connection fingerprinting when pooling is disabled globally and for
@@ -149,6 +160,10 @@ fn default_subgraph_pool_idle_timeout() -> Option<Duration> {
 
 fn default_dedupe_enabled() -> bool {
     true
+}
+
+fn default_max_context_aliases_per_request() -> usize {
+    15
 }
 
 fn default_router_dedupe_enabled() -> bool {
@@ -236,6 +251,13 @@ pub struct TrafficShapingExecutorSubgraphConfig {
     /// When omitted, `traffic_shaping.all.compression` is used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compression: Option<TrafficShapingSubgraphCompressionConfig>,
+
+    /// Overrides how many aliased fields one entity request to this subgraph may carry when
+    /// entities need different contextual argument values (`@fromContext`).
+    ///
+    /// When omitted, `traffic_shaping.all.max_context_aliases_per_request` is used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context_aliases_per_request: Option<usize>,
 }
 
 /// Controls which transport queries and mutations use for WebSocket-enabled subgraphs.
@@ -435,6 +457,25 @@ pub struct TrafficShapingExecutorGlobalConfig {
     /// Router, Cosmo, and Hive Gateway's behavior here.
     #[serde(default)]
     pub compression: TrafficShapingSubgraphCompressionConfig,
+
+    /// The most top-level aliased fields one entity request to a subgraph may carry when
+    /// entities need different contextual argument values (`@fromContext`).
+    ///
+    /// A contextual argument is a single variable, so entities with different context values
+    /// can not share one `_entities` field. Instead of sending one request per distinct value,
+    /// the router repeats the `_entities` field once per value under an alias
+    /// (`_entities_0`, `_entities_1`, ...) and sends them together. When there are more distinct
+    /// values than this limit, the router sends several such requests.
+    ///
+    /// Subgraphs often limit the number of aliases in an operation (for example, graphql-armor's
+    /// max-aliases rule), so keep this at or below that limit. A value of `1` (or `0`) disables
+    /// aliasing and sends one request per distinct value.
+    ///
+    /// Per-subgraph values under `traffic_shaping.subgraphs.<name>.max_context_aliases_per_request` take precedence.
+    ///
+    /// Defaults to 15.
+    #[serde(default = "default_max_context_aliases_per_request")]
+    pub max_context_aliases_per_request: usize,
 }
 
 fn default_request_timeout() -> DurationOrExpression {
@@ -468,6 +509,7 @@ impl Default for TrafficShapingExecutorGlobalConfig {
             forward_operation_name: false,
             websocket: Default::default(),
             compression: Default::default(),
+            max_context_aliases_per_request: default_max_context_aliases_per_request(),
         }
     }
 }

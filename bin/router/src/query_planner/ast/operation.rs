@@ -60,14 +60,12 @@ pub struct SubgraphFetchOperation {
     pub name_write_position: usize,
     /// Copies of this operation built by `context_aliased`, indexed by the number of groups.
     #[serde(skip)]
-    context_aliased:
-        OnceLock<Box<[OnceLock<Option<ContextAliasedOperation>>; MAX_CONTEXT_ALIASES + 1]>>,
+    context_aliased: OnceLock<Box<ContextAliasedCache>>,
 }
 
-/// The most top-level fields one subgraph request carries when entities are fetched with
-/// different contextual argument values. It matches the default alias limit of common GraphQL
-/// security tooling (graphql-armor), so subgraphs do not reject the request.
-pub const MAX_CONTEXT_ALIASES: usize = 15;
+// boxed twice so the field stays one pointer wide, plans hold one of these per fetch
+#[derive(Debug, Clone)]
+struct ContextAliasedCache(Box<[OnceLock<Option<ContextAliasedOperation>>]>);
 
 /// An entity fetch operation with its top-level fields and per-group variables repeated once per
 /// group of contextual argument values, so that all groups are fetched in a single request.
@@ -98,18 +96,27 @@ impl SubgraphFetchOperation {
     /// [`ContextAliasedOperation`]. The `variables` get a separate copy per group, all other
     /// variables are shared. The result is built once per group count and cached.
     ///
-    /// Returns `None` when `groups` is not between 2 and [`MAX_CONTEXT_ALIASES`], or the
-    /// operation can not be rewritten.
+    /// `max_groups` is the most groups callers ever ask for. It sizes the cache on the first
+    /// call, later calls with more groups than that get `None`.
+    ///
+    /// Returns `None` when `groups` is not between 2 and `max_groups`, or the operation can not
+    /// be rewritten.
     pub fn context_aliased(
         &self,
         groups: usize,
+        max_groups: usize,
         variables: &[&str],
     ) -> Option<&ContextAliasedOperation> {
-        if groups < 2 {
+        if groups < 2 || groups > max_groups {
             return None;
         }
         self.context_aliased
-            .get_or_init(|| Box::new(std::array::from_fn(|_| OnceLock::new())))
+            .get_or_init(|| {
+                Box::new(ContextAliasedCache(
+                    (0..=max_groups).map(|_| OnceLock::new()).collect(),
+                ))
+            })
+            .0
             .get(groups)?
             .get_or_init(|| build_context_aliased(&self.document_str, groups, variables))
             .as_ref()
@@ -766,14 +773,14 @@ mod tests {
         );
         let operation = operation.as_ref();
         assert!(operation
-            .context_aliased(1, &["representations", "c"])
+            .context_aliased(1, 15, &["representations", "c"])
             .is_none());
         assert!(operation
-            .context_aliased(super::MAX_CONTEXT_ALIASES + 1, &["representations", "c"])
+            .context_aliased(16, 15, &["representations", "c"])
             .is_none());
 
         let aliased = operation
-            .context_aliased(2, &["representations", "c"])
+            .context_aliased(2, 15, &["representations", "c"])
             .unwrap();
         insta::assert_snapshot!(aliased.operation.document_str, @"query($representations_0:[_Any!]!$representations_1:[_Any!]!$c_0:ID$c_1:ID$shared:Int){_entities_0:_entities(representations:$representations_0){...F_0...on T@include(if:$c_0){g(a:[{x:$c_0}]b:$shared)}}_entities_1:_entities(representations:$representations_1){...F_1...on T@include(if:$c_1){g(a:[{x:$c_1}]b:$shared)}}}fragment F_0 on T{f(a:$c_0)}fragment F_1 on T{f(a:$c_1)}");
         assert_eq!(aliased.operation.name_write_position, 5);
@@ -789,7 +796,7 @@ mod tests {
         // cached per group count
         assert!(std::ptr::eq(
             aliased,
-            operation.context_aliased(2, &[]).unwrap()
+            operation.context_aliased(2, 15, &[]).unwrap()
         ));
     }
 }
