@@ -183,11 +183,11 @@ pub struct SubgraphExecutorMap {
     websocket_pool: Arc<WebSocketPool>,
 }
 impl SubgraphExecutorMap {
-    /// See [`SupergraphTrafficShapingConfig::max_context_aliases_per_request`].
-    pub fn max_context_aliases_per_request(&self, subgraph_name: &str) -> usize {
+    /// See [`SupergraphTrafficShapingConfig::max_aliases_per_request`].
+    pub fn max_aliases_per_request(&self, subgraph_name: &str) -> usize {
         self.config
             .traffic_shaping
-            .max_context_aliases_per_request(subgraph_name)
+            .max_aliases_per_request(subgraph_name)
     }
 
     fn new(

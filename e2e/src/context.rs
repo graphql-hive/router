@@ -117,7 +117,7 @@ mod context_e2e_tests {
     }
 
     #[ntex::test]
-    async fn max_context_aliases_per_request_is_configurable_per_subgraph() {
+    async fn max_aliases_per_request_is_configurable_per_subgraph() {
         let mut server = mockito::Server::new_async().await;
         let router = start_router_with_config(
             "context-basic",
@@ -126,7 +126,7 @@ mod context_e2e_tests {
             traffic_shaping:
               subgraphs:
                 a:
-                  max_context_aliases_per_request: 2
+                  max_aliases_per_request: 2
             "#,
         )
         .await;

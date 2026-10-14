@@ -486,6 +486,7 @@ fn experimental_abstract_type_folding_folds_object_fragments_into_interface(
         Default::default(),
         QueryPlannerOptions {
             experimental_abstract_type_folding: true,
+            ..Default::default()
         },
     )?;
 

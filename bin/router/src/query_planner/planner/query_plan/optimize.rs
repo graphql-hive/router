@@ -73,6 +73,7 @@ use crate::query_planner::{
         custom_scalar_paths_for_entities_selection, BatchFetchNode, CustomScalarPaths, EntityBatch,
         EntityBatchAlias, FetchRewrite, FlattenNodePath, KeyRenamer, PlanNode,
     },
+    planner::QueryPlannerOptions,
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
 };
 
@@ -481,13 +482,19 @@ pub(super) fn optimize_top_level_sequence(nodes: Vec<PlanNode>) -> Vec<PlanNode>
 pub(super) fn optimize_root_node(
     node: PlanNode,
     supergraph: &SupergraphState,
+    options: &QueryPlannerOptions,
 ) -> Result<PlanNode, QueryPlanError> {
     // Single entry point for optimizer rewrites.
-    PlanOptimizer { supergraph }.optimize_node(node)
+    PlanOptimizer {
+        supergraph,
+        options,
+    }
+    .optimize_node(node)
 }
 
 struct PlanOptimizer<'a> {
     supergraph: &'a SupergraphState,
+    options: &'a QueryPlannerOptions,
 }
 
 impl PlanOptimizer<'_> {
@@ -522,7 +529,8 @@ impl PlanOptimizer<'_> {
                 };
 
                 let optimized_nodes = PlanNode::flatten_parallel(optimized_nodes);
-                let optimized_nodes = optimize_parallel_node(optimized_nodes, self.supergraph)?;
+                let optimized_nodes =
+                    optimize_parallel_node(optimized_nodes, self.supergraph, self.options)?;
 
                 Ok(PlanNode::parallel(optimized_nodes))
             }
@@ -570,6 +578,7 @@ impl PlanOptimizer<'_> {
 fn optimize_parallel_node(
     nodes: Vec<PlanNode>,
     supergraph: &SupergraphState,
+    options: &QueryPlannerOptions,
 ) -> Result<Vec<PlanNode>, QueryPlanError> {
     // Find all `Flatten(Fetch)` candidates
     // and group by subgraph.
@@ -592,31 +601,41 @@ fn optimize_parallel_node(
             // Split groups by fetch shape
             let shape_groups = partition_by_shape(variable_group.candidates);
 
-            let Some(first_group) = shape_groups.first() else {
-                continue;
-            };
-            let Some(first_candidate) = first_group.first() else {
+            let Some(first_candidate) = shape_groups.first().and_then(|group| group.first()) else {
                 continue;
             };
 
-            // For each merged group, we keep the first node position and remove the rest.
-            // This keeps sibling order stable and deterministic.
-            let first_index = first_candidate.index;
+            // every shape group is one alias, so a batch carrying more aliases than the
+            // subgraph allows is split into several batches
+            let max_aliases = options.max_aliases_per_request(&first_candidate.service_name);
 
-            // Build one `BatchFetch` node from each final group
-            let batch_fetch_node =
-                build_batched_fetch_node(&shape_groups, &variable_group.variables, supergraph)?;
+            for chunk in shape_groups.chunks(max_aliases) {
+                // a single fetch has nothing to batch with, keep the original node
+                if let [group] = chunk {
+                    if group.len() < 2 {
+                        continue;
+                    }
+                }
 
-            batch_node_replacements.insert(
-                first_index,
-                PlanNode::BatchFetch(Box::new(batch_fetch_node)),
-            );
+                // For each merged group, we keep the first node position and remove the rest.
+                // This keeps sibling order stable and deterministic.
+                let first_index = chunk[0][0].index;
 
-            for group in &shape_groups {
-                for candidate in group {
-                    // Remove all but the first candidate from the group
-                    if candidate.index != first_index {
-                        removed_indices.insert(candidate.index);
+                // Build one `BatchFetch` node from each final group
+                let batch_fetch_node =
+                    build_batched_fetch_node(chunk, &variable_group.variables, supergraph)?;
+
+                batch_node_replacements.insert(
+                    first_index,
+                    PlanNode::BatchFetch(Box::new(batch_fetch_node)),
+                );
+
+                for group in chunk {
+                    for candidate in group {
+                        // Remove all but the first candidate from the group
+                        if candidate.index != first_index {
+                            removed_indices.insert(candidate.index);
+                        }
                     }
                 }
             }
@@ -925,6 +944,7 @@ mod tests {
             FetchNode, FetchNodePathSegment, FetchRewrite, FlattenNode, FlattenNodePath, PlanNode,
             QueryPlan, ValueSetter,
         },
+        planner::QueryPlannerOptions,
         state::supergraph_state::{OperationKind, SupergraphState},
         utils::parsing::{parse_operation, parse_schema},
     };
@@ -964,8 +984,9 @@ mod tests {
             flatten_entity_fetch_node(2, "inventory", "products", requires_query, &entities_query);
 
         let nodes = vec![passthrough.clone(), candidate_a, candidate_b];
-        let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph)
-            .expect("optimize should work");
+        let optimized =
+            optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
+                .expect("optimize should work");
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
@@ -1053,8 +1074,9 @@ mod tests {
         );
 
         let nodes = vec![candidate_a, candidate_b];
-        let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph)
-            .expect("optimize should work");
+        let optimized =
+            optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
+                .expect("optimize should work");
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
@@ -1117,8 +1139,9 @@ mod tests {
             flatten_entity_fetch_node(2, "inventory", "products", requires_query, &entities_query);
 
         let nodes = vec![candidate_a, candidate_b];
-        let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph)
-            .expect("optimize should work");
+        let optimized =
+            optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
+                .expect("optimize should work");
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
@@ -1181,8 +1204,9 @@ mod tests {
         );
 
         let nodes = vec![inventory_candidate, products_candidate];
-        let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph)
-            .expect("optimize should work");
+        let optimized =
+            optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
+                .expect("optimize should work");
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
@@ -1254,8 +1278,9 @@ mod tests {
         );
 
         let nodes = vec![products_candidate, top_products_candidate];
-        let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph)
-            .expect("optimize should work");
+        let optimized =
+            optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
+                .expect("optimize should work");
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
@@ -1328,8 +1353,9 @@ mod tests {
 
         let nodes = vec![products_candidate, top_products_candidate];
 
-        let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph)
-            .expect("optimize should work");
+        let optimized =
+            optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
+                .expect("optimize should work");
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
@@ -1378,6 +1404,116 @@ mod tests {
         "#);
     }
 
+    /// A batch with more aliases than `max_aliases_per_request` is split into several batches,
+    /// and a leftover single fetch stays a plain fetch.
+    #[test]
+    fn optimize_parallel_node_splits_batches_over_max_aliases_per_request() {
+        let supergraph = test_supergraph_state();
+        let requires_upc = "query { ... on Product { upc } }";
+        let requires_name = "query { ... on Product { name } }";
+        let shipping_estimate_query = "
+          query($representations:[_Any!]!) {
+            _entities(representations: $representations) {
+              ... on Product { shippingEstimate }
+            }
+          }
+        ";
+        let in_stock_query = "
+          query($representations:[_Any!]!) {
+            _entities(representations: $representations) {
+              ... on Product { inStock }
+            }
+          }
+        ";
+
+        let nodes = vec![
+            flatten_entity_fetch_node(
+                1,
+                "inventory",
+                "products",
+                requires_upc,
+                shipping_estimate_query,
+            ),
+            flatten_entity_fetch_node(2, "inventory", "products", requires_upc, in_stock_query),
+            flatten_entity_fetch_node(
+                3,
+                "inventory",
+                "products",
+                requires_name,
+                shipping_estimate_query,
+            ),
+        ];
+
+        let options = QueryPlannerOptions {
+            subgraph_max_aliases_per_request: [("inventory".to_string(), 2)].into(),
+            ..Default::default()
+        };
+        let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph, &options)
+            .expect("optimize should work");
+
+        let query_plan = QueryPlan {
+            kind: "QueryPlan",
+            node: Some(optimized),
+        };
+
+        insta::assert_snapshot!(format!("{query_plan}"), @r#"
+        QueryPlan {
+          Parallel {
+            BatchFetch(service: "inventory") {
+              {
+                _e0 {
+                  paths: [
+                    "products.@"
+                  ]
+                  {
+                    ... on Product {
+                      upc
+                    }
+                  }
+                }
+                _e1 {
+                  paths: [
+                    "products.@"
+                  ]
+                  {
+                    ... on Product {
+                      upc
+                    }
+                  }
+                }
+              }
+              {
+                _e0: _entities(representations: $__batch_reps_0) {
+                  ... on Product {
+                    shippingEstimate
+                  }
+                }
+                _e1: _entities(representations: $__batch_reps_0) {
+                  ... on Product {
+                    inStock
+                  }
+                }
+              }
+            },
+            Flatten(path: "products.@") {
+              Fetch(service: "inventory") {
+                {
+                  ... on Product {
+                    name
+                  }
+                } =>
+                {
+                  ... on Product {
+                    shippingEstimate
+                  }
+                }
+              },
+            },
+          },
+        },
+        "#);
+    }
+
     /// Aliases with same input side and same paths can share one representations variable.
     #[test]
     fn optimize_parallel_node_shares_representations_variable_when_input_and_paths_match() {
@@ -1403,8 +1539,12 @@ mod tests {
         let b =
             flatten_entity_fetch_node(2, "inventory", "products", requires_query, in_stock_query);
 
-        let optimized = optimize_root_node(PlanNode::parallel(vec![a, b]), &supergraph)
-            .expect("optimize should work");
+        let optimized = optimize_root_node(
+            PlanNode::parallel(vec![a, b]),
+            &supergraph,
+            &Default::default(),
+        )
+        .expect("optimize should work");
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
@@ -1471,8 +1611,12 @@ mod tests {
         let b =
             flatten_entity_fetch_node(2, "inventory", "products", requires_name, entities_query);
 
-        let optimized = optimize_root_node(PlanNode::parallel(vec![a, b]), &supergraph)
-            .expect("optimize should work");
+        let optimized = optimize_root_node(
+            PlanNode::parallel(vec![a, b]),
+            &supergraph,
+            &Default::default(),
+        )
+        .expect("optimize should work");
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
@@ -1547,9 +1691,12 @@ mod tests {
             entities_query,
         ));
 
-        let optimized =
-            optimize_root_node(PlanNode::parallel(vec![base, with_rewrite]), &supergraph)
-                .expect("optimize should work");
+        let optimized = optimize_root_node(
+            PlanNode::parallel(vec![base, with_rewrite]),
+            &supergraph,
+            &Default::default(),
+        )
+        .expect("optimize should work");
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
@@ -1621,8 +1768,9 @@ mod tests {
 
         let nodes = vec![a, b];
 
-        let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph)
-            .expect("optimize should work");
+        let optimized =
+            optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
+                .expect("optimize should work");
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
@@ -1699,8 +1847,9 @@ mod tests {
 
         let nodes = vec![base, with_rewrite];
 
-        let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph)
-            .expect("optimize should work");
+        let optimized =
+            optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
+                .expect("optimize should work");
 
         // TODO: make sure rewrites are preserved
         let batch_node = optimized
@@ -1800,8 +1949,9 @@ mod tests {
         ));
 
         let nodes = vec![base, with_rewrite];
-        let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph)
-            .expect("optimize should work");
+        let optimized =
+            optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
+                .expect("optimize should work");
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
@@ -1878,8 +2028,9 @@ mod tests {
         ));
 
         let nodes = vec![base, with_output_rewrite];
-        let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph)
-            .expect("optimize should work");
+        let optimized =
+            optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
+                .expect("optimize should work");
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
@@ -1965,8 +2116,9 @@ mod tests {
 
         let nodes = vec![shape_a_first, shape_b, shape_a_second];
 
-        let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph)
-            .expect("optimize should work");
+        let optimized =
+            optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
+                .expect("optimize should work");
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
@@ -2052,8 +2204,9 @@ mod tests {
 
         let nodes = vec![with_fragment_a, with_fragment_b];
 
-        let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph)
-            .expect("optimize should work");
+        let optimized =
+            optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
+                .expect("optimize should work");
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
@@ -2100,8 +2253,9 @@ mod tests {
 
         let nodes = vec![first, second];
 
-        let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph)
-            .expect("optimize should work");
+        let optimized =
+            optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
+                .expect("optimize should work");
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
@@ -2148,8 +2302,9 @@ mod tests {
 
         let nodes = vec![candidate];
 
-        let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph)
-            .expect("optimize should work");
+        let optimized =
+            optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
+                .expect("optimize should work");
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
@@ -2205,8 +2360,9 @@ mod tests {
 
         let nodes = vec![inventory_a, inventory_b, products_a, products_b];
 
-        let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph)
-            .expect("optimize should work");
+        let optimized =
+            optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
+                .expect("optimize should work");
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",

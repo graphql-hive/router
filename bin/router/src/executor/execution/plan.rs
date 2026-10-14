@@ -947,7 +947,7 @@ impl<'exec> Executor<'exec> {
                 // every wave repeats all batch aliases, so fewer waves fit in one request
                 let waves_per_request = (self
                     .executors
-                    .max_context_aliases_per_request(&batch_fetch_node.service_name)
+                    .max_aliases_per_request(&batch_fetch_node.service_name)
                     / batch_fetch_node.entity_batch.aliases.len().max(1))
                 .max(1);
                 let mut requests = Vec::new();
@@ -1074,7 +1074,7 @@ impl<'exec> Executor<'exec> {
 
                 let groups_per_request = self
                     .executors
-                    .max_context_aliases_per_request(&fetch_node.service_name)
+                    .max_aliases_per_request(&fetch_node.service_name)
                     .max(1);
                 let mut requests = Vec::new();
                 let mut groups = groups

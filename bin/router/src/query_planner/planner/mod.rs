@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use error::QueryPlanError;
 use fetch::{error::FetchGraphError, fetch_graph::build_fetch_graph_from_query_tree};
@@ -28,9 +28,37 @@ pub mod query_plan;
 pub mod tree;
 pub mod walker;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct QueryPlannerOptions {
     pub experimental_abstract_type_folding: bool,
+    /// The most aliased `_entities` fields one batched entity request to a subgraph may carry.
+    /// Entity fetches that would be batched beyond this limit are split into several batches.
+    ///
+    /// Values in `subgraph_max_aliases_per_request` take precedence for their subgraph.
+    pub max_aliases_per_request: usize,
+    /// Per-subgraph overrides of `max_aliases_per_request`, keyed by subgraph name.
+    pub subgraph_max_aliases_per_request: HashMap<String, usize>,
+}
+
+impl Default for QueryPlannerOptions {
+    fn default() -> Self {
+        Self {
+            experimental_abstract_type_folding: false,
+            max_aliases_per_request: 15,
+            subgraph_max_aliases_per_request: HashMap::new(),
+        }
+    }
+}
+
+impl QueryPlannerOptions {
+    /// Returns the alias limit for the given subgraph, never less than 1.
+    pub fn max_aliases_per_request(&self, subgraph_name: &str) -> usize {
+        self.subgraph_max_aliases_per_request
+            .get(subgraph_name)
+            .copied()
+            .unwrap_or(self.max_aliases_per_request)
+            .max(1)
+    }
 }
 
 pub struct Planner {
@@ -107,8 +135,12 @@ impl Planner {
             cancellation_token,
         )?;
         add_variables_to_fetch_steps(&mut fetch_graph, &normalized_operation.variable_definitions)?;
-        let query_plan =
-            build_query_plan_from_fetch_graph(fetch_graph, &self.supergraph, cancellation_token)?;
+        let query_plan = build_query_plan_from_fetch_graph(
+            fetch_graph,
+            &self.supergraph,
+            &self.options,
+            cancellation_token,
+        )?;
 
         Ok(query_plan)
     }

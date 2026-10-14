@@ -81,6 +81,15 @@ impl TryFrom<&HiveRouterConfig> for SupergraphOptions {
                 experimental_abstract_type_folding: config
                     .query_planner
                     .experimental_abstract_type_folding,
+                max_aliases_per_request: config.traffic_shaping.all.max_aliases_per_request,
+                subgraph_max_aliases_per_request: config
+                    .traffic_shaping
+                    .subgraphs
+                    .iter()
+                    .filter_map(|(name, subgraph)| {
+                        Some((name.clone(), subgraph.max_aliases_per_request?))
+                    })
+                    .collect(),
             },
             traffic_shaping: (&config.traffic_shaping).into(),
             override_subgraph_urls: config.override_subgraph_urls.clone(),
