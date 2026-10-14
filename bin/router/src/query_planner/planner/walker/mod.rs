@@ -5,7 +5,7 @@ pub(crate) mod path;
 pub(crate) mod pathfinder;
 pub(crate) mod utils;
 
-use std::{borrow::Cow, collections::VecDeque};
+use std::{borrow::Cow, collections::VecDeque, rc::Rc};
 
 use crate::query_planner::{
     ast::{
@@ -21,7 +21,7 @@ use crate::query_planner::{
     },
     planner::walker::{
         path::UnionContext,
-        pathfinder::{find_self_referencing_direct_path, NavigationTarget},
+        pathfinder::{find_direct_path, find_self_referencing_direct_path, NavigationTarget},
     },
     state::supergraph_state::{OperationKind, SupergraphState},
     utils::cancellation::CancellationToken,
@@ -45,7 +45,7 @@ pub type BestPathsPerLeaf<'graph> = Vec<Vec<OperationPath<'graph>>>;
 // TODO: Consider to use VecDeque(fixed_size) if we can predict it?
 // TODO: Consider to drop this IR layer and just go with QTP directly.
 
-type WorkItem<'graph, 'op> = (&'op SelectionItem, Vec<OperationPath<'graph>>);
+type WorkItem<'graph, 'op> = (&'op SelectionItem, Rc<Vec<OperationPath<'graph>>>);
 type ResolutionStack<'graph, 'op> = Vec<WorkItem<'graph, 'op>>;
 
 #[instrument(level = "trace", skip_all)]
@@ -64,10 +64,12 @@ pub fn walk_operation<'graph, 'op: 'graph>(
     trace!("operation is of type {:?}", op_type);
 
     let root_entrypoints = get_entrypoints(graph, op_type)?;
-    let initial_paths: Vec<OperationPath<'graph>> = root_entrypoints
-        .iter()
-        .map(|edge| OperationPath::new_entrypoint(edge))
-        .collect();
+    let initial_paths: Rc<Vec<OperationPath<'graph>>> = Rc::new(
+        root_entrypoints
+            .iter()
+            .map(|edge| OperationPath::new_entrypoint(edge))
+            .collect(),
+    );
 
     let mut paths_grouped_by_root_field: Vec<BestPathsPerLeaf> =
         Vec::with_capacity(operation.selection_set.items.len());
@@ -76,7 +78,7 @@ pub fn walk_operation<'graph, 'op: 'graph>(
     for selection_item in selection_set.items.iter() {
         let mut stack_to_resolve: VecDeque<WorkItem> = VecDeque::new();
 
-        stack_to_resolve.push_back((selection_item, initial_paths.to_vec()));
+        stack_to_resolve.push_back((selection_item, Rc::clone(&initial_paths)));
 
         let mut paths_per_leaf: Vec<Vec<OperationPath<'graph>>> = vec![];
 
@@ -322,7 +324,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
         );
         let _enter = path_span.enter();
 
-        let mut direct_paths = find_direct_paths(
+        let direct_path = find_direct_path(
             graph,
             supergraph,
             override_context,
@@ -331,10 +333,11 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
             cancellation_token,
         )?;
 
-        trace!("Direct paths found: {}", direct_paths.len());
-        if !direct_paths.is_empty() {
+        let found_direct_path = direct_path.is_some();
+        trace!("Direct path found: {}", found_direct_path);
+        if let Some(direct_path) = direct_path {
             trace!("advanced: {}", path.pretty_print(graph));
-            next_paths.push(direct_paths.remove(0));
+            next_paths.push(direct_path);
         }
 
         if fields_to_resolve_locally.is_empty() {
@@ -356,7 +359,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
                 next_paths.extend(indirect_paths);
             }
 
-            if !found_indirect_paths && direct_paths.is_empty() {
+            if !found_indirect_paths && !found_direct_path {
                 // Looks like a union member or an interface implementation is not resolvable.
                 // The fact the fragment for that object type passed GraphQL validations,
                 // means that it's a child of the abstract type,
@@ -771,8 +774,9 @@ fn process_field<'graph, 'op: 'graph>(
         paths_per_leaf.push(find_best_paths(next_paths));
     } else {
         trace!("Found {} paths", next_paths.len());
+        let next_paths = Rc::new(next_paths);
         for next_selection_items in &field.selections.items {
-            next_stack_to_resolve.push((next_selection_items, next_paths.clone()));
+            next_stack_to_resolve.push((next_selection_items, Rc::clone(&next_paths)));
         }
     }
 
