@@ -478,7 +478,69 @@ pub fn find_direct_paths<'graph>(
         .find_direct_paths(path, target)
 }
 
+#[instrument(level = "trace", skip_all, fields(
+    path = path.pretty_print(graph),
+    current_cost = path.cost,
+))]
+pub fn find_direct_path<'graph>(
+    graph: &'graph Graph,
+    supergraph: &'graph SupergraphState,
+    override_context: &'graph PlannerOverrideContext,
+    path: &OperationPath<'graph>,
+    target: &NavigationTarget<'_>,
+    cancellation_token: &'graph CancellationToken,
+) -> Result<Option<OperationPath<'graph>>, WalkOperationError> {
+    PathSearch::new(graph, supergraph, override_context, cancellation_token)
+        .find_direct_path(path, target)
+}
+
 impl<'graph> PathSearch<'graph> {
+    fn find_direct_path(
+        &mut self,
+        path: &OperationPath<'graph>,
+        target: &NavigationTarget<'_>,
+    ) -> Result<Option<OperationPath<'graph>>, WalkOperationError> {
+        let graph = self.graph;
+        let path_tail_index = path.tail();
+
+        // Respect the path's current union scope when targeting a concrete type.
+        if let NavigationTarget::ConcreteType(type_name, _) = target {
+            if !path.can_resolve_union_member(type_name) {
+                return Ok(None);
+            }
+        }
+
+        let edges_iter: Box<dyn Iterator<Item = _>> = match target {
+            NavigationTarget::Field { field, .. } => {
+                Box::new(graph.edges_from(path_tail_index).filter(move |edge| {
+                    matches!(edge.weight(), Edge::FieldMove(field_move) if field_move.name == field.name)
+                        || matches!(edge.weight(), Edge::ReentryMove(reentry) if reentry.name == field.name)
+                }))
+            }
+            NavigationTarget::ConcreteType(type_name, _) => Box::new(
+                graph
+                    .edges_from(path_tail_index)
+                    .filter(move |edge| match edge.weight() {
+                        Edge::AbstractMove(target_type) => target_type == type_name,
+                        Edge::InterfaceObjectTypeMove(target_type) => {
+                            &target_type.object_type_name == type_name
+                        }
+                        _ => false,
+                    }),
+            ),
+        };
+
+        for edge_ref in edges_iter {
+            if let Some(next_path) = self.try_advance_direct_path(path, &edge_ref, target)? {
+                trace!("Finished finding direct path, found one");
+                return Ok(Some(next_path));
+            }
+        }
+
+        trace!("Finished finding direct path, found none");
+        Ok(None)
+    }
+
     fn find_direct_paths(
         &mut self,
         path: &OperationPath<'graph>,
