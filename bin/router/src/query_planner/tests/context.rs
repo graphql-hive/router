@@ -1580,3 +1580,17 @@ fn context_requires_a_locally_resolvable_entity_key() {
         }
     }
 }
+
+#[test]
+fn context_from_the_implementation_of_an_interface_ancestor() -> Result<(), Box<dyn Error>> {
+    let plan = build_query_plan_with_defaults(
+        "fixture/tests/context-interface-implementation.supergraph.graphql",
+        parse_operation("{ accounts { wallet { discount } } }"),
+    )?;
+
+    assert!(
+        plan.to_string().contains("discount(plan: $__context"),
+        "{plan}"
+    );
+    Ok(())
+}
