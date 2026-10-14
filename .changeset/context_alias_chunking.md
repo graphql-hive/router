@@ -25,4 +25,4 @@ The cap applies to both places where the router adds aliases:
 
 Higher values reduce request overhead at the cost of larger query payloads. Lower values help accommodate subgraph alias or query-complexity limits, such as graphql-armor's max-aliases rule. Aliases from the client's own query are not counted. Set this option to `1` (or `0`) to send one `_entities` field per request.
 
-The query planner's default is also `15`, so query plans produced by the node addon split batches with more than 15 aliases as well.
+Both limits are decided while planning: the planner splits batches and records how many context groups fit in one request on each fetch, so execution only splits the groups it finds in the data. Plugins that build `SupergraphOptions` themselves set the limit through the new `QueryPlannerOptions::max_aliases_per_request` and `subgraph_max_aliases_per_request` fields, which are filled from `traffic_shaping` when converting from the router config. The query planner's default is also `15`, so query plans produced by the node addon split batches with more than 15 aliases as well.

@@ -99,16 +99,6 @@ impl SupergraphTrafficShapingConfig {
             .unwrap_or_else(|| self.all.compression.clone())
     }
 
-    /// Returns the most aliased `_entities` fields one entity request to a subgraph may carry.
-    ///
-    /// A per-subgraph value takes precedence over the value configured in `all`.
-    pub fn max_aliases_per_request(&self, subgraph_name: &str) -> usize {
-        self.subgraphs
-            .get(subgraph_name)
-            .and_then(|config| config.max_aliases_per_request)
-            .unwrap_or(self.all.max_aliases_per_request)
-    }
-
     /// Returns whether any configured traffic-shaping rule can reuse WebSocket connections.
     ///
     /// This is used to avoid connection fingerprinting when pooling is disabled globally and for

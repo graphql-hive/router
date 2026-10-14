@@ -59,8 +59,9 @@ pub struct SubgraphFetchOperation {
     /// The value is the position in the document where the operation name should be written.
     pub name_write_position: usize,
     /// Copies of this operation built by `context_aliased`, indexed by the number of groups.
+    /// Set by the planner on fetches with contextual arguments, sized by the alias limit.
     #[serde(skip)]
-    context_aliased: OnceLock<Box<ContextAliasedCache>>,
+    context_aliased: Option<Box<ContextAliasedCache>>,
 }
 
 // boxed twice so the field stays one pointer wide, plans hold one of these per fetch
@@ -92,30 +93,39 @@ impl ContextAliasedOperation {
 }
 
 impl SubgraphFetchOperation {
+    /// Allows [`Self::context_aliased`] to put up to `max_groups` groups of contextual argument
+    /// values into one request. Called by the planner, a `max_groups` below 2 disables aliasing.
+    pub fn set_max_context_groups(&mut self, max_groups: usize) {
+        self.context_aliased = (max_groups >= 2).then(|| {
+            Box::new(ContextAliasedCache(
+                (0..=max_groups).map(|_| OnceLock::new()).collect(),
+            ))
+        });
+    }
+
+    /// The most groups of contextual argument values one request may carry, at least 1.
+    pub fn max_context_groups(&self) -> usize {
+        self.context_aliased
+            .as_ref()
+            .map_or(1, |cache| cache.0.len() - 1)
+    }
+
     /// Returns this operation with every top-level field repeated once per group, see
     /// [`ContextAliasedOperation`]. The `variables` get a separate copy per group, all other
     /// variables are shared. The result is built once per group count and cached.
     ///
-    /// `max_groups` is the most groups callers ever ask for. It sizes the cache on the first
-    /// call, later calls with more groups than that get `None`.
-    ///
-    /// Returns `None` when `groups` is not between 2 and `max_groups`, or the operation can not
-    /// be rewritten.
+    /// Returns `None` when `groups` is not between 2 and [`Self::max_context_groups`], or the
+    /// operation can not be rewritten.
     pub fn context_aliased(
         &self,
         groups: usize,
-        max_groups: usize,
         variables: &[&str],
     ) -> Option<&ContextAliasedOperation> {
-        if groups < 2 || groups > max_groups {
+        if groups < 2 {
             return None;
         }
         self.context_aliased
-            .get_or_init(|| {
-                Box::new(ContextAliasedCache(
-                    (0..=max_groups).map(|_| OnceLock::new()).collect(),
-                ))
-            })
+            .as_ref()?
             .0
             .get(groups)?
             .get_or_init(|| build_context_aliased(&self.document_str, groups, variables))
@@ -207,7 +217,7 @@ fn build_context_aliased(
             hash: hash_minified_query(&document_str),
             name_write_position: name_write_position(&document_str),
             document_str: document_str.into_boxed_str(),
-            context_aliased: OnceLock::new(),
+            context_aliased: None,
         },
         variables: renamed,
         response_keys,
@@ -343,7 +353,7 @@ impl PlanningFetchOperation {
                 document_str: document_str.into_boxed_str(),
                 hash,
                 name_write_position,
-                context_aliased: OnceLock::new(),
+                context_aliased: None,
             },
         }
     }
@@ -771,16 +781,22 @@ mod tests {
         let operation = parse_subgraph_fetch_operation(
             "query($representations: [_Any!]!, $c: ID, $shared: Int) { _entities(representations: $representations) { ...F ... on T @include(if: $c) { g(a: [{x: $c}], b: $shared) } } } fragment F on T { f(a: $c) }",
         );
-        let operation = operation.as_ref();
+        let mut operation = operation.operation;
+        // not enabled by the planner
         assert!(operation
-            .context_aliased(1, 15, &["representations", "c"])
+            .context_aliased(2, &["representations", "c"])
+            .is_none());
+        operation.set_max_context_groups(15);
+        assert_eq!(operation.max_context_groups(), 15);
+        assert!(operation
+            .context_aliased(1, &["representations", "c"])
             .is_none());
         assert!(operation
-            .context_aliased(16, 15, &["representations", "c"])
+            .context_aliased(16, &["representations", "c"])
             .is_none());
 
         let aliased = operation
-            .context_aliased(2, 15, &["representations", "c"])
+            .context_aliased(2, &["representations", "c"])
             .unwrap();
         insta::assert_snapshot!(aliased.operation.document_str, @"query($representations_0:[_Any!]!$representations_1:[_Any!]!$c_0:ID$c_1:ID$shared:Int){_entities_0:_entities(representations:$representations_0){...F_0...on T@include(if:$c_0){g(a:[{x:$c_0}]b:$shared)}}_entities_1:_entities(representations:$representations_1){...F_1...on T@include(if:$c_1){g(a:[{x:$c_1}]b:$shared)}}}fragment F_0 on T{f(a:$c_0)}fragment F_1 on T{f(a:$c_1)}");
         assert_eq!(aliased.operation.name_write_position, 5);
@@ -796,7 +812,7 @@ mod tests {
         // cached per group count
         assert!(std::ptr::eq(
             aliased,
-            operation.context_aliased(2, 15, &[]).unwrap()
+            operation.context_aliased(2, &[]).unwrap()
         ));
     }
 }

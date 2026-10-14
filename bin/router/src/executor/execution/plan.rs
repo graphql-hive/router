@@ -944,22 +944,16 @@ impl<'exec> Executor<'exec> {
                     );
                 }
 
-                // every wave repeats all batch aliases, so fewer waves fit in one request
-                let waves_per_request = (self
-                    .executors
-                    .max_aliases_per_request(&batch_fetch_node.service_name)
-                    / batch_fetch_node.entity_batch.aliases.len().max(1))
-                .max(1);
+                let waves_per_request = batch_fetch_node.operation.max_context_groups();
                 let mut requests = Vec::new();
                 let mut waves = waves.into_iter().peekable();
                 while waves.peek().is_some() {
                     let chunk: Vec<_> = waves.by_ref().take(waves_per_request).collect();
                     let variables: Vec<&str> = chunk[0].0.iter().map(|(name, _)| *name).collect();
-                    let Some(aliased) = batch_fetch_node.operation.context_aliased(
-                        chunk.len(),
-                        waves_per_request,
-                        &variables,
-                    ) else {
+                    let Some(aliased) = batch_fetch_node
+                        .operation
+                        .context_aliased(chunk.len(), &variables)
+                    else {
                         requests.extend(chunk.into_iter().map(|(raw_variable_values, aliases)| {
                             (
                                 &batch_fetch_node.operation,
@@ -1072,10 +1066,7 @@ impl<'exec> Executor<'exec> {
                 );
                 let representation_hashes = path_hashes.pop().unwrap_or_default();
 
-                let groups_per_request = self
-                    .executors
-                    .max_aliases_per_request(&fetch_node.service_name)
-                    .max(1);
+                let groups_per_request = fetch_node.operation.max_context_groups();
                 let mut requests = Vec::new();
                 let mut groups = groups
                     .into_iter()
@@ -1089,11 +1080,10 @@ impl<'exec> Executor<'exec> {
                         .map(|(name, _)| *name)
                         .chain(["representations"])
                         .collect();
-                    let Some(aliased) = fetch_node.operation.context_aliased(
-                        chunk.len(),
-                        groups_per_request,
-                        &variables,
-                    ) else {
+                    let Some(aliased) = fetch_node
+                        .operation
+                        .context_aliased(chunk.len(), &variables)
+                    else {
                         requests.extend(chunk.into_iter().map(|group| {
                             let mut raw_variable_values = group.variables;
                             raw_variable_values.push(("representations", group.representations));

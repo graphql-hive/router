@@ -264,6 +264,7 @@ impl<'a> BatchFetchBuilder<'a> {
         mut self,
         first_candidate: &EntityFetch,
         supergraph: &SupergraphState,
+        max_aliases: usize,
     ) -> Result<BatchFetchNode, QueryPlanError> {
         self.operation_variable_definitions
             .extend(self.merged_non_representation_variables.iter().cloned());
@@ -283,6 +284,18 @@ impl<'a> BatchFetchBuilder<'a> {
             ))
         })?;
 
+        let mut operation = PlanningFetchOperation::from_anonymous_operation(document);
+        if self
+            .batched_aliases
+            .iter()
+            .any(|alias| !alias.context_variables.is_empty())
+        {
+            // every group of contextual argument values repeats all batch aliases
+            operation
+                .operation
+                .set_max_context_groups(max_aliases / self.batched_aliases.len().max(1));
+        }
+
         Ok(BatchFetchNode {
             id: first_candidate.fetch_node_id,
             service_name: first_candidate.service_name.clone(),
@@ -292,7 +305,7 @@ impl<'a> BatchFetchBuilder<'a> {
                 Some(self.variable_usages)
             },
             operation_kind: Some(OperationKind::Query),
-            operation: PlanningFetchOperation::from_anonymous_operation(document),
+            operation,
             custom_scalar_paths: (!self.custom_scalar_paths.is_empty())
                 .then_some(self.custom_scalar_paths),
             entity_batch: EntityBatch {
@@ -622,8 +635,12 @@ fn optimize_parallel_node(
                 let first_index = chunk[0][0].index;
 
                 // Build one `BatchFetch` node from each final group
-                let batch_fetch_node =
-                    build_batched_fetch_node(chunk, &variable_group.variables, supergraph)?;
+                let batch_fetch_node = build_batched_fetch_node(
+                    chunk,
+                    &variable_group.variables,
+                    supergraph,
+                    max_aliases,
+                )?;
 
                 batch_node_replacements.insert(
                     first_index,
@@ -870,6 +887,7 @@ fn build_batched_fetch_node(
     shape_groups: &[Vec<EntityFetch>],
     merged_non_representation_variables: &[VariableDefinition],
     supergraph: &SupergraphState,
+    max_aliases: usize,
 ) -> Result<BatchFetchNode, QueryPlanError> {
     let first_candidate = shape_groups
         .first()
@@ -885,7 +903,7 @@ fn build_batched_fetch_node(
         builder.add_shape_group(index, shape_group, supergraph)?;
     }
 
-    builder.finish(first_candidate, supergraph)
+    builder.finish(first_candidate, supergraph, max_aliases)
 }
 
 fn optimize_plan_sequence(nodes: Vec<PlanNode>) -> Vec<PlanNode> {

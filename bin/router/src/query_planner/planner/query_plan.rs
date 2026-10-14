@@ -123,7 +123,7 @@ pub fn build_query_plan_from_fetch_graph(
                 )))?;
 
             let step_data = fetch_graph.get_step_data(step_index)?;
-            current_wave_nodes.push(PlanNode::from_fetch_step(step_data, supergraph));
+            current_wave_nodes.push(PlanNode::from_fetch_step(step_data, supergraph, options));
             planned_nodes_count += 1;
             in_degrees.mark_as_processed(step_index);
 

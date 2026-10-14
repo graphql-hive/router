@@ -416,13 +416,14 @@ mod tests {
         else {
             panic!("operation");
         };
-        let operation = PlanningFetchOperation::from_anonymous_operation(Document {
+        let mut operation = PlanningFetchOperation::from_anonymous_operation(Document {
             operation: operation.into(),
             fragments: Vec::new(),
         })
         .operation;
+        operation.set_max_context_groups(15);
         let aliased = operation
-            .context_aliased(3, 15, &["representations", "c"])
+            .context_aliased(3, &["representations", "c"])
             .unwrap();
 
         let mut response = SubgraphResponse {
