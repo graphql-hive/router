@@ -1580,3 +1580,65 @@ fn context_requires_a_locally_resolvable_entity_key() {
         }
     }
 }
+
+#[test]
+fn context_from_the_implementation_of_an_interface_ancestor() -> Result<(), Box<dyn Error>> {
+    let plan = build_query_plan_with_defaults(
+        "fixture/tests/context-interface-implementation.supergraph.graphql",
+        parse_operation("{ accounts { wallet { discount } } }"),
+    )?;
+
+    insta::assert_snapshot!(plan.to_string(), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            accounts {
+              __typename
+              ... on Member {
+                plan
+              }
+              ... on Guest {
+                plan
+              }
+              wallet {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "accounts.@.wallet") {
+          Fetch(service: "a") {
+            {
+              ... on Wallet {
+                __typename
+                id
+              }
+            } =>
+            ($__context_0:String) {
+              ... on Wallet {
+                discount(plan: $__context_0)
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    let plan = serde_json::to_value(plan)?;
+    assert_eq!(
+        plan["node"]["nodes"][1]["node"]["contextRewrites"],
+        serde_json::json!([
+            {
+                "path": ["Parent", {"TypenameEquals": ["Member"]}, {"Key": "plan"}],
+                "renameKeyTo": "__context_0"
+            },
+            {
+                "path": ["Parent", {"TypenameEquals": ["Guest"]}, {"Key": "plan"}],
+                "renameKeyTo": "__context_0"
+            }
+        ])
+    );
+    Ok(())
+}

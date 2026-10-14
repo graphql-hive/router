@@ -94,7 +94,16 @@ mod context_tests {
         let argument = &field.context_arguments[0];
         assert_eq!(argument.name, "code");
         assert_eq!(argument.type_in_graph.to_string(), "String");
-        assert_eq!(argument.selections.len(), 2);
+        assert_eq!(argument.selections.len(), 3);
+        let interface_selection = argument
+            .selections
+            .iter()
+            .find(|selection| selection.type_name == "Account")
+            .unwrap();
+        assert_eq!(
+            interface_selection.selection_set.to_string(),
+            "{...on User{currency}}"
+        );
         assert!(argument
             .selections
             .iter()
