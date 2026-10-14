@@ -20,7 +20,11 @@ use super::graph::{
 };
 use crate::query_planner::planner::walker::utils::get_entrypoints;
 use crate::query_planner::{
-    ast::type_aware_selection::TypeAwareSelection,
+    ast::{
+        selection_item::SelectionItem,
+        selection_set::{InlineFragmentSelection, SelectionSet},
+        type_aware_selection::TypeAwareSelection,
+    },
     federation_spec::FederationRules,
     graph::node::{SubgraphTypeSpecialization, UnionMembersData},
     state::supergraph_state::{
@@ -727,10 +731,8 @@ impl Graph {
                             join_field
                                 .context_arguments
                                 .iter()
-                                .map(|argument| ContextArgument {
-                                    name: argument.name.clone(),
-                                    type_in_graph: argument.type_in_graph.clone(),
-                                    selections: state
+                                .map(|argument| {
+                                    let mut selections: Vec<TypeAwareSelection> = state
                                         .contexts
                                         .get(&argument.context)
                                         .into_iter()
@@ -745,7 +747,47 @@ impl Graph {
                                                 &argument.selection,
                                             )
                                         })
-                                        .collect(),
+                                        .collect();
+                                    // ancestor paths can stay on an interface even when only its
+                                    // implementations declare the context, so add an interface selection too
+                                    for (interface, members) in &state.interface_to_object_types {
+                                        // keep the direct selection if the interface already declares this context
+                                        if selections
+                                            .iter()
+                                            .any(|selection| selection.type_name == *interface)
+                                        {
+                                            continue;
+                                        }
+                                        // keep each implementation behind its type condition so both field
+                                        // fetching and context rewrites only apply to matching runtime objects
+                                        let items = selections
+                                            .iter()
+                                            .filter(|selection| {
+                                                members.contains(&selection.type_name)
+                                            })
+                                            .map(|selection| {
+                                                SelectionItem::InlineFragment(
+                                                    InlineFragmentSelection {
+                                                        type_condition: selection.type_name.clone(),
+                                                        selections: selection.selection_set.clone(),
+                                                        skip_if: None,
+                                                        include_if: None,
+                                                    },
+                                                )
+                                            })
+                                            .collect::<Vec<_>>();
+                                        if !items.is_empty() {
+                                            selections.push(TypeAwareSelection {
+                                                type_name: interface.clone(),
+                                                selection_set: SelectionSet { items },
+                                            });
+                                        }
+                                    }
+                                    ContextArgument {
+                                        name: argument.name.clone(),
+                                        type_in_graph: argument.type_in_graph.clone(),
+                                        selections,
+                                    }
                                 })
                                 .collect::<Vec<_>>()
                         })
