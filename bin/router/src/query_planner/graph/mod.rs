@@ -165,6 +165,30 @@ pub struct Graph {
 }
 
 impl Graph {
+    fn needs_output_traversal(definition: &SupergraphDefinition) -> bool {
+        matches!(
+            definition,
+            SupergraphDefinition::Object(_)
+                | SupergraphDefinition::Interface(_)
+                | SupergraphDefinition::Union(_)
+        )
+    }
+
+    fn can_have_entity_moves(definition: &SupergraphDefinition) -> bool {
+        matches!(
+            definition,
+            SupergraphDefinition::Object(_) | SupergraphDefinition::Interface(_)
+        )
+    }
+
+    fn is_leaf_output_type(state: &SupergraphState, type_name: &str) -> bool {
+        state.is_scalar_type(type_name)
+            || state
+                .definitions
+                .get(type_name)
+                .is_some_and(|definition| matches!(definition, SupergraphDefinition::Enum(_)))
+    }
+
     #[instrument(level = "trace", skip(supergraph_state))]
     pub fn graph_from_supergraph_state(
         supergraph_state: &SupergraphState,
@@ -327,6 +351,7 @@ impl Graph {
     }
 
     /// Add an edge without scanning the graph for an identical edge.
+    /// Use only where the caller constructs each logical edge once.
     fn push_edge(&mut self, head: NodeIndex, tail: NodeIndex, edge: Edge) -> EdgeIndex {
         self.graph.add_edge(head, tail, edge)
     }
@@ -357,7 +382,11 @@ impl Graph {
         build_context: &mut GraphBuildContext<'state>,
         cached_rules: &mut CachedFederationRules<'state>,
     ) -> Result<(), GraphError> {
-        for (def_name, definition) in state.definitions.iter() {
+        for (def_name, definition) in state
+            .definitions
+            .iter()
+            .filter(|(_, definition)| Self::can_have_entity_moves(definition))
+        {
             let is_interface = definition.is_interface_type();
             for join_type1 in definition.join_types() {
                 // Connects object and interface entities of the same name by @key
@@ -627,13 +656,20 @@ impl Graph {
         state: &'state SupergraphState,
         build_context: &mut GraphBuildContext<'state>,
     ) -> Result<(), GraphError> {
-        for (def_name, definition) in state.definitions.iter() {
+        for (def_name, definition) in state
+            .definitions
+            .iter()
+            .filter(|(_, definition)| Self::needs_output_traversal(definition))
+        {
             if let Some(root_type) = definition.try_into_root_type() {
+                // `subgraphs()` is sorted but may contain duplicate graph IDs if the SDL has
+                // duplicate `@join__type`s. A root entrypoint is unique per root and graph.
                 let mut graph_ids = definition.subgraphs();
                 graph_ids.dedup();
 
-                // Collect the graphs with at least one available root field in one pass. The
-                // entrypoint only needs to know whether any field is available in each graph.
+                // Collect the root graphs that have at least one available field in one pass.
+                // Root entrypoints only need to know whether each graph can resolve anything;
+                // building a list of all available field names for every graph was unnecessary.
                 let mut graphs_without_fields: HashSet<_> = graph_ids.iter().copied().collect();
                 for field in definition.fields().values() {
                     if field.join_field.is_empty() {
@@ -696,7 +732,11 @@ impl Graph {
         let unions = UnionDefinitions::new(state);
         let mut provides = HashMap::new();
 
-        for (def_name, definition) in state.definitions.iter() {
+        for (def_name, definition) in state
+            .definitions
+            .iter()
+            .filter(|(_, definition)| Self::can_have_entity_moves(definition))
+        {
             for graph_id in definition.subgraphs().iter() {
                 let graph_name = build_context.resolve_graph_id(state, graph_id)?.0.clone();
                 if !definition.is_defined_in_subgraph(graph_id) {
@@ -1021,7 +1061,7 @@ impl Graph {
                                 Edge::create_field_move(
                                     field_name.clone(),
                                     def_name.clone(),
-                                    state.is_scalar_type(target_type),
+                                    Self::is_leaf_output_type(state, target_type),
                                     field_definition.field_type.is_list(),
                                     maybe_join_field.cloned(),
                                     requirements.clone(),
@@ -1076,7 +1116,7 @@ impl Graph {
                         Edge::create_field_move(
                             field_name.clone(),
                             def_name.clone(),
-                            state.is_scalar_type(target_type),
+                            Self::is_leaf_output_type(state, target_type),
                             field_definition.field_type.is_list(),
                             maybe_join_field.cloned(),
                             requirements.clone(),
