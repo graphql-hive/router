@@ -42,8 +42,11 @@
 //!
 //! 5.  The `Candidate` struct uses `OnceCell` to ensure that the
 //!     potentially expensive work of building and costing a `QueryTree` is only ever
-//!     done if a candidate is actually evaluated, and never more
-//!     than once.
+//!     done if a candidate is actually evaluated, and never more than once.
+//!
+//! 6.  Candidate combinations are costed incrementally. Since adding a candidate only
+//!     adds nodes not already present in the current tree, we avoid recalculating the
+//!     cost of the entire merged tree while preserving the exact branch-and-bound costs.
 
 use lazy_init::LazyTransform;
 use std::{cell::OnceCell, rc::Rc};
@@ -249,32 +252,33 @@ fn find_initial_plan(
 
         // At each step, pick the candidate that adds the smallest cost to the current plan
         for candidate in alternatives {
-            let cand_tree = match candidate.get_tree(graph) {
-                Ok(t) => t,
+            let candidate_tree = match candidate.get_tree(graph) {
+                Ok(tree) => tree,
                 Err(_) => continue,
             };
-            let next_tree = match current_tree.as_ref() {
-                Some(t) => {
-                    let mut merged = t.clone();
-                    Rc::make_mut(&mut merged.root).merge_nodes(&cand_tree.root);
-                    merged
+
+            let added_cost = match current_tree.as_ref() {
+                Some(tree) => {
+                    calculate_added_cost_of_merge(graph, &tree.root, &candidate_tree.root)
                 }
-                None => cand_tree.clone(),
+                None => calculate_cost_of_tree(graph, &candidate_tree.root),
             };
-            let next_cost = calculate_cost_of_tree(graph, &next_tree.root);
+            let next_cost = current_cost + added_cost;
             let delta = next_cost.saturating_sub(current_cost);
+
             if delta < best_delta {
                 best_delta = delta;
-                best_next = Some((next_cost, next_tree));
+                best_next = Some((next_cost, candidate_tree));
             }
         }
 
-        if let Some((next_cost, next_tree)) = best_next {
-            current_cost = next_cost;
-            current_tree = Some(next_tree);
-        } else {
-            return None;
+        let (next_cost, next_tree) = best_next?;
+
+        match current_tree.as_mut() {
+            Some(tree) => Rc::make_mut(&mut tree.root).merge_nodes(&next_tree.root),
+            None => current_tree = Some(next_tree),
         }
+        current_cost = next_cost;
     }
 
     current_tree.map(|t| (current_cost, t))
@@ -321,20 +325,25 @@ fn explore_plan_combinations(
     // Explore each possible candidate for the current set of alternatives.
     for cand in groups[group_index].iter() {
         let cand_tree = cand.get_tree(graph)?;
-        let next_tree = match tree_so_far.as_ref() {
-            Some(t) => {
-                let mut merged = t.clone();
-                Rc::make_mut(&mut merged.root).merge_nodes(&cand_tree.root);
-                merged
-            }
-            None => cand_tree.clone(),
-        };
 
-        let next_cost = calculate_cost_of_tree(graph, &next_tree.root);
+        let added_cost = match tree_so_far.as_ref() {
+            Some(tree) => calculate_added_cost_of_merge(graph, &tree.root, &cand_tree.root),
+            None => calculate_cost_of_tree(graph, &cand_tree.root),
+        };
+        let next_cost = cost_so_far + added_cost;
         // If the next step alone is too expensive, skip it.
         if next_cost >= state.best_cost {
             continue;
         }
+
+        let next_tree = match tree_so_far.as_ref() {
+            Some(tree) => {
+                let mut merged = tree.clone();
+                Rc::make_mut(&mut merged.root).merge_nodes(&cand_tree.root);
+                merged
+            }
+            None => cand_tree,
+        };
 
         explore_plan_combinations(
             graph,
@@ -351,17 +360,54 @@ fn explore_plan_combinations(
     Ok(())
 }
 
+/// Calculate how much cost `source` adds when merged into `target`.
+///
+/// Only nodes missing from `target`, and their missing descendants and requirements,
+/// contribute additional cost. This avoids re-costing the entire merged tree while
+/// retaining the same cost as a full merge followed by `calculate_cost_of_tree`.
+fn calculate_added_cost_of_merge(
+    graph: &Graph,
+    target: &QueryTreeNode,
+    source: &QueryTreeNode,
+) -> u64 {
+    calculate_added_cost_for_node_list(graph, &target.children, &source.children, false)
+        + calculate_added_cost_for_node_list(
+            graph,
+            &target.requirements,
+            &source.requirements,
+            true,
+        )
+}
+
+fn calculate_added_cost_for_node_list(
+    graph: &Graph,
+    target_list: &[Rc<QueryTreeNode>],
+    source_list: &[Rc<QueryTreeNode>],
+    is_requirement: bool,
+) -> u64 {
+    source_list
+        .iter()
+        .map(|source_node| {
+            if let Some(target_node) = target_list
+                .iter()
+                .find(|target_node| target_node.as_ref() == source_node.as_ref())
+            {
+                calculate_added_cost_of_merge(graph, target_node, source_node)
+            } else if is_requirement {
+                CROSS_SUBGRAPH_COST + calculate_cost_of_tree(graph, source_node)
+            } else {
+                edge_cost(graph, source_node) + calculate_cost_of_tree(graph, source_node)
+            }
+        })
+        .sum()
+}
+
 #[inline(always)]
 fn calculate_cost_of_tree(graph: &Graph, node: &QueryTreeNode) -> u64 {
     let mut current_cost = FIELD_COST;
 
     for child in &node.children {
-        if child.edge_from_parent.is_some_and(|edge_index| {
-            matches!(
-                graph.edge(edge_index).expect("edge should exist"),
-                Edge::SubgraphEntrypoint { .. }
-            )
-        }) {
+        if edge_cost(graph, child) > 0 {
             current_cost += CROSS_SUBGRAPH_COST;
         }
 
@@ -374,4 +420,87 @@ fn calculate_cost_of_tree(graph: &Graph, node: &QueryTreeNode) -> u64 {
     }
 
     current_cost
+}
+
+#[inline(always)]
+fn edge_cost(graph: &Graph, node: &QueryTreeNode) -> u64 {
+    if node.edge_from_parent.is_some_and(|edge_index| {
+        matches!(
+            graph.edge(edge_index).expect("edge should exist"),
+            Edge::SubgraphEntrypoint { .. }
+        )
+    }) {
+        CROSS_SUBGRAPH_COST
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::rc::Rc;
+
+    use petgraph::graph::NodeIndex;
+
+    use super::*;
+
+    fn node(
+        index: usize,
+        children: Vec<Rc<QueryTreeNode>>,
+        requirements: Vec<Rc<QueryTreeNode>>,
+    ) -> Rc<QueryTreeNode> {
+        Rc::new(QueryTreeNode {
+            node_index: NodeIndex::new(index),
+            edge_from_parent: None,
+            requirements,
+            children,
+            selection_attributes: None,
+            condition: None,
+            mutation_field_position: None,
+        })
+    }
+
+    #[test]
+    fn incremental_merge_cost_matches_full_tree_cost() {
+        let graph = Graph::default();
+        // The graph is only consulted for edge costs. These test nodes have no graph edges.
+
+        let shared_leaf = node(2, vec![], vec![]);
+        let shared_requirement = node(3, vec![], vec![]);
+        let target_shared = node(1, vec![shared_leaf], vec![shared_requirement]);
+        let target = QueryTreeNode {
+            node_index: NodeIndex::new(0),
+            edge_from_parent: None,
+            requirements: vec![],
+            children: vec![target_shared],
+            selection_attributes: None,
+            condition: None,
+            mutation_field_position: None,
+        };
+
+        let source_shared = node(
+            1,
+            vec![node(2, vec![], vec![]), node(4, vec![], vec![])],
+            vec![node(3, vec![], vec![]), node(5, vec![], vec![])],
+        );
+        let source = QueryTreeNode {
+            node_index: NodeIndex::new(0),
+            edge_from_parent: None,
+            requirements: vec![],
+            children: vec![source_shared, node(6, vec![], vec![])],
+            selection_attributes: None,
+            condition: None,
+            mutation_field_position: None,
+        };
+
+        let current_cost = calculate_cost_of_tree(&graph, &target);
+        let added_cost = calculate_added_cost_of_merge(&graph, &target, &source);
+        let mut merged = target.clone();
+        merged.merge_nodes(&source);
+
+        assert_eq!(
+            added_cost,
+            calculate_cost_of_tree(&graph, &merged) - current_cost
+        );
+    }
 }
