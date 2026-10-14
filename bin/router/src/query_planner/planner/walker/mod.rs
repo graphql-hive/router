@@ -592,25 +592,40 @@ fn process_field<'graph, 'op: 'graph>(
         }
 
         if !fields_to_resolve_locally.contains(&field.name) && !found_direct_paths_to_leaf {
-            let indirect_paths = find_indirect_paths(
-                graph,
-                supergraph,
-                override_context,
-                path,
-                &NavigationTarget::Field {
-                    field,
-                    target_subgraph_ids: target_subgraph_ids.as_deref(),
-                },
-                &excluded,
-                cancellation_token,
-            )?;
-            trace!("Indirect paths found: {}", indirect_paths.len());
+            let has_indirect_candidates = graph.edges_from(path.tail()).any(|edge| {
+                matches!(
+                    edge.weight(),
+                    Edge::EntityMove { .. } | Edge::InterfaceObjectTypeMove { .. }
+                )
+            });
 
-            if !indirect_paths.is_empty() {
-                advanced = true;
-                for indirect_path in indirect_paths {
-                    tracker.add(&indirect_path)?;
+            if has_indirect_candidates {
+                let indirect_paths = find_indirect_paths(
+                    graph,
+                    supergraph,
+                    override_context,
+                    path,
+                    &NavigationTarget::Field {
+                        field,
+                        target_subgraph_ids: target_subgraph_ids.as_deref(),
+                    },
+                    &excluded,
+                    cancellation_token,
+                )?;
+                trace!("Indirect paths found: {}", indirect_paths.len());
+
+                if !indirect_paths.is_empty() {
+                    advanced = true;
+                    for indirect_path in indirect_paths {
+                        tracker.add(&indirect_path)?;
+                    }
                 }
+            } else {
+                trace!(
+                    "Skipping indirect lookup for '{}' at tail {} because there are no entity/interface-object outgoing edges",
+                    field.name,
+                    path.tail().index()
+                );
             }
         }
 
