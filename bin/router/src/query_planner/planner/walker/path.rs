@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::rc::Rc;
 use std::{cmp, fmt::Debug};
 
@@ -33,6 +32,9 @@ impl PartialEq for SelectionAttributes {
 pub struct PathSegment {
     // Link to the previous step, null for the first segment originating from rootNode
     prev: Option<Rc<PathSegment>>,
+    /// How many segments the path has up to and including this one.
+    /// Lets the getters below allocate once, with the right size.
+    depth: usize,
     pub edge_index: EdgeIndex,
     tail_node: NodeIndex,
     cumulative_cost: u64,
@@ -117,6 +119,7 @@ impl PathSegment {
     pub fn new_root(edge: &EdgeReference) -> Self {
         Self {
             prev: None,
+            depth: 1,
             edge_index: edge.id(),
             tail_node: edge.target(),
             cumulative_cost: edge.weight().cost(),
@@ -193,6 +196,7 @@ impl<'graph> OperationPath<'graph> {
 
         let new_segment_data = PathSegment {
             prev: self.last_segment.clone(),
+            depth: self.last_segment.as_ref().map_or(0, |prev| prev.depth) + 1,
             tail_node: edge_ref.target(),
             edge_index: edge_ref.id(),
             cumulative_cost: new_cost,
@@ -261,40 +265,31 @@ impl<'graph> OperationPath<'graph> {
             .map_or(self.root_node, |segment| segment.tail_node)
     }
 
-    pub fn get_segments(&self) -> Vec<Rc<PathSegment>> {
-        let mut segments: VecDeque<Rc<PathSegment>> = VecDeque::new();
-        let mut current: Option<Rc<PathSegment>> = self.last_segment.clone();
-
-        while let Some(segment) = current {
-            segments.push_front(segment.clone());
-            current = segment.prev.clone();
-        }
-
-        segments.into_iter().collect()
+    /// The segments from the root to the tail.
+    pub fn get_segments(&self) -> Vec<&PathSegment> {
+        self.collect_from_root(|segment| segment)
     }
 
     pub fn get_edges(&self) -> Vec<EdgeIndex> {
-        let mut edges: VecDeque<EdgeIndex> = VecDeque::new();
-        let mut current: Option<Rc<PathSegment>> = self.last_segment.clone();
-
-        while let Some(segment) = current {
-            edges.push_front(segment.edge_index);
-            current = segment.prev.clone();
-        }
-
-        edges.into_iter().collect()
+        self.collect_from_root(|segment| segment.edge_index)
     }
 
     pub fn get_requirement_tree(&self) -> Vec<Option<Rc<QueryTreeNode>>> {
-        let mut requirement_tree_vec: VecDeque<Option<Rc<QueryTreeNode>>> = VecDeque::new();
-        let mut current: Option<Rc<PathSegment>> = self.last_segment.clone();
+        self.collect_from_root(|segment| segment.requirement_tree.clone())
+    }
+
+    /// Walks the segments from the tail by reference, into one exactly-sized Vec, and flips it.
+    fn collect_from_root<'a, T>(&'a self, map: impl Fn(&'a PathSegment) -> T) -> Vec<T> {
+        let mut items = Vec::with_capacity(self.last_segment.as_ref().map_or(0, |s| s.depth));
+        let mut current = self.last_segment.as_deref();
 
         while let Some(segment) = current {
-            requirement_tree_vec.push_front(segment.requirement_tree.clone());
-            current = segment.prev.clone();
+            items.push(map(segment));
+            current = segment.prev.as_deref();
         }
 
-        requirement_tree_vec.into_iter().collect()
+        items.reverse();
+        items
     }
 
     pub fn pretty_print(&self, graph: &Graph<'_>) -> String {
@@ -323,8 +318,8 @@ impl<'graph> OperationPath<'graph> {
      * other: The path found that satisfies (part of) the requirement.
      */
     pub fn build_requirement_continuation_path(&self, other: &OperationPath<'graph>) -> Self {
-        let source_segments: Vec<Rc<PathSegment>> = self.get_segments();
-        let target_segments: Vec<Rc<PathSegment>> = other.get_segments();
+        let source_segments = self.get_segments();
+        let target_segments = other.get_segments();
 
         // Index of the last common segment in the sequence
         let mut common_index: Option<usize> = None;
@@ -368,6 +363,7 @@ impl<'graph> OperationPath<'graph> {
             let new_cumulative_cost = original_segment.cumulative_cost - cost_offset.unwrap_or(0);
 
             let new_segment_data = PathSegment {
+                depth: previous_new_segment.as_ref().map_or(0, |prev| prev.depth) + 1,
                 prev: previous_new_segment.take(),
                 cumulative_cost: new_cumulative_cost,
                 edge_index: original_segment.edge_index,

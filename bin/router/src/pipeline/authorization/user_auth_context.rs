@@ -133,7 +133,7 @@ impl AuthorizationMetadata {
 
     /// Computes whether each type has auth rules in its subtree.
     fn compute_type_auth_metadata(
-        definitions: &std::collections::HashMap<String, SupergraphDefinition>,
+        definitions: &HashMap<String, SupergraphDefinition>,
         schema_metadata: &SchemaMetadata,
         type_rules: &TypeRulesMap,
         field_rules: &TypeFieldRulesMap,

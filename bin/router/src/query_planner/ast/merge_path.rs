@@ -126,13 +126,14 @@ impl From<&InlineFragmentSelection> for Option<Condition> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// Cheap to clone: paths get copied on every push, so the strings sit behind `Rc`.
+#[derive(Clone, Debug, PartialEq)]
 pub enum Segment {
     // A field with a unique identifier and the arguments hash
     // We used this to uniquely identify the field in the selection set.
-    Field(FieldPathSegment, u64, Option<Condition>),
+    Field(Rc<FieldPathSegment>, u64, Option<Condition>),
     List,
-    TypeCondition(BTreeSet<String>, Option<Condition>),
+    TypeCondition(Rc<BTreeSet<String>>, Option<Condition>),
 }
 
 impl Display for Segment {
@@ -170,7 +171,7 @@ impl MergePath {
 
     pub fn slice_from(&self, start: usize) -> Self {
         Self {
-            inner: Rc::from(&self.inner[start..]),
+            inner: self.inner[start..].iter().cloned().collect(),
         }
     }
 
@@ -180,7 +181,7 @@ impl MergePath {
 
     pub fn without_last(&self) -> Self {
         Self {
-            inner: Rc::from(&self.inner[..self.inner.len() - 1]),
+            inner: self.inner[..self.inner.len() - 1].iter().cloned().collect(),
         }
     }
 
@@ -206,28 +207,40 @@ impl MergePath {
         result
     }
 
+    // These collect straight into the `Rc<[Segment]>`. The iterators know their exact length,
+    // so that's one allocation, no Vec in between.
+
     /// Insert a string at the beginning of the path
     pub fn insert_front(&self, segment: impl Into<Segment>) -> Self {
-        let mut new_segments = Vec::with_capacity(self.inner.len() + 1);
-        new_segments.push(segment.into());
-        new_segments.extend_from_slice(&self.inner);
-        Self::new(new_segments)
+        Self {
+            inner: std::iter::once(segment.into())
+                .chain(self.inner.iter().cloned())
+                .collect(),
+        }
     }
 
     /// Inserts a string at the end of the path
     pub fn push(&self, segment: impl Into<Segment>) -> Self {
-        let mut new_segments = Vec::with_capacity(self.inner.len() + 1);
-        new_segments.extend_from_slice(&self.inner);
-        new_segments.push(segment.into());
-        Self::new(new_segments)
+        Self {
+            inner: self
+                .inner
+                .iter()
+                .cloned()
+                .chain(std::iter::once(segment.into()))
+                .collect(),
+        }
     }
 
     /// Appends another path to this one
     pub fn concat(&self, other: &MergePath) -> Self {
-        let mut new_segments = Vec::with_capacity(self.inner.len() + other.inner.len());
-        new_segments.extend_from_slice(&self.inner);
-        new_segments.extend_from_slice(&other.inner);
-        Self::new(new_segments)
+        Self {
+            inner: self
+                .inner
+                .iter()
+                .chain(other.inner.iter())
+                .cloned()
+                .collect(),
+        }
     }
 
     pub fn len(&self) -> usize {

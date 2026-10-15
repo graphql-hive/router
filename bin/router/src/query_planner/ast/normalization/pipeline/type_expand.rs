@@ -1,4 +1,5 @@
-use std::{collections::HashSet, vec};
+use ahash::HashSet;
+use std::vec;
 
 use graphql_tools::parser::query::{
     Definition, Field, InlineFragment, Mutation, OperationDefinition, Query, Selection,
