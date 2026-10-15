@@ -12,6 +12,9 @@
 //! it. A plan is those trees merged, and costs a field per node plus a crossing per fetch it needs.
 //! Fetches are counted the way the fetch graph makes them: one root fetch per subgraph, and one
 //! entity call per subgraph and path of the objects it extends, however many nodes lead there.
+//! ponytail: two calls with the same key where one waits on the other stay two requests, but
+//! count as one here. Only the cost is off, the plan is still right. abstract has 20 of those,
+//! the same in every plan, so no pick changes. Key on dependency depth if one ever does.
 //! Each node and each fetch is an "item", interned once with its weight, and a candidate is the
 //! list of its items. So a plan costs the weight of the items its candidates use, counted once.
 //!
@@ -873,22 +876,35 @@ impl<'a> Plan<'a> {
     ) -> Result<bool, QueryPlanError> {
         let mut improved = false;
         for &crossing in crossings {
+            if *budget == 0 {
+                break;
+            }
             if self.uses[crossing as usize] == 0 {
                 continue;
             }
             cancellation_token.bail_if_cancelled()?;
 
+            // Every item it looks at goes on the budget, even when the crossing can't be dropped.
+            let items: &'a Items = self.items;
+            let without = |candidate: &'a Candidate, work: &mut usize| {
+                items.of(candidate).all(|item| {
+                    *work += 1;
+                    item != crossing
+                })
+            };
+            let mut work = 0;
             let sets: Vec<usize> = users[&crossing]
                 .iter()
                 .map(|&group| group as usize)
-                .filter(|&group| self.items(group).any(|item| item == crossing))
+                .filter(|&group| !without(&self.groups[group][self.choice[group]], &mut work))
                 .collect();
-            let items: &'a Items = self.items;
-            let without = |candidate: &'a Candidate| items.of(candidate).all(|item| item != crossing);
-            if !sets
-                .iter()
-                .all(|&group| self.groups[group].iter().any(without))
-            {
+            let movable = sets.iter().all(|&group| {
+                self.groups[group]
+                    .iter()
+                    .any(|candidate| without(candidate, &mut work))
+            });
+            *budget = budget.saturating_sub(work);
+            if !movable {
                 continue;
             }
 
@@ -901,17 +917,18 @@ impl<'a> Plan<'a> {
                 let mut best = usize::MAX;
                 let mut best_added_cost = u64::MAX;
                 let groups: &'a [Alternatives] = self.groups;
+                let mut work = 0;
                 for (index, candidate) in groups[group].iter().enumerate() {
-                    if !without(candidate) {
+                    if !without(candidate, &mut work) {
                         continue;
                     }
                     let added_cost = self.added(self.of(candidate));
-                    *budget = budget.saturating_sub(self.of(candidate).count());
                     if added_cost < best_added_cost {
                         best_added_cost = added_cost;
                         best = index;
                     }
                 }
+                *budget = budget.saturating_sub(work);
                 self.choice[group] = best;
                 self.add(self.items(group));
             }
@@ -922,9 +939,6 @@ impl<'a> Plan<'a> {
                 for (&group, &candidate) in sets.iter().zip(&previous) {
                     self.set(group, candidate);
                 }
-            }
-            if *budget == 0 {
-                break;
             }
         }
         Ok(improved)
