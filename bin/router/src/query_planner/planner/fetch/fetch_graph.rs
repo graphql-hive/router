@@ -59,9 +59,8 @@ pub struct FetchGraph<State> {
 
 impl FetchGraph<SingleTypeFetchStep> {
     pub fn to_multi_type(self) -> FetchGraph<MultiTypeFetchStep> {
-        let new_graph = self
-            .graph
-            .map(|_, w| w.clone().into_multi_type(), |_, _| ());
+        // Moves the steps over instead of cloning them, so both graphs are never alive at once.
+        let new_graph = self.graph.map_owned(|_, w| w.into_multi_type(), |_, _| ());
 
         FetchGraph {
             graph: new_graph,
