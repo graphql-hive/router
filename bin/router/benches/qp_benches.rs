@@ -116,6 +116,12 @@ fn query_plan_pipeline(c: &mut Criterion) {
             "./fixture/bfg/operation-1.graphql",
             Some("Query1"),
         ),
+        (
+            "query_plan_bfg_operation_2",
+            "./fixture/bfg/supergraph.graphql",
+            "./fixture/bfg/operation-2.graphql",
+            Some("Query2"),
+        ),
     ] {
         let supergraph_sdl =
             std::fs::read_to_string(schema_path).expect("Unable to read supergraph fixture");
