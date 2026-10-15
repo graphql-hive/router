@@ -634,13 +634,17 @@ fn optimize_parallel_node(
                 // This keeps sibling order stable and deterministic.
                 let first_index = chunk[0][0].index;
 
+                let mut variables = Vec::new();
+                for candidate in chunk.iter().flatten() {
+                    merge_variable_definitions(
+                        &mut variables,
+                        &candidate.non_representations_variable_definitions,
+                    );
+                }
+
                 // Build one `BatchFetch` node from each final group
-                let batch_fetch_node = build_batched_fetch_node(
-                    chunk,
-                    &variable_group.variables,
-                    supergraph,
-                    max_aliases,
-                )?;
+                let batch_fetch_node =
+                    build_batched_fetch_node(chunk, &variables, supergraph, max_aliases)?;
 
                 batch_node_replacements.insert(
                     first_index,
@@ -1420,6 +1424,50 @@ mod tests {
           },
         },
         "#);
+    }
+
+    #[test]
+    fn optimize_parallel_node_declares_only_variables_used_in_each_chunk() {
+        let supergraph = test_supergraph_state();
+        let requires = "query { ... on Product { upc } }";
+        let queries = [
+            "query($representations:[_Any!]!) { _entities(representations:$representations) { ... on Product { shippingEstimate } } }",
+            "query($representations:[_Any!]!) { _entities(representations:$representations) { ... on Product { inStock } } }",
+            "query($representations:[_Any!]!, $b:Boolean!) { _entities(representations:$representations) { ... on Product { shippingEstimate @include(if:$b) } } }",
+        ];
+        let nodes = [queries[0], queries[1], queries[2], queries[2]]
+            .iter()
+            .enumerate()
+            .map(|(index, query)| {
+                flatten_entity_fetch_node(index as i64, "inventory", "products", requires, query)
+            })
+            .collect();
+        let options = QueryPlannerOptions {
+            max_aliases_per_request: 2,
+            ..Default::default()
+        };
+        let optimized =
+            optimize_root_node(PlanNode::parallel(nodes), &supergraph, &options).unwrap();
+        let PlanNode::Parallel(parallel) = optimized else {
+            panic!("parallel");
+        };
+        assert_eq!(parallel.nodes.len(), 2);
+        for (index, node) in parallel.nodes.iter().enumerate() {
+            let PlanNode::BatchFetch(batch) = node else {
+                panic!("batch");
+            };
+            let definitions = batch
+                .operation
+                .document
+                .operation
+                .variable_definitions
+                .as_ref()
+                .unwrap();
+            assert_eq!(
+                definitions.iter().any(|variable| variable.name == "b"),
+                index == 1
+            );
+        }
     }
 
     /// A batch with more aliases than `max_aliases_per_request` is split into several batches,
