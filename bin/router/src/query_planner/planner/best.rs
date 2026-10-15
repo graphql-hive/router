@@ -97,7 +97,7 @@ impl<'graph> Candidate<'graph> {
     }
 
     #[inline]
-    fn get_tree(&self, graph: &Graph) -> Result<QueryTree, QueryPlanError> {
+    fn get_tree(&self, graph: &Graph<'_>) -> Result<QueryTree, QueryPlanError> {
         Ok(self
             .tree
             .get_or_create(|(p, mp)| QueryTree::from_path(graph, &p, mp))
@@ -105,7 +105,7 @@ impl<'graph> Candidate<'graph> {
     }
 
     #[inline]
-    fn get_cost(&self, graph: &Graph) -> Result<u64, QueryPlanError> {
+    fn get_cost(&self, graph: &Graph<'_>) -> Result<u64, QueryPlanError> {
         if let Some(v) = self.cost.get() {
             return Ok(*v);
         }
@@ -144,7 +144,7 @@ fn prepare_alternatives<'graph>(operation: ResolvedOperation<'graph>) -> Vec<Alt
 }
 
 fn calculate_min_remaining_costs(
-    graph: &Graph,
+    graph: &Graph<'_>,
     per_leaf_alternatives_asc: &[Alternatives],
 ) -> Result<Vec<u64>, QueryPlanError> {
     // Pre-compute a lower bound for pruning.
@@ -174,7 +174,7 @@ fn calculate_min_remaining_costs(
     Ok(min_remaining_costs)
 }
 
-fn sort_candidates_by_cost(graph: &Graph, per_leaf_alternatives_asc: &mut [Alternatives]) {
+fn sort_candidates_by_cost(graph: &Graph<'_>, per_leaf_alternatives_asc: &mut [Alternatives]) {
     // Within each set of alternatives, sort choices by their cost.
     // Trying cheaper options first
     // is more likely to lead to better solutions sooner.
@@ -184,7 +184,7 @@ fn sort_candidates_by_cost(graph: &Graph, per_leaf_alternatives_asc: &mut [Alter
 }
 
 pub fn find_best_combination(
-    graph: &Graph,
+    graph: &Graph<'_>,
     operation: ResolvedOperation,
     cancellation_token: &CancellationToken,
 ) -> Result<QueryTree, QueryPlanError> {
@@ -240,7 +240,7 @@ pub fn find_best_combination(
 /// A fast search that finds a good, but not best plan.
 /// It works by making the "locally best" choice at each step.
 fn find_initial_plan(
-    graph: &Graph,
+    graph: &Graph<'_>,
     alternatives_list: &[Alternatives],
 ) -> Option<(u64, QueryTree)> {
     let mut current_tree: Option<QueryTree> = None;
@@ -292,7 +292,7 @@ struct ExplorationState {
 #[allow(clippy::too_many_arguments)]
 /// Performs branch-and-bound (to prune early) depth-first search to find the best combination
 fn explore_plan_combinations(
-    graph: &Graph,
+    graph: &Graph<'_>,
     groups: &[Alternatives],
     group_index: usize,
     tree_so_far: Option<QueryTree>,
@@ -366,7 +366,7 @@ fn explore_plan_combinations(
 /// contribute additional cost. This avoids re-costing the entire merged tree while
 /// retaining the same cost as a full merge followed by `calculate_cost_of_tree`.
 fn calculate_added_cost_of_merge(
-    graph: &Graph,
+    graph: &Graph<'_>,
     target: &QueryTreeNode,
     source: &QueryTreeNode,
 ) -> u64 {
@@ -380,7 +380,7 @@ fn calculate_added_cost_of_merge(
 }
 
 fn calculate_added_cost_for_node_list(
-    graph: &Graph,
+    graph: &Graph<'_>,
     target_list: &[Rc<QueryTreeNode>],
     source_list: &[Rc<QueryTreeNode>],
     is_requirement: bool,
@@ -403,7 +403,7 @@ fn calculate_added_cost_for_node_list(
 }
 
 #[inline(always)]
-fn calculate_cost_of_tree(graph: &Graph, node: &QueryTreeNode) -> u64 {
+fn calculate_cost_of_tree(graph: &Graph<'_>, node: &QueryTreeNode) -> u64 {
     let mut current_cost = FIELD_COST;
 
     for child in &node.children {
@@ -423,7 +423,7 @@ fn calculate_cost_of_tree(graph: &Graph, node: &QueryTreeNode) -> u64 {
 }
 
 #[inline(always)]
-fn edge_cost(graph: &Graph, node: &QueryTreeNode) -> u64 {
+fn edge_cost(graph: &Graph<'_>, node: &QueryTreeNode) -> u64 {
     if node.edge_from_parent.is_some_and(|edge_index| {
         matches!(
             graph.edge(edge_index).expect("edge should exist"),

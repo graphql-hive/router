@@ -60,7 +60,7 @@ pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), Normaliza
 
             handle_selection_set(
                 ctx.supergraph,
-                ctx.subgraph_name.map(String::as_str),
+                ctx.subgraph_name,
                 root_type_def,
                 selection_set,
             )?;

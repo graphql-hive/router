@@ -6,7 +6,7 @@ use crate::query_planner::ast::selection_set::{
 };
 use crate::query_planner::ast::type_aware_selection::TypeAwareSelection;
 use crate::query_planner::graph::edge::{
-    Edge, FieldMove, InterfaceObjectTypeMove, PlannerOverrideContext, ReentryMove,
+    Edge, EdgeReference, FieldMove, InterfaceObjectTypeMove, PlannerOverrideContext, ReentryMove,
 };
 use crate::query_planner::graph::node::Node;
 use crate::query_planner::graph::Graph;
@@ -25,7 +25,6 @@ use crate::query_planner::planner::QueryPlannerOptions;
 use crate::query_planner::state::supergraph_state::{OperationKind, SubgraphName, SupergraphState};
 use crate::query_planner::utils::cancellation::CancellationToken;
 use petgraph::algo::has_path_connecting;
-use petgraph::graph::EdgeReference;
 use petgraph::stable_graph::{EdgeIndex, NodeIndex, NodeIndices, NodeReferences, StableDiGraph};
 use petgraph::visit::EdgeRef;
 use petgraph::visit::{Bfs, IntoNodeReferences};
@@ -78,13 +77,13 @@ impl FetchGraph<SingleTypeFetchStep> {
 
 impl FetchGraph<SingleTypeFetchStep> {
     /// A key or requirement of the objects at `response_path`, the way an entity call reads it.
-    fn read_at(
+    fn read_at<'selection>(
         &mut self,
         response_path: &MergePath,
-        selection: &TypeAwareSelection,
-    ) -> TypeAwareSelection {
+        selection: &TypeAwareSelection<'selection>,
+    ) -> TypeAwareSelection<'selection> {
         TypeAwareSelection {
-            type_name: selection.type_name.clone(),
+            type_name: selection.type_name,
             selection_set: self
                 .response_keys
                 .input(&place_of(response_path), &selection.selection_set),
@@ -454,8 +453,8 @@ fn ensure_fetch_step_for_subgraph(
     input_type_name: &str,
     output_type_name: &str,
     response_path: &MergePath,
-    key: Option<&TypeAwareSelection>,
-    requires: Option<&TypeAwareSelection>,
+    key: Option<&TypeAwareSelection<'_>>,
+    requires: Option<&TypeAwareSelection<'_>>,
     condition: Option<&Condition>,
     created_from_requires: bool,
 ) -> Result<NodeIndex, FetchGraphError> {
@@ -555,10 +554,10 @@ fn ensure_fetch_step_for_requirement(
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     parent_fetch_step_index: NodeIndex,
     subgraph_name: &SubgraphName,
-    type_name: &String,
+    type_name: &str,
     response_path: &MergePath,
     condition: Option<&Condition>,
-    requirement: &TypeAwareSelection,
+    requirement: &TypeAwareSelection<'_>,
 ) -> Result<NodeIndex, FetchGraphError> {
     let matching_child_index =
         fetch_graph
@@ -573,7 +572,7 @@ fn ensure_fetch_step_for_requirement(
                         return None;
                     }
 
-                    if fetch_step.input.definition_name() != *type_name {
+                    if fetch_step.input.definition_name() != type_name {
                         return None;
                     }
 
@@ -639,7 +638,7 @@ fn ensure_fetch_step_for_requirement(
   response_path = response_path.to_string()
 ))]
 fn process_children_for_fetch_steps(
-    graph: &Graph,
+    graph: &Graph<'_>,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
@@ -683,7 +682,7 @@ fn process_children_for_fetch_steps(
   response_path = response_path.to_string()
 ))]
 fn process_requirements_for_fetch_steps(
-    graph: &Graph,
+    graph: &Graph<'_>,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
@@ -720,7 +719,7 @@ fn process_requirements_for_fetch_steps(
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
 fn process_noop_edge(
-    graph: &Graph,
+    graph: &Graph<'_>,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
@@ -759,7 +758,7 @@ fn process_noop_edge(
   requiring_fetch_step_index = requiring_fetch_step_index.map(|f| f.index()),
 ))]
 fn process_entity_move_edge(
-    graph: &Graph,
+    graph: &Graph<'_>,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
@@ -777,7 +776,7 @@ fn process_entity_move_edge(
         Edge::EntityMove(em) => (
             TypeAwareSelection {
                 selection_set: em.requirements.selection_set.clone(),
-                type_name: em.requirements.type_name.clone(),
+                type_name: em.requirements.type_name,
             },
             em.is_interface,
         ),
@@ -839,7 +838,7 @@ fn process_entity_move_edge(
                 FetchNodePathSegment::typename_equals_from_type(output_type_name.to_string()),
                 FetchNodePathSegment::Key("__typename".to_string()),
             ],
-            set_value_to: output_type_name.clone(),
+            set_value_to: output_type_name.to_string(),
         }));
 
         fetch_step
@@ -896,7 +895,7 @@ fn process_entity_move_edge(
   requiring_fetch_step_index = requiring_fetch_step_index.map(|f| f.index()),
 ))]
 fn process_interface_object_type_move_edge(
-    graph: &Graph,
+    graph: &Graph<'_>,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
@@ -914,7 +913,7 @@ fn process_interface_object_type_move_edge(
     let requirement = match edge {
         Edge::InterfaceObjectTypeMove(m) => TypeAwareSelection {
             selection_set: m.requirements.selection_set.clone(),
-            type_name: m.requirements.type_name.clone(),
+            type_name: m.requirements.type_name,
         },
         _ => {
             return Err(FetchGraphError::UnexpectedEdgeMove(
@@ -986,7 +985,7 @@ fn process_interface_object_type_move_edge(
             FetchNodePathSegment::typename_equals_from_type(interface_type_name.to_string()),
             FetchNodePathSegment::Key("__typename".to_string()),
         ],
-        set_value_to: interface_type_name.clone(),
+        set_value_to: interface_type_name.to_string(),
     }));
 
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
@@ -1077,7 +1076,7 @@ fn process_interface_object_type_move_edge(
   parent_fetch_step_index = parent_fetch_step_index.index(),
 ))]
 fn process_subgraph_entrypoint_edge(
-    graph: &Graph,
+    graph: &Graph<'_>,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
@@ -1119,7 +1118,7 @@ fn process_subgraph_entrypoint_edge(
   parent_fetch_step_index = parent_fetch_step_index.index(),
 ))]
 fn process_subgraph_reentry(
-    graph: &Graph,
+    graph: &Graph<'_>,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     supergraph: &SupergraphState,
     edge_index: EdgeIndex,
@@ -1239,7 +1238,7 @@ fn process_subgraph_reentry(
   fetch_path = fetch_path.to_string(),
 ))]
 fn process_selfie_edge(
-    graph: &Graph,
+    graph: &Graph<'_>,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
@@ -1325,7 +1324,7 @@ fn process_selfie_edge(
   fetch_path = fetch_path.to_string()
 ))]
 fn process_abstract_edge(
-    graph: &Graph,
+    graph: &Graph<'_>,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
@@ -1399,7 +1398,7 @@ fn process_abstract_edge(
   fetch_path = fetch_path.to_string(),
 ))]
 fn process_plain_field_edge(
-    graph: &Graph,
+    graph: &Graph<'_>,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
@@ -1526,7 +1525,7 @@ fn process_plain_field_edge(
   requiring_fetch_step_index = requiring_fetch_step_index.map(|s| s.index()),
 ))]
 fn process_requires_field_edge(
-    graph: &Graph,
+    graph: &Graph<'_>,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
@@ -1547,7 +1546,7 @@ fn process_requires_field_edge(
     let head_node_index = graph.get_edge_head(&edge_index)?;
     let head_node = graph.node(head_node_index)?;
     let (head_type_name, head_subgraph_name, is_interface_object) = match head_node {
-        Node::SubgraphType(t) => (&t.name, &t.subgraph, &t.is_interface_object),
+        Node::SubgraphType(t) => (t.name, &t.subgraph, &t.is_interface_object),
         _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
 
@@ -1650,7 +1649,7 @@ fn process_requires_field_edge(
                 FetchNodePathSegment::typename_equals_from_type(head_type_name.to_string()),
                 FetchNodePathSegment::Key("__typename".to_string()),
             ],
-            set_value_to: head_type_name.clone(),
+            set_value_to: head_type_name.to_string(),
         }));
     }
 
@@ -1826,17 +1825,15 @@ fn process_requires_field_edge(
   node = graph.node(query_node.node_index).unwrap().to_string()
 ))]
 fn find_satisfiable_key<'a>(
-    graph: &'a Graph,
+    graph: &'a Graph<'a>,
     supergraph: &'a SupergraphState,
     override_context: &'a PlannerOverrideContext,
     query_node: &QueryTreeNode,
-) -> Result<&'a TypeAwareSelection, FetchGraphError> {
+) -> Result<&'a TypeAwareSelection<'a>, FetchGraphError> {
     // This could be improved...
     // We added a flag to `can_satisfy_edge` and increased the complexity.
 
-    let mut entity_moves_edges_to_self: Vec<
-        EdgeReference<crate::query_planner::graph::edge::Edge>,
-    > = graph
+    let mut entity_moves_edges_to_self: Vec<EdgeReference<'a>> = graph
         .edges_from(query_node.node_index)
         .filter(|edge_reference| {
             let edge = graph.edge(edge_reference.id()).unwrap();
@@ -1883,7 +1880,7 @@ fn find_satisfiable_key<'a>(
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
 fn process_query_node(
-    graph: &Graph,
+    graph: &Graph<'_>,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
@@ -2071,10 +2068,10 @@ fn process_query_node(
 /// Yes, when every path to them stays in the current subgraph. Required fields are
 /// `@external`, so this only happens when a `@provides` gave us those fields at this spot.
 fn requirements_resolve_in_place(
-    graph: &Graph,
+    graph: &Graph<'_>,
     query_node: &QueryTreeNode,
 ) -> Result<bool, FetchGraphError> {
-    fn stays_in_subgraph(graph: &Graph, node: &QueryTreeNode) -> Result<bool, FetchGraphError> {
+    fn stays_in_subgraph(graph: &Graph<'_>, node: &QueryTreeNode) -> Result<bool, FetchGraphError> {
         if !node.requirements.is_empty() {
             return Ok(false);
         }
@@ -2122,7 +2119,7 @@ pub fn find_graph_roots<State>(graph: &FetchGraph<State>) -> Vec<NodeIndex> {
     children_count = query_tree.root.children.len(),
 ))]
 pub fn build_fetch_graph_from_query_tree(
-    graph: &Graph,
+    graph: &Graph<'_>,
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_tree: QueryTree,

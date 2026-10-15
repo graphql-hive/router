@@ -1,9 +1,7 @@
 use crate::query_planner::{
-    ast::selection_set::ResponseKeyConflict,
-    graph::{error::GraphError, node::Node},
+    ast::selection_set::ResponseKeyConflict, graph::error::GraphError,
     planner::fetch::selections::FetchStepSelectionsError,
-    planner::walker::error::WalkOperationError,
-    utils::cancellation::CancellationError,
+    planner::walker::error::WalkOperationError, utils::cancellation::CancellationError,
 };
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -21,7 +19,7 @@ pub enum FetchGraphError {
     #[error("No step holds the object the entity call [{0}] extends")]
     MissingEntityOwner(usize),
     #[error("Subgraph name: {0}")]
-    MissingSubgraphName(Box<Node>),
+    MissingSubgraphName(Box<str>),
     #[error("Missing requirement tree for @requires")]
     MissingRequirement,
     #[error("Expected a single children of the @requires query tree node")]
