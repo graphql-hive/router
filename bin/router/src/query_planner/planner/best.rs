@@ -23,6 +23,8 @@
 
 use std::rc::Rc;
 
+use petgraph::graph::NodeIndex;
+
 use crate::query_planner::{
     graph::{edge::Edge, Graph},
     planner::{
@@ -45,9 +47,11 @@ use crate::query_planner::{
 const CROSS_SUBGRAPH_COST: u64 = 1000;
 const FIELD_COST: u64 = 1;
 
-/// One possible way to resolve a leaf of the query.
-struct Candidate<'graph> {
-    path: OperationPath<'graph>,
+/// One possible way to resolve a leaf of the query. There's one per path the walker found, so
+/// it keeps only what rebuilds the path's segments, not the whole path.
+struct Candidate {
+    root_node: NodeIndex,
+    last_segment: Option<Rc<PathSegment>>,
     mutation_field_position: MutationFieldPosition,
     /// The cost of the candidate's tree on its own.
     cost: u64,
@@ -55,18 +59,19 @@ struct Candidate<'graph> {
 
 /// Represents a set of alternative Candidates to satisfy a single leaf in the query.
 /// The final plan must choose exactly one fragment from each ChoiceGroup.
-type Alternatives<'graph> = Vec<Candidate<'graph>>;
+type Alternatives = Vec<Candidate>;
 
-impl<'graph> Candidate<'graph> {
+impl Candidate {
     fn new(
         graph: &Graph<'_>,
-        path: OperationPath<'graph>,
+        path: OperationPath<'_>,
         mutation_field_position: MutationFieldPosition,
     ) -> Result<Self, QueryPlanError> {
         // The tree's root, then the chain.
         let cost = FIELD_COST + chain_cost(graph, &path.get_segments())?;
         let candidate = Self {
-            path,
+            root_node: path.root_node,
+            last_segment: path.last_segment,
             mutation_field_position,
             cost,
         };
@@ -81,31 +86,42 @@ impl<'graph> Candidate<'graph> {
         Ok(candidate)
     }
 
+    /// The path again, minus what the walker needed (union context, cost).
+    fn path(&self) -> OperationPath<'static> {
+        OperationPath {
+            root_node: self.root_node,
+            last_segment: self.last_segment.clone(),
+            cost: 0,
+            union_context: None,
+        }
+    }
+
     fn build_tree(&self, graph: &Graph<'_>) -> Result<QueryTree, QueryPlanError> {
         Ok(QueryTree::from_path(
             graph,
-            &self.path,
+            &self.path(),
             self.mutation_field_position,
         )?)
     }
 }
 
 /// Each `Alternatives` group represents a set of possible ways to satisfy one leaf of the query.
-fn prepare_alternatives<'graph>(
+fn prepare_alternatives(
     graph: &Graph<'_>,
-    operation: ResolvedOperation<'graph>,
-) -> Result<Vec<Alternatives<'graph>>, QueryPlanError> {
+    operation: ResolvedOperation<'_>,
+) -> Result<Vec<Alternatives>, QueryPlanError> {
     let is_mutation = matches!(operation.operation_kind, OperationKind::Mutation);
-    let mut per_leaf_alternatives_asc: Vec<Alternatives<'graph>> = Vec::new();
+    let mut per_leaf_alternatives_asc: Vec<Alternatives> = Vec::new();
 
     for (index, root_field_options) in operation.root_field_groups.into_iter().enumerate() {
         let mutation_field_position: MutationFieldPosition = is_mutation.then_some(index);
 
         for paths_to_leaf in root_field_options {
-            let mut alternatives = paths_to_leaf
-                .into_iter()
-                .map(|path| Candidate::new(graph, path, mutation_field_position))
-                .collect::<Result<Alternatives, _>>()?;
+            // Sized up front, collecting through `Result` would grow it and leave spare capacity.
+            let mut alternatives = Alternatives::with_capacity(paths_to_leaf.len());
+            for path in paths_to_leaf {
+                alternatives.push(Candidate::new(graph, path, mutation_field_position)?);
+            }
             // Cheapest on its own first, it wins ties in `pick_candidates`.
             alternatives.sort_by_key(|candidate| candidate.cost);
             per_leaf_alternatives_asc.push(alternatives);
@@ -182,7 +198,8 @@ fn added_cost_of_candidate(
     root: &QueryTreeNode,
     candidate: &Candidate,
 ) -> Result<u64, QueryPlanError> {
-    let segments = candidate.path.get_segments();
+    let path = candidate.path();
+    let segments = path.get_segments();
     let mut added_cost = 0;
     let mut target = root;
 
@@ -203,7 +220,7 @@ fn added_cost_of_candidate(
                     &segment.selection_attributes,
                 )
                 && child.mutation_field_position == mutation_field_position
-                && child.condition == segment.condition
+                && child.condition.as_ref() == segment.condition.as_deref()
         });
 
         match same_node {

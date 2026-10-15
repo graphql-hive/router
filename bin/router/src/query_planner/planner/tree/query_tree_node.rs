@@ -163,7 +163,7 @@ impl QueryTreeNode {
             &tail_node_index,
             Some(edge_at_index),
             (*selection_attributes_at_index).as_ref(),
-            segment_at_index.condition.as_ref(),
+            segment_at_index.condition.as_deref(),
         );
 
         // Only apply the position to the first node created from the segments
