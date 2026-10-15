@@ -2,6 +2,7 @@ use std::{
     collections::BTreeMap,
     fmt::Display,
     hash::{DefaultHasher, Hash, Hasher},
+    sync::Arc,
 };
 
 use serde::{Deserialize, Serialize};
@@ -10,15 +11,21 @@ use super::shrink::ShrinkMemory;
 use super::value::Value;
 use graphql_tools::parser::query::{Text as ParserText, Value as ParserValue};
 
+/// Shared on clone. A field is cloned a lot while planning (type expansion, every path through it,
+/// fetch step selections), and its arguments never change after parsing.
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
 pub struct ArgumentsMap {
     #[serde(flatten)]
-    arguments_map: BTreeMap<String, Value>,
+    arguments_map: Arc<BTreeMap<String, Value>>,
 }
 
 impl ShrinkMemory for ArgumentsMap {
     fn shrink_memory(&mut self) {
-        for value in self.arguments_map.values_mut() {
+        // A shared map is left as is, shrinking it would mean copying it.
+        let Some(arguments_map) = Arc::get_mut(&mut self.arguments_map) else {
+            return;
+        };
+        for value in arguments_map.values_mut() {
             value.shrink_memory();
         }
     }
@@ -41,7 +48,8 @@ impl<'a> IntoIterator for &'a ArgumentsMap {
 
 impl PartialEq for ArgumentsMap {
     fn eq(&self, other: &Self) -> bool {
-        self.arguments_map == other.arguments_map
+        Arc::ptr_eq(&self.arguments_map, &other.arguments_map)
+            || self.arguments_map == other.arguments_map
     }
 }
 
@@ -49,14 +57,16 @@ impl From<(String, Value)> for ArgumentsMap {
     fn from((key, value): (String, Value)) -> Self {
         let mut arguments_map = BTreeMap::new();
         arguments_map.insert(key, value);
-        Self { arguments_map }
+        Self {
+            arguments_map: Arc::new(arguments_map),
+        }
     }
 }
 
 impl From<Vec<(String, Value)>> for ArgumentsMap {
     fn from(args: Vec<(String, Value)>) -> Self {
         Self {
-            arguments_map: args.into_iter().collect(),
+            arguments_map: Arc::new(args.into_iter().collect()),
         }
     }
 }
@@ -70,7 +80,9 @@ where
             .into_iter()
             .map(|(key, value)| (key.as_ref().to_string(), (&value).into()))
             .collect();
-        Self { arguments_map }
+        Self {
+            arguments_map: Arc::new(arguments_map),
+        }
     }
 }
 
@@ -86,7 +98,7 @@ impl ArgumentsMap {
     }
 
     pub fn add_argument(&mut self, key: String, value: Value) {
-        self.arguments_map.insert(key, value);
+        Arc::make_mut(&mut self.arguments_map).insert(key, value);
     }
 
     pub fn has_argument(&self, key: &str) -> bool {

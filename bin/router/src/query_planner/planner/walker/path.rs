@@ -84,7 +84,8 @@ pub struct PathSegment {
     context_requirements: Option<Rc<[Rc<ContextRequirement>]>>,
     /// Shared by every path through the same field, see `NavigationTarget::Field`.
     pub selection_attributes: Option<Rc<SelectionAttributes>>,
-    pub condition: Option<Condition>,
+    /// Boxed, it's rare (`@skip`/`@include`) and every segment would pay for two `String`s.
+    pub condition: Option<Box<Condition>>,
 }
 
 impl PathSegment {
@@ -261,8 +262,10 @@ impl<'graph> OperationPath<'graph> {
                 NavigationTarget::ConcreteType(_, _) => None,
             },
             condition: match target {
-                NavigationTarget::Field { field, .. } => (*field).into(),
-                NavigationTarget::ConcreteType(_, condition) => condition.clone(),
+                NavigationTarget::Field { field, .. } => {
+                    Option::<Condition>::from(*field).map(Box::new)
+                }
+                NavigationTarget::ConcreteType(_, condition) => condition.clone().map(Box::new),
             },
         };
         let new_segment = Rc::new(new_segment_data);

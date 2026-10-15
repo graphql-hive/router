@@ -69,7 +69,8 @@ graphql-tools =  { path = "../../lib/graphql-tools", version = "0.5.10" }
 
 tokio = { workspace = true }
 futures = { workspace = true }
-serde = { workspace = true }
+# `rc` for `ArgumentsMap`, which keeps its map in an `Arc`.
+serde = { workspace = true, features = ["rc"] }
 reqwest = { workspace = true }
 sonic-rs = { workspace = true }
 tracing = { workspace = true }
