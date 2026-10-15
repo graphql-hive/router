@@ -1,7 +1,5 @@
-use std::{
-    collections::HashMap,
-    hash::{Hash, Hasher},
-};
+use ahash::{HashMap, HashMapExt};
+use std::hash::{Hash, Hasher};
 
 use petgraph::graph::NodeIndex;
 use rustc_hash::FxHasher;
@@ -171,7 +169,7 @@ fn response_path_hash(step: &FetchStepData<MultiTypeFetchStep>) -> u64 {
             Segment::List => 1u8.hash(&mut hasher),
             Segment::TypeCondition(types, condition) => {
                 2u8.hash(&mut hasher);
-                for type_name in types {
+                for type_name in types.iter() {
                     type_name.hash(&mut hasher);
                 }
                 condition.hash(&mut hasher);

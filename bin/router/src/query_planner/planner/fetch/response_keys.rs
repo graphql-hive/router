@@ -11,7 +11,7 @@
 //! That's coarser than it has to be: it may alias a field that would've been fine, never the
 //! other way around.
 
-use std::collections::HashMap;
+use ahash::HashMap;
 
 use crate::query_planner::ast::{
     arguments::ArgumentsMap,
@@ -43,18 +43,26 @@ impl ResponseKeys {
         keys
     }
 
+    /// The place, made on first use. Looked up by slice, so the key is copied only once.
+    fn place_mut(&mut self, place: &[String]) -> &mut Place {
+        if !self.places.contains_key(place) {
+            self.places.insert(place.to_vec(), Place::default());
+        }
+        self.places.get_mut(place).expect("inserted above")
+    }
+
     fn take_client_keys(&mut self, place: &mut Vec<String>, selection_set: &SelectionSet) {
         for item in &selection_set.items {
             match item {
                 SelectionItem::Field(field) => {
                     let key = field.selection_identifier().to_string();
-                    self.places
-                        .entry(place.clone())
-                        .or_default()
-                        .occupants
-                        .entry(key.clone())
-                        .or_default()
-                        .push(signature(field));
+                    let occupants = &mut self.place_mut(place).occupants;
+                    match occupants.get_mut(&key) {
+                        Some(signatures) => signatures.push(signature(field)),
+                        None => {
+                            occupants.insert(key.clone(), vec![signature(field)]);
+                        }
+                    }
                     place.push(key);
                     self.take_client_keys(place, &field.selections);
                     place.pop();
@@ -74,11 +82,15 @@ impl ResponseKeys {
             return field.name.clone();
         }
 
-        let signature = signature(field);
-        let place = self.places.entry(place.to_vec()).or_default();
-        if let Some((_, key)) = place.picked.iter().find(|(picked, _)| *picked == signature) {
+        let place = self.place_mut(place);
+        // Compared in place, the signature is only built when it gets stored.
+        if let Some((_, key)) = place.picked.iter().find(|((name, arguments), _)| {
+            *name == field.name && arguments.as_ref() == field.arguments()
+        }) {
             return key.clone();
         }
+
+        let signature = signature(field);
 
         let name_is_free = place
             .occupants
@@ -104,7 +116,7 @@ impl ResponseKeys {
 
     /// `selection_set`, at `place`, the way a fetch writes it: `_internal_qp_alias_0: price`.
     pub fn output(&mut self, place: &[String], selection_set: &SelectionSet) -> SelectionSet {
-        self.map(place, selection_set, &|field, key| {
+        self.map(&mut place.to_vec(), selection_set, &|field, key| {
             if key != field.name {
                 field.alias = Some(key);
             }
@@ -114,16 +126,17 @@ impl ResponseKeys {
     /// `selection_set`, at `place`, the way a representation reads it:
     /// `price: _internal_qp_alias_0`, the value under the key, put back under the field's name.
     pub fn input(&mut self, place: &[String], selection_set: &SelectionSet) -> SelectionSet {
-        self.map(place, selection_set, &|field, key| {
+        self.map(&mut place.to_vec(), selection_set, &|field, key| {
             if key != field.name {
                 field.alias = Some(std::mem::replace(&mut field.name, key));
             }
         })
     }
 
+    /// `place` is a stack: a field's key goes on it while its selections are mapped.
     fn map<F: Fn(&mut FieldSelection, String)>(
         &mut self,
-        place: &[String],
+        place: &mut Vec<String>,
         selection_set: &SelectionSet,
         apply: &F,
     ) -> SelectionSet {
@@ -133,13 +146,10 @@ impl ResponseKeys {
             .map(|item| match item {
                 SelectionItem::Field(field) => {
                     let key = self.wire_key(place, field);
-                    let mut nested_place = place.to_vec();
-                    nested_place.push(key.clone());
-                    let mut field = field.with_new_selections(self.map(
-                        &nested_place,
-                        &field.selections,
-                        apply,
-                    ));
+                    place.push(key);
+                    let selections = self.map(place, &field.selections, apply);
+                    let key = place.pop().expect("pushed above");
+                    let mut field = field.with_new_selections(selections);
                     apply(&mut field, key);
                     SelectionItem::Field(field)
                 }

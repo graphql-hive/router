@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use ahash::{HashMap, HashMapExt, HashSet, HashSetExt};
 
 use tracing::instrument;
 
