@@ -50,7 +50,7 @@ type ResolutionStack<'graph, 'op> = Vec<WorkItem<'graph, 'op>>;
 
 #[instrument(level = "trace", skip_all)]
 pub fn walk_operation<'graph, 'op: 'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     operation: &'op OperationDefinition,
@@ -110,7 +110,7 @@ pub fn walk_operation<'graph, 'op: 'graph>(
 }
 
 fn process_selection<'graph, 'op: 'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     selection_item: &'op SelectionItem,
@@ -164,7 +164,7 @@ fn process_selection<'graph, 'op: 'graph>(
 
 #[instrument(level = "trace", skip_all)]
 fn process_selection_set<'graph, 'op: 'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     selection_set: &'op SelectionSet,
@@ -202,7 +202,7 @@ fn process_selection_set<'graph, 'op: 'graph>(
   type_condition = fragment.type_condition,
 ))]
 fn process_inline_fragment<'graph, 'op: 'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     fragment: &'op InlineFragmentSelection,
@@ -528,7 +528,7 @@ fn narrow_partial_union_paths<'graph>(paths: &mut Vec<OperationPath<'graph>>) {
   leaf = field.is_leaf()
 ))]
 fn process_field<'graph, 'op: 'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     field: &'op FieldSelection,
@@ -790,7 +790,7 @@ fn field_target_subgraph_ids<'s>(
     supergraph: &'s SupergraphState,
     field: &FieldSelection,
     paths: &[OperationPath<'_>],
-    graph: &Graph,
+    graph: &Graph<'_>,
 ) -> Result<Option<Cow<'s, [u16]>>, WalkOperationError> {
     let mut target_subgraph_ids: Option<Cow<'s, [u16]>> = None;
 

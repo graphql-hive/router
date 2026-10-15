@@ -43,14 +43,14 @@ pub struct PathSegment {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PossibleUnionMembers<'graph> {
-    All(&'graph [String]),
+    All(&'graph [&'graph str]),
     One(&'graph str),
 }
 
 impl<'graph> PossibleUnionMembers<'graph> {
     fn contains(&self, member_type_name: &str) -> bool {
         match self {
-            Self::All(members) => members.iter().any(|member| member == member_type_name),
+            Self::All(members) => members.iter().any(|member| *member == member_type_name),
             Self::One(member) => *member == member_type_name,
         }
     }
@@ -64,7 +64,7 @@ impl<'graph> PossibleUnionMembers<'graph> {
 
     fn as_vec(&self) -> Vec<&'graph str> {
         match self {
-            Self::All(members) => members.iter().map(String::as_str).collect(),
+            Self::All(members) => members.to_vec(),
             Self::One(member) => vec![member],
         }
     }
@@ -72,7 +72,7 @@ impl<'graph> PossibleUnionMembers<'graph> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnionContext<'graph> {
-    data: &'graph UnionMembersData,
+    data: &'graph UnionMembersData<'graph>,
     pub graph_id: &'graph str,
     pub member_name: &'graph str,
     possible_members: PossibleUnionMembers<'graph>,
@@ -182,7 +182,7 @@ impl<'graph> OperationPath<'graph> {
 
     pub fn advance(
         &self,
-        graph: &'graph Graph,
+        graph: &'graph Graph<'graph>,
         edge_ref: &EdgeReference<'graph>,
         requirement: Option<Rc<QueryTreeNode>>,
         target: &NavigationTarget,
@@ -222,8 +222,10 @@ impl<'graph> OperationPath<'graph> {
                     (Some(union_data), Some(graph_id)) => Some(UnionContext {
                         data: union_data,
                         graph_id,
-                        member_name: union_data.object_type_name.as_str(),
-                        possible_members: PossibleUnionMembers::All(&union_data.possible_members),
+                        member_name: union_data.object_type_name,
+                        possible_members: PossibleUnionMembers::All(
+                            union_data.possible_members.as_slice(),
+                        ),
                     }),
                     _ => None,
                 }
@@ -295,7 +297,7 @@ impl<'graph> OperationPath<'graph> {
         requirement_tree_vec.into_iter().collect()
     }
 
-    pub fn pretty_print(&self, graph: &Graph) -> String {
+    pub fn pretty_print(&self, graph: &Graph<'_>) -> String {
         let edges = self.get_edges();
 
         if edges.is_empty() {

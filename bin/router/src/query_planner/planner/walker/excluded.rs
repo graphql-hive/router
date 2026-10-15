@@ -6,7 +6,7 @@ use crate::query_planner::ast::type_aware_selection::TypeAwareSelection;
 #[derive(Default)]
 pub struct ExcludedFromLookup<'graph> {
     pub graph_ids: HashSet<&'graph str>,
-    pub requirement: HashSet<&'graph TypeAwareSelection>,
+    pub requirement: HashSet<&'graph TypeAwareSelection<'graph>>,
 }
 
 impl<'graph> ExcludedFromLookup<'graph> {

@@ -23,7 +23,7 @@ use crate::query_planner::{
 #[inline]
 pub fn type_expand(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
     let supergraph = ctx.supergraph;
-    let subgraph_name = ctx.subgraph_name.map(String::as_str);
+    let subgraph_name = ctx.subgraph_name;
     let definitions = &mut ctx.document.definitions;
 
     for definition in definitions {

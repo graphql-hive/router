@@ -25,7 +25,7 @@ impl QueryTree {
         root_node = graph.pretty_print_node(&path.root_node)
     ))]
     pub fn from_path(
-        graph: &Graph,
+        graph: &Graph<'_>,
         path: &OperationPath,
         mutation_field_position: MutationFieldPosition,
     ) -> Result<Self, GraphError> {
