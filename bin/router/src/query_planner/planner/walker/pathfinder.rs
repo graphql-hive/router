@@ -29,7 +29,7 @@ use crate::query_planner::{
 use super::{
     error::WalkOperationError,
     excluded::ExcludedFromLookup,
-    path::{ContextRequirement, OperationPath},
+    path::{ContextRequirement, OperationPath, SelectionAttributes},
 };
 
 #[derive(Debug)]
@@ -91,6 +91,9 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
 pub enum NavigationTarget<'op> {
     Field {
         field: &'op FieldSelection,
+        /// The field's alias and arguments, made once per field and shared by every path
+        /// that goes through it, instead of cloned into each.
+        attributes: Rc<SelectionAttributes>,
         target_subgraph_ids: Option<&'op [u16]>,
     },
     ConcreteType(&'op str, Option<Condition>),
@@ -903,11 +906,13 @@ impl<'graph> PathSearch<'graph> {
             self.graph,
         )?;
 
+        let attributes = SelectionAttributes::shared(field);
         for path in move_requirement.paths.iter() {
             let direct_paths = self.find_direct_paths(
                 path,
                 &NavigationTarget::Field {
                     field,
+                    attributes: Rc::clone(&attributes),
                     target_subgraph_ids: None,
                 },
             )?;
@@ -921,6 +926,7 @@ impl<'graph> PathSearch<'graph> {
                     path,
                     &NavigationTarget::Field {
                         field,
+                        attributes: Rc::clone(&attributes),
                         target_subgraph_ids: target_subgraph_ids.as_deref(),
                     },
                     excluded,

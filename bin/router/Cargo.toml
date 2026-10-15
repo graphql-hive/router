@@ -151,7 +151,6 @@ object_store = { workspace = true }
 # query-planner
 petgraph = "0.8.2"
 bitflags = "2.12.1"
-lazy-init = "0.5.1"
 rustc-hash = "2.1.1"
 
 # executor

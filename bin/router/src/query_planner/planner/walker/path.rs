@@ -10,7 +10,7 @@ use crate::query_planner::ast::merge_path::Condition;
 use crate::query_planner::graph::node::UnionMembersData;
 use crate::query_planner::planner::walker::pathfinder::NavigationTarget;
 use crate::query_planner::{
-    ast::arguments::ArgumentsMap,
+    ast::{arguments::ArgumentsMap, selection_set::FieldSelection},
     graph::{edge::Edge, edge::EdgeReference, Graph},
     planner::tree::query_tree_node::QueryTreeNode,
 };
@@ -25,6 +25,37 @@ pub struct SelectionAttributes {
 impl PartialEq for SelectionAttributes {
     fn eq(&self, other: &Self) -> bool {
         self.alias == other.alias && self.arguments == other.arguments
+    }
+}
+
+impl SelectionAttributes {
+    /// The attributes of `field`, to share between the paths through it. Most fields have no
+    /// alias and no arguments, those all get the same `Rc`, so nothing is allocated for them.
+    pub fn shared(field: &FieldSelection) -> Rc<Self> {
+        thread_local! {
+            static NONE: Rc<SelectionAttributes> = Rc::new(SelectionAttributes::default());
+        }
+
+        if field.alias.is_none() && field.arguments.is_none() {
+            return NONE.with(Rc::clone);
+        }
+        Rc::new(Self {
+            alias: field.alias.clone(),
+            arguments: field.arguments.clone(),
+        })
+    }
+}
+
+/// Paths through the same field share its attributes, so the same `Rc` means equal,
+/// without comparing the arguments.
+pub fn same_selection_attributes(
+    left: &Option<Rc<SelectionAttributes>>,
+    right: &Option<Rc<SelectionAttributes>>,
+) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => Rc::ptr_eq(left, right) || left == right,
+        (None, None) => true,
+        _ => false,
     }
 }
 
@@ -51,7 +82,8 @@ pub struct PathSegment {
     pub requirement_tree: Option<Rc<QueryTreeNode>>,
     // `None` when empty, and cloning it is a refcount bump
     context_requirements: Option<Rc<[Rc<ContextRequirement>]>>,
-    pub selection_attributes: Option<SelectionAttributes>,
+    /// Shared by every path through the same field, see `NavigationTarget::Field`.
+    pub selection_attributes: Option<Rc<SelectionAttributes>>,
     pub condition: Option<Condition>,
 }
 
@@ -225,10 +257,7 @@ impl<'graph> OperationPath<'graph> {
             context_requirements: (!context_requirements.is_empty())
                 .then(|| context_requirements.into()),
             selection_attributes: match target {
-                NavigationTarget::Field { field, .. } => Some(SelectionAttributes {
-                    alias: field.alias.clone(),
-                    arguments: field.arguments.clone(),
-                }),
+                NavigationTarget::Field { attributes, .. } => Some(Rc::clone(attributes)),
                 NavigationTarget::ConcreteType(_, _) => None,
             },
             condition: match target {
