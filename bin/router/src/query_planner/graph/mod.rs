@@ -9,7 +9,7 @@ pub use self::edge::PERCENTAGE_SCALE_FACTOR;
 mod tests;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt::{Debug, Display},
     sync::Arc,
 };
@@ -352,13 +352,13 @@ impl<'graph> Graph<'graph> {
 
     // __typename is a meta-field: it carries no declared field definition, so unlike
     // other fields it always resolves to a plain "String" move, regardless of parent type.
-    fn upsert_typename_edge(
+    fn push_typename_edge(
         &mut self,
         head: NodeIndex,
         tail: NodeIndex,
         parent_type_name: &'graph str,
     ) {
-        self.upsert_edge(
+        self.push_edge(
             head,
             tail,
             Edge::create_field_move(
@@ -386,61 +386,62 @@ impl<'graph> Graph<'graph> {
             .filter(|(_, definition)| Self::can_have_entity_moves(definition))
         {
             let is_interface = definition.is_interface_type();
-            for join_type1 in definition.join_types() {
-                // Connects object and interface entities of the same name by @key
-                for join_type2 in definition.join_types() {
-                    let head = self.upsert_subgraph_node(
-                        build_context,
-                        state,
-                        def_name,
-                        &join_type1.graph_id,
-                        join_type1.is_interface_object,
-                    )?;
+            let join_types = definition.join_types();
 
-                    if join_type1.graph_id != join_type2.graph_id {
-                        if let (true, Some(key)) = (&join_type2.resolvable, &join_type2.key) {
-                            let tail = self.upsert_subgraph_node(
-                                build_context,
-                                state,
-                                def_name,
-                                &join_type2.graph_id,
-                                join_type2.is_interface_object,
-                            )?;
-                            let key_selection =
-                                cached_rules.parse_key(state, &join_type2.graph_id, def_name, key);
+            let mut nodes = Vec::with_capacity(join_types.len());
+            for join_type in join_types {
+                nodes.push(self.upsert_subgraph_node(
+                    build_context,
+                    state,
+                    def_name,
+                    &join_type.graph_id,
+                    join_type.is_interface_object,
+                )?);
+            }
 
-                            trace!(
-                                "Creating entity move edge from '{}/{}' to '{}/{}' via key '{}'",
-                                def_name,
-                                join_type1.graph_id,
-                                def_name,
-                                join_type2.graph_id,
-                                key
-                            );
-
-                            self.upsert_edge(
-                                head,
-                                tail,
-                                Edge::create_entity_move(key, key_selection, is_interface),
-                            );
-                        }
-                    } else if let (true, Some(key)) = (&join_type1.resolvable, &join_type1.key) {
+            // Only resolvable join types with a @key can be jumped to.
+            let mut keys = Vec::with_capacity(join_types.len());
+            let mut targets = Vec::new();
+            for (index, join_type) in join_types.iter().enumerate() {
+                let key = match (join_type.resolvable, &join_type.key) {
+                    (true, Some(key)) => {
+                        targets.push(index);
                         let key_selection =
-                            cached_rules.parse_key(state, &join_type1.graph_id, def_name, key);
-
-                        trace!(
-                            "Creating self-referencing entity move edge in '{}/{}' via key '{}'",
-                            def_name,
-                            join_type1.graph_id,
-                            key
-                        );
-
-                        self.upsert_edge(
-                            head,
-                            head,
-                            Edge::create_entity_move(key, key_selection, is_interface),
-                        );
+                            cached_rules.parse_key(state, &join_type.graph_id, def_name, key);
+                        Some((key.as_str(), key_selection))
                     }
+                    _ => None,
+                };
+                keys.push(key);
+            }
+
+            for (index1, join_type1) in join_types.iter().enumerate() {
+                let head = nodes[index1];
+
+                // Connects object and interface entities of the same name by @key
+                for &index2 in &targets {
+                    // In the same subgraph it's a self-move by join_type1's own key.
+                    let (tail, key) = if join_type1.graph_id != join_types[index2].graph_id {
+                        (nodes[index2], &keys[index2])
+                    } else {
+                        (head, &keys[index1])
+                    };
+                    let Some((key, key_selection)) = key else {
+                        continue;
+                    };
+
+                    trace!(
+                        "Creating entity move edge from '{}' to '{}' via key '{}'",
+                        self.graph[head],
+                        self.graph[tail],
+                        key
+                    );
+
+                    self.upsert_edge(
+                        head,
+                        tail,
+                        Edge::create_entity_move(key, key_selection.clone(), is_interface),
+                    );
                 }
 
                 // Connects object types implementing @interfaceObject by @key
@@ -459,13 +460,7 @@ impl<'graph> Graph<'graph> {
                 }
 
                 let interface_object_name = def_name;
-                let tail = self.upsert_subgraph_node(
-                    build_context,
-                    state,
-                    interface_object_name,
-                    &join_type1.graph_id,
-                    join_type1.is_interface_object,
-                )?;
+                let tail = head;
 
                 let typename_selection = cached_rules.parse_key(
                     state,
@@ -735,16 +730,16 @@ impl<'graph> Graph<'graph> {
             .iter()
             .filter(|(_, definition)| Self::can_have_entity_moves(definition))
         {
-            for graph_id in definition.subgraphs().iter() {
-                let graph_name = build_context.resolve_graph_id(state, graph_id)?.0.clone();
-                if !definition.is_defined_in_subgraph(graph_id) {
-                    continue;
-                }
+            // A type can repeat @join__type for one subgraph (one per @key), so visit each
+            // subgraph once. Everything below adds each edge once per subgraph, no dedup needed.
+            let mut subgraphs: BTreeMap<&str, bool> = BTreeMap::new();
+            for join_type in definition.join_types() {
+                *subgraphs.entry(join_type.graph_id.as_str()).or_default() |=
+                    join_type.is_interface_object;
+            }
 
-                let is_interface_object = definition
-                    .extract_join_types_for(graph_id)
-                    .iter()
-                    .any(|j| j.is_interface_object);
+            for (graph_id, is_interface_object) in subgraphs {
+                let graph_name = build_context.resolve_graph_id(state, graph_id)?.0.clone();
                 let has_resolvable_typename = matches!(
                     definition,
                     SupergraphDefinition::Object(_)
@@ -775,7 +770,7 @@ impl<'graph> Graph<'graph> {
                         false,
                     )?;
 
-                    self.upsert_typename_edge(head, tail, def_name);
+                    self.push_typename_edge(head, tail, def_name);
                 }
 
                 trace!(
@@ -790,15 +785,20 @@ impl<'graph> Graph<'graph> {
                     graph_id,
                     state.is_interface_object_in_subgraph(def_name, graph_id),
                 )?;
-                self.upsert_edge(head, head, Edge::Selfie(def_name.clone()));
+                self.push_edge(head, head, Edge::Selfie(def_name.clone()));
 
                 for (field_name, field_definition) in definition.fields().iter() {
-                    let (is_available, maybe_join_field) =
+                    let (is_available, maybe_join_field) = if field_definition.join_field.is_empty()
+                    {
+                        // The type lives in this subgraph, so a field without @join__field does too.
+                        (true, None)
+                    } else {
                         FederationRules::check_field_subgraph_availability(
                             field_definition,
                             graph_id,
                             definition,
-                        );
+                        )
+                    };
 
                     let target_type = field_definition.field_type.inner_type();
 
@@ -903,14 +903,6 @@ impl<'graph> Graph<'graph> {
                     //
                     let target_type_is_union = unions.contains(target_type);
                     if target_type_is_union {
-                        let head = self.upsert_subgraph_node(
-                            build_context,
-                            state,
-                            def_name,
-                            graph_id,
-                            state.is_interface_object_in_subgraph(def_name, graph_id),
-                        )?;
-
                         // Build union-member edges for the current subgraph only. Doing a global
                         // intersection here strips valid members from pinned paths such as
                         // Query.getResponse -> Response/A -> actions, where A knows the full union.
@@ -962,7 +954,7 @@ impl<'graph> Graph<'graph> {
                                 def_name,
                                 graph_id
                             );
-                            self.upsert_edge(
+                            self.push_edge(
                                 tail,
                                 typename_tail,
                                 Edge::create_field_move(
@@ -982,7 +974,7 @@ impl<'graph> Graph<'graph> {
                                 field_name,
                                 graph_id
                             );
-                            let edge = self.upsert_edge(
+                            let edge = self.push_edge(
                                 head,
                                 tail,
                                 Edge::create_field_move(
@@ -1003,7 +995,7 @@ impl<'graph> Graph<'graph> {
                                 "  [x] Creating abstract move edge for '{}.{}/{}' (union member: {})",
                                 def_name, field_name, graph_id, member
                             );
-                            self.upsert_edge(
+                            self.push_edge(
                                 tail,
                                 abstract_tail,
                                 Edge::AbstractMove(member.to_string()),
@@ -1021,13 +1013,6 @@ impl<'graph> Graph<'graph> {
                         target_type
                     );
 
-                    let head = self.upsert_subgraph_node(
-                        build_context,
-                        state,
-                        def_name,
-                        graph_id,
-                        state.is_interface_object_in_subgraph(def_name, graph_id),
-                    )?;
                     let tail = self.upsert_subgraph_node(
                         build_context,
                         state,
@@ -1036,7 +1021,7 @@ impl<'graph> Graph<'graph> {
                         state.is_interface_object_in_subgraph(target_type, graph_id),
                     )?;
 
-                    let edge = self.upsert_edge(
+                    let edge = self.push_edge(
                         head,
                         tail,
                         Edge::create_field_move(
