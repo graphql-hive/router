@@ -1013,7 +1013,13 @@ impl<'exec> Executor<'exec> {
                             operation_kind: batch_fetch_node.operation_kind.as_ref(),
                             operation,
                             output_rewrites: None,
-                            custom_scalar_paths: batch_fetch_node.custom_scalar_paths.as_ref(),
+                            custom_scalar_paths: batch_fetch_node.custom_scalar_paths.as_ref().map(
+                                |paths| {
+                                    aliased.as_ref().map_or(paths, |(operation, _)| {
+                                        operation.custom_scalar_paths(paths)
+                                    })
+                                },
+                            ),
                             raw_variable_values: Some(raw_variable_values),
                             affected_path: None,
                         })
@@ -1146,7 +1152,13 @@ impl<'exec> Executor<'exec> {
                                 operation_kind: fetch_node.operation_kind.as_ref(),
                                 operation,
                                 output_rewrites: fetch_node.output_rewrites.as_deref(),
-                                custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
+                                custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref().map(
+                                    |paths| {
+                                        aliased.as_ref().map_or(paths, |(operation, _)| {
+                                            operation.custom_scalar_paths(paths)
+                                        })
+                                    },
+                                ),
                                 raw_variable_values: Some(raw_variable_values),
                                 affected_path: Some(flatten_node.path.as_ref()),
                             })

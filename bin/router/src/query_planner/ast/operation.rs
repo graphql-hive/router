@@ -2,7 +2,7 @@ use std::{fmt::Display, sync::OnceLock};
 
 use crate::query_planner::{
     ast::{document::Document, hash::ast_hash},
-    planner::plan_nodes::hash_minified_query,
+    planner::plan_nodes::{hash_minified_query, CustomScalarPaths},
     state::supergraph_state::TypeNode,
 };
 use graphql_tools::parser::query as parser;
@@ -80,9 +80,29 @@ pub struct ContextAliasedOperation {
     pub variables: Vec<(String, Vec<String>)>,
     /// The original response key of every top-level field, and its alias in each group.
     pub response_keys: Vec<(String, Vec<String>)>,
+    custom_scalar_paths: OnceLock<CustomScalarPaths>,
 }
 
 impl ContextAliasedOperation {
+    /// Returns custom-scalar paths rooted at the generated response aliases.
+    pub fn custom_scalar_paths(&self, original: &CustomScalarPaths) -> &CustomScalarPaths {
+        self.custom_scalar_paths.get_or_init(|| CustomScalarPaths {
+            children: self
+                .response_keys
+                .iter()
+                .filter_map(|(key, aliases)| {
+                    original.children.get(key).map(|paths| (aliases, paths))
+                })
+                .flat_map(|(aliases, paths)| {
+                    aliases
+                        .iter()
+                        .map(move |alias| (alias.clone(), paths.clone()))
+                })
+                .collect(),
+            terminal: original.terminal,
+        })
+    }
+
     /// The name of the variable `name` in the group `group`, if it is a per-group variable.
     pub fn variable(&self, name: &str, group: usize) -> Option<&str> {
         self.variables
@@ -221,6 +241,7 @@ fn build_context_aliased(
         },
         variables: renamed,
         response_keys,
+        custom_scalar_paths: OnceLock::new(),
     })
 }
 
@@ -591,7 +612,7 @@ impl<'a, T: parser::Text<'a>> From<parser::VariableDefinition<'a, T>> for Variab
 
 #[cfg(test)]
 mod tests {
-    use super::PlanningFetchOperation;
+    use super::{CustomScalarPaths, PlanningFetchOperation};
     use crate::query_planner::{ast::document::Document, utils::parsing::parse_operation};
     use graphql_tools::parser::query::Definition;
     use std::fmt;
@@ -774,6 +795,48 @@ mod tests {
             query query {field}
             "
         );
+    }
+
+    #[test]
+    fn context_aliased_preserves_custom_scalars_under_generated_aliases() {
+        use crate::executor::response::{subgraph_response::SubgraphResponse, value::Value};
+
+        for key in ["_entities", "_e0"] {
+            let mut operation = parse_subgraph_fetch_operation(&format!(
+                "query($representations: [_Any!]!, $c: ID) {{ {key}: _entities(representations: $representations) {{ ... on T {{ json(a: $c) }} }} }}",
+            ))
+            .operation;
+            operation.set_max_context_groups(2);
+            let aliased = operation
+                .context_aliased(2, &["representations", "c"])
+                .unwrap();
+            let mut original = CustomScalarPaths::default();
+            original.insert_path([key, "json"]);
+            let paths = aliased.custom_scalar_paths(&original);
+            assert!(!paths.children.contains_key(key));
+            for group in 0..2 {
+                let alias = format!("{key}_{group}");
+                assert_eq!(paths.children[&alias], original.children[key]);
+                let response = SubgraphResponse::deserialize_from_bytes(
+                    bytes::Bytes::from(format!(
+                        r#"{{"data":{{"{alias}":[{{"json":{{"escaped\tkey":1}}}}]}}}}"#,
+                    )),
+                    Some(paths),
+                )
+                .unwrap();
+                let Value::Object(fields) = response.data else {
+                    panic!("object")
+                };
+                let Value::Array(entities) = &fields[0].1 else {
+                    panic!("array")
+                };
+                let Value::Object(entity) = &entities[0] else {
+                    panic!("entity")
+                };
+                assert!(matches!(entity[0].1, Value::RawJson(_)));
+            }
+            assert!(original.children.contains_key(key));
+        }
     }
 
     #[test]
