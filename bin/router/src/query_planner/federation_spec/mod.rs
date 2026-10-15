@@ -38,7 +38,7 @@ pub(crate) mod join_union;
 fn normalize_fields_argument_value_mut(
     supergraph: &SupergraphState,
     type_name: &str,
-    subgraph_name: &String,
+    subgraph_name: &str,
     fields_str: &str,
 ) -> SelectionSet<'static, String> {
     let selection_set_str = format!("{{{fields_str}}}");
@@ -117,19 +117,19 @@ struct SelectionCacheKey<'a> {
 #[derive(Debug, Default)]
 pub(crate) struct CachedFederationRules<'a> {
     selections: AHashMap<SelectionCacheKey<'a>, Arc<QuerySelectionSet<'static, String>>>,
-    type_aware_selections: AHashMap<SelectionCacheKey<'a>, Arc<TypeAwareSelection>>,
+    type_aware_selections: AHashMap<SelectionCacheKey<'a>, Arc<TypeAwareSelection<'a>>>,
 }
 
 impl<'a> CachedFederationRules<'a> {
     fn parse_selection(
         &mut self,
         supergraph: &'a SupergraphState,
-        subgraph_name: &'a String,
+        subgraph_name: &'a str,
         type_name: &'a str,
         selection: &'a str,
     ) -> Arc<QuerySelectionSet<'static, String>> {
         let key = SelectionCacheKey {
-            subgraph_name: subgraph_name.as_str(),
+            subgraph_name,
             type_name,
             selection,
         };
@@ -150,12 +150,12 @@ impl<'a> CachedFederationRules<'a> {
     fn parse_type_aware_selection(
         &mut self,
         supergraph: &'a SupergraphState,
-        subgraph_name: &'a String,
+        subgraph_name: &'a str,
         type_name: &'a str,
         selection: &'a str,
-    ) -> Arc<TypeAwareSelection> {
+    ) -> Arc<TypeAwareSelection<'a>> {
         let key = SelectionCacheKey {
-            subgraph_name: subgraph_name.as_str(),
+            subgraph_name,
             type_name,
             selection,
         };
@@ -165,7 +165,7 @@ impl<'a> CachedFederationRules<'a> {
 
         let selection_set = self.parse_selection(supergraph, subgraph_name, type_name, selection);
         let selection = Arc::new(TypeAwareSelection {
-            type_name: type_name.to_string(),
+            type_name,
             selection_set: selection_set.as_ref().clone().into(),
         });
         self.type_aware_selections
@@ -176,20 +176,20 @@ impl<'a> CachedFederationRules<'a> {
     pub(crate) fn parse_key(
         &mut self,
         supergraph: &'a SupergraphState,
-        subgraph_name: &'a String,
+        subgraph_name: &'a str,
         type_name: &'a str,
         key: &'a str,
-    ) -> Arc<TypeAwareSelection> {
+    ) -> Arc<TypeAwareSelection<'a>> {
         self.parse_type_aware_selection(supergraph, subgraph_name, type_name, key)
     }
 
     pub(crate) fn parse_requires(
         &mut self,
         supergraph: &'a SupergraphState,
-        subgraph_name: &'a String,
+        subgraph_name: &'a str,
         type_name: &'a str,
         requires: &'a str,
-    ) -> Arc<TypeAwareSelection> {
+    ) -> Arc<TypeAwareSelection<'a>> {
         self.parse_type_aware_selection(supergraph, subgraph_name, type_name, requires)
     }
 
@@ -206,26 +206,26 @@ impl<'a> CachedFederationRules<'a> {
 }
 
 impl FederationRules {
-    pub fn parse_key(
+    pub fn parse_key<'a>(
         supergraph: &SupergraphState,
-        subgraph_name: &String,
-        type_name: &str,
+        subgraph_name: &'a str,
+        type_name: &'a str,
         key: &str,
-    ) -> TypeAwareSelection {
+    ) -> TypeAwareSelection<'a> {
         let selection_set =
             normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, key);
         TypeAwareSelection {
-            type_name: type_name.to_string(),
+            type_name,
             selection_set: selection_set.into(),
         }
     }
 
-    pub fn parse_context_selection(
+    pub fn parse_context_selection<'a>(
         supergraph: &SupergraphState,
         subgraph_name: &String,
-        type_name: &str,
+        type_name: &'a str,
         selection: &str,
-    ) -> TypeAwareSelection {
+    ) -> TypeAwareSelection<'a> {
         let selection = selection.trim();
         let fields = if let Some(inner) = selection.strip_prefix('{') {
             inner
@@ -256,7 +256,7 @@ impl FederationRules {
             }
         });
         TypeAwareSelection {
-            type_name: type_name.to_string(),
+            type_name,
             selection_set: selection_set.into(),
         }
     }
