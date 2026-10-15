@@ -196,6 +196,15 @@ fn build_context_aliased(
         renamed.push((definition.name, names));
     }
 
+    let mut names = std::collections::HashSet::new();
+    if query
+        .variable_definitions
+        .iter()
+        .any(|definition| !names.insert(definition.name.as_str()))
+    {
+        return None;
+    }
+
     let fields = std::mem::take(&mut query.selection_set.items);
     let mut response_keys = Vec::with_capacity(fields.len());
     for selection in &fields {
@@ -795,6 +804,20 @@ mod tests {
             query query {field}
             "
         );
+    }
+
+    #[test]
+    fn context_aliased_rejects_generated_variable_collisions() {
+        for shared in ["__context_0_0", "representations_0"] {
+            let mut operation = parse_subgraph_fetch_operation(&format!(
+                "query($representations: [_Any!]!, $__context_0: String, ${shared}: Int) {{ _entities(representations: $representations) {{ ... on T {{ f(a: $__context_0, b: ${shared}) }} }} }}",
+            ))
+            .operation;
+            operation.set_max_context_groups(2);
+            assert!(operation
+                .context_aliased(2, &["representations", "__context_0"])
+                .is_none());
+        }
     }
 
     #[test]
