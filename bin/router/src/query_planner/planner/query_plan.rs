@@ -1,7 +1,10 @@
 use ahash::{HashMap, HashMapExt};
 use std::collections::VecDeque;
 
-use petgraph::{graph::NodeIndex, visit::EdgeRef};
+use petgraph::{
+    graph::NodeIndex,
+    visit::{EdgeRef, NodeIndexable},
+};
 
 use crate::query_planner::{
     planner::{
@@ -108,10 +111,12 @@ pub fn build_query_plan_from_fetch_graph(
         }
     }
 
-    let mut overall_plan_sequence: Vec<PlanNode> = Vec::new();
+    // Only the order first. The steps are turned into plan nodes after, and freed one by one,
+    // so the fetch graph and the plan aren't both alive in full.
+    let mut waves: Vec<Vec<NodeIndex>> = Vec::new();
 
     while !queue.is_empty() {
-        let mut current_wave_nodes: Vec<PlanNode> = Vec::new();
+        let mut current_wave: Vec<NodeIndex> = Vec::new();
         let wave_size = queue.len();
 
         for _ in 0..wave_size {
@@ -121,8 +126,7 @@ pub fn build_query_plan_from_fetch_graph(
                     "Failed to pop a step from the queue. Queue should not be empty",
                 )))?;
 
-            let step_data = fetch_graph.get_step_data(step_index)?;
-            current_wave_nodes.push(PlanNode::from_fetch_step(step_data, supergraph));
+            current_wave.push(step_index);
             planned_nodes_count += 1;
             in_degrees.mark_as_processed(step_index);
 
@@ -141,19 +145,12 @@ pub fn build_query_plan_from_fetch_graph(
             }
         }
 
-        if current_wave_nodes.is_empty() {
+        if current_wave.is_empty() {
             return Err(QueryPlanError::Internal(String::from(
                 "Wave was empty. It should not happen as the queue was non-empty.",
             )));
-        } else if current_wave_nodes.len() == 1 {
-            overall_plan_sequence.push(current_wave_nodes.into_iter().next().ok_or(
-                QueryPlanError::Internal(String::from("Was was expected to be of length 1")),
-            )?);
-        } else {
-            overall_plan_sequence.push(PlanNode::Parallel(ParallelNode {
-                nodes: current_wave_nodes,
-            }));
         }
+        waves.push(current_wave);
     }
 
     let total_fetch_nodes = fetch_graph
@@ -163,6 +160,32 @@ pub fn build_query_plan_from_fetch_graph(
 
     if planned_nodes_count != total_fetch_nodes {
         return Err(QueryPlanError::Internal("Cycle detected".to_string()));
+    }
+
+    // The steps by node index, moved out in one go (removing nodes one by one walks the edge
+    // lists). Each is freed as soon as it's a plan node.
+    let mut steps: Vec<Option<_>> = Vec::new();
+    steps.resize_with(fetch_graph.graph.node_bound(), || None);
+    fetch_graph.graph.map_owned(|index, step| steps[index.index()] = Some(step), |_, _| ());
+
+    let mut overall_plan_sequence: Vec<PlanNode> = Vec::with_capacity(waves.len());
+    for wave in waves {
+        let mut current_wave_nodes = Vec::with_capacity(wave.len());
+        for step_index in wave {
+            let step_data = steps[step_index.index()].take().ok_or(QueryPlanError::Internal(
+                format!("Step {} is missing", step_index.index()),
+            ))?;
+            current_wave_nodes.push(PlanNode::from_fetch_step(&step_data, supergraph));
+        }
+
+        overall_plan_sequence.push(match current_wave_nodes.len() {
+            1 => current_wave_nodes.into_iter().next().ok_or(QueryPlanError::Internal(
+                String::from("Was was expected to be of length 1"),
+            ))?,
+            _ => PlanNode::Parallel(ParallelNode {
+                nodes: current_wave_nodes,
+            }),
+        });
     }
 
     if overall_plan_sequence.is_empty() {
