@@ -1,4 +1,5 @@
-use std::collections::{BTreeMap, HashSet};
+use ahash::{HashSet, HashSetExt};
+use std::collections::BTreeMap;
 
 use petgraph::{
     graph::NodeIndex,

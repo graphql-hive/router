@@ -1,8 +1,8 @@
+use ahash::HashSet;
 use graphql_tools::parser::query::{
     Definition, Field, InlineFragment, Mutation, OperationDefinition, Query, Selection,
     SelectionSet, Subscription, TypeCondition,
 };
-use std::collections::HashSet;
 
 use crate::query_planner::{
     ast::normalization::{
@@ -283,7 +283,7 @@ fn expand_abstract_fragment(
             })?
         }
         _ => {
-            owned_parent_set = HashSet::from([parent_type_def.name().to_string()]);
+            owned_parent_set = HashSet::from_iter([parent_type_def.name().to_string()]);
             &owned_parent_set
         }
     };

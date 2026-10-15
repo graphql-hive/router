@@ -1,5 +1,7 @@
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use ahash::{HashMap, HashMapExt, HashSet};
+use std::collections::{BTreeSet, VecDeque};
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::rc::Rc;
 
 use petgraph::{graph::NodeIndex, Direction};
 use tracing::{instrument, trace};
@@ -359,10 +361,12 @@ fn merge_batched_response_paths(
         // Example: dropping |[Agency] can send Self/Group values to agency fetches.
         if !type_condition_changed {
             return Some(Segment::TypeCondition(
-                merged_type_condition_members
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect(),
+                Rc::new(
+                    merged_type_condition_members
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect(),
+                ),
                 condition.cloned(),
             ));
         }
@@ -383,10 +387,12 @@ fn merge_batched_response_paths(
         }
 
         Some(Segment::TypeCondition(
-            merged_type_condition_members
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
+            Rc::new(
+                merged_type_condition_members
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+            ),
             condition.cloned(),
         ))
     }
@@ -649,7 +655,9 @@ impl FetchStepData<MultiTypeFetchStep> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
+    use std::rc::Rc;
+
+    use ahash::{HashMap, HashMapExt, HashSet};
 
     use crate::query_planner::{
         ast::merge_path::{Condition, FieldPathSegment, MergePath, Segment},
@@ -665,15 +673,27 @@ mod tests {
     /// `products.@|[types] condition.reviews.@.product`
     fn path_with_condition(type_names: &[&str], condition: Option<Condition>) -> MergePath {
         MergePath::new(vec![
-            Segment::Field(FieldPathSegment::named("products".to_string()), 0, None),
+            Segment::Field(
+                FieldPathSegment::named("products".to_string()).into(),
+                0,
+                None,
+            ),
             Segment::List,
             Segment::TypeCondition(
-                type_names.iter().map(|name| name.to_string()).collect(),
+                Rc::new(type_names.iter().map(|name| name.to_string()).collect()),
                 condition,
             ),
-            Segment::Field(FieldPathSegment::named("reviews".to_string()), 0, None),
+            Segment::Field(
+                FieldPathSegment::named("reviews".to_string()).into(),
+                0,
+                None,
+            ),
             Segment::List,
-            Segment::Field(FieldPathSegment::named("product".to_string()), 0, None),
+            Segment::Field(
+                FieldPathSegment::named("product".to_string()).into(),
+                0,
+                None,
+            ),
         ])
     }
 
@@ -700,9 +720,9 @@ mod tests {
         let me = path_with_condition(&["Book"], condition.clone());
         let other = path_with_condition(&["User"], condition.clone());
         let normalized_path_key = normalized_path_hash(&me);
-        let possible_types = HashSet::from(["Book".to_string(), "User".to_string()]);
+        let possible_types = HashSet::from_iter(["Book".to_string(), "User".to_string()]);
         let possible_types_by_position =
-            HashMap::from([((normalized_path_key, 2), &possible_types)]);
+            HashMap::from_iter([((normalized_path_key, 2), &possible_types)]);
 
         let merged = merge_batched_response_paths(
             &me,
@@ -719,13 +739,13 @@ mod tests {
         let me = path("Book");
         let other = path("User");
         let normalized_path_key = normalized_path_hash(&me);
-        let possible_types = HashSet::from([
+        let possible_types = HashSet::from_iter([
             "Book".to_string(),
             "User".to_string(),
             "Magazine".to_string(),
         ]);
         let possible_types_by_position =
-            HashMap::from([((normalized_path_key, 2), &possible_types)]);
+            HashMap::from_iter([((normalized_path_key, 2), &possible_types)]);
 
         let merged = merge_batched_response_paths(
             &me,
@@ -745,9 +765,9 @@ mod tests {
         let me = path("Book");
         let other = path("User");
         let normalized_path_key = normalized_path_hash(&me);
-        let possible_types = HashSet::from(["Book".to_string(), "User".to_string()]);
+        let possible_types = HashSet::from_iter(["Book".to_string(), "User".to_string()]);
         let possible_types_by_position =
-            HashMap::from([((normalized_path_key, 2), &possible_types)]);
+            HashMap::from_iter([((normalized_path_key, 2), &possible_types)]);
 
         let merged = merge_batched_response_paths(
             &me,
