@@ -43,7 +43,7 @@ type ActiveEdgeChecks = HashSet<(NodeIndex, EdgeIndex)>;
 struct IndirectPathsLookupQueue<'graph> {
     queue: Vec<(
         VisitedGraphs<'graph>,
-        HashSet<&'graph TypeAwareSelection>,
+        HashSet<&'graph TypeAwareSelection<'graph>>,
         OperationPath<'graph>,
     )>,
 }
@@ -69,7 +69,7 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
     pub fn add(
         &mut self,
         visited_graphs: VisitedGraphs<'graph>,
-        selections: HashSet<&'graph TypeAwareSelection>,
+        selections: HashSet<&'graph TypeAwareSelection<'graph>>,
         path: OperationPath<'graph>,
     ) {
         self.queue.push((visited_graphs, selections, path));
@@ -79,7 +79,7 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
         &mut self,
     ) -> Option<(
         VisitedGraphs<'graph>,
-        HashSet<&'graph TypeAwareSelection>,
+        HashSet<&'graph TypeAwareSelection<'graph>>,
         OperationPath<'graph>,
     )> {
         self.queue.pop()
@@ -113,7 +113,7 @@ impl<'op> From<&'op NavigationTarget<'op>> for NavigationTargetKey<'op> {
 }
 
 struct PathSearch<'graph> {
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     cancellation_token: &'graph CancellationToken,
@@ -124,7 +124,7 @@ struct PathSearch<'graph> {
 
 impl<'graph> PathSearch<'graph> {
     fn new(
-        graph: &'graph Graph,
+        graph: &'graph Graph<'graph>,
         supergraph: &'graph SupergraphState,
         override_context: &'graph PlannerOverrideContext,
         cancellation_token: &'graph CancellationToken,
@@ -144,7 +144,7 @@ impl<'graph> PathSearch<'graph> {
   current_cost = path.cost
 ))]
 pub fn find_indirect_paths<'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
@@ -429,7 +429,7 @@ impl<'graph> PathSearch<'graph> {
 }
 
 pub fn find_self_referencing_direct_path<'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
@@ -467,7 +467,7 @@ pub fn find_self_referencing_direct_path<'graph>(
     current_cost = path.cost,
 ))]
 pub fn find_direct_paths<'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
@@ -483,7 +483,7 @@ pub fn find_direct_paths<'graph>(
     current_cost = path.cost,
 ))]
 pub fn find_direct_path<'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     path: &OperationPath<'graph>,
@@ -497,7 +497,7 @@ pub fn find_direct_path<'graph>(
 /// Edges from the path's tail that lead straight to `target`, nothing when the path's union
 /// scope rules the target type out.
 fn direct_edges<'graph, 't>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     path: &OperationPath<'graph>,
     target: &'t NavigationTarget<'_>,
 ) -> Box<dyn Iterator<Item = EdgeReference<'graph>> + 't>
@@ -575,7 +575,7 @@ impl<'graph> PathSearch<'graph> {
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn can_satisfy_edge<'graph>(
-    graph: &'graph Graph,
+    graph: &'graph Graph<'graph>,
     supergraph: &'graph SupergraphState,
     override_context: &'graph PlannerOverrideContext,
     edge_ref: &EdgeReference<'graph>,
@@ -1094,7 +1094,7 @@ impl<'graph> RequirementCycleChecker<'graph> {
     ///
     fn requirements_depend_on_target_field(
         &self,
-        requirements: &TypeAwareSelection,
+        requirements: &TypeAwareSelection<'graph>,
         target_field: &FieldSelection,
     ) -> bool {
         if !self.type_condition_matches(&requirements.type_name) {
