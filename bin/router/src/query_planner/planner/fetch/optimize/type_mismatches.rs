@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use ahash::HashSet;
 
 use petgraph::graph::NodeIndex;
 use tracing::{instrument, trace};

@@ -9,11 +9,12 @@ mod graph_tests {
         state::supergraph_state::SupergraphState,
         utils::parsing::parse_schema,
     };
+    use ahash::{HashSet, HashSetExt};
     use petgraph::{
         graph::NodeIndex,
         visit::{EdgeRef, NodeRef},
     };
-    use std::{collections::HashSet, path::PathBuf};
+    use std::path::PathBuf;
 
     fn init_test(supergraph_sdl: &str) -> Graph<'static> {
         let schema = parse_schema(supergraph_sdl);

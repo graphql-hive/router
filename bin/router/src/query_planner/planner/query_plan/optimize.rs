@@ -51,8 +51,9 @@
 //!     e2: _entities (for F4)
 //!
 
+use ahash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::BTreeSet,
     hash::{Hash, Hasher},
 };
 
@@ -862,11 +863,8 @@ fn optimize_plan_sequence(nodes: Vec<PlanNode>) -> Vec<PlanNode> {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::{BTreeSet, HashSet},
-        fs,
-        path::PathBuf,
-    };
+    use ahash::HashSet;
+    use std::{collections::BTreeSet, fs, path::PathBuf};
 
     use graphql_tools::parser::query as query_ast;
 
@@ -889,7 +887,8 @@ mod tests {
 
     #[test]
     fn next_unique_representations_variable_name_skips_used_values() {
-        let mut used = HashSet::from(["__batch_reps_0".to_string(), "__batch_reps_2".to_string()]);
+        let mut used =
+            HashSet::from_iter(["__batch_reps_0".to_string(), "__batch_reps_2".to_string()]);
         let mut next_index = 0;
 
         let first = next_unique_representations_var_name(&mut used, &mut next_index);
@@ -2280,7 +2279,7 @@ mod tests {
 
         let path = FlattenNodePath::from(&MergePath::new(vec![
             Segment::Field(
-                FieldPathSegment::named(root_path_field.to_string()),
+                FieldPathSegment::named(root_path_field.to_string()).into(),
                 0,
                 None,
             ),

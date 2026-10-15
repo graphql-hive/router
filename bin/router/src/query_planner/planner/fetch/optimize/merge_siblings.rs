@@ -1,5 +1,6 @@
+use ahash::{HashMap, HashMapExt};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::VecDeque,
     hash::{Hash, Hasher},
 };
 
@@ -134,7 +135,7 @@ fn response_path_shape_hash(step: &FetchStepData<MultiTypeFetchStep>) -> u64 {
             Segment::List => 1u8.hash(&mut hasher),
             Segment::TypeCondition(types, condition) => {
                 2u8.hash(&mut hasher);
-                for type_name in types {
+                for type_name in types.iter() {
                     type_name.hash(&mut hasher);
                 }
                 condition.hash(&mut hasher);
