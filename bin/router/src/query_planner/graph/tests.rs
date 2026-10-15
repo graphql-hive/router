@@ -140,8 +140,15 @@ mod graph_tests {
         }
     }
 
+    fn find_node_index(graph: &Graph<'_>, node_id: &str) -> Option<NodeIndex> {
+        graph
+            .graph
+            .node_indices()
+            .find(|&index| graph.graph[index].display_name() == node_id)
+    }
+
     fn find_node_doesnt_exists(graph: &Graph<'_>, node_id: &str) {
-        let node_res = graph.node_display_name_to_index.get(node_id);
+        let node_res = find_node_index(graph, node_id);
 
         assert!(
             node_res.is_none(),
@@ -151,7 +158,7 @@ mod graph_tests {
     }
 
     fn find_node<'a>(graph: &'a Graph<'a>, node_id: &str) -> (FoundEdges<'a>, FoundEdges<'a>) {
-        let node_res = graph.node_display_name_to_index.get(node_id);
+        let node_res = find_node_index(graph, node_id);
 
         assert!(node_res.is_some(), "failed to find node {}", node_id);
 
@@ -159,14 +166,14 @@ mod graph_tests {
 
         let incoming_edges = FoundEdges {
             edges: graph
-                .edges_to(*node_index)
+                .edges_to(node_index)
                 .map(|edge_ref| (edge_ref, edge_ref.source().id()))
                 .collect(),
             graph,
         };
         let outgoing_edges = FoundEdges {
             edges: graph
-                .edges_from(*node_index)
+                .edges_from(node_index)
                 .map(|edge_ref| (edge_ref, edge_ref.target().id()))
                 .collect(),
             graph,
