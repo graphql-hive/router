@@ -133,14 +133,15 @@ pub fn find_best_combination(
     }
 
     let per_leaf_alternatives_asc = prepare_alternatives(graph, operation)?;
-    pick_candidates(graph, &per_leaf_alternatives_asc, cancellation_token)?
+    pick_candidates(graph, per_leaf_alternatives_asc, cancellation_token)?
         .ok_or(QueryPlanError::EmptyPlan)
 }
 
 /// For each set, the candidate that adds the least cost to the plan so far.
+/// Takes the sets by value, so each one's paths are freed once it's picked.
 fn pick_candidates(
     graph: &Graph<'_>,
-    alternatives_list: &[Alternatives],
+    alternatives_list: Vec<Alternatives>,
     cancellation_token: &CancellationToken,
 ) -> Result<Option<QueryTree>, QueryPlanError> {
     let mut plan: Option<QueryTree> = None;
@@ -150,7 +151,7 @@ fn pick_candidates(
 
         let mut best_added_cost = u64::MAX;
         let mut best: Option<&Candidate> = None;
-        for candidate in alternatives {
+        for candidate in &alternatives {
             let added_cost = match plan.as_ref() {
                 Some(plan) => added_cost_of_candidate(graph, &plan.root, candidate)?,
                 None => candidate.cost,
