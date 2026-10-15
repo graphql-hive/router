@@ -1233,10 +1233,6 @@ impl SupergraphDefinition {
             .collect()
     }
 
-    pub fn is_defined_in_subgraph(&self, graph_id: &str) -> bool {
-        self.join_types().iter().any(|jt| jt.graph_id == graph_id)
-    }
-
     pub fn try_into_root_type(&self) -> Option<&OperationKind> {
         match self {
             SupergraphDefinition::Object(object_type) => object_type.root_type.as_ref(),
