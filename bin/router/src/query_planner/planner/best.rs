@@ -14,7 +14,8 @@
 //! entity call per subgraph and path of the objects it extends, however many nodes lead there.
 //! ponytail: two calls with the same key where one waits on the other stay two requests, but
 //! count as one here. Only the cost is off, the plan is still right. abstract has 20 of those,
-//! the same in every plan, so no pick changes. Key on dependency depth if one ever does.
+//! the same in every plan, so no pick changes. If one ever does, look at what actually keeps
+//! those calls apart first: same depth doesn't mean they can merge.
 //! Each node and each fetch is an "item", interned once with its weight, and a candidate is the
 //! list of its items. So a plan costs the weight of the items its candidates use, counted once.
 //!
@@ -588,6 +589,7 @@ pub fn find_best_combination(
     let relaxed_cost = plan.cost();
     if !proven {
         plan.improve(cancellation_token)?;
+        proven = is_proven(plan.cost(), lower_bound);
     }
     trace!(
         greedy_cost,
