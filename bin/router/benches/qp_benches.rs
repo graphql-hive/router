@@ -257,6 +257,8 @@ fn provides_planning(c: &mut Criterion) {
 }
 
 fn all_benchmarks(c: &mut Criterion) {
+    let _ = tracing::subscriber::set_global_default(tracing::subscriber::NoSubscriber::default());
+
     query_plan_pipeline(c);
     cache_preparation(c);
     provides_planning(c);
