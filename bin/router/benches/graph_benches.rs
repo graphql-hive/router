@@ -45,6 +45,8 @@ fn graph_building(c: &mut Criterion) {
 }
 
 fn all_benchmarks(c: &mut Criterion) {
+    let _ = tracing::subscriber::set_global_default(tracing::subscriber::NoSubscriber::default());
+
     graph_building(c);
 }
 
