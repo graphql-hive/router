@@ -2808,7 +2808,6 @@ dependencies = [
  "itoa",
  "jsonwebtoken",
  "lasso2",
- "lazy-init",
  "lazy_static",
  "matchit 0.9.2",
  "md5",
@@ -3656,12 +3655,6 @@ checksum = "a030549b8dfea08d7981ad0381acb4bc0cdc7a4fd616e3b9659c31dc0a3474fd"
 dependencies = [
  "hashbrown 0.14.5",
 ]
-
-[[package]]
-name = "lazy-init"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f40963626ac12dcaf92afc15e4c3db624858c92fd9f8ba2125eaada3ac2706f"
 
 [[package]]
 name = "lazy_static"

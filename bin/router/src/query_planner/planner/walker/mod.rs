@@ -20,7 +20,7 @@ use crate::query_planner::{
         Graph,
     },
     planner::walker::{
-        path::UnionContext,
+        path::{SelectionAttributes, UnionContext},
         pathfinder::{find_direct_path, find_self_referencing_direct_path, NavigationTarget},
     },
     state::supergraph_state::{OperationKind, SupergraphState},
@@ -375,6 +375,8 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
 
     if next_paths.is_empty() {
         let mut tracker = BestPathTracker::new(graph);
+        let typename = FieldSelection::new_typename();
+        let typename_attributes = SelectionAttributes::shared(&typename);
 
         for path in paths {
             let path_span = span!(
@@ -389,7 +391,8 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
                 override_context,
                 path,
                 &NavigationTarget::Field {
-                    field: &FieldSelection::new_typename(),
+                    field: &typename,
+                    attributes: Rc::clone(&typename_attributes),
                     target_subgraph_ids: None,
                 },
                 cancellation_token,
@@ -555,6 +558,7 @@ fn process_field<'graph, 'op: 'graph>(
     cancellation_token.bail_if_cancelled()?;
 
     let mut target_subgraph_ids_cache = None;
+    let attributes = SelectionAttributes::shared(field);
 
     for path in paths {
         let path_span = span!(
@@ -574,6 +578,7 @@ fn process_field<'graph, 'op: 'graph>(
             path,
             &NavigationTarget::Field {
                 field,
+                attributes: Rc::clone(&attributes),
                 target_subgraph_ids: None,
             },
             cancellation_token,
@@ -613,6 +618,7 @@ fn process_field<'graph, 'op: 'graph>(
                     path,
                     &NavigationTarget::Field {
                         field,
+                        attributes: Rc::clone(&attributes),
                         target_subgraph_ids,
                     },
                     &excluded,
