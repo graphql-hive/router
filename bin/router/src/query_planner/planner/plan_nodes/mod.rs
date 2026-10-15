@@ -662,7 +662,12 @@ impl FetchNode<Planning> {
             true => {
                 let planner_requires = create_input_selection_set(&step.input);
                 let mut operation = create_output_operation(step, supergraph);
-                if !step.context_variable_definitions.is_empty() {
+                if !step.context_variable_definitions.is_empty()
+                    && !step
+                        .context_variable_definitions
+                        .iter()
+                        .any(|variable| variable.variable_type.is_non_null())
+                {
                     // one alias per group of contextual argument values
                     operation.operation.set_max_context_groups(
                         options.max_aliases_per_request(&step.service_name.0),
