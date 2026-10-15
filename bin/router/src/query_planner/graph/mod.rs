@@ -154,7 +154,6 @@ pub struct Graph<'graph> {
     pub mutation_root: Option<NodeIndex>,
     pub subscription_root: Option<NodeIndex>,
     node_to_index: HashMap<Node<'graph>, NodeIndex>,
-    pub node_display_name_to_index: HashMap<String, NodeIndex>,
 }
 
 impl<'graph> Graph<'graph> {
@@ -188,7 +187,6 @@ impl<'graph> Graph<'graph> {
     ) -> Result<Self, GraphError> {
         let mut instance = Graph {
             node_to_index: HashMap::new(),
-            node_display_name_to_index: HashMap::new(),
             graph: InnerGraph::new(),
             ..Default::default()
         };
@@ -291,11 +289,8 @@ impl<'graph> Graph<'graph> {
             return index;
         }
 
-        let display_identifier = node.display_name();
         let index = self.graph.add_node(node);
         self.node_to_index.insert(self.graph[index].clone(), index);
-        self.node_display_name_to_index
-            .insert(display_identifier, index);
 
         index
     }
@@ -1360,7 +1355,7 @@ impl<'graph> Graph<'graph> {
                     state.resolve_graph_id(graph_id)?,
                     state.is_interface_object_in_subgraph(&on_type, graph_id),
                 );
-                let below = match self.node_display_name_to_index.get(&plain.display_name()) {
+                let below = match self.node_to_index.get(&plain) {
                     Some(&plain) => self.prune_provided(state, plain, below, graph_id)?,
                     None => below,
                 };
@@ -1418,10 +1413,7 @@ impl<'graph> Graph<'graph> {
             state.resolve_graph_id(graph_id)?,
             state.is_interface_object_in_subgraph(return_type_name, graph_id),
         );
-        Ok(self
-            .node_display_name_to_index
-            .get(&plain.display_name())
-            .copied())
+        Ok(self.node_to_index.get(&plain).copied())
     }
 }
 
