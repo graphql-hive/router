@@ -955,12 +955,21 @@ mod tests {
 
     use graphql_tools::parser::query as query_ast;
 
+    use crate::executor::{
+        execution::demand_control::{
+            compile_actual_subgraph_cost_plan,
+            estimate_actual_subgraph_response_cost_with_compiled_plan,
+            subgraph_response_tracker::SubgraphResponseCostTracker,
+        },
+        response::value::Value,
+    };
     use crate::query_planner::{
         ast::{
             document::Document,
             merge_path::{FieldPathSegment, MergePath, Segment},
             operation::PlanningFetchOperation,
             requires::RequiresSelectionSet,
+            selection_item::SelectionItem,
         },
         planner::plan_nodes::planning::{
             FetchNode, FetchNodePathSegment, FetchRewrite, FlattenNode, FlattenNodePath, PlanNode,
@@ -1424,6 +1433,112 @@ mod tests {
           },
         },
         "#);
+    }
+
+    /// Splitting fetches with identical operations but different requirements must preserve
+    /// the total actual subgraph cost across all returned entities.
+    #[test]
+    fn optimize_parallel_node_preserves_actual_subgraph_cost_when_capping_aliases() {
+        let supergraph = test_supergraph_state();
+        let entities_query = "
+          query($representations:[_Any!]!) {
+            _entities(representations: $representations) {
+              ... on Product { shippingEstimate }
+            }
+          }
+        ";
+        let mut totals = Vec::new();
+        for max_aliases_per_request in [15, 1] {
+            let nodes = ["upc", "name"]
+                .iter()
+                .enumerate()
+                .map(|(index, key)| {
+                    flatten_entity_fetch_node(
+                        index as i64,
+                        "inventory",
+                        "products",
+                        &format!("query {{ ... on Product {{ {key} }} }}"),
+                        entities_query,
+                    )
+                })
+                .collect();
+            let options = QueryPlannerOptions {
+                max_aliases_per_request,
+                ..Default::default()
+            };
+            let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph, &options)
+                .expect("optimize should work");
+            let nodes = match optimized {
+                PlanNode::Parallel(parallel) => parallel.nodes,
+                node => vec![node],
+            };
+            assert_eq!(
+                nodes.len(),
+                if max_aliases_per_request == 1 { 2 } else { 1 },
+                "the cap should split the batch into two separate fetches"
+            );
+            let mut tracker = SubgraphResponseCostTracker::new();
+            let mut hashes = Vec::new();
+            for node in &nodes {
+                let operation = match node {
+                    PlanNode::BatchFetch(batch) => &batch.operation,
+                    PlanNode::Flatten(flatten) => {
+                        let PlanNode::Fetch(fetch) = flatten.node.as_ref() else {
+                            panic!("flatten should wrap a Fetch node");
+                        };
+                        &fetch.operation
+                    }
+                    _ => panic!("optimized nodes should be entity fetches"),
+                };
+                hashes.push(operation.operation.hash);
+                let response = Value::Object(
+                    operation
+                        .document
+                        .operation
+                        .selection_set
+                        .items
+                        .iter()
+                        .map(|selection| {
+                            let SelectionItem::Field(field) = selection else {
+                                panic!("entity operations should have top-level fields");
+                            };
+                            (
+                                field.alias.as_deref().unwrap_or(&field.name),
+                                Value::Array(vec![Value::Object(vec![(
+                                    "shippingEstimate",
+                                    Value::I64(1),
+                                )])]),
+                            )
+                        })
+                        .collect(),
+                );
+                let cost_plan = compile_actual_subgraph_cost_plan(&operation.document, &supergraph);
+                let cost = estimate_actual_subgraph_response_cost_with_compiled_plan(
+                    &cost_plan, &response, &None,
+                );
+                assert!(
+                    cost > 0,
+                    "each entity response should contribute to actual cost"
+                );
+                tracker.track("inventory", operation.operation.hash, cost);
+            }
+            if max_aliases_per_request == 1 {
+                assert_eq!(
+                    hashes[0], hashes[1],
+                    "separate fetches should share an operation hash"
+                );
+            }
+            assert_eq!(
+                tracker.total(),
+                2,
+                "both returned Product entities should be counted"
+            );
+            totals.push(tracker.total());
+        }
+        assert_eq!(
+            totals[0], totals[1],
+            "capping aliases must preserve actual subgraph cost"
+        );
     }
 
     #[test]
