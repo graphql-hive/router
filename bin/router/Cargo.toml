@@ -47,6 +47,10 @@ name = "graph_benches"
 harness = false
 
 [[bench]]
+name = "supergraph_benches"
+harness = false
+
+[[bench]]
 name = "executor_benches"
 harness = false
 
