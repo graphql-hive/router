@@ -247,22 +247,26 @@ pub(super) fn unalias_response<'exec>(
         let Some(GraphQLErrorPathSegment::String(first)) = path.segments.first() else {
             continue;
         };
-        let Some((key, offset)) =
+        let Some((key, group, offset)) =
             aliased
                 .response_keys
                 .iter()
                 .zip(&offsets)
                 .find_map(|((key, aliases), offsets)| {
                     let group = aliases.iter().position(|alias| alias == first)?;
-                    Some((key, offsets[group]))
+                    Some((key, group, offsets[group]))
                 })
         else {
             continue;
         };
-        path.segments[0] = GraphQLErrorPathSegment::String(key.clone());
         if let Some(GraphQLErrorPathSegment::Index(index)) = path.segments.get_mut(1) {
+            if *index >= count(key, group) {
+                error.path = None;
+                continue;
+            }
             *index += offset;
         }
+        path.segments[0] = GraphQLErrorPathSegment::String(key.clone());
     }
 }
 
@@ -446,6 +450,18 @@ mod tests {
                     extensions: Default::default(),
                 },
                 GraphQLError::from_message_and_extensions("other", Default::default()),
+                GraphQLError {
+                    message: "surplus entity".into(),
+                    locations: None,
+                    path: Some(GraphQLErrorPath {
+                        segments: vec![
+                            GraphQLErrorPathSegment::String("_entities_0".into()),
+                            GraphQLErrorPathSegment::Index(2),
+                            GraphQLErrorPathSegment::String("f".into()),
+                        ],
+                    }),
+                    extensions: Default::default(),
+                },
             ]),
             extensions: None,
             headers: None,
@@ -469,5 +485,7 @@ mod tests {
             ]
         );
         assert!(errors[1].path.is_none());
+        assert_eq!(errors[2].message, "surplus entity");
+        assert!(errors[2].path.is_none());
     }
 }
