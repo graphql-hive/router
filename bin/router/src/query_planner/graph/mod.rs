@@ -729,7 +729,7 @@ impl<'graph> Graph<'graph> {
         for (def_name, definition) in state
             .definitions
             .iter()
-            .filter(|(_, definition)| Self::can_have_entity_moves(definition))
+            .filter(|(_, definition)| Self::needs_output_traversal(definition))
         {
             // A type can repeat @join__type for one subgraph (one per @key), so visit each
             // subgraph once. Everything below adds each edge once per subgraph, no dedup needed.
