@@ -1,5 +1,5 @@
 use std::rc::Rc;
-use std::{cmp, fmt::Debug};
+use std::{cell::Cell, cmp, fmt::Debug};
 
 use petgraph::{
     graph::{EdgeIndex, NodeIndex},
@@ -65,7 +65,7 @@ pub struct PathSegment {
     prev: Option<Rc<PathSegment>>,
     /// How many segments the path has up to and including this one.
     /// Lets the getters below allocate once, with the right size.
-    depth: usize,
+    depth: u32,
     pub edge_index: EdgeIndex,
     tail_node: NodeIndex,
     cumulative_cost: u64,
@@ -74,7 +74,14 @@ pub struct PathSegment {
     pub selection_attributes: Option<Rc<SelectionAttributes>>,
     /// Boxed, it's rare (`@skip`/`@include`) and every segment would pay for two `String`s.
     pub condition: Option<Box<Condition>>,
+    /// Filled in by `best.rs` when it costs the paths: the segment's item, the range of the items
+    /// it brings along (its fetch and its requirement), and its response path. Paths share their
+    /// prefixes, so each segment is worked out once.
+    pub(crate) planner_items: Cell<[u32; 4]>,
 }
+
+/// `PathSegment::planner_items` before `best.rs` fills it in.
+pub(crate) const NO_PLANNER_ITEMS: [u32; 4] = [u32::MAX; 4];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PossibleUnionMembers<'graph> {
@@ -149,6 +156,11 @@ impl<'graph> UnionContext<'graph> {
 }
 
 impl PathSegment {
+    /// The segment before this one, `None` for the first.
+    pub(crate) fn prev(&self) -> Option<&PathSegment> {
+        self.prev.as_deref()
+    }
+
     pub fn new_root(edge: &EdgeReference) -> Self {
         Self {
             prev: None,
@@ -159,6 +171,7 @@ impl PathSegment {
             requirement_tree: None,
             selection_attributes: None,
             condition: None,
+            planner_items: Cell::new(NO_PLANNER_ITEMS),
         }
     }
 }
@@ -244,6 +257,7 @@ impl<'graph> OperationPath<'graph> {
                 }
                 NavigationTarget::ConcreteType(_, condition) => condition.clone().map(Box::new),
             },
+            planner_items: Cell::new(NO_PLANNER_ITEMS),
         };
         let new_segment = Rc::new(new_segment_data);
 
@@ -312,7 +326,8 @@ impl<'graph> OperationPath<'graph> {
 
     /// Walks the segments from the tail by reference, into one exactly-sized Vec, and flips it.
     fn collect_from_root<'a, T>(&'a self, map: impl Fn(&'a PathSegment) -> T) -> Vec<T> {
-        let mut items = Vec::with_capacity(self.last_segment.as_ref().map_or(0, |s| s.depth));
+        let mut items =
+            Vec::with_capacity(self.last_segment.as_ref().map_or(0, |s| s.depth as usize));
         let mut current = self.last_segment.as_deref();
 
         while let Some(segment) = current {
@@ -403,6 +418,8 @@ impl<'graph> OperationPath<'graph> {
                 tail_node: original_segment.tail_node,
                 selection_attributes: original_segment.selection_attributes.clone(),
                 condition: original_segment.condition.clone(),
+                // Another chain, so other items.
+                planner_items: Cell::new(NO_PLANNER_ITEMS),
             };
 
             previous_new_segment = Some(Rc::new(new_segment_data));
