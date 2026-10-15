@@ -27,7 +27,13 @@ impl<'a> SubgraphResponseCostTracker<'a> {
         fetch_step_hash: FetchStepHash,
         cost: SubgraphCost,
     ) {
-        self.records.insert((subgraph, fetch_step_hash), cost);
+        // the hash identifies the operation text, not an individual execution. fetches with
+        // different requires can have identical operations, and alias limits can split them
+        // into separate requests. context groups can also execute the same operation repeatedly.
+        // every response contributes to actual cost, so accumulate even when the hash matches.
+        // saturate so large totals can't overflow and undercount the cost
+        let total = self.records.entry((subgraph, fetch_step_hash)).or_default();
+        *total = total.saturating_add(cost);
     }
 
     pub fn total(&self) -> u64 {

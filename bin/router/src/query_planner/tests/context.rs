@@ -3,6 +3,35 @@ use crate::query_planner::utils::parsing::parse_operation;
 use std::error::Error;
 
 #[test]
+fn non_null_context_variables_disable_group_aliasing() -> Result<(), Box<dyn Error>> {
+    use crate::query_planner::planner::plan_nodes::planning::PlanNode;
+
+    let sdl = read_supergraph("fixture/tests/context-basic.supergraph.graphql");
+    for (variable_type, expected_limit) in [("String", 15), ("String!", 1)] {
+        let plan = build_query_plan_from_sdl(
+            &sdl.replace("type: \"String\"", &format!("type: \"{variable_type}\"")),
+            parse_operation("{ users { txs { amount } } }"),
+            Default::default(),
+            Default::default(),
+        )?;
+        let Some(PlanNode::Sequence(sequence)) = plan.node else {
+            panic!("sequence");
+        };
+        let Some(PlanNode::Flatten(flatten)) = sequence.nodes.last() else {
+            panic!("flatten");
+        };
+        let PlanNode::Fetch(fetch) = flatten.node.as_ref() else {
+            panic!("fetch");
+        };
+        assert_eq!(
+            fetch.operation.operation.max_context_groups(),
+            expected_limit
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn mutation_results_supply_context_in_root_field_order() -> Result<(), Box<dyn Error>> {
     let plan = build_query_plan_with_defaults(
         "fixture/tests/context-basic.supergraph.graphql",

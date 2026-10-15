@@ -99,8 +99,12 @@ pub fn build_query_plan_from_sdl(
     )?;
     add_variables_to_fetch_steps(&mut fetch_graph, &operation.variable_definitions)?;
 
-    let plan =
-        build_query_plan_from_fetch_graph(fetch_graph, &supergraph_state, &cancellation_token)?;
+    let plan = build_query_plan_from_fetch_graph(
+        fetch_graph,
+        &supergraph_state,
+        &options,
+        &cancellation_token,
+    )?;
 
     Ok(plan)
 }

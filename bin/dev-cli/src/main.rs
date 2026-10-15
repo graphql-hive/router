@@ -191,8 +191,13 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
     )
     .expect("failed to build fetch graph");
 
-    build_query_plan_from_fetch_graph(fetch_graph, &supergraph, &cancellation_token)
-        .expect("failed to build query plan")
+    build_query_plan_from_fetch_graph(
+        fetch_graph,
+        &supergraph,
+        &QueryPlannerOptions::default(),
+        &cancellation_token,
+    )
+    .expect("failed to build query plan")
 }
 
 fn process_merged_tree(

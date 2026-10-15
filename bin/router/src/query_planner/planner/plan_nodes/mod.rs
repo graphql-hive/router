@@ -8,8 +8,12 @@ use crate::query_planner::{
         selection_set::{FieldSelection, SelectionSet},
         value::Value,
     },
-    planner::fetch::{
-        fetch_step_data::FetchStepData, selections::FetchStepSelections, state::MultiTypeFetchStep,
+    planner::{
+        fetch::{
+            fetch_step_data::FetchStepData, selections::FetchStepSelections,
+            state::MultiTypeFetchStep,
+        },
+        QueryPlannerOptions,
     },
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
     utils::pretty_display::{get_indent, PrettyDisplay},
@@ -652,16 +656,29 @@ impl FetchNode<Planning> {
     pub fn from_fetch_step(
         step: &FetchStepData<MultiTypeFetchStep>,
         supergraph: &SupergraphState,
+        options: &QueryPlannerOptions,
     ) -> Self {
         match step.is_entity_call() {
             true => {
                 let planner_requires = create_input_selection_set(&step.input);
+                let mut operation = create_output_operation(step, supergraph);
+                if !step.context_variable_definitions.is_empty()
+                    && !step
+                        .context_variable_definitions
+                        .iter()
+                        .any(|variable| variable.variable_type.is_non_null())
+                {
+                    // one alias per group of contextual argument values
+                    operation.operation.set_max_context_groups(
+                        options.max_aliases_per_request(&step.service_name.0),
+                    );
+                }
                 FetchNode {
                     id: step.id,
                     service_name: step.service_name.0.clone(),
                     variable_usages: step.variable_usages.clone(),
                     operation_kind: Some(OperationKind::Query),
-                    operation: create_output_operation(step, supergraph),
+                    operation,
                     custom_scalar_paths: custom_scalar_paths_from_fetch_output(
                         &step.output,
                         supergraph,
@@ -721,8 +738,9 @@ impl PlanNode<Planning> {
     pub fn from_fetch_step(
         step: &FetchStepData<MultiTypeFetchStep>,
         supergraph: &SupergraphState,
+        options: &QueryPlannerOptions,
     ) -> Self {
-        let fetch = FetchNode::from_fetch_step(step, supergraph);
+        let fetch = FetchNode::from_fetch_step(step, supergraph, options);
 
         let node = if !step.response_path.is_empty() {
             PlanNode::Flatten(FlattenNode {
@@ -1044,12 +1062,12 @@ mod stored_size_tests {
         for (name, actual, expected) in [
             ("PlanNode", size_of::<PlanNode>(), 40),
             ("ConditionNode", size_of::<ConditionNode>(), 40),
-            ("FetchNode", size_of::<FetchNode>(), 272),
-            ("BatchFetchNode", size_of::<BatchFetchNode>(), 160),
+            ("FetchNode", size_of::<FetchNode>(), 280),
+            ("BatchFetchNode", size_of::<BatchFetchNode>(), 168),
             (
                 "SubgraphFetchOperation",
                 size_of::<crate::query_planner::ast::operation::SubgraphFetchOperation>(),
-                32,
+                40,
             ),
         ] {
             assert_eq!(

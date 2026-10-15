@@ -74,6 +74,7 @@ fn query_plan_pipeline(c: &mut Criterion) {
             let query_plan = build_query_plan_from_fetch_graph(
                 fetch_graph,
                 bb_supergraph_state,
+                &QueryPlannerOptions::default(),
                 &cancellation_token,
             )
             .unwrap();
@@ -124,6 +125,7 @@ fn query_plan_pipeline(c: &mut Criterion) {
             let query_plan = build_query_plan_from_fetch_graph(
                 fetch_graph,
                 bb_supergraph_state,
+                &QueryPlannerOptions::default(),
                 &cancellation_token,
             )
             .unwrap();
@@ -237,6 +239,7 @@ fn provides_planning(c: &mut Criterion) {
                 build_query_plan_from_fetch_graph(
                     fetch_graph,
                     &supergraph_state,
+                    &QueryPlannerOptions::default(),
                     &cancellation_token,
                 )
                 .unwrap(),

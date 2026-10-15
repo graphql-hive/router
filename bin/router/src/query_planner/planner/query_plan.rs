@@ -7,6 +7,7 @@ use crate::query_planner::{
         fetch::state::MultiTypeFetchStep,
         plan_nodes::planning::PlanNode,
         query_plan::optimize::{optimize_root_node, optimize_top_level_sequence},
+        QueryPlannerOptions,
     },
     state::supergraph_state::SupergraphState,
     utils::cancellation::CancellationToken,
@@ -85,6 +86,7 @@ pub static QUERY_PLAN_KIND: &str = "QueryPlan";
 pub fn build_query_plan_from_fetch_graph(
     fetch_graph: FetchGraph<MultiTypeFetchStep>,
     supergraph: &SupergraphState,
+    options: &QueryPlannerOptions,
     cancellation_token: &CancellationToken,
 ) -> Result<QueryPlan, QueryPlanError> {
     let root_index = fetch_graph.root_index.ok_or(QueryPlanError::NoRoot)?;
@@ -121,7 +123,7 @@ pub fn build_query_plan_from_fetch_graph(
                 )))?;
 
             let step_data = fetch_graph.get_step_data(step_index)?;
-            current_wave_nodes.push(PlanNode::from_fetch_step(step_data, supergraph));
+            current_wave_nodes.push(PlanNode::from_fetch_step(step_data, supergraph, options));
             planned_nodes_count += 1;
             in_degrees.mark_as_processed(step_index);
 
@@ -185,7 +187,7 @@ pub fn build_query_plan_from_fetch_graph(
     };
 
     // Then run full recursive optimization + batching rewrites.
-    let root_node = optimize_root_node(root_node, supergraph)?;
+    let root_node = optimize_root_node(root_node, supergraph, options)?;
 
     Ok(QueryPlan {
         kind: QUERY_PLAN_KIND,
