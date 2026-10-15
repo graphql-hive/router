@@ -22,7 +22,10 @@ use crate::query_planner::{
     graph::edge::{OverrideLabel, Percentage},
 };
 
-use super::{entity_keys::EntityKeys, subgraph_state::SubgraphState};
+use super::{
+    entity_keys::EntityKeys,
+    subgraph_state::{SubgraphDefinitionSource, SubgraphState},
+};
 
 static BUILTIN_SCALARS: [&str; 5] = ["String", "Int", "Float", "Boolean", "ID"];
 
@@ -266,8 +269,30 @@ impl SupergraphState {
             entity_keys: Arc::default(),
         };
 
+        // Group the join types by subgraph in one pass. Scanning every definition for every
+        // subgraph is too slow when there are hundreds of subgraphs.
+        let mut definitions_by_subgraph: HashMap<&str, Vec<SubgraphDefinitionSource>> =
+            HashMap::new();
+        for (def_name, definition) in instance.definitions.iter() {
+            for join_type in definition.join_types() {
+                let sources = definitions_by_subgraph
+                    .entry(join_type.graph_id.as_str())
+                    .or_default();
+                // A type can repeat @join__type for one subgraph, keep those together.
+                match sources.last_mut() {
+                    Some((name, _, join_types)) if *name == def_name => {
+                        join_types.push(join_type.clone())
+                    }
+                    _ => sources.push((def_name, definition, vec![join_type.clone()])),
+                }
+            }
+        }
+
         for subgraph_id in instance.known_subgraphs.keys() {
-            let state = SubgraphState::decompose_from_supergraph(subgraph_id, &instance);
+            let sources = definitions_by_subgraph
+                .remove(subgraph_id.as_str())
+                .unwrap_or_default();
+            let state = SubgraphState::decompose_from_supergraph(subgraph_id, sources);
             let subgraph_name = instance.resolve_graph_id(subgraph_id).unwrap();
             instance.subgraphs_state.insert(subgraph_name, state);
         }
@@ -623,6 +648,22 @@ impl SupergraphState {
         schema: &SchemaDocument,
         linked_specs: LinkedSpecifications,
     ) -> HashMap<String, SupergraphDefinition> {
+        // Each of these scans the whole document, so look them up once, not per object type.
+        let query_type = schema.query_type().name.as_str();
+        let mutation_type = schema.mutation_type().map(|t| t.name.as_str());
+        let subscription_type = schema.subscription_type().map(|t| t.name.as_str());
+        let root_type_of = |name: &str| {
+            if name == query_type {
+                Some(OperationKind::Query)
+            } else if mutation_type == Some(name) {
+                Some(OperationKind::Mutation)
+            } else if subscription_type == Some(name) {
+                Some(OperationKind::Subscription)
+            } else {
+                None
+            }
+        };
+
         schema
             .definitions
             .iter()
@@ -632,7 +673,7 @@ impl SupergraphState {
                         object_type.name.to_string(),
                         SupergraphDefinition::Object(Self::build_object_type(
                             object_type,
-                            schema,
+                            root_type_of(&object_type.name),
                             &linked_specs,
                         )),
                     ))
@@ -724,22 +765,38 @@ impl SupergraphState {
         enum_type: &input::EnumType<'static, String>,
         linked_specs: &LinkedSpecifications,
     ) -> SupergraphEnumType {
+        let values: Vec<SupergraphEnumValueType> = enum_type
+            .values
+            .iter()
+            .map(|value| SupergraphEnumValueType {
+                name: value.name.to_string(),
+                join_enum_value: Self::extract_directives::<JoinEnumValueDirective>(
+                    &value.directives,
+                ),
+            })
+            .collect();
+
+        let mut values_by_subgraph: HashMap<String, Vec<usize>> = HashMap::new();
+        for (index, value) in values.iter().enumerate() {
+            for join_enum_value in &value.join_enum_value {
+                let indexes = values_by_subgraph
+                    .entry(join_enum_value.graph.clone())
+                    .or_default();
+                // A value can list the same subgraph twice.
+                if indexes.last() != Some(&index) {
+                    indexes.push(index);
+                }
+            }
+        }
+
         SupergraphEnumType {
             name: enum_type.name.to_string(),
             join_type: Self::extract_directives::<JoinTypeDirective>(&enum_type.directives),
             authenticated: linked_specs.extract_authenticated_directives(&enum_type.directives),
             requires_scopes: linked_specs.extract_requires_scopes_directives(&enum_type.directives),
             policy: linked_specs.extract_policy_directives(&enum_type.directives),
-            values: enum_type
-                .values
-                .iter()
-                .map(|value| SupergraphEnumValueType {
-                    name: value.name.to_string(),
-                    join_enum_value: Self::extract_directives::<JoinEnumValueDirective>(
-                        &value.directives,
-                    ),
-                })
-                .collect(),
+            values,
+            values_by_subgraph,
             cost: linked_specs.extract_cost_directive(&enum_type.directives),
         }
     }
@@ -855,27 +912,10 @@ impl SupergraphState {
     #[instrument(level = "trace",skip_all, fields(name = object_type.name))]
     fn build_object_type(
         object_type: &input::ObjectType<'static, String>,
-        schema: &SchemaDocument,
+        root_type: Option<OperationKind>,
         linked_specs: &LinkedSpecifications,
     ) -> SupergraphObjectType {
         let fields = Self::build_fields(&object_type.fields, linked_specs);
-
-        let root_type = if object_type.name == schema.query_type().name {
-            Some(OperationKind::Query)
-        } else if schema
-            .mutation_type()
-            .is_some_and(|t| t.name == object_type.name)
-        {
-            Some(OperationKind::Mutation)
-        } else if schema
-            .subscription_type()
-            .is_some_and(|t| t.name == object_type.name)
-        {
-            Some(OperationKind::Subscription)
-        } else {
-            None
-        };
-
         let used_in_subgraphs = Self::build_subgraph_usage_from_fields(&fields);
 
         SupergraphObjectType {
@@ -1130,6 +1170,8 @@ pub struct SupergraphScalarType {
 pub struct SupergraphEnumType {
     pub name: String,
     pub values: Vec<SupergraphEnumValueType>,
+    /// Indexes into `values`, per subgraph, so `values_of_subgraph` doesn't scan them all.
+    values_by_subgraph: HashMap<String, Vec<usize>>,
     pub join_type: Vec<JoinTypeDirective>,
     pub requires_scopes: Vec<RequiresScopesDirective>,
     pub policy: Vec<PolicyDirective>,
@@ -1139,10 +1181,10 @@ pub struct SupergraphEnumType {
 
 impl SupergraphEnumType {
     pub fn values_of_subgraph(&self, graph_id: &str) -> Vec<&SupergraphEnumValueType> {
-        self.values
-            .iter()
-            .filter(|value| value.join_enum_value.iter().any(|je| je.graph == graph_id))
-            .collect::<Vec<_>>()
+        self.values_by_subgraph
+            .get(graph_id)
+            .map(|indexes| indexes.iter().map(|&index| &self.values[index]).collect())
+            .unwrap_or_default()
     }
 }
 
@@ -1192,14 +1234,6 @@ impl SupergraphDefinition {
 
     pub fn is_interface_type(&self) -> bool {
         matches!(self, SupergraphDefinition::Interface(_))
-    }
-
-    pub fn extract_join_types_for(&self, graph_id: &str) -> Vec<JoinTypeDirective> {
-        self.join_types()
-            .iter()
-            .filter(|jt| jt.graph_id == graph_id)
-            .cloned()
-            .collect()
     }
 
     pub fn try_into_root_type(&self) -> Option<&OperationKind> {
