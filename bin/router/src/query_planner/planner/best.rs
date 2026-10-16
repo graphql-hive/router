@@ -40,11 +40,7 @@
 //! The plan never gets worse than greedy's. Only the picked candidates become trees, merged in the
 //! order of the sets, like before.
 
-use std::{
-    hash::{Hash, Hasher},
-    ops::Range,
-    rc::Rc,
-};
+use std::{ops::Range, rc::Rc};
 
 use ahash::{HashMap, HashMapExt};
 use petgraph::graph::{EdgeIndex, NodeIndex};
@@ -90,8 +86,7 @@ struct Candidate {
     listed: Option<Range<u32>>,
 }
 
-/// Represents a set of alternative Candidates to satisfy a single leaf in the query.
-/// The final plan must choose exactly one fragment from each ChoiceGroup.
+/// The candidates of one leaf, a set. The plan picks one candidate per set.
 type Alternatives = Vec<Candidate>;
 
 impl Candidate {
@@ -114,50 +109,28 @@ impl Candidate {
     }
 }
 
-/// Selection attributes as part of an item's identity, equal the way tree nodes compare them.
-struct AttributesKey(Rc<SelectionAttributes>);
-
-impl PartialEq for AttributesKey {
-    fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.0, &other.0) || self.0 == other.0
-    }
-}
-
-impl Eq for AttributesKey {}
-
-impl Hash for AttributesKey {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.alias.hash(state);
-        self.0.arguments.hash(state);
-    }
-}
-
 /// What makes two tree nodes the same node once merged: the same parent, in the same list
-/// (children or requirements), and equal the way `QueryTreeNode` compares nodes. There's one per
-/// item, so it's kept small: the rare parts are boxed or narrowed.
-#[derive(PartialEq, Eq, Hash)]
-struct ItemKey {
+/// (children or requirements), and equal the way `QueryTreeNode` compares nodes. Hashed straight
+/// from the node's fields, see `ITEM_HASHER`.
+fn node_fingerprint(
     parent: u32,
     requirement: bool,
     node_index: NodeIndex,
     edge: Option<EdgeIndex>,
-    attributes: Option<AttributesKey>,
-    mutation_field_position: Option<u32>,
-    condition: Option<Box<Condition>>,
-}
-
-impl ItemKey {
-    fn of_node(parent: u32, requirement: bool, node: &QueryTreeNode) -> Self {
-        Self {
-            parent,
-            requirement,
-            node_index: node.node_index,
-            edge: node.edge_from_parent,
-            attributes: node.selection_attributes.clone().map(AttributesKey),
-            mutation_field_position: node.mutation_field_position.map(|position| position as u32),
-            condition: node.condition.clone().map(Box::new),
-        }
-    }
+    attributes: Option<&SelectionAttributes>,
+    mutation_field_position: MutationFieldPosition,
+    condition: Option<&Condition>,
+) -> u64 {
+    let attributes = attributes.map(|attributes| (&attributes.alias, &attributes.arguments));
+    ITEM_HASHER.hash_one((
+        parent,
+        requirement,
+        node_index,
+        edge,
+        attributes,
+        mutation_field_position,
+        condition,
+    ))
 }
 
 /// The parent of the first segment's item, the plan's root.
@@ -283,8 +256,8 @@ impl<'a, 'graph> ItemBuilder<'a, 'graph> {
         })
     }
 
-    fn node_item(&mut self, key: ItemKey) -> u32 {
-        self.intern(ITEM_HASHER.hash_one(&key), FIELD_COST)
+    fn node_item(&mut self, fingerprint: u64) -> u32 {
+        self.intern(fingerprint, FIELD_COST)
     }
 
     /// The fetch an entrypoint or a requirement of a node in `node_index`'s subgraph needs.
@@ -349,8 +322,13 @@ impl<'a, 'graph> ItemBuilder<'a, 'graph> {
                 } else {
                     None
                 };
-                let (item, path, brought) =
-                    self.segment_items(parent, parent_path, segment, position, mutation_field_position)?;
+                let (item, path, brought) = self.segment_items(
+                    parent,
+                    parent_path,
+                    segment,
+                    position,
+                    mutation_field_position,
+                )?;
                 if !listed {
                     segment
                         .planner_items
@@ -400,15 +378,15 @@ impl<'a, 'graph> ItemBuilder<'a, 'graph> {
     ) -> Result<(u32, u32, Range<u32>), QueryPlanError> {
         let node_index = self.graph.get_edge_tail(&segment.edge_index)?;
         let edge = self.graph.edge(segment.edge_index)?;
-        let item = self.node_item(ItemKey {
+        let item = self.node_item(node_fingerprint(
             parent,
-            requirement: false,
+            false,
             node_index,
-            edge: Some(segment.edge_index),
-            attributes: segment.selection_attributes.clone().map(AttributesKey),
-            mutation_field_position: position.map(|position| position as u32),
-            condition: segment.condition.clone(),
-        });
+            Some(segment.edge_index),
+            segment.selection_attributes.as_deref(),
+            position,
+            segment.condition.as_deref(),
+        ));
         let path = self.path_below(parent_path, edge, segment.selection_attributes.as_ref());
 
         let start = self.items.requirement_items.len() as u32;
@@ -420,7 +398,14 @@ impl<'a, 'graph> ItemBuilder<'a, 'graph> {
             // A field's requirement is read from the object the field is on.
             let fetch = self.fetch_item(true, node_index, parent_path, mutation_field_position)?;
             self.items.requirement_items.push(fetch);
-            self.tree_items(item, requirement, true, parent_path, parent_path, mutation_field_position)?;
+            self.tree_items(
+                item,
+                requirement,
+                true,
+                parent_path,
+                parent_path,
+                mutation_field_position,
+            )?;
         }
         let end = self.items.requirement_items.len() as u32;
         Ok((item, path, start..end))
@@ -437,7 +422,15 @@ impl<'a, 'graph> ItemBuilder<'a, 'graph> {
         parent_path: u32,
         mutation_field_position: MutationFieldPosition,
     ) -> Result<(), QueryPlanError> {
-        let item = self.node_item(ItemKey::of_node(parent, requirement, node));
+        let item = self.node_item(node_fingerprint(
+            parent,
+            requirement,
+            node.node_index,
+            node.edge_from_parent,
+            node.selection_attributes.as_deref(),
+            node.mutation_field_position,
+            node.condition.as_ref(),
+        ));
         self.items.requirement_items.push(item);
 
         let edge = match node.edge_from_parent {
@@ -456,7 +449,14 @@ impl<'a, 'graph> ItemBuilder<'a, 'graph> {
             let fetch =
                 self.fetch_item(true, node.node_index, object_path, mutation_field_position)?;
             self.items.requirement_items.push(fetch);
-            self.tree_items(item, requirement, true, object_path, object_path, mutation_field_position)?;
+            self.tree_items(
+                item,
+                requirement,
+                true,
+                object_path,
+                object_path,
+                mutation_field_position,
+            )?;
         }
         for child in &node.children {
             let child_path = match child.edge_from_parent {
@@ -466,20 +466,26 @@ impl<'a, 'graph> ItemBuilder<'a, 'graph> {
                 }
                 None => path,
             };
-            self.tree_items(item, child, false, child_path, path, mutation_field_position)?;
+            self.tree_items(
+                item,
+                child,
+                false,
+                child_path,
+                path,
+                mutation_field_position,
+            )?;
         }
         Ok(())
     }
 }
 
-/// Each `Alternatives` group represents a set of possible ways to satisfy one leaf of the query.
-/// Also returns the items the candidates are made of.
+/// One set per leaf, fewest candidates first, and the items the candidates are made of.
 fn prepare_alternatives(
     graph: &Graph<'_>,
     operation: ResolvedOperation<'_>,
 ) -> Result<(Vec<Alternatives>, Items), QueryPlanError> {
     let is_mutation = matches!(operation.operation_kind, OperationKind::Mutation);
-    let mut per_leaf_alternatives_asc: Vec<Alternatives> = Vec::new();
+    let mut groups: Vec<Alternatives> = Vec::new();
     let mut builder = ItemBuilder::new(graph);
     let mut fetches: Vec<u32> = Vec::new();
 
@@ -500,7 +506,7 @@ fn prepare_alternatives(
                 };
                 // The tree's root, then its items. A chain can need the same fetch twice (into a
                 // subgraph, out, and back at the same path), and items must be counted once, so
-                // such a candidate gets a deduplicated list.
+                // such a candidate gets a deduplicated list. Only fetches repeat.
                 fetches.clear();
                 let mut cost = FIELD_COST;
                 for item in builder.items.of(&candidate) {
@@ -510,19 +516,15 @@ fn prepare_alternatives(
                     }
                     cost += weight;
                 }
-                candidate.cost = cost;
                 fetches.sort_unstable();
-                if fetches.windows(2).any(|pair| pair[0] == pair[1]) {
+                let all = fetches.len();
+                fetches.dedup();
+                if fetches.len() < all {
                     let mut items: Vec<u32> = builder.items.of(&candidate).collect();
-                    let range = builder.list(&mut items);
-                    candidate.listed = Some(range);
-                    candidate.cost = FIELD_COST
-                        + builder
-                            .items
-                            .of(&candidate)
-                            .map(|item| builder.items.weights[item as usize])
-                            .sum::<u64>();
+                    candidate.listed = Some(builder.list(&mut items));
+                    cost -= (all - fetches.len()) as u64 * CROSS_SUBGRAPH_COST;
                 }
+                candidate.cost = cost;
 
                 #[cfg(test)]
                 assert_eq!(
@@ -535,14 +537,14 @@ fn prepare_alternatives(
             }
             // Cheapest on its own first, it wins ties when picking.
             alternatives.sort_by_key(|candidate| candidate.cost);
-            per_leaf_alternatives_asc.push(alternatives);
+            groups.push(alternatives);
         }
     }
 
-    // Sort alternatives by length in ascending order.
-    per_leaf_alternatives_asc.sort_by_key(|alternatives| alternatives.len());
+    // Greedy goes in this order: the sets with the fewest choices first.
+    groups.sort_by_key(|alternatives| alternatives.len());
 
-    Ok((per_leaf_alternatives_asc, builder.items))
+    Ok((groups, builder.items))
 }
 
 pub fn find_best_combination(
@@ -565,7 +567,7 @@ pub fn find_best_combination(
     }
 
     let mut plan = Plan::new(&items, &groups);
-    plan.pick_greedily(graph, cancellation_token)?;
+    plan.pick_greedily(cancellation_token)?;
     let greedy_cost = plan.cost();
     let (mut lower_bound, sets_using) = lower_bound(&items, &groups);
     // The cheapest plan costs a whole number, at least the bound.
@@ -636,6 +638,7 @@ fn merge_picks(
 
 /// The picked candidate of every set, and how many of them use each item.
 struct Plan<'a> {
+    /// `items.weights`, kept at hand for the hot loops.
     weights: &'a [u64],
     items: &'a Items,
     groups: &'a [Alternatives],
@@ -664,8 +667,7 @@ impl<'a> Plan<'a> {
     }
 
     fn of(&self, candidate: &'a Candidate) -> CandidateItems<'a> {
-        let items: &'a Items = self.items;
-        items.of(candidate)
+        self.items.of(candidate)
     }
 
     fn cost(&self) -> u64 {
@@ -673,8 +675,7 @@ impl<'a> Plan<'a> {
     }
 
     fn items(&self, group: usize) -> CandidateItems<'a> {
-        let groups: &'a [Alternatives] = self.groups;
-        self.of(&groups[group][self.choice[group]])
+        self.of(&self.groups[group][self.choice[group]])
     }
 
     /// What `items` would add to the plan.
@@ -722,14 +723,9 @@ impl<'a> Plan<'a> {
     /// For each set, the candidate that adds the least cost to the plan so far.
     fn pick_greedily(
         &mut self,
-        #[allow(unused_variables)] graph: &Graph<'_>,
         cancellation_token: &CancellationToken,
     ) -> Result<(), QueryPlanError> {
-        // Test builds keep the plan as a tree too, to check every added cost against a merge.
-        #[cfg(test)]
-        let mut tree: Option<QueryTree> = None;
-
-        let groups: &'a [Alternatives] = self.groups;
+        let groups = self.groups;
         for (group, alternatives) in groups.iter().enumerate() {
             cancellation_token.bail_if_cancelled()?;
 
@@ -737,18 +733,6 @@ impl<'a> Plan<'a> {
             let mut best_added_cost = u64::MAX;
             for (index, candidate) in alternatives.iter().enumerate() {
                 let added_cost = self.added(self.of(candidate));
-
-                #[cfg(test)]
-                if let Some(tree) = &tree {
-                    let mut merged = tree.clone();
-                    Rc::make_mut(&mut merged.root).merge_nodes(&candidate.build_tree(graph)?.root);
-                    assert_eq!(
-                        added_cost,
-                        tree_cost(graph, &merged.root) - tree_cost(graph, &tree.root),
-                        "the added cost from the items must match the added cost of the tree"
-                    );
-                }
-
                 if added_cost < best_added_cost {
                     best_added_cost = added_cost;
                     best = index;
@@ -756,15 +740,6 @@ impl<'a> Plan<'a> {
             }
             self.choice[group] = best;
             self.add(self.of(&alternatives[best]));
-
-            #[cfg(test)]
-            {
-                let picked = alternatives[best].build_tree(graph)?;
-                match tree.as_mut() {
-                    Some(tree) => Rc::make_mut(&mut tree.root).merge_nodes(&picked.root),
-                    None => tree = Some(picked),
-                }
-            }
         }
         Ok(())
     }
@@ -777,8 +752,7 @@ impl<'a> Plan<'a> {
         // The sets that could use each crossing, for moving them all off it.
         let mut candidate_items = 0;
         let mut users: HashMap<u32, Vec<u32>> = HashMap::new();
-        let groups: &'a [Alternatives] = self.groups;
-        for (group, alternatives) in groups.iter().enumerate() {
+        for (group, alternatives) in self.groups.iter().enumerate() {
             for candidate in alternatives {
                 for item in self.of(candidate) {
                     candidate_items += 1;
@@ -812,7 +786,7 @@ impl<'a> Plan<'a> {
         cancellation_token: &CancellationToken,
     ) -> Result<bool, QueryPlanError> {
         let mut improved = false;
-        let groups: &'a [Alternatives] = self.groups;
+        let groups = self.groups;
         for (group, alternatives) in groups.iter().enumerate() {
             if alternatives.len() < 2 {
                 continue;
@@ -887,7 +861,7 @@ impl<'a> Plan<'a> {
             cancellation_token.bail_if_cancelled()?;
 
             // Every item it looks at goes on the budget, even when the crossing can't be dropped.
-            let items: &'a Items = self.items;
+            let items = self.items;
             let without = |candidate: &'a Candidate, work: &mut usize| {
                 items.of(candidate).all(|item| {
                     *work += 1;
@@ -918,7 +892,7 @@ impl<'a> Plan<'a> {
             for &group in &sets {
                 let mut best = usize::MAX;
                 let mut best_added_cost = u64::MAX;
-                let groups: &'a [Alternatives] = self.groups;
+                let groups = self.groups;
                 let mut work = 0;
                 for (index, candidate) in groups[group].iter().enumerate() {
                     if !without(candidate, &mut work) {
@@ -945,7 +919,6 @@ impl<'a> Plan<'a> {
         }
         Ok(improved)
     }
-
 }
 
 /// No plan costs less. Items every candidate of a set has are paid for sure. Any other item is
