@@ -404,6 +404,48 @@ fn provides_fieldset_with_typename() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// `media` is `@external` in the provider, so its union node only exists for the `@provides`
+/// and gets its `__typename` from the plain union node.
+#[test]
+fn provides_external_union_field_with_typename() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          holder {
+            media {
+              __typename
+              ... on Book {
+                title
+              }
+            }
+          }
+        }"#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/provides-typename-union.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "provider") {
+        {
+          holder {
+            media {
+              __typename
+              ... on Book {
+                title
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+    Ok(())
+}
+
 #[test]
 fn provides_fieldset_with_nested_typename() -> Result<(), Box<dyn Error>> {
     init_logger();

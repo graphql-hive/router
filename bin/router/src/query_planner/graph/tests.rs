@@ -13,7 +13,7 @@ mod graph_tests {
         graph::NodeIndex,
         visit::{EdgeRef, NodeRef},
     };
-    use std::path::PathBuf;
+    use std::{collections::HashSet, path::PathBuf};
 
     fn init_test(supergraph_sdl: &str) -> Graph<'static> {
         let schema = parse_schema(supergraph_sdl);
@@ -140,8 +140,15 @@ mod graph_tests {
         }
     }
 
+    fn find_node_index(graph: &Graph<'_>, node_id: &str) -> Option<NodeIndex> {
+        graph
+            .graph
+            .node_indices()
+            .find(|&index| graph.graph[index].display_name() == node_id)
+    }
+
     fn find_node_doesnt_exists(graph: &Graph<'_>, node_id: &str) {
-        let node_res = graph.node_display_name_to_index.get(node_id);
+        let node_res = find_node_index(graph, node_id);
 
         assert!(
             node_res.is_none(),
@@ -151,7 +158,7 @@ mod graph_tests {
     }
 
     fn find_node<'a>(graph: &'a Graph<'a>, node_id: &str) -> (FoundEdges<'a>, FoundEdges<'a>) {
-        let node_res = graph.node_display_name_to_index.get(node_id);
+        let node_res = find_node_index(graph, node_id);
 
         assert!(node_res.is_some(), "failed to find node {}", node_id);
 
@@ -159,14 +166,14 @@ mod graph_tests {
 
         let incoming_edges = FoundEdges {
             edges: graph
-                .edges_to(*node_index)
+                .edges_to(node_index)
                 .map(|edge_ref| (edge_ref, edge_ref.source().id()))
                 .collect(),
             graph,
         };
         let outgoing_edges = FoundEdges {
             edges: graph
-                .edges_from(*node_index)
+                .edges_from(node_index)
                 .map(|edge_ref| (edge_ref, edge_ref.target().id()))
                 .collect(),
             graph,
@@ -411,8 +418,9 @@ mod graph_tests {
         assert_eq!(graph.root_subscription_node(), None);
 
         let (incoming, outgoing) = find_node(&graph, "Product/products");
-        assert_eq!(incoming.edges.len(), 14);
-        assert_eq!(outgoing.edges.len(), 18);
+        // One 🤳 edge, even though Product has three @join__type(graph: PRODUCTS).
+        assert_eq!(incoming.edges.len(), 12);
+        assert_eq!(outgoing.edges.len(), 16);
 
         incoming
             .assert_key_edge("id", "Product/inventory")
@@ -623,5 +631,30 @@ mod graph_tests {
             .assert_field_edge("__typename", "String/reviews");
 
         Ok(())
+    }
+
+    #[test]
+    fn repeated_join_type_adds_each_edge_once() {
+        let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixture/tests/keys-mashup.supergraph.graphql");
+        let graph = init_test(
+            &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
+        );
+
+        for node_id in ["A/a", "A/b"] {
+            let (_, outgoing) = find_node(&graph, node_id);
+            let mut seen = HashSet::new();
+            for (edge_ref, to) in &outgoing.edges {
+                let edge = format!("{:?}", edge_ref.weight());
+                assert!(
+                    seen.insert((edge.clone(), *to)),
+                    "edge {} on {} added twice",
+                    edge,
+                    node_id
+                );
+            }
+            assert_eq!(outgoing.edges_field("id").len(), 1);
+            assert_eq!(outgoing.edges_field("__typename").len(), 1);
+        }
     }
 }
