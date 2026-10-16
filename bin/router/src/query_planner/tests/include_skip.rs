@@ -1323,100 +1323,94 @@ fn qp_nested_include_skip_conditions_in_complex_products_query() -> Result<(), B
           }
         },
         Include(if: $reviews) {
-          Flatten(path: "topProducts.@") {
-            Fetch(service: "reviews") {
-              {
-                ... on Product {
-                  __typename
-                  upc
-                }
-              } =>
-              ($nestedReviews:Boolean,$product:Boolean,$skipAuthor:Boolean) {
-                ... on Product {
-                  reviews {
-                    body
-                    author @skip(if: $skipAuthor) {
-                      __typename
-                      id
-                      reviews @include(if: $nestedReviews) {
-                        body
-                        product @include(if: $product) {
-                          __typename
-                          upc
+          Sequence {
+            Flatten(path: "topProducts.@") {
+              Fetch(service: "reviews") {
+                {
+                  ... on Product {
+                    __typename
+                    upc
+                  }
+                } =>
+                ($nestedReviews:Boolean,$product:Boolean,$skipAuthor:Boolean) {
+                  ... on Product {
+                    reviews {
+                      body
+                      author @skip(if: $skipAuthor) {
+                        __typename
+                        id
+                        reviews @include(if: $nestedReviews) {
+                          body
+                          product @include(if: $product) {
+                            __typename
+                            upc
+                          }
                         }
                       }
                     }
                   }
                 }
-              }
+              },
             },
-          },
-        },
-        Parallel {
-          Include(if: $reviews) {
+            Skip(if: $skipAuthor) {
+              Parallel {
+                Include(if: $nestedReviews) {
+                  Include(if: $product) {
+                    Flatten(path: "topProducts.@.reviews.@.author.reviews.@.product") {
+                      Fetch(service: "products") {
+                        {
+                          ... on Product {
+                            __typename
+                            upc
+                          }
+                        } =>
+                        {
+                          ... on Product {
+                            price
+                            weight
+                            name
+                          }
+                        }
+                      },
+                    },
+                  },
+                },
+                Flatten(path: "topProducts.@.reviews.@.author") {
+                  Fetch(service: "accounts") {
+                    {
+                      ... on User {
+                        __typename
+                        id
+                      }
+                    } =>
+                    {
+                      ... on User {
+                        name
+                      }
+                    }
+                  },
+                },
+              },
+            },
             Skip(if: $skipAuthor) {
               Include(if: $nestedReviews) {
                 Include(if: $product) {
                   Flatten(path: "topProducts.@.reviews.@.author.reviews.@.product") {
-                    Fetch(service: "products") {
+                    Fetch(service: "inventory") {
                       {
                         ... on Product {
                           __typename
+                          price
+                          weight
                           upc
                         }
                       } =>
                       {
                         ... on Product {
-                          price
-                          weight
-                          name
+                          shippingEstimate
                         }
                       }
                     },
-                  },
-                },
-              },
-            },
-          },
-          Include(if: $reviews) {
-            Skip(if: $skipAuthor) {
-              Flatten(path: "topProducts.@.reviews.@.author") {
-                Fetch(service: "accounts") {
-                  {
-                    ... on User {
-                      __typename
-                      id
-                    }
-                  } =>
-                  {
-                    ... on User {
-                      name
-                    }
-                  }
-                },
-              },
-            },
-          },
-        },
-        Include(if: $reviews) {
-          Skip(if: $skipAuthor) {
-            Include(if: $nestedReviews) {
-              Include(if: $product) {
-                Flatten(path: "topProducts.@.reviews.@.author.reviews.@.product") {
-                  Fetch(service: "inventory") {
-                    {
-                      ... on Product {
-                        __typename
-                        price
-                        weight
-                        upc
-                      }
-                    } =>
-                    {
-                      ... on Product {
-                        shippingEstimate
-                      }
-                    }
                   },
                 },
               },
@@ -1472,43 +1466,43 @@ fn qp_abstract_interface_mixed_conditions_stay_scoped() -> Result<(), Box<dyn Er
         },
         Parallel {
           Include(if: $showReviews) {
-            Flatten(path: "products.@") {
-              Fetch(service: "reviews") {
-                {
-                  ... on Book {
-                    __typename
-                    id
+            Parallel {
+              Flatten(path: "products.@") {
+                Fetch(service: "reviews") {
+                  {
+                    ... on Book {
+                      __typename
+                      id
+                    }
+                    ... on Magazine {
+                      __typename
+                      id
+                    }
+                  } =>
+                  {
+                    ... on Book {
+                      reviewsCount
+                    }
+                    ... on Magazine {
+                      reviewsCount
+                    }
                   }
-                  ... on Magazine {
-                    __typename
-                    id
-                  }
-                } =>
-                {
-                  ... on Book {
-                    reviewsCount
-                  }
-                  ... on Magazine {
-                    reviewsCount
-                  }
-                }
+                },
               },
-            },
-          },
-          Include(if: $showReviews) {
-            Flatten(path: "products.@|[Book]") {
-              Fetch(service: "books") {
-                {
-                  ... on Book {
-                    __typename
-                    id
+              Flatten(path: "products.@|[Book]") {
+                Fetch(service: "books") {
+                  {
+                    ... on Book {
+                      __typename
+                      id
+                    }
+                  } =>
+                  {
+                    ... on Book {
+                      title
+                    }
                   }
-                } =>
-                {
-                  ... on Book {
-                    title
-                  }
-                }
+                },
               },
             },
           },
@@ -1742,8 +1736,8 @@ fn conditional_root_fragment_survives_merges() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Parallel {
-          Include(if: $x) {
+        Include(if: $x) {
+          Parallel {
             Flatten(path: "|[Query].userInB") {
               Fetch(service: "c") {
                 {
@@ -1760,8 +1754,6 @@ fn conditional_root_fragment_survives_merges() -> Result<(), Box<dyn Error>> {
                 }
               },
             },
-          },
-          Include(if: $x) {
             Flatten(path: "|[Query].userInB") {
               Fetch(service: "a") {
                 {
