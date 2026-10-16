@@ -140,9 +140,7 @@ impl FetchGraph<MultiTypeFetchStep> {
 
                     let mut merged = false;
                     for (target_index, target_normalized_path) in &targets {
-                        if self.graph.node_weight(*target_index).is_none()
-                            || self.is_ancestor_or_descendant(*target_index, source_index)
-                        {
+                        if self.graph.node_weight(*target_index).is_none() {
                             continue;
                         }
 
@@ -159,7 +157,10 @@ impl FetchGraph<MultiTypeFetchStep> {
                             left.can_be_batched_with(right)
                         };
 
-                        if !can_still_batch {
+                        // After the cheaper check, as it walks the graph.
+                        if !can_still_batch
+                            || self.is_ancestor_or_descendant(*target_index, source_index)
+                        {
                             continue;
                         }
 
@@ -399,7 +400,7 @@ fn merge_batched_response_paths(
 
     // If non-type-condition parts differ, do not merge.
     // Example: a.@.b vs a.c.b.
-    if me.without_type_castings() != other.without_type_castings() {
+    if !me.eq_without_type_castings(other) {
         return me.clone();
     }
     // Final merged path.
@@ -544,7 +545,9 @@ impl FetchStepData<MultiTypeFetchStep> {
         }
 
         // Paths must match after removing type conditions.
-        if self.response_path.without_type_castings() != other.response_path.without_type_castings()
+        if !self
+            .response_path
+            .eq_without_type_castings(&other.response_path)
         {
             return false;
         }
