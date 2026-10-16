@@ -281,6 +281,11 @@ impl FetchStepSelections<SingleTypeFetchStep> {
 }
 
 impl<State> FetchStepSelections<State> {
+    /// The input type of a single-type step.
+    pub fn first_definition_name(&self) -> Option<&str> {
+        self.selections.keys().next().map(String::as_str)
+    }
+
     pub fn is_fetching_multiple_types(&self) -> bool {
         self.selections.len() > 1
     }

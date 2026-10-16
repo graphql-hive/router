@@ -49,6 +49,11 @@ pub struct FetchGraph<State> {
     pub(crate) entity_owners: HashMap<NodeIndex, NodeIndex>,
     /// The keys of the fields the planner adds itself. Only needed while the graph is built.
     pub(crate) response_keys: ResponseKeys,
+    /// Each step's children by what an entity call gets reused on, see `step_identity`, newest
+    /// last. So finding a step to reuse doesn't go through all the children, thousands on a big
+    /// query. Only kept while the graph is built: until the merges, a step keeps its identity and
+    /// no edge goes away.
+    pub(crate) children_by_identity: Option<HashMap<(NodeIndex, u64), Vec<NodeIndex>>>,
 }
 
 impl FetchGraph<SingleTypeFetchStep> {
@@ -62,6 +67,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             operation_kind: self.operation_kind,
             entity_owners: HashMap::new(),
             response_keys: ResponseKeys::default(),
+            children_by_identity: None,
         }
     }
 
@@ -72,7 +78,27 @@ impl FetchGraph<SingleTypeFetchStep> {
             operation_kind: kind,
             entity_owners: HashMap::new(),
             response_keys: ResponseKeys::default(),
+            children_by_identity: Some(HashMap::new()),
         }
+    }
+
+    /// The children of `parent` that may have this identity, newest first like `children_of`.
+    /// They still need checking: different identities can share a hash.
+    fn children_like(
+        &self,
+        parent: NodeIndex,
+        subgraph_name: &SubgraphName,
+        input_type_name: &str,
+        response_path: &MergePath,
+        condition: Option<&Condition>,
+    ) -> impl Iterator<Item = NodeIndex> + '_ {
+        let identity = step_identity(subgraph_name, input_type_name, response_path, condition);
+        self.children_by_identity
+            .as_ref()
+            .expect("the children are indexed until the graph is built")
+            .get(&(parent, identity))
+            .into_iter()
+            .flat_map(|children| children.iter().rev().copied())
     }
 }
 
@@ -129,12 +155,12 @@ impl<State> FetchGraph<State> {
         &mut self,
         index: NodeIndex,
     ) -> Result<&mut FetchStepData<State>, FetchGraphError> {
-        self.graph
-            .node_weight_mut(index)
-            .ok_or(FetchGraphError::MissingStep(
+        self.graph.node_weight_mut(index).ok_or_else(|| {
+            FetchGraphError::MissingStep(
                 index.index(),
                 String::from("when getting mutable step data"),
-            ))
+            )
+        })
     }
 }
 
@@ -164,16 +190,34 @@ impl<State> FetchGraph<State> {
         &self,
         index: NodeIndex,
     ) -> Result<&FetchStepData<State>, FetchGraphError> {
-        self.graph
-            .node_weight(index)
-            .ok_or(FetchGraphError::MissingStep(
-                index.index(),
-                String::from("when getting step data"),
-            ))
+        self.graph.node_weight(index).ok_or_else(|| {
+            FetchGraphError::MissingStep(index.index(), String::from("when getting step data"))
+        })
     }
 
     pub fn connect(&mut self, parent_index: NodeIndex, child_index: NodeIndex) -> EdgeIndex {
-        self.graph.update_edge(parent_index, child_index, ())
+        if let Some(edge) = self.graph.find_edge(parent_index, child_index) {
+            return edge;
+        }
+        let edge = self.graph.add_edge(parent_index, child_index, ());
+        if let (Some(index), Some(child)) = (
+            self.children_by_identity.as_mut(),
+            self.graph.node_weight(child_index),
+        ) {
+            if let Some(input_type_name) = child.input.first_definition_name() {
+                let identity = step_identity(
+                    &child.service_name,
+                    input_type_name,
+                    &child.response_path,
+                    child.condition.as_ref(),
+                );
+                index
+                    .entry((parent_index, identity))
+                    .or_default()
+                    .push(child_index);
+            }
+        }
+        edge
     }
 
     pub fn remove_edge(&mut self, edge_index: EdgeIndex) -> bool {
@@ -447,6 +491,38 @@ fn create_fetch_step_for_root_move(
 
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
+/// What a step is reused on: its subgraph, input type, response path and condition. A hash of
+/// part of each path segment is enough, as equal paths hash the same.
+fn step_identity(
+    subgraph_name: &SubgraphName,
+    input_type_name: &str,
+    response_path: &MergePath,
+    condition: Option<&Condition>,
+) -> u64 {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = ahash::AHasher::default();
+    subgraph_name.hash(&mut hasher);
+    input_type_name.hash(&mut hasher);
+    condition.hash(&mut hasher);
+    response_path.inner.len().hash(&mut hasher);
+    for segment in response_path.inner.iter() {
+        match segment {
+            Segment::Field(field, arguments, _) => {
+                0u8.hash(&mut hasher);
+                field.response_key().hash(&mut hasher);
+                arguments.hash(&mut hasher);
+            }
+            Segment::List => 1u8.hash(&mut hasher),
+            Segment::TypeCondition(type_names, _) => {
+                2u8.hash(&mut hasher);
+                type_names.hash(&mut hasher);
+            }
+        }
+    }
+    hasher.finish()
+}
+
 fn ensure_fetch_step_for_subgraph(
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     parent_fetch_step_index: NodeIndex,
@@ -463,23 +539,29 @@ fn ensure_fetch_step_for_subgraph(
         None
     } else {
         fetch_graph
-            .children_of(parent_fetch_step_index)
-            .find_map(|to_child_edge_ref| {
-                if let Ok(fetch_step) = fetch_graph.get_step_data(to_child_edge_ref.target()) {
+            .children_like(
+                parent_fetch_step_index,
+                subgraph_name,
+                input_type_name,
+                response_path,
+                condition,
+            )
+            .find(|&child_index| {
+                if let Ok(fetch_step) = fetch_graph.get_step_data(child_index) {
                     if fetch_step.service_name != *subgraph_name {
-                        return None;
+                        return false;
                     }
 
                     if fetch_step.input.definition_name() != input_type_name {
-                        return None;
+                        return false;
                     }
 
                     if fetch_step.response_path != *response_path {
-                        return None;
+                        return false;
                     }
 
                     if fetch_step.condition.as_ref() != condition {
-                        return None;
+                        return false;
                     }
 
                     if let Some(key) = &key {
@@ -490,7 +572,7 @@ fn ensure_fetch_step_for_subgraph(
                                 .contains(&key.selection_set)
                         {
                             // requested key fields are not part of the input
-                            return None;
+                            return false;
                         }
                     }
 
@@ -499,13 +581,13 @@ fn ensure_fetch_step_for_subgraph(
                     if fetch_step.flags.contains(FetchStepFlags::USED_FOR_REQUIRES)
                         || requires.is_some()
                     {
-                        return None;
+                        return false;
                     }
 
-                    return Some(to_child_edge_ref.target());
+                    return true;
                 }
 
-                None
+                false
             })
     };
 
@@ -560,39 +642,44 @@ fn ensure_fetch_step_for_requirement(
     condition: Option<&Condition>,
     requirement: &TypeAwareSelection<'_>,
 ) -> Result<NodeIndex, FetchGraphError> {
-    let matching_child_index =
-        fetch_graph
-            .children_of(parent_fetch_step_index)
-            .find_map(|to_child_edge_ref| {
-                if let Ok(fetch_step) = fetch_graph.get_step_data(to_child_edge_ref.target()) {
-                    if fetch_step.service_name != *subgraph_name {
-                        return None;
-                    }
-
-                    if fetch_step.condition.as_ref() != condition {
-                        return None;
-                    }
-
-                    if fetch_step.input.definition_name() != type_name {
-                        return None;
-                    }
-
-                    if fetch_step.response_path != *response_path {
-                        return None;
-                    }
-
-                    if !fetch_step
-                        .input
-                        .contains(&requirement.type_name, &requirement.selection_set)
-                    {
-                        return None;
-                    }
-
-                    return Some(to_child_edge_ref.target());
+    let matching_child_index = fetch_graph
+        .children_like(
+            parent_fetch_step_index,
+            subgraph_name,
+            type_name,
+            response_path,
+            condition,
+        )
+        .find(|&child_index| {
+            if let Ok(fetch_step) = fetch_graph.get_step_data(child_index) {
+                if fetch_step.service_name != *subgraph_name {
+                    return false;
                 }
 
-                None
-            });
+                if fetch_step.condition.as_ref() != condition {
+                    return false;
+                }
+
+                if fetch_step.input.definition_name() != type_name {
+                    return false;
+                }
+
+                if fetch_step.response_path != *response_path {
+                    return false;
+                }
+
+                if !fetch_step
+                    .input
+                    .contains(&requirement.type_name, &requirement.selection_set)
+                {
+                    return false;
+                }
+
+                return true;
+            }
+
+            false
+        });
 
     match matching_child_index {
         Some(idx) => {
