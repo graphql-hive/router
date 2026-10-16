@@ -24,14 +24,16 @@ use crate::query_planner::planner::walker::pathfinder::can_satisfy_edge;
 use crate::query_planner::planner::QueryPlannerOptions;
 use crate::query_planner::state::supergraph_state::{OperationKind, SubgraphName, SupergraphState};
 use crate::query_planner::utils::cancellation::CancellationToken;
+use ahash::{HashMap, HashMapExt};
 use petgraph::algo::has_path_connecting;
 use petgraph::stable_graph::{EdgeIndex, NodeIndex, NodeIndices, NodeReferences, StableDiGraph};
 use petgraph::visit::EdgeRef;
 use petgraph::visit::{Bfs, IntoNodeReferences};
 use petgraph::Directed;
 use petgraph::Direction;
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 use std::fmt::{Debug, Display};
+use std::rc::Rc;
 use tracing::{instrument, trace};
 
 use super::error::FetchGraphError;
@@ -1196,7 +1198,10 @@ fn process_subgraph_reentry(
         },
     )?;
 
-    let segment_field = FieldPathSegment::new(reentry_move.name.to_string(), field_alias);
+    let segment_field = Rc::new(FieldPathSegment::new(
+        reentry_move.name.to_string(),
+        field_alias,
+    ));
     let mut child_response_path = response_path.push(Segment::Field(segment_field, 0, None));
     if reentry_move.is_list {
         child_response_path = child_response_path.push(Segment::List);
@@ -1291,11 +1296,11 @@ fn process_selfie_edge(
         condition.cloned()
     };
     let child_response_path = response_path.push(Segment::TypeCondition(
-        BTreeSet::from([target_type_name.clone()]),
+        Rc::new(BTreeSet::from([target_type_name.clone()])),
         segment_condition.clone(),
     ));
     let child_fetch_path = fetch_path.push(Segment::TypeCondition(
-        BTreeSet::from([target_type_name.clone()]),
+        Rc::new(BTreeSet::from([target_type_name.clone()])),
         segment_condition,
     ));
 
@@ -1360,11 +1365,11 @@ fn process_abstract_edge(
     )?;
 
     let child_response_path = response_path.push(Segment::TypeCondition(
-        BTreeSet::from([target_type_name.clone()]),
+        Rc::new(BTreeSet::from([target_type_name.clone()])),
         None,
     ));
     let child_fetch_path = fetch_path.push(Segment::TypeCondition(
-        BTreeSet::from([target_type_name.clone()]),
+        Rc::new(BTreeSet::from([target_type_name.clone()])),
         None,
     ));
 
@@ -1482,7 +1487,10 @@ fn process_plain_field_edge(
         .selection_arguments()
         .map(|a| a.hash_u64())
         .unwrap_or(0);
-    let segment_field = FieldPathSegment::new(field_move.name.to_string(), field_alias);
+    let segment_field = Rc::new(FieldPathSegment::new(
+        field_move.name.to_string(),
+        field_alias,
+    ));
     let segment_condition = if should_strip_condition {
         None
     } else {
@@ -1724,7 +1732,10 @@ fn process_requires_field_edge(
         .selection_arguments()
         .map(|a| a.hash_u64())
         .unwrap_or(0);
-    let segment_field = FieldPathSegment::new(field_move.name.to_string(), field_alias);
+    let segment_field = Rc::new(FieldPathSegment::new(
+        field_move.name.to_string(),
+        field_alias,
+    ));
     let mut child_response_path = response_path.push(Segment::Field(
         segment_field.clone(),
         segment_args_hash,

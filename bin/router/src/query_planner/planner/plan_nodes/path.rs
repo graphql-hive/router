@@ -188,7 +188,7 @@ impl From<&MergePath> for Vec<FetchNodePathSegment> {
             .iter()
             .filter_map(|path_segment| match path_segment {
                 Segment::TypeCondition(type_names, _) => {
-                    Some(FetchNodePathSegment::TypenameEquals(type_names.clone()))
+                    Some(FetchNodePathSegment::TypenameEquals((**type_names).clone()))
                 }
                 Segment::Field(field_seg, _args_hash, _) => Some(FetchNodePathSegment::Key(
                     field_seg.response_key().to_string(),

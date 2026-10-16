@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use ahash::{HashMap, HashMapExt};
 use std::mem::take;
 
 use crate::query_planner::ast::document::Document;

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use ahash::{HashMap, HashMapExt};
 
 use crate::query_planner::ast::minification::error::MinificationError;
 use crate::query_planner::ast::minification::selection_id::{generate_selection_id, SelectionId};

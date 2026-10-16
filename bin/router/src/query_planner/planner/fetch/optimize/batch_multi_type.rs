@@ -1,5 +1,7 @@
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use ahash::{HashMap, HashMapExt, HashSet};
+use std::collections::{BTreeSet, VecDeque};
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::rc::Rc;
 
 use petgraph::{graph::NodeIndex, Direction};
 use tracing::{instrument, trace};
@@ -10,9 +12,7 @@ use crate::query_planner::planner::fetch::fetch_step_data::{
     type_condition_types_from_response_path, FetchStepFlags, FetchStepKind,
 };
 use crate::query_planner::planner::fetch::selections::FetchStepSelections;
-use crate::query_planner::state::supergraph_state::{
-    SubgraphName, SupergraphDefinition, SupergraphState,
-};
+use crate::query_planner::state::supergraph_state::{SubgraphName, SupergraphState};
 use crate::query_planner::{
     ast::merge_path::{MergePath, Segment},
     planner::fetch::{
@@ -243,12 +243,13 @@ impl FetchGraph<MultiTypeFetchStep> {
 /// Every object type the value at each slot of `path` can be, keyed like the type conditions
 /// `merge_batched_response_paths` looks at: (path hash without type conditions, slot).
 /// A slot is left out when its type can't be worked out, and then nothing gets stripped there.
-fn possible_types_by_position(
-    supergraph: &SupergraphState,
+/// The sets are borrowed from the supergraph, cloning them per merge was most of the time.
+fn possible_types_by_position<'a>(
+    supergraph: &'a SupergraphState,
     root_type: &str,
     path: &MergePath,
     normalized_path_key: u64,
-) -> HashMap<(u64, usize), BTreeSet<String>> {
+) -> HashMap<(u64, usize), &'a HashSet<String>> {
     let mut result = HashMap::new();
     // The named type of the value at the current slot, and the type condition on it.
     let mut current_type = Some(root_type.to_string());
@@ -278,7 +279,10 @@ fn possible_types_by_position(
         }
         if let Some(possible_types) = current_type
             .as_deref()
-            .and_then(|type_name| possible_object_types(supergraph, type_name))
+            .and_then(|type_name| supergraph.all_possible_types(type_name))
+            // An interface nothing implements has an empty set. "Every type is merged" would be
+            // true for it, so leave it out and keep the type condition.
+            .filter(|possible_types| !possible_types.is_empty())
         {
             result.insert((normalized_path_key, position), possible_types);
         }
@@ -287,29 +291,11 @@ fn possible_types_by_position(
     result
 }
 
-fn possible_object_types(
-    supergraph: &SupergraphState,
-    type_name: &str,
-) -> Option<BTreeSet<String>> {
-    match supergraph.definitions.get(type_name)? {
-        SupergraphDefinition::Object(_) => Some(BTreeSet::from([type_name.to_string()])),
-        SupergraphDefinition::Interface(_) => supergraph.interface_members(type_name).cloned(),
-        SupergraphDefinition::Union(union_type) => Some(
-            union_type
-                .union_members
-                .iter()
-                .map(|member| member.member.clone())
-                .collect(),
-        ),
-        _ => None,
-    }
-}
-
 fn merge_batched_response_paths(
     me: &MergePath,
     other: &MergePath,
     normalized_path_key: u64,
-    possible_types_by_position: &HashMap<(u64, usize), BTreeSet<String>>,
+    possible_types_by_position: &HashMap<(u64, usize), &HashSet<String>>,
 ) -> MergePath {
     // Merge rule at each slot (type-condition part only):
     // - If non-type-condition shape differs -> keep `me` unchanged
@@ -360,7 +346,7 @@ fn merge_batched_response_paths(
         other_had_type_condition: bool,
         merged_type_condition_members: BTreeSet<&str>,
         condition: Option<&Condition>,
-        possible_types_by_position: &HashMap<(u64, usize), BTreeSet<String>>,
+        possible_types_by_position: &HashMap<(u64, usize), &HashSet<String>>,
     ) -> Option<Segment> {
         // We keep a type condition only when both sides had one at this position.
         if !me_had_type_condition
@@ -375,10 +361,12 @@ fn merge_batched_response_paths(
         // Example: dropping |[Agency] can send Self/Group values to agency fetches.
         if !type_condition_changed {
             return Some(Segment::TypeCondition(
-                merged_type_condition_members
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect(),
+                Rc::new(
+                    merged_type_condition_members
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect(),
+                ),
                 condition.cloned(),
             ));
         }
@@ -399,10 +387,12 @@ fn merge_batched_response_paths(
         }
 
         Some(Segment::TypeCondition(
-            merged_type_condition_members
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
+            Rc::new(
+                merged_type_condition_members
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+            ),
             condition.cloned(),
         ))
     }
@@ -650,7 +640,9 @@ impl FetchStepData<MultiTypeFetchStep> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeSet, HashMap};
+    use std::rc::Rc;
+
+    use ahash::{HashMap, HashMapExt, HashSet};
 
     use crate::query_planner::{
         ast::merge_path::{Condition, FieldPathSegment, MergePath, Segment},
@@ -666,15 +658,27 @@ mod tests {
     /// `products.@|[types] condition.reviews.@.product`
     fn path_with_condition(type_names: &[&str], condition: Option<Condition>) -> MergePath {
         MergePath::new(vec![
-            Segment::Field(FieldPathSegment::named("products".to_string()), 0, None),
+            Segment::Field(
+                FieldPathSegment::named("products".to_string()).into(),
+                0,
+                None,
+            ),
             Segment::List,
             Segment::TypeCondition(
-                type_names.iter().map(|name| name.to_string()).collect(),
+                Rc::new(type_names.iter().map(|name| name.to_string()).collect()),
                 condition,
             ),
-            Segment::Field(FieldPathSegment::named("reviews".to_string()), 0, None),
+            Segment::Field(
+                FieldPathSegment::named("reviews".to_string()).into(),
+                0,
+                None,
+            ),
             Segment::List,
-            Segment::Field(FieldPathSegment::named("product".to_string()), 0, None),
+            Segment::Field(
+                FieldPathSegment::named("product".to_string()).into(),
+                0,
+                None,
+            ),
         ])
     }
 
@@ -701,10 +705,9 @@ mod tests {
         let me = path_with_condition(&["Book"], condition.clone());
         let other = path_with_condition(&["User"], condition.clone());
         let normalized_path_key = normalized_path_hash(&me);
-        let possible_types_by_position = HashMap::from([(
-            (normalized_path_key, 2),
-            BTreeSet::from_iter(["Book".to_string(), "User".to_string()]),
-        )]);
+        let possible_types = HashSet::from_iter(["Book".to_string(), "User".to_string()]);
+        let possible_types_by_position =
+            HashMap::from_iter([((normalized_path_key, 2), &possible_types)]);
 
         let merged = merge_batched_response_paths(
             &me,
@@ -721,14 +724,13 @@ mod tests {
         let me = path("Book");
         let other = path("User");
         let normalized_path_key = normalized_path_hash(&me);
-        let possible_types_by_position = HashMap::from([(
-            (normalized_path_key, 2),
-            BTreeSet::from_iter([
-                "Book".to_string(),
-                "User".to_string(),
-                "Magazine".to_string(),
-            ]),
-        )]);
+        let possible_types = HashSet::from_iter([
+            "Book".to_string(),
+            "User".to_string(),
+            "Magazine".to_string(),
+        ]);
+        let possible_types_by_position =
+            HashMap::from_iter([((normalized_path_key, 2), &possible_types)]);
 
         let merged = merge_batched_response_paths(
             &me,
@@ -748,10 +750,9 @@ mod tests {
         let me = path("Book");
         let other = path("User");
         let normalized_path_key = normalized_path_hash(&me);
-        let possible_types_by_position = HashMap::from([(
-            (normalized_path_key, 2),
-            BTreeSet::from_iter(["Book".to_string(), "User".to_string()]),
-        )]);
+        let possible_types = HashSet::from_iter(["Book".to_string(), "User".to_string()]);
+        let possible_types_by_position =
+            HashMap::from_iter([((normalized_path_key, 2), &possible_types)]);
 
         let merged = merge_batched_response_paths(
             &me,

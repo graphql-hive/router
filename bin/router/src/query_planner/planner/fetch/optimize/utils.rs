@@ -1,4 +1,5 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use ahash::{HashMap, HashSet, HashSetExt};
+use std::collections::VecDeque;
 
 use petgraph::{
     graph::NodeIndex,
@@ -437,7 +438,9 @@ mod tests {
                 .iter()
                 .map(|name| match *name {
                     "@" => Segment::List,
-                    name => Segment::Field(FieldPathSegment::named(name.to_string()), 0, None),
+                    name => {
+                        Segment::Field(FieldPathSegment::named(name.to_string()).into(), 0, None)
+                    }
                 })
                 .collect(),
         )
