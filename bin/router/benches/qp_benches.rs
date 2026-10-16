@@ -30,6 +30,54 @@ fn get_executable_operation(
         .operation
 }
 
+fn bench_query_plan(
+    c: &mut Criterion,
+    name: &str,
+    graph: &Graph,
+    supergraph_state: &SupergraphState,
+    operation: &OperationDefinition,
+) {
+    let override_context = PlannerOverrideContext::default();
+    let cancellation_token = CancellationToken::new();
+
+    c.bench_function(name, |b| {
+        b.iter(|| {
+            let bb_graph = black_box(graph);
+            let bb_operation = black_box(operation);
+            let bb_supergraph_state = black_box(supergraph_state);
+            let bb_override_context = black_box(&override_context);
+
+            let best_paths_per_leaf = walk_operation(
+                bb_graph,
+                bb_supergraph_state,
+                bb_override_context,
+                bb_operation,
+                &cancellation_token,
+            )
+            .expect("walk_operation failed during benchmark");
+            let query_tree =
+                find_best_combination(bb_graph, best_paths_per_leaf, &cancellation_token).unwrap();
+            let fetch_graph = build_fetch_graph_from_query_tree(
+                bb_graph,
+                bb_supergraph_state,
+                bb_override_context,
+                query_tree,
+                bb_operation,
+                &QueryPlannerOptions::default(),
+                &cancellation_token,
+            )
+            .unwrap();
+            let query_plan = build_query_plan_from_fetch_graph(
+                fetch_graph,
+                bb_supergraph_state,
+                &cancellation_token,
+            )
+            .unwrap();
+            black_box(query_plan);
+        })
+    });
+}
+
 fn query_plan_pipeline(c: &mut Criterion) {
     let supergraph_sdl = std::fs::read_to_string("../../bench/supergraph.graphql")
         .expect("Unable to read input file");
@@ -41,95 +89,46 @@ fn query_plan_pipeline(c: &mut Criterion) {
     let parsed_document = get_operation("../../bench/operation.graphql");
     let operation =
         get_executable_operation(&parsed_document, &supergraph_state, Some("TestQuery"));
-    let override_context = PlannerOverrideContext::default();
-    let cancellation_token = CancellationToken::new();
+    bench_query_plan(c, "query_plan", &graph, &supergraph_state, &operation);
 
-    c.bench_function("query_plan", |b| {
-        b.iter(|| {
-            let bb_graph = black_box(&graph);
-            let bb_operation = black_box(&operation);
-            let bb_supergraph_state = black_box(&supergraph_state);
-            let bb_override_context = black_box(&override_context);
-
-            let best_paths_per_leaf = walk_operation(
-                bb_graph,
-                bb_supergraph_state,
-                bb_override_context,
-                bb_operation,
-                &cancellation_token,
-            )
-            .expect("walk_operation failed during benchmark");
-            let query_tree =
-                find_best_combination(bb_graph, best_paths_per_leaf, &cancellation_token).unwrap();
-            let fetch_graph = build_fetch_graph_from_query_tree(
-                bb_graph,
-                bb_supergraph_state,
-                bb_override_context,
-                query_tree,
-                bb_operation,
-                &QueryPlannerOptions::default(),
-                &cancellation_token,
-            )
-            .unwrap();
-            let query_plan = build_query_plan_from_fetch_graph(
-                fetch_graph,
-                bb_supergraph_state,
-                &cancellation_token,
-            )
-            .unwrap();
-            black_box(query_plan);
-        })
-    });
-
-    c.bench_function("query_plan_grafbase_many_plans", |b| {
+    for (benchmark_name, schema_path, operation_path, operation_name) in [
+        (
+            "query_plan_grafbase_many_plans",
+            "./fixture/grafbase-many-plans/supergraph.graphql",
+            "./fixture/grafbase-many-plans/operation.graphql",
+            Some("ManyPlansQuery"),
+        ),
+        (
+            "query_plan_abstract_many_subgraphs",
+            "./fixture/abstract-many-subgraphs/supergraph.graphql",
+            "./fixture/abstract-many-subgraphs/operation.graphql",
+            Some("AbstractManySubgraphsBench"),
+        ),
+        (
+            "query_plan_heavy_query",
+            "./fixture/heavy-query/supergraph.graphql",
+            "./fixture/heavy-query/operation.graphql",
+            Some("TvpVod"),
+        ),
+    ] {
         let supergraph_sdl =
-            std::fs::read_to_string("./fixture/grafbase-many-plans/supergraph.graphql")
-                .expect("Unable to read input file");
+            std::fs::read_to_string(schema_path).expect("Unable to read supergraph fixture");
         let parsed_schema = parse_schema(&supergraph_sdl);
-        let supergraph_state = SupergraphState::new(&parsed_schema);
-        let graph =
-            Graph::graph_from_supergraph_state(&supergraph_state).expect("failed to create graph");
+        let fixture_supergraph = SupergraphState::new(&parsed_schema);
+        let fixture_graph = Graph::graph_from_supergraph_state(&fixture_supergraph)
+            .expect("failed to create graph");
+        let fixture_document = get_operation(operation_path);
+        let fixture_operation =
+            get_executable_operation(&fixture_document, &fixture_supergraph, operation_name);
 
-        let parsed_document = get_operation("./fixture/grafbase-many-plans/operation.graphql");
-        let operation =
-            get_executable_operation(&parsed_document, &supergraph_state, Some("ManyPlansQuery"));
-        let override_context = PlannerOverrideContext::default();
-
-        b.iter(|| {
-            let bb_graph = black_box(&graph);
-            let bb_operation = black_box(&operation);
-            let bb_supergraph_state = black_box(&supergraph_state);
-            let bb_override_context = black_box(&override_context);
-
-            let best_paths_per_leaf = walk_operation(
-                bb_graph,
-                bb_supergraph_state,
-                bb_override_context,
-                bb_operation,
-                &cancellation_token,
-            )
-            .expect("walk_operation failed during benchmark");
-            let query_tree =
-                find_best_combination(bb_graph, best_paths_per_leaf, &cancellation_token).unwrap();
-            let fetch_graph = build_fetch_graph_from_query_tree(
-                bb_graph,
-                bb_supergraph_state,
-                bb_override_context,
-                query_tree,
-                bb_operation,
-                &QueryPlannerOptions::default(),
-                &cancellation_token,
-            )
-            .unwrap();
-            let query_plan = build_query_plan_from_fetch_graph(
-                fetch_graph,
-                bb_supergraph_state,
-                &cancellation_token,
-            )
-            .unwrap();
-            black_box(query_plan);
-        })
-    });
+        bench_query_plan(
+            c,
+            benchmark_name,
+            &fixture_graph,
+            &fixture_supergraph,
+            &fixture_operation,
+        );
+    }
 
     c.bench_function("normalization", |b| {
         b.iter(|| {
