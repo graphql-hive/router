@@ -130,7 +130,7 @@ fn main() {
             println!("{projection}");
         }
         _ => {
-            eprintln!("Unknown command. Available commands: consumer_graph, graph, paths, tree, fetch_graph, plan");
+            eprintln!("Unknown command. Available commands: consumer_schema, graph, paths, fetch_graph, plan");
             process::exit(1);
         }
     };
@@ -198,7 +198,12 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
 fn process_merged_tree(
     supergraph_path: &str,
     operation_path: &str,
-) -> (Graph, QueryTree, SupergraphState, OperationDefinition) {
+) -> (
+    Graph<'static>,
+    QueryTree,
+    &'static SupergraphState,
+    OperationDefinition,
+) {
     let (graph, operation, supergraph_state) =
         load_graph_operation(supergraph_path, operation_path);
     let override_context = PlannerOverrideContext::default();
@@ -229,12 +234,16 @@ fn get_operation(operation_path: &str, supergraph: &SupergraphState) -> Operatio
 fn load_graph_operation(
     supergraph_path: &str,
     operation_path: &str,
-) -> (Graph, OperationDefinition, SupergraphState) {
+) -> (
+    Graph<'static>,
+    OperationDefinition,
+    &'static SupergraphState,
+) {
     let supergraph_sdl =
         std::fs::read_to_string(supergraph_path).expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);
-    let supergraph = SupergraphState::new(&parsed_schema);
-    let graph = Graph::graph_from_supergraph_state(&supergraph).expect("failed to create graph");
+    let supergraph = Box::leak(Box::new(SupergraphState::new(&parsed_schema)));
+    let graph = Graph::graph_from_supergraph_state(supergraph).expect("failed to create graph");
     let operation = get_operation(operation_path, &supergraph);
 
     (graph, operation, supergraph)

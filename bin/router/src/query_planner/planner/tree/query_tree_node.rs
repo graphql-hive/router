@@ -108,7 +108,7 @@ impl QueryTreeNode {
     }
 
     pub fn from_paths(
-        graph: &Graph,
+        graph: &Graph<'_>,
         paths: &[OperationPath],
         mutation_field_position: MutationFieldPosition,
     ) -> Result<Option<Rc<Self>>, GraphError> {
@@ -136,7 +136,7 @@ impl QueryTreeNode {
       total_segments = segments.len()
     ))]
     fn from_path_segment_sequences(
-        graph: &Graph,
+        graph: &Graph<'_>,
         segments: &[Rc<PathSegment>],
         current_index: usize,
         mutation_field_position: MutationFieldPosition,
@@ -195,7 +195,7 @@ impl QueryTreeNode {
       segments_count = segments.len()
     ))]
     pub fn create_root_for_path_sequences(
-        graph: &Graph,
+        graph: &Graph<'_>,
         root_node_index: &NodeIndex,
         segments: &Vec<Rc<PathSegment>>,
         mutation_field_position: MutationFieldPosition,
