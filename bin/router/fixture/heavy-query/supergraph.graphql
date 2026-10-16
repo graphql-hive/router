@@ -1,0 +1,663 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
+  query: Query
+}
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @link(
+  url: String
+  as: String
+  for: link__Purpose
+  import: [link__Import]
+) repeatable on SCHEMA
+
+directive @join__field(
+  graph: join__Graph
+  requires: join__FieldSet
+  provides: join__FieldSet
+  type: String
+  external: Boolean
+  override: String
+  usedOverridden: Boolean
+) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__implements(
+  graph: join__Graph!
+  interface: String!
+) repeatable on OBJECT | INTERFACE
+
+directive @join__type(
+  graph: join__Graph!
+  key: join__FieldSet
+  extension: Boolean! = false
+  resolvable: Boolean! = true
+  isInterfaceObject: Boolean! = false
+) repeatable on OBJECT | INTERFACE
+
+directive @join__unionMember(
+  graph: join__Graph!
+  member: String!
+) repeatable on UNION
+
+enum link__Purpose {
+  EXECUTION
+  SECURITY
+}
+
+scalar join__FieldSet
+scalar link__Import
+
+enum join__Graph {
+  CATALOG @join__graph(name: "catalog", url: "http://catalog/graphql")
+  PERSONALIZATION
+    @join__graph(name: "personalization", url: "http://personalization/graphql")
+  ARTWORK @join__graph(name: "artwork", url: "http://artwork/graphql")
+  PLAYBACK @join__graph(name: "playback", url: "http://playback/graphql")
+  RATINGS @join__graph(name: "ratings", url: "http://ratings/graphql")
+  LOCALIZATION
+    @join__graph(name: "localization", url: "http://localization/graphql")
+  MERCH @join__graph(name: "merch", url: "http://merch/graphql")
+}
+
+type Query @join__type(graph: CATALOG) @join__type(graph: PERSONALIZATION) {
+  home(
+    profileId: ID!
+    locale: String!
+    device: String!
+    maturity: Int!
+    experiments: [String!]!
+  ): Screen! @join__field(graph: CATALOG) @join__field(graph: PERSONALIZATION)
+  title(id: ID!): Title @join__field(graph: CATALOG)
+}
+
+interface Node
+  @join__type(graph: CATALOG, key: "id")
+  @join__type(graph: PERSONALIZATION, key: "id")
+  @join__type(graph: ARTWORK, key: "id")
+  @join__type(graph: PLAYBACK, key: "id")
+  @join__type(graph: RATINGS, key: "id")
+  @join__type(graph: LOCALIZATION, key: "id")
+  @join__type(graph: MERCH, key: "id") {
+  id: ID!
+    @join__field(graph: CATALOG)
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: ARTWORK)
+    @join__field(graph: PLAYBACK)
+    @join__field(graph: RATINGS)
+    @join__field(graph: LOCALIZATION)
+    @join__field(graph: MERCH)
+}
+
+interface Title
+  @join__type(graph: CATALOG, key: "id")
+  @join__type(graph: PERSONALIZATION, key: "id")
+  @join__type(graph: ARTWORK, key: "id")
+  @join__type(graph: PLAYBACK, key: "id")
+  @join__type(graph: RATINGS, key: "id")
+  @join__type(graph: LOCALIZATION, key: "id")
+  @join__type(graph: MERCH, key: "id") {
+  id: ID!
+    @join__field(graph: CATALOG)
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: ARTWORK)
+    @join__field(graph: PLAYBACK)
+    @join__field(graph: RATINGS)
+    @join__field(graph: LOCALIZATION)
+    @join__field(graph: MERCH)
+  name(locale: String!): String!
+    @join__field(graph: CATALOG)
+    @join__field(graph: LOCALIZATION)
+  synopsis(locale: String!): String
+    @join__field(graph: CATALOG)
+    @join__field(graph: LOCALIZATION)
+  availability(profileId: ID!, maturity: Int!): Availability
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: RATINGS)
+  artwork(locale: String!, device: String!): Artwork
+    @join__field(graph: ARTWORK)
+    @join__field(graph: PERSONALIZATION)
+  playback(profileId: ID!, device: String!): Playback
+    @join__field(graph: PLAYBACK)
+  rating(profileId: ID!, maturity: Int!): Rating
+    @join__field(graph: RATINGS)
+    @join__field(graph: PERSONALIZATION)
+  similar(profileId: ID!, maturity: Int!): [Title!]!
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: CATALOG)
+  trailers(profileId: ID!, device: String!): [Video!]!
+    @join__field(graph: PLAYBACK)
+    @join__field(graph: MERCH)
+  cast(locale: String!): [Person!]!
+    @join__field(graph: CATALOG)
+    @join__field(graph: LOCALIZATION)
+}
+
+type Screen implements Node
+  @join__type(graph: CATALOG, key: "id")
+  @join__type(graph: PERSONALIZATION, key: "id")
+  @join__type(graph: ARTWORK, key: "id")
+  @join__type(graph: PLAYBACK, key: "id")
+  @join__type(graph: RATINGS, key: "id")
+  @join__type(graph: LOCALIZATION, key: "id")
+  @join__type(graph: MERCH, key: "id")
+  @join__implements(graph: CATALOG, interface: "Node")
+  @join__implements(graph: PERSONALIZATION, interface: "Node")
+  @join__implements(graph: ARTWORK, interface: "Node")
+  @join__implements(graph: PLAYBACK, interface: "Node")
+  @join__implements(graph: RATINGS, interface: "Node")
+  @join__implements(graph: LOCALIZATION, interface: "Node")
+  @join__implements(graph: MERCH, interface: "Node") {
+  id: ID!
+    @join__field(graph: CATALOG)
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: ARTWORK)
+    @join__field(graph: PLAYBACK)
+    @join__field(graph: RATINGS)
+    @join__field(graph: LOCALIZATION)
+    @join__field(graph: MERCH)
+  slug: String! @join__field(graph: CATALOG)
+  localizedTitle(locale: String!): String!
+    @join__field(graph: LOCALIZATION)
+    @join__field(graph: CATALOG)
+  hero(locale: String!, device: String!): Billboard
+    @join__field(graph: CATALOG)
+    @join__field(graph: PERSONALIZATION)
+  rows(profileId: ID!, maturity: Int!, experiments: [String!]!): [Row!]!
+    @join__field(graph: CATALOG)
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: MERCH)
+}
+
+type Row implements Node
+  @join__type(graph: CATALOG, key: "id")
+  @join__type(graph: PERSONALIZATION, key: "id")
+  @join__type(graph: ARTWORK, key: "id")
+  @join__type(graph: PLAYBACK, key: "id")
+  @join__type(graph: RATINGS, key: "id")
+  @join__type(graph: LOCALIZATION, key: "id")
+  @join__type(graph: MERCH, key: "id")
+  @join__implements(graph: CATALOG, interface: "Node")
+  @join__implements(graph: PERSONALIZATION, interface: "Node")
+  @join__implements(graph: ARTWORK, interface: "Node")
+  @join__implements(graph: PLAYBACK, interface: "Node")
+  @join__implements(graph: RATINGS, interface: "Node")
+  @join__implements(graph: LOCALIZATION, interface: "Node")
+  @join__implements(graph: MERCH, interface: "Node") {
+  id: ID!
+    @join__field(graph: CATALOG)
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: ARTWORK)
+    @join__field(graph: PLAYBACK)
+    @join__field(graph: RATINGS)
+    @join__field(graph: LOCALIZATION)
+    @join__field(graph: MERCH)
+  rank: Int! @join__field(graph: PERSONALIZATION) @join__field(graph: CATALOG)
+  kind: String! @join__field(graph: CATALOG) @join__field(graph: MERCH)
+  localizedTitle(locale: String!): String!
+    @join__field(graph: LOCALIZATION)
+    @join__field(graph: CATALOG)
+  context(profileId: ID!, experiments: [String!]!): RowContext
+    @join__field(graph: PERSONALIZATION)
+  items(profileId: ID!, maturity: Int!, experiments: [String!]!): [Tile!]!
+    @join__field(graph: CATALOG)
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: MERCH)
+}
+
+type Tile implements Node
+  @join__type(graph: CATALOG, key: "id")
+  @join__type(graph: PERSONALIZATION, key: "id")
+  @join__type(graph: ARTWORK, key: "id")
+  @join__type(graph: PLAYBACK, key: "id")
+  @join__type(graph: RATINGS, key: "id")
+  @join__type(graph: LOCALIZATION, key: "id")
+  @join__type(graph: MERCH, key: "id")
+  @join__implements(graph: CATALOG, interface: "Node")
+  @join__implements(graph: PERSONALIZATION, interface: "Node")
+  @join__implements(graph: ARTWORK, interface: "Node")
+  @join__implements(graph: PLAYBACK, interface: "Node")
+  @join__implements(graph: RATINGS, interface: "Node")
+  @join__implements(graph: LOCALIZATION, interface: "Node")
+  @join__implements(graph: MERCH, interface: "Node") {
+  id: ID!
+    @join__field(graph: CATALOG)
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: ARTWORK)
+    @join__field(graph: PLAYBACK)
+    @join__field(graph: RATINGS)
+    @join__field(graph: LOCALIZATION)
+    @join__field(graph: MERCH)
+  rank: Int! @join__field(graph: PERSONALIZATION) @join__field(graph: CATALOG)
+  reason(profileId: ID!): String @join__field(graph: PERSONALIZATION)
+  badge(locale: String!): Badge
+    @join__field(graph: MERCH)
+    @join__field(graph: LOCALIZATION)
+  title: Title @join__field(graph: CATALOG) @join__field(graph: PERSONALIZATION)
+  preview(profileId: ID!, device: String!): Video
+    @join__field(graph: PLAYBACK)
+    @join__field(graph: MERCH)
+}
+
+type Movie implements Node & Title
+  @join__type(graph: CATALOG, key: "id")
+  @join__type(graph: PERSONALIZATION, key: "id")
+  @join__type(graph: ARTWORK, key: "id")
+  @join__type(graph: PLAYBACK, key: "id")
+  @join__type(graph: RATINGS, key: "id")
+  @join__type(graph: LOCALIZATION, key: "id")
+  @join__type(graph: MERCH, key: "id")
+  @join__implements(graph: CATALOG, interface: "Node")
+  @join__implements(graph: PERSONALIZATION, interface: "Node")
+  @join__implements(graph: ARTWORK, interface: "Node")
+  @join__implements(graph: PLAYBACK, interface: "Node")
+  @join__implements(graph: RATINGS, interface: "Node")
+  @join__implements(graph: LOCALIZATION, interface: "Node")
+  @join__implements(graph: MERCH, interface: "Node")
+  @join__implements(graph: CATALOG, interface: "Title")
+  @join__implements(graph: PERSONALIZATION, interface: "Title")
+  @join__implements(graph: ARTWORK, interface: "Title")
+  @join__implements(graph: PLAYBACK, interface: "Title")
+  @join__implements(graph: RATINGS, interface: "Title")
+  @join__implements(graph: LOCALIZATION, interface: "Title")
+  @join__implements(graph: MERCH, interface: "Title") {
+  id: ID!
+    @join__field(graph: CATALOG)
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: ARTWORK)
+    @join__field(graph: PLAYBACK)
+    @join__field(graph: RATINGS)
+    @join__field(graph: LOCALIZATION)
+    @join__field(graph: MERCH)
+  name(locale: String!): String!
+    @join__field(graph: CATALOG)
+    @join__field(graph: LOCALIZATION)
+  synopsis(locale: String!): String
+    @join__field(graph: CATALOG)
+    @join__field(graph: LOCALIZATION)
+  availability(profileId: ID!, maturity: Int!): Availability
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: RATINGS)
+  artwork(locale: String!, device: String!): Artwork
+    @join__field(graph: ARTWORK)
+    @join__field(graph: PERSONALIZATION)
+  playback(profileId: ID!, device: String!): Playback
+    @join__field(graph: PLAYBACK)
+  rating(profileId: ID!, maturity: Int!): Rating
+    @join__field(graph: RATINGS)
+    @join__field(graph: PERSONALIZATION)
+  similar(profileId: ID!, maturity: Int!): [Title!]!
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: CATALOG)
+  trailers(profileId: ID!, device: String!): [Video!]!
+    @join__field(graph: PLAYBACK)
+    @join__field(graph: MERCH)
+  cast(locale: String!): [Person!]!
+    @join__field(graph: CATALOG)
+    @join__field(graph: LOCALIZATION)
+  runtimeSeconds: Int! @join__field(graph: CATALOG)
+  collections(profileId: ID!, maturity: Int!): [Collection!]!
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: CATALOG)
+}
+
+type Series implements Node & Title
+  @join__type(graph: CATALOG, key: "id")
+  @join__type(graph: PERSONALIZATION, key: "id")
+  @join__type(graph: ARTWORK, key: "id")
+  @join__type(graph: PLAYBACK, key: "id")
+  @join__type(graph: RATINGS, key: "id")
+  @join__type(graph: LOCALIZATION, key: "id")
+  @join__type(graph: MERCH, key: "id")
+  @join__implements(graph: CATALOG, interface: "Node")
+  @join__implements(graph: PERSONALIZATION, interface: "Node")
+  @join__implements(graph: ARTWORK, interface: "Node")
+  @join__implements(graph: PLAYBACK, interface: "Node")
+  @join__implements(graph: RATINGS, interface: "Node")
+  @join__implements(graph: LOCALIZATION, interface: "Node")
+  @join__implements(graph: MERCH, interface: "Node")
+  @join__implements(graph: CATALOG, interface: "Title")
+  @join__implements(graph: PERSONALIZATION, interface: "Title")
+  @join__implements(graph: ARTWORK, interface: "Title")
+  @join__implements(graph: PLAYBACK, interface: "Title")
+  @join__implements(graph: RATINGS, interface: "Title")
+  @join__implements(graph: LOCALIZATION, interface: "Title")
+  @join__implements(graph: MERCH, interface: "Title") {
+  id: ID!
+    @join__field(graph: CATALOG)
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: ARTWORK)
+    @join__field(graph: PLAYBACK)
+    @join__field(graph: RATINGS)
+    @join__field(graph: LOCALIZATION)
+    @join__field(graph: MERCH)
+  name(locale: String!): String!
+    @join__field(graph: CATALOG)
+    @join__field(graph: LOCALIZATION)
+  synopsis(locale: String!): String
+    @join__field(graph: CATALOG)
+    @join__field(graph: LOCALIZATION)
+  availability(profileId: ID!, maturity: Int!): Availability
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: RATINGS)
+  artwork(locale: String!, device: String!): Artwork
+    @join__field(graph: ARTWORK)
+    @join__field(graph: PERSONALIZATION)
+  playback(profileId: ID!, device: String!): Playback
+    @join__field(graph: PLAYBACK)
+  rating(profileId: ID!, maturity: Int!): Rating
+    @join__field(graph: RATINGS)
+    @join__field(graph: PERSONALIZATION)
+  similar(profileId: ID!, maturity: Int!): [Title!]!
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: CATALOG)
+  trailers(profileId: ID!, device: String!): [Video!]!
+    @join__field(graph: PLAYBACK)
+    @join__field(graph: MERCH)
+  cast(locale: String!): [Person!]!
+    @join__field(graph: CATALOG)
+    @join__field(graph: LOCALIZATION)
+  seasonCount: Int! @join__field(graph: CATALOG)
+  seasons(profileId: ID!, maturity: Int!): [Season!]!
+    @join__field(graph: CATALOG)
+    @join__field(graph: PERSONALIZATION)
+}
+
+type Episode implements Node & Title
+  @join__type(graph: CATALOG, key: "id")
+  @join__type(graph: PERSONALIZATION, key: "id")
+  @join__type(graph: ARTWORK, key: "id")
+  @join__type(graph: PLAYBACK, key: "id")
+  @join__type(graph: RATINGS, key: "id")
+  @join__type(graph: LOCALIZATION, key: "id")
+  @join__type(graph: MERCH, key: "id")
+  @join__implements(graph: CATALOG, interface: "Node")
+  @join__implements(graph: PERSONALIZATION, interface: "Node")
+  @join__implements(graph: ARTWORK, interface: "Node")
+  @join__implements(graph: PLAYBACK, interface: "Node")
+  @join__implements(graph: RATINGS, interface: "Node")
+  @join__implements(graph: LOCALIZATION, interface: "Node")
+  @join__implements(graph: MERCH, interface: "Node")
+  @join__implements(graph: CATALOG, interface: "Title")
+  @join__implements(graph: PERSONALIZATION, interface: "Title")
+  @join__implements(graph: ARTWORK, interface: "Title")
+  @join__implements(graph: PLAYBACK, interface: "Title")
+  @join__implements(graph: RATINGS, interface: "Title")
+  @join__implements(graph: LOCALIZATION, interface: "Title")
+  @join__implements(graph: MERCH, interface: "Title") {
+  id: ID!
+    @join__field(graph: CATALOG)
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: ARTWORK)
+    @join__field(graph: PLAYBACK)
+    @join__field(graph: RATINGS)
+    @join__field(graph: LOCALIZATION)
+    @join__field(graph: MERCH)
+  name(locale: String!): String!
+    @join__field(graph: CATALOG)
+    @join__field(graph: LOCALIZATION)
+  synopsis(locale: String!): String
+    @join__field(graph: CATALOG)
+    @join__field(graph: LOCALIZATION)
+  availability(profileId: ID!, maturity: Int!): Availability
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: RATINGS)
+  artwork(locale: String!, device: String!): Artwork
+    @join__field(graph: ARTWORK)
+    @join__field(graph: PERSONALIZATION)
+  playback(profileId: ID!, device: String!): Playback
+    @join__field(graph: PLAYBACK)
+  rating(profileId: ID!, maturity: Int!): Rating
+    @join__field(graph: RATINGS)
+    @join__field(graph: PERSONALIZATION)
+  similar(profileId: ID!, maturity: Int!): [Title!]!
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: CATALOG)
+  trailers(profileId: ID!, device: String!): [Video!]!
+    @join__field(graph: PLAYBACK)
+    @join__field(graph: MERCH)
+  cast(locale: String!): [Person!]!
+    @join__field(graph: CATALOG)
+    @join__field(graph: LOCALIZATION)
+  episodeNumber: Int! @join__field(graph: CATALOG)
+  series: Series
+    @join__field(graph: CATALOG)
+    @join__field(graph: PERSONALIZATION)
+}
+
+type Collection implements Node
+  @join__type(graph: CATALOG, key: "id")
+  @join__type(graph: PERSONALIZATION, key: "id")
+  @join__type(graph: ARTWORK, key: "id")
+  @join__type(graph: PLAYBACK, key: "id")
+  @join__type(graph: RATINGS, key: "id")
+  @join__type(graph: LOCALIZATION, key: "id")
+  @join__type(graph: MERCH, key: "id")
+  @join__implements(graph: CATALOG, interface: "Node")
+  @join__implements(graph: PERSONALIZATION, interface: "Node")
+  @join__implements(graph: ARTWORK, interface: "Node")
+  @join__implements(graph: PLAYBACK, interface: "Node")
+  @join__implements(graph: RATINGS, interface: "Node")
+  @join__implements(graph: LOCALIZATION, interface: "Node")
+  @join__implements(graph: MERCH, interface: "Node") {
+  id: ID!
+    @join__field(graph: CATALOG)
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: ARTWORK)
+    @join__field(graph: PLAYBACK)
+    @join__field(graph: RATINGS)
+    @join__field(graph: LOCALIZATION)
+    @join__field(graph: MERCH)
+  name(locale: String!): String!
+    @join__field(graph: LOCALIZATION)
+    @join__field(graph: CATALOG)
+  titles(profileId: ID!, maturity: Int!): [Title!]!
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: CATALOG)
+}
+
+type Season implements Node
+  @join__type(graph: CATALOG, key: "id")
+  @join__type(graph: PERSONALIZATION, key: "id")
+  @join__type(graph: ARTWORK, key: "id")
+  @join__type(graph: PLAYBACK, key: "id")
+  @join__type(graph: RATINGS, key: "id")
+  @join__type(graph: LOCALIZATION, key: "id")
+  @join__type(graph: MERCH, key: "id")
+  @join__implements(graph: CATALOG, interface: "Node")
+  @join__implements(graph: PERSONALIZATION, interface: "Node")
+  @join__implements(graph: ARTWORK, interface: "Node")
+  @join__implements(graph: PLAYBACK, interface: "Node")
+  @join__implements(graph: RATINGS, interface: "Node")
+  @join__implements(graph: LOCALIZATION, interface: "Node")
+  @join__implements(graph: MERCH, interface: "Node") {
+  id: ID!
+    @join__field(graph: CATALOG)
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: ARTWORK)
+    @join__field(graph: PLAYBACK)
+    @join__field(graph: RATINGS)
+    @join__field(graph: LOCALIZATION)
+    @join__field(graph: MERCH)
+  number: Int! @join__field(graph: CATALOG)
+  title(locale: String!): String!
+    @join__field(graph: LOCALIZATION)
+    @join__field(graph: CATALOG)
+  episodes(profileId: ID!, maturity: Int!): [Episode!]!
+    @join__field(graph: CATALOG)
+    @join__field(graph: PERSONALIZATION)
+}
+
+type Billboard implements Node
+  @join__type(graph: CATALOG, key: "id")
+  @join__type(graph: PERSONALIZATION, key: "id")
+  @join__type(graph: ARTWORK, key: "id")
+  @join__type(graph: PLAYBACK, key: "id")
+  @join__type(graph: RATINGS, key: "id")
+  @join__type(graph: LOCALIZATION, key: "id")
+  @join__type(graph: MERCH, key: "id")
+  @join__implements(graph: CATALOG, interface: "Node")
+  @join__implements(graph: PERSONALIZATION, interface: "Node")
+  @join__implements(graph: ARTWORK, interface: "Node")
+  @join__implements(graph: PLAYBACK, interface: "Node")
+  @join__implements(graph: RATINGS, interface: "Node")
+  @join__implements(graph: LOCALIZATION, interface: "Node")
+  @join__implements(graph: MERCH, interface: "Node") {
+  id: ID!
+    @join__field(graph: CATALOG)
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: ARTWORK)
+    @join__field(graph: PLAYBACK)
+    @join__field(graph: RATINGS)
+    @join__field(graph: LOCALIZATION)
+    @join__field(graph: MERCH)
+  title: Title @join__field(graph: CATALOG) @join__field(graph: PERSONALIZATION)
+  artwork(locale: String!, device: String!): Artwork
+    @join__field(graph: ARTWORK)
+    @join__field(graph: PERSONALIZATION)
+  tracking(profileId: ID!, experiments: [String!]!): Tracking
+    @join__field(graph: MERCH)
+    @join__field(graph: PERSONALIZATION)
+}
+
+type Artwork implements Node
+  @join__type(graph: CATALOG, key: "id")
+  @join__type(graph: PERSONALIZATION, key: "id")
+  @join__type(graph: ARTWORK, key: "id")
+  @join__type(graph: PLAYBACK, key: "id")
+  @join__type(graph: RATINGS, key: "id")
+  @join__type(graph: LOCALIZATION, key: "id")
+  @join__type(graph: MERCH, key: "id")
+  @join__implements(graph: CATALOG, interface: "Node")
+  @join__implements(graph: PERSONALIZATION, interface: "Node")
+  @join__implements(graph: ARTWORK, interface: "Node")
+  @join__implements(graph: PLAYBACK, interface: "Node")
+  @join__implements(graph: RATINGS, interface: "Node")
+  @join__implements(graph: LOCALIZATION, interface: "Node")
+  @join__implements(graph: MERCH, interface: "Node") {
+  id: ID!
+    @join__field(graph: CATALOG)
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: ARTWORK)
+    @join__field(graph: PLAYBACK)
+    @join__field(graph: RATINGS)
+    @join__field(graph: LOCALIZATION)
+    @join__field(graph: MERCH)
+  poster: Image @join__field(graph: ARTWORK)
+  boxshot: Image @join__field(graph: ARTWORK)
+  billboard: Image @join__field(graph: ARTWORK) @join__field(graph: MERCH)
+  palette: [String!]! @join__field(graph: ARTWORK)
+}
+
+type Image @join__type(graph: ARTWORK) @join__type(graph: MERCH) {
+  url: String! @join__field(graph: ARTWORK) @join__field(graph: MERCH)
+  width: Int! @join__field(graph: ARTWORK)
+  height: Int! @join__field(graph: ARTWORK)
+}
+
+type Playback @join__type(graph: PLAYBACK) {
+  bookmarkSeconds: Int @join__field(graph: PLAYBACK)
+  playable: Boolean! @join__field(graph: PLAYBACK)
+  streams(device: String!): [Video!]! @join__field(graph: PLAYBACK)
+}
+
+type Rating @join__type(graph: RATINGS) @join__type(graph: PERSONALIZATION) {
+  score: Float @join__field(graph: RATINGS) @join__field(graph: PERSONALIZATION)
+  predicted: Float @join__field(graph: PERSONALIZATION)
+  maturity: Int! @join__field(graph: RATINGS)
+}
+
+type Availability
+  @join__type(graph: RATINGS)
+  @join__type(graph: PERSONALIZATION) {
+  available: Boolean!
+    @join__field(graph: RATINGS)
+    @join__field(graph: PERSONALIZATION)
+  reason: String @join__field(graph: PERSONALIZATION)
+}
+
+type Video implements Node
+  @join__type(graph: CATALOG, key: "id")
+  @join__type(graph: PERSONALIZATION, key: "id")
+  @join__type(graph: ARTWORK, key: "id")
+  @join__type(graph: PLAYBACK, key: "id")
+  @join__type(graph: RATINGS, key: "id")
+  @join__type(graph: LOCALIZATION, key: "id")
+  @join__type(graph: MERCH, key: "id")
+  @join__implements(graph: CATALOG, interface: "Node")
+  @join__implements(graph: PERSONALIZATION, interface: "Node")
+  @join__implements(graph: ARTWORK, interface: "Node")
+  @join__implements(graph: PLAYBACK, interface: "Node")
+  @join__implements(graph: RATINGS, interface: "Node")
+  @join__implements(graph: LOCALIZATION, interface: "Node")
+  @join__implements(graph: MERCH, interface: "Node") {
+  id: ID!
+    @join__field(graph: CATALOG)
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: ARTWORK)
+    @join__field(graph: PLAYBACK)
+    @join__field(graph: RATINGS)
+    @join__field(graph: LOCALIZATION)
+    @join__field(graph: MERCH)
+  url(device: String!): String! @join__field(graph: PLAYBACK)
+  durationSeconds: Int! @join__field(graph: PLAYBACK)
+  artwork(locale: String!, device: String!): Artwork
+    @join__field(graph: ARTWORK)
+    @join__field(graph: MERCH)
+}
+
+type Person implements Node
+  @join__type(graph: CATALOG, key: "id")
+  @join__type(graph: PERSONALIZATION, key: "id")
+  @join__type(graph: ARTWORK, key: "id")
+  @join__type(graph: PLAYBACK, key: "id")
+  @join__type(graph: RATINGS, key: "id")
+  @join__type(graph: LOCALIZATION, key: "id")
+  @join__type(graph: MERCH, key: "id")
+  @join__implements(graph: CATALOG, interface: "Node")
+  @join__implements(graph: PERSONALIZATION, interface: "Node")
+  @join__implements(graph: ARTWORK, interface: "Node")
+  @join__implements(graph: PLAYBACK, interface: "Node")
+  @join__implements(graph: RATINGS, interface: "Node")
+  @join__implements(graph: LOCALIZATION, interface: "Node")
+  @join__implements(graph: MERCH, interface: "Node") {
+  id: ID!
+    @join__field(graph: CATALOG)
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: ARTWORK)
+    @join__field(graph: PLAYBACK)
+    @join__field(graph: RATINGS)
+    @join__field(graph: LOCALIZATION)
+    @join__field(graph: MERCH)
+  name(locale: String!): String!
+    @join__field(graph: CATALOG)
+    @join__field(graph: LOCALIZATION)
+  headshot: Image @join__field(graph: ARTWORK)
+}
+
+type RowContext
+  @join__type(graph: PERSONALIZATION)
+  @join__type(graph: LOCALIZATION) {
+  requestId: String! @join__field(graph: PERSONALIZATION)
+  algorithm: String! @join__field(graph: PERSONALIZATION)
+  explanation(locale: String!): String
+    @join__field(graph: PERSONALIZATION)
+    @join__field(graph: LOCALIZATION)
+}
+
+type Badge @join__type(graph: MERCH) @join__type(graph: LOCALIZATION) {
+  text(locale: String!): String!
+    @join__field(graph: MERCH)
+    @join__field(graph: LOCALIZATION)
+  style: String! @join__field(graph: MERCH)
+}
+
+type Tracking @join__type(graph: MERCH) @join__type(graph: PERSONALIZATION) {
+  impressionId: String!
+    @join__field(graph: MERCH)
+    @join__field(graph: PERSONALIZATION)
+  campaignId: String @join__field(graph: MERCH)
+}
