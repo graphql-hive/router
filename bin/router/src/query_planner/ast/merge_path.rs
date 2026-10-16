@@ -276,15 +276,14 @@ impl MergePath {
         })
     }
 
-    pub fn without_type_castings(&self) -> Self {
-        let new_segments = self
-            .inner
+    /// Whether the two paths are the same once their type conditions are taken out.
+    pub fn eq_without_type_castings(&self, other: &Self) -> bool {
+        let not_type_condition =
+            |segment: &&Segment| !matches!(segment, Segment::TypeCondition(..));
+        self.inner
             .iter()
-            .filter(|segment| !matches!(segment, Segment::TypeCondition(_, _)))
-            .cloned()
-            .collect::<Vec<_>>();
-
-        Self::new(new_segments)
+            .filter(not_type_condition)
+            .eq(other.inner.iter().filter(not_type_condition))
     }
 }
 
