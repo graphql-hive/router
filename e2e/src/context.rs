@@ -1240,10 +1240,11 @@ mod context_e2e_tests {
     #[ntex::test]
     async fn non_null_contexts_from_exclusive_ancestors_are_fetched_separately() {
         let mut server = mockito::Server::new_async().await;
-        let router = start_router("context-multi-type", &server).await;
-        for (ancestor, entity, currency, variable) in [
-            ("User", "Transaction", "USD", "__context_0"),
-            ("Other", "Adjustment", "EUR", "__context_1"),
+        // a non-null contextual argument only composes with a `__typename` selection
+        let router = start_router("context-non-null", &server).await;
+        for (ancestor, entity, variable) in [
+            ("User", "Transaction", "__context_0"),
+            ("Other", "Adjustment", "__context_1"),
         ] {
             let root = server
                 .mock("POST", "/a")
@@ -1255,7 +1256,6 @@ mod context_e2e_tests {
                         "data": {
                             "viewer": {
                                 "__typename": ancestor,
-                                "currency": currency,
                                 "txs": [{"__typename": entity, "id": "same"}]
                             }
                         }
@@ -1271,7 +1271,7 @@ mod context_e2e_tests {
                     let request = body(r);
                     request["variables"]
                         == json!({
-                            variable: currency,
+                            variable: ancestor,
                             "representations": [{"__typename": entity, "id": "same"}]
                         })
                 })
