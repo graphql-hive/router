@@ -11,7 +11,9 @@ use tracing::{instrument, trace};
 use crate::query_planner::{
     ast::{
         merge_path::{MergePath, Segment},
-        selection_set::{find_arguments_conflicts, find_selection_set_by_path},
+        selection_set::{
+            find_arguments_conflicts, find_selection_set_by_path, response_keys_conflict,
+        },
     },
     planner::fetch::{
         error::FetchGraphError,
@@ -509,6 +511,22 @@ impl FetchStepData<MultiTypeFetchStep> {
     }
 
     pub fn has_arguments_conflicts_with(&self, other: &Self) -> bool {
+        // same-object outputs can use different context variables even when their
+        // entity inputs match. keep those fetches apart so batching can put each
+        // output under its own alias
+        if self.response_path == other.response_path {
+            let output_conflicts = FetchStepSelections::<MultiTypeFetchStep>::iter_matching_types(
+                &self.output,
+                &other.output,
+                |_, self_selections, other_selections| {
+                    response_keys_conflict(self_selections, other_selections)
+                },
+            );
+            if output_conflicts.iter().any(|(_, conflict)| *conflict) {
+                return true;
+            }
+        }
+
         let input_conflicts = FetchStepSelections::<MultiTypeFetchStep>::iter_matching_types(
             &self.input,
             &other.input,
