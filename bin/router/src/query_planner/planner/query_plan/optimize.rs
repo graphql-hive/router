@@ -50,6 +50,9 @@
 //!     e1: _entities (for F3)
 //!     e2: _entities (for F4)
 //!
+//! Fetches under an `Include` or `Skip` can join a batch too, their alias then
+//! only runs when the condition says so.
+//!
 
 use ahash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use std::{
@@ -71,8 +74,9 @@ use crate::query_planner::{
     },
     planner::error::QueryPlanError,
     planner::plan_nodes::planning::{
-        custom_scalar_paths_for_entities_selection, BatchFetchNode, CustomScalarPaths, EntityBatch,
-        EntityBatchAlias, FetchContext, FetchRewrite, FlattenNodePath, PlanNode,
+        custom_scalar_paths_for_entities_selection, BatchFetchNode, ConditionNode,
+        CustomScalarPaths, EntityBatch, EntityBatchAlias, FetchContext, FetchRewrite,
+        FlattenNodePath, PlanNode,
     },
     planner::QueryPlannerOptions,
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
@@ -99,6 +103,7 @@ struct RepresentationsInputKey {
     input_rewrites: Option<Vec<FetchRewrite>>,
     context: Option<Box<FetchContext>>,
     merge_paths: Vec<FlattenNodePath>,
+    condition: Option<(String, bool)>,
 }
 
 struct BatchFetchBuilder<'a> {
@@ -192,6 +197,16 @@ impl<'a> BatchFetchBuilder<'a> {
             input_rewrites: representative.input_rewrites.clone(),
             output_rewrites: representative.output_rewrites.clone(),
             context: representative.context.clone(),
+            include_if: representative
+                .condition
+                .as_ref()
+                .filter(|(_, include)| *include)
+                .map(|(variable, _)| variable.clone()),
+            skip_if: representative
+                .condition
+                .as_ref()
+                .filter(|(_, include)| !*include)
+                .map(|(variable, _)| variable.clone()),
         });
 
         Ok(())
@@ -221,6 +236,7 @@ impl<'a> BatchFetchBuilder<'a> {
             input_rewrites: representative.input_rewrites.clone(),
             context: representative.context.clone(),
             merge_paths: merge_paths.to_vec(),
+            condition: representative.condition.clone(),
         };
 
         if let Some(existing_name) = self
@@ -352,6 +368,8 @@ struct EntityFetch {
     context: Option<Box<FetchContext>>,
     shape_key: ShapeKey,
     non_representations_variable_definitions: Vec<VariableDefinition>,
+    /// The `Include` (`true`) or `Skip` (`false`) it sits under, by its variable.
+    condition: Option<(String, bool)>,
 }
 
 impl EntityFetch {
@@ -365,9 +383,19 @@ impl EntityFetch {
             && self.input_rewrites == right.input_rewrites
             && self.output_rewrites == right.output_rewrites
             && self.context == right.context
+            && self.condition == right.condition
     }
 
     fn from_node(index: usize, node: &PlanNode) -> Result<Option<Self>, QueryPlanError> {
+        // A Flatten(Fetch) can sit under a one-sided condition, the alias gets that condition.
+        let (condition, node) = match node {
+            PlanNode::Condition(condition_node) => match one_sided_body(condition_node) {
+                Some((include, body)) => (Some((condition_node.condition.clone(), include)), body),
+                None => return Ok(None),
+            },
+            node => (None, node),
+        };
+
         // We only batch Flatten(Fetch) as those represent the entity calls
         let PlanNode::Flatten(flatten_node) = node else {
             return Ok(None);
@@ -478,6 +506,7 @@ impl EntityFetch {
             context,
             shape_key,
             non_representations_variable_definitions,
+            condition,
         }))
     }
 }
@@ -538,8 +567,9 @@ impl PlanOptimizer<'_> {
                 Ok(PlanNode::sequence(sequence_node.nodes))
             }
             PlanNode::Parallel(parallel_node) => {
-                let nodes =
-                    merge_parallel_conditions(PlanNode::flatten_parallel(parallel_node.nodes));
+                let nodes = lift_conditional_entity_fetches(merge_parallel_conditions(
+                    PlanNode::flatten_parallel(parallel_node.nodes),
+                ));
                 // If all children are fetching nodes, skip recursive optimize walk.
                 let optimized_nodes = if nodes.iter().all(|node| node.is_fetching_node()) {
                     nodes
@@ -617,13 +647,9 @@ fn merge_parallel_conditions(nodes: Vec<PlanNode>) -> Vec<PlanNode> {
             merged.push(node);
             continue;
         };
-        let include = match (&condition.if_clause, &condition.else_clause) {
-            (Some(_), None) => true,
-            (None, Some(_)) => false,
-            _ => {
-                merged.push(PlanNode::Condition(condition));
-                continue;
-            }
+        let Some((include, _)) = one_sided_body(&condition) else {
+            merged.push(PlanNode::Condition(condition));
+            continue;
         };
         let key = (condition.condition.clone(), include);
         let Some(&place) = places.get(&key) else {
@@ -652,6 +678,130 @@ fn merge_parallel_conditions(nodes: Vec<PlanNode>) -> Vec<PlanNode> {
     }
 
     merged
+}
+
+/// Takes entity fetches out of a one-sided condition when their subgraph is also fetched
+/// outside of it, so they can share a batch. Each one keeps its condition:
+///
+/// ```ignore
+/// Parallel { Flatten(a) { Fetch(s) }, Include(if: $c) { Parallel { Flatten(b) { Fetch(s) }, X } } }
+/// ```
+///
+/// becomes
+///
+/// ```ignore
+/// Parallel { Flatten(a) { Fetch(s) }, Include(if: $c) { Flatten(b) { Fetch(s) } }, Include(if: $c) { X } }
+/// ```
+///
+/// and the batch gives the alias of `b` the condition. Expects the conditions to be merged first.
+fn lift_conditional_entity_fetches(nodes: Vec<PlanNode>) -> Vec<PlanNode> {
+    // The first condition we saw each subgraph under (`None` is no condition).
+    // Once a subgraph shows up under another one, it's worth lifting.
+    let mut first_condition: HashMap<&str, Option<(&str, bool)>> = HashMap::new();
+    let mut liftable: HashSet<String> = HashSet::new();
+
+    for node in &nodes {
+        let (condition, children) = match node {
+            PlanNode::Condition(condition_node) => match one_sided_body(condition_node) {
+                Some((include, body)) => (
+                    Some((condition_node.condition.as_str(), include)),
+                    parallel_children(body),
+                ),
+                None => continue,
+            },
+            node => (None, std::slice::from_ref(node)),
+        };
+        for service in children.iter().filter_map(entity_fetch_service) {
+            match first_condition.get(service) {
+                None => {
+                    first_condition.insert(service, condition);
+                }
+                Some(first) if *first != condition => {
+                    liftable.insert(service.to_string());
+                }
+                Some(_) => {}
+            }
+        }
+    }
+
+    if liftable.is_empty() {
+        return nodes;
+    }
+
+    let mut lifted = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        let PlanNode::Condition(mut condition) = node else {
+            lifted.push(node);
+            continue;
+        };
+        let Some((include, _)) = one_sided_body(&condition) else {
+            lifted.push(PlanNode::Condition(condition));
+            continue;
+        };
+        let slot = if include {
+            &mut condition.if_clause
+        } else {
+            &mut condition.else_clause
+        };
+        let children = match slot.take().map(|body| *body) {
+            Some(PlanNode::Parallel(parallel_node)) => parallel_node.nodes,
+            body => body.into_iter().collect(),
+        };
+        let (out, kept): (Vec<_>, Vec<_>) = children.into_iter().partition(|child| {
+            entity_fetch_service(child).is_some_and(|service| liftable.contains(service))
+        });
+
+        for child in out {
+            let clause = Some(Box::new(child));
+            let (if_clause, else_clause) = if include {
+                (clause, None)
+            } else {
+                (None, clause)
+            };
+            lifted.push(PlanNode::Condition(ConditionNode {
+                condition: condition.condition.clone(),
+                if_clause,
+                else_clause,
+            }));
+        }
+        if !kept.is_empty() {
+            *slot = Some(Box::new(PlanNode::parallel(kept)));
+            lifted.push(PlanNode::Condition(condition));
+        }
+    }
+
+    lifted
+}
+
+/// Whether it's an `Include` (`true`) or a `Skip` (`false`), and what runs then.
+/// `None` when it has both sides (or neither).
+fn one_sided_body(condition: &ConditionNode) -> Option<(bool, &PlanNode)> {
+    match (&condition.if_clause, &condition.else_clause) {
+        (Some(body), None) => Some((true, body)),
+        (None, Some(body)) => Some((false, body)),
+        _ => None,
+    }
+}
+
+fn parallel_children(node: &PlanNode) -> &[PlanNode] {
+    match node {
+        PlanNode::Parallel(parallel_node) => &parallel_node.nodes,
+        node => std::slice::from_ref(node),
+    }
+}
+
+/// The subgraph of a Flatten(Fetch) entity call, the kind of node that can be batched.
+fn entity_fetch_service(node: &PlanNode) -> Option<&str> {
+    let PlanNode::Flatten(flatten_node) = node else {
+        return None;
+    };
+    let PlanNode::Fetch(fetch_node) = flatten_node.node.as_ref() else {
+        return None;
+    };
+    fetch_node
+        .planner_requires
+        .is_some()
+        .then_some(fetch_node.service_name.as_str())
 }
 
 /// Merge entity fetches in a `Parallel` block into `BatchFetch` nodes
@@ -1347,8 +1497,8 @@ mod tests {
         "#);
     }
 
-    /// Entity fetches under the same condition get batched under it. Others stay apart: an
-    /// `Include` and a `Skip` of the same variable, or another variable.
+    /// Entity fetches under different conditions share one batch, each condition goes on its
+    /// alias. The ones under the same condition share an alias.
     #[test]
     fn optimize_parallel_node_batches_fetches_under_the_same_condition() {
         let supergraph = test_supergraph_state();
@@ -1378,8 +1528,9 @@ mod tests {
             condition("b", true, fetch(3, "products")),
             condition("a", true, fetch(4, "topProducts")),
         ];
-        let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph)
-            .expect("optimize should work");
+        let optimized =
+            optimize_root_node(PlanNode::parallel(nodes), &supergraph, &Default::default())
+                .expect("optimize should work");
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
@@ -1388,63 +1539,60 @@ mod tests {
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
         QueryPlan {
-          Parallel {
-            Include(if: $a) {
-              BatchFetch(service: "inventory") {
+          BatchFetch(service: "inventory") {
+            {
+              _e0 @include(if: $a) {
+                paths: [
+                  "products.@"
+                  "topProducts.@"
+                ]
                 {
-                  _e0 {
-                    paths: [
-                      "products.@"
-                      "topProducts.@"
-                    ]
-                    {
-                      ... on Product {
-                        upc
-                      }
-                    }
+                  ... on Product {
+                    upc
                   }
                 }
+              }
+              _e1 @skip(if: $a) {
+                paths: [
+                  "products.@"
+                ]
                 {
-                  _e0: _entities(representations: $__batch_reps_0) {
-                    ... on Product {
-                      shippingEstimate
-                    }
+                  ... on Product {
+                    upc
                   }
                 }
-              },
-            },
-            Skip(if: $a) {
-              Flatten(path: "products.@") {
-                Fetch(service: "inventory") {
-                  {
-                    ... on Product {
-                      upc
-                    }
-                  } =>
-                  {
-                    ... on Product {
-                      shippingEstimate
-                    }
+              }
+              _e2 @include(if: $b) {
+                paths: [
+                  "products.@"
+                ]
+                {
+                  ... on Product {
+                    upc
                   }
-                },
-              },
-            },
-            Include(if: $b) {
-              Flatten(path: "products.@") {
-                Fetch(service: "inventory") {
-                  {
-                    ... on Product {
-                      upc
-                    }
-                  } =>
-                  {
-                    ... on Product {
-                      shippingEstimate
-                    }
-                  }
-                },
-              },
-            },
+                }
+              }
+            }
+            {
+              _e0: _entities(representations: $__batch_reps_0) {
+                ... on Product {
+                  ...a
+                }
+              }
+              _e1: _entities(representations: $__batch_reps_1) {
+                ... on Product {
+                  ...a
+                }
+              }
+              _e2: _entities(representations: $__batch_reps_2) {
+                ... on Product {
+                  ...a
+                }
+              }
+            }
+            fragment a on Product {
+              shippingEstimate
+            }
           },
         },
         "#);

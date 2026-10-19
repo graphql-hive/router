@@ -1707,6 +1707,11 @@ impl<'exec> Executor<'exec> {
             .aliases
             .iter()
             .map(|alias_spec| {
+                // The condition says the alias won't run, so we don't collect anything for it.
+                // With no groups it still sends an empty list, the variable is declared anyway.
+                if !batch_alias_condition_met(alias_spec, self.variable_values) {
+                    return (Vec::new(), Vec::new());
+                }
                 collect_context_entities(
                     data,
                     alias_spec.merge_paths.iter(),
@@ -1962,6 +1967,28 @@ fn condition_node_by_variables<'a>(
     } else {
         condition_node.else_clause.as_deref()
     }
+}
+
+/// Same rules as `condition_node_by_variables`: a missing variable runs neither side.
+fn batch_alias_condition_met(
+    alias: &EntityBatchAlias,
+    variable_values: &Option<VariablesMap>,
+) -> bool {
+    let is_true = |name: &str| {
+        variable_values
+            .as_ref()
+            .and_then(|vars| vars.get(name))
+            .map(|value| matches!(value.as_ref(), ValueRef::Bool(true)))
+    };
+
+    alias
+        .include_if
+        .as_deref()
+        .is_none_or(|name| is_true(name) == Some(true))
+        && alias
+            .skip_if
+            .as_deref()
+            .is_none_or(|name| is_true(name) == Some(false))
 }
 
 fn select_fetch_variables<'a>(
@@ -2269,6 +2296,8 @@ mod tests {
                     input_rewrites: None,
                     output_rewrites: None,
                     context: None,
+                    include_if: None,
+                    skip_if: None,
                 },
                 EntityBatchAlias {
                     alias: "_e1".to_string(),
@@ -2278,6 +2307,8 @@ mod tests {
                     input_rewrites: None,
                     output_rewrites: None,
                     context: None,
+                    include_if: None,
+                    skip_if: None,
                 },
             ],
         };

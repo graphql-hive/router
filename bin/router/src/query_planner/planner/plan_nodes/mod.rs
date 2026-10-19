@@ -461,6 +461,13 @@ pub struct EntityBatchAlias {
     pub output_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
     pub context: Option<Box<FetchContext>>,
+    /// The alias only runs when this variable is `true`.
+    /// When it doesn't run, its representations aren't collected and an empty list is sent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_if: Option<String>,
+    /// The alias only runs when this variable is `false`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skip_if: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -956,7 +963,14 @@ impl<S: PlanState> PrettyDisplay for BatchFetchNode<S> {
         )?;
         writeln!(f, "{indent}  {{")?;
         for alias in &self.entity_batch.aliases {
-            writeln!(f, "{indent}    {} {{", alias.alias)?;
+            write!(f, "{indent}    {}", alias.alias)?;
+            if let Some(variable) = &alias.include_if {
+                write!(f, " @include(if: ${variable})")?;
+            }
+            if let Some(variable) = &alias.skip_if {
+                write!(f, " @skip(if: ${variable})")?;
+            }
+            writeln!(f, " {{")?;
             writeln!(f, "{indent}      paths: [")?;
             for merge_path in alias.merge_paths.iter() {
                 writeln!(f, "{indent}        \"{}\"", merge_path)?;
