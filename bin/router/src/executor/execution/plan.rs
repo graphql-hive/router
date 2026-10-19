@@ -1,11 +1,11 @@
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeSet, HashMap};
-use std::sync::Arc;
+use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::sync::{Arc, LazyLock};
 use std::vec;
 
 use crate::query_planner::ast::operation::SubgraphFetchOperation;
 use crate::query_planner::planner::plan_nodes::{
-    CustomScalarPaths, FetchNode, FlattenNode, ResponsePathRef,
+    CustomScalarPaths, FetchNode, FlattenNode, ReadySchedule, ResponsePathRef,
 };
 use crate::query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use crate::query_planner::{
@@ -274,6 +274,7 @@ pub async fn execute_query_plan<'exec>(
         // because we might need entity resolution after receiving each subscription event
         let query_plan: Arc<QueryPlan> = Arc::new(QueryPlan {
             kind: QUERY_PLAN_KIND,
+            ready_schedule: None,
             node: remaining_nodes.map(|nodes| {
                 if nodes.len() == 1 {
                     nodes.into_iter().next().unwrap()
@@ -543,7 +544,14 @@ async fn execute_query_plan_with_data<'exec>(
     };
 
     if let Some(node) = &opts.query_plan.node {
-        executor.execute_plan_node(&mut exec_ctx, node).await;
+        match opts.query_plan.ready_schedule.as_ref() {
+            Some(schedule) if *READY_SCHEDULING => {
+                executor
+                    .execute_ready_schedule(&mut exec_ctx, node, schedule)
+                    .await
+            }
+            _ => executor.execute_plan_node(&mut exec_ctx, node).await,
+        }
     }
 
     let error_count = exec_ctx.errors.len(); // Added for usage reporting
@@ -833,7 +841,63 @@ struct PrepareExecutionJobOpts<'exec> {
     affected_path: Option<ResponsePathRef<'exec>>,
 }
 
+/// Experimental: start each fetch as soon as the fetches it waits for are merged,
+/// instead of waiting for the whole previous wave. Off unless the env var is `1` or `true`.
+static READY_SCHEDULING: LazyLock<bool> = LazyLock::new(|| {
+    std::env::var("HIVE_ROUTER_EXPERIMENTAL_READY_SCHEDULING")
+        .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+});
+
 impl<'exec> Executor<'exec> {
+    async fn execute_ready_schedule(
+        &self,
+        ctx: &mut ExecutionContext<'exec>,
+        root: &'exec PlanNode,
+        schedule: &ReadySchedule,
+    ) {
+        let PlanNode::Sequence(sequence) = root else {
+            return self.execute_plan_node(ctx, root).await;
+        };
+        let fetch = |index: usize| {
+            let (wave, position) = schedule.fetches[index];
+            match &sequence.nodes[wave] {
+                PlanNode::Parallel(parallel) => &parallel.nodes[position],
+                node => node,
+            }
+        };
+        let release = |index: usize, waiting_on: &mut [usize], ready: &mut VecDeque<usize>| {
+            for &dependent in &schedule.dependents[index] {
+                waiting_on[dependent] -= 1;
+                if waiting_on[dependent] == 0 {
+                    ready.push_back(dependent);
+                }
+            }
+        };
+
+        let mut waiting_on = schedule.waiting_on.clone();
+        let mut ready: VecDeque<usize> = (0..waiting_on.len())
+            .filter(|&index| waiting_on[index] == 0)
+            .collect();
+        let mut in_flight = FuturesUnordered::new();
+
+        loop {
+            while let Some(index) = ready.pop_front() {
+                // Same as a wave: we only borrow `ctx.data` to prepare the request.
+                match self.prepare_job_future(fetch(index), &ctx.data) {
+                    Some(fut) => in_flight.push(fut.map(move |job| (index, job))),
+                    // Nothing to fetch (skipped, or no entities), so whatever waits on it can go.
+                    None => release(index, &mut waiting_on, &mut ready),
+                }
+            }
+
+            let Some((index, job)) = in_flight.next().await else {
+                break;
+            };
+            self.process_job_result(ctx, job);
+            release(index, &mut waiting_on, &mut ready);
+        }
+    }
+
     async fn execute_plan_node(&self, ctx: &mut ExecutionContext<'exec>, node: &'exec PlanNode) {
         match node {
             PlanNode::Parallel(parallel_node) => {

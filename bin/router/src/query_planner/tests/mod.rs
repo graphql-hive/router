@@ -12,6 +12,7 @@ mod object_entities;
 mod override_requires;
 mod overrides;
 mod provides;
+mod ready_schedule;
 mod renamed_root_types;
 mod requires;
 mod requires_alias_scopes;

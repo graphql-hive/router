@@ -126,8 +126,11 @@ mod tests {
         let mut to_merge = super::EntitiesToMerge::new(&mut entities, [0, 1, 0, 1]);
 
         let id = |value: Option<Value>| {
-            value
-                .and_then(|v| Value::object_get(v.as_object()?, "id")?.as_str().map(String::from))
+            value.and_then(|v| {
+                Value::object_get(v.as_object()?, "id")?
+                    .as_str()
+                    .map(String::from)
+            })
         };
         assert_eq!(id(to_merge.next_for(0)).as_deref(), Some("a"));
         assert_eq!(id(to_merge.next_for(1)).as_deref(), Some("b"));

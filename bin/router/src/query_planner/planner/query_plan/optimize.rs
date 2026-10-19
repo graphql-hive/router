@@ -290,6 +290,7 @@ impl<'a> BatchFetchBuilder<'a> {
             entity_batch: EntityBatch {
                 aliases: self.batched_aliases,
             },
+            fetch_node_ids: Vec::new(),
         })
     }
 }
@@ -822,7 +823,13 @@ fn build_batched_fetch_node(
         builder.add_shape_group(index, shape_group, supergraph)?;
     }
 
-    builder.finish(first_candidate, supergraph)
+    let mut batch_fetch_node = builder.finish(first_candidate, supergraph)?;
+    batch_fetch_node.fetch_node_ids = shape_groups
+        .iter()
+        .flatten()
+        .map(|candidate| candidate.fetch_node_id)
+        .collect();
+    Ok(batch_fetch_node)
 }
 
 fn optimize_plan_sequence(nodes: Vec<PlanNode>) -> Vec<PlanNode> {
@@ -925,6 +932,7 @@ mod tests {
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
+            ready_schedule: None,
             node: Some(optimized),
         };
 
@@ -1014,6 +1022,7 @@ mod tests {
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
+            ready_schedule: None,
             node: Some(optimized),
         };
 
@@ -1078,6 +1087,7 @@ mod tests {
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
+            ready_schedule: None,
             node: Some(optimized),
         };
 
@@ -1142,6 +1152,7 @@ mod tests {
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
+            ready_schedule: None,
             node: Some(optimized),
         };
 
@@ -1215,6 +1226,7 @@ mod tests {
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
+            ready_schedule: None,
             node: Some(optimized),
         };
 
@@ -1289,6 +1301,7 @@ mod tests {
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
+            ready_schedule: None,
             node: Some(optimized),
         };
 
@@ -1364,6 +1377,7 @@ mod tests {
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
+            ready_schedule: None,
             node: Some(optimized),
         };
 
@@ -1432,6 +1446,7 @@ mod tests {
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
+            ready_schedule: None,
             node: Some(optimized),
         };
 
@@ -1509,6 +1524,7 @@ mod tests {
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
+            ready_schedule: None,
             node: Some(optimized),
         };
 
@@ -1582,6 +1598,7 @@ mod tests {
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
+            ready_schedule: None,
             node: Some(optimized),
         };
 
@@ -1684,6 +1701,7 @@ mod tests {
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
+            ready_schedule: None,
             node: Some(optimized),
         };
 
@@ -1761,6 +1779,7 @@ mod tests {
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
+            ready_schedule: None,
             node: Some(optimized),
         };
 
@@ -1839,6 +1858,7 @@ mod tests {
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
+            ready_schedule: None,
             node: Some(optimized),
         };
 
@@ -1926,6 +1946,7 @@ mod tests {
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
+            ready_schedule: None,
             node: Some(optimized),
         };
 
@@ -2013,6 +2034,7 @@ mod tests {
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
+            ready_schedule: None,
             node: Some(optimized),
         };
 
@@ -2061,6 +2083,7 @@ mod tests {
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
+            ready_schedule: None,
             node: Some(optimized),
         };
 
@@ -2109,6 +2132,7 @@ mod tests {
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
+            ready_schedule: None,
             node: Some(optimized),
         };
 
@@ -2166,6 +2190,7 @@ mod tests {
 
         let query_plan = QueryPlan {
             kind: "QueryPlan",
+            ready_schedule: None,
             node: Some(optimized),
         };
 

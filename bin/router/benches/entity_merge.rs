@@ -13,7 +13,10 @@ fn entity(i: usize) -> Value<'static> {
     let review = |n: usize| {
         Value::Object(vec![
             ("id", Value::String(format!("r{i}-{n}").into())),
-            ("body", Value::String("Pretty good, would buy again.".into())),
+            (
+                "body",
+                Value::String("Pretty good, would buy again.".into()),
+            ),
             ("rating", Value::U64(4)),
         ])
     };
@@ -22,7 +25,10 @@ fn entity(i: usize) -> Value<'static> {
         ("name", Value::String(format!("Product {i}").into())),
         ("price", Value::U64(100 + i as u64)),
         ("inStock", Value::Bool(true)),
-        ("reviews", Value::Array(vec![review(0), review(1), review(2)])),
+        (
+            "reviews",
+            Value::Array(vec![review(0), review(1), review(2)]),
+        ),
     ])
 }
 
@@ -33,8 +39,11 @@ pub fn benchmarks(c: &mut Criterion) {
     let schema_metadata = SchemaMetadata::default();
     let mut group = c.benchmark_group("entity_merge");
 
-    for (label, unique) in [("unique", TARGETS), ("dup_50", TARGETS / 2), ("dup_90", TARGETS / 10)]
-    {
+    for (label, unique) in [
+        ("unique", TARGETS),
+        ("dup_50", TARGETS / 2),
+        ("dup_90", TARGETS / 10),
+    ] {
         let data = Value::Object(vec![(
             "products",
             Value::Array(
