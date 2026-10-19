@@ -1352,23 +1352,61 @@ fn qp_nested_include_skip_conditions_in_complex_products_query() -> Result<(), B
             },
           },
         },
-        Parallel {
-          Skip(if: $skipAuthor) {
+        Skip(if: $skipAuthor) {
+          Sequence {
+            Parallel {
+              Include(if: $nestedReviews) {
+                Include(if: $product) {
+                  Flatten(path: "topProducts.@.reviews.@.author.reviews.@.product") {
+                    Fetch(service: "products") {
+                      {
+                        ... on Product {
+                          __typename
+                          upc
+                        }
+                      } =>
+                      {
+                        ... on Product {
+                          price
+                          weight
+                          name
+                        }
+                      }
+                    },
+                  },
+                },
+              },
+              Flatten(path: "topProducts.@.reviews.@.author") {
+                Fetch(service: "accounts") {
+                  {
+                    ... on User {
+                      __typename
+                      id
+                    }
+                  } =>
+                  {
+                    ... on User {
+                      name
+                    }
+                  }
+                },
+              },
+            },
             Include(if: $nestedReviews) {
               Include(if: $product) {
                 Flatten(path: "topProducts.@.reviews.@.author.reviews.@.product") {
-                  Fetch(service: "products") {
+                  Fetch(service: "inventory") {
                     {
                       ... on Product {
                         __typename
+                        price
+                        weight
                         upc
                       }
                     } =>
                     {
                       ... on Product {
-                        price
-                        weight
-                        name
+                        shippingEstimate
                       }
                     }
                   },
@@ -1376,46 +1414,114 @@ fn qp_nested_include_skip_conditions_in_complex_products_query() -> Result<(), B
               },
             },
           },
-          Skip(if: $skipAuthor) {
-            Flatten(path: "topProducts.@.reviews.@.author") {
-              Fetch(service: "accounts") {
-                {
-                  ... on User {
-                    __typename
-                    id
-                  }
-                } =>
-                {
-                  ... on User {
-                    name
-                  }
-                }
-              },
-            },
-          },
         },
-        Skip(if: $skipAuthor) {
-          Include(if: $nestedReviews) {
-            Include(if: $product) {
-              Flatten(path: "topProducts.@.reviews.@.author.reviews.@.product") {
-                Fetch(service: "inventory") {
-                  {
-                    ... on Product {
-                      __typename
-                      price
-                      weight
-                      upc
-                    }
-                  } =>
-                  {
-                    ... on Product {
-                      shippingEstimate
-                    }
-                  }
-                },
-              },
-            },
-          },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn qp_conditioned_fetches_batch_with_unconditional_entity_fetch() -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let document = parse_operation(
+        r#"
+        query ($showConditional: Boolean!) {
+          first: topProducts(first: 1) {
+            upc
+            shippingEstimate @include(if: $showConditional)
+          }
+          second: topProducts(first: 2) {
+            upc
+            shippingEstimate @include(if: $showConditional)
+          }
+          always: topProducts(first: 3) {
+            upc
+            shippingEstimate
+          }
+        }
+      "#,
+    );
+
+    let query_plan =
+        build_query_plan_with_defaults("fixture/products-example.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{query_plan}"), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          query ($showConditional:Boolean!) {
+            first: topProducts(first: 1) {
+              ...a
+            }
+            second: topProducts(first: 2) {
+              ...a
+            }
+            always: topProducts(first: 3) {
+              ...b
+            }
+          }
+          fragment a on Product {
+            __typename
+            upc
+            ... on Product @include(if: $showConditional) {
+              ...b
+            }
+          }
+          fragment b on Product {
+            price
+            weight
+            __typename
+            upc
+          }
+        },
+        BatchFetch(service: "inventory") {
+          {
+            _e0 {
+              paths: [
+                "always.@"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  price
+                  weight
+                  upc
+                }
+              }
+            }
+            _e1 @include(if: $showConditional) {
+              paths: [
+                "second.@"
+                "first.@"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  price
+                  weight
+                  upc
+                }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Product {
+                ...a
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Product {
+                ...a
+              }
+            }
+          }
+          fragment a on Product {
+            shippingEstimate
+          }
         },
       },
     },
@@ -1466,43 +1572,43 @@ fn qp_abstract_interface_mixed_conditions_stay_scoped() -> Result<(), Box<dyn Er
         },
         Parallel {
           Include(if: $showReviews) {
-            Flatten(path: "products.@") {
-              Fetch(service: "reviews") {
-                {
-                  ... on Book {
-                    __typename
-                    id
+            Parallel {
+              Flatten(path: "products.@") {
+                Fetch(service: "reviews") {
+                  {
+                    ... on Book {
+                      __typename
+                      id
+                    }
+                    ... on Magazine {
+                      __typename
+                      id
+                    }
+                  } =>
+                  {
+                    ... on Book {
+                      reviewsCount
+                    }
+                    ... on Magazine {
+                      reviewsCount
+                    }
                   }
-                  ... on Magazine {
-                    __typename
-                    id
-                  }
-                } =>
-                {
-                  ... on Book {
-                    reviewsCount
-                  }
-                  ... on Magazine {
-                    reviewsCount
-                  }
-                }
+                },
               },
-            },
-          },
-          Include(if: $showReviews) {
-            Flatten(path: "products.@|[Book]") {
-              Fetch(service: "books") {
-                {
-                  ... on Book {
-                    __typename
-                    id
+              Flatten(path: "products.@|[Book]") {
+                Fetch(service: "books") {
+                  {
+                    ... on Book {
+                      __typename
+                      id
+                    }
+                  } =>
+                  {
+                    ... on Book {
+                      title
+                    }
                   }
-                } =>
-                {
-                  ... on Book {
-                    title
-                  }
-                }
+                },
               },
             },
           },
@@ -1736,8 +1842,8 @@ fn conditional_root_fragment_survives_merges() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Parallel {
-          Include(if: $x) {
+        Include(if: $x) {
+          Parallel {
             Flatten(path: "|[Query].userInB") {
               Fetch(service: "c") {
                 {
@@ -1754,8 +1860,6 @@ fn conditional_root_fragment_survives_merges() -> Result<(), Box<dyn Error>> {
                 }
               },
             },
-          },
-          Include(if: $x) {
             Flatten(path: "|[Query].userInB") {
               Fetch(service: "a") {
                 {
