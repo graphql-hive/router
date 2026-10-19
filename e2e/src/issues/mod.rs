@@ -3752,10 +3752,18 @@ mod issues_e2e_tests {
                     let body: serde_json::Value =
                         serde_json::from_slice(request.body.as_deref().unwrap_or_default())
                             .unwrap_or_default();
-                    seen_by_mocks
-                        .lock()
-                        .unwrap()
-                        .push(body["variables"]["representations"].to_string());
+                    // One list per entity call, a batch sends them as `__batch_reps_N`.
+                    // An alias skipped by its condition gets an empty one, nothing was sent for it.
+                    let variables = body["variables"].as_object().cloned().unwrap_or_default();
+                    seen_by_mocks.lock().unwrap().extend(
+                        variables
+                            .iter()
+                            .filter(|(name, _)| {
+                                *name == "representations" || name.starts_with("__batch_reps")
+                            })
+                            .filter(|(_, list)| list.as_array().is_some_and(|l| !l.is_empty()))
+                            .map(|(_, list)| list.to_string()),
+                    );
                 }
                 mocks(request)
             })

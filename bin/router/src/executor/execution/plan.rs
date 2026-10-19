@@ -1526,6 +1526,23 @@ impl<'exec> Executor<'exec> {
         let possible_types = &self.schema_metadata.possible_types;
 
         for alias_spec in &entity_batch.aliases {
+            let variable_name = alias_spec.representations_variable_name.as_str();
+
+            // The condition says the alias won't run, so we don't collect anything for it.
+            // The variable is still declared in the operation, it gets an empty list.
+            if !batch_alias_condition_met(alias_spec, self.variable_values) {
+                if !raw_variable_indices_by_name.contains_key(variable_name) {
+                    raw_variable_indices_by_name.insert(variable_name, raw_variable_values.len());
+                    raw_variable_values.push((variable_name, b"[]".to_vec()));
+                }
+                aliases.push(AliasBatchState {
+                    alias_spec,
+                    representation_hash_to_index: AHashMap::new(),
+                    paths: Vec::new(),
+                });
+                continue;
+            }
+
             let mut index = 0;
             let mut filtered_representations = Vec::new();
             filtered_representations.put(OPEN_BRACKET);
@@ -1611,7 +1628,6 @@ impl<'exec> Executor<'exec> {
                 });
             }
 
-            let variable_name = alias_spec.representations_variable_name.as_str();
             if !raw_variable_indices_by_name.contains_key(variable_name) {
                 raw_variable_indices_by_name.insert(variable_name, raw_variable_values.len());
                 raw_variable_values.push((variable_name, filtered_representations));
@@ -1745,6 +1761,28 @@ fn condition_node_by_variables<'a>(
     } else {
         condition_node.else_clause.as_deref()
     }
+}
+
+/// Same rules as `condition_node_by_variables`: a missing variable runs neither side.
+fn batch_alias_condition_met(
+    alias: &EntityBatchAlias,
+    variable_values: &Option<VariablesMap>,
+) -> bool {
+    let is_true = |name: &str| {
+        variable_values
+            .as_ref()
+            .and_then(|vars| vars.get(name))
+            .map(|value| matches!(value.as_ref(), ValueRef::Bool(true)))
+    };
+
+    alias
+        .include_if
+        .as_deref()
+        .is_none_or(|name| is_true(name) == Some(true))
+        && alias
+            .skip_if
+            .as_deref()
+            .is_none_or(|name| is_true(name) == Some(false))
 }
 
 fn select_fetch_variables<'a>(
@@ -2040,6 +2078,8 @@ mod tests {
                     requires: requires_from(requires_selection.clone()),
                     input_rewrites: None,
                     output_rewrites: None,
+                    include_if: None,
+                    skip_if: None,
                 },
                 EntityBatchAlias {
                     alias: "_e1".to_string(),
@@ -2048,6 +2088,8 @@ mod tests {
                     requires: requires_from(requires_selection),
                     input_rewrites: None,
                     output_rewrites: None,
+                    include_if: None,
+                    skip_if: None,
                 },
             ],
         };
