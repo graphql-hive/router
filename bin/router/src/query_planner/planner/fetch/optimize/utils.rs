@@ -511,8 +511,9 @@ impl FetchStepData<MultiTypeFetchStep> {
     }
 
     pub fn has_arguments_conflicts_with(&self, other: &Self) -> bool {
-        // same-object outputs can use different context variables even when their entity inputs match.
-        // keep those fetches apart so batching can put each output under its own alias.
+        // same-object outputs can use different context variables even when their
+        // entity inputs match. keep those fetches apart so batching can put each
+        // output under its own alias
         if self.response_path == other.response_path {
             let output_conflicts = FetchStepSelections::<MultiTypeFetchStep>::iter_matching_types(
                 &self.output,
