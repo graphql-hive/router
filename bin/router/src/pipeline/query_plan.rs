@@ -36,6 +36,7 @@ pub struct PlannedQuery {
 fn empty_planning_plan() -> QueryPlan<Planning> {
     QueryPlan {
         kind: QUERY_PLAN_KIND,
+        ready_schedule: None,
         node: None,
     }
 }
@@ -43,6 +44,7 @@ fn empty_planning_plan() -> QueryPlan<Planning> {
 static EMPTY_QUERY_PLAN: LazyLock<Arc<QueryPlan>> = LazyLock::new(|| {
     Arc::new(QueryPlan {
         kind: QUERY_PLAN_KIND,
+        ready_schedule: None,
         node: None,
     })
 });

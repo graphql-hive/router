@@ -59,6 +59,22 @@ pub struct QueryPlan<S: PlanState = Executable> {
     pub kind: &'static str, // "QueryPlan"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node: Option<PlanNode<S>>,
+    /// What each fetch waits for, so it can start as soon as those are done
+    /// instead of waiting for the whole wave. Only set for plans it knows how to run.
+    #[serde(skip)]
+    pub ready_schedule: Option<ReadySchedule>,
+}
+
+/// The fetches of a wave-by-wave plan (a Sequence of waves) and what each one waits for.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReadySchedule {
+    /// Where each fetch sits: (wave, position in the wave).
+    /// A wave that is not a Parallel holds one fetch, at position 0.
+    pub fetches: Vec<(usize, usize)>,
+    /// How many fetches each one waits for.
+    pub waiting_on: Vec<usize>,
+    /// The fetches that wait for each one.
+    pub dependents: Vec<Vec<usize>>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -225,6 +241,9 @@ pub struct BatchFetchNode<S: PlanState = Executable> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_scalar_paths: Option<CustomScalarPaths>,
     pub entity_batch: EntityBatch,
+    /// Ids of the fetches that got batched into this one.
+    #[serde(skip)]
+    pub fetch_node_ids: S::FetchNodeIds,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
