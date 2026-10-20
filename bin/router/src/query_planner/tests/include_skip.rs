@@ -1530,6 +1530,199 @@ fn qp_conditioned_fetches_batch_with_unconditional_entity_fetch() -> Result<(), 
     Ok(())
 }
 
+/// Known gap: `@include` and `@skip` on one field make two nested conditions,
+/// `Skip(if: $b) { Include(if: $a) { .. } }`. Only one level gets taken out of a condition, so
+/// this inventory fetch doesn't join the one for `always`, and it costs a second request.
+#[test]
+fn qp_nested_conditions_dont_batch_with_unconditional_entity_fetch() -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let document = parse_operation(
+        r#"
+        query ($a: Boolean!, $b: Boolean!) {
+          first: topProducts(first: 1) {
+            upc
+            shippingEstimate @include(if: $a) @skip(if: $b)
+          }
+          always: topProducts(first: 3) {
+            upc
+            shippingEstimate
+          }
+        }
+      "#,
+    );
+
+    let query_plan =
+        build_query_plan_with_defaults("fixture/products-example.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{query_plan}"), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          query ($a:Boolean!,$b:Boolean!) {
+            first: topProducts(first: 1) {
+              __typename
+              upc
+              ... on Product @skip(if: $b) @include(if: $a) {
+                ...a
+              }
+            }
+            always: topProducts(first: 3) {
+              ...a
+            }
+          }
+          fragment a on Product {
+            price
+            weight
+            __typename
+            upc
+          }
+        },
+        Parallel {
+          Flatten(path: "always.@") {
+            Fetch(service: "inventory") {
+              {
+                ... on Product {
+                  __typename
+                  price
+                  weight
+                  upc
+                }
+              } =>
+              {
+                ... on Product {
+                  shippingEstimate
+                }
+              }
+            },
+          },
+          Skip(if: $b) {
+            Include(if: $a) {
+              Flatten(path: "first.@") {
+                Fetch(service: "inventory") {
+                  {
+                    ... on Product {
+                      __typename
+                      price
+                      weight
+                      upc
+                    }
+                  } =>
+                  {
+                    ... on Product {
+                      shippingEstimate
+                    }
+                  }
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Known gap: the same conditions nested in a different order. `second` sits under
+/// `Include(if: $b) { Include(if: $a) { .. } }` and `first` under `Include(if: $a) { .. }`. Only the
+/// outer condition is compared, `$b` isn't `$a`, so with both true it's two inventory requests
+/// instead of one. The wfg `query-1` fixture hits this with two identical `service11` batches.
+#[test]
+fn qp_swapped_nested_conditions_dont_batch() -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let document = parse_operation(
+        r#"
+        query ($a: Boolean!, $b: Boolean!) {
+          first: topProducts(first: 1) {
+            upc
+            shippingEstimate @include(if: $a)
+          }
+          second: topProducts(first: 2) @include(if: $b) {
+            upc
+            shippingEstimate @include(if: $a)
+          }
+        }
+      "#,
+    );
+
+    let query_plan =
+        build_query_plan_with_defaults("fixture/products-example.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{query_plan}"), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          query ($a:Boolean!,$b:Boolean!) {
+            first: topProducts(first: 1) {
+              ...a
+            }
+            second: topProducts(first: 2) @include(if: $b) {
+              ...a
+            }
+          }
+          fragment a on Product {
+            __typename
+            upc
+            ... on Product @include(if: $a) {
+              price
+              weight
+              __typename
+              upc
+            }
+          }
+        },
+        Parallel {
+          Include(if: $b) {
+            Include(if: $a) {
+              Flatten(path: "second.@") {
+                Fetch(service: "inventory") {
+                  {
+                    ... on Product {
+                      __typename
+                      price
+                      weight
+                      upc
+                    }
+                  } =>
+                  {
+                    ... on Product {
+                      shippingEstimate
+                    }
+                  }
+                },
+              },
+            },
+          },
+          Include(if: $a) {
+            Flatten(path: "first.@") {
+              Fetch(service: "inventory") {
+                {
+                  ... on Product {
+                    __typename
+                    price
+                    weight
+                    upc
+                  }
+                } =>
+                {
+                  ... on Product {
+                    shippingEstimate
+                  }
+                }
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
 #[test]
 fn qp_abstract_interface_mixed_conditions_stay_scoped() -> Result<(), Box<dyn Error>> {
     init_logger();

@@ -1167,7 +1167,7 @@ fn optimize_plan_sequence(nodes: Vec<PlanNode>) -> Vec<PlanNode> {
 #[cfg(test)]
 mod tests {
     use ahash::HashSet;
-    use std::{collections::BTreeSet, fs, path::PathBuf};
+    use std::{collections::BTreeSet, fs, path::PathBuf, rc::Rc};
 
     use graphql_tools::parser::query as query_ast;
 
@@ -1592,6 +1592,107 @@ mod tests {
             }
             fragment a on Product {
               shippingEstimate
+            }
+          },
+        },
+        "#);
+    }
+
+    /// Known gap: every type combination becomes its own merge path. The fetch graph
+    /// (`batch_multi_type`) doesn't merge entity steps whose types differ at more than one
+    /// place, or that have two type conditions in a row (`|[I]|[A]`). Here both happen, so the
+    /// batch lists 8 paths that could be 2:
+    ///
+    /// ```text
+    /// items.@|[I]|[A|B].thing|[X|Y]
+    /// items.@|[I]|[A|B].other.thing|[X|Y]
+    /// ```
+    ///
+    /// The wfg `query-1` fixture has 4,564 paths like this, 201 once folded. The executor walks
+    /// each one from the root of the response, once for representations and once for results.
+    #[test]
+    fn optimize_parallel_node_lists_every_type_combination_as_its_own_path() {
+        let supergraph = test_supergraph_state();
+        let requires_query = "query { ... on Product { upc } }";
+        let entities_query = "
+          query($representations:[_Any!]!) {
+            _entities(representations: $representations) {
+              ... on Product { shippingEstimate }
+            }
+          }
+        ";
+        let field =
+            |name: &str| Segment::Field(FieldPathSegment::named(name.to_string()).into(), 0, None);
+        let types = |names: &[&str]| {
+            Segment::TypeCondition(
+                Rc::new(names.iter().map(|name| name.to_string()).collect()),
+                None,
+            )
+        };
+        // items.@|[I]|[<outer>].<middle..>.thing|[<inner>]
+        let fetch = |id, outer: &str, middle: &[&str], inner: &str| {
+            let mut segments = vec![
+                field("items"),
+                Segment::List,
+                types(&["I"]),
+                types(&[outer]),
+            ];
+            segments.extend(middle.iter().map(|name| field(name)));
+            segments.extend([field("thing"), types(&[inner])]);
+
+            let PlanNode::Flatten(mut flatten_node) =
+                flatten_entity_fetch_node(id, "inventory", "items", requires_query, entities_query)
+            else {
+                unreachable!("the helper makes a Flatten");
+            };
+            flatten_node.path = FlattenNodePath::from(&MergePath::new(segments));
+            PlanNode::Flatten(flatten_node)
+        };
+
+        let mut nodes = Vec::new();
+        for middle in [&[][..], &["other"][..]] {
+            for outer in ["A", "B"] {
+                for inner in ["X", "Y"] {
+                    nodes.push(fetch(nodes.len() as i64, outer, middle, inner));
+                }
+            }
+        }
+        let optimized = optimize_root_node(PlanNode::parallel(nodes), &supergraph)
+            .expect("optimize should work");
+
+        let query_plan = QueryPlan {
+            kind: "QueryPlan",
+            node: Some(optimized),
+        };
+
+        insta::assert_snapshot!(format!("{query_plan}"), @r#"
+        QueryPlan {
+          BatchFetch(service: "inventory") {
+            {
+              _e0 {
+                paths: [
+                  "items.@|[I]|[A].thing|[X]"
+                  "items.@|[I]|[A].thing|[Y]"
+                  "items.@|[I]|[B].thing|[X]"
+                  "items.@|[I]|[B].thing|[Y]"
+                  "items.@|[I]|[A].other.thing|[X]"
+                  "items.@|[I]|[A].other.thing|[Y]"
+                  "items.@|[I]|[B].other.thing|[X]"
+                  "items.@|[I]|[B].other.thing|[Y]"
+                ]
+                {
+                  ... on Product {
+                    upc
+                  }
+                }
+              }
+            }
+            {
+              _e0: _entities(representations: $__batch_reps_0) {
+                ... on Product {
+                  shippingEstimate
+                }
+              }
             }
           },
         },
