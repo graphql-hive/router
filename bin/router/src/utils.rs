@@ -68,3 +68,55 @@ pub trait MapAccessSerdeExt<'de>: de::MapAccess<'de> {
 }
 
 impl<'de, A> MapAccessSerdeExt<'de> for A where A: de::MapAccess<'de> {}
+
+/// Turns a `Vec<u8>` into `ntex::util::Bytes` without copying it.
+/// `Bytes::from(Vec<u8>)` copies, which for a response body is a second full copy of the response.
+pub fn vec_into_ntex_bytes(vec: Vec<u8>) -> ntex::util::Bytes {
+    ntex::util::Bytes::from_ext(VecStorage(vec))
+}
+
+struct VecStorage(Vec<u8>);
+
+// The Vec sits behind an Arc, so cloning a `Bytes` is a refcount bump.
+// `addr` is the `Arc<Vec<u8>>` pointer, `len` is the Vec's length.
+const VEC_STORAGE_VTABLE: ntex_bytes::StorageVTable = ntex_bytes::StorageVTable::new(
+    |addr, _| unsafe { (*addr.cast::<Vec<u8>>()).as_ptr() },
+    |_, len| len,
+    |addr, len| unsafe {
+        std::sync::Arc::increment_strong_count(addr.cast::<Vec<u8>>());
+        Some((addr, len))
+    },
+    |addr, _| unsafe { std::sync::Arc::decrement_strong_count(addr.cast::<Vec<u8>>()) },
+);
+
+impl ntex_bytes::StorageExt for VecStorage {
+    fn create(self) -> (*const u8, usize, &'static ntex_bytes::StorageVTable) {
+        let len = self.0.len();
+        let addr = std::sync::Arc::into_raw(std::sync::Arc::new(self.0));
+        (addr.cast::<u8>(), len, &VEC_STORAGE_VTABLE)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::vec_into_ntex_bytes;
+
+    #[test]
+    fn vec_into_ntex_bytes_keeps_the_data_through_clones_and_slices() {
+        let data: Vec<u8> = (0..200u8).collect();
+        let ptr = data.as_ptr();
+        let bytes = vec_into_ntex_bytes(data.clone());
+        assert_eq!(&bytes[..], &data[..]);
+
+        let clone = bytes.clone();
+        assert_eq!(clone.as_ptr(), bytes.as_ptr(), "a clone shares the buffer");
+        drop(bytes);
+        assert_eq!(&clone[..], &data[..], "the buffer outlives the original");
+
+        assert_eq!(&clone.slice(10..20)[..], &data[10..20]);
+        assert_eq!(&clone[..], &data[..]);
+
+        let moved = vec_into_ntex_bytes(data);
+        assert_eq!(moved.as_ptr(), ptr, "the Vec's buffer is used as is");
+    }
+}

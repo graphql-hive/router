@@ -266,7 +266,7 @@ async fn compress_full_body(
                 summary.set_response_bytes(compressed.len() as i64);
             }
 
-            Body::Bytes(Bytes::from(compressed))
+            Body::Bytes(crate::utils::vec_into_ntex_bytes(compressed))
         }
         _ => Body::Bytes(fallback),
     };

@@ -758,7 +758,7 @@ pub async fn execute_planned_request<'exec>(
             );
 
             Ok(SharedRouterResponse::Single(SharedRouterSingleResponse {
-                body: ntex::util::Bytes::from(result.body),
+                body: crate::utils::vec_into_ntex_bytes(result.body),
                 headers,
                 status: result.status_code,
                 error_count: result.error_count,
