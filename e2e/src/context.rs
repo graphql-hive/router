@@ -43,6 +43,355 @@ mod context_e2e_tests {
     }
 
     #[ntex::test]
+    async fn remote_context_producers_finish_before_the_consumer() {
+        for multi_hop in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let router = start_router(
+                if multi_hop {
+                    "context-multi-hop"
+                } else {
+                    "context-remote-producer"
+                },
+                &server,
+            )
+            .await;
+            let step = Arc::new(AtomicUsize::new(0));
+            let root = server
+                .mock("POST", "/a")
+                .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(
+                    json!({"data": {"t": if multi_hop {
+                        json!({"__typename": "T", "a": {"__typename": "A", "id": "a"},
+                            "u": {"__typename": "U", "id": "u"}})
+                    } else {
+                        json!({"__typename": "T", "id": "t",
+                            "u": {"__typename": "U", "id": "u"}})
+                    }}})
+                    .to_string(),
+                )
+                .expect(1)
+                .create_async()
+                .await;
+            let producer_step = Arc::clone(&step);
+            let producer = server
+                .mock("POST", "/b")
+                .match_request(move |r| {
+                    let request = body(r);
+                    let typename = if multi_hop { "A" } else { "T" };
+                    let id = if multi_hop { "a" } else { "t" };
+                    if request["variables"]["representations"]
+                        != json!([{"__typename": typename, "id": id}])
+                    {
+                        return false;
+                    }
+                    assert_eq!(producer_step.fetch_add(1, Ordering::SeqCst), 0);
+                    true
+                })
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(
+                    json!({"data": {"_entities": [if multi_hop {
+                    json!({"b": {"__typename": "B", "id": "b"}})
+                } else { json!({"prop": "remote"}) }]}})
+                    .to_string(),
+                )
+                .expect(1)
+                .create_async()
+                .await;
+            let nested_step = Arc::clone(&step);
+            let nested = server
+                .mock("POST", "/a")
+                .match_request(move |r| {
+                    if body(r)["variables"]["representations"]
+                        != json!([{"__typename": "B", "id": "b"}])
+                    {
+                        return false;
+                    }
+                    assert_eq!(nested_step.fetch_add(1, Ordering::SeqCst), 1);
+                    true
+                })
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(r#"{"data":{"_entities":[{"c":{"prop":"remote"}}]}}"#)
+                .expect(usize::from(multi_hop))
+                .create_async()
+                .await;
+            let consumer_step = Arc::clone(&step);
+            let consumer = server
+                .mock("POST", "/a")
+                .match_request(move |r| {
+                    if body(r)["variables"]
+                        != json!({
+                            "representations": [{"__typename": "U", "id": "u"}],
+                            "__context_0": "remote"
+                        })
+                    {
+                        return false;
+                    }
+                    assert_eq!(
+                        consumer_step.fetch_add(1, Ordering::SeqCst),
+                        if multi_hop { 2 } else { 1 }
+                    );
+                    true
+                })
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(r#"{"data":{"_entities":[{"field":42}]}}"#)
+                .expect(1)
+                .create_async()
+                .await;
+            let response = router
+                .send_graphql_request("{ t { u { field } } }", None, None)
+                .await;
+            let response: Value =
+                serde_json::from_str(&response.json_body_string_pretty().await).unwrap();
+            assert_eq!(response, json!({"data": {"t": {"u": {"field": 42}}}}));
+            assert_eq!(step.load(Ordering::SeqCst), if multi_hop { 3 } else { 2 });
+            root.assert_async().await;
+            producer.assert_async().await;
+            nested.assert_async().await;
+            consumer.assert_async().await;
+        }
+    }
+
+    #[ntex::test]
+    async fn query_root_context_injects_a_hidden_sibling() {
+        let mut server = mockito::Server::new_async().await;
+        let router = start_router("context-query-root", &server).await;
+        let root = server.mock("POST", "/a")
+            .match_request(|r| {
+                let request = body(r);
+                let query = request["query"].as_str().unwrap();
+                !query.contains("_entities") && query.contains("me{locale}")
+            })
+            .with_status(200).with_header("content-type", "application/json")
+            .with_body(r#"{"data":{"__typename":"Query","me":{"locale":"en-GB"},"product":{"__typename":"Product","id":"1"}}}"#)
+            .expect(1).create_async().await;
+        let consumer = server
+            .mock("POST", "/a")
+            .match_request(|r| {
+                body(r)["variables"]
+                    == json!({
+                        "representations": [{"__typename": "Product", "id": "1"}],
+                        "__context_0": "en-GB"
+                    })
+            })
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":{"_entities":[{"price":42}]}}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let response = router
+            .send_graphql_request("{ product { price } }", None, None)
+            .await;
+        let response: Value =
+            serde_json::from_str(&response.json_body_string_pretty().await).unwrap();
+        assert_eq!(response, json!({"data": {"product": {"price": 42}}}));
+        root.assert_async().await;
+        consumer.assert_async().await;
+    }
+
+    #[ntex::test]
+    async fn list_context_argument_preserves_nullable_elements() {
+        let mut server = mockito::Server::new_async().await;
+        let router = start_router("context-list-argument", &server).await;
+        let root = server.mock("POST", "/a")
+            .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+            .with_status(200).with_header("content-type", "application/json")
+            .with_body(r#"{"data":{"t":{"__typename":"T","prop":["USD",null,"EUR"],"u":{"__typename":"U","id":"1"}}}}"#)
+            .expect(1).create_async().await;
+        let consumer = server
+            .mock("POST", "/a")
+            .match_request(|r| {
+                let request = body(r);
+                request["variables"]
+                    == json!({
+                        "representations": [{"__typename": "U", "id": "1"}],
+                        "__context_0": ["USD", null, "EUR"]
+                    })
+                    && request["query"]
+                        .as_str()
+                        .unwrap()
+                        .contains("$__context_0:[String]")
+            })
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":{"_entities":[{"field":3}]}}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let response = router
+            .send_graphql_request("{ t { u { field } } }", None, None)
+            .await;
+        let response: Value =
+            serde_json::from_str(&response.json_body_string_pretty().await).unwrap();
+        assert_eq!(response, json!({"data": {"t": {"u": {"field": 3}}}}));
+        root.assert_async().await;
+        consumer.assert_async().await;
+    }
+
+    #[ntex::test]
+    async fn context_fetch_failures_preserve_dependencies_and_null_bubbling() {
+        for producer_fails in [true, false] {
+            let mut server = mockito::Server::new_async().await;
+            let router = start_router_with_config(
+                "context-fetch-failures",
+                &server,
+                r#"
+            error_masking:
+              all:
+                enabled: false
+            "#,
+            )
+            .await;
+            let root_response = if producer_fails {
+                json!({"data": null, "errors": [{"message": "producer failed", "path": ["t"]}]})
+            } else {
+                json!({"data": {"t": {"__typename": "T", "id": "t", "prop": "available",
+                    "u": {"__typename": "U", "id": "u"}}}})
+            };
+            let root = server
+                .mock("POST", "/a")
+                .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(root_response.to_string())
+                .expect(1)
+                .create_async()
+                .await;
+            let consumer = server
+                .mock("POST", "/a")
+                .match_request(move |r| {
+                    let request = body(r);
+                    request["query"].as_str().unwrap().contains("_entities")
+                        && (producer_fails
+                            || request["variables"]
+                                == json!({
+                                    "representations": [{"__typename": "U", "id": "u"}],
+                                    "__context_0": "available"
+                                }))
+                })
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(r#"{"data":{"_entities":[{"field":42}]}}"#)
+                .expect(usize::from(!producer_fails))
+                .create_async()
+                .await;
+            let unrelated = server.mock("POST", "/b")
+                .match_request(|r| body(r)["variables"]["representations"] == json!([{"__typename": "U", "id": "u"}]))
+                .with_status(200).with_header("content-type", "application/json")
+                .with_body(r#"{"data":null,"errors":[{"message":"unrelated failed","path":["_entities",0,"b"]}]}"#)
+                .expect(usize::from(!producer_fails)).create_async().await;
+            let query = if producer_fails {
+                "{ t { id u { field } } }"
+            } else {
+                "{ t { id u { field b } } }"
+            };
+            let response = router.send_graphql_request(query, None, None).await;
+            let response: Value =
+                serde_json::from_str(&response.json_body_string_pretty().await).unwrap();
+            assert!(response["data"].is_null(), "{response}");
+            if producer_fails {
+                insta::assert_json_snapshot!(response, @r#"
+                {
+                  "data": null,
+                  "errors": [
+                    {
+                      "message": "producer failed",
+                      "path": [
+                        "t"
+                      ],
+                      "extensions": {
+                        "code": "DOWNSTREAM_SERVICE_ERROR",
+                        "service": "a"
+                      }
+                    }
+                  ]
+                }
+                "#);
+            } else {
+                insta::assert_json_snapshot!(response, @r#"
+                {
+                  "data": null,
+                  "errors": [
+                    {
+                      "message": "unrelated failed",
+                      "path": [
+                        "_entities",
+                        0,
+                        "b"
+                      ],
+                      "extensions": {
+                        "code": "DOWNSTREAM_SERVICE_ERROR",
+                        "service": "b",
+                        "affectedPath": "t.u"
+                      }
+                    }
+                  ]
+                }
+                "#);
+            }
+            root.assert_async().await;
+            consumer.assert_async().await;
+            unrelated.assert_async().await;
+        }
+    }
+
+    #[ntex::test]
+    async fn shared_context_names_do_not_leak_between_unrelated_objects() {
+        for conditions in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let router = start_router(
+                if conditions {
+                    "context-shared-conditions"
+                } else {
+                    "context-shared-duck"
+                },
+                &server,
+            )
+            .await;
+            let root = server.mock("POST", "/a")
+                .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+                .with_status(200).with_header("content-type", "application/json")
+                .with_body(json!({"data": {
+                    "foo": {"__typename": "Foo", "prop": "foo-value", "u": {"__typename": "U", "id": "same"}},
+                    "bar": {"__typename": "Bar", if conditions { "prop2" } else { "prop" }: "bar-value", "u": {"__typename": "U", "id": "same"}}
+                }}).to_string())
+                .expect(1).create_async().await;
+            let consumer = server
+                .mock("POST", "/a")
+                .match_request(|r| {
+                    body(r)["variables"]
+                        == json!({
+                            "__batch_reps_0": [{"__typename": "U", "id": "same"}],
+                            "__batch_reps_1": [{"__typename": "U", "id": "same"}],
+                            "__context_0": "foo-value", "__context_1": "bar-value"
+                        })
+                })
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(r#"{"data":{"_e0":[{"field":2}],"_e1":[{"field":1}]}}"#)
+                .expect(1)
+                .create_async()
+                .await;
+            let response = router
+                .send_graphql_request("{ foo { u { field } } bar { u { field } } }", None, None)
+                .await;
+            let response: Value =
+                serde_json::from_str(&response.json_body_string_pretty().await).unwrap();
+            assert_eq!(
+                response,
+                json!({"data": {"foo": {"u": {"field": 1}}, "bar": {"u": {"field": 2}}}})
+            );
+            root.assert_async().await;
+            consumer.assert_async().await;
+        }
+    }
+
+    #[ntex::test]
     async fn chunks_context_groups_into_aliased_requests() {
         let mut server = mockito::Server::new_async().await;
         let router = start_router("context-basic", &server).await;
@@ -474,53 +823,50 @@ mod context_e2e_tests {
     async fn interface_context() {
         let mut server = mockito::Server::new_async().await;
         let router = start_router("context-basic", &server).await;
-        let _root = server
-            .mock("POST", "/a")
-            .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(
-                r#"{"data":{"account":{
-                "__typename":"User",
-                "currency":"USD",
-                "txs":[{"__typename":"Transaction","id":"1"}]
-            }}}"#,
-            )
-            .expect(1)
-            .create_async()
-            .await;
-        let entities = server
-            .mock("POST", "/a")
-            .match_request(|r| {
-                let body = body(r);
-                body["variables"]["__context_0"] == "USD"
-            })
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"data":{"_entities":[{"fromInterface":1}]}}"#)
-            .expect(1)
-            .create_async()
-            .await;
-
-        let res = router
-            .send_graphql_request(r#"{ account { txs { fromInterface } } }"#, None, None)
-            .await;
-
-        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
-    {
-      "data": {
-        "account": {
-          "txs": [
-            {
-              "fromInterface": 1
-            }
-          ]
+        for (typename, currency) in [("User", "USD"), ("Other", "EUR")] {
+            let root = server
+                .mock("POST", "/a")
+                .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(
+                    json!({"data": {"account": {
+                        "__typename": typename,
+                        "currency": currency,
+                        "txs": [{"__typename": "Transaction", "id": "1"}]
+                    }}})
+                    .to_string(),
+                )
+                .expect(1)
+                .create_async()
+                .await;
+            let entities = server
+                .mock("POST", "/a")
+                .match_request(move |r| {
+                    body(r)["variables"]
+                        == json!({
+                            "__context_0": currency,
+                            "representations": [{"__typename": "Transaction", "id": "1"}]
+                        })
+                })
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(r#"{"data":{"_entities":[{"fromInterface":1}]}}"#)
+                .expect(1)
+                .create_async()
+                .await;
+            let res = router
+                .send_graphql_request(r#"{ account { txs { fromInterface } } }"#, None, None)
+                .await;
+            let response: Value =
+                serde_json::from_str(&res.json_body_string_pretty().await).unwrap();
+            assert_eq!(
+                response,
+                json!({"data": {"account": {"txs": [{"fromInterface": 1}]}}})
+            );
+            root.assert_async().await;
+            entities.assert_async().await;
         }
-      }
-    }
-    "#);
-        _root.assert_async().await;
-        entities.assert_async().await;
     }
 
     #[ntex::test]

@@ -846,7 +846,7 @@ fn remote_context_producer_precedes_consumer() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(plan.to_string(), @r#"
     QueryPlan {
       Sequence {
-        Fetch(service: "Subgraph1") {
+        Fetch(service: "a") {
           {
             t {
               __typename
@@ -859,7 +859,7 @@ fn remote_context_producer_precedes_consumer() -> Result<(), Box<dyn Error>> {
           }
         },
         Flatten(path: "t") {
-          Fetch(service: "Subgraph2") {
+          Fetch(service: "b") {
             {
               ... on T {
                 __typename
@@ -874,7 +874,7 @@ fn remote_context_producer_precedes_consumer() -> Result<(), Box<dyn Error>> {
           },
         },
         Flatten(path: "t.u") {
-          Fetch(service: "Subgraph1") {
+          Fetch(service: "a") {
             {
               ... on U {
                 __typename
@@ -899,7 +899,7 @@ fn remote_context_producer_precedes_consumer() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
-            "serviceName": "Subgraph1",
+            "serviceName": "a",
             "operationKind": "query",
             "operation": "{t{__typename id u{__typename id}}}"
           },
@@ -912,7 +912,7 @@ fn remote_context_producer_precedes_consumer() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
-              "serviceName": "Subgraph2",
+              "serviceName": "b",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on T{prop}}}",
               "requires": [
@@ -945,7 +945,7 @@ fn remote_context_producer_precedes_consumer() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
-              "serviceName": "Subgraph1",
+              "serviceName": "a",
               "variableUsages": [
                 "__context_0"
               ],
@@ -1004,7 +1004,7 @@ fn context_selection_crosses_subgraphs_multiple_times() -> Result<(), Box<dyn Er
     insta::assert_snapshot!(plan.to_string(), @r#"
     QueryPlan {
       Sequence {
-        Fetch(service: "Subgraph1") {
+        Fetch(service: "a") {
           {
             t {
               __typename
@@ -1020,7 +1020,7 @@ fn context_selection_crosses_subgraphs_multiple_times() -> Result<(), Box<dyn Er
           }
         },
         Flatten(path: "t.a") {
-          Fetch(service: "Subgraph2") {
+          Fetch(service: "b") {
             {
               ... on A {
                 __typename
@@ -1038,7 +1038,7 @@ fn context_selection_crosses_subgraphs_multiple_times() -> Result<(), Box<dyn Er
           },
         },
         Flatten(path: "t.a.b") {
-          Fetch(service: "Subgraph1") {
+          Fetch(service: "a") {
             {
               ... on B {
                 __typename
@@ -1055,7 +1055,7 @@ fn context_selection_crosses_subgraphs_multiple_times() -> Result<(), Box<dyn Er
           },
         },
         Flatten(path: "t.u") {
-          Fetch(service: "Subgraph1") {
+          Fetch(service: "a") {
             {
               ... on U {
                 __typename
@@ -1080,7 +1080,7 @@ fn context_selection_crosses_subgraphs_multiple_times() -> Result<(), Box<dyn Er
         "nodes": [
           {
             "kind": "Fetch",
-            "serviceName": "Subgraph1",
+            "serviceName": "a",
             "operationKind": "query",
             "operation": "{t{__typename a{__typename id} u{__typename id}}}"
           },
@@ -1096,7 +1096,7 @@ fn context_selection_crosses_subgraphs_multiple_times() -> Result<(), Box<dyn Er
             ],
             "node": {
               "kind": "Fetch",
-              "serviceName": "Subgraph2",
+              "serviceName": "b",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on A{b{__typename id}}}}",
               "requires": [
@@ -1132,7 +1132,7 @@ fn context_selection_crosses_subgraphs_multiple_times() -> Result<(), Box<dyn Er
             ],
             "node": {
               "kind": "Fetch",
-              "serviceName": "Subgraph1",
+              "serviceName": "a",
               "operationKind": "query",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on B{c{prop}}}}",
               "requires": [
@@ -1165,7 +1165,7 @@ fn context_selection_crosses_subgraphs_multiple_times() -> Result<(), Box<dyn Er
             ],
             "node": {
               "kind": "Fetch",
-              "serviceName": "Subgraph1",
+              "serviceName": "a",
               "variableUsages": [
                 "__context_0"
               ],
@@ -1233,7 +1233,7 @@ fn query_root_context_selects_a_sibling_field() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(plan.to_string(), @r#"
     QueryPlan {
       Sequence {
-        Fetch(service: "Subgraph1") {
+        Fetch(service: "a") {
           {
             __typename
             me {
@@ -1246,7 +1246,7 @@ fn query_root_context_selects_a_sibling_field() -> Result<(), Box<dyn Error>> {
           }
         },
         Flatten(path: "product") {
-          Fetch(service: "Subgraph1") {
+          Fetch(service: "a") {
             {
               ... on Product {
                 __typename
@@ -1271,7 +1271,7 @@ fn query_root_context_selects_a_sibling_field() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
-            "serviceName": "Subgraph1",
+            "serviceName": "a",
             "operationKind": "query",
             "operation": "{__typename me{locale} product{__typename id}}"
           },
@@ -1284,7 +1284,7 @@ fn query_root_context_selects_a_sibling_field() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
-              "serviceName": "Subgraph1",
+              "serviceName": "a",
               "variableUsages": [
                 "__context_0"
               ],
@@ -1346,7 +1346,7 @@ fn context_is_resolved_before_a_key_transition() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(plan.to_string(), @r#"
     QueryPlan {
       Sequence {
-        Fetch(service: "Subgraph1") {
+        Fetch(service: "a") {
           {
             customer {
               __typename
@@ -1361,7 +1361,7 @@ fn context_is_resolved_before_a_key_transition() -> Result<(), Box<dyn Error>> {
           }
         },
         Flatten(path: "customer.child") {
-          Fetch(service: "Subgraph2") {
+          Fetch(service: "b") {
             {
               ... on Child {
                 __typename
@@ -1386,7 +1386,7 @@ fn context_is_resolved_before_a_key_transition() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
-            "serviceName": "Subgraph1",
+            "serviceName": "a",
             "operationKind": "query",
             "operation": "{customer{__typename identifiers{legacyUserId} child{__typename id}}}"
           },
@@ -1402,7 +1402,7 @@ fn context_is_resolved_before_a_key_transition() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
-              "serviceName": "Subgraph2",
+              "serviceName": "b",
               "variableUsages": [
                 "__context_0"
               ],
@@ -1464,7 +1464,7 @@ fn context_value_reuses_an_existing_fetch() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(plan.to_string(), @r#"
     QueryPlan {
       Sequence {
-        Fetch(service: "Subgraph1") {
+        Fetch(service: "a") {
           {
             t {
               __typename
@@ -1477,7 +1477,7 @@ fn context_value_reuses_an_existing_fetch() -> Result<(), Box<dyn Error>> {
           }
         },
         Flatten(path: "t.u") {
-          Fetch(service: "Subgraph2") {
+          Fetch(service: "b") {
             {
               ... on U {
                 __typename
@@ -1502,7 +1502,7 @@ fn context_value_reuses_an_existing_fetch() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
-            "serviceName": "Subgraph1",
+            "serviceName": "a",
             "operationKind": "query",
             "operation": "{t{__typename prop u{__typename id}}}"
           },
@@ -1518,7 +1518,7 @@ fn context_value_reuses_an_existing_fetch() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
-              "serviceName": "Subgraph2",
+              "serviceName": "b",
               "variableUsages": [
                 "__context_0"
               ],
@@ -1577,7 +1577,7 @@ fn list_context_argument_preserves_its_type() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(plan.to_string(), @r#"
     QueryPlan {
       Sequence {
-        Fetch(service: "Subgraph1") {
+        Fetch(service: "a") {
           {
             t {
               __typename
@@ -1590,7 +1590,7 @@ fn list_context_argument_preserves_its_type() -> Result<(), Box<dyn Error>> {
           }
         },
         Flatten(path: "t.u") {
-          Fetch(service: "Subgraph1") {
+          Fetch(service: "a") {
             {
               ... on U {
                 __typename
@@ -1615,7 +1615,7 @@ fn list_context_argument_preserves_its_type() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
-            "serviceName": "Subgraph1",
+            "serviceName": "a",
             "operationKind": "query",
             "operation": "{t{__typename prop u{__typename id}}}"
           },
@@ -1631,7 +1631,7 @@ fn list_context_argument_preserves_its_type() -> Result<(), Box<dyn Error>> {
             ],
             "node": {
               "kind": "Fetch",
-              "serviceName": "Subgraph1",
+              "serviceName": "a",
               "variableUsages": [
                 "__context_0"
               ],
@@ -1690,7 +1690,7 @@ fn multiple_context_arguments_merge_into_an_ancestor_fetch() -> Result<(), Box<d
     insta::assert_snapshot!(plan.to_string(), @r#"
     QueryPlan {
       Sequence {
-        Fetch(service: "Subgraph2") {
+        Fetch(service: "b") {
           {
             customer {
               __typename
@@ -1703,7 +1703,7 @@ fn multiple_context_arguments_merge_into_an_ancestor_fetch() -> Result<(), Box<d
           }
         },
         Flatten(path: "customer") {
-          Fetch(service: "Subgraph3") {
+          Fetch(service: "c") {
             {
               ... on Customer {
                 __typename
@@ -1736,7 +1736,7 @@ fn multiple_context_arguments_merge_into_an_ancestor_fetch() -> Result<(), Box<d
         "nodes": [
           {
             "kind": "Fetch",
-            "serviceName": "Subgraph2",
+            "serviceName": "b",
             "operationKind": "query",
             "operation": "{customer{__typename id identifiers{id5} mid}}"
           },
@@ -1749,7 +1749,7 @@ fn multiple_context_arguments_merge_into_an_ancestor_fetch() -> Result<(), Box<d
             ],
             "node": {
               "kind": "Fetch",
-              "serviceName": "Subgraph3",
+              "serviceName": "c",
               "variableUsages": [
                 "__context_0",
                 "__context_1"
