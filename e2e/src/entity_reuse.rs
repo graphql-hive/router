@@ -2,17 +2,13 @@
 mod entity_reuse_e2e_tests {
     use std::collections::BTreeMap;
 
-    use crate::testkit::{ClientResponseExt, EnvVarsGuard, TestRouter, TestSubgraphs};
+    use crate::testkit::{ClientResponseExt, TestRouter, TestSubgraphs};
 
     // In the bench operation, every product, user and inventory entity the last two waves ask
     // for was already fetched by `topProducts`, `users` and the first inventory fetch.
-    // With reuse on, those fetches copy them instead of calling the subgraphs again.
+    // Reuse is on by default, so those fetches copy them instead of calling the subgraphs again.
     #[ntex::test]
     async fn bench_operation_copies_entities_it_already_has() {
-        let _env = EnvVarsGuard::new()
-            .set("HIVE_ROUTER_EXPERIMENTAL_ENTITY_REUSE", "1")
-            .apply()
-            .await;
         let subgraphs = TestSubgraphs::builder().build().start().await;
 
         let router = TestRouter::builder()
