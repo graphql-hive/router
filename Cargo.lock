@@ -237,7 +237,7 @@ dependencies = [
  "memchr",
  "proc-macro2",
  "quote",
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "syn 2.0.117",
 ]
 
@@ -256,7 +256,7 @@ version = "0.15.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d0af3691ba3af77949c0b5a3925444b85cb58a0184cc7fec16c68ba2e7be868"
 dependencies = [
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "unicode-ident",
  "winnow",
 ]
@@ -345,7 +345,7 @@ dependencies = [
  "num-traits",
  "pin-project-lite",
  "regex",
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -1813,6 +1813,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "dhat"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98cd11d84628e233de0ce467de10b8633f4ddaecafadefc86e13b84b8739b827"
+dependencies = [
+ "backtrace",
+ "lazy_static",
+ "mintex",
+ "parking_lot",
+ "rustc-hash 1.1.0",
+ "serde",
+ "serde_json",
+ "thousands",
+]
+
+[[package]]
 name = "diff"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2790,6 +2806,7 @@ dependencies = [
  "criterion",
  "dashmap",
  "datadog-opentelemetry",
+ "dhat",
  "envconfig",
  "flate2",
  "futures",
@@ -2862,7 +2879,7 @@ dependencies = [
  "reqwest-middleware",
  "reqwest-retry",
  "retry-policies",
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "rustls",
  "ryu",
  "schemars 1.2.3",
@@ -4090,7 +4107,7 @@ dependencies = [
  "rmp",
  "rmp-serde",
  "rmpv",
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "serde",
  "serde-transcode",
  "serde_json",
@@ -4127,7 +4144,7 @@ dependencies = [
  "rmp",
  "rmp-serde",
  "rmpv",
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "serde",
  "serde-transcode",
  "serde_json",
@@ -4340,6 +4357,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "mintex"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c505b3e17ed6b70a7ed2e67fbb2c560ee327353556120d6e72f5232b6880d536"
+
+[[package]]
 name = "mio"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4452,7 +4475,7 @@ dependencies = [
  "napi-build",
  "napi-sys",
  "nohash-hasher",
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "serde",
  "serde_json",
  "tokio",
@@ -6236,7 +6259,7 @@ dependencies = [
  "pin-project-lite",
  "quinn-proto",
  "quinn-udp",
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "rustls",
  "socket2",
  "thiserror 2.0.21",
@@ -6258,7 +6281,7 @@ dependencies = [
  "rand 0.10.3",
  "rand_pcg",
  "ring",
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "rustls",
  "rustls-pki-types",
  "slab",
@@ -6849,6 +6872,12 @@ name = "rustc-demangle"
 version = "0.1.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b50b8869d9fc858ce7266cce0194bd74df58b9d0e3f6df3a9fc8eb470d95c09d"
+
+[[package]]
+name = "rustc-hash"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 
 [[package]]
 name = "rustc-hash"
@@ -8037,6 +8066,12 @@ dependencies = [
  "quote",
  "syn 3.0.3",
 ]
+
+[[package]]
+name = "thousands"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3bf63baf9f5039dadc247375c29eb13706706cfde997d0330d05aa63a77d8820"
 
 [[package]]
 name = "thread_local"

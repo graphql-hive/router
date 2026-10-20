@@ -26,6 +26,8 @@ path = "src/config/config_schema_generator.rs"
 noop_otlp_exporter = []
 testing = []
 graphiql = []
+# Heap profiling, see PROFILING.md. Swaps mimalloc for dhat.
+dhat-heap = ["dep:dhat"]
 
 [[bench]]
 name = "persisted_documents_matcher_benches"
@@ -126,6 +128,7 @@ humantime = { workspace = true }
 recloser = { workspace = true }
 
 mimalloc = { version = "0.1.48", features = ["v3"] }
+dhat = { version = "0.3", optional = true }
 mediatype = "0.21.0"
 headers-accept = "0.3.0"
 async-stream = "0.3.6"
