@@ -408,9 +408,7 @@ impl RouterSharedState {
 fn render_laboratory_page(
     config: &crate::config::laboratory::LaboratoryConfig,
 ) -> Result<Bytes, SharedStateError> {
-    let html = render_laboratory_html(crate::LABORATORY_HTML, config).map_err(Box::new)?;
-
-    Ok(Bytes::from(html))
+    Ok(render_laboratory_html(crate::LABORATORY_HTML, config).map_err(Box::new)?)
 }
 
 /// The `graphiql` feature swaps the Laboratory for a static GraphiQL page, which has nowhere to
