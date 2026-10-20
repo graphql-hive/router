@@ -4,10 +4,16 @@ mod entity_batching_e2e_tests {
 
     use sonic_rs::JsonValueTrait;
 
-    use crate::testkit::{ClientResponseExt, TestRouter, TestSubgraphs};
+    use crate::testkit::{ClientResponseExt, EnvVarsGuard, TestRouter, TestSubgraphs};
 
     #[ntex::test]
     async fn measure_bench_operation_subgraph_calls() {
+        // With entity reuse, most of these batches never go out, so it's off here.
+        // See `entity_reuse.rs` for the counts with it on.
+        let _env = EnvVarsGuard::new()
+            .set("HIVE_ROUTER_EXPERIMENTAL_ENTITY_REUSE", "0")
+            .apply()
+            .await;
         let subgraphs = TestSubgraphs::builder().build().start().await;
 
         let router = TestRouter::builder()
@@ -106,18 +112,20 @@ mod entity_batching_e2e_tests {
             data[0], data[1],
             "splitting batches must not change the data"
         );
+        // Entity reuse copies what the last accounts, inventory and products fetches would ask
+        // for, so only reviews still has two aliases to split.
         insta::assert_snapshot!(sonic_rs::to_string_pretty(&counts).unwrap(), @r#"
         [
           {
-            "accounts": 2,
-            "inventory": 2,
-            "products": 2,
+            "accounts": 1,
+            "inventory": 1,
+            "products": 1,
             "reviews": 1
           },
           {
-            "accounts": 2,
-            "inventory": 2,
-            "products": 2,
+            "accounts": 1,
+            "inventory": 1,
+            "products": 1,
             "reviews": 2
           }
         ]
