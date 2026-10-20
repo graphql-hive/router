@@ -139,9 +139,11 @@ impl AuthorizationMetadata {
         field_rules: &TypeFieldRulesMap,
     ) -> HashMap<String, bool> {
         let mut result = HashMap::default();
+        // one set for all types, cleared in between, borrowing names from the schema
+        let mut visited = HashSet::default();
 
         for type_name in definitions.keys() {
-            let mut visited = HashSet::default();
+            visited.clear();
             let has_auth = Self::type_has_any_auth_recursive(
                 type_name,
                 schema_metadata,
@@ -155,17 +157,16 @@ impl AuthorizationMetadata {
         result
     }
 
-    fn type_has_any_auth_recursive(
-        type_name: &str,
-        schema_metadata: &SchemaMetadata,
+    fn type_has_any_auth_recursive<'s>(
+        type_name: &'s str,
+        schema_metadata: &'s SchemaMetadata,
         type_rules: &TypeRulesMap,
         field_rules: &TypeFieldRulesMap,
-        visited: &mut HashSet<String>,
+        visited: &mut HashSet<&'s str>,
     ) -> bool {
-        if visited.contains(type_name) {
+        if !visited.insert(type_name) {
             return false;
         }
-        visited.insert(type_name.to_string());
 
         if type_rules.contains_key(type_name) {
             return true;
