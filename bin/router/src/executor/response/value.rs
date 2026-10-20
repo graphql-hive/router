@@ -311,9 +311,65 @@ impl Display for Value<'_> {
     }
 }
 
-struct ValueVisitor<'a> {
-    // We need a marker to hold the lifetime 'a.
-    _marker: std::marker::PhantomData<&'a ()>,
+/// Holds the children of every object and array that's still being read, so each one gets
+/// allocated once, at its final length. sonic doesn't give a length up front, and growing
+/// from empty means regrows plus up to 2x unused capacity on every container.
+#[derive(Default)]
+pub struct DeserializeScratch<'de> {
+    elements: Vec<Value<'de>>,
+    entries: Vec<(&'de str, Value<'de>)>,
+}
+
+impl<'de> DeserializeScratch<'de> {
+    #[inline]
+    pub(crate) fn elements_start(&self) -> usize {
+        self.elements.len()
+    }
+
+    #[inline]
+    pub(crate) fn push_element(&mut self, value: Value<'de>) {
+        self.elements.push(value);
+    }
+
+    /// Everything pushed since `start`, as an exactly sized array.
+    #[inline]
+    pub(crate) fn finish_array(&mut self, start: usize) -> Value<'de> {
+        Value::Array(self.elements.drain(start..).collect())
+    }
+
+    #[inline]
+    pub(crate) fn entries_start(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[inline]
+    pub(crate) fn push_entry(&mut self, key: &'de str, value: Value<'de>) {
+        self.entries.push((key, value));
+    }
+
+    /// Everything pushed since `start`, as an exactly sized object.
+    #[inline]
+    pub(crate) fn finish_object(&mut self, start: usize) -> Value<'de> {
+        Value::Object(self.entries.drain(start..).collect())
+    }
+}
+
+/// Deserializes a `Value`, sharing one scratch across the whole tree.
+pub struct ScratchSeed<'s, 'de>(pub &'s mut DeserializeScratch<'de>);
+
+impl<'de> de::DeserializeSeed<'de> for ScratchSeed<'_, 'de> {
+    type Value = Value<'de>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(ValueVisitor { scratch: self.0 })
+    }
+}
+
+struct ValueVisitor<'s, 'de> {
+    scratch: &'s mut DeserializeScratch<'de>,
 }
 
 impl<'de> de::Deserialize<'de> for Value<'de> {
@@ -321,13 +377,14 @@ impl<'de> de::Deserialize<'de> for Value<'de> {
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_any(ValueVisitor {
-            _marker: std::marker::PhantomData,
-        })
+        de::DeserializeSeed::deserialize(
+            ScratchSeed(&mut DeserializeScratch::default()),
+            deserializer,
+        )
     }
 }
 
-impl<'de> Visitor<'de> for ValueVisitor<'de> {
+impl<'de> Visitor<'de> for ValueVisitor<'_, 'de> {
     type Value = Value<'de>;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -376,28 +433,27 @@ impl<'de> Visitor<'de> for ValueVisitor<'de> {
         Ok(Value::Null)
     }
 
-    // For arrays, Serde recursively calls `deserialize` for the inner type.
     fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
     where
         A: SeqAccess<'de>,
     {
-        let mut elements = Vec::with_capacity(seq.size_hint().unwrap_or(0));
-        while let Some(elem) = seq.next_element()? {
-            elements.push(elem);
+        let start = self.scratch.elements_start();
+        while let Some(elem) = seq.next_element_seed(ScratchSeed(&mut *self.scratch))? {
+            self.scratch.push_element(elem);
         }
-        Ok(Value::Array(elements))
+        Ok(self.scratch.finish_array(start))
     }
 
-    // For objects, the same happens for keys and values.
     fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
     where
         M: MapAccess<'de>,
     {
-        let mut entries = Vec::with_capacity(map.size_hint().unwrap_or(0));
-        while let Some((key, value)) = map.next_entry()? {
-            entries.push((key, value));
+        let start = self.scratch.entries_start();
+        while let Some(key) = map.next_key::<&'de str>()? {
+            let value = map.next_value_seed(ScratchSeed(&mut *self.scratch))?;
+            self.scratch.push_entry(key, value);
         }
-        Ok(Value::Object(entries))
+        Ok(self.scratch.finish_object(start))
     }
 }
 
@@ -491,6 +547,33 @@ mod tests {
 
         let keys: Vec<_> = value.as_object().unwrap().iter().map(|(k, _)| *k).collect();
         assert_eq!(keys, ["b", "a", "c"]);
+    }
+
+    #[test]
+    fn deserialized_containers_are_exactly_sized() {
+        fn assert_exact(value: &Value) {
+            match value {
+                Value::Array(arr) => {
+                    assert_eq!(arr.capacity(), arr.len());
+                    arr.iter().for_each(assert_exact);
+                }
+                Value::Object(obj) => {
+                    assert_eq!(obj.capacity(), obj.len());
+                    obj.iter().for_each(|(_, v)| assert_exact(v));
+                }
+                _ => {}
+            }
+        }
+
+        let bytes = br#"{"a":[1,2,3,4,5],"b":{"c":1,"d":[{"e":1},{}],"f":[]},"g":1,"h":2,"i":3}"#;
+        let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
+        let value = Value::deserialize(&mut deserializer).unwrap();
+
+        assert_exact(&value);
+        assert_eq!(
+            sonic_rs::to_string(&value).unwrap(),
+            std::str::from_utf8(bytes).unwrap()
+        );
     }
 
     #[test]
