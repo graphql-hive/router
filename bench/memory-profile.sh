@@ -22,8 +22,9 @@ cd "$REPO_ROOT"
 
 OUT_DIR="$REPO_ROOT/bench/results/memory"
 ROUTER_CONFIG="$REPO_ROOT/${ROUTER_CONFIG:-bench/configs/default.config.yaml}"
-# fixed request count, so totals of two runs can be compared
-REQUESTS="${REQUESTS:-1000}"
+# fixed request count, so totals of two runs can be compared.
+# Every request allocates the same way, so 200 is plenty, and dhat makes each one slow.
+REQUESTS="${REQUESTS:-200}"
 CONCURRENCY="${CONCURRENCY:-10}"
 # not the usual 4000/4200, so it can run next to a regular benchmark
 ROUTER_PORT="${ROUTER_PORT:-4400}"
