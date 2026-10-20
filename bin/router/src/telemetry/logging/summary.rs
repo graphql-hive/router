@@ -126,10 +126,16 @@ impl RequestSummary {
 
     pub fn record_subgraph_call_duration(&self, name: &str, duration: Duration) {
         if let Ok(mut durations) = self.subgraph_calls_duration.lock() {
-            durations
-                .entry(name.to_string())
-                .or_default()
-                .push(duration);
+            // `entry` would need an owned key on every call, even when the subgraph is known
+            match durations.get_mut(name) {
+                Some(calls) => calls.push(duration),
+                None => {
+                    // same capacity a first `push` would pick, so a second call doesn't regrow
+                    let mut calls = Vec::with_capacity(4);
+                    calls.push(duration);
+                    durations.insert(name.to_string(), calls);
+                }
+            }
         }
     }
 
