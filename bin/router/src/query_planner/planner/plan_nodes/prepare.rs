@@ -25,6 +25,7 @@ impl FetchNode<Planning> {
             planner_requires: (),
             input_rewrites: self.input_rewrites,
             output_rewrites: self.output_rewrites,
+            entity_reuse: self.entity_reuse,
         }
     }
 }

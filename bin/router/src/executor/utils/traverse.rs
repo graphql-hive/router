@@ -150,13 +150,13 @@ fn walk_mut<'a, Callback>(
     }
 }
 
-pub fn traverse_and_callback<'a, Callback>(
-    current_data: &'a Value<'a>,
-    remaining_path: &'a [PathSegment],
-    possible_types: &'a PossibleTypes,
+pub fn traverse_and_callback<'d, 'a, Callback>(
+    current_data: &'d Value<'a>,
+    remaining_path: &[PathSegment],
+    possible_types: &PossibleTypes,
     callback: &mut Callback,
 ) where
-    Callback: FnMut(&'a Value<'a>),
+    Callback: FnMut(&'d Value<'a>),
 {
     if remaining_path.is_empty() {
         if let Value::Array(arr) = current_data {

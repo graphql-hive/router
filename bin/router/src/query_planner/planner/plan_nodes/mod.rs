@@ -168,6 +168,18 @@ pub struct FetchNode<S: PlanState = Executable> {
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_rewrites: Option<Vec<FetchRewrite>>,
+    /// Where entities this fetch asks for might already be in the response.
+    #[serde(skip)]
+    pub entity_reuse: Option<Box<EntityReuse>>,
+}
+
+/// Places in the response, filled by earlier fetches, that hold objects of the type an entity
+/// fetch resolves, with all the fields it asks for. An entity whose representation matches one
+/// of those objects gets the `copy` fields copied from it, instead of going to the subgraph.
+#[derive(Debug, Clone)]
+pub struct EntityReuse {
+    pub sources: Vec<FlattenNodePath>,
+    pub copy: RequiresSelectionSet,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -404,6 +416,9 @@ pub struct EntityBatchAlias {
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_rewrites: Option<Vec<FetchRewrite>>,
+    /// Where entities this alias asks for might already be in the response.
+    #[serde(skip)]
+    pub entity_reuse: Option<Box<EntityReuse>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -681,6 +696,7 @@ impl FetchNode<Planning> {
                     planner_requires: Some(Box::new(planner_requires)),
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),
+                    entity_reuse: None,
                 }
             }
             false => {
@@ -709,6 +725,7 @@ impl FetchNode<Planning> {
                     requires: None,
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),
+                    entity_reuse: None,
                 }
             }
         }
@@ -1042,7 +1059,7 @@ mod stored_size_tests {
         for (name, actual, expected) in [
             ("PlanNode", size_of::<PlanNode>(), 40),
             ("ConditionNode", size_of::<ConditionNode>(), 40),
-            ("FetchNode", size_of::<FetchNode>(), 224),
+            ("FetchNode", size_of::<FetchNode>(), 232),
             ("BatchFetchNode", size_of::<BatchFetchNode>(), 160),
             (
                 "SubgraphFetchOperation",

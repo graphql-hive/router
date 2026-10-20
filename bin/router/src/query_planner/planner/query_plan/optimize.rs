@@ -71,7 +71,7 @@ use crate::query_planner::{
     planner::error::QueryPlanError,
     planner::plan_nodes::planning::{
         custom_scalar_paths_for_entities_selection, BatchFetchNode, CustomScalarPaths, EntityBatch,
-        EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
+        EntityBatchAlias, EntityReuse, FetchRewrite, FlattenNodePath, PlanNode,
     },
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
 };
@@ -187,9 +187,30 @@ impl<'a> BatchFetchBuilder<'a> {
             requires: RequiresSelectionSet::from(&representative.requires),
             input_rewrites: representative.input_rewrites.clone(),
             output_rewrites: representative.output_rewrites.clone(),
+            entity_reuse: Self::merge_entity_reuse(shape_group),
         });
 
         Ok(())
+    }
+
+    /// Fetches in one alias ask for the same fields, so they copy the same fields too.
+    /// The batch starts only once every one of them could have, so every place any of them
+    /// could look at is filled by then.
+    fn merge_entity_reuse(shape_group: &[EntityFetch]) -> Option<Box<EntityReuse>> {
+        let mut merged: Option<Box<EntityReuse>> = None;
+        for reuse in shape_group.iter().filter_map(|c| c.entity_reuse.as_deref()) {
+            match merged.as_mut() {
+                None => merged = Some(Box::new(reuse.clone())),
+                Some(merged) => {
+                    for source in &reuse.sources {
+                        if !merged.sources.contains(source) {
+                            merged.sources.push(source.clone());
+                        }
+                    }
+                }
+            }
+        }
+        merged
     }
 
     fn collect_merge_paths(shape_group: &[EntityFetch]) -> Vec<FlattenNodePath> {
@@ -320,6 +341,7 @@ struct EntityFetch {
     output_rewrites: Option<Vec<FetchRewrite>>,
     shape_key: ShapeKey,
     non_representations_variable_definitions: Vec<VariableDefinition>,
+    entity_reuse: Option<Box<EntityReuse>>,
 }
 
 impl EntityFetch {
@@ -413,6 +435,7 @@ impl EntityFetch {
             output_rewrites,
             shape_key,
             non_representations_variable_definitions,
+            entity_reuse: fetch_node.entity_reuse.clone(),
         }))
     }
 }
@@ -2301,6 +2324,7 @@ mod tests {
             planner_requires: Some(Box::new(requires)),
             input_rewrites: None,
             output_rewrites: None,
+            entity_reuse: None,
         };
 
         let path = FlattenNodePath::from(&MergePath::new(vec![
@@ -2369,6 +2393,7 @@ mod tests {
             planner_requires: None,
             input_rewrites: None,
             output_rewrites: None,
+            entity_reuse: None,
         }
     }
 

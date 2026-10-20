@@ -65,9 +65,9 @@ fn bench_operation_fetches_wait_only_for_their_parents() -> Result<(), Box<dyn E
     1 (wave 0): Fetch(accounts) waits on []
     2 (wave 1): Flatten(topProducts.@, inventory) waits on [0]
     3 (wave 1): BatchFetch(reviews, 2 fetches) waits on [0, 1]
-    4 (wave 2): BatchFetch(products, 3 fetches) waits on [3]
-    5 (wave 2): BatchFetch(accounts, 2 fetches) waits on [3]
-    6 (wave 3): BatchFetch(inventory, 3 fetches) waits on [4]
+    4 (wave 2): BatchFetch(products, 3 fetches) waits on [0, 3]
+    5 (wave 2): BatchFetch(accounts, 2 fetches) waits on [1, 3]
+    6 (wave 3): BatchFetch(inventory, 3 fetches) waits on [2, 4]
     ");
 
     Ok(())

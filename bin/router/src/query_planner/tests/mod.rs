@@ -1,5 +1,6 @@
 mod alias;
 mod arguments;
+mod entity_reuse;
 mod fragments;
 mod generated;
 mod include_skip;
