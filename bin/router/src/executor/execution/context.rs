@@ -387,6 +387,45 @@ mod tests {
     }
 
     #[test]
+    fn excessive_parent_navigation_sends_null() {
+        // u has only the root as an ancestor, but the context rewrite asks for three parents.
+        // walking past the root must send null without panicking or dropping u's representation
+        let data = sonic_rs::from_str(r#"{"u":{"__typename":"U","id":"1"}}"#).unwrap();
+        let path: FlattenNodePath = vec![PathSegment::Field("u".into())].into();
+        let definition = parse_operation("{ __typename id }").definitions.remove(0);
+        let graphql_tools::parser::query::Definition::Operation(
+            graphql_tools::parser::query::OperationDefinition::SelectionSet(selection),
+        ) = definition
+        else {
+            panic!("selection");
+        };
+        let requires = RequiresSelectionSet::from(&SelectionSet::from(selection));
+        let rewrites = [KeyRenamer {
+            path: vec![FetchNodePathSegment::Parent; 3],
+            rename_key_to: "__context_0".into(),
+        }];
+        let names = ["__context_0".into()];
+        let (groups, hashes) = collect_context_entities(
+            &data,
+            [path.as_ref()],
+            &requires,
+            None,
+            Some(&rewrites),
+            &names,
+            &PossibleTypes::default(),
+            None,
+        );
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].variables, vec![("__context_0", b"null".to_vec())]);
+        assert_eq!(
+            groups[0].representations,
+            br#"[{"__typename":"U","id":"1"}]"#
+        );
+        assert_eq!(hashes[0].len(), 1);
+        assert!(hashes[0][0].is_some());
+    }
+
+    #[test]
     fn selection_preserves_lists_and_checks_types() {
         let data: Value<'_> = sonic_rs::from_str(
             r#"{"__typename":"User", "codes":[{"code":"USD"}, null, {"code":"EUR"}]}"#,
