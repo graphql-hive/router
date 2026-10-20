@@ -744,8 +744,8 @@ pub enum ExecutionJob<'exec> {
         operation: &'exec SubgraphFetchOperation,
         response: SubgraphResponse<'exec>,
         flatten_node_path: &'exec FlattenNodePath,
-        representation_hashes: Vec<Option<u64>>,
-        representation_hash_to_index: AHashMap<u64, usize>,
+        // For each target, in walk order: which returned entity goes into it.
+        entity_indexes: Vec<Option<usize>>,
         output_rewrites: Option<&'exec [FetchRewrite]>,
     },
     BatchFetch {
@@ -758,13 +758,15 @@ pub enum ExecutionJob<'exec> {
 
 pub struct AliasBatchState<'exec> {
     alias_spec: &'exec EntityBatchAlias,
-    representation_hash_to_index: AHashMap<u64, usize>,
+    // How many representations we sent for this alias.
+    entity_count: usize,
     paths: Vec<AliasPathState<'exec>>,
 }
 
 struct AliasPathState<'exec> {
     merge_path: ResponsePathRef<'exec>,
-    representation_hashes: Arc<Vec<Option<u64>>>,
+    // For each target on this path, in walk order: which returned entity goes into it.
+    entity_indexes: Arc<Vec<Option<usize>>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1000,10 +1002,7 @@ impl<'exec> Executor<'exec> {
                         .of_subgraph(&batch_fetch_node.service_name),
                 );
 
-                if aliases
-                    .iter()
-                    .all(|alias| alias.representation_hash_to_index.is_empty())
-                {
+                if aliases.iter().all(|alias| alias.entity_count == 0) {
                     // All alias lists are empty, so nothing to fetch.
                     // We skip the network call to save time.
                     debug!(
@@ -1060,7 +1059,7 @@ impl<'exec> Executor<'exec> {
                     .schema_metadata
                     .entity_keys
                     .of_subgraph(&fetch_node.service_name);
-                let mut representation_hashes: Vec<Option<u64>> = Vec::new();
+                let mut entity_indexes: Vec<Option<usize>> = Vec::new();
                 let mut representation_hash_to_index: AHashMap<u64, usize> = AHashMap::new();
                 let arena = bumpalo::Bump::new();
 
@@ -1074,15 +1073,17 @@ impl<'exec> Executor<'exec> {
                     &self.schema_metadata.possible_types,
                     &mut |entity| {
                         if entity.is_null() {
-                            representation_hashes.push(None);
+                            entity_indexes.push(None);
                             return;
                         }
 
                         let hash = entity.to_hash(required_selections, possible_types);
-                        representation_hashes.push(Some(hash));
                         let is_first_representation = representation_hash_to_index.is_empty();
                         let vacant_entry = match representation_hash_to_index.entry(hash) {
-                            Entry::Occupied(_) => return,
+                            Entry::Occupied(entry) => {
+                                entity_indexes.push(Some(*entry.get()));
+                                return;
+                            }
                             Entry::Vacant(vacant_entry) => vacant_entry,
                         };
 
@@ -1110,14 +1111,17 @@ impl<'exec> Executor<'exec> {
 
                         if is_projected {
                             vacant_entry.insert(index);
+                            entity_indexes.push(Some(index));
                             index += 1;
+                        } else {
+                            entity_indexes.push(None);
                         }
                     },
                 );
 
                 filtered_representations.put(CLOSE_BRACKET);
 
-                if representation_hash_to_index.is_empty() {
+                if index == 0 {
                     return None;
                 }
 
@@ -1144,8 +1148,7 @@ impl<'exec> Executor<'exec> {
                         flatten_node_path: &flatten_node.path,
                         response: fetch_job.response(),
                         subgraph_name: fetch_node.service_name.as_str(),
-                        representation_hashes,
-                        representation_hash_to_index,
+                        entity_indexes,
                         output_rewrites: fetch_node.output_rewrites.as_deref(),
                     })
                     .boxed(),
@@ -1273,8 +1276,7 @@ impl<'exec> Executor<'exec> {
                     ExecutionJob::FlattenFetch {
                         mut response,
                         flatten_node_path,
-                        representation_hashes,
-                        ref representation_hash_to_index,
+                        ref entity_indexes,
                         output_rewrites,
                         ..
                     } => {
@@ -1303,11 +1305,7 @@ impl<'exec> Executor<'exec> {
                                 .map(|_| HashMap::with_capacity(entities.len()));
                             let mut entities = EntitiesToMerge::new(
                                 &mut entities,
-                                representation_hashes
-                                    .iter()
-                                    .flatten()
-                                    .filter_map(|hash| representation_hash_to_index.get(hash))
-                                    .copied(),
+                                entity_indexes.iter().flatten().copied(),
                             );
                             traverse_and_callback_mut(
                                 &mut ctx.data,
@@ -1315,16 +1313,10 @@ impl<'exec> Executor<'exec> {
                                 self.schema_metadata,
                                 initial_error_path,
                                 &mut |target, error_path| {
-                                    let hash = representation_hashes.get(index).copied();
+                                    let entity_index = entity_indexes.get(index);
                                     index += 1;
 
-                                    let Some(Some(hash)) = hash else {
-                                        return;
-                                    };
-
-                                    if let Some(entity_index) =
-                                        representation_hash_to_index.get(&hash)
-                                    {
+                                    if let Some(Some(entity_index)) = entity_index {
                                         if let (Some(error_path), Some(entity_index_error_map)) =
                                             (error_path, entity_index_error_map.as_mut())
                                         {
@@ -1527,7 +1519,7 @@ impl<'exec> Executor<'exec> {
             }
         }
 
-        if alias_state.representation_hash_to_index.is_empty() {
+        if alias_state.entity_count == 0 {
             return entity_index_error_map;
         }
 
@@ -1536,8 +1528,7 @@ impl<'exec> Executor<'exec> {
             alias_state
                 .paths
                 .iter()
-                .flat_map(|path_state| path_state.representation_hashes.iter().flatten())
-                .filter_map(|hash| alias_state.representation_hash_to_index.get(hash))
+                .flat_map(|path_state| path_state.entity_indexes.iter().flatten())
                 .copied(),
         );
 
@@ -1556,16 +1547,10 @@ impl<'exec> Executor<'exec> {
                 self.schema_metadata,
                 initial_error_path,
                 &mut |target_data, error_path| {
-                    let hash = path_state.representation_hashes.get(index).copied();
+                    let entity_index = path_state.entity_indexes.get(index);
                     index += 1;
 
-                    let Some(Some(hash)) = hash else {
-                        return;
-                    };
-
-                    // Find matching entity index from hash->index map
-                    if let Some(entity_index) = alias_state.representation_hash_to_index.get(&hash)
-                    {
+                    if let Some(Some(entity_index)) = entity_index {
                         // If this alias has errors, we also collect target paths
                         // so one subgraph error can be copied to all matching targets.
                         if let (Some(error_path), Some(entity_index_error_map)) =
@@ -1613,7 +1598,7 @@ impl<'exec> Executor<'exec> {
             filtered_representations.put(OPEN_BRACKET);
             let mut representation_hash_to_index: AHashMap<u64, usize> = AHashMap::new();
             let arena = bumpalo::Bump::new();
-            let mut path_hashes_by_index: Vec<Option<Arc<Vec<Option<u64>>>>> =
+            let mut path_indexes_by_index: Vec<Option<Arc<Vec<Option<usize>>>>> =
                 vec![None; alias_spec.merge_paths.len()];
 
             let mut path_groups: Vec<(ResponsePathRef<'_>, Vec<usize>)> =
@@ -1629,21 +1614,23 @@ impl<'exec> Executor<'exec> {
             }
 
             for (merge_path, grouped_target_indices) in path_groups {
-                let mut representation_hashes: Vec<Option<u64>> = Vec::new();
+                let mut entity_indexes: Vec<Option<usize>> = Vec::new();
 
                 let required_selections = alias_spec.requires.root_selections();
 
                 traverse_and_callback(data, merge_path.as_slice(), possible_types, &mut |entity| {
                     if entity.is_null() {
-                        representation_hashes.push(None);
+                        entity_indexes.push(None);
                         return;
                     }
 
                     let hash = entity.to_hash(required_selections, possible_types);
-                    representation_hashes.push(Some(hash));
                     let is_first_representation = representation_hash_to_index.is_empty();
                     let vacant_entry = match representation_hash_to_index.entry(hash) {
-                        Entry::Occupied(_) => return,
+                        Entry::Occupied(entry) => {
+                            entity_indexes.push(Some(*entry.get()));
+                            return;
+                        }
                         Entry::Vacant(vacant_entry) => vacant_entry,
                     };
 
@@ -1670,14 +1657,17 @@ impl<'exec> Executor<'exec> {
 
                     if is_projected {
                         vacant_entry.insert(index);
+                        entity_indexes.push(Some(index));
                         index += 1;
+                    } else {
+                        entity_indexes.push(None);
                     }
                 });
 
-                let representation_hashes = Arc::new(representation_hashes);
+                let entity_indexes = Arc::new(entity_indexes);
 
                 for path_index in grouped_target_indices {
-                    path_hashes_by_index[path_index] = Some(Arc::clone(&representation_hashes));
+                    path_indexes_by_index[path_index] = Some(Arc::clone(&entity_indexes));
                 }
             }
 
@@ -1687,7 +1677,7 @@ impl<'exec> Executor<'exec> {
             for (path_index, merge_path) in alias_spec.merge_paths.iter().enumerate() {
                 paths.push(AliasPathState {
                     merge_path,
-                    representation_hashes: path_hashes_by_index[path_index]
+                    entity_indexes: path_indexes_by_index[path_index]
                         .take()
                         .unwrap_or_else(|| Arc::new(Vec::new())),
                 });
@@ -1701,7 +1691,7 @@ impl<'exec> Executor<'exec> {
 
             aliases.push(AliasBatchState {
                 alias_spec,
-                representation_hash_to_index,
+                entity_count: index,
                 paths,
             });
         }
