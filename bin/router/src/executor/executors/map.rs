@@ -58,7 +58,8 @@ type SubgraphName = String;
 type SubgraphEndpoint = String;
 type ExecutorsBySubgraphMap =
     DashMap<SubgraphName, DashMap<SubgraphEndpoint, SubgraphExecutorBoxedArc>>;
-type StaticEndpointsBySubgraphMap = DashMap<SubgraphName, SubgraphEndpoint>;
+// Arc, so resolving a static endpoint for every subgraph call doesn't copy the URL.
+type StaticEndpointsBySubgraphMap = DashMap<SubgraphName, Arc<str>>;
 type ExpressionEndpointsBySubgraphMap = HashMap<SubgraphName, VrlProgram>;
 type TimeoutsBySubgraph = DashMap<SubgraphName, DurationOrProgram>;
 
@@ -416,7 +417,7 @@ impl SubgraphExecutorMap {
                                     self.subscription_executors_by_subgraph
                                         .get(subgraph_name)
                                         .and_then(|endpoints| {
-                                            endpoints.get(&endpoint_str).and_then(|executor| {
+                                            endpoints.get(&*endpoint_str).and_then(|executor| {
                                                 let id = WebSocketConnectionId::new(
                                                     subgraph_name,
                                                     executor.endpoint().clone(),
@@ -652,7 +653,7 @@ impl SubgraphExecutorMap {
         &self,
         subgraph_name: &str,
         client_request: &ClientRequestDetails<'_>,
-    ) -> Result<String, SubgraphExecutorError> {
+    ) -> Result<Arc<str>, SubgraphExecutorError> {
         let expression = self
             .expression_endpoints_by_subgraph
             .get(subgraph_name)
@@ -666,9 +667,8 @@ impl SubgraphExecutorMap {
             let original_url_value = VrlValue::Bytes(
                 self.static_endpoints_by_subgraph
                     .get(subgraph_name)
-                    .map(|endpoint| endpoint.value().clone())
-                    .ok_or_else(|| SubgraphExecutorError::StaticEndpointNotFound)?
-                    .into(),
+                    .map(|endpoint| bytes::Bytes::copy_from_slice(endpoint.value().as_bytes()))
+                    .ok_or_else(|| SubgraphExecutorError::StaticEndpointNotFound)?,
             );
 
             let subgraph_value =
@@ -685,7 +685,7 @@ impl SubgraphExecutorMap {
             })?;
 
             match endpoint_result.as_str() {
-                Some(s) => Ok(s.to_string()),
+                Some(s) => Ok(Arc::from(s)),
                 None => Err(SubgraphExecutorError::EndpointExpressionWrongType),
             }
         } else {
@@ -761,7 +761,7 @@ impl SubgraphExecutorMap {
     /// or when resolving the expression (to have the original URL available there).
     fn register_static_endpoint(&self, subgraph_name: &str, endpoint_str: &str) {
         self.static_endpoints_by_subgraph
-            .insert(subgraph_name.to_string(), endpoint_str.to_string());
+            .insert(subgraph_name.to_string(), Arc::from(endpoint_str));
     }
 
     /// Converts a resolved HTTP endpoint into the exact WebSocket pool key endpoint.
