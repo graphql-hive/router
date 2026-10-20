@@ -152,7 +152,7 @@ pub async fn graphql_request_handler(
     if *response_mode == ResponseMode::Laboratory {
         return Ok(web::HttpResponse::Ok()
             .header(CONTENT_TYPE, TEXT_HTML_MIME)
-            .body(shared_state.laboratory_html.clone()));
+            .body(shared_state.laboratory_page()));
     }
 
     let started_at = Instant::now();
