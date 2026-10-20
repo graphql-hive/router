@@ -60,4 +60,67 @@ mod entity_batching_e2e_tests {
         "#
         );
     }
+
+    #[ntex::test]
+    async fn max_aliases_per_request_splits_batches() {
+        let mut data = Vec::new();
+        let mut counts = Vec::new();
+        for max_aliases in [15, 1] {
+            let subgraphs = TestSubgraphs::builder().build().start().await;
+            let router = TestRouter::builder()
+                .with_subgraphs(&subgraphs)
+                .inline_config(format!(
+                    r#"
+                      supergraph:
+                        source: file
+                        path: supergraph.graphql
+                      traffic_shaping:
+                        all:
+                          dedupe_enabled: false
+                          max_aliases_per_request: {max_aliases}
+                      "#,
+                ))
+                .build()
+                .start()
+                .await;
+
+            let res = router
+                .send_graphql_request(include_str!("../../bench/operation.graphql"), None, None)
+                .await;
+            assert!(res.status().is_success(), "Expected 200 OK");
+            let json_body = res.json_body().await;
+            assert!(json_body["errors"].is_null(), "expected no GraphQL errors");
+            data.push(sonic_rs::to_string(&json_body["data"]).unwrap());
+
+            let mut subgraph_request_counts: BTreeMap<&str, usize> = BTreeMap::new();
+            for subgraph in ["accounts", "inventory", "products", "reviews"] {
+                let request_count = subgraphs
+                    .get_requests_log(subgraph)
+                    .map_or(0, |requests| requests.len());
+                subgraph_request_counts.insert(subgraph, request_count);
+            }
+            counts.push(subgraph_request_counts);
+        }
+
+        assert_eq!(
+            data[0], data[1],
+            "splitting batches must not change the data"
+        );
+        insta::assert_snapshot!(sonic_rs::to_string_pretty(&counts).unwrap(), @r#"
+        [
+          {
+            "accounts": 2,
+            "inventory": 2,
+            "products": 2,
+            "reviews": 1
+          },
+          {
+            "accounts": 2,
+            "inventory": 2,
+            "products": 2,
+            "reviews": 2
+          }
+        ]
+        "#);
+    }
 }

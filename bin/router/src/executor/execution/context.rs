@@ -8,20 +8,21 @@ use xxhash_rust::xxh3::Xxh3;
 
 use crate::{
     executor::{
-        execution::{error::PlanExecutionErrorKind, rewrites::FetchRewriteExt},
+        execution::rewrites::FetchRewriteExt,
         introspection::schema::PossibleTypes,
         projection::request::project_requires,
-        response::value::Value,
+        response::{
+            graphql_error::GraphQLErrorPathSegment, subgraph_response::SubgraphResponse,
+            value::Value,
+        },
         utils::traverse::traverse_and_callback,
     },
     query_planner::{
-        ast::requires::RequiresSelectionSet,
+        ast::{operation::ContextAliasedOperation, requires::RequiresSelectionSet},
         planner::plan_nodes::{FetchNodePathSegment, FetchRewrite, KeyRenamer, ResponsePathRef},
         state::entity_keys::KeysByType,
     },
 };
-
-pub(super) const MAX_CONTEXT_GROUPS: usize = 1024;
 
 pub(super) type RepresentationHashes = Arc<Vec<Option<u64>>>;
 
@@ -69,7 +70,6 @@ fn select_value<'v>(
 /// Walks every flatten path, deduplicates the entities by hash and projects their
 /// representations. Entities are grouped by the tuple of their context values (one request per
 /// group), without context variables there is at most one group. Identical paths share hashes.
-/// Context groups consume the shared operation budget before allocating representations.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn collect_context_entities<'a>(
     data: &Value<'_>,
@@ -80,8 +80,7 @@ pub(super) fn collect_context_entities<'a>(
     context_variables: &'a [String],
     possible_types: &PossibleTypes,
     subgraph_keys: Option<&KeysByType>,
-    remaining_context_groups: &mut usize,
-) -> Result<(Vec<ContextGroup<'a>>, Vec<RepresentationHashes>), PlanExecutionErrorKind> {
+) -> (Vec<ContextGroup<'a>>, Vec<RepresentationHashes>) {
     let mut names: Vec<&str> = context_variables.iter().map(String::as_str).collect();
     let rewrites = context_rewrites.unwrap_or_default();
     for rewrite in rewrites {
@@ -107,11 +106,7 @@ pub(super) fn collect_context_entities<'a>(
             continue;
         }
         let mut hashes = Vec::new();
-        let mut exceeded_budget = false;
         let mut collect = |entity: &Value<'_>, objects: &[&Value<'_>]| {
-            if exceeded_budget {
-                return;
-            }
             if entity.is_null() {
                 hashes.push(None);
                 return;
@@ -144,11 +139,6 @@ pub(super) fn collect_context_entities<'a>(
             } else if let Some(index) = group_by_values.get(&values) {
                 *index
             } else {
-                if *remaining_context_groups == 0 {
-                    exceeded_budget = true;
-                    return;
-                }
-                *remaining_context_groups -= 1;
                 let index = groups.len();
                 groups.push(ContextGroup {
                     variables: names.iter().copied().zip(values.iter().cloned()).collect(),
@@ -196,9 +186,6 @@ pub(super) fn collect_context_entities<'a>(
             }
         };
         traverse_and_callback(data, path.as_slice(), possible_types, &mut collect);
-        if exceeded_budget {
-            return Err(PlanExecutionErrorKind::ContextGroupLimitExceeded);
-        }
         let hashes = Arc::new(hashes);
         seen_paths.push((path, Arc::clone(&hashes)));
         path_hashes.push(hashes);
@@ -206,7 +193,81 @@ pub(super) fn collect_context_entities<'a>(
     for group in &mut groups {
         group.representations.push(b']');
     }
-    Ok((groups, path_hashes))
+    (groups, path_hashes)
+}
+
+/// Turns the response of a [`ContextAliasedOperation`] back into the response of the original
+/// operation, so it can be merged like any other. The entities of every group are concatenated
+/// under the original response key and error paths are pointed to them.
+///
+/// `count(key, group)` is the number of representations sent for `key` in `group`. A group's
+/// entities are padded or cut to that, so the indexes of the following groups stay stable.
+pub(super) fn unalias_response<'exec>(
+    response: &mut SubgraphResponse<'exec>,
+    aliased: &'exec ContextAliasedOperation,
+    count: impl Fn(&str, usize) -> usize,
+) {
+    let offsets: Vec<Vec<usize>> = aliased
+        .response_keys
+        .iter()
+        .map(|(key, aliases)| {
+            let mut offset = 0;
+            (0..aliases.len())
+                .map(|group| {
+                    let current = offset;
+                    offset += count(key, group);
+                    current
+                })
+                .collect()
+        })
+        .collect();
+
+    if let Value::Object(fields) = &mut response.data {
+        let mut merged = Vec::with_capacity(aliased.response_keys.len());
+        for ((key, aliases), offsets) in aliased.response_keys.iter().zip(&offsets) {
+            let mut entities = Vec::new();
+            for (group, alias) in aliases.iter().enumerate() {
+                let count = count(key, group);
+                if let Some(position) = Value::object_position(fields, alias) {
+                    if let Value::Array(items) = fields.swap_remove(position).1 {
+                        entities.extend(items.into_iter().take(count));
+                    }
+                }
+                entities.resize(offsets[group] + count, Value::Null);
+            }
+            merged.push((key.as_str(), Value::Array(entities)));
+        }
+        *fields = merged;
+    }
+
+    for error in response.errors.iter_mut().flatten() {
+        let Some(path) = error.path.as_mut() else {
+            continue;
+        };
+        let Some(GraphQLErrorPathSegment::String(first)) = path.segments.first() else {
+            continue;
+        };
+        let Some((key, group, offset)) =
+            aliased
+                .response_keys
+                .iter()
+                .zip(&offsets)
+                .find_map(|((key, aliases), offsets)| {
+                    let group = aliases.iter().position(|alias| alias == first)?;
+                    Some((key, group, offsets[group]))
+                })
+        else {
+            continue;
+        };
+        if let Some(GraphQLErrorPathSegment::Index(index)) = path.segments.get_mut(1) {
+            if *index >= count(key, group) {
+                error.path = None;
+                continue;
+            }
+            *index += offset;
+        }
+        path.segments[0] = GraphQLErrorPathSegment::String(key.clone());
+    }
 }
 
 #[cfg(test)]
@@ -261,7 +322,6 @@ mod tests {
             },
         ];
         let names = ["__context_0".into()];
-        let mut budget = 3;
         let (groups, hashes) = collect_context_entities(
             &data,
             [path.as_ref()],
@@ -271,11 +331,8 @@ mod tests {
             &names,
             &PossibleTypes::default(),
             None,
-            &mut budget,
-        )
-        .unwrap();
+        );
         assert_eq!(groups.len(), 3);
-        assert_eq!(budget, 0);
         assert_eq!(
             groups.iter().map(|g| &g.variables[0].1).collect::<Vec<_>>(),
             vec![
@@ -290,24 +347,6 @@ mod tests {
         assert_eq!(hashes[0][4], None);
         assert!(groups[0].hash_to_index.contains_key(&hashes[0][0].unwrap()));
         assert!(!groups[0].hash_to_index.contains_key(&hashes[0][2].unwrap()));
-        for remaining in [0, 2] {
-            let mut budget = remaining;
-            assert!(matches!(
-                collect_context_entities(
-                    &data,
-                    [path.as_ref()],
-                    &requires,
-                    None,
-                    Some(&rewrites),
-                    &names,
-                    &PossibleTypes::default(),
-                    None,
-                    &mut budget,
-                ),
-                Err(PlanExecutionErrorKind::ContextGroupLimitExceeded)
-            ));
-            assert_eq!(budget, 0);
-        }
     }
 
     #[test]
@@ -328,7 +367,6 @@ mod tests {
             .into_iter()
             .collect();
         let names = ["__context_0".into()];
-        let mut budget = MAX_CONTEXT_GROUPS;
         let (groups, _) = collect_context_entities(
             &data,
             [path.as_ref()],
@@ -338,9 +376,7 @@ mod tests {
             &names,
             &PossibleTypes::default(),
             Some(&keys),
-            &mut budget,
-        )
-        .unwrap();
+        );
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].variables, vec![("__context_0", b"null".to_vec())]);
         assert_eq!(groups[0].hash_to_index.len(), 1);
@@ -348,7 +384,6 @@ mod tests {
             std::str::from_utf8(&groups[0].representations).unwrap(),
             r#"[{"__typename":"Transaction","id":"1","missing":null}]"#
         );
-        assert_eq!(budget, MAX_CONTEXT_GROUPS - 1);
     }
 
     #[test]
@@ -368,5 +403,89 @@ mod tests {
             sonic_rs::to_string(&value).unwrap(),
             r#"["USD",null,"EUR"]"#
         );
+    }
+
+    #[test]
+    fn unalias_response_concatenates_groups_and_shifts_error_paths() {
+        use crate::{
+            executor::response::graphql_error::{GraphQLError, GraphQLErrorPath},
+            query_planner::ast::{document::Document, operation::PlanningFetchOperation},
+        };
+
+        let document = parse_operation(
+            "query($representations: [_Any!]!, $c: ID) { _entities(representations: $representations) { ... on T { f(a: $c) } } }",
+        );
+        let graphql_tools::parser::query::Definition::Operation(operation) =
+            document.definitions.into_iter().next().unwrap()
+        else {
+            panic!("operation");
+        };
+        let mut operation = PlanningFetchOperation::from_anonymous_operation(Document {
+            operation: operation.into(),
+            fragments: Vec::new(),
+        })
+        .operation;
+        operation.set_max_context_groups(15);
+        let aliased = operation
+            .context_aliased(3, &["representations", "c"])
+            .unwrap();
+
+        let mut response = SubgraphResponse {
+            // group 0 returns too many entities, group 1 none
+            data: sonic_rs::from_str(
+                r#"{"_entities_2":[{"f":3}],"_entities_0":[{"f":1},{"f":2},{"f":9}],"_entities_1":null}"#,
+            )
+            .unwrap(),
+            errors: Some(vec![
+                GraphQLError {
+                    message: "boom".into(),
+                    locations: None,
+                    path: Some(GraphQLErrorPath {
+                        segments: vec![
+                            GraphQLErrorPathSegment::String("_entities_2".into()),
+                            GraphQLErrorPathSegment::Index(0),
+                            GraphQLErrorPathSegment::String("f".into()),
+                        ],
+                    }),
+                    extensions: Default::default(),
+                },
+                GraphQLError::from_message_and_extensions("other", Default::default()),
+                GraphQLError {
+                    message: "surplus entity".into(),
+                    locations: None,
+                    path: Some(GraphQLErrorPath {
+                        segments: vec![
+                            GraphQLErrorPathSegment::String("_entities_0".into()),
+                            GraphQLErrorPathSegment::Index(2),
+                            GraphQLErrorPathSegment::String("f".into()),
+                        ],
+                    }),
+                    extensions: Default::default(),
+                },
+            ]),
+            extensions: None,
+            headers: None,
+            bytes: None,
+            status: None,
+        };
+        let counts = [2, 1, 1];
+        unalias_response(&mut response, aliased, |_, group| counts[group]);
+
+        assert_eq!(
+            sonic_rs::to_string(&response.data).unwrap(),
+            r#"{"_entities":[{"f":1},{"f":2},null,{"f":3}]}"#
+        );
+        let errors = response.errors.unwrap();
+        assert_eq!(
+            errors[0].path.as_ref().unwrap().segments,
+            vec![
+                GraphQLErrorPathSegment::String("_entities".into()),
+                GraphQLErrorPathSegment::Index(3),
+                GraphQLErrorPathSegment::String("f".into()),
+            ]
+        );
+        assert!(errors[1].path.is_none());
+        assert_eq!(errors[2].message, "surplus entity");
+        assert!(errors[2].path.is_none());
     }
 }

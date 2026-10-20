@@ -3,6 +3,40 @@ use crate::query_planner::utils::parsing::parse_operation;
 use std::error::Error;
 
 #[test]
+fn non_null_context_variables_disable_group_aliasing() -> Result<(), Box<dyn Error>> {
+    use crate::query_planner::planner::plan_nodes::planning::PlanNode;
+
+    // a non-null contextual argument only composes with a `__typename` selection
+    for (fixture, query, expected_limit) in [
+        ("context-basic", "{ users { txs { amount } } }", 15),
+        (
+            "context-non-null",
+            "{ viewer { ... on User { txs { amount } } } }",
+            1,
+        ),
+    ] {
+        let plan = build_query_plan_with_defaults(
+            &format!("fixture/tests/{fixture}.supergraph.graphql"),
+            parse_operation(query),
+        )?;
+        let Some(PlanNode::Sequence(sequence)) = plan.node else {
+            panic!("sequence");
+        };
+        let Some(PlanNode::Flatten(flatten)) = sequence.nodes.last() else {
+            panic!("flatten");
+        };
+        let PlanNode::Fetch(fetch) = flatten.node.as_ref() else {
+            panic!("fetch");
+        };
+        assert_eq!(
+            fetch.operation.operation.max_context_groups(),
+            expected_limit
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn mutation_results_supply_context_in_root_field_order() -> Result<(), Box<dyn Error>> {
     let plan = build_query_plan_with_defaults(
         "fixture/tests/context-basic.supergraph.graphql",
@@ -1258,7 +1292,7 @@ fn two_root_fields_batch_into_one_fetch() -> Result<(), Box<dyn Error>> {
 fn multi_type_fetch_does_not_require_contexts_from_mutually_exclusive_ancestors(
 ) -> Result<(), Box<dyn Error>> {
     let plan = build_query_plan_with_defaults(
-        "fixture/tests/context-multi-type.supergraph.graphql",
+        "fixture/tests/context-non-null.supergraph.graphql",
         parse_operation(
             "{ viewer { ... on User { txs { amount } } ... on Other { txs { amount } } } }",
         ),
@@ -1640,5 +1674,156 @@ fn context_from_the_implementation_of_an_interface_ancestor() -> Result<(), Box<
             }
         ])
     );
+    Ok(())
+}
+
+// The tests below plan against supergraphs composed from real subgraphs, one for each shape
+// that composition (federation-composition#335) accepts.
+
+fn plan_composed(fixture: &str, query: &str) -> Result<String, Box<dyn Error>> {
+    Ok(build_query_plan_with_defaults(
+        &format!("fixture/tests/{fixture}.supergraph.graphql"),
+        parse_operation(query),
+    )?
+    .to_string())
+}
+
+#[test]
+fn requires_selection_that_sets_its_own_context() -> Result<(), Box<dyn Error>> {
+    // `b` requires `offer { value }`, and `value` reads the context of `plan`, which is the
+    // parent of the requiring field
+    let plan = plan_composed("context-with-directives", "{ plan { discount } }")?;
+    insta::assert_snapshot!(plan, @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            plan {
+              __typename
+              id
+              tier
+              offer {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "plan.offer") {
+          Fetch(service: "a") {
+            {
+              ... on Offer {
+                __typename
+                id
+              }
+            } =>
+            ($__context_0:String) {
+              ... on Offer {
+                value(tier: $__context_0)
+              }
+            }
+          },
+        },
+        Flatten(path: "plan") {
+          Fetch(service: "b") {
+            {
+              ... on Plan {
+                __typename
+                offer {
+                  value
+                }
+                id
+              }
+            } =>
+            {
+              ... on Plan {
+                discount
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    // the client selects the same contextual field the requirement selects
+    let plan = plan_composed(
+        "context-with-directives",
+        "{ plan { discount offer { value } } }",
+    )?;
+    insta::assert_snapshot!(plan, @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            plan {
+              __typename
+              id
+              tier
+              offer {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        BatchFetch(service: "a") {
+          {
+            _e0 {
+              paths: [
+                "plan.offer"
+              ]
+              {
+                ... on Offer {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e1 {
+              paths: [
+                "plan.offer"
+              ]
+              {
+                ... on Offer {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          ($__context_0:String,$__context_1:String) {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Offer {
+                value(tier: $__context_0)
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Offer {
+                value(tier: $__context_1)
+              }
+            }
+          }
+        },
+        Flatten(path: "plan") {
+          Fetch(service: "b") {
+            {
+              ... on Plan {
+                __typename
+                offer {
+                  value
+                }
+                id
+              }
+            } =>
+            {
+              ... on Plan {
+                discount
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
     Ok(())
 }
