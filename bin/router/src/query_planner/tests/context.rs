@@ -761,6 +761,1464 @@ fn interface_context() -> Result<(), Box<dyn Error>> {
     },
     "#);
 
+    insta::assert_json_snapshot!(query_plan, @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "operationKind": "query",
+            "operation": "{account{__typename currency txs{__typename id}}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              {
+                "Field": "account"
+              },
+              {
+                "Field": "txs"
+              },
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "a",
+              "variableUsages": [
+                "__context_0"
+              ],
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!, $__context_0:String){_entities(representations: $representations){...on Transaction{fromInterface(code: $__context_0)}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Transaction",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "contextVariables": [
+                "__context_0"
+              ],
+              "contextRewrites": [
+                {
+                  "path": [
+                    "Parent",
+                    {
+                      "TypenameEquals": [
+                        "Account"
+                      ]
+                    },
+                    {
+                      "Key": "currency"
+                    }
+                  ],
+                  "renameKeyTo": "__context_0"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn remote_context_producer_precedes_consumer() -> Result<(), Box<dyn Error>> {
+    let plan = build_query_plan_with_defaults(
+        "fixture/tests/context-remote-producer.supergraph.graphql",
+        parse_operation("{ t { u { id field } } }"),
+    )?;
+    insta::assert_snapshot!(plan.to_string(), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "Subgraph1") {
+          {
+            t {
+              __typename
+              id
+              u {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "t") {
+          Fetch(service: "Subgraph2") {
+            {
+              ... on T {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on T {
+                prop
+              }
+            }
+          },
+        },
+        Flatten(path: "t.u") {
+          Fetch(service: "Subgraph1") {
+            {
+              ... on U {
+                __typename
+                id
+              }
+            } =>
+            ($__context_0:String) {
+              ... on U {
+                field(a: $__context_0)
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    insta::assert_json_snapshot!(plan.into_executable(), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "Subgraph1",
+            "operationKind": "query",
+            "operation": "{t{__typename id u{__typename id}}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              {
+                "Field": "t"
+              }
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "Subgraph2",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on T{prop}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "T",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              {
+                "Field": "t"
+              },
+              {
+                "Field": "u"
+              }
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "Subgraph1",
+              "variableUsages": [
+                "__context_0"
+              ],
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!, $__context_0:String){_entities(representations: $representations){...on U{field(a: $__context_0)}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "U",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "contextVariables": [
+                "__context_0"
+              ],
+              "contextRewrites": [
+                {
+                  "path": [
+                    "Parent",
+                    {
+                      "TypenameEquals": [
+                        "T"
+                      ]
+                    },
+                    {
+                      "Key": "prop"
+                    }
+                  ],
+                  "renameKeyTo": "__context_0"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
+    Ok(())
+}
+
+#[test]
+fn context_selection_crosses_subgraphs_multiple_times() -> Result<(), Box<dyn Error>> {
+    let plan = build_query_plan_with_defaults(
+        "fixture/tests/context-multi-hop.supergraph.graphql",
+        parse_operation("{ t { u { field } } }"),
+    )?;
+    insta::assert_snapshot!(plan.to_string(), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "Subgraph1") {
+          {
+            t {
+              __typename
+              a {
+                __typename
+                id
+              }
+              u {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "t.a") {
+          Fetch(service: "Subgraph2") {
+            {
+              ... on A {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on A {
+                b {
+                  __typename
+                  id
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "t.a.b") {
+          Fetch(service: "Subgraph1") {
+            {
+              ... on B {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on B {
+                c {
+                  prop
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "t.u") {
+          Fetch(service: "Subgraph1") {
+            {
+              ... on U {
+                __typename
+                id
+              }
+            } =>
+            ($__context_0:String) {
+              ... on U {
+                field(a: $__context_0)
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    insta::assert_json_snapshot!(plan.into_executable(), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "Subgraph1",
+            "operationKind": "query",
+            "operation": "{t{__typename a{__typename id} u{__typename id}}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              {
+                "Field": "t"
+              },
+              {
+                "Field": "a"
+              }
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "Subgraph2",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on A{b{__typename id}}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "A",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              {
+                "Field": "t"
+              },
+              {
+                "Field": "a"
+              },
+              {
+                "Field": "b"
+              }
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "Subgraph1",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on B{c{prop}}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "B",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              {
+                "Field": "t"
+              },
+              {
+                "Field": "u"
+              }
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "Subgraph1",
+              "variableUsages": [
+                "__context_0"
+              ],
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!, $__context_0:String){_entities(representations: $representations){...on U{field(a: $__context_0)}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "U",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "contextVariables": [
+                "__context_0"
+              ],
+              "contextRewrites": [
+                {
+                  "path": [
+                    "Parent",
+                    {
+                      "TypenameEquals": [
+                        "T"
+                      ]
+                    },
+                    {
+                      "Key": "a"
+                    },
+                    {
+                      "Key": "b"
+                    },
+                    {
+                      "Key": "c"
+                    },
+                    {
+                      "Key": "prop"
+                    }
+                  ],
+                  "renameKeyTo": "__context_0"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
+    Ok(())
+}
+
+#[test]
+fn query_root_context_selects_a_sibling_field() -> Result<(), Box<dyn Error>> {
+    let plan = build_query_plan_with_defaults(
+        "fixture/tests/context-query-root.supergraph.graphql",
+        parse_operation("{ product { price } }"),
+    )?;
+    insta::assert_snapshot!(plan.to_string(), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "Subgraph1") {
+          {
+            __typename
+            me {
+              locale
+            }
+            product {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "product") {
+          Fetch(service: "Subgraph1") {
+            {
+              ... on Product {
+                __typename
+                id
+              }
+            } =>
+            ($__context_0:String) {
+              ... on Product {
+                price(locale: $__context_0)
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    insta::assert_json_snapshot!(plan.into_executable(), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "Subgraph1",
+            "operationKind": "query",
+            "operation": "{__typename me{locale} product{__typename id}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              {
+                "Field": "product"
+              }
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "Subgraph1",
+              "variableUsages": [
+                "__context_0"
+              ],
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!, $__context_0:String){_entities(representations: $representations){...on Product{price(locale: $__context_0)}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Product",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "contextVariables": [
+                "__context_0"
+              ],
+              "contextRewrites": [
+                {
+                  "path": [
+                    "Parent",
+                    {
+                      "TypenameEquals": [
+                        "Query"
+                      ]
+                    },
+                    {
+                      "Key": "me"
+                    },
+                    {
+                      "Key": "locale"
+                    }
+                  ],
+                  "renameKeyTo": "__context_0"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
+    Ok(())
+}
+
+#[test]
+fn context_is_resolved_before_a_key_transition() -> Result<(), Box<dyn Error>> {
+    let plan = build_query_plan_with_defaults(
+        "fixture/tests/context-before-key-transition.supergraph.graphql",
+        parse_operation("{ customer { child { id prop } } }"),
+    )?;
+    insta::assert_snapshot!(plan.to_string(), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "Subgraph1") {
+          {
+            customer {
+              __typename
+              identifiers {
+                legacyUserId
+              }
+              child {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "customer.child") {
+          Fetch(service: "Subgraph2") {
+            {
+              ... on Child {
+                __typename
+                id
+              }
+            } =>
+            ($__context_0:ID) {
+              ... on Child {
+                prop(legacyUserId: $__context_0)
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    insta::assert_json_snapshot!(plan.into_executable(), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "Subgraph1",
+            "operationKind": "query",
+            "operation": "{customer{__typename identifiers{legacyUserId} child{__typename id}}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              {
+                "Field": "customer"
+              },
+              {
+                "Field": "child"
+              }
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "Subgraph2",
+              "variableUsages": [
+                "__context_0"
+              ],
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!, $__context_0:ID){_entities(representations: $representations){...on Child{prop(legacyUserId: $__context_0)}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Child",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "contextVariables": [
+                "__context_0"
+              ],
+              "contextRewrites": [
+                {
+                  "path": [
+                    "Parent",
+                    {
+                      "TypenameEquals": [
+                        "Customer"
+                      ]
+                    },
+                    {
+                      "Key": "identifiers"
+                    },
+                    {
+                      "Key": "legacyUserId"
+                    }
+                  ],
+                  "renameKeyTo": "__context_0"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
+    Ok(())
+}
+
+#[test]
+fn context_value_reuses_an_existing_fetch() -> Result<(), Box<dyn Error>> {
+    let plan = build_query_plan_with_defaults(
+        "fixture/tests/context-existing-fetch.supergraph.graphql",
+        parse_operation("{ t { u { id field } } }"),
+    )?;
+    insta::assert_snapshot!(plan.to_string(), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "Subgraph1") {
+          {
+            t {
+              __typename
+              prop
+              u {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "t.u") {
+          Fetch(service: "Subgraph2") {
+            {
+              ... on U {
+                __typename
+                id
+              }
+            } =>
+            ($__context_0:String) {
+              ... on U {
+                field(a: $__context_0)
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    insta::assert_json_snapshot!(plan.into_executable(), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "Subgraph1",
+            "operationKind": "query",
+            "operation": "{t{__typename prop u{__typename id}}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              {
+                "Field": "t"
+              },
+              {
+                "Field": "u"
+              }
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "Subgraph2",
+              "variableUsages": [
+                "__context_0"
+              ],
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!, $__context_0:String){_entities(representations: $representations){...on U{field(a: $__context_0)}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "U",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "contextVariables": [
+                "__context_0"
+              ],
+              "contextRewrites": [
+                {
+                  "path": [
+                    "Parent",
+                    {
+                      "TypenameEquals": [
+                        "T"
+                      ]
+                    },
+                    {
+                      "Key": "prop"
+                    }
+                  ],
+                  "renameKeyTo": "__context_0"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
+    Ok(())
+}
+
+#[test]
+fn list_context_argument_preserves_its_type() -> Result<(), Box<dyn Error>> {
+    let plan = build_query_plan_with_defaults(
+        "fixture/tests/context-list-argument.supergraph.graphql",
+        parse_operation("{ t { u { field } } }"),
+    )?;
+    insta::assert_snapshot!(plan.to_string(), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "Subgraph1") {
+          {
+            t {
+              __typename
+              prop
+              u {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "t.u") {
+          Fetch(service: "Subgraph1") {
+            {
+              ... on U {
+                __typename
+                id
+              }
+            } =>
+            ($__context_0:[String]) {
+              ... on U {
+                field(a: $__context_0)
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    insta::assert_json_snapshot!(plan.into_executable(), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "Subgraph1",
+            "operationKind": "query",
+            "operation": "{t{__typename prop u{__typename id}}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              {
+                "Field": "t"
+              },
+              {
+                "Field": "u"
+              }
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "Subgraph1",
+              "variableUsages": [
+                "__context_0"
+              ],
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!, $__context_0:[String]){_entities(representations: $representations){...on U{field(a: $__context_0)}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "U",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "contextVariables": [
+                "__context_0"
+              ],
+              "contextRewrites": [
+                {
+                  "path": [
+                    "Parent",
+                    {
+                      "TypenameEquals": [
+                        "T"
+                      ]
+                    },
+                    {
+                      "Key": "prop"
+                    }
+                  ],
+                  "renameKeyTo": "__context_0"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
+    Ok(())
+}
+
+#[test]
+fn multiple_context_arguments_merge_into_an_ancestor_fetch() -> Result<(), Box<dyn Error>> {
+    let plan = build_query_plan_with_defaults(
+        "fixture/tests/context-merged-arguments.supergraph.graphql",
+        parse_operation("{ customer { accounts { foo { id } } } }"),
+    )?;
+    insta::assert_snapshot!(plan.to_string(), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "Subgraph2") {
+          {
+            customer {
+              __typename
+              id
+              identifiers {
+                id5
+              }
+              mid
+            }
+          }
+        },
+        Flatten(path: "customer") {
+          Fetch(service: "Subgraph3") {
+            {
+              ... on Customer {
+                __typename
+                id
+              }
+            } =>
+            ($__context_0:ID,$__context_1:ID) {
+              ... on Customer {
+                __typename
+                id
+                accounts {
+                  __typename
+                  id
+                  foo(ctx_id5: $__context_0, ctx_mid: $__context_1) {
+                    id
+                  }
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    insta::assert_json_snapshot!(plan.into_executable(), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "Subgraph2",
+            "operationKind": "query",
+            "operation": "{customer{__typename id identifiers{id5} mid}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              {
+                "Field": "customer"
+              }
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "Subgraph3",
+              "variableUsages": [
+                "__context_0",
+                "__context_1"
+              ],
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!, $__context_0:ID, $__context_1:ID){_entities(representations: $representations){...on Customer{__typename id accounts{__typename id foo(ctx_id5: $__context_0, ctx_mid: $__context_1){id}}}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Customer",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "contextVariables": [
+                "__context_0",
+                "__context_1"
+              ],
+              "contextRewrites": [
+                {
+                  "path": [
+                    {
+                      "TypenameEquals": [
+                        "Customer"
+                      ]
+                    },
+                    {
+                      "Key": "identifiers"
+                    },
+                    {
+                      "Key": "id5"
+                    }
+                  ],
+                  "renameKeyTo": "__context_0"
+                },
+                {
+                  "path": [
+                    {
+                      "TypenameEquals": [
+                        "Customer"
+                      ]
+                    },
+                    {
+                      "Key": "mid"
+                    }
+                  ],
+                  "renameKeyTo": "__context_1"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
+    Ok(())
+}
+
+#[test]
+fn unrelated_objects_share_a_context_name() -> Result<(), Box<dyn Error>> {
+    let plan = build_query_plan_with_defaults(
+        "fixture/tests/context-shared-duck.supergraph.graphql",
+        parse_operation("{ foo { u { field } } bar { u { field } } }"),
+    )?;
+    insta::assert_snapshot!(plan.to_string(), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            foo {
+              __typename
+              prop
+              u {
+                ...a
+              }
+            }
+            bar {
+              __typename
+              prop
+              u {
+                ...a
+              }
+            }
+          }
+          fragment a on U {
+            __typename
+            id
+          }
+        },
+        BatchFetch(service: "a") {
+          {
+            _e0 {
+              paths: [
+                "bar.u"
+              ]
+              {
+                ... on U {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e1 {
+              paths: [
+                "foo.u"
+              ]
+              {
+                ... on U {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          ($__context_1:String,$__context_0:String) {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on U {
+                field(a: $__context_1)
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on U {
+                field(a: $__context_0)
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+    insta::assert_json_snapshot!(plan.into_executable(), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "operationKind": "query",
+            "operation": "{foo{__typename prop u{...a}} bar{__typename prop u{...a}}}\n\nfragment a on U {__typename id}\n"
+          },
+          {
+            "kind": "BatchFetch",
+            "serviceName": "a",
+            "variableUsages": [
+              "__context_0",
+              "__context_1"
+            ],
+            "operationKind": "query",
+            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!, $__context_1:String, $__context_0:String){_e0: _entities(representations: $__batch_reps_0){...on U{field(a: $__context_1)}} _e1: _entities(representations: $__batch_reps_1){...on U{field(a: $__context_0)}}}",
+            "entityBatch": {
+              "aliases": [
+                {
+                  "alias": "_e0",
+                  "representationsVariableName": "__batch_reps_0",
+                  "paths": [
+                    [
+                      {
+                        "Field": "bar"
+                      },
+                      {
+                        "Field": "u"
+                      }
+                    ]
+                  ],
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "U",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "id"
+                        }
+                      ]
+                    }
+                  ],
+                  "contextRewrites": [
+                    {
+                      "path": [
+                        "Parent",
+                        {
+                          "TypenameEquals": [
+                            "Bar"
+                          ]
+                        },
+                        {
+                          "Key": "prop"
+                        }
+                      ],
+                      "renameKeyTo": "__context_1"
+                    }
+                  ],
+                  "contextVariables": [
+                    "__context_1"
+                  ]
+                },
+                {
+                  "alias": "_e1",
+                  "representationsVariableName": "__batch_reps_1",
+                  "paths": [
+                    [
+                      {
+                        "Field": "foo"
+                      },
+                      {
+                        "Field": "u"
+                      }
+                    ]
+                  ],
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "U",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "id"
+                        }
+                      ]
+                    }
+                  ],
+                  "contextRewrites": [
+                    {
+                      "path": [
+                        "Parent",
+                        {
+                          "TypenameEquals": [
+                            "Foo"
+                          ]
+                        },
+                        {
+                          "Key": "prop"
+                        }
+                      ],
+                      "renameKeyTo": "__context_0"
+                    }
+                  ],
+                  "contextVariables": [
+                    "__context_0"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
+    Ok(())
+}
+
+#[test]
+fn shared_context_name_selects_fields_by_type() -> Result<(), Box<dyn Error>> {
+    let plan = build_query_plan_with_defaults(
+        "fixture/tests/context-shared-conditions.supergraph.graphql",
+        parse_operation("{ foo { u { field } } bar { u { field } } }"),
+    )?;
+    insta::assert_snapshot!(plan.to_string(), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            foo {
+              __typename
+              prop
+              u {
+                ...a
+              }
+            }
+            bar {
+              __typename
+              prop2
+              u {
+                ...a
+              }
+            }
+          }
+          fragment a on U {
+            __typename
+            id
+          }
+        },
+        BatchFetch(service: "a") {
+          {
+            _e0 {
+              paths: [
+                "bar.u"
+              ]
+              {
+                ... on U {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e1 {
+              paths: [
+                "foo.u"
+              ]
+              {
+                ... on U {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          ($__context_1:String,$__context_0:String) {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on U {
+                field(a: $__context_1)
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on U {
+                field(a: $__context_0)
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+    insta::assert_json_snapshot!(plan.into_executable(), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "operationKind": "query",
+            "operation": "{foo{__typename prop u{...a}} bar{__typename prop2 u{...a}}}\n\nfragment a on U {__typename id}\n"
+          },
+          {
+            "kind": "BatchFetch",
+            "serviceName": "a",
+            "variableUsages": [
+              "__context_0",
+              "__context_1"
+            ],
+            "operationKind": "query",
+            "operation": "query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!, $__context_1:String, $__context_0:String){_e0: _entities(representations: $__batch_reps_0){...on U{field(a: $__context_1)}} _e1: _entities(representations: $__batch_reps_1){...on U{field(a: $__context_0)}}}",
+            "entityBatch": {
+              "aliases": [
+                {
+                  "alias": "_e0",
+                  "representationsVariableName": "__batch_reps_0",
+                  "paths": [
+                    [
+                      {
+                        "Field": "bar"
+                      },
+                      {
+                        "Field": "u"
+                      }
+                    ]
+                  ],
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "U",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "id"
+                        }
+                      ]
+                    }
+                  ],
+                  "contextRewrites": [
+                    {
+                      "path": [
+                        "Parent",
+                        {
+                          "TypenameEquals": [
+                            "Bar"
+                          ]
+                        },
+                        {
+                          "Key": "prop2"
+                        }
+                      ],
+                      "renameKeyTo": "__context_1"
+                    }
+                  ],
+                  "contextVariables": [
+                    "__context_1"
+                  ]
+                },
+                {
+                  "alias": "_e1",
+                  "representationsVariableName": "__batch_reps_1",
+                  "paths": [
+                    [
+                      {
+                        "Field": "foo"
+                      },
+                      {
+                        "Field": "u"
+                      }
+                    ]
+                  ],
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "U",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "id"
+                        }
+                      ]
+                    }
+                  ],
+                  "contextRewrites": [
+                    {
+                      "path": [
+                        "Parent",
+                        {
+                          "TypenameEquals": [
+                            "Foo"
+                          ]
+                        },
+                        {
+                          "Key": "prop"
+                        }
+                      ],
+                      "renameKeyTo": "__context_0"
+                    }
+                  ],
+                  "contextVariables": [
+                    "__context_0"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
     Ok(())
 }
 
