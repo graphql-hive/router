@@ -72,7 +72,7 @@ use crate::executor::{
     projection::{plan::ProjectionPlan, response::project_by_operation},
     response::{
         graphql_error::{GraphQLError, GraphQLErrorPath, GraphQLErrorPathSegment},
-        merge::deep_merge,
+        merge::{deep_merge, deep_merge_from},
         subgraph_response::SubgraphResponse,
         value::Value,
     },
@@ -1378,7 +1378,7 @@ impl<'exec> Executor<'exec> {
                                     self.schema_metadata,
                                     None,
                                     &mut |target, _error_path| {
-                                        deep_merge(target, source.clone());
+                                        deep_merge_from(target, &source);
                                     },
                                 );
                             }
@@ -1442,12 +1442,12 @@ impl<'exec> Executor<'exec> {
                                             error_paths.push(error_path);
                                         }
                                         if let Some(entity) = entities.get(*entity_index) {
-                                            // SAFETY: `new_val` is a clone of an entity that lives for `'a`.
+                                            // SAFETY: `entity` lives for `'a`.
                                             // The transmute is to satisfy the compiler, but the lifetime
                                             // is valid.
-                                            let new_val: Value<'_> =
-                                                unsafe { std::mem::transmute(entity.clone()) };
-                                            deep_merge(target, new_val);
+                                            let entity: &Value<'_> =
+                                                unsafe { std::mem::transmute(entity) };
+                                            deep_merge_from(target, entity);
                                         }
                                     }
                                 },
@@ -1675,10 +1675,10 @@ impl<'exec> Executor<'exec> {
                             error_paths.push(error_path);
                         }
                         if let Some(entity) = entities.get(*entity_index) {
-                            // SAFETY: `new_val` is a clone of an entity that lives for `'a`.
+                            // SAFETY: `entity` lives for `'a`.
                             // The transmute is to satisfy the compiler, but the lifetime is valid.
-                            let new_val: Value<'_> = unsafe { std::mem::transmute(entity.clone()) };
-                            deep_merge(target_data, new_val);
+                            let entity: &Value<'_> = unsafe { std::mem::transmute(entity) };
+                            deep_merge_from(target_data, entity);
                         }
                     }
                 },
