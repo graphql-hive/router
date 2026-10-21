@@ -197,7 +197,7 @@ impl<'a> CachedFederationRules<'a> {
         &mut self,
         supergraph: &'a SupergraphState,
         join_field: &'a JoinFieldDirective,
-        subgraph_name: &'a String,
+        subgraph_name: &'a str,
         type_name: &'a str,
     ) -> Option<Arc<QuerySelectionSet<'static, String>>> {
         let provides = join_field.provides.as_deref()?;
@@ -222,7 +222,7 @@ impl FederationRules {
 
     pub fn parse_context_selection<'a>(
         supergraph: &SupergraphState,
-        subgraph_name: &String,
+        subgraph_name: &str,
         type_name: &'a str,
         selection: &str,
     ) -> TypeAwareSelection<'a> {
@@ -264,7 +264,7 @@ impl FederationRules {
     pub fn parse_provides(
         supergraph: &SupergraphState,
         join_field: &JoinFieldDirective,
-        subgraph_name: &String,
+        subgraph_name: &str,
         type_name: &str,
     ) -> Option<SelectionSet<'static, String>> {
         if let Some(provides) = &join_field.provides {
@@ -281,7 +281,7 @@ impl FederationRules {
 
     pub fn parse_requires(
         supergraph: &SupergraphState,
-        subgraph_name: &String,
+        subgraph_name: &str,
         type_name: &str,
         requires: &str,
     ) -> SelectionSet<'static, String> {

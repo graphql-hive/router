@@ -605,7 +605,7 @@ fn ensure_fetch_step_for_requirement(
 
                     if !fetch_step
                         .input
-                        .contains(&requirement.type_name, &requirement.selection_set)
+                        .contains(requirement.type_name, &requirement.selection_set)
                     {
                         return None;
                     }
@@ -1465,7 +1465,7 @@ fn process_plain_field_edge(
     let field_alias = fetch_graph.alias_at(
         response_path,
         query_node,
-        &field_move.name,
+        field_move.name,
         created_from_requires,
     );
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
@@ -1621,7 +1621,7 @@ fn process_requires_field_edge(
     let field_alias = fetch_graph.alias_at(
         response_path,
         query_node,
-        &field_move.name,
+        field_move.name,
         created_from_requires,
     );
 

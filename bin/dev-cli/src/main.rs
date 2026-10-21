@@ -64,7 +64,7 @@ fn main() {
             let cancellation_token = CancellationToken::new();
             let best_paths_per_leaf = walk_operation(
                 &graph,
-                &supergraph_state,
+                supergraph_state,
                 &override_context,
                 &operation,
                 &cancellation_token,
@@ -155,7 +155,7 @@ fn process_fetch_graph(
     let cancellation_token = CancellationToken::new();
     build_fetch_graph_from_query_tree(
         &graph,
-        &supergraph_state,
+        supergraph_state,
         &override_context,
         query_tree,
         &operation,
@@ -172,7 +172,7 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
 
     let best_paths_per_leaf = walk_operation(
         &graph,
-        &supergraph,
+        supergraph,
         &override_context,
         &operation,
         &cancellation_token,
@@ -182,7 +182,7 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
         find_best_combination(&graph, best_paths_per_leaf, &cancellation_token).unwrap();
     let fetch_graph = build_fetch_graph_from_query_tree(
         &graph,
-        &supergraph,
+        supergraph,
         &override_context,
         query_tree,
         &operation,
@@ -193,7 +193,7 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
 
     build_query_plan_from_fetch_graph(
         fetch_graph,
-        &supergraph,
+        supergraph,
         &QueryPlannerOptions::default(),
         &cancellation_token,
     )
@@ -215,7 +215,7 @@ fn process_merged_tree(
     let cancellation_token = CancellationToken::new();
     let best_paths_per_leaf = walk_operation(
         &graph,
-        &supergraph_state,
+        supergraph_state,
         &override_context,
         &operation,
         &cancellation_token,
@@ -249,7 +249,7 @@ fn load_graph_operation(
     let parsed_schema = parse_schema(&supergraph_sdl);
     let supergraph = Box::leak(Box::new(SupergraphState::new(&parsed_schema)));
     let graph = Graph::graph_from_supergraph_state(supergraph).expect("failed to create graph");
-    let operation = get_operation(operation_path, &supergraph);
+    let operation = get_operation(operation_path, supergraph);
 
     (graph, operation, supergraph)
 }

@@ -92,7 +92,7 @@ impl<'graph> Node<'graph> {
             Node::QueryRoot(name) => name,
             Node::MutationRoot(name) => name,
             Node::SubscriptionRoot(name) => name,
-            Node::SubgraphType(st) => &st.name,
+            Node::SubgraphType(st) => st.name,
         }
     }
 
