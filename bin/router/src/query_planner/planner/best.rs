@@ -373,10 +373,10 @@ fn calculate_cost_of_tree(graph: &Graph, node: &QueryTreeNode) -> u64 {
         current_cost += calculate_cost_of_tree(graph, requirement);
     }
 
-    for requirement in &node.context_requirements {
+    for requirement in node.context_requirements() {
         current_cost += calculate_cost_of_tree(graph, requirement);
     }
-    if !node.resolved_context_requirements.is_empty() {
+    if !node.resolved_context_requirements().is_empty() {
         current_cost += CROSS_SUBGRAPH_COST;
     }
 

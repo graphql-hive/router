@@ -46,9 +46,16 @@ pub struct PathSegment {
     tail_node: NodeIndex,
     cumulative_cost: u64,
     pub requirement_tree: Option<Rc<QueryTreeNode>>,
-    pub context_requirements: Vec<Rc<ContextRequirement>>,
+    // `None` when empty, and cloning it is a refcount bump
+    context_requirements: Option<Rc<[Rc<ContextRequirement>]>>,
     pub selection_attributes: Option<SelectionAttributes>,
     pub condition: Option<Condition>,
+}
+
+impl PathSegment {
+    pub fn context_requirements(&self) -> &[Rc<ContextRequirement>] {
+        self.context_requirements.as_deref().unwrap_or_default()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,7 +95,7 @@ impl PathSegment {
             tail_node: edge.target(),
             cumulative_cost: edge.weight().cost(),
             requirement_tree: None,
-            context_requirements: vec![],
+            context_requirements: None,
             selection_attributes: None,
             condition: None,
         }
@@ -171,7 +178,8 @@ impl<'graph> OperationPath<'graph> {
             edge_index: edge_ref.id(),
             cumulative_cost: new_cost,
             requirement_tree: requirement,
-            context_requirements,
+            context_requirements: (!context_requirements.is_empty())
+                .then(|| context_requirements.into()),
             selection_attributes: match target {
                 NavigationTarget::Field { field, .. } => Some(SelectionAttributes {
                     alias: field.alias.clone(),

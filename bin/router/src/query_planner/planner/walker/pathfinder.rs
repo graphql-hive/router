@@ -686,13 +686,13 @@ impl<'graph> PathSearch<'graph> {
                             cost += graph.edge(edge)?.cost();
                         }
                         cost += node
-                            .resolved_context_requirements
+                            .resolved_context_requirements()
                             .iter()
                             .map(|requirement| requirement.cost)
                             .sum::<u64>();
                         nodes.extend(node.children.iter().map(Rc::as_ref));
                     }
-                    tree.context_coordinate = Some((edge_ref.id(), argument));
+                    tree.context_mut().coordinate = Some((edge_ref.id(), argument));
                     context_requirements.push(Rc::new(ContextRequirement {
                         argument,
                         selection: selection_index,

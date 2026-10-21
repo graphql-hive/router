@@ -1695,7 +1695,7 @@ fn process_requires_field_edge(
         .selection_arguments()
         .cloned()
         .unwrap_or_default();
-    for requirement in &query_node.resolved_context_requirements {
+    for requirement in query_node.resolved_context_requirements() {
         let argument = &field_move.context_arguments[requirement.argument];
         // a contextual field inside a @requires or context selection only sees ancestors from
         // the root of that selection down, that root is where the selection gets planned and
@@ -2061,7 +2061,7 @@ fn process_query_node(
         let edge = graph.edge(edge_index)?;
 
         if matches!(edge, Edge::FieldMove(_) | Edge::ReentryMove(_)) {
-            for requirement in &query_node.context_requirements {
+            for requirement in query_node.context_requirements() {
                 fetch_graph
                     .get_step_data_mut(parent_fetch_step_index)?
                     .output
@@ -2079,7 +2079,7 @@ fn process_query_node(
                     condition,
                     true,
                 )?;
-                let coordinate = requirement.context_coordinate.ok_or_else(|| {
+                let coordinate = requirement.context_coordinate().ok_or_else(|| {
                     FetchGraphError::Internal("Missing context argument coordinate".to_string())
                 })?;
                 fetch_graph
@@ -2266,7 +2266,7 @@ fn requirements_resolve_in_place(
     query_node: &QueryTreeNode,
 ) -> Result<bool, FetchGraphError> {
     fn stays_in_subgraph(graph: &Graph, node: &QueryTreeNode) -> Result<bool, FetchGraphError> {
-        if !node.requirements.is_empty() || !node.resolved_context_requirements.is_empty() {
+        if !node.requirements.is_empty() || !node.resolved_context_requirements().is_empty() {
             return Ok(false);
         }
         if let Some(edge_index) = node.edge_from_parent {

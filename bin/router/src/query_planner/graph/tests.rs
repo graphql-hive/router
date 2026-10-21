@@ -71,7 +71,7 @@ mod context_tests {
             .unwrap();
             let path = &paths.root_field_groups[0][0][0];
             let segments = path.get_segments();
-            let context = &segments.last().unwrap().context_requirements[0];
+            let context = &segments.last().unwrap().context_requirements()[0];
             assert_eq!(context.cost, expected_cost);
             assert_eq!(path.cost, 1003 + expected_cost);
         }
