@@ -613,8 +613,12 @@ fn optimize_parallel_node(
             };
 
             // every shape group is one alias, so a batch carrying more aliases than the
-            // subgraph allows is split into several batches
-            let max_aliases = options.max_aliases_per_request(&first_candidate.service_name);
+            // subgraph allows is split into several batches. no limit, no split.
+            let service_name = &first_candidate.service_name;
+            let max_aliases = options
+                .max_aliases_per_request(service_name)
+                .unwrap_or(usize::MAX);
+            let max_context_aliases = options.max_context_aliases_per_request(service_name);
 
             for chunk in shape_groups.chunks(max_aliases) {
                 // a single fetch has nothing to batch with, keep the original node
@@ -638,7 +642,7 @@ fn optimize_parallel_node(
 
                 // Build one `BatchFetch` node from each final group
                 let batch_fetch_node =
-                    build_batched_fetch_node(chunk, &variables, supergraph, max_aliases)?;
+                    build_batched_fetch_node(chunk, &variables, supergraph, max_context_aliases)?;
 
                 batch_node_replacements.insert(
                     first_index,
@@ -1442,7 +1446,7 @@ mod tests {
           }
         ";
         let mut totals = Vec::new();
-        for max_aliases_per_request in [15, 1] {
+        for max_aliases_per_request in [None, Some(1)] {
             let nodes = ["upc", "name"]
                 .iter()
                 .enumerate()
@@ -1468,7 +1472,11 @@ mod tests {
             };
             assert_eq!(
                 nodes.len(),
-                if max_aliases_per_request == 1 { 2 } else { 1 },
+                if max_aliases_per_request == Some(1) {
+                    2
+                } else {
+                    1
+                },
                 "the cap should split the batch into two separate fetches"
             );
             let mut tracker = SubgraphResponseCostTracker::new();
@@ -1516,7 +1524,7 @@ mod tests {
                 );
                 tracker.track("inventory", operation.operation.hash, cost);
             }
-            if max_aliases_per_request == 1 {
+            if max_aliases_per_request == Some(1) {
                 assert_eq!(
                     hashes[0], hashes[1],
                     "separate fetches should share an operation hash"
@@ -1552,7 +1560,7 @@ mod tests {
             })
             .collect();
         let options = QueryPlannerOptions {
-            max_aliases_per_request: 2,
+            max_aliases_per_request: Some(2),
             ..Default::default()
         };
         let optimized =
@@ -1577,6 +1585,35 @@ mod tests {
                 index == 1
             );
         }
+    }
+
+    /// Without `max_aliases_per_request` a batch is never split, however many shapes it has.
+    #[test]
+    fn optimize_parallel_node_does_not_split_batches_without_max_aliases_per_request() {
+        let supergraph = test_supergraph_state();
+        let nodes = (0..20)
+            .map(|index| {
+                flatten_entity_fetch_node(
+                    index,
+                    "inventory",
+                    "products",
+                    "query { ... on Product { upc } }",
+                    &format!(
+                        "query($representations:[_Any!]!) {{ _entities(representations: $representations) {{ ... on Product {{ a{index}: inStock }} }} }}"
+                    ),
+                )
+            })
+            .collect();
+        let optimized = optimize_root_node(
+            PlanNode::parallel(nodes),
+            &supergraph,
+            &QueryPlannerOptions::default(),
+        )
+        .unwrap();
+        let PlanNode::BatchFetch(batch) = optimized else {
+            panic!("expected a single batch, got {optimized:?}");
+        };
+        assert_eq!(batch.entity_batch.aliases.len(), 20);
     }
 
     /// A batch with more aliases than `max_aliases_per_request` is split into several batches,

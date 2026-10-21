@@ -700,7 +700,7 @@ impl FetchNode<Planning> {
                 {
                     // one alias per group of contextual argument values
                     operation.operation.set_max_context_groups(
-                        options.max_aliases_per_request(&step.service_name.0),
+                        options.max_context_aliases_per_request(&step.service_name.0),
                     );
                 }
                 FetchNode {

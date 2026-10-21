@@ -151,10 +151,6 @@ fn default_dedupe_enabled() -> bool {
     true
 }
 
-fn default_max_aliases_per_request() -> usize {
-    15
-}
-
 fn default_router_dedupe_enabled() -> bool {
     false
 }
@@ -464,9 +460,10 @@ pub struct TrafficShapingExecutorGlobalConfig {
     ///
     /// Per-subgraph values under `traffic_shaping.subgraphs.<name>.max_aliases_per_request` take precedence.
     ///
-    /// Defaults to 15.
-    #[serde(default = "default_max_aliases_per_request")]
-    pub max_aliases_per_request: usize,
+    /// Not set by default: batches are never split, and contextual argument groups go up to 15
+    /// per request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_aliases_per_request: Option<usize>,
 }
 
 fn default_request_timeout() -> DurationOrExpression {
@@ -500,7 +497,7 @@ impl Default for TrafficShapingExecutorGlobalConfig {
             forward_operation_name: false,
             websocket: Default::default(),
             compression: Default::default(),
-            max_aliases_per_request: default_max_aliases_per_request(),
+            max_aliases_per_request: None,
         }
     }
 }
