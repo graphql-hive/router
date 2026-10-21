@@ -2328,10 +2328,13 @@ pub fn build_fetch_graph_from_query_tree(
             .unwrap_or(OperationKind::Query),
     );
     fetch_graph.response_keys = ResponseKeys::from_operation(&operation.selection_set);
+    // only names that look like ours can clash, so for nearly every operation this stays
+    // empty and allocates nothing
     fetch_graph.operation_variables = operation
         .variable_definitions
         .iter()
         .flatten()
+        .filter(|variable| variable.name.starts_with("__context_"))
         .map(|variable| variable.name.clone())
         .collect();
 
