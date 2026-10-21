@@ -2208,6 +2208,45 @@ mod tests {
         assert_eq!(waves.len(), 1);
         assert!(waves[0].0.contains(&("__context_0", b"null".to_vec())));
         assert!(waves[0].0.contains(&("__context_1", b"null".to_vec())));
+
+        // _e0 gets one group per product and _e1 a single group, so _e1 has fewer groups than
+        // there are waves and must send its first group's values in every wave
+        use crate::query_planner::planner::plan_nodes::{FetchNodePathSegment, KeyRenamer};
+        let data: ResponseValue = sonic_rs::from_str(
+            r#"{
+                "currency": "USD",
+                "products": [
+                    {"__typename": "Product", "upc": "1"},
+                    {"__typename": "Product", "upc": "2"}
+                ]
+            }"#,
+        )
+        .unwrap();
+        entity_batch.aliases[0].context =
+            crate::query_planner::planner::plan_nodes::FetchContext::new(
+                vec!["__context_0".into()],
+                Some(vec![KeyRenamer {
+                    path: vec![FetchNodePathSegment::Key("upc".into())],
+                    rename_key_to: "__context_0".into(),
+                }]),
+            );
+        entity_batch.aliases[1].context =
+            crate::query_planner::planner::plan_nodes::FetchContext::new(
+                vec!["__context_1".into()],
+                Some(vec![KeyRenamer {
+                    path: vec![
+                        FetchNodePathSegment::Parent,
+                        FetchNodePathSegment::Key("currency".into()),
+                    ],
+                    rename_key_to: "__context_1".into(),
+                }]),
+            );
+        let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None);
+        assert_eq!(waves.len(), 2);
+        for (wave, upc) in waves.iter().zip(["\"1\"", "\"2\""]) {
+            assert!(wave.0.contains(&("__context_0", upc.as_bytes().to_vec())));
+            assert!(wave.0.contains(&("__context_1", b"\"USD\"".to_vec())));
+        }
     }
 
     #[tokio::test]

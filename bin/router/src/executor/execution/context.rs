@@ -462,6 +462,188 @@ mod tests {
     }
 
     #[test]
+    fn ancestor_cache_invalidates_on_entity_local_values() {
+        // all posts share the same user, only the entity-local code differs, so the cached
+        // parent alone must not decide the group
+        let data: Value<'_> = sonic_rs::from_str(
+            r#"{"users":[{"currency":"USD","posts":[
+                {"__typename":"Post","id":"1","code":"A"},
+                {"__typename":"Post","id":"2","code":"B"},
+                {"__typename":"Post","id":"3","code":"A"}
+            ]}]}"#,
+        )
+        .unwrap();
+        let path: FlattenNodePath = vec![
+            PathSegment::Field("users".into()),
+            PathSegment::List,
+            PathSegment::Field("posts".into()),
+            PathSegment::List,
+        ]
+        .into();
+        let definition = parse_operation("{ __typename id }").definitions.remove(0);
+        let graphql_tools::parser::query::Definition::Operation(
+            graphql_tools::parser::query::OperationDefinition::SelectionSet(selection),
+        ) = definition
+        else {
+            panic!("selection");
+        };
+        let requires = RequiresSelectionSet::from(&SelectionSet::from(selection));
+        let rewrites = [
+            KeyRenamer {
+                path: vec![
+                    FetchNodePathSegment::Parent,
+                    FetchNodePathSegment::Key("currency".into()),
+                ],
+                rename_key_to: "__context_0".into(),
+            },
+            KeyRenamer {
+                path: vec![FetchNodePathSegment::Key("code".into())],
+                rename_key_to: "__context_1".into(),
+            },
+        ];
+        let names = ["__context_0".into(), "__context_1".into()];
+        let possible_types = PossibleTypes::default();
+        let (groups, hashes) = collect_context_entities(
+            &data,
+            [path.as_ref()],
+            &requires,
+            None,
+            Some(&rewrites),
+            &names,
+            &possible_types,
+            None,
+        );
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].variables[1].1, b"\"A\"");
+        assert_eq!(groups[1].variables[1].1, b"\"B\"");
+        let hashes: Vec<u64> = hashes[0].iter().map(|hash| hash.unwrap()).collect();
+        assert!(groups[0].hash_to_index.contains_key(&hashes[0]));
+        assert!(groups[1].hash_to_index.contains_key(&hashes[1]));
+        assert!(groups[0].hash_to_index.contains_key(&hashes[2]));
+
+        // resolving the same sources again reuses the cached group, a different entity under
+        // the same parent doesn't
+        let Value::Object(root) = &data else {
+            panic!("object");
+        };
+        let Some(Value::Array(users)) = Value::object_get(root, "users") else {
+            panic!("users");
+        };
+        let user = &users[0];
+        let Value::Object(user_fields) = user else {
+            panic!("user");
+        };
+        let Some(Value::Array(posts)) = Value::object_get(user_fields, "posts") else {
+            panic!("posts");
+        };
+        let objects = [&data, user];
+        let mut contexts = ContextGroups::new(&names, &rewrites);
+        let resolved: Vec<usize> = [0, 0, 1, 1, 2, 0]
+            .into_iter()
+            .map(|post| contexts.resolve(&posts[post], &objects, &possible_types))
+            .collect();
+        assert_eq!(resolved, vec![0, 0, 1, 1, 0, 0]);
+    }
+
+    #[test]
+    fn ancestor_cache_tracks_every_parent_depth_across_paths() {
+        // the currency is two parents up and the name one parent up. posts under the same user
+        // reuse the cached group, a new user or org must not. the drafts path starts right
+        // after the posts path ends, under different ancestors than its last entity
+        let data: Value<'_> = sonic_rs::from_str(
+            r#"{"orgs":[
+                {"currency":"USD","users":[
+                    {"name":"a",
+                     "posts":[{"__typename":"Post","id":"1"},{"__typename":"Post","id":"2"}],
+                     "drafts":[{"__typename":"Post","id":"5"}]},
+                    {"name":"b","posts":[{"__typename":"Post","id":"3"}]}
+                ]},
+                {"currency":"EUR","users":[
+                    {"name":"a",
+                     "posts":[{"__typename":"Post","id":"4"}],
+                     "drafts":[{"__typename":"Post","id":"6"}]}
+                ]}
+            ]}"#,
+        )
+        .unwrap();
+        let path = |field: &str| -> FlattenNodePath {
+            vec![
+                PathSegment::Field("orgs".into()),
+                PathSegment::List,
+                PathSegment::Field("users".into()),
+                PathSegment::List,
+                PathSegment::Field(field.into()),
+                PathSegment::List,
+            ]
+            .into()
+        };
+        let posts = path("posts");
+        let drafts = path("drafts");
+        let definition = parse_operation("{ __typename id }").definitions.remove(0);
+        let graphql_tools::parser::query::Definition::Operation(
+            graphql_tools::parser::query::OperationDefinition::SelectionSet(selection),
+        ) = definition
+        else {
+            panic!("selection");
+        };
+        let requires = RequiresSelectionSet::from(&SelectionSet::from(selection));
+        let rewrites = [
+            KeyRenamer {
+                path: vec![
+                    FetchNodePathSegment::Parent,
+                    FetchNodePathSegment::Parent,
+                    FetchNodePathSegment::Key("currency".into()),
+                ],
+                rename_key_to: "__context_0".into(),
+            },
+            KeyRenamer {
+                path: vec![
+                    FetchNodePathSegment::Parent,
+                    FetchNodePathSegment::Key("name".into()),
+                ],
+                rename_key_to: "__context_1".into(),
+            },
+        ];
+        let names = ["__context_0".into(), "__context_1".into()];
+        let (groups, hashes) = collect_context_entities(
+            &data,
+            [posts.as_ref(), drafts.as_ref()],
+            &requires,
+            None,
+            Some(&rewrites),
+            &names,
+            &PossibleTypes::default(),
+            None,
+        );
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| (
+                    std::str::from_utf8(&group.variables[0].1).unwrap(),
+                    std::str::from_utf8(&group.variables[1].1).unwrap(),
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (r#""USD""#, r#""a""#),
+                (r#""USD""#, r#""b""#),
+                (r#""EUR""#, r#""a""#),
+            ]
+        );
+        // posts 1 to 4, then drafts 5 and 6, with the group each one must land in
+        let entities = hashes[0].iter().chain(hashes[1].iter());
+        for (hash, group) in entities.zip([0, 0, 1, 2, 0, 2]) {
+            assert!(groups[group].hash_to_index.contains_key(&hash.unwrap()));
+        }
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| group.hash_to_index.len())
+                .collect::<Vec<_>>(),
+            vec![3, 1, 2]
+        );
+    }
+
+    #[test]
     fn empty_context_selection_sends_null() {
         let data = sonic_rs::from_str(r#"{"__typename":"Transaction","id":"1"}"#).unwrap();
         let path = FlattenNodePath::default();
