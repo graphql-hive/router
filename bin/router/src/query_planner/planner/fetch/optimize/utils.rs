@@ -293,16 +293,16 @@ impl FetchGraph<MultiTypeFetchStep> {
                     continue;
                 }
                 for target_index in self.graph.node_indices() {
-                    if source_index == target_index
-                        || !self.is_descendant_of(source_index, target_index)
-                    {
+                    if source_index == target_index {
                         continue;
                     }
                     let target = self.get_step_data(target_index)?;
+                    // cheap checks first, the graph walk goes last
                     if target.service_name == source.service_name
                         && target.context_rewrites.is_none()
                         && target.can_absorb_nested_entity_call(source)
                         && !target.has_arguments_conflicts_with(source)
+                        && self.is_descendant_of(source_index, target_index)
                     {
                         candidate = Some((target_index, source_index));
                         break;
