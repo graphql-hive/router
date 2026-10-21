@@ -963,34 +963,32 @@ impl<'exec> Executor<'exec> {
                 continue;
             };
             let wave_count = chunk.len();
-            let mut values_per_wave = Vec::with_capacity(wave_count);
-            let mut merged_aliases: Vec<AliasBatchState<'exec>> = Vec::new();
-            // representations sent per alias and wave
-            let mut counts: Vec<Vec<usize>> = Vec::new();
-            // representations sent per alias so far, so where the next wave starts
-            let mut offsets: Vec<usize> = Vec::new();
+            // representations each alias sends over all the waves, so its map is sized once
             let mut totals = vec![0; chunk[0].1.len()];
             for (_, aliases) in &chunk {
                 for (total, alias) in totals.iter_mut().zip(aliases) {
                     *total += alias.representation_hash_to_index.len();
                 }
             }
-            for (wave, (values, mut aliases)) in chunk.into_iter().enumerate() {
+            // the aliases of the first wave take in the entities of all the others
+            let mut chunk = chunk.into_iter();
+            let Some((values, mut merged_aliases)) = chunk.next() else {
+                continue;
+            };
+            let mut values_per_wave = Vec::with_capacity(wave_count);
+            values_per_wave.push(values);
+            // representations sent per alias and wave
+            let mut counts: Vec<Vec<usize>> = Vec::with_capacity(merged_aliases.len());
+            // representations sent per alias so far, so where the next wave starts
+            let mut offsets: Vec<usize> = Vec::with_capacity(merged_aliases.len());
+            for (alias, total) in merged_aliases.iter_mut().zip(&totals) {
+                let count = alias.representation_hash_to_index.len();
+                counts.push(vec![count]);
+                offsets.push(count);
+                alias.representation_hash_to_index.reserve(total - count);
+            }
+            for (values, aliases) in chunk {
                 values_per_wave.push(values);
-                if wave == 0 {
-                    counts = aliases
-                        .iter()
-                        .map(|alias| vec![alias.representation_hash_to_index.len()])
-                        .collect();
-                    offsets = counts.iter().map(|counts| counts[0]).collect();
-                    for (alias, total) in aliases.iter_mut().zip(&totals) {
-                        alias
-                            .representation_hash_to_index
-                            .reserve(total - alias.representation_hash_to_index.len());
-                    }
-                    merged_aliases = aliases;
-                    continue;
-                }
                 for (((merged, counts), offset), alias) in merged_aliases
                     .iter_mut()
                     .zip(&mut counts)
