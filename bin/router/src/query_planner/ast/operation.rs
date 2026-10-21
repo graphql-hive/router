@@ -58,68 +58,152 @@ pub struct SubgraphFetchOperation {
     ///
     /// The value is the position in the document where the operation name should be written.
     pub name_write_position: usize,
-    /// Copies of this operation built by `context_aliased`, indexed by the number of groups.
-    /// Set by the planner on fetches with contextual arguments, sized by the alias limit.
+    /// How this operation is written out for several groups of contextual argument values.
+    /// Set by the planner on fetches with contextual arguments.
     #[serde(skip)]
-    context_aliased: Option<Box<ContextAliasedCache>>,
+    context_aliased: Option<Box<ContextAliasing>>,
 }
 
-// boxed twice so the field stays one pointer wide, plans hold one of these per fetch
+// boxed so the field stays one pointer wide, plans hold one of these per fetch
 #[derive(Debug, Clone)]
-struct ContextAliasedCache(Box<[OnceLock<Option<ContextAliasedOperation>>]>);
+struct ContextAliasing {
+    max_groups: usize,
+    template: OnceLock<Option<ContextAliasTemplate>>,
+}
 
-/// An entity fetch operation with its top-level fields and per-group variables repeated once per
-/// group of contextual argument values, so that all groups are fetched in a single request.
+/// Stands in for the group number in a [`ContextAliasTemplate`]. A GraphQL document can't
+/// contain it, so it can't be mistaken for anything.
+const GROUP: char = '\0';
+// mark where the per-group variables and the fields end while the template gets minified,
+// same deal, no document can contain these
+const VARIABLES_START: &str = "\u{1}";
+const VARIABLES_END: &str = "\u{2}";
+const FIELDS_END: &str = "\u{3}";
+
+/// An entity fetch operation cut into the parts every group of contextual argument values
+/// shares and the parts each group gets its own copy of (top-level fields, fragments and the
+/// per-group variables), so it can be written out for any number of groups. A group's copies get
+/// `_{group}` added to their names.
 ///
-/// For two groups, `query($representations:[_Any!]!,$c:ID){_entities(representations:$representations){...on T{f(a:$c)}}}`
-/// becomes `query($representations_0:[_Any!]!,$representations_1:[_Any!]!,$c_0:ID,$c_1:ID){_entities_0:_entities(representations:$representations_0){...on T{f(a:$c_0)}} _entities_1:_entities(representations:$representations_1){...on T{f(a:$c_1)}}}`.
+/// For two groups, `query($representations:[_Any!]!$c:ID){_entities(representations:$representations){...on T{f(a:$c)}}}`
+/// becomes `query($representations_0:[_Any!]!$c_0:ID$representations_1:[_Any!]!$c_1:ID){_entities_0:_entities(representations:$representations_0){...on T{f(a:$c_0)}}_entities_1:_entities(representations:$representations_1){...on T{f(a:$c_1)}}}`.
+///
+/// It's built once per fetch and is about as big as the operation. The copies are written per
+/// request and dropped with it, so they don't pile up in the plan cache.
 #[derive(Debug, Clone)]
-pub struct ContextAliasedOperation {
-    pub operation: SubgraphFetchOperation,
-    /// The original name of every per-group variable, and its name in each group.
-    pub variables: Vec<(String, Vec<String>)>,
-    /// The original response key of every top-level field, and its alias in each group.
-    pub response_keys: Vec<(String, Vec<String>)>,
-    custom_scalar_paths: OnceLock<CustomScalarPaths>,
+pub struct ContextAliasTemplate {
+    /// `query(` and the variables all groups share
+    head: Box<str>,
+    /// The per-group parts, with [`GROUP`] where the group number goes
+    variables: Box<str>,
+    fields: Box<str>,
+    fragments: Box<str>,
+    /// Two copies of the fields need a space between them, like `a:b c:d`
+    space_between_fields: bool,
+    /// The original names of the per-group variables
+    group_variables: Box<[String]>,
+    /// The original response key of every top-level field
+    pub response_keys: Box<[String]>,
 }
 
-impl ContextAliasedOperation {
-    /// Returns custom-scalar paths rooted at the generated response aliases.
-    pub fn custom_scalar_paths(&self, original: &CustomScalarPaths) -> &CustomScalarPaths {
-        self.custom_scalar_paths.get_or_init(|| CustomScalarPaths {
-            children: self
-                .response_keys
-                .iter()
-                .filter_map(|(key, aliases)| {
-                    original.children.get(key).map(|paths| (aliases, paths))
-                })
-                .flat_map(|(aliases, paths)| {
-                    aliases
-                        .iter()
-                        .map(move |alias| (alias.clone(), paths.clone()))
-                })
-                .collect(),
-            terminal: original.terminal,
-        })
+impl ContextAliasTemplate {
+    /// Writes the operation out for `groups` groups.
+    pub fn operation(&self, groups: usize) -> SubgraphFetchOperation {
+        let mut document = String::with_capacity(
+            self.head.len()
+                + 3
+                + groups * (self.variables.len() + self.fields.len() + self.fragments.len() + 8),
+        );
+        document.push_str(&self.head);
+        for group in 0..groups {
+            push_group(&mut document, &self.variables, group);
+        }
+        document.push_str("){");
+        for group in 0..groups {
+            if group > 0 && self.space_between_fields {
+                document.push(' ');
+            }
+            push_group(&mut document, &self.fields, group);
+        }
+        document.push('}');
+        for group in 0..groups {
+            push_group(&mut document, &self.fragments, group);
+        }
+        SubgraphFetchOperation {
+            hash: hash_minified_query(&document),
+            name_write_position: name_write_position(&document),
+            document_str: document.into_boxed_str(),
+            context_aliased: None,
+        }
     }
 
     /// The name of the variable `name` in the group `group`, if it is a per-group variable.
-    pub fn variable(&self, name: &str, group: usize) -> Option<&str> {
-        self.variables
+    pub fn variable(&self, name: &str, group: usize) -> Option<String> {
+        self.group_variables
             .iter()
-            .find(|(original, _)| original == name)
-            .map(|(_, names)| names[group].as_str())
+            .any(|variable| variable == name)
+            .then(|| format!("{name}_{group}"))
+    }
+
+    /// Turns a response key like `_entities_3` into the index of its original key and its group.
+    pub fn response_key(&self, alias: &str) -> Option<(usize, usize)> {
+        let (key, group) = split_group(alias)?;
+        let key = self
+            .response_keys
+            .iter()
+            .position(|original| original == key)?;
+        Some((key, group))
+    }
+
+    /// Custom-scalar paths rooted at the response keys of `groups` groups.
+    pub fn custom_scalar_paths(
+        &self,
+        original: &CustomScalarPaths,
+        groups: usize,
+    ) -> CustomScalarPaths {
+        CustomScalarPaths {
+            children: self
+                .response_keys
+                .iter()
+                .filter_map(|key| Some((key, original.children.get(key)?)))
+                .flat_map(|(key, paths)| {
+                    (0..groups).map(move |group| (format!("{key}_{group}"), paths.clone()))
+                })
+                .collect(),
+            terminal: original.terminal,
+        }
     }
 }
 
+fn push_group(document: &mut String, text: &str, group: usize) {
+    use std::fmt::Write;
+    for (index, piece) in text.split(GROUP).enumerate() {
+        if index > 0 {
+            let _ = write!(document, "{group}");
+        }
+        document.push_str(piece);
+    }
+}
+
+/// Splits a name like `c_12` into `c` and `12`.
+fn split_group(name: &str) -> Option<(&str, usize)> {
+    let (name, group) = name.rsplit_once('_')?;
+    if group.is_empty() || !group.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some((name, group.parse().ok()?))
+}
+
 impl SubgraphFetchOperation {
-    /// Allows [`Self::context_aliased`] to put up to `max_groups` groups of contextual argument
-    /// values into one request. Called by the planner, a `max_groups` below 2 disables aliasing.
+    /// Allows [`Self::context_alias_template`] to put up to `max_groups` groups of contextual
+    /// argument values into one request. Called by the planner, a `max_groups` below 2 disables
+    /// aliasing, `usize::MAX` means no limit.
     pub fn set_max_context_groups(&mut self, max_groups: usize) {
         self.context_aliased = (max_groups >= 2).then(|| {
-            Box::new(ContextAliasedCache(
-                (0..=max_groups).map(|_| OnceLock::new()).collect(),
-            ))
+            Box::new(ContextAliasing {
+                max_groups,
+                template: OnceLock::new(),
+            })
         });
     }
 
@@ -127,37 +211,27 @@ impl SubgraphFetchOperation {
     pub fn max_context_groups(&self) -> usize {
         self.context_aliased
             .as_ref()
-            .map_or(1, |cache| cache.0.len() - 1)
+            .map_or(1, |aliasing| aliasing.max_groups)
     }
 
-    /// Returns this operation with every top-level field repeated once per group, see
-    /// [`ContextAliasedOperation`]. The `variables` get a separate copy per group, all other
-    /// variables are shared. The result is built once per group count and cached.
+    /// Returns the template to write this operation out for several groups, see
+    /// [`ContextAliasTemplate`]. The `variables` get a separate copy per group, all other
+    /// variables are shared. Built on first use and kept with the operation.
     ///
-    /// Returns `None` when `groups` is not between 2 and [`Self::max_context_groups`], or the
-    /// operation can not be rewritten.
-    pub fn context_aliased(
-        &self,
-        groups: usize,
-        variables: &[&str],
-    ) -> Option<&ContextAliasedOperation> {
-        if groups < 2 {
-            return None;
-        }
+    /// Returns `None` when aliasing is off, or the operation can not be rewritten.
+    pub fn context_alias_template(&self, variables: &[&str]) -> Option<&ContextAliasTemplate> {
         self.context_aliased
             .as_ref()?
-            .0
-            .get(groups)?
-            .get_or_init(|| build_context_aliased(&self.document_str, groups, variables))
+            .template
+            .get_or_init(|| build_context_alias_template(&self.document_str, variables))
             .as_ref()
     }
 }
 
-fn build_context_aliased(
+fn build_context_alias_template(
     document_str: &str,
-    groups: usize,
     variables: &[&str],
-) -> Option<ContextAliasedOperation> {
+) -> Option<ContextAliasTemplate> {
     let document = parser::parse_query::<String>(document_str).ok()?;
     let mut query = None;
     let mut fragments = Vec::new();
@@ -173,84 +247,104 @@ fn build_context_aliased(
         }
     }
     let mut query = query?;
-    let fragment_names: Vec<String> = fragments.iter().map(|f| f.name.clone()).collect();
-    let suffixed = |name: &str| {
-        (0..groups)
-            .map(|g| format!("{name}_{g}"))
-            .collect::<Vec<_>>()
-    };
-
-    let mut renamed = Vec::new();
-    for definition in std::mem::take(&mut query.variable_definitions) {
-        if !variables.contains(&definition.name.as_str()) {
-            query.variable_definitions.push(definition);
-            continue;
-        }
-        let names = suffixed(&definition.name);
-        for name in &names {
-            query.variable_definitions.push(parser::VariableDefinition {
-                name: name.clone(),
-                ..definition.clone()
-            });
-        }
-        renamed.push((definition.name, names));
+    // they'd be written between the variables and the fields, the planner never adds any
+    if !query.directives.is_empty() {
+        return None;
     }
+    let fragment_names: Vec<String> = fragments.iter().map(|f| f.name.clone()).collect();
 
-    let mut names = std::collections::HashSet::new();
-    if query
-        .variable_definitions
-        .iter()
-        .any(|definition| !names.insert(definition.name.as_str()))
-    {
+    let mut shared = Vec::new();
+    let mut grouped = Vec::new();
+    let mut group_variables = Vec::new();
+    for definition in std::mem::take(&mut query.variable_definitions) {
+        if variables.contains(&definition.name.as_str()) {
+            group_variables.push(definition.name.clone());
+            grouped.push(parser::VariableDefinition {
+                name: format!("{}_{GROUP}", definition.name),
+                ..definition
+            });
+        } else {
+            shared.push(definition);
+        }
+    }
+    if grouped.is_empty() {
+        return None;
+    }
+    // a shared `$c_1` next to a per-group `$c` would clash with the copy for group 1
+    if shared.iter().any(|definition| {
+        split_group(&definition.name)
+            .is_some_and(|(name, _)| group_variables.iter().any(|v| v == name))
+    }) {
         return None;
     }
 
-    let fields = std::mem::take(&mut query.selection_set.items);
-    let mut response_keys = Vec::with_capacity(fields.len());
-    for selection in &fields {
+    let mut response_keys = Vec::with_capacity(query.selection_set.items.len());
+    for selection in &mut query.selection_set.items {
         let parser::Selection::Field(field) = selection else {
             return None;
         };
-        let key = field.alias.as_ref().unwrap_or(&field.name);
-        response_keys.push((key.clone(), suffixed(key)));
+        let key = field.alias.take().unwrap_or_else(|| field.name.clone());
+        field.alias = Some(format!("{key}_{GROUP}"));
+        response_keys.push(key);
+        suffix_selection(selection, variables, &fragment_names, GROUP);
     }
-    for group in 0..groups {
-        for (selection, (_, aliases)) in fields.iter().zip(&response_keys) {
-            let mut selection = selection.clone();
-            if let parser::Selection::Field(field) = &mut selection {
-                field.alias = Some(aliases[group].clone());
-            }
-            suffix_selection(&mut selection, variables, &fragment_names, group);
-            query.selection_set.items.push(selection);
+    for fragment in &mut fragments {
+        fragment.name = format!("{}_{GROUP}", fragment.name);
+        suffix_directives(&mut fragment.directives, variables, GROUP);
+        for selection in &mut fragment.selection_set.items {
+            suffix_selection(selection, variables, &fragment_names, GROUP);
         }
     }
 
+    // minify it all in one go, with markers where the shared and per-group parts meet
+    let marker = |name: &str| parser::VariableDefinition {
+        position: query.position,
+        name: name.to_string(),
+        var_type: parser::Type::NamedType(name.to_string()),
+        default_value: None,
+    };
+    let (start, end) = (marker(VARIABLES_START), marker(VARIABLES_END));
+    query.variable_definitions = shared;
+    query.variable_definitions.push(start);
+    query.variable_definitions.extend(grouped);
+    query.variable_definitions.push(end);
+    query
+        .selection_set
+        .items
+        .push(parser::Selection::Field(parser::Field {
+            position: query.position,
+            alias: None,
+            name: FIELDS_END.to_string(),
+            arguments: Vec::new(),
+            directives: Vec::new(),
+            selection_set: parser::SelectionSet {
+                span: query.selection_set.span,
+                items: Vec::new(),
+            },
+        }));
     let mut definitions = vec![parser::Definition::Operation(
         parser::OperationDefinition::Query(query),
     )];
-    for group in 0..groups {
-        for fragment in &fragments {
-            let mut fragment = fragment.clone();
-            fragment.name = format!("{}_{group}", fragment.name);
-            suffix_directives(&mut fragment.directives, variables, group);
-            for selection in &mut fragment.selection_set.items {
-                suffix_selection(selection, variables, &fragment_names, group);
-            }
-            definitions.push(parser::Definition::Fragment(fragment));
-        }
-    }
+    definitions.extend(fragments.into_iter().map(parser::Definition::Fragment));
+    let minified = parser::minify_query_document(&parser::Document { definitions });
 
-    let document_str = parser::minify_query_document(&parser::Document { definitions });
-    Some(ContextAliasedOperation {
-        operation: SubgraphFetchOperation {
-            hash: hash_minified_query(&document_str),
-            name_write_position: name_write_position(&document_str),
-            document_str: document_str.into_boxed_str(),
-            context_aliased: None,
-        },
-        variables: renamed,
-        response_keys,
-        custom_scalar_paths: OnceLock::new(),
+    // query(<shared>$\1:\1<per-group>$\2:\2){<fields> \3}<fragments>
+    let (head, rest) = minified.split_once(&format!("${VARIABLES_START}:{VARIABLES_START}"))?;
+    let (variables, rest) = rest.split_once(&format!("${VARIABLES_END}:{VARIABLES_END}){{"))?;
+    let (fields, fragments) = rest.split_once(FIELDS_END)?;
+    let fields = fields.strip_suffix(' ').unwrap_or(fields);
+    let fragments = fragments.strip_prefix('}')?;
+    let is_word =
+        |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == GROUP);
+
+    Some(ContextAliasTemplate {
+        head: head.into(),
+        variables: variables.into(),
+        space_between_fields: is_word(fields.chars().last()) && is_word(fields.chars().next()),
+        fields: fields.into(),
+        fragments: fragments.into(),
+        group_variables: group_variables.into(),
+        response_keys: response_keys.into(),
     })
 }
 
@@ -259,7 +353,7 @@ fn suffix_selection(
     selection: &mut parser::Selection<'_, String>,
     variables: &[&str],
     fragments: &[String],
-    group: usize,
+    group: char,
 ) {
     let items = match selection {
         parser::Selection::Field(field) => {
@@ -289,7 +383,7 @@ fn suffix_selection(
 fn suffix_directives(
     directives: &mut [parser::Directive<'_, String>],
     variables: &[&str],
-    group: usize,
+    group: char,
 ) {
     for directive in directives {
         for (_, value) in &mut directive.arguments {
@@ -298,7 +392,7 @@ fn suffix_directives(
     }
 }
 
-fn suffix_value(value: &mut parser::Value<'_, String>, variables: &[&str], group: usize) {
+fn suffix_value(value: &mut parser::Value<'_, String>, variables: &[&str], group: char) {
     match value {
         parser::Value::Variable(name) if variables.contains(&name.as_str()) => {
             *name = format!("{name}_{group}");
@@ -807,21 +901,21 @@ mod tests {
     }
 
     #[test]
-    fn context_aliased_rejects_generated_variable_collisions() {
-        for shared in ["__context_0_0", "representations_0"] {
+    fn context_alias_template_rejects_generated_variable_collisions() {
+        for shared in ["__context_0_0", "representations_0", "representations_17"] {
             let mut operation = parse_subgraph_fetch_operation(&format!(
                 "query($representations: [_Any!]!, $__context_0: String, ${shared}: Int) {{ _entities(representations: $representations) {{ ... on T {{ f(a: $__context_0, b: ${shared}) }} }} }}",
             ))
             .operation;
-            operation.set_max_context_groups(2);
+            operation.set_max_context_groups(usize::MAX);
             assert!(operation
-                .context_aliased(2, &["representations", "__context_0"])
+                .context_alias_template(&["representations", "__context_0"])
                 .is_none());
         }
     }
 
     #[test]
-    fn context_aliased_preserves_custom_scalars_under_generated_aliases() {
+    fn context_alias_template_preserves_custom_scalars_under_generated_aliases() {
         use crate::executor::response::{subgraph_response::SubgraphResponse, value::Value};
 
         for key in ["_entities", "_e0"] {
@@ -830,12 +924,12 @@ mod tests {
             ))
             .operation;
             operation.set_max_context_groups(2);
-            let aliased = operation
-                .context_aliased(2, &["representations", "c"])
+            let template = operation
+                .context_alias_template(&["representations", "c"])
                 .unwrap();
             let mut original = CustomScalarPaths::default();
             original.insert_path([key, "json"]);
-            let paths = aliased.custom_scalar_paths(&original);
+            let paths = &template.custom_scalar_paths(&original, 2);
             assert!(!paths.children.contains_key(key));
             for group in 0..2 {
                 let alias = format!("{key}_{group}");
@@ -863,42 +957,56 @@ mod tests {
     }
 
     #[test]
-    fn context_aliased_repeats_fields_variables_and_fragments_per_group() {
+    fn context_alias_template_repeats_fields_variables_and_fragments_per_group() {
         let operation = parse_subgraph_fetch_operation(
             "query($representations: [_Any!]!, $c: ID, $shared: Int) { _entities(representations: $representations) { ...F ... on T @include(if: $c) { g(a: [{x: $c}], b: $shared) } } } fragment F on T { f(a: $c) }",
         );
         let mut operation = operation.operation;
         // not enabled by the planner
         assert!(operation
-            .context_aliased(2, &["representations", "c"])
+            .context_alias_template(&["representations", "c"])
             .is_none());
-        operation.set_max_context_groups(15);
-        assert_eq!(operation.max_context_groups(), 15);
-        assert!(operation
-            .context_aliased(1, &["representations", "c"])
-            .is_none());
-        assert!(operation
-            .context_aliased(16, &["representations", "c"])
-            .is_none());
+        operation.set_max_context_groups(usize::MAX);
+        assert_eq!(operation.max_context_groups(), usize::MAX);
 
-        let aliased = operation
-            .context_aliased(2, &["representations", "c"])
+        let template = operation
+            .context_alias_template(&["representations", "c"])
             .unwrap();
-        insta::assert_snapshot!(aliased.operation.document_str, @"query($representations_0:[_Any!]!$representations_1:[_Any!]!$c_0:ID$c_1:ID$shared:Int){_entities_0:_entities(representations:$representations_0){...F_0...on T@include(if:$c_0){g(a:[{x:$c_0}]b:$shared)}}_entities_1:_entities(representations:$representations_1){...F_1...on T@include(if:$c_1){g(a:[{x:$c_1}]b:$shared)}}}fragment F_0 on T{f(a:$c_0)}fragment F_1 on T{f(a:$c_1)}");
-        assert_eq!(aliased.operation.name_write_position, 5);
-        assert_eq!(aliased.variable("c", 1), Some("c_1"));
-        assert_eq!(aliased.variable("shared", 1), None);
+        let aliased = template.operation(2);
+        insta::assert_snapshot!(aliased.document_str, @"query($shared:Int$representations_0:[_Any!]!$c_0:ID$representations_1:[_Any!]!$c_1:ID){_entities_0:_entities(representations:$representations_0){...F_0...on T@include(if:$c_0){g(a:[{x:$c_0}]b:$shared)}}_entities_1:_entities(representations:$representations_1){...F_1...on T@include(if:$c_1){g(a:[{x:$c_1}]b:$shared)}}}fragment F_0 on T{f(a:$c_0)}fragment F_1 on T{f(a:$c_1)}");
+        assert_eq!(aliased.name_write_position, 5);
         assert_eq!(
-            aliased.response_keys,
-            vec![(
-                "_entities".to_string(),
-                vec!["_entities_0".to_string(), "_entities_1".to_string()]
-            )]
+            aliased.hash,
+            crate::query_planner::planner::plan_nodes::hash_minified_query(&aliased.document_str)
         );
-        // cached per group count
+        assert_eq!(template.variable("c", 1).as_deref(), Some("c_1"));
+        assert_eq!(template.variable("shared", 1), None);
+        assert_eq!(&*template.response_keys, ["_entities".to_string()]);
+        assert_eq!(template.response_key("_entities_12"), Some((0, 12)));
+        assert_eq!(template.response_key("_entities_"), None);
+        assert_eq!(template.response_key("other_1"), None);
+        // one template for every group count
         assert!(std::ptr::eq(
-            aliased,
-            operation.context_aliased(2, &[]).unwrap()
+            template,
+            operation.context_alias_template(&[]).unwrap()
         ));
+        // no limit on the group count
+        let aliased = template.operation(40);
+        assert!(graphql_tools::parser::parse_query::<String>(&aliased.document_str).is_ok());
+        assert!(aliased
+            .document_str
+            .contains("_entities_39:_entities(representations:$representations_39)"));
+        assert!(aliased
+            .document_str
+            .ends_with("fragment F_39 on T{f(a:$c_39)}"));
+    }
+
+    #[test]
+    fn context_alias_template_separates_fields_that_end_with_a_name() {
+        let mut operation =
+            parse_subgraph_fetch_operation("query($r: [_Any!]!) { a(x: $r) b }").operation;
+        operation.set_max_context_groups(usize::MAX);
+        let template = operation.context_alias_template(&["r"]).unwrap();
+        insta::assert_snapshot!(template.operation(2).document_str, @"query($r_0:[_Any!]!$r_1:[_Any!]!){a_0:a(x:$r_0)b_0:b a_1:a(x:$r_1)b_1:b}");
     }
 }

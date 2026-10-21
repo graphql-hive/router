@@ -394,7 +394,16 @@ mod context_e2e_tests {
     #[ntex::test]
     async fn chunks_context_groups_into_aliased_requests() {
         let mut server = mockito::Server::new_async().await;
-        let router = start_router("context-basic", &server).await;
+        let router = start_router_with_config(
+            "context-basic",
+            &server,
+            r#"
+            traffic_shaping:
+              all:
+                max_aliases_per_request: 15
+            "#,
+        )
+        .await;
         // one more group than fits in one request
         let users: Vec<_> = (0..16)
             .map(|index| {
@@ -463,6 +472,61 @@ mod context_e2e_tests {
         root.assert_async().await;
         aliased.assert_async().await;
         single.assert_async().await;
+    }
+
+    #[ntex::test]
+    async fn sends_all_context_groups_in_one_request_by_default() {
+        let mut server = mockito::Server::new_async().await;
+        let router = start_router("context-basic", &server).await;
+        let users: Vec<_> = (0..40)
+            .map(|index| {
+                json!({
+                    "__typename": "User",
+                    "currency": index.to_string(),
+                    "txs": [{"__typename": "Transaction", "id": "same"}]
+                })
+            })
+            .collect();
+        let root = server
+            .mock("POST", "/a")
+            .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({"data": {"users": users}}).to_string())
+            .expect(1)
+            .create_async()
+            .await;
+        // listed backwards, the order of the aliases in the response doesn't matter
+        let aliased_data: serde_json::Map<_, _> = (0..40)
+            .rev()
+            .map(|index| (format!("_entities_{index}"), json!([{"amount": index}])))
+            .collect();
+        let aliased = server
+            .mock("POST", "/a")
+            .match_request(|r| {
+                let body = body(r);
+                body["query"].as_str().unwrap().contains("_entities_39:")
+                    && (0..40).all(|index| {
+                        body["variables"][format!("__context_0_{index}")] == index.to_string()
+                    })
+            })
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({"data": aliased_data}).to_string())
+            .expect(1)
+            .create_async()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ users { txs { amount } } }", None, None)
+            .await;
+        let response: Value = serde_json::from_str(&res.json_body_string_pretty().await).unwrap();
+        let expected: Vec<_> = (0..40)
+            .map(|index| json!({"txs": [{"amount": index}]}))
+            .collect();
+        assert_eq!(response, json!({"data": {"users": expected}}));
+        root.assert_async().await;
+        aliased.assert_async().await;
     }
 
     #[ntex::test]

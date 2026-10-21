@@ -21,7 +21,7 @@ traffic_shaping:
 The cap applies to both places where the router adds aliases:
 
 - **Query planning.** Compatible entity fetches to the same subgraph are batched into a `BatchFetch` with one alias per fetch shape. Without a cap batches are never split, same as before. With a cap, a batch with more aliases than the cap is split into several `BatchFetch` nodes that run in parallel. A leftover single fetch stays a regular fetch.
-- **Contextual argument groups.** Groups are split into additional requests rather than failing the operation. Without a cap, up to `15` groups go in one request. For example, a regular entity fetch with 12 distinct context-value groups and a cap of `5` sends three requests containing 5, 5, and 2 groups. A single group keeps the original query unchanged. In a batched fetch every group repeats all batch aliases, so each request carries `cap / batch aliases` groups, at least one.
+- **Contextual argument groups.** Without a cap, all groups of a fetch go in one request. With a cap, groups are split into additional requests rather than failing the operation. For example, a regular entity fetch with 12 distinct context-value groups and a cap of `5` sends three requests containing 5, 5, and 2 groups. A single group keeps the original query unchanged. In a batched fetch every group repeats all batch aliases, so each request carries `cap / batch aliases` groups, at least one.
 
 Higher values reduce request overhead at the cost of larger query payloads. Lower values help accommodate subgraph alias or query-complexity limits, such as graphql-armor's max-aliases rule. Aliases from the client's own query are not counted. Set this option to `1` (or `0`) to send one `_entities` field per request.
 

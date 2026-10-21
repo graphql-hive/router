@@ -460,8 +460,8 @@ pub struct TrafficShapingExecutorGlobalConfig {
     ///
     /// Per-subgraph values under `traffic_shaping.subgraphs.<name>.max_aliases_per_request` take precedence.
     ///
-    /// Not set by default: batches are never split, and contextual argument groups go up to 15
-    /// per request.
+    /// Not set by default, so there's no limit: batches are never split, and all contextual
+    /// argument groups of a fetch go in one request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_aliases_per_request: Option<usize>,
 }

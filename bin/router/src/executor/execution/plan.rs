@@ -1,4 +1,4 @@
-use super::context::{collect_context_entities, unalias_response};
+use super::context::{collect_context_entities, unalias_response, AliasedRequests};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::vec;
@@ -465,6 +465,8 @@ async fn execute_query_plan_with_data<'exec>(
     mut data: Value<'exec>,
     mut opts: QueryPlanExecutionOpts<'exec>,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
+    // declared first so it outlives everything that borrows from it
+    let aliased_requests = AliasedRequests::default();
     let mut errors = opts.initial_errors;
 
     let dedupe_subgraph_requests = opts.operation_kind.is_query();
@@ -536,6 +538,7 @@ async fn execute_query_plan_with_data<'exec>(
         plugin_req_state: opts.plugin_req_state.as_ref(),
         operation_name_factory: &opts.operation_name_factory,
         connection_fingerprint: opts.connection_fingerprint,
+        aliased_requests: &aliased_requests,
     };
 
     if let Some(node) = &opts.query_plan.node {
@@ -715,6 +718,7 @@ pub struct Executor<'exec> {
     pub plugin_req_state: Option<&'exec PluginRequestState<'exec>>,
     pub operation_name_factory: &'exec OperationNameFactory,
     pub connection_fingerprint: Option<ConnectionFingerprint>,
+    pub aliased_requests: &'exec AliasedRequests,
 }
 
 pub enum ExecutionJob<'exec> {
@@ -950,21 +954,27 @@ impl<'exec> Executor<'exec> {
                 while waves.peek().is_some() {
                     let chunk: Vec<_> = waves.by_ref().take(waves_per_request).collect();
                     let variables: Vec<&str> = chunk[0].0.iter().map(|(name, _)| *name).collect();
-                    let Some(aliased) = batch_fetch_node
-                        .operation
-                        .context_aliased(chunk.len(), &variables)
-                    else {
+                    let template = if chunk.len() < 2 {
+                        None
+                    } else {
+                        batch_fetch_node
+                            .operation
+                            .context_alias_template(&variables)
+                    };
+                    let Some(template) = template else {
                         requests.extend(chunk.into_iter().map(|(raw_variable_values, aliases)| {
                             (
                                 &batch_fetch_node.operation,
                                 raw_variable_values,
+                                batch_fetch_node.custom_scalar_paths.as_ref(),
                                 aliases,
                                 None,
                             )
                         }));
                         continue;
                     };
-                    let mut raw_variable_values = Vec::new();
+                    let wave_count = chunk.len();
+                    let mut values_per_wave = Vec::with_capacity(wave_count);
                     let mut merged_aliases: Vec<AliasBatchState<'exec>> = Vec::new();
                     // representations sent per alias and wave
                     let mut counts: Vec<Vec<usize>> = Vec::new();
@@ -977,9 +987,7 @@ impl<'exec> Executor<'exec> {
                         }
                     }
                     for (wave, (values, mut aliases)) in chunk.into_iter().enumerate() {
-                        raw_variable_values.extend(values.into_iter().map(|(name, value)| {
-                            (aliased.variable(name, wave).unwrap_or(name), value)
-                        }));
+                        values_per_wave.push(values);
                         if wave == 0 {
                             counts = aliases
                                 .iter()
@@ -1011,67 +1019,76 @@ impl<'exec> Executor<'exec> {
                             *offset += count;
                         }
                     }
-                    // reorder the counts by response key of `aliased`, so unaliasing the
-                    // response doesn't have to look up the batch alias behind every key
-                    let counts: Vec<Vec<usize>> = aliased
-                        .response_keys
-                        .iter()
-                        .map(|(key, _)| {
-                            batch_fetch_node
-                                .entity_batch
-                                .aliases
-                                .iter()
-                                .position(|alias| alias.alias == *key)
-                                .map_or_else(Vec::new, |alias| std::mem::take(&mut counts[alias]))
-                        })
-                        .collect();
+                    let (request, raw_variable_values) = self.aliased_requests.push(
+                        template,
+                        values_per_wave,
+                        batch_fetch_node.custom_scalar_paths.as_ref(),
+                    );
                     requests.push((
-                        &aliased.operation,
+                        &request.operation,
                         raw_variable_values,
+                        request.custom_scalar_paths.as_ref(),
                         merged_aliases,
-                        Some((aliased, counts)),
+                        Some((template, wave_count, counts)),
                     ));
                 }
 
                 requests
                     .into_iter()
-                    .map(|(operation, raw_variable_values, aliases, aliased)| {
-                        self.prepare_execution_job(PrepareExecutionJobOpts {
-                            subgraph_name: &batch_fetch_node.service_name,
-                            variable_usages: batch_fetch_node.variable_usages.as_ref(),
-                            operation_name: self
-                                .operation_name_factory
-                                .generate(&batch_fetch_node.service_name, batch_fetch_node.id),
-                            operation_kind: batch_fetch_node.operation_kind.as_ref(),
+                    .map(
+                        |(
                             operation,
-                            output_rewrites: None,
-                            custom_scalar_paths: batch_fetch_node.custom_scalar_paths.as_ref().map(
-                                |paths| {
-                                    aliased.as_ref().map_or(paths, |(operation, _)| {
-                                        operation.custom_scalar_paths(paths)
-                                    })
-                                },
-                            ),
-                            raw_variable_values: Some(raw_variable_values),
-                            affected_path: None,
-                        })
-                        .map_ok(move |fetch_job| {
-                            let mut response = fetch_job.response();
-                            if let Some((aliased, counts)) = aliased {
-                                // keys without a batch alias have no counts and sent nothing
-                                unalias_response(&mut response, aliased, |key, wave| {
-                                    counts[key].get(wave).copied().unwrap_or(0)
-                                });
-                            }
-                            ExecutionJob::BatchFetch {
-                                operation: &batch_fetch_node.operation,
+                            raw_variable_values,
+                            custom_scalar_paths,
+                            aliases,
+                            unalias,
+                        )| {
+                            self.prepare_execution_job(PrepareExecutionJobOpts {
                                 subgraph_name: &batch_fetch_node.service_name,
-                                response,
-                                aliases,
-                            }
-                        })
-                        .boxed()
-                    })
+                                variable_usages: batch_fetch_node.variable_usages.as_ref(),
+                                operation_name: self
+                                    .operation_name_factory
+                                    .generate(&batch_fetch_node.service_name, batch_fetch_node.id),
+                                operation_kind: batch_fetch_node.operation_kind.as_ref(),
+                                operation,
+                                output_rewrites: None,
+                                custom_scalar_paths,
+                                raw_variable_values: Some(raw_variable_values),
+                                affected_path: None,
+                            })
+                            .map_ok(move |fetch_job| {
+                                let mut response = fetch_job.response();
+                                if let Some((template, waves, counts)) = unalias {
+                                    let batch_aliases = &batch_fetch_node.entity_batch.aliases;
+                                    // the batch alias behind every response key, looked up once
+                                    let alias_of: Vec<Option<usize>> = template
+                                        .response_keys
+                                        .iter()
+                                        .map(|key| {
+                                            batch_aliases
+                                                .iter()
+                                                .position(|alias| alias.alias == *key)
+                                        })
+                                        .collect();
+                                    unalias_response(
+                                        &mut response,
+                                        template,
+                                        waves,
+                                        |key, wave| {
+                                            alias_of[key].map_or(0, |alias| counts[alias][wave])
+                                        },
+                                    );
+                                }
+                                ExecutionJob::BatchFetch {
+                                    operation: &batch_fetch_node.operation,
+                                    subgraph_name: &batch_fetch_node.service_name,
+                                    response,
+                                    aliases,
+                                }
+                            })
+                            .boxed()
+                        },
+                    )
                     .collect()
             }
             PlanNode::Flatten(flatten_node) => {
@@ -1115,30 +1132,33 @@ impl<'exec> Executor<'exec> {
                         .map(|(name, _)| *name)
                         .chain(["representations"])
                         .collect();
-                    let Some(aliased) = fetch_node
-                        .operation
-                        .context_aliased(chunk.len(), &variables)
-                    else {
+                    let template = if chunk.len() < 2 {
+                        None
+                    } else {
+                        fetch_node.operation.context_alias_template(&variables)
+                    };
+                    let Some(template) = template else {
                         requests.extend(chunk.into_iter().map(|group| {
                             let mut raw_variable_values = group.variables;
                             raw_variable_values.push(("representations", group.representations));
                             (
                                 &fetch_node.operation,
                                 raw_variable_values,
+                                fetch_node.custom_scalar_paths.as_ref(),
                                 group.hash_to_index,
                                 None,
                             )
                         }));
                         continue;
                     };
-                    let mut raw_variable_values = Vec::new();
+                    let mut values_per_group = Vec::with_capacity(chunk.len());
                     let mut hash_to_index = AHashMap::with_capacity(
                         chunk.iter().map(|group| group.hash_to_index.len()).sum(),
                     );
                     // representations sent per group
                     let mut counts = Vec::with_capacity(chunk.len());
                     let mut offset = 0;
-                    for (index, group) in chunk.into_iter().enumerate() {
+                    for group in chunk {
                         let count = group.hash_to_index.len();
                         counts.push(count);
                         hash_to_index.extend(
@@ -1148,21 +1168,21 @@ impl<'exec> Executor<'exec> {
                                 .map(|(hash, entity_index)| (hash, entity_index + offset)),
                         );
                         offset += count;
-                        raw_variable_values.extend(
-                            group
-                                .variables
-                                .into_iter()
-                                .chain([("representations", group.representations)])
-                                .map(|(name, value)| {
-                                    (aliased.variable(name, index).unwrap_or(name), value)
-                                }),
-                        );
+                        let mut values = group.variables;
+                        values.push(("representations", group.representations));
+                        values_per_group.push(values);
                     }
+                    let (request, raw_variable_values) = self.aliased_requests.push(
+                        template,
+                        values_per_group,
+                        fetch_node.custom_scalar_paths.as_ref(),
+                    );
                     requests.push((
-                        &aliased.operation,
+                        &request.operation,
                         raw_variable_values,
+                        request.custom_scalar_paths.as_ref(),
                         hash_to_index,
-                        Some((aliased, counts)),
+                        Some((template, counts)),
                     ));
                 }
 
@@ -1172,8 +1192,9 @@ impl<'exec> Executor<'exec> {
                         |(
                             operation,
                             raw_variable_values,
+                            custom_scalar_paths,
                             representation_hash_to_index,
-                            aliased,
+                            unalias,
                         )| {
                             let representation_hashes = Arc::clone(&representation_hashes);
                             self.prepare_execution_job(PrepareExecutionJobOpts {
@@ -1185,22 +1206,19 @@ impl<'exec> Executor<'exec> {
                                 operation_kind: fetch_node.operation_kind.as_ref(),
                                 operation,
                                 output_rewrites: fetch_node.output_rewrites.as_deref(),
-                                custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref().map(
-                                    |paths| {
-                                        aliased.as_ref().map_or(paths, |(operation, _)| {
-                                            operation.custom_scalar_paths(paths)
-                                        })
-                                    },
-                                ),
+                                custom_scalar_paths,
                                 raw_variable_values: Some(raw_variable_values),
                                 affected_path: Some(flatten_node.path.as_ref()),
                             })
                             .map_ok(move |fetch_job| {
                                 let mut response = fetch_job.response();
-                                if let Some((aliased, counts)) = aliased {
-                                    unalias_response(&mut response, aliased, |_, group| {
-                                        counts[group]
-                                    });
+                                if let Some((template, counts)) = unalias {
+                                    unalias_response(
+                                        &mut response,
+                                        template,
+                                        counts.len(),
+                                        |_, group| counts[group],
+                                    );
                                 }
                                 ExecutionJob::FlattenFetch {
                                     operation: &fetch_node.operation,
@@ -2094,6 +2112,7 @@ mod tests {
         .unwrap();
 
         let executor = Executor {
+            aliased_requests: &crate::executor::execution::context::AliasedRequests::default(),
             variable_values: &None,
             schema_metadata: &SchemaMetadata::default(),
             executors: &executors,
@@ -2270,6 +2289,7 @@ mod tests {
             ),
         ]);
         let executor = Executor {
+            aliased_requests: &crate::executor::execution::context::AliasedRequests::default(),
             variable_values: &None,
             schema_metadata: &SchemaMetadata::default(),
             executors: &SubgraphExecutorMap::from_http_endpoint_map(

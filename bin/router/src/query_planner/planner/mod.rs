@@ -32,18 +32,14 @@ pub mod walker;
 pub struct QueryPlannerOptions {
     pub experimental_abstract_type_folding: bool,
     /// The most aliased `_entities` fields one entity request to a subgraph may carry.
-    /// `None` means batches are never split, and contextual argument groups go up to
-    /// [`DEFAULT_MAX_CONTEXT_ALIASES`] per request.
+    /// `None` means no limit: batches are never split, and all groups of contextual argument
+    /// values go in one request.
     ///
     /// Values in `subgraph_max_aliases_per_request` take precedence for their subgraph.
     pub max_aliases_per_request: Option<usize>,
     /// Per-subgraph overrides of `max_aliases_per_request`, keyed by subgraph name.
     pub subgraph_max_aliases_per_request: HashMap<String, usize>,
 }
-
-/// How many context groups one request carries when no alias limit is set.
-/// Each count gets its own cached copy of the operation, so this can't be unlimited.
-pub const DEFAULT_MAX_CONTEXT_ALIASES: usize = 15;
 
 impl QueryPlannerOptions {
     /// Returns the alias limit for the given subgraph, never less than 1. `None` when unlimited.
@@ -53,12 +49,6 @@ impl QueryPlannerOptions {
             .copied()
             .or(self.max_aliases_per_request)
             .map(|max| max.max(1))
-    }
-
-    /// Returns the alias limit for contextual argument groups, which always has one.
-    pub fn max_context_aliases_per_request(&self, subgraph_name: &str) -> usize {
-        self.max_aliases_per_request(subgraph_name)
-            .unwrap_or(DEFAULT_MAX_CONTEXT_ALIASES)
     }
 }
 

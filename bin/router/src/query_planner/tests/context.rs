@@ -8,7 +8,7 @@ fn non_null_context_variables_disable_group_aliasing() -> Result<(), Box<dyn Err
 
     // a non-null contextual argument only composes with a `__typename` selection
     for (fixture, query, expected_limit) in [
-        ("context-basic", "{ users { txs { amount } } }", 15),
+        ("context-basic", "{ users { txs { amount } } }", usize::MAX),
         (
             "context-non-null",
             "{ viewer { ... on User { txs { amount } } } }",
