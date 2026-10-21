@@ -404,32 +404,27 @@ pub(super) fn unalias_response<'exec>(
         .collect();
 
     if let Value::Object(fields) = &mut response.data {
-        // the aliases can come back in any order, so sort them into their groups first
-        let mut lists: Vec<Vec<Option<Vec<Value<'exec>>>>> = keys
+        // every group has its own range in the merged list, so the aliases can come back in any
+        // order. a missing group or entity stays null, extra entities are dropped.
+        let mut merged: Vec<Vec<Value<'exec>>> = offsets
             .iter()
-            .map(|_| (0..groups).map(|_| None).collect())
+            .map(|offsets| vec![Value::Null; offsets[groups]])
             .collect();
         for (alias, value) in std::mem::take(fields) {
             if let (Some((key, group)), Value::Array(items)) = (template.response_key(alias), value)
             {
                 if group < groups {
-                    lists[key][group] = Some(items);
+                    let range = offsets[key][group]..offsets[key][group + 1];
+                    for (slot, item) in merged[key][range].iter_mut().zip(items) {
+                        *slot = item;
+                    }
                 }
             }
         }
         *fields = keys
             .iter()
-            .zip(lists)
-            .zip(&offsets)
-            .map(|((key, lists), offsets)| {
-                let mut entities = Vec::with_capacity(offsets[groups]);
-                for (group, items) in lists.into_iter().enumerate() {
-                    let count = offsets[group + 1] - offsets[group];
-                    entities.extend(items.into_iter().flatten().take(count));
-                    entities.resize(offsets[group + 1], Value::Null);
-                }
-                (key.as_str(), Value::Array(entities))
-            })
+            .map(String::as_str)
+            .zip(merged.into_iter().map(Value::Array))
             .collect();
     }
 
