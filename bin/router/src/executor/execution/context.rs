@@ -82,19 +82,22 @@ struct ContextSource<'a> {
     path: &'a [FetchNodePathSegment],
 }
 
-/// Scoped to one traversal of immutable response data. Cached addresses are only
-/// compared, never dereferenced, and must not be reused for another response.
-struct ContextGroups<'a> {
+/// Groups entities by their context values while traversing one borrowed response.
+/// The `'d` lifetime ties the cached ancestors to that response, so the cache
+/// cannot outlive it or be reused for another one.
+struct ContextGroups<'a, 'd, 'v> {
     names: Vec<&'a str>,
     sources: Vec<Vec<ContextSource<'a>>>,
     groups: Vec<ContextGroup<'a>>,
     group_by_values: AHashMap<Vec<Vec<u8>>, usize>,
     ancestor_depths: Vec<usize>,
-    last_ancestors: Vec<*const ()>,
+    // ancestors the previous entity read from, one per depth in `ancestor_depths`.
+    // `None` means the ancestor was missing
+    last_ancestors: Vec<Option<&'d Value<'v>>>,
     last_group: Option<usize>,
 }
 
-impl<'a> ContextGroups<'a> {
+impl<'a, 'd, 'v> ContextGroups<'a, 'd, 'v> {
     fn new(variables: &'a [String], rewrites: &'a [KeyRenamer]) -> Self {
         let mut names: Vec<&str> = variables.iter().map(String::as_str).collect();
         for rewrite in rewrites {
@@ -143,7 +146,7 @@ impl<'a> ContextGroups<'a> {
             sources,
             groups,
             group_by_values: AHashMap::new(),
-            last_ancestors: vec![std::ptr::null(); ancestor_depths.len()],
+            last_ancestors: vec![None; ancestor_depths.len()],
             ancestor_depths,
             last_group: None,
         }
@@ -151,8 +154,8 @@ impl<'a> ContextGroups<'a> {
 
     fn resolve(
         &mut self,
-        entity: &Value<'_>,
-        objects: &[&Value<'_>],
+        entity: &'d Value<'v>,
+        objects: &[&'d Value<'v>],
         possible_types: &PossibleTypes,
     ) -> usize {
         if self.names.is_empty() {
@@ -168,12 +171,16 @@ impl<'a> ContextGroups<'a> {
 
         // Check each distinct depth once, updating the cache for this entity.
         // Include every candidate source, even those skipped by a type condition.
+        // compared by address: the response is borrowed for 'd and can't change, so the same
+        // address means the same object and thus the same selected values.
         let mut same_ancestors = true;
         for (depth, previous) in self.ancestor_depths.iter().zip(&mut self.last_ancestors) {
-            let current = ancestor(*depth).map_or(std::ptr::null(), |value| {
-                value as *const Value<'_> as *const ()
-            });
-            same_ancestors &= *previous == current;
+            let current = ancestor(*depth);
+            same_ancestors &= match (*previous, current) {
+                (Some(previous), Some(current)) => std::ptr::eq(previous, current),
+                (None, None) => true,
+                _ => false,
+            };
             *previous = current;
         }
         if let Some(index) = self.last_group.filter(|_| same_ancestors) {
@@ -218,8 +225,8 @@ impl<'a> ContextGroups<'a> {
 /// representations. Entities are grouped by the tuple of their context values (one request per
 /// group), without context variables there is at most one group. Identical paths share hashes.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub(super) fn collect_context_entities<'a>(
-    data: &Value<'_>,
+pub(super) fn collect_context_entities<'a, 'd, 'v>(
+    data: &'d Value<'v>,
     paths: impl IntoIterator<Item = ResponsePathRef<'a>>,
     requires: &RequiresSelectionSet,
     input_rewrites: Option<&[FetchRewrite]>,
@@ -238,7 +245,8 @@ pub(super) fn collect_context_entities<'a>(
             continue;
         }
         let mut hashes = Vec::new();
-        let mut collect = |entity: &Value<'_>, objects: &[&Value<'_>]| {
+        // the callback gets references into `data`, which the ancestor cache relies on
+        let mut collect = |entity: &'d Value<'v>, objects: &[&'d Value<'v>]| {
             if entity.is_null() {
                 hashes.push(None);
                 return;
