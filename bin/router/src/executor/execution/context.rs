@@ -26,7 +26,7 @@ use crate::{
             requires::RequiresSelectionSet,
         },
         planner::plan_nodes::{
-            CustomScalarPaths, FetchNodePathSegment, FetchRewrite, KeyRenamer, ResponsePathRef,
+            CustomScalarPaths, FetchContext, FetchNodePathSegment, FetchRewrite, ResponsePathRef,
         },
         state::entity_keys::KeysByType,
     },
@@ -106,13 +106,9 @@ struct ContextGroups<'a, 'd, 'v> {
 }
 
 impl<'a, 'd, 'v> ContextGroups<'a, 'd, 'v> {
-    fn new(variables: &'a [String], rewrites: &'a [KeyRenamer]) -> Self {
-        let mut names: Vec<&str> = variables.iter().map(String::as_str).collect();
-        for rewrite in rewrites {
-            if !names.contains(&rewrite.rename_key_to.as_str()) {
-                names.push(rewrite.rename_key_to.as_str());
-            }
-        }
+    fn new(context: &'a Option<Box<FetchContext>>) -> Self {
+        let names = FetchContext::group_variables(context);
+        let rewrites = FetchContext::rewrites(context).unwrap_or_default();
         let sources: Vec<Vec<ContextSource<'a>>> = names
             .iter()
             .map(|name| {
@@ -238,12 +234,11 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
     paths: impl IntoIterator<Item = ResponsePathRef<'a>>,
     requires: &RequiresSelectionSet,
     input_rewrites: Option<&[FetchRewrite]>,
-    context_rewrites: Option<&'a [KeyRenamer]>,
-    context_variables: &'a [String],
+    context: &'a Option<Box<FetchContext>>,
     possible_types: &PossibleTypes,
     subgraph_keys: Option<&KeysByType>,
 ) -> (Vec<ContextGroup<'a>>, Vec<RepresentationHashes>) {
-    let mut contexts = ContextGroups::new(context_variables, context_rewrites.unwrap_or_default());
+    let mut contexts = ContextGroups::new(context);
     let mut path_hashes: Vec<RepresentationHashes> = Vec::new();
     let mut seen_paths: Vec<(ResponsePathRef<'a>, RepresentationHashes)> = Vec::new();
     let required_selections = requires.root_selections();
@@ -466,7 +461,7 @@ mod tests {
     use super::*;
     use crate::query_planner::{
         ast::selection_set::SelectionSet,
-        planner::plan_nodes::{FlattenNodePath, PathSegment},
+        planner::plan_nodes::{FlattenNodePath, KeyRenamer, PathSegment},
         utils::parsing::parse_operation,
     };
 
@@ -495,7 +490,7 @@ mod tests {
             panic!("selection");
         };
         let requires = RequiresSelectionSet::from(&SelectionSet::from(selection));
-        let rewrites = vec![
+        let rewrites = [
             KeyRenamer {
                 path: vec![
                     FetchNodePathSegment::Parent,
@@ -513,14 +508,13 @@ mod tests {
                 rename_key_to: "__context_0".into(),
             },
         ];
-        let names = ["__context_0".into()];
+        let context = FetchContext::new(vec!["__context_0".into()], Some(rewrites.to_vec()));
         let (groups, hashes) = collect_context_entities(
             &data,
             [path.as_ref()],
             &requires,
             None,
-            Some(&rewrites),
-            &names,
+            &context,
             &PossibleTypes::default(),
             None,
         );
@@ -583,15 +577,17 @@ mod tests {
                 rename_key_to: "__context_1".into(),
             },
         ];
-        let names = ["__context_0".into(), "__context_1".into()];
+        let context = FetchContext::new(
+            vec!["__context_0".into(), "__context_1".into()],
+            Some(rewrites.to_vec()),
+        );
         let possible_types = PossibleTypes::default();
         let (groups, hashes) = collect_context_entities(
             &data,
             [path.as_ref()],
             &requires,
             None,
-            Some(&rewrites),
-            &names,
+            &context,
             &possible_types,
             None,
         );
@@ -619,7 +615,7 @@ mod tests {
             panic!("posts");
         };
         let objects = [&data, user];
-        let mut contexts = ContextGroups::new(&names, &rewrites);
+        let mut contexts = ContextGroups::new(&context);
         let resolved: Vec<usize> = [0, 0, 1, 1, 2, 0]
             .into_iter()
             .map(|post| contexts.resolve(&posts[post], &objects, &possible_types))
@@ -686,14 +682,16 @@ mod tests {
                 rename_key_to: "__context_1".into(),
             },
         ];
-        let names = ["__context_0".into(), "__context_1".into()];
+        let context = FetchContext::new(
+            vec!["__context_0".into(), "__context_1".into()],
+            Some(rewrites.to_vec()),
+        );
         let (groups, hashes) = collect_context_entities(
             &data,
             [posts.as_ref(), drafts.as_ref()],
             &requires,
             None,
-            Some(&rewrites),
-            &names,
+            &context,
             &PossibleTypes::default(),
             None,
         );
@@ -742,14 +740,13 @@ mod tests {
         let keys: KeysByType = [("Transaction".into(), vec![vec!["id".into()]])]
             .into_iter()
             .collect();
-        let names = ["__context_0".into()];
+        let context = FetchContext::new(vec!["__context_0".into()], Some(Vec::new()));
         let (groups, _) = collect_context_entities(
             &data,
             [path.as_ref()],
             &requires,
             None,
-            Some(&[]),
-            &names,
+            &context,
             &PossibleTypes::default(),
             Some(&keys),
         );
@@ -780,14 +777,13 @@ mod tests {
             path: vec![FetchNodePathSegment::Parent; 3],
             rename_key_to: "__context_0".into(),
         }];
-        let names = ["__context_0".into()];
+        let context = FetchContext::new(vec!["__context_0".into()], Some(rewrites.to_vec()));
         let (groups, hashes) = collect_context_entities(
             &data,
             [path.as_ref()],
             &requires,
             None,
-            Some(&rewrites),
-            &names,
+            &context,
             &PossibleTypes::default(),
             None,
         );

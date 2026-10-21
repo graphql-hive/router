@@ -51,8 +51,11 @@ fn contextual_fetches_carry_a_compiled_template() -> Result<(), Box<dyn Error>> 
     ) {
         match node {
             PlanNode::Fetch(fetch) if !FetchContext::variables(&fetch.context).is_empty() => {
-                let mut variables = FetchContext::variables(&fetch.context).to_vec();
-                variables.push("representations".to_string());
+                let variables = FetchContext::group_variables(&fetch.context)
+                    .into_iter()
+                    .chain(["representations"])
+                    .map(str::to_string)
+                    .collect();
                 found.push((&fetch.operation, variables));
             }
             PlanNode::BatchFetch(batch)
@@ -67,10 +70,10 @@ fn contextual_fetches_carry_a_compiled_template() -> Result<(), Box<dyn Error>> 
                     .aliases
                     .iter()
                     .flat_map(|alias| {
-                        FetchContext::variables(&alias.context)
-                            .iter()
-                            .cloned()
-                            .chain([alias.representations_variable_name.clone()])
+                        FetchContext::group_variables(&alias.context)
+                            .into_iter()
+                            .chain([alias.representations_variable_name.as_str()])
+                            .map(str::to_string)
                     })
                     .collect();
                 found.push((&batch.operation, variables));

@@ -1229,8 +1229,7 @@ impl<'exec> Executor<'exec> {
                     [flatten_node.path.as_ref()],
                     requires_nodes,
                     fetch_node.input_rewrites.as_deref(),
-                    FetchContext::rewrites(&fetch_node.context),
-                    FetchContext::variables(&fetch_node.context),
+                    &fetch_node.context,
                     &self.schema_metadata.possible_types,
                     self.schema_metadata
                         .entity_keys
@@ -1725,8 +1724,7 @@ impl<'exec> Executor<'exec> {
                     alias_spec.merge_paths.iter(),
                     &alias_spec.requires,
                     alias_spec.input_rewrites.as_deref(),
-                    FetchContext::rewrites(&alias_spec.context),
-                    FetchContext::variables(&alias_spec.context),
+                    &alias_spec.context,
                     &self.schema_metadata.possible_types,
                     subgraph_keys,
                 )
@@ -1759,16 +1757,7 @@ impl<'exec> Executor<'exec> {
                 } else if let Some(first) = groups.first() {
                     raw_variable_values.extend(first.variables.iter().cloned());
                 } else {
-                    for name in FetchContext::variables(&alias_spec.context)
-                        .iter()
-                        .map(String::as_str)
-                        .chain(
-                            FetchContext::rewrites(&alias_spec.context)
-                                .into_iter()
-                                .flatten()
-                                .map(|rewrite| rewrite.rename_key_to.as_str()),
-                        )
-                    {
+                    for name in FetchContext::group_variables(&alias_spec.context) {
                         if !raw_variable_values
                             .iter()
                             .any(|(existing, _)| *existing == name)

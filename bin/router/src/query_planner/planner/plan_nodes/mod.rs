@@ -192,6 +192,22 @@ impl FetchContext {
     pub fn rewrites(context: &Option<Box<Self>>) -> Option<&[KeyRenamer]> {
         context.as_ref()?.rewrites.as_deref()
     }
+
+    /// The variables every group of contextual argument values sends its own value for: the
+    /// context variables, then the rewrite targets that aren't one of them. The planner and the
+    /// executor both read it from here, so they always agree.
+    pub fn group_variables(context: &Option<Box<Self>>) -> Vec<&str> {
+        let mut names: Vec<&str> = Self::variables(context)
+            .iter()
+            .map(String::as_str)
+            .collect();
+        for rewrite in Self::rewrites(context).unwrap_or_default() {
+            if !names.contains(&rewrite.rename_key_to.as_str()) {
+                names.push(&rewrite.rename_key_to);
+            }
+        }
+        names
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -692,6 +708,13 @@ impl FetchNode<Planning> {
             true => {
                 let planner_requires = create_input_selection_set(&step.input);
                 let mut operation = create_output_operation(step, supergraph);
+                let context = FetchContext::new(
+                    step.context_variable_definitions
+                        .iter()
+                        .map(|var| var.name.clone())
+                        .collect(),
+                    step.context_rewrites.clone(),
+                );
                 if !step.context_variable_definitions.is_empty()
                     && !step
                         .context_variable_definitions
@@ -700,17 +723,10 @@ impl FetchNode<Planning> {
                 {
                     // one alias per group of contextual argument values, each with its own
                     // representations and context values
-                    let group_variables = step
-                        .context_variable_definitions
-                        .iter()
-                        .map(|variable| variable.name.clone())
-                        .chain(
-                            step.context_rewrites
-                                .iter()
-                                .flatten()
-                                .map(|rewrite| rewrite.rename_key_to.clone()),
-                        )
-                        .chain(["representations".to_string()])
+                    let group_variables = FetchContext::group_variables(&context)
+                        .into_iter()
+                        .chain(["representations"])
+                        .map(str::to_string)
                         .collect();
                     operation.operation.set_max_context_groups(
                         options
@@ -734,13 +750,7 @@ impl FetchNode<Planning> {
                     planner_requires: Some(Box::new(planner_requires)),
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),
-                    context: FetchContext::new(
-                        step.context_variable_definitions
-                            .iter()
-                            .map(|var| var.name.clone())
-                            .collect(),
-                        step.context_rewrites.clone(),
-                    ),
+                    context,
                 }
             }
             false => {

@@ -293,16 +293,10 @@ impl<'a> BatchFetchBuilder<'a> {
                 .batched_aliases
                 .iter()
                 .flat_map(|alias| {
-                    FetchContext::variables(&alias.context)
-                        .iter()
-                        .cloned()
-                        .chain(
-                            FetchContext::rewrites(&alias.context)
-                                .into_iter()
-                                .flatten()
-                                .map(|rewrite| rewrite.rename_key_to.clone()),
-                        )
-                        .chain([alias.representations_variable_name.clone()])
+                    FetchContext::group_variables(&alias.context)
+                        .into_iter()
+                        .chain([alias.representations_variable_name.as_str()])
+                        .map(str::to_string)
                 })
                 .collect();
             operation.operation.set_max_context_groups(
