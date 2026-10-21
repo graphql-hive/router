@@ -340,7 +340,8 @@ pub(super) fn unalias_response<'exec>(
                         entities.extend(items.into_iter().take(count));
                     }
                 }
-                entities.resize(offsets[group] + count, Value::Null);
+                // pad missing entities with null, so the next group starts at its offset
+                entities.resize(offsets[group + 1], Value::Null);
             }
             merged.push((key.as_str(), Value::Array(entities)));
         }
