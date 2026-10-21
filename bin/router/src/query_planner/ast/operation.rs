@@ -1,4 +1,7 @@
-use std::fmt::Display;
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Display,
+};
 
 use crate::query_planner::{
     ast::{document::Document, hash::ast_hash},
@@ -224,8 +227,8 @@ impl SubgraphFetchOperation {
 /// Compiles `document_str` into a [`ContextAliasTemplate`]. The `variables` get a separate copy
 /// per group, all other variables are shared.
 ///
-/// Every name that gets a group number is swapped for a placeholder name no name in the operation
-/// starts with, and the result is minified. The placeholders are then found among the tokens of
+/// Every name that gets a group number is swapped for a placeholder name that isn't a name in the
+/// operation, and the result is minified. The placeholders are then found among the tokens of
 /// the output, so they only ever match whole names. A string is a single token, so nothing in
 /// one is taken for a placeholder.
 fn compile_context_alias_template(
@@ -255,26 +258,27 @@ fn compile_context_alias_template(
         return None;
     }
 
-    let names = |text: &str| -> Option<Vec<String>> {
-        Some(
-            spanned_tokens(text)
-                .ok()?
-                .into_iter()
-                .filter(|(kind, _)| *kind == TokenKind::Name)
-                .map(|(_, span)| text[span].to_string())
-                .collect(),
-        )
-    };
-    let mut prefix = String::from("__hive_tpl_");
-    let original_names = names(document_str)?;
-    while original_names.iter().any(|name| name.starts_with(&prefix)) {
-        prefix.push('_');
-    }
+    // placeholders are short numbered names, skipping any that's already a name in the operation,
+    // so each one matches nothing but itself
+    let original_tokens = spanned_tokens(document_str).ok()?;
+    let taken: HashSet<&str> = original_tokens
+        .iter()
+        .filter(|(kind, _)| *kind == TokenKind::Name)
+        .map(|(_, span)| &document_str[span.clone()])
+        .collect();
     // what every placeholder stands for, the group number goes after it
-    let mut replacements: Vec<String> = Vec::new();
+    let mut placeholders: HashMap<String, String> = HashMap::new();
+    let mut next = 0usize;
     let mut placeholder = |replacement: String| {
-        replacements.push(replacement);
-        format!("{prefix}{}", replacements.len() - 1)
+        let name = loop {
+            let candidate = format!("__hive_tpl_{next}");
+            next += 1;
+            if !taken.contains(candidate.as_str()) {
+                break candidate;
+            }
+        };
+        placeholders.insert(name.clone(), replacement);
+        name
     };
 
     let mut shared = Vec::new();
@@ -366,14 +370,11 @@ fn compile_context_alias_template(
             if *kind != TokenKind::Name || span.start < range.start || span.end > range.end {
                 continue;
             }
-            let Some(index) = printed[span.clone()]
-                .strip_prefix(prefix.as_str())
-                .and_then(|index| index.parse::<usize>().ok())
-            else {
+            let Some(replacement) = placeholders.get(&printed[span.clone()]) else {
                 continue;
             };
             text.push_str(&printed[copied..span.start]);
-            text.push_str(replacements.get(index)?);
+            text.push_str(replacement);
             group_positions.push(u32::try_from(text.len()).ok()?);
             copied = span.end;
         }
@@ -387,7 +388,7 @@ fn compile_context_alias_template(
     if tokens.iter().any(|(kind, span)| {
         *kind == TokenKind::Name
             && span.end <= grouped_start
-            && printed[span.clone()].starts_with(prefix.as_str())
+            && placeholders.contains_key(&printed[span.clone()])
     }) {
         return None;
     }
@@ -1258,8 +1259,34 @@ mod tests {
         // a field, an argument, an enum value, a type and a shared variable all start like the
         // first placeholder candidate
         assert_template_matches_copying(
-            "query($r: [_Any!]!, $__hive_tpl_3: __hive_tpl_T) { _entities(representations: $r) { ... on T { __hive_tpl_0(__hive_tpl_1: __hive_tpl_2, x: $__hive_tpl_3) } } }",
+            "query($r: [_Any!]!, $__hive_tpl_3: __hive_tpl_T) { _entities(representations: $r) { ... on T { __hive_tpl_0(__hive_tpl_1: __hive_tpl_2, x: $__hive_tpl_3) __hive_tpl_: a __hive_tpl__0: b } } }",
             &["r"],
+        );
+    }
+
+    #[test]
+    fn context_alias_template_handles_long_names_that_look_like_placeholders() {
+        // this used to grow the placeholder prefix one `_` at a time, comparing it to every name
+        let alias = format!("__hive_tpl_{}", "_".repeat(200_000));
+        let query = format!(
+            "query($r: [_Any!]!) {{ _entities(representations: $r) {{ ... on T {{ {alias}: x __hive_tpl_0 }} }} }}"
+        );
+        let mut operation = parse_subgraph_fetch_operation(&query).operation;
+        operation.set_max_context_groups(usize::MAX, strings(&["r"]));
+        let template = operation.context_alias_template().unwrap();
+        // the placeholders stayed short, so the template is no bigger than the operation
+        let size = template.head.len()
+            + [&template.variables, &template.fields, &template.fragments]
+                .iter()
+                .map(|section| section.text.len())
+                .sum::<usize>();
+        assert!(size < operation.document_str.len() + 100);
+        let written = template.operation(2).document_str;
+        assert_eq!(
+            super::parser::minify_query_document(
+                &super::parser::parse_query::<String>(&written).unwrap()
+            ),
+            expand_by_copying(&operation.document_str, &["r"], 2)
         );
     }
 
