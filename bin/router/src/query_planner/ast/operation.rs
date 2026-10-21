@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
+    hash::{Hash, Hasher},
 };
 
 use crate::query_planner::{
@@ -82,6 +83,8 @@ pub struct SubgraphFetchOperation {
 pub struct ContextAliasTemplate {
     /// The most groups one request may carry
     max_groups: usize,
+    /// The hash of the operation it's compiled from
+    hash: u64,
     /// `query(` and the variables all groups share
     head: Box<str>,
     /// The parts every group gets its own copy of
@@ -145,8 +148,12 @@ impl ContextAliasTemplate {
         for group in 0..groups {
             self.fragments.write(&mut document, number.format(group));
         }
+        // what's written only depends on the template and the group count, so there's no need to
+        // hash all of it
+        let mut hasher = xxhash_rust::xxh3::Xxh3::new();
+        (self.hash, groups).hash(&mut hasher);
         SubgraphFetchOperation {
-            hash: hash_minified_query(&document),
+            hash: hasher.finish(),
             name_write_position: name_write_position(&document),
             document_str: document.into_boxed_str(),
             context_template: None,
@@ -397,6 +404,7 @@ fn compile_context_alias_template(
     }
     Some(ContextAliasTemplate {
         max_groups,
+        hash: hash_minified_query(document_str),
         head: printed[..grouped_start].into(),
         variables: section(grouped_start..tokens[close_variables].1.start)?,
         fields: section(tokens[open_fields].1.end..tokens[close_fields].1.start)?,
@@ -1076,10 +1084,10 @@ mod tests {
         let aliased = template.operation(2);
         insta::assert_snapshot!(aliased.document_str, @"query($shared:Int$representations_0:[_Any!]!$c_0:ID$representations_1:[_Any!]!$c_1:ID){_entities_0:_entities(representations:$representations_0){...F_0...on T@include(if:$c_0){g(a:[{x:$c_0}]b:$shared)}} _entities_1:_entities(representations:$representations_1){...F_1...on T@include(if:$c_1){g(a:[{x:$c_1}]b:$shared)}}}fragment F_0 on T{f(a:$c_0)}fragment F_1 on T{f(a:$c_1)}");
         assert_eq!(aliased.name_write_position, 5);
-        assert_eq!(
-            aliased.hash,
-            crate::query_planner::planner::plan_nodes::hash_minified_query(&aliased.document_str)
-        );
+        // one hash per group count
+        assert_eq!(aliased.hash, template.operation(2).hash);
+        assert_ne!(aliased.hash, template.operation(3).hash);
+        assert_ne!(aliased.hash, operation.hash);
         assert_eq!(template.variable("c", 1).as_deref(), Some("c_1"));
         assert_eq!(template.variable("shared", 1), None);
         assert_eq!(&*template.response_keys, ["_entities".to_string()]);
