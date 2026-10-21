@@ -36,6 +36,104 @@ fn non_null_context_variables_disable_group_aliasing() -> Result<(), Box<dyn Err
     Ok(())
 }
 
+/// The planner compiles a template for every contextual Flatten and BatchFetch, it survives
+/// turning the plan into an executable one and cloning it, and what it writes parses.
+#[test]
+fn contextual_fetches_carry_a_compiled_template() -> Result<(), Box<dyn Error>> {
+    use crate::query_planner::{
+        ast::operation::SubgraphFetchOperation,
+        planner::plan_nodes::{FetchContext, PlanNode},
+    };
+
+    fn contextual<'a>(
+        node: &'a PlanNode,
+        found: &mut Vec<(&'a SubgraphFetchOperation, Vec<String>)>,
+    ) {
+        match node {
+            PlanNode::Fetch(fetch) if !FetchContext::variables(&fetch.context).is_empty() => {
+                let mut variables = FetchContext::variables(&fetch.context).to_vec();
+                variables.push("representations".to_string());
+                found.push((&fetch.operation, variables));
+            }
+            PlanNode::BatchFetch(batch)
+                if batch
+                    .entity_batch
+                    .aliases
+                    .iter()
+                    .any(|alias| !FetchContext::variables(&alias.context).is_empty()) =>
+            {
+                let variables = batch
+                    .entity_batch
+                    .aliases
+                    .iter()
+                    .flat_map(|alias| {
+                        FetchContext::variables(&alias.context)
+                            .iter()
+                            .cloned()
+                            .chain([alias.representations_variable_name.clone()])
+                    })
+                    .collect();
+                found.push((&batch.operation, variables));
+            }
+            PlanNode::Sequence(node) => node.nodes.iter().for_each(|node| contextual(node, found)),
+            PlanNode::Parallel(node) => node.nodes.iter().for_each(|node| contextual(node, found)),
+            PlanNode::Flatten(node) => contextual(&node.node, found),
+            PlanNode::Condition(node) => {
+                for clause in [&node.if_clause, &node.else_clause].into_iter().flatten() {
+                    contextual(clause, found);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for (fixture, query, batched) in [
+        ("context-basic", "{ users { txs { amount } } }", false),
+        (
+            "context-shared-duck",
+            "{ foo { u { field } } bar { u { field } } }",
+            true,
+        ),
+    ] {
+        let plan = build_query_plan_with_defaults(
+            &format!("fixture/tests/{fixture}.supergraph.graphql"),
+            parse_operation(query),
+        )?
+        .into_executable();
+        // plans are cloned out of the cache
+        let plan = plan.clone();
+        let mut found = Vec::new();
+        contextual(plan.node.as_ref().unwrap(), &mut found);
+        assert!(!found.is_empty(), "{fixture}");
+        assert_eq!(
+            found
+                .iter()
+                .any(|(operation, _)| operation.document_str.contains("__batch_reps")),
+            batched,
+            "{fixture}"
+        );
+        for (operation, variables) in found {
+            let template = operation
+                .context_alias_template()
+                .unwrap_or_else(|| panic!("no template for {}", operation.document_str));
+            let written = template.operation(2);
+            graphql_tools::parser::parse_query::<String>(&written.document_str)?;
+            for variable in variables {
+                for group in 0..2 {
+                    assert!(
+                        written
+                            .document_str
+                            .contains(&format!("${variable}_{group}:")),
+                        "{variable} in group {group} of {}",
+                        written.document_str
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn mutation_results_supply_context_in_root_field_order() -> Result<(), Box<dyn Error>> {
     let plan = build_query_plan_with_defaults(

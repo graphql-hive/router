@@ -1,4 +1,4 @@
-use std::{fmt::Display, sync::OnceLock};
+use std::fmt::Display;
 
 use crate::query_planner::{
     ast::{document::Document, hash::ast_hash},
@@ -59,28 +59,11 @@ pub struct SubgraphFetchOperation {
     /// The value is the position in the document where the operation name should be written.
     pub name_write_position: usize,
     /// How this operation is written out for several groups of contextual argument values.
-    /// Set by the planner on fetches with contextual arguments.
+    /// Compiled by the planner on fetches with contextual arguments, boxed so the field stays one
+    /// pointer wide.
     #[serde(skip)]
-    context_aliased: Option<Box<ContextAliasing>>,
+    context_template: Option<Box<ContextAliasTemplate>>,
 }
-
-// boxed so the field stays one pointer wide, plans hold one of these per fetch
-#[derive(Debug, Clone)]
-struct ContextAliasing {
-    max_groups: usize,
-    /// The variables every group gets its own copy of
-    group_variables: Box<[String]>,
-    template: OnceLock<Option<ContextAliasTemplate>>,
-}
-
-/// Stands in for the group number in a [`ContextAliasTemplate`].
-const GROUP: char = '\0';
-// mark where the per-group variables and the fields end while the template gets minified.
-// names can't contain these, but string values can (the minifier writes them out raw in block
-// strings), so operations that already have one don't get a template
-const VARIABLES_START: &str = "\u{1}";
-const VARIABLES_END: &str = "\u{2}";
-const FIELDS_END: &str = "\u{3}";
 
 /// An entity fetch operation cut into the parts every group of contextual argument values
 /// shares and the parts each group gets its own copy of (top-level fields, fragments and the
@@ -90,33 +73,59 @@ const FIELDS_END: &str = "\u{3}";
 /// For two groups, `query($representations:[_Any!]!$c:ID){_entities(representations:$representations){...on T{f(a:$c)}}}`
 /// becomes `query($representations_0:[_Any!]!$c_0:ID$representations_1:[_Any!]!$c_1:ID){_entities_0:_entities(representations:$representations_0){...on T{f(a:$c_0)}} _entities_1:_entities(representations:$representations_1){...on T{f(a:$c_1)}}}`.
 ///
-/// It's built once per fetch and is about as big as the operation. The copies are written per
-/// request and dropped with it, so they don't pile up in the plan cache.
+/// It's compiled once with the plan and is about as big as the operation. The copies are written
+/// per request and dropped with it, so they don't pile up in the plan cache.
 #[derive(Debug, Clone)]
 pub struct ContextAliasTemplate {
+    /// The most groups one request may carry
+    max_groups: usize,
     /// `query(` and the variables all groups share
     head: Box<str>,
-    /// The per-group parts, with [`GROUP`] where the group number goes
-    variables: Box<str>,
-    fields: Box<str>,
-    fragments: Box<str>,
+    /// The parts every group gets its own copy of
+    variables: TemplateSection,
+    fields: TemplateSection,
+    fragments: TemplateSection,
     /// The original names of the per-group variables
     group_variables: Box<[String]>,
     /// The original response key of every top-level field
     pub response_keys: Box<[String]>,
 }
 
+/// Text every group gets a copy of, with the byte offsets where the group number goes.
+#[derive(Debug, Clone)]
+struct TemplateSection {
+    text: Box<str>,
+    group_positions: Box<[u32]>,
+}
+
+impl TemplateSection {
+    fn write(&self, document: &mut String, group: &str) {
+        let mut start = 0;
+        for &position in &self.group_positions {
+            document.push_str(&self.text[start..position as usize]);
+            document.push_str(group);
+            start = position as usize;
+        }
+        document.push_str(&self.text[start..]);
+    }
+
+    /// The length of one copy, with a group number of `digits` digits.
+    fn len(&self, digits: usize) -> usize {
+        self.text.len() + self.group_positions.len() * digits
+    }
+}
+
 impl ContextAliasTemplate {
     /// Writes the operation out for `groups` groups.
     pub fn operation(&self, groups: usize) -> SubgraphFetchOperation {
-        let mut document = String::with_capacity(
-            self.head.len()
-                + 3
-                + groups * (self.variables.len() + self.fields.len() + self.fragments.len() + 8),
-        );
+        let digits = groups.max(1).ilog10() as usize + 1;
+        let copy =
+            self.variables.len(digits) + self.fields.len(digits) + self.fragments.len(digits);
+        let mut document = String::with_capacity(self.head.len() + 3 + groups * (copy + 1));
+        let mut number = itoa::Buffer::new();
         document.push_str(&self.head);
         for group in 0..groups {
-            push_group(&mut document, &self.variables, group);
+            self.variables.write(&mut document, number.format(group));
         }
         document.push_str("){");
         for group in 0..groups {
@@ -124,17 +133,17 @@ impl ContextAliasTemplate {
             if group > 0 {
                 document.push(' ');
             }
-            push_group(&mut document, &self.fields, group);
+            self.fields.write(&mut document, number.format(group));
         }
         document.push('}');
         for group in 0..groups {
-            push_group(&mut document, &self.fragments, group);
+            self.fragments.write(&mut document, number.format(group));
         }
         SubgraphFetchOperation {
             hash: hash_minified_query(&document),
             name_write_position: name_write_position(&document),
             document_str: document.into_boxed_str(),
-            context_aliased: None,
+            context_template: None,
         }
     }
 
@@ -176,16 +185,6 @@ impl ContextAliasTemplate {
     }
 }
 
-fn push_group(document: &mut String, text: &str, group: usize) {
-    use std::fmt::Write;
-    for (index, piece) in text.split(GROUP).enumerate() {
-        if index > 0 {
-            let _ = write!(document, "{group}");
-        }
-        document.push_str(piece);
-    }
-}
-
 /// Splits a name like `c_12` into `c` and `12`.
 fn split_group(name: &str) -> Option<(&str, usize)> {
     let (name, group) = name.rsplit_once('_')?;
@@ -196,52 +195,47 @@ fn split_group(name: &str) -> Option<(&str, usize)> {
 }
 
 impl SubgraphFetchOperation {
-    /// Allows [`Self::context_alias_template`] to put up to `max_groups` groups of contextual
-    /// argument values into one request, each with its own copy of `group_variables`. Called by
-    /// the planner, a `max_groups` below 2 disables aliasing, `usize::MAX` means no limit.
+    /// Lets up to `max_groups` groups of contextual argument values go in one request, each with
+    /// its own copy of `group_variables`, by compiling a [`ContextAliasTemplate`]. Called by the
+    /// planner once the operation is final. A `max_groups` below 2, or an operation that can't be
+    /// written out per group, leaves aliasing off. `usize::MAX` means no limit.
     pub fn set_max_context_groups(&mut self, max_groups: usize, group_variables: Vec<String>) {
-        self.context_aliased = (max_groups >= 2).then(|| {
-            Box::new(ContextAliasing {
-                max_groups,
-                group_variables: group_variables.into(),
-                template: OnceLock::new(),
+        self.context_template = (max_groups >= 2)
+            .then(|| {
+                compile_context_alias_template(&self.document_str, max_groups, group_variables)
             })
-        });
+            .flatten()
+            .map(Box::new);
     }
 
     /// The most groups of contextual argument values one request may carry, at least 1.
     pub fn max_context_groups(&self) -> usize {
-        self.context_aliased
+        self.context_template
             .as_ref()
-            .map_or(1, |aliasing| aliasing.max_groups)
+            .map_or(1, |template| template.max_groups)
     }
 
-    /// Returns the template to write this operation out for several groups, see
-    /// [`ContextAliasTemplate`]. Built on first use and kept with the operation.
-    ///
-    /// Returns `None` when aliasing is off, or the operation can not be rewritten.
+    /// The template to write this operation out for several groups, `None` when aliasing is off.
     pub fn context_alias_template(&self) -> Option<&ContextAliasTemplate> {
-        let aliasing = self.context_aliased.as_ref()?;
-        aliasing
-            .template
-            .get_or_init(|| {
-                build_context_alias_template(&self.document_str, &aliasing.group_variables)
-            })
-            .as_ref()
+        self.context_template.as_deref()
     }
 }
 
-/// The `variables` get a separate copy per group, all other variables are shared.
-fn build_context_alias_template(
+/// Compiles `document_str` into a [`ContextAliasTemplate`]. The `variables` get a separate copy
+/// per group, all other variables are shared.
+///
+/// Every name that gets a group number is swapped for a placeholder name no name in the operation
+/// starts with, and the result is minified. The placeholders are then found among the tokens of
+/// the output, so they only ever match whole names. A string is a single token, so nothing in
+/// one is taken for a placeholder.
+fn compile_context_alias_template(
     document_str: &str,
-    variables: &[String],
+    max_groups: usize,
+    variables: Vec<String>,
 ) -> Option<ContextAliasTemplate> {
-    let variables: Vec<&str> = variables.iter().map(String::as_str).collect();
-    let variables = variables.as_slice();
+    use graphql_tools::parser::{spanned_tokens, TokenKind};
+
     let document = parser::parse_query::<String>(document_str).ok()?;
-    if parser::minify_query_document(&document).contains(|c| ('\0'..='\u{3}').contains(&c)) {
-        return None;
-    }
     let mut query = None;
     let mut fragments = Vec::new();
     for definition in document.definitions {
@@ -260,18 +254,37 @@ fn build_context_alias_template(
     if !query.directives.is_empty() {
         return None;
     }
-    let fragment_names: Vec<String> = fragments.iter().map(|f| f.name.clone()).collect();
+
+    let names = |text: &str| -> Option<Vec<String>> {
+        Some(
+            spanned_tokens(text)
+                .ok()?
+                .into_iter()
+                .filter(|(kind, _)| *kind == TokenKind::Name)
+                .map(|(_, span)| text[span].to_string())
+                .collect(),
+        )
+    };
+    let mut prefix = String::from("__hive_tpl_");
+    let original_names = names(document_str)?;
+    while original_names.iter().any(|name| name.starts_with(&prefix)) {
+        prefix.push('_');
+    }
+    // what every placeholder stands for, the group number goes after it
+    let mut replacements: Vec<String> = Vec::new();
+    let mut placeholder = |replacement: String| {
+        replacements.push(replacement);
+        format!("{prefix}{}", replacements.len() - 1)
+    };
 
     let mut shared = Vec::new();
     let mut grouped = Vec::new();
-    let mut group_variables = Vec::new();
+    let mut renamed_variables = Vec::new();
     for definition in std::mem::take(&mut query.variable_definitions) {
-        if variables.contains(&definition.name.as_str()) {
-            group_variables.push(definition.name.clone());
-            grouped.push(parser::VariableDefinition {
-                name: format!("{}_{GROUP}", definition.name),
-                ..definition
-            });
+        if variables.contains(&definition.name) {
+            let name = placeholder(format!("{}_", definition.name));
+            renamed_variables.push((definition.name.clone(), name.clone()));
+            grouped.push(parser::VariableDefinition { name, ..definition });
         } else {
             shared.push(definition);
         }
@@ -282,135 +295,206 @@ fn build_context_alias_template(
     // a shared `$c_1` next to a per-group `$c` would clash with the copy for group 1
     if shared.iter().any(|definition| {
         split_group(&definition.name)
-            .is_some_and(|(name, _)| group_variables.iter().any(|v| v == name))
+            .is_some_and(|(name, _)| renamed_variables.iter().any(|(v, _)| v == name))
     }) {
         return None;
     }
 
+    let renamed_fragments: Vec<(String, String)> = fragments
+        .iter()
+        .map(|fragment| {
+            (
+                fragment.name.clone(),
+                placeholder(format!("{}_", fragment.name)),
+            )
+        })
+        .collect();
     let mut response_keys = Vec::with_capacity(query.selection_set.items.len());
     for selection in &mut query.selection_set.items {
         let parser::Selection::Field(field) = selection else {
             return None;
         };
         let key = field.alias.take().unwrap_or_else(|| field.name.clone());
-        field.alias = Some(format!("{key}_{GROUP}"));
+        field.alias = Some(placeholder(format!("{key}_")));
         response_keys.push(key);
-        suffix_selection(selection, variables, &fragment_names, GROUP);
+        rename_selection(selection, &renamed_variables, &renamed_fragments);
     }
-    for fragment in &mut fragments {
-        fragment.name = format!("{}_{GROUP}", fragment.name);
-        suffix_directives(&mut fragment.directives, variables, GROUP);
+    for (fragment, (_, name)) in fragments.iter_mut().zip(&renamed_fragments) {
+        fragment.name = name.clone();
+        rename_directives(&mut fragment.directives, &renamed_variables);
         for selection in &mut fragment.selection_set.items {
-            suffix_selection(selection, variables, &fragment_names, GROUP);
+            rename_selection(selection, &renamed_variables, &renamed_fragments);
         }
     }
 
-    // minify it all in one go, with markers where the shared and per-group parts meet
-    let marker = |name: &str| parser::VariableDefinition {
-        position: query.position,
-        name: name.to_string(),
-        var_type: parser::Type::NamedType(name.to_string()),
-        default_value: None,
-    };
-    let (start, end) = (marker(VARIABLES_START), marker(VARIABLES_END));
+    let shared_count = shared.len();
     query.variable_definitions = shared;
-    query.variable_definitions.push(start);
     query.variable_definitions.extend(grouped);
-    query.variable_definitions.push(end);
-    query
-        .selection_set
-        .items
-        .push(parser::Selection::Field(parser::Field {
-            position: query.position,
-            alias: None,
-            name: FIELDS_END.to_string(),
-            arguments: Vec::new(),
-            directives: Vec::new(),
-            selection_set: parser::SelectionSet {
-                span: query.selection_set.span,
-                items: Vec::new(),
-            },
-        }));
     let mut definitions = vec![parser::Definition::Operation(
         parser::OperationDefinition::Query(query),
     )];
     definitions.extend(fragments.into_iter().map(parser::Definition::Fragment));
-    let minified = parser::minify_query_document(&parser::Document { definitions });
+    let printed = parser::minify_query_document(&parser::Document { definitions });
 
-    // query(<shared>$\1:\1<per-group>$\2:\2){<fields> \3}<fragments>
-    let (head, rest) = minified.split_once(&format!("${VARIABLES_START}:{VARIABLES_START}"))?;
-    let (variables, rest) = rest.split_once(&format!("${VARIABLES_END}:{VARIABLES_END}){{"))?;
-    let (fields, fragments) = rest.split_once(FIELDS_END)?;
-    let fields = fields.strip_suffix(' ').unwrap_or(fields);
-    let fragments = fragments.strip_prefix('}')?;
+    // query(<shared><per-group>){<fields>}<fragments>
+    let tokens = spanned_tokens(&printed).ok()?;
+    let is = |index: usize, text: &str| {
+        tokens.get(index).is_some_and(|(kind, span)| {
+            *kind == TokenKind::Punctuator && &printed[span.clone()] == text
+        })
+    };
+    let open_variables = (1..=2).find(|index| is(*index, "("))?;
+    let close_variables = closing_token(&printed, &tokens, open_variables)?;
+    // defaults are constants, so every `$` in here starts a definition
+    let grouped_start = tokens[open_variables..close_variables]
+        .iter()
+        .filter(|(_, span)| &printed[span.clone()] == "$")
+        .nth(shared_count)?
+        .1
+        .start;
+    let open_fields = close_variables + 1;
+    if !is(open_fields, "{") {
+        return None;
+    }
+    let close_fields = closing_token(&printed, &tokens, open_fields)?;
 
+    let section = |range: std::ops::Range<usize>| -> Option<TemplateSection> {
+        let mut text = String::with_capacity(range.len());
+        let mut group_positions = Vec::new();
+        let mut copied = range.start;
+        for (kind, span) in &tokens {
+            if *kind != TokenKind::Name || span.start < range.start || span.end > range.end {
+                continue;
+            }
+            let Some(index) = printed[span.clone()]
+                .strip_prefix(prefix.as_str())
+                .and_then(|index| index.parse::<usize>().ok())
+            else {
+                continue;
+            };
+            text.push_str(&printed[copied..span.start]);
+            text.push_str(replacements.get(index)?);
+            group_positions.push(u32::try_from(text.len()).ok()?);
+            copied = span.end;
+        }
+        text.push_str(&printed[copied..range.end]);
+        Some(TemplateSection {
+            text: text.into(),
+            group_positions: group_positions.into(),
+        })
+    };
+    // nothing shared should have had a placeholder
+    if tokens.iter().any(|(kind, span)| {
+        *kind == TokenKind::Name
+            && span.end <= grouped_start
+            && printed[span.clone()].starts_with(prefix.as_str())
+    }) {
+        return None;
+    }
     Some(ContextAliasTemplate {
-        head: head.into(),
-        variables: variables.into(),
-        fields: fields.into(),
-        fragments: fragments.into(),
-        group_variables: group_variables.into(),
+        max_groups,
+        head: printed[..grouped_start].into(),
+        variables: section(grouped_start..tokens[close_variables].1.start)?,
+        fields: section(tokens[open_fields].1.end..tokens[close_fields].1.start)?,
+        fragments: section(tokens[close_fields].1.end..printed.len())?,
+        group_variables: renamed_variables
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect(),
         response_keys: response_keys.into(),
     })
 }
 
-/// Points the variables and fragment spreads in `selection` to their copies for `group`.
-fn suffix_selection(
+/// The index of the token that closes the bracket at `open`.
+fn closing_token(
+    printed: &str,
+    tokens: &[(graphql_tools::parser::TokenKind, std::ops::Range<usize>)],
+    open: usize,
+) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, (kind, span)) in tokens.iter().enumerate().skip(open) {
+        if *kind != graphql_tools::parser::TokenKind::Punctuator {
+            continue;
+        }
+        match &printed[span.clone()] {
+            "(" | "[" | "{" => depth += 1,
+            ")" | "]" | "}" => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn renamed<'a>(names: &'a [(String, String)], name: &str) -> Option<&'a String> {
+    names
+        .iter()
+        .find(|(original, _)| original == name)
+        .map(|(_, new)| new)
+}
+
+/// Points the variables and fragment spreads in `selection` to new names. `variables` and
+/// `fragments` pair every old name with its new one.
+fn rename_selection(
     selection: &mut parser::Selection<'_, String>,
-    variables: &[&str],
-    fragments: &[String],
-    group: char,
+    variables: &[(String, String)],
+    fragments: &[(String, String)],
 ) {
     let items = match selection {
         parser::Selection::Field(field) => {
             for (_, value) in &mut field.arguments {
-                suffix_value(value, variables, group);
+                rename_value(value, variables);
             }
-            suffix_directives(&mut field.directives, variables, group);
+            rename_directives(&mut field.directives, variables);
             &mut field.selection_set.items
         }
         parser::Selection::FragmentSpread(spread) => {
-            if fragments.contains(&spread.fragment_name) {
-                spread.fragment_name = format!("{}_{group}", spread.fragment_name);
+            if let Some(name) = renamed(fragments, &spread.fragment_name) {
+                spread.fragment_name = name.clone();
             }
-            suffix_directives(&mut spread.directives, variables, group);
+            rename_directives(&mut spread.directives, variables);
             return;
         }
         parser::Selection::InlineFragment(fragment) => {
-            suffix_directives(&mut fragment.directives, variables, group);
+            rename_directives(&mut fragment.directives, variables);
             &mut fragment.selection_set.items
         }
     };
     for item in items {
-        suffix_selection(item, variables, fragments, group);
+        rename_selection(item, variables, fragments);
     }
 }
 
-fn suffix_directives(
+fn rename_directives(
     directives: &mut [parser::Directive<'_, String>],
-    variables: &[&str],
-    group: char,
+    variables: &[(String, String)],
 ) {
     for directive in directives {
         for (_, value) in &mut directive.arguments {
-            suffix_value(value, variables, group);
+            rename_value(value, variables);
         }
     }
 }
 
-fn suffix_value(value: &mut parser::Value<'_, String>, variables: &[&str], group: char) {
+fn rename_value(value: &mut parser::Value<'_, String>, variables: &[(String, String)]) {
     match value {
-        parser::Value::Variable(name) if variables.contains(&name.as_str()) => {
-            *name = format!("{name}_{group}");
+        parser::Value::Variable(name) => {
+            if let Some(new) = renamed(variables, name) {
+                *name = new.clone();
+            }
         }
         parser::Value::List(items) => {
             for item in items {
-                suffix_value(item, variables, group);
+                rename_value(item, variables);
             }
         }
         parser::Value::Object(fields) => {
             for (_, item) in fields {
-                suffix_value(item, variables, group);
+                rename_value(item, variables);
             }
         }
         _ => {}
@@ -483,7 +567,7 @@ impl PlanningFetchOperation {
                 document_str: document_str.into_boxed_str(),
                 hash,
                 name_write_position,
-                context_aliased: None,
+                context_template: None,
             },
         }
     }
@@ -1004,17 +1088,219 @@ mod tests {
             .ends_with("fragment F_39 on T{f(a:$c_39)}"));
     }
 
-    #[test]
-    fn context_alias_template_skips_operations_with_marker_characters() {
-        // a newline makes the minifier write a block string, with the control character raw
-        for value in [r#""x\u0000y\nz""#, r#""x\u0001y\nz""#, r#""x\u0003y\nz""#] {
-            let mut operation = parse_subgraph_fetch_operation(&format!(
-                "query($r: [_Any!]!) {{ _entities(representations: $r) {{ ... on T {{ f(s: {value}) }} }} }}"
-            ))
-            .operation;
-            operation.set_max_context_groups(usize::MAX, strings(&["r"]));
-            assert!(operation.context_alias_template().is_none(), "{value}");
+    /// Writes `document_str` out for `groups` groups by copying its AST for every group, the slow
+    /// and obvious way. A template has to come out the same.
+    fn expand_by_copying(document_str: &str, variables: &[&str], groups: usize) -> String {
+        use super::{parser, rename_directives, rename_selection};
+
+        let document = parser::parse_query::<String>(document_str).unwrap();
+        let mut query = None;
+        let mut fragments = Vec::new();
+        for definition in document.definitions {
+            match definition {
+                parser::Definition::Operation(parser::OperationDefinition::Query(operation)) => {
+                    query = Some(operation)
+                }
+                parser::Definition::Fragment(fragment) => fragments.push(fragment),
+                _ => panic!("only queries and fragments"),
+            }
         }
+        let mut query = query.unwrap();
+        let (grouped, shared): (Vec<_>, Vec<_>) = std::mem::take(&mut query.variable_definitions)
+            .into_iter()
+            .partition(|definition| variables.contains(&definition.name.as_str()));
+        let fields = std::mem::take(&mut query.selection_set.items);
+        query.variable_definitions = shared;
+        let mut copies = Vec::new();
+        for group in 0..groups {
+            let suffixed = |name: &str| (name.to_string(), format!("{name}_{group}"));
+            let renamed_variables: Vec<_> = grouped.iter().map(|d| suffixed(&d.name)).collect();
+            let renamed_fragments: Vec<_> = fragments.iter().map(|f| suffixed(&f.name)).collect();
+            for definition in &grouped {
+                query.variable_definitions.push(parser::VariableDefinition {
+                    name: format!("{}_{group}", definition.name),
+                    ..definition.clone()
+                });
+            }
+            for field in &fields {
+                let mut selection = field.clone();
+                if let parser::Selection::Field(field) = &mut selection {
+                    let key = field.alias.take().unwrap_or_else(|| field.name.clone());
+                    field.alias = Some(format!("{key}_{group}"));
+                }
+                rename_selection(&mut selection, &renamed_variables, &renamed_fragments);
+                query.selection_set.items.push(selection);
+            }
+            for fragment in &fragments {
+                let mut fragment = fragment.clone();
+                fragment.name = format!("{}_{group}", fragment.name);
+                rename_directives(&mut fragment.directives, &renamed_variables);
+                for selection in &mut fragment.selection_set.items {
+                    rename_selection(selection, &renamed_variables, &renamed_fragments);
+                }
+                copies.push(parser::Definition::Fragment(fragment));
+            }
+        }
+        let mut definitions = vec![parser::Definition::Operation(
+            parser::OperationDefinition::Query(query),
+        )];
+        definitions.extend(copies);
+        parser::minify_query_document(&parser::Document { definitions })
+    }
+
+    /// Checks that the template's output parses and matches [`expand_by_copying`], ignoring
+    /// formatting, for group counts that cross digit boundaries. Returns the template's output.
+    fn assert_template_matches_copying(document_str: &str, variables: &[&str]) -> Vec<String> {
+        use super::parser;
+
+        let mut operation = parse_subgraph_fetch_operation(document_str).operation;
+        operation.set_max_context_groups(usize::MAX, strings(variables));
+        let template = operation
+            .context_alias_template()
+            .unwrap_or_else(|| panic!("no template for {document_str}"));
+        [1, 2, 3, 9, 10, 11, 99, 100, 101]
+            .into_iter()
+            .map(|groups| {
+                let written = template.operation(groups).document_str.into_string();
+                let parsed = parser::parse_query::<String>(&written).unwrap_or_else(|error| {
+                    panic!("{groups} groups don't parse: {error}\n{written}")
+                });
+                assert_eq!(
+                    parser::minify_query_document(&parsed),
+                    expand_by_copying(&operation.document_str, variables, groups),
+                    "{groups} groups of {document_str}"
+                );
+                written
+            })
+            .collect()
+    }
+
+    /// Every string argument value in `document`, decoded.
+    fn string_arguments(document: &str) -> Vec<String> {
+        use super::parser;
+
+        fn collect(selection: &parser::Selection<'_, String>, strings: &mut Vec<String>) {
+            let items = match selection {
+                parser::Selection::Field(field) => {
+                    for (_, value) in &field.arguments {
+                        if let parser::Value::String(string) = value {
+                            strings.push(string.clone());
+                        }
+                    }
+                    &field.selection_set.items
+                }
+                parser::Selection::InlineFragment(fragment) => &fragment.selection_set.items,
+                parser::Selection::FragmentSpread(_) => return,
+            };
+            for item in items {
+                collect(item, strings);
+            }
+        }
+        let mut strings = Vec::new();
+        for definition in parser::parse_query::<String>(document).unwrap().definitions {
+            let selections = match definition {
+                parser::Definition::Operation(parser::OperationDefinition::Query(query)) => {
+                    query.selection_set.items
+                }
+                parser::Definition::Fragment(fragment) => fragment.selection_set.items,
+                _ => continue,
+            };
+            for selection in &selections {
+                collect(selection, &mut strings);
+            }
+        }
+        strings
+    }
+
+    #[test]
+    fn context_alias_template_keeps_control_characters_in_strings() {
+        // a newline makes the minifier write a block string, with the control character raw.
+        // these used to be the group placeholder and the section markers.
+        for character in ['\0', '\u{1}', '\u{2}', '\u{3}'] {
+            let value = format!("x{character}y\nz");
+            let escaped = format!("\"x\\u000{}y\\nz\"", character as u32);
+            let written = assert_template_matches_copying(
+                &format!(
+                    "query($r: [_Any!]!) {{ _entities(representations: $r) {{ ... on T {{ f(s: {escaped}) }} }} }}"
+                ),
+                &["r"],
+            );
+            for written in &written {
+                let strings = string_arguments(written);
+                assert!(!strings.is_empty());
+                assert!(strings.iter().all(|string| *string == value), "{written:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn context_alias_template_leaves_names_in_strings_alone() {
+        let written = assert_template_matches_copying(
+            r#"query($r: [_Any!]!, $c: ID) { _entities(representations: $r) { ...F ... on T { f(a: $c, s: "$c __hive_tpl_0 _entities_0 ...F", t: "$r\n__hive_tpl_1:") } } } fragment F on T { g(s: "fragment F_0 on T __hive_tpl_2") }"#,
+            &["r", "c"],
+        );
+        let strings = string_arguments(&written[1]);
+        assert_eq!(
+            strings,
+            [
+                "$c __hive_tpl_0 _entities_0 ...F",
+                "$r\n__hive_tpl_1:",
+                "$c __hive_tpl_0 _entities_0 ...F",
+                "$r\n__hive_tpl_1:",
+                "fragment F_0 on T __hive_tpl_2",
+                "fragment F_0 on T __hive_tpl_2",
+            ]
+        );
+    }
+
+    #[test]
+    fn context_alias_template_avoids_names_that_look_like_placeholders() {
+        // a field, an argument, an enum value, a type and a shared variable all start like the
+        // first placeholder candidate
+        assert_template_matches_copying(
+            "query($r: [_Any!]!, $__hive_tpl_3: __hive_tpl_T) { _entities(representations: $r) { ... on T { __hive_tpl_0(__hive_tpl_1: __hive_tpl_2, x: $__hive_tpl_3) } } }",
+            &["r"],
+        );
+    }
+
+    #[test]
+    fn context_alias_template_handles_defaults_directives_and_fragments() {
+        assert_template_matches_copying(
+            r#"query($representations: [_Any!]!, $c: In = {a: [1, {b: "x)", c: [[]]}]}, $shared: In = {x: ["(", {y: 2}]}) { _entities(representations: $representations) { ...F @include(if: $c) ... on T @skip(if: $c) { g(a: [{x: $c, y: [$c, {z: $shared}]}], b: $shared) @dir(a: {b: [$c]}) } } } fragment F on T @dir(a: $c) { f(a: $c) ...G } fragment G on T { h(b: $c, d: $shared) }"#,
+            &["representations", "c"],
+        );
+    }
+
+    #[test]
+    fn context_alias_template_handles_several_top_level_fields_and_aliases() {
+        assert_template_matches_copying(
+            "query($r: [_Any!]!, $s: [_Any!]!) { a: _entities(representations: $r) { ... on T { x } } _entities(representations: $s) { __typename } b: __typename }",
+            &["r", "s"],
+        );
+    }
+
+    #[test]
+    fn context_alias_template_falls_back_when_it_cant_be_compiled() {
+        for (query, variables) in [
+            // a top-level fragment spread has no response key to alias
+            ("query($r: [_Any!]!) { ...F } fragment F on Query { _entities(representations: $r) { __typename } }", &["r"][..]),
+            // nothing gets its own copy
+            ("query($r: [_Any!]!) { _entities(representations: $r) { __typename } }", &["other"][..]),
+        ] {
+            let mut operation = parse_subgraph_fetch_operation(query).operation;
+            operation.set_max_context_groups(15, strings(variables));
+            assert!(operation.context_alias_template().is_none(), "{query}");
+            // so every group goes in a request of its own
+            assert_eq!(operation.max_context_groups(), 1, "{query}");
+        }
+        let mut operation = parse_subgraph_fetch_operation(
+            "query($r: [_Any!]!) { _entities(representations: $r) { __typename } }",
+        )
+        .operation;
+        operation.set_max_context_groups(1, strings(&["r"]));
+        assert!(operation.context_alias_template().is_none());
+        operation.set_max_context_groups(15, strings(&["r"]));
+        assert_eq!(operation.max_context_groups(), 15);
     }
 
     #[test]
