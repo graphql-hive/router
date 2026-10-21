@@ -305,48 +305,10 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
 
 /// One request that carries several groups of contextual argument values, written out from a
 /// [`ContextAliasTemplate`].
-pub(super) struct AliasedRequest {
-    pub operation: SubgraphFetchOperation,
+struct AliasedRequest {
+    operation: SubgraphFetchOperation,
     /// The names of the per-group variables in each group
-    pub variable_names: Vec<String>,
-}
-
-impl AliasedRequest {
-    /// Writes out a request for every group in `groups` (the variable values of each group, in
-    /// group order). Returns it with the variable values, in the order of `variable_names`.
-    pub(super) fn new(
-        template: &ContextAliasTemplate,
-        groups: Vec<Vec<(&str, Vec<u8>)>>,
-    ) -> (Self, Vec<Vec<u8>>) {
-        let count = groups.len();
-        let variable_count = groups.iter().map(Vec::len).sum();
-        let mut variable_names = Vec::with_capacity(variable_count);
-        let mut variable_values = Vec::with_capacity(variable_count);
-        for (group, values) in groups.into_iter().enumerate() {
-            for (name, value) in values {
-                variable_names.push(
-                    template
-                        .variable(name, group)
-                        .unwrap_or_else(|| name.to_string()),
-                );
-                variable_values.push(value);
-            }
-        }
-        let request = Self {
-            operation: template.operation(count),
-            variable_names,
-        };
-        (request, variable_values)
-    }
-
-    /// Pairs the variable names with the values [`Self::new`] returned.
-    pub(super) fn variables(&self, values: Vec<Vec<u8>>) -> Vec<(&str, Vec<u8>)> {
-        self.variable_names
-            .iter()
-            .map(String::as_str)
-            .zip(values)
-            .collect()
-    }
+    variable_names: Vec<String>,
 }
 
 /// Keeps the [`AliasedRequest`]s of one execution around until it's done, since the subgraph
@@ -362,8 +324,42 @@ pub struct AliasedRequests {
 }
 
 impl AliasedRequests {
-    /// Keeps `request` until the execution is done.
-    pub(super) fn insert(&self, request: AliasedRequest) -> &AliasedRequest {
+    /// Writes out a request for every group in `groups` (the variable values of each group, in
+    /// group order) and keeps it until the execution is done. Returns its operation and its
+    /// variables, renamed for their group.
+    pub(super) fn write(
+        &self,
+        template: &ContextAliasTemplate,
+        groups: Vec<Vec<(&str, Vec<u8>)>>,
+    ) -> (&SubgraphFetchOperation, Vec<(&str, Vec<u8>)>) {
+        let count = groups.len();
+        let variable_count = groups.iter().map(Vec::len).sum();
+        let mut variable_names = Vec::with_capacity(variable_count);
+        let mut values = Vec::with_capacity(variable_count);
+        for (group, variables) in groups.into_iter().enumerate() {
+            for (name, value) in variables {
+                variable_names.push(
+                    template
+                        .variable(name, group)
+                        .unwrap_or_else(|| name.to_string()),
+                );
+                values.push(value);
+            }
+        }
+        let request = self.insert(AliasedRequest {
+            operation: template.operation(count),
+            variable_names,
+        });
+        let variables = request
+            .variable_names
+            .iter()
+            .map(String::as_str)
+            .zip(values)
+            .collect();
+        (&request.operation, variables)
+    }
+
+    fn insert(&self, request: AliasedRequest) -> &AliasedRequest {
         // 1-based, so request `i` sits in bucket `ilog2(i)`
         let index = self.len.fetch_add(1, Ordering::Relaxed) + 1;
         let bucket = index.ilog2() as usize;
@@ -374,7 +370,7 @@ impl AliasedRequests {
     }
 }
 
-/// Turns the response of an [`AliasedRequest`] for `groups` groups back into the response of the
+/// Turns the response of an aliased request for `groups` groups back into the response of the
 /// original operation, so it can be merged like any other. The entities of every group are
 /// concatenated under the original response key and error paths are pointed to them.
 ///
@@ -872,11 +868,16 @@ mod tests {
                 let groups = (0..i % 7 + 2)
                     .map(|_| vec![("representations", b"[]".to_vec())])
                     .collect();
-                store.insert(AliasedRequest::new(template, groups).0)
+                store.write(template, groups)
             })
             .collect();
-        for (i, request) in requests.iter().enumerate() {
-            assert_eq!(request.variable_names.len(), i % 7 + 2);
+        for (i, (operation, variables)) in requests.iter().enumerate() {
+            let last = i % 7 + 1;
+            assert_eq!(variables.len(), last + 1);
+            assert_eq!(variables[last].0, format!("representations_{last}"));
+            assert!(operation
+                .document_str
+                .contains(&format!("_entities_{last}:")));
         }
     }
 

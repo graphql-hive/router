@@ -1,6 +1,4 @@
-use super::context::{
-    collect_context_entities, unalias_response, AliasedRequest, AliasedRequests, ContextGroup,
-};
+use super::context::{collect_context_entities, unalias_response, AliasedRequests, ContextGroup};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::vec;
@@ -1010,8 +1008,7 @@ impl<'exec> Executor<'exec> {
                     *offset += count;
                 }
             }
-            let (request, values) = AliasedRequest::new(template, values_per_wave);
-            let request = self.aliased_requests.insert(request);
+            let (operation, variables) = self.aliased_requests.write(template, values_per_wave);
             // the batch alias behind every response key, looked up once
             let batch_aliases = &batch_fetch_node.entity_batch.aliases;
             let counts = template
@@ -1028,8 +1025,8 @@ impl<'exec> Executor<'exec> {
                 })
                 .collect();
             requests.push(PreparedRequest {
-                operation: &request.operation,
-                variables: request.variables(values),
+                operation,
+                variables,
                 custom_scalar_paths: template.custom_scalar_paths(),
                 merge: merged_aliases,
                 unalias: Some(Unalias {
@@ -1097,11 +1094,10 @@ impl<'exec> Executor<'exec> {
                 values.push(("representations", group.representations));
                 values_per_group.push(values);
             }
-            let (request, values) = AliasedRequest::new(template, values_per_group);
-            let request = self.aliased_requests.insert(request);
+            let (operation, variables) = self.aliased_requests.write(template, values_per_group);
             requests.push(PreparedRequest {
-                operation: &request.operation,
-                variables: request.variables(values),
+                operation,
+                variables,
                 custom_scalar_paths: template.custom_scalar_paths(),
                 merge: hash_to_index,
                 unalias: Some(Unalias {
