@@ -71,11 +71,11 @@ struct ContextAliasing {
     template: OnceLock<Option<ContextAliasTemplate>>,
 }
 
-/// Stands in for the group number in a [`ContextAliasTemplate`]. A GraphQL document can't
-/// contain it, so it can't be mistaken for anything.
+/// Stands in for the group number in a [`ContextAliasTemplate`].
 const GROUP: char = '\0';
-// mark where the per-group variables and the fields end while the template gets minified,
-// same deal, no document can contain these
+// mark where the per-group variables and the fields end while the template gets minified.
+// names can't contain these, but string values can (the minifier writes them out raw in block
+// strings), so operations that already have one don't get a template
 const VARIABLES_START: &str = "\u{1}";
 const VARIABLES_END: &str = "\u{2}";
 const FIELDS_END: &str = "\u{3}";
@@ -233,6 +233,9 @@ fn build_context_alias_template(
     variables: &[&str],
 ) -> Option<ContextAliasTemplate> {
     let document = parser::parse_query::<String>(document_str).ok()?;
+    if parser::minify_query_document(&document).contains(|c| ('\0'..='\u{3}').contains(&c)) {
+        return None;
+    }
     let mut query = None;
     let mut fragments = Vec::new();
     for definition in document.definitions {
@@ -999,6 +1002,22 @@ mod tests {
         assert!(aliased
             .document_str
             .ends_with("fragment F_39 on T{f(a:$c_39)}"));
+    }
+
+    #[test]
+    fn context_alias_template_skips_operations_with_marker_characters() {
+        // a newline makes the minifier write a block string, with the control character raw
+        for value in [r#""x\u0000y\nz""#, r#""x\u0001y\nz""#, r#""x\u0003y\nz""#] {
+            let mut operation = parse_subgraph_fetch_operation(&format!(
+                "query($r: [_Any!]!) {{ _entities(representations: $r) {{ ... on T {{ f(s: {value}) }} }} }}"
+            ))
+            .operation;
+            operation.set_max_context_groups(usize::MAX);
+            assert!(
+                operation.context_alias_template(&["r"]).is_none(),
+                "{value}"
+            );
+        }
     }
 
     #[test]
