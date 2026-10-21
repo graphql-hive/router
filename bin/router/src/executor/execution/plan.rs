@@ -1011,6 +1011,20 @@ impl<'exec> Executor<'exec> {
                             *offset += count;
                         }
                     }
+                    // reorder the counts by response key of `aliased`, so unaliasing the
+                    // response doesn't have to look up the batch alias behind every key
+                    let counts: Vec<Vec<usize>> = aliased
+                        .response_keys
+                        .iter()
+                        .map(|(key, _)| {
+                            batch_fetch_node
+                                .entity_batch
+                                .aliases
+                                .iter()
+                                .position(|alias| alias.alias == *key)
+                                .map_or_else(Vec::new, |alias| std::mem::take(&mut counts[alias]))
+                        })
+                        .collect();
                     requests.push((
                         &aliased.operation,
                         raw_variable_values,
@@ -1044,17 +1058,9 @@ impl<'exec> Executor<'exec> {
                         .map_ok(move |fetch_job| {
                             let mut response = fetch_job.response();
                             if let Some((aliased, counts)) = aliased {
-                                let batch_aliases = &batch_fetch_node.entity_batch.aliases;
-                                // the batch alias behind every response key, looked up once
-                                let alias_of: Vec<Option<usize>> = aliased
-                                    .response_keys
-                                    .iter()
-                                    .map(|(key, _)| {
-                                        batch_aliases.iter().position(|alias| alias.alias == *key)
-                                    })
-                                    .collect();
+                                // keys without a batch alias have no counts and sent nothing
                                 unalias_response(&mut response, aliased, |key, wave| {
-                                    alias_of[key].map_or(0, |alias| counts[alias][wave])
+                                    counts[key].get(wave).copied().unwrap_or(0)
                                 });
                             }
                             ExecutionJob::BatchFetch {
