@@ -34,9 +34,9 @@ use bytes::{BufMut, Bytes, BytesMut};
 use http::HeaderMap;
 use http::HeaderValue;
 use http::StatusCode;
-use hyper::body::Body as _;
 use http_body_util::BodyExt;
 use http_body_util::Full;
+use hyper::body::Body as _;
 use hyper::Version;
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
@@ -408,7 +408,7 @@ async fn send_request<'a>(
 
 pub enum DeduplicationHint {
     Deduped {
-        fingerprint: u64,
+        fingerprint: u128,
         leader_id: u64,
         is_leader: bool,
     },

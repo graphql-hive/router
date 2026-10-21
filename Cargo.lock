@@ -2885,6 +2885,7 @@ dependencies = [
  "schemars 1.2.3",
  "serde",
  "serde_json",
+ "smallvec",
  "sonic-rs",
  "sonic-simd",
  "strum 0.28.0",

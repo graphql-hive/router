@@ -138,7 +138,7 @@ struct ResolvedSubgraphConfig<'a> {
     compression: TrafficShapingSubgraphCompressionConfig,
 }
 
-pub type InflightRequestsMap = InFlightMap<u64, (SubgraphHttpResponse, u64)>;
+pub type InflightRequestsMap = InFlightMap<u128, (SubgraphHttpResponse, u64)>;
 
 #[derive(Clone)]
 pub struct HttpCallbackRuntimeConfig {
