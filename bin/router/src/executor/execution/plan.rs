@@ -5,7 +5,7 @@ use std::vec;
 
 use crate::query_planner::ast::operation::SubgraphFetchOperation;
 use crate::query_planner::planner::plan_nodes::{
-    CustomScalarPaths, FetchNode, FlattenNode, ResponsePathRef,
+    CustomScalarPaths, FetchContext, FetchNode, FlattenNode, ResponsePathRef,
 };
 use crate::query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use crate::query_planner::{
@@ -1063,8 +1063,8 @@ impl<'exec> Executor<'exec> {
                     [flatten_node.path.as_ref()],
                     requires_nodes,
                     fetch_node.input_rewrites.as_deref(),
-                    fetch_node.context_rewrites.as_deref(),
-                    &fetch_node.context_variables,
+                    FetchContext::rewrites(&fetch_node.context),
+                    FetchContext::variables(&fetch_node.context),
                     &self.schema_metadata.possible_types,
                     self.schema_metadata
                         .entity_keys
@@ -1628,8 +1628,8 @@ impl<'exec> Executor<'exec> {
                     alias_spec.merge_paths.iter(),
                     &alias_spec.requires,
                     alias_spec.input_rewrites.as_deref(),
-                    alias_spec.context_rewrites.as_deref(),
-                    &alias_spec.context_variables,
+                    FetchContext::rewrites(&alias_spec.context),
+                    FetchContext::variables(&alias_spec.context),
                     &self.schema_metadata.possible_types,
                     subgraph_keys,
                 )
@@ -1653,14 +1653,12 @@ impl<'exec> Executor<'exec> {
                 if let Some(values) = groups.get(wave).or_else(|| groups.first()) {
                     raw_variable_values.extend(values.variables.clone());
                 } else {
-                    for name in alias_spec
-                        .context_variables
+                    for name in FetchContext::variables(&alias_spec.context)
                         .iter()
                         .map(String::as_str)
                         .chain(
-                            alias_spec
-                                .context_rewrites
-                                .iter()
+                            FetchContext::rewrites(&alias_spec.context)
+                                .into_iter()
                                 .flatten()
                                 .map(|rewrite| rewrite.rename_key_to.as_str()),
                         )
@@ -2135,8 +2133,7 @@ mod tests {
                     requires: requires_from(requires_selection.clone()),
                     input_rewrites: None,
                     output_rewrites: None,
-                    context_rewrites: None,
-                    context_variables: Vec::new(),
+                    context: None,
                 },
                 EntityBatchAlias {
                     alias: "_e1".to_string(),
@@ -2145,8 +2142,7 @@ mod tests {
                     requires: requires_from(requires_selection),
                     input_rewrites: None,
                     output_rewrites: None,
-                    context_rewrites: None,
-                    context_variables: Vec::new(),
+                    context: None,
                 },
             ],
         };
@@ -2161,8 +2157,10 @@ mod tests {
 
         let mut entity_batch = entity_batch;
         for (index, alias) in entity_batch.aliases.iter_mut().enumerate() {
-            alias.context_variables = vec![format!("__context_{index}")];
-            alias.context_rewrites = Some(Vec::new());
+            alias.context = crate::query_planner::planner::plan_nodes::FetchContext::new(
+                vec![format!("__context_{index}")],
+                Some(Vec::new()),
+            );
         }
         let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None);
         assert_eq!(waves.len(), 1);
@@ -2280,8 +2278,7 @@ mod tests {
                             id: 1,
                             planner_requires: (),
                             service_name: "subgraph_a".to_string(),
-                            context_rewrites: None,
-                            context_variables: Vec::new(),
+                            context: None,
                             operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_a }"),
                             )
@@ -2297,8 +2294,7 @@ mod tests {
                             id: 2,
                             planner_requires: (),
                             service_name: "subgraph_b".to_string(),
-                            context_rewrites: None,
-                            context_variables: Vec::new(),
+                            context: None,
                             operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_b }"),
                             )
