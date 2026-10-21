@@ -79,6 +79,16 @@ struct VecStorage(Vec<u8>);
 
 // The Vec sits behind an Arc, so cloning a `Bytes` is a refcount bump.
 // `addr` is the `Arc<Vec<u8>>` pointer, `len` is the Vec's length.
+//
+// Why the unsafe bits are fine:
+// - `addr` always comes from `Arc::into_raw` in `create`, and ntex passes it back untouched
+//   (when it slices or advances, it copies instead of moving `addr`), so casting back to
+//   `Vec<u8>` gives the same Arc.
+// - every `Bytes` handle owns exactly one strong count: `create` gives one, `clone` adds one,
+//   `drop` takes one. ntex only clones a live handle, so the Arc is still alive in `clone`.
+// - nothing touches the Vec once it's in the Arc, so its pointer and length never change
+//   and reading it from many threads is fine.
+// ntex-bytes is pinned with `=` in Cargo.toml, so recheck all of this on every bump.
 const VEC_STORAGE_VTABLE: ntex_bytes::StorageVTable = ntex_bytes::StorageVTable::new(
     |addr, _| unsafe { (*addr.cast::<Vec<u8>>()).as_ptr() },
     |_, len| len,
@@ -118,5 +128,60 @@ mod tests {
 
         let moved = vec_into_ntex_bytes(data);
         assert_eq!(moved.as_ptr(), ptr, "the Vec's buffer is used as is");
+    }
+
+    // When the socket takes only part of the body, ntex-net calls `advance_to`.
+    // For external storage ntex-bytes copies whatever's left into its own buffer,
+    // so the zero-copy only holds when the body goes out in one write.
+    // If this starts failing on the pointer checks, ntex stopped copying here.
+    #[test]
+    fn vec_into_ntex_bytes_copies_the_rest_after_a_partial_write() {
+        let data: Vec<u8> = (0..=255u8).cycle().take(64 * 1024).collect();
+        let mut body = vec_into_ntex_bytes(data.clone());
+        // take the pointer from the body, `data` is a different allocation
+        let ptr = body.as_ptr();
+
+        body.advance_to(1000);
+        assert_eq!(&body[..], &data[1000..]);
+        assert_ne!(
+            body.as_ptr(),
+            ptr.wrapping_add(1000),
+            "the rest is a copy, not our buffer"
+        );
+
+        // after that it's ntex's own buffer, so the next write just moves the start
+        let copy_ptr = body.as_ptr();
+        body.advance_to(1000);
+        assert_eq!(&body[..], &data[2000..]);
+        assert_eq!(body.as_ptr(), copy_ptr.wrapping_add(1000), "copied only once");
+    }
+
+    #[test]
+    fn vec_into_ntex_bytes_uses_the_length_not_the_capacity() {
+        // response buffers are sized up front, so they usually have room to spare
+        let mut data = Vec::with_capacity(4096);
+        data.extend_from_slice(b"{\"data\":null}");
+        let bytes = vec_into_ntex_bytes(data);
+        assert_eq!(&bytes[..], b"{\"data\":null}");
+        assert_eq!(bytes.len(), 13);
+
+        let empty = vec_into_ntex_bytes(Vec::new());
+        assert!(empty.is_empty());
+        assert_eq!(&empty.clone()[..], b"");
+    }
+
+    // ntex can call the vtable from any thread, so clones get dropped on other threads
+    #[test]
+    fn vec_into_ntex_bytes_clones_can_be_dropped_on_other_threads() {
+        let bytes = vec_into_ntex_bytes(vec![7u8; 1024]);
+        let clones: Vec<_> = (0..4).map(|_| bytes.clone()).collect();
+        drop(bytes);
+        let handles: Vec<_> = clones
+            .into_iter()
+            .map(|b| std::thread::spawn(move || assert!(b.iter().all(|&x| x == 7))))
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
     }
 }
