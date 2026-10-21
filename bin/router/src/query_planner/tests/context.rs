@@ -1940,6 +1940,9 @@ fn unrelated_objects_share_a_context_name() -> Result<(), Box<dyn Error>> {
                       ]
                     }
                   ],
+                  "contextVariables": [
+                    "__context_1"
+                  ],
                   "contextRewrites": [
                     {
                       "path": [
@@ -1955,9 +1958,6 @@ fn unrelated_objects_share_a_context_name() -> Result<(), Box<dyn Error>> {
                       ],
                       "renameKeyTo": "__context_1"
                     }
-                  ],
-                  "contextVariables": [
-                    "__context_1"
                   ]
                 },
                 {
@@ -1989,6 +1989,9 @@ fn unrelated_objects_share_a_context_name() -> Result<(), Box<dyn Error>> {
                       ]
                     }
                   ],
+                  "contextVariables": [
+                    "__context_0"
+                  ],
                   "contextRewrites": [
                     {
                       "path": [
@@ -2004,9 +2007,6 @@ fn unrelated_objects_share_a_context_name() -> Result<(), Box<dyn Error>> {
                       ],
                       "renameKeyTo": "__context_0"
                     }
-                  ],
-                  "contextVariables": [
-                    "__context_0"
                   ]
                 }
               ]
@@ -2143,6 +2143,9 @@ fn shared_context_name_selects_fields_by_type() -> Result<(), Box<dyn Error>> {
                       ]
                     }
                   ],
+                  "contextVariables": [
+                    "__context_1"
+                  ],
                   "contextRewrites": [
                     {
                       "path": [
@@ -2158,9 +2161,6 @@ fn shared_context_name_selects_fields_by_type() -> Result<(), Box<dyn Error>> {
                       ],
                       "renameKeyTo": "__context_1"
                     }
-                  ],
-                  "contextVariables": [
-                    "__context_1"
                   ]
                 },
                 {
@@ -2192,6 +2192,9 @@ fn shared_context_name_selects_fields_by_type() -> Result<(), Box<dyn Error>> {
                       ]
                     }
                   ],
+                  "contextVariables": [
+                    "__context_0"
+                  ],
                   "contextRewrites": [
                     {
                       "path": [
@@ -2207,9 +2210,6 @@ fn shared_context_name_selects_fields_by_type() -> Result<(), Box<dyn Error>> {
                       ],
                       "renameKeyTo": "__context_0"
                     }
-                  ],
-                  "contextVariables": [
-                    "__context_0"
                   ]
                 }
               ]
@@ -2358,6 +2358,9 @@ fn union_context_with_type_conditions() -> Result<(), Box<dyn Error>> {
                       ]
                     }
                   ],
+                  "contextVariables": [
+                    "__context_1"
+                  ],
                   "contextRewrites": [
                     {
                       "path": [
@@ -2387,9 +2390,6 @@ fn union_context_with_type_conditions() -> Result<(), Box<dyn Error>> {
                       ],
                       "renameKeyTo": "__context_1"
                     }
-                  ],
-                  "contextVariables": [
-                    "__context_1"
                   ]
                 },
                 {
@@ -2427,6 +2427,9 @@ fn union_context_with_type_conditions() -> Result<(), Box<dyn Error>> {
                       ]
                     }
                   ],
+                  "contextVariables": [
+                    "__context_0"
+                  ],
                   "contextRewrites": [
                     {
                       "path": [
@@ -2456,9 +2459,6 @@ fn union_context_with_type_conditions() -> Result<(), Box<dyn Error>> {
                       ],
                       "renameKeyTo": "__context_0"
                     }
-                  ],
-                  "contextVariables": [
-                    "__context_0"
                   ]
                 }
               ]

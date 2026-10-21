@@ -22,14 +22,23 @@ pub struct QueryTreeNode {
     pub edge_from_parent: Option<EdgeIndex>,
     /// Nodes required to execute the move
     pub requirements: Vec<Rc<QueryTreeNode>>,
-    pub context_requirements: Vec<Rc<QueryTreeNode>>,
-    pub context_coordinate: Option<(EdgeIndex, usize)>,
-    pub resolved_context_requirements: Vec<Rc<ContextRequirement>>,
+    /// Only set on nodes that deal with `@fromContext`, the rest pay a pointer for it.
+    pub context: Option<Box<NodeContext>>,
     pub children: Vec<Rc<QueryTreeNode>>,
     pub selection_attributes: Option<SelectionAttributes>,
     pub condition: Option<Condition>,
     /// Distinguishes nodes originating from different top-level mutation fields.
     pub mutation_field_position: MutationFieldPosition,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct NodeContext {
+    /// Trees that fetch the context values for the fields below this node
+    pub requirements: Vec<Rc<QueryTreeNode>>,
+    /// The contextual argument a context requirement tree is for
+    pub coordinate: Option<(EdgeIndex, usize)>,
+    /// Context values this node's field needs
+    pub resolved_requirements: Vec<Rc<ContextRequirement>>,
 }
 
 /// Implements the `PartialEq` trait for `QueryTreeNode` to allow comparison based on node index, edge from parent, and selection attributes.
@@ -42,7 +51,7 @@ impl PartialEq for QueryTreeNode {
             && self.selection_attributes == other.selection_attributes
             && self.mutation_field_position == other.mutation_field_position
             && self.condition == other.condition
-            && self.context_coordinate == other.context_coordinate
+            && self.context_coordinate() == other.context_coordinate()
     }
 }
 
@@ -83,14 +92,32 @@ impl QueryTreeNode {
             node_index: *node_index,
             edge_from_parent: edge_from_parent.cloned(),
             requirements: Vec::new(),
-            context_requirements: Vec::new(),
-            context_coordinate: None,
-            resolved_context_requirements: Vec::new(),
+            context: None,
             children: Vec::new(),
             selection_attributes: selection_attributes.cloned(),
             mutation_field_position: None,
             condition: condition.cloned(),
         }
+    }
+
+    pub fn context_requirements(&self) -> &[Rc<QueryTreeNode>] {
+        self.context
+            .as_ref()
+            .map_or(&[], |context| &context.requirements)
+    }
+
+    pub fn resolved_context_requirements(&self) -> &[Rc<ContextRequirement>] {
+        self.context
+            .as_ref()
+            .map_or(&[], |context| &context.resolved_requirements)
+    }
+
+    pub fn context_coordinate(&self) -> Option<(EdgeIndex, usize)> {
+        self.context.as_ref()?.coordinate
+    }
+
+    pub fn context_mut(&mut self) -> &mut NodeContext {
+        self.context.get_or_insert_default()
     }
 
     pub fn selection_arguments(&self) -> Option<&ArgumentsMap> {
@@ -112,15 +139,18 @@ impl QueryTreeNode {
     pub fn merge_nodes(&mut self, other: &Self) {
         merge_query_tree_node_list(&mut self.children, &other.children);
         merge_query_tree_node_list(&mut self.requirements, &other.requirements);
-        merge_query_tree_node_list(&mut self.context_requirements, &other.context_requirements);
-        for requirement in &other.resolved_context_requirements {
-            if !self.resolved_context_requirements.iter().any(|existing| {
+        let Some(other_context) = &other.context else {
+            return;
+        };
+        let context = self.context_mut();
+        merge_query_tree_node_list(&mut context.requirements, &other_context.requirements);
+        for requirement in &other_context.resolved_requirements {
+            if !context.resolved_requirements.iter().any(|existing| {
                 existing.argument == requirement.argument
                     && existing.selection == requirement.selection
                     && existing.levels == requirement.levels
             }) {
-                self.resolved_context_requirements
-                    .push(Rc::clone(requirement));
+                context.resolved_requirements.push(Rc::clone(requirement));
             }
         }
     }
@@ -193,12 +223,15 @@ impl QueryTreeNode {
                 .push(Rc::clone(requirements_tree_arc));
         }
 
-        tree_node.resolved_context_requirements = segment_at_index.context_requirements.clone();
+        if !segment_at_index.context_requirements().is_empty() {
+            tree_node.context_mut().resolved_requirements =
+                segment_at_index.context_requirements().to_vec();
+        }
         for (index, segment) in segments.iter().enumerate().skip(current_index + 1) {
-            for requirement in &segment.context_requirements {
+            for requirement in segment.context_requirements() {
                 if index.checked_sub(requirement.segments_back) == Some(current_index) {
                     merge_query_tree_node_list(
-                        &mut tree_node.context_requirements,
+                        &mut tree_node.context_mut().requirements,
                         &[Rc::clone(&requirement.tree)],
                     );
                 }
@@ -253,5 +286,26 @@ impl QueryTreeNode {
         }
 
         Ok(root_tree_node)
+    }
+}
+
+#[cfg(test)]
+#[cfg(target_pointer_width = "64")]
+mod size_tests {
+    use super::*;
+    use std::mem::size_of;
+
+    #[test]
+    fn planner_structs_stay_small() {
+        // pathfinding makes a lot of these, so growing them makes planning slower
+        for (name, actual, expected) in [
+            ("PathSegment", size_of::<PathSegment>(), 152),
+            ("QueryTreeNode", size_of::<QueryTreeNode>(), 192),
+        ] {
+            assert_eq!(
+                actual, expected,
+                "{name} is {actual} B, expected {expected} B"
+            );
+        }
     }
 }

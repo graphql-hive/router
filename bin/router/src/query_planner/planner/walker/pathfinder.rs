@@ -636,12 +636,11 @@ impl<'graph> PathSearch<'graph> {
                     return Ok(None);
                 }
 
-                let segments = path.get_segments();
                 for (argument, context_argument) in field_move.context_arguments.iter().enumerate()
                 {
                     let mut levels = 0;
                     let mut matched = None;
-                    for (back, segment) in segments.iter().rev().enumerate() {
+                    for (back, segment) in path.segments_rev().enumerate() {
                         if !matches!(
                             graph.edge(segment.edge_index)?,
                             Edge::FieldMove(_) | Edge::ReentryMove(_)
@@ -686,13 +685,13 @@ impl<'graph> PathSearch<'graph> {
                             cost += graph.edge(edge)?.cost();
                         }
                         cost += node
-                            .resolved_context_requirements
+                            .resolved_context_requirements()
                             .iter()
                             .map(|requirement| requirement.cost)
                             .sum::<u64>();
                         nodes.extend(node.children.iter().map(Rc::as_ref));
                     }
-                    tree.context_coordinate = Some((edge_ref.id(), argument));
+                    tree.context_mut().coordinate = Some((edge_ref.id(), argument));
                     context_requirements.push(Rc::new(ContextRequirement {
                         argument,
                         selection: selection_index,

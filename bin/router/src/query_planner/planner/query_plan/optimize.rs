@@ -71,7 +71,7 @@ use crate::query_planner::{
     planner::error::QueryPlanError,
     planner::plan_nodes::planning::{
         custom_scalar_paths_for_entities_selection, BatchFetchNode, CustomScalarPaths, EntityBatch,
-        EntityBatchAlias, FetchRewrite, FlattenNodePath, KeyRenamer, PlanNode,
+        EntityBatchAlias, FetchContext, FetchRewrite, FlattenNodePath, PlanNode,
     },
     planner::QueryPlannerOptions,
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
@@ -96,8 +96,7 @@ struct ShapeKey {
 struct RepresentationsInputKey {
     requires: SelectionSet,
     input_rewrites: Option<Vec<FetchRewrite>>,
-    context_rewrites: Option<Vec<KeyRenamer>>,
-    context_variables: Vec<String>,
+    context: Option<Box<FetchContext>>,
     merge_paths: Vec<FlattenNodePath>,
 }
 
@@ -191,8 +190,7 @@ impl<'a> BatchFetchBuilder<'a> {
             requires: RequiresSelectionSet::from(&representative.requires),
             input_rewrites: representative.input_rewrites.clone(),
             output_rewrites: representative.output_rewrites.clone(),
-            context_rewrites: representative.context_rewrites.clone(),
-            context_variables: representative.context_variables.clone(),
+            context: representative.context.clone(),
         });
 
         Ok(())
@@ -220,8 +218,7 @@ impl<'a> BatchFetchBuilder<'a> {
         let representations_input_key = RepresentationsInputKey {
             requires: representative.requires.clone(),
             input_rewrites: representative.input_rewrites.clone(),
-            context_rewrites: representative.context_rewrites.clone(),
-            context_variables: representative.context_variables.clone(),
+            context: representative.context.clone(),
             merge_paths: merge_paths.to_vec(),
         };
 
@@ -288,7 +285,7 @@ impl<'a> BatchFetchBuilder<'a> {
         if self
             .batched_aliases
             .iter()
-            .any(|alias| !alias.context_variables.is_empty())
+            .any(|alias| !FetchContext::variables(&alias.context).is_empty())
         {
             // every group of contextual argument values repeats all batch aliases
             operation
@@ -338,8 +335,7 @@ struct EntityFetch {
     entities_selection: SelectionSet,
     input_rewrites: Option<Vec<FetchRewrite>>,
     output_rewrites: Option<Vec<FetchRewrite>>,
-    context_rewrites: Option<Vec<KeyRenamer>>,
-    context_variables: Vec<String>,
+    context: Option<Box<FetchContext>>,
     shape_key: ShapeKey,
     non_representations_variable_definitions: Vec<VariableDefinition>,
 }
@@ -354,8 +350,7 @@ impl EntityFetch {
             && self.entities_selection == right.entities_selection
             && self.input_rewrites == right.input_rewrites
             && self.output_rewrites == right.output_rewrites
-            && self.context_rewrites == right.context_rewrites
-            && self.context_variables == right.context_variables
+            && self.context == right.context
     }
 
     fn from_node(index: usize, node: &PlanNode) -> Result<Option<Self>, QueryPlanError> {
@@ -393,8 +388,8 @@ impl EntityFetch {
             .inline_fragment_spreads(&fetch_node.operation.document.fragments)?;
         let input_rewrites = fetch_node.input_rewrites.clone();
         let output_rewrites = fetch_node.output_rewrites.clone();
-        let context_rewrites = fetch_node.context_rewrites.clone();
-        let context_variables = fetch_node.context_variables.clone();
+        let context = fetch_node.context.clone();
+        let context_variables = FetchContext::variables(&context);
         if !context_variables.is_empty() {
             // fetches with a non-null context argument are never batched, on purpose.
             // a batch with contexts is sent once per distinct set of context values. an alias
@@ -453,7 +448,7 @@ impl EntityFetch {
             entities_selection_hash,
             input_rewrites_hash: fetch_rewrites_hash(input_rewrites.as_deref()),
             output_rewrites_hash: fetch_rewrites_hash(output_rewrites.as_deref()),
-            context_rewrites_hash: fetch_rewrites_hash(context_rewrites.as_deref()),
+            context_rewrites_hash: fetch_rewrites_hash(FetchContext::rewrites(&context)),
         };
 
         Ok(Some(EntityFetch {
@@ -466,8 +461,7 @@ impl EntityFetch {
             entities_selection,
             input_rewrites,
             output_rewrites,
-            context_rewrites,
-            context_variables,
+            context,
             shape_key,
             non_representations_variable_definitions,
         }))
@@ -619,8 +613,12 @@ fn optimize_parallel_node(
             };
 
             // every shape group is one alias, so a batch carrying more aliases than the
-            // subgraph allows is split into several batches
-            let max_aliases = options.max_aliases_per_request(&first_candidate.service_name);
+            // subgraph allows is split into several batches. no limit, no split.
+            let service_name = &first_candidate.service_name;
+            let max_aliases = options
+                .max_aliases_per_request(service_name)
+                .unwrap_or(usize::MAX);
+            let max_context_aliases = options.max_context_aliases_per_request(service_name);
 
             for chunk in shape_groups.chunks(max_aliases) {
                 // a single fetch has nothing to batch with, keep the original node
@@ -644,7 +642,7 @@ fn optimize_parallel_node(
 
                 // Build one `BatchFetch` node from each final group
                 let batch_fetch_node =
-                    build_batched_fetch_node(chunk, &variables, supergraph, max_aliases)?;
+                    build_batched_fetch_node(chunk, &variables, supergraph, max_context_aliases)?;
 
                 batch_node_replacements.insert(
                     first_index,
@@ -1448,7 +1446,7 @@ mod tests {
           }
         ";
         let mut totals = Vec::new();
-        for max_aliases_per_request in [15, 1] {
+        for max_aliases_per_request in [None, Some(1)] {
             let nodes = ["upc", "name"]
                 .iter()
                 .enumerate()
@@ -1474,7 +1472,11 @@ mod tests {
             };
             assert_eq!(
                 nodes.len(),
-                if max_aliases_per_request == 1 { 2 } else { 1 },
+                if max_aliases_per_request == Some(1) {
+                    2
+                } else {
+                    1
+                },
                 "the cap should split the batch into two separate fetches"
             );
             let mut tracker = SubgraphResponseCostTracker::new();
@@ -1522,7 +1524,7 @@ mod tests {
                 );
                 tracker.track("inventory", operation.operation.hash, cost);
             }
-            if max_aliases_per_request == 1 {
+            if max_aliases_per_request == Some(1) {
                 assert_eq!(
                     hashes[0], hashes[1],
                     "separate fetches should share an operation hash"
@@ -1558,7 +1560,7 @@ mod tests {
             })
             .collect();
         let options = QueryPlannerOptions {
-            max_aliases_per_request: 2,
+            max_aliases_per_request: Some(2),
             ..Default::default()
         };
         let optimized =
@@ -1583,6 +1585,35 @@ mod tests {
                 index == 1
             );
         }
+    }
+
+    /// Without `max_aliases_per_request` a batch is never split, however many shapes it has.
+    #[test]
+    fn optimize_parallel_node_does_not_split_batches_without_max_aliases_per_request() {
+        let supergraph = test_supergraph_state();
+        let nodes = (0..20)
+            .map(|index| {
+                flatten_entity_fetch_node(
+                    index,
+                    "inventory",
+                    "products",
+                    "query { ... on Product { upc } }",
+                    &format!(
+                        "query($representations:[_Any!]!) {{ _entities(representations: $representations) {{ ... on Product {{ a{index}: inStock }} }} }}"
+                    ),
+                )
+            })
+            .collect();
+        let optimized = optimize_root_node(
+            PlanNode::parallel(nodes),
+            &supergraph,
+            &QueryPlannerOptions::default(),
+        )
+        .unwrap();
+        let PlanNode::BatchFetch(batch) = optimized else {
+            panic!("expected a single batch, got {optimized:?}");
+        };
+        assert_eq!(batch.entity_batch.aliases.len(), 20);
     }
 
     /// A batch with more aliases than `max_aliases_per_request` is split into several batches,
@@ -2657,8 +2688,7 @@ mod tests {
             planner_requires: Some(Box::new(requires)),
             input_rewrites: None,
             output_rewrites: None,
-            context_rewrites: None,
-            context_variables: Vec::new(),
+            context: None,
         };
 
         let path = FlattenNodePath::from(&MergePath::new(vec![
@@ -2727,8 +2757,7 @@ mod tests {
             planner_requires: None,
             input_rewrites: None,
             output_rewrites: None,
-            context_rewrites: None,
-            context_variables: Vec::new(),
+            context: None,
         }
     }
 

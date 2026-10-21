@@ -28,36 +28,37 @@ pub mod query_plan;
 pub mod tree;
 pub mod walker;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct QueryPlannerOptions {
     pub experimental_abstract_type_folding: bool,
-    /// The most aliased `_entities` fields one batched entity request to a subgraph may carry.
-    /// Entity fetches that would be batched beyond this limit are split into several batches.
+    /// The most aliased `_entities` fields one entity request to a subgraph may carry.
+    /// `None` means batches are never split, and contextual argument groups go up to
+    /// [`DEFAULT_MAX_CONTEXT_ALIASES`] per request.
     ///
     /// Values in `subgraph_max_aliases_per_request` take precedence for their subgraph.
-    pub max_aliases_per_request: usize,
+    pub max_aliases_per_request: Option<usize>,
     /// Per-subgraph overrides of `max_aliases_per_request`, keyed by subgraph name.
     pub subgraph_max_aliases_per_request: HashMap<String, usize>,
 }
 
-impl Default for QueryPlannerOptions {
-    fn default() -> Self {
-        Self {
-            experimental_abstract_type_folding: false,
-            max_aliases_per_request: 15,
-            subgraph_max_aliases_per_request: HashMap::new(),
-        }
-    }
-}
+/// How many context groups one request carries when no alias limit is set.
+/// Each count gets its own cached copy of the operation, so this can't be unlimited.
+pub const DEFAULT_MAX_CONTEXT_ALIASES: usize = 15;
 
 impl QueryPlannerOptions {
-    /// Returns the alias limit for the given subgraph, never less than 1.
-    pub fn max_aliases_per_request(&self, subgraph_name: &str) -> usize {
+    /// Returns the alias limit for the given subgraph, never less than 1. `None` when unlimited.
+    pub fn max_aliases_per_request(&self, subgraph_name: &str) -> Option<usize> {
         self.subgraph_max_aliases_per_request
             .get(subgraph_name)
             .copied()
-            .unwrap_or(self.max_aliases_per_request)
-            .max(1)
+            .or(self.max_aliases_per_request)
+            .map(|max| max.max(1))
+    }
+
+    /// Returns the alias limit for contextual argument groups, which always has one.
+    pub fn max_context_aliases_per_request(&self, subgraph_name: &str) -> usize {
+        self.max_aliases_per_request(subgraph_name)
+            .unwrap_or(DEFAULT_MAX_CONTEXT_ALIASES)
     }
 }
 

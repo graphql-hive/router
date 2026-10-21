@@ -156,10 +156,42 @@ pub struct FetchNode<S: PlanState = Executable> {
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_rewrites: Option<Vec<FetchRewrite>>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub context_variables: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context_rewrites: Option<Vec<KeyRenamer>>,
+    #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<Box<FetchContext>>,
+}
+
+/// What a fetch with `@fromContext` arguments needs at execution time.
+/// Boxed in plans, so all the other fetches pay only a pointer for it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FetchContext {
+    #[serde(
+        rename = "contextVariables",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub variables: Vec<String>,
+    #[serde(rename = "contextRewrites", skip_serializing_if = "Option::is_none")]
+    pub rewrites: Option<Vec<KeyRenamer>>,
+}
+
+impl FetchContext {
+    /// `None` when there's nothing contextual, so plain fetches don't allocate.
+    pub fn new(variables: Vec<String>, rewrites: Option<Vec<KeyRenamer>>) -> Option<Box<Self>> {
+        (!variables.is_empty() || rewrites.is_some()).then(|| {
+            Box::new(Self {
+                variables,
+                rewrites,
+            })
+        })
+    }
+
+    pub fn variables(context: &Option<Box<Self>>) -> &[String] {
+        context.as_ref().map_or(&[], |context| &context.variables)
+    }
+
+    pub fn rewrites(context: &Option<Box<Self>>) -> Option<&[KeyRenamer]> {
+        context.as_ref()?.rewrites.as_deref()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -393,10 +425,8 @@ pub struct EntityBatchAlias {
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_rewrites: Option<Vec<FetchRewrite>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context_rewrites: Option<Vec<KeyRenamer>>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub context_variables: Vec<String>,
+    #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<Box<FetchContext>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -670,7 +700,7 @@ impl FetchNode<Planning> {
                 {
                     // one alias per group of contextual argument values
                     operation.operation.set_max_context_groups(
-                        options.max_aliases_per_request(&step.service_name.0),
+                        options.max_context_aliases_per_request(&step.service_name.0),
                     );
                 }
                 FetchNode {
@@ -688,12 +718,13 @@ impl FetchNode<Planning> {
                     planner_requires: Some(Box::new(planner_requires)),
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),
-                    context_rewrites: step.context_rewrites.clone(),
-                    context_variables: step
-                        .context_variable_definitions
-                        .iter()
-                        .map(|var| var.name.clone())
-                        .collect(),
+                    context: FetchContext::new(
+                        step.context_variable_definitions
+                            .iter()
+                            .map(|var| var.name.clone())
+                            .collect(),
+                        step.context_rewrites.clone(),
+                    ),
                 }
             }
             false => {
@@ -722,12 +753,13 @@ impl FetchNode<Planning> {
                     requires: None,
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),
-                    context_rewrites: step.context_rewrites.clone(),
-                    context_variables: step
-                        .context_variable_definitions
-                        .iter()
-                        .map(|var| var.name.clone())
-                        .collect(),
+                    context: FetchContext::new(
+                        step.context_variable_definitions
+                            .iter()
+                            .map(|var| var.name.clone())
+                            .collect(),
+                        step.context_rewrites.clone(),
+                    ),
                 }
             }
         }
@@ -1062,7 +1094,7 @@ mod stored_size_tests {
         for (name, actual, expected) in [
             ("PlanNode", size_of::<PlanNode>(), 40),
             ("ConditionNode", size_of::<ConditionNode>(), 40),
-            ("FetchNode", size_of::<FetchNode>(), 280),
+            ("FetchNode", size_of::<FetchNode>(), 240),
             ("BatchFetchNode", size_of::<BatchFetchNode>(), 168),
             (
                 "SubgraphFetchOperation",
