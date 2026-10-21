@@ -1676,9 +1676,18 @@ impl<'exec> Executor<'exec> {
             for (alias_spec, (groups, path_hashes)) in
                 entity_batch.aliases.iter().zip(&mut prepared)
             {
-                // an alias with fewer groups still needs its context variables, it just sends no representations
-                if let Some(values) = groups.get(wave).or_else(|| groups.first()) {
-                    raw_variable_values.extend(values.variables.clone());
+                // an alias with fewer groups still needs its context variables, it just sends no
+                // representations. it borrows them from its first group, so that one is copied,
+                // every other group is read once and can be moved out.
+                let has_fewer_groups = groups.len() < wave_count;
+                if let Some(group) = groups.get_mut(wave) {
+                    if wave == 0 && has_fewer_groups {
+                        raw_variable_values.extend(group.variables.iter().cloned());
+                    } else {
+                        raw_variable_values.extend(std::mem::take(&mut group.variables));
+                    }
+                } else if let Some(first) = groups.first() {
+                    raw_variable_values.extend(first.variables.iter().cloned());
                 } else {
                     for name in FetchContext::variables(&alias_spec.context)
                         .iter()
