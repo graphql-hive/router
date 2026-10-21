@@ -695,7 +695,7 @@ impl<'graph> PathSearch<'graph> {
                             .iter()
                             .enumerate()
                             .find(|(_, selection)| {
-                                self.type_condition_matches(head.name_str(), &selection.type_name)
+                                self.type_condition_matches(head.name_str(), selection.type_name)
                             })
                         {
                             matched = Some((back + 1, segment, index, selection));
@@ -1097,7 +1097,7 @@ impl<'graph> RequirementCycleChecker<'graph> {
         requirements: &TypeAwareSelection<'graph>,
         target_field: &FieldSelection,
     ) -> bool {
-        if !self.type_condition_matches(&requirements.type_name) {
+        if !self.type_condition_matches(requirements.type_name) {
             return false;
         }
         requirements

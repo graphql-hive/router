@@ -259,7 +259,7 @@ impl<'graph> Edge<'graph> {
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::FieldMove(fm) => &fm.name,
+            Self::FieldMove(fm) => fm.name,
             Self::ReentryMove(fm) => &fm.name,
             Self::EntityMove(EntityMove { key, .. }) => key,
             Self::AbstractMove(id) => id,

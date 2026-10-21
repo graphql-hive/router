@@ -737,7 +737,7 @@ impl<'graph> Graph<'graph> {
     /// The selection a context argument reads, parsed for each type declaring that context.
     fn context_selections(
         state: &'graph SupergraphState,
-        graph_id: &String,
+        graph_id: &str,
         context: &str,
         selection: &str,
     ) -> Arc<[TypeAwareSelection<'graph>]> {
