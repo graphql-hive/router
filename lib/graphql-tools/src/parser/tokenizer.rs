@@ -40,6 +40,24 @@ impl TokenStream<'_> {
     }
 }
 
+/// Splits `source` into its tokens, each with the byte range it covers in `source`. A string or a
+/// block string is a single token, so nothing inside one is ever read as a name.
+pub fn spanned_tokens(source: &str) -> Result<Vec<(Kind, std::ops::Range<usize>)>, String> {
+    let mut stream = TokenStream::new(source);
+    let mut tokens = Vec::new();
+    loop {
+        match stream.uncons() {
+            Ok(token) => {
+                // the value is a slice of `source`
+                let start = token.value.as_ptr() as usize - source.as_ptr() as usize;
+                tokens.push((token.kind, start..start + token.value.len()));
+            }
+            Err(ref error) if error == &Error::end_of_input() => return Ok(tokens),
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Checkpoint {
     position: Pos,
@@ -386,6 +404,25 @@ impl<'a> fmt::Display for Token<'a> {
 
 #[cfg(test)]
 mod test {
+    #[test]
+    fn spanned_tokens_cover_whole_tokens() {
+        let source = "query($a:ID){f(s:\"\"\"\n  x$a\n\"\"\" t:\"$a\")}";
+        let tokens = super::spanned_tokens(source).unwrap();
+        let names: Vec<&str> = tokens
+            .iter()
+            .filter(|(kind, _)| *kind == super::Kind::Name)
+            .map(|(_, span)| &source[span.clone()])
+            .collect();
+        // the `$a` inside both strings stays part of the string
+        assert_eq!(names, ["query", "a", "ID", "f", "s", "t"]);
+        let strings: Vec<&str> = tokens
+            .iter()
+            .filter(|(kind, _)| matches!(kind, super::Kind::StringValue | super::Kind::BlockString))
+            .map(|(_, span)| &source[span.clone()])
+            .collect();
+        assert_eq!(strings, ["\"\"\"\n  x$a\n\"\"\"", "\"$a\""]);
+    }
+
     use super::Kind::*;
     use super::{Kind, TokenStream};
     use combine::easy::Error;
