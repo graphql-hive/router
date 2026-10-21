@@ -298,34 +298,35 @@ pub(super) fn collect_context_entities<'a>(
 /// operation, so it can be merged like any other. The entities of every group are concatenated
 /// under the original response key and error paths are pointed to them.
 ///
-/// `count(key, group)` is the number of representations sent for `key` in `group`. A group's
-/// entities are padded or cut to that, so the indexes of the following groups stay stable.
+/// `count(key, group)` is the number of representations sent for the `key`-th response key of
+/// `aliased` in `group`. A group's entities are padded or cut to that, so the indexes of the
+/// following groups stay stable.
 pub(super) fn unalias_response<'exec>(
     response: &mut SubgraphResponse<'exec>,
     aliased: &'exec ContextAliasedOperation,
-    count: impl Fn(&str, usize) -> usize,
+    count: impl Fn(usize, usize) -> usize,
 ) {
+    // where every group starts, plus where the last one ends
     let offsets: Vec<Vec<usize>> = aliased
         .response_keys
         .iter()
-        .map(|(key, aliases)| {
-            let mut offset = 0;
-            (0..aliases.len())
-                .map(|group| {
-                    let current = offset;
-                    offset += count(key, group);
-                    current
-                })
-                .collect()
+        .enumerate()
+        .map(|(key, (_, aliases))| {
+            let mut offsets = Vec::with_capacity(aliases.len() + 1);
+            offsets.push(0);
+            for group in 0..aliases.len() {
+                offsets.push(offsets[group] + count(key, group));
+            }
+            offsets
         })
         .collect();
 
     if let Value::Object(fields) = &mut response.data {
         let mut merged = Vec::with_capacity(aliased.response_keys.len());
         for ((key, aliases), offsets) in aliased.response_keys.iter().zip(&offsets) {
-            let mut entities = Vec::new();
+            let mut entities = Vec::with_capacity(offsets[aliases.len()]);
             for (group, alias) in aliases.iter().enumerate() {
-                let count = count(key, group);
+                let count = offsets[group + 1] - offsets[group];
                 if let Some(position) = Value::object_position(fields, alias) {
                     if let Value::Array(items) = fields.swap_remove(position).1 {
                         entities.extend(items.into_iter().take(count));
@@ -345,20 +346,21 @@ pub(super) fn unalias_response<'exec>(
         let Some(GraphQLErrorPathSegment::String(first)) = path.segments.first() else {
             continue;
         };
-        let Some((key, group, offset)) =
+        let Some((key, group, offsets)) =
             aliased
                 .response_keys
                 .iter()
                 .zip(&offsets)
                 .find_map(|((key, aliases), offsets)| {
                     let group = aliases.iter().position(|alias| alias == first)?;
-                    Some((key, group, offsets[group]))
+                    Some((key, group, offsets))
                 })
         else {
             continue;
         };
+        let offset = offsets[group];
         if let Some(GraphQLErrorPathSegment::Index(index)) = path.segments.get_mut(1) {
-            if *index >= count(key, group) {
+            if *index >= offsets[group + 1] - offset {
                 error.path = None;
                 continue;
             }

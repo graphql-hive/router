@@ -1045,11 +1045,16 @@ impl<'exec> Executor<'exec> {
                             let mut response = fetch_job.response();
                             if let Some((aliased, counts)) = aliased {
                                 let batch_aliases = &batch_fetch_node.entity_batch.aliases;
+                                // the batch alias behind every response key, looked up once
+                                let alias_of: Vec<Option<usize>> = aliased
+                                    .response_keys
+                                    .iter()
+                                    .map(|(key, _)| {
+                                        batch_aliases.iter().position(|alias| alias.alias == *key)
+                                    })
+                                    .collect();
                                 unalias_response(&mut response, aliased, |key, wave| {
-                                    batch_aliases
-                                        .iter()
-                                        .position(|alias| alias.alias == key)
-                                        .map_or(0, |alias| counts[alias][wave])
+                                    alias_of[key].map_or(0, |alias| counts[alias][wave])
                                 });
                             }
                             ExecutionJob::BatchFetch {
