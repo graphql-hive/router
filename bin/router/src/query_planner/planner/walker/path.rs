@@ -261,6 +261,13 @@ impl<'graph> OperationPath<'graph> {
         prefix
     }
 
+    /// The segments from the last one back to the first, without collecting them.
+    pub fn segments_rev(&self) -> impl Iterator<Item = &PathSegment> {
+        std::iter::successors(self.last_segment.as_deref(), |segment| {
+            segment.prev.as_deref()
+        })
+    }
+
     pub fn get_segments(&self) -> Vec<Rc<PathSegment>> {
         let mut segments: VecDeque<Rc<PathSegment>> = VecDeque::new();
         let mut current: Option<Rc<PathSegment>> = self.last_segment.clone();

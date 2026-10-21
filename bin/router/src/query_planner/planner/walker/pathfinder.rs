@@ -636,12 +636,11 @@ impl<'graph> PathSearch<'graph> {
                     return Ok(None);
                 }
 
-                let segments = path.get_segments();
                 for (argument, context_argument) in field_move.context_arguments.iter().enumerate()
                 {
                     let mut levels = 0;
                     let mut matched = None;
-                    for (back, segment) in segments.iter().rev().enumerate() {
+                    for (back, segment) in path.segments_rev().enumerate() {
                         if !matches!(
                             graph.edge(segment.edge_index)?,
                             Edge::FieldMove(_) | Edge::ReentryMove(_)
