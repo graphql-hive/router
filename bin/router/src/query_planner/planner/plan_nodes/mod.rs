@@ -234,9 +234,23 @@ pub struct CustomScalarPaths {
     pub children: BTreeMap<String, CustomScalarPaths>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub terminal: bool,
+    /// Set on the paths of a context-aliased request, where every key here has a group number
+    /// added, so `_entities_3` reads the paths of `_entities`
+    #[serde(skip)]
+    pub group_suffixed: bool,
 }
 
 impl CustomScalarPaths {
+    /// The paths under `key`.
+    pub fn child(&self, key: &str) -> Option<&Self> {
+        let key = if self.group_suffixed {
+            key.rsplit_once('_')?.0
+        } else {
+            key
+        };
+        self.children.get(key)
+    }
+
     pub fn insert_path<I, S>(&mut self, path: I)
     where
         I: IntoIterator<Item = S>,
@@ -305,7 +319,11 @@ impl CustomScalarPathState {
         }
 
         let terminal = self.custom_scalar_seen && !self.standard_scalar_seen && children.is_empty();
-        let paths = CustomScalarPaths { children, terminal };
+        let paths = CustomScalarPaths {
+            children,
+            terminal,
+            group_suffixed: false,
+        };
 
         (!paths.is_empty()).then_some(paths)
     }
@@ -708,6 +726,11 @@ impl FetchNode<Planning> {
             true => {
                 let planner_requires = create_input_selection_set(&step.input);
                 let mut operation = create_output_operation(step, supergraph);
+                let custom_scalar_paths = custom_scalar_paths_from_fetch_output(
+                    &step.output,
+                    supergraph,
+                    Some("_entities"),
+                );
                 let context = FetchContext::new(
                     step.context_variable_definitions
                         .iter()
@@ -733,6 +756,7 @@ impl FetchNode<Planning> {
                             .max_aliases_per_request(&step.service_name.0)
                             .unwrap_or(usize::MAX),
                         group_variables,
+                        custom_scalar_paths.as_ref(),
                     );
                 }
                 FetchNode {
@@ -741,11 +765,7 @@ impl FetchNode<Planning> {
                     variable_usages: step.variable_usages.clone(),
                     operation_kind: Some(OperationKind::Query),
                     operation,
-                    custom_scalar_paths: custom_scalar_paths_from_fetch_output(
-                        &step.output,
-                        supergraph,
-                        Some("_entities"),
-                    ),
+                    custom_scalar_paths,
                     requires: Some(RequiresSelectionSet::from(&planner_requires)),
                     planner_requires: Some(Box::new(planner_requires)),
                     input_rewrites: step.input_rewrites.clone(),

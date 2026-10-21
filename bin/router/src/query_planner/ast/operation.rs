@@ -92,6 +92,9 @@ pub struct ContextAliasTemplate {
     group_variables: Box<[String]>,
     /// The original response key of every top-level field
     pub response_keys: Box<[String]>,
+    /// The fetch's custom-scalar paths, read through the group number of every response key, so
+    /// one copy works for any number of groups
+    custom_scalar_paths: Option<CustomScalarPaths>,
 }
 
 /// Text every group gets a copy of, with the byte offsets where the group number goes.
@@ -168,23 +171,9 @@ impl ContextAliasTemplate {
         Some((key, group))
     }
 
-    /// Custom-scalar paths rooted at the response keys of `groups` groups.
-    pub fn custom_scalar_paths(
-        &self,
-        original: &CustomScalarPaths,
-        groups: usize,
-    ) -> CustomScalarPaths {
-        CustomScalarPaths {
-            children: self
-                .response_keys
-                .iter()
-                .filter_map(|key| Some((key, original.children.get(key)?)))
-                .flat_map(|(key, paths)| {
-                    (0..groups).map(move |group| (format!("{key}_{group}"), paths.clone()))
-                })
-                .collect(),
-            terminal: original.terminal,
-        }
+    /// The custom-scalar paths of the requests it writes, for any number of groups.
+    pub fn custom_scalar_paths(&self) -> Option<&CustomScalarPaths> {
+        self.custom_scalar_paths.as_ref()
     }
 }
 
@@ -200,15 +189,29 @@ fn split_group(name: &str) -> Option<(&str, usize)> {
 impl SubgraphFetchOperation {
     /// Lets up to `max_groups` groups of contextual argument values go in one request, each with
     /// its own copy of `group_variables`, by compiling a [`ContextAliasTemplate`]. Called by the
-    /// planner once the operation is final. A `max_groups` below 2, or an operation that can't be
-    /// written out per group, leaves aliasing off. `usize::MAX` means no limit.
-    pub fn set_max_context_groups(&mut self, max_groups: usize, group_variables: Vec<String>) {
+    /// planner once the operation is final, with the fetch's `custom_scalar_paths`. A `max_groups`
+    /// below 2, or an operation that can't be written out per group, leaves aliasing off.
+    /// `usize::MAX` means no limit.
+    pub fn set_max_context_groups(
+        &mut self,
+        max_groups: usize,
+        group_variables: Vec<String>,
+        custom_scalar_paths: Option<&CustomScalarPaths>,
+    ) {
         self.context_template = (max_groups >= 2)
             .then(|| {
-                compile_context_alias_template(&self.document_str, max_groups, group_variables)
+                let mut template = compile_context_alias_template(
+                    &self.document_str,
+                    max_groups,
+                    group_variables,
+                )?;
+                template.custom_scalar_paths = custom_scalar_paths.map(|paths| CustomScalarPaths {
+                    group_suffixed: true,
+                    ..paths.clone()
+                });
+                Some(Box::new(template))
             })
-            .flatten()
-            .map(Box::new);
+            .flatten();
     }
 
     /// The most groups of contextual argument values one request may carry, at least 1.
@@ -403,6 +406,7 @@ fn compile_context_alias_template(
             .map(|(name, _)| name)
             .collect(),
         response_keys: response_keys.into(),
+        custom_scalar_paths: None,
     })
 }
 
@@ -1002,8 +1006,11 @@ mod tests {
                 "query($representations: [_Any!]!, $__context_0: String, ${shared}: Int) {{ _entities(representations: $representations) {{ ... on T {{ f(a: $__context_0, b: ${shared}) }} }} }}",
             ))
             .operation;
-            operation
-                .set_max_context_groups(usize::MAX, strings(&["representations", "__context_0"]));
+            operation.set_max_context_groups(
+                usize::MAX,
+                strings(&["representations", "__context_0"]),
+                None,
+            );
             assert!(operation.context_alias_template().is_none());
         }
     }
@@ -1017,15 +1024,21 @@ mod tests {
                 "query($representations: [_Any!]!, $c: ID) {{ {key}: _entities(representations: $representations) {{ ... on T {{ json(a: $c) }} }} }}",
             ))
             .operation;
-            operation.set_max_context_groups(2, strings(&["representations", "c"]));
-            let template = operation.context_alias_template().unwrap();
             let mut original = CustomScalarPaths::default();
             original.insert_path([key, "json"]);
-            let paths = &template.custom_scalar_paths(&original, 2);
-            assert!(!paths.children.contains_key(key));
-            for group in 0..2 {
+            operation.set_max_context_groups(
+                2,
+                strings(&["representations", "c"]),
+                Some(&original),
+            );
+            let template = operation.context_alias_template().unwrap();
+            let paths = template.custom_scalar_paths().unwrap();
+            // the group number is never read as part of the key
+            assert_eq!(paths.child(key), None);
+            // more groups than the limit, the paths don't depend on the count
+            for group in [0, 1, 12] {
                 let alias = format!("{key}_{group}");
-                assert_eq!(paths.children[&alias], original.children[key]);
+                assert_eq!(paths.child(&alias), original.children.get(key));
                 let response = SubgraphResponse::deserialize_from_bytes(
                     bytes::Bytes::from(format!(
                         r#"{{"data":{{"{alias}":[{{"json":{{"escaped\tkey":1}}}}]}}}}"#,
@@ -1056,7 +1069,7 @@ mod tests {
         let mut operation = operation.operation;
         // not enabled by the planner
         assert!(operation.context_alias_template().is_none());
-        operation.set_max_context_groups(usize::MAX, strings(&["representations", "c"]));
+        operation.set_max_context_groups(usize::MAX, strings(&["representations", "c"]), None);
         assert_eq!(operation.max_context_groups(), usize::MAX);
 
         let template = operation.context_alias_template().unwrap();
@@ -1155,7 +1168,7 @@ mod tests {
         use super::parser;
 
         let mut operation = parse_subgraph_fetch_operation(document_str).operation;
-        operation.set_max_context_groups(usize::MAX, strings(variables));
+        operation.set_max_context_groups(usize::MAX, strings(variables), None);
         let template = operation
             .context_alias_template()
             .unwrap_or_else(|| panic!("no template for {document_str}"));
@@ -1272,7 +1285,7 @@ mod tests {
             "query($r: [_Any!]!) {{ _entities(representations: $r) {{ ... on T {{ {alias}: x __hive_tpl_0 }} }} }}"
         );
         let mut operation = parse_subgraph_fetch_operation(&query).operation;
-        operation.set_max_context_groups(usize::MAX, strings(&["r"]));
+        operation.set_max_context_groups(usize::MAX, strings(&["r"]), None);
         let template = operation.context_alias_template().unwrap();
         // the placeholders stayed short, so the template is no bigger than the operation
         let size = template.head.len()
@@ -1315,7 +1328,7 @@ mod tests {
             ("query($r: [_Any!]!) { _entities(representations: $r) { __typename } }", &["other"][..]),
         ] {
             let mut operation = parse_subgraph_fetch_operation(query).operation;
-            operation.set_max_context_groups(15, strings(variables));
+            operation.set_max_context_groups(15, strings(variables), None);
             assert!(operation.context_alias_template().is_none(), "{query}");
             // so every group goes in a request of its own
             assert_eq!(operation.max_context_groups(), 1, "{query}");
@@ -1324,9 +1337,9 @@ mod tests {
             "query($r: [_Any!]!) { _entities(representations: $r) { __typename } }",
         )
         .operation;
-        operation.set_max_context_groups(1, strings(&["r"]));
+        operation.set_max_context_groups(1, strings(&["r"]), None);
         assert!(operation.context_alias_template().is_none());
-        operation.set_max_context_groups(15, strings(&["r"]));
+        operation.set_max_context_groups(15, strings(&["r"]), None);
         assert_eq!(operation.max_context_groups(), 15);
     }
 
@@ -1334,7 +1347,7 @@ mod tests {
     fn context_alias_template_separates_fields_that_end_with_a_name() {
         let mut operation =
             parse_subgraph_fetch_operation("query($r: [_Any!]!) { a(x: $r) b }").operation;
-        operation.set_max_context_groups(usize::MAX, strings(&["r"]));
+        operation.set_max_context_groups(usize::MAX, strings(&["r"]), None);
         let template = operation.context_alias_template().unwrap();
         insta::assert_snapshot!(template.operation(2).document_str, @"query($r_0:[_Any!]!$r_1:[_Any!]!){a_0:a(x:$r_0)b_0:b a_1:a(x:$r_1)b_1:b}");
     }

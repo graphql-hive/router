@@ -302,6 +302,7 @@ impl<'a> BatchFetchBuilder<'a> {
             operation.operation.set_max_context_groups(
                 max_aliases / self.batched_aliases.len().max(1),
                 group_variables,
+                (!self.custom_scalar_paths.is_empty()).then_some(&self.custom_scalar_paths),
             );
         }
 

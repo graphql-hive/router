@@ -25,9 +25,7 @@ use crate::{
             operation::{ContextAliasTemplate, SubgraphFetchOperation},
             requires::RequiresSelectionSet,
         },
-        planner::plan_nodes::{
-            CustomScalarPaths, FetchContext, FetchNodePathSegment, FetchRewrite, ResponsePathRef,
-        },
+        planner::plan_nodes::{FetchContext, FetchNodePathSegment, FetchRewrite, ResponsePathRef},
         state::entity_keys::KeysByType,
     },
 };
@@ -311,7 +309,6 @@ pub(super) struct AliasedRequest {
     pub operation: SubgraphFetchOperation,
     /// The names of the per-group variables in each group
     pub variable_names: Vec<String>,
-    pub custom_scalar_paths: Option<CustomScalarPaths>,
 }
 
 impl AliasedRequest {
@@ -320,7 +317,6 @@ impl AliasedRequest {
     pub(super) fn new(
         template: &ContextAliasTemplate,
         groups: Vec<Vec<(&str, Vec<u8>)>>,
-        custom_scalar_paths: Option<&CustomScalarPaths>,
     ) -> (Self, Vec<Vec<u8>>) {
         let count = groups.len();
         let variable_count = groups.iter().map(Vec::len).sum();
@@ -339,8 +335,6 @@ impl AliasedRequest {
         let request = Self {
             operation: template.operation(count),
             variable_names,
-            custom_scalar_paths: custom_scalar_paths
-                .map(|paths| template.custom_scalar_paths(paths, count)),
         };
         (request, variable_values)
     }
@@ -868,7 +862,7 @@ mod tests {
             fragments: Vec::new(),
         })
         .operation;
-        operation.set_max_context_groups(usize::MAX, vec!["representations".to_string()]);
+        operation.set_max_context_groups(usize::MAX, vec!["representations".to_string()], None);
         let template = operation.context_alias_template().unwrap();
 
         // enough to fill a few buckets, each with its own group count
@@ -878,7 +872,7 @@ mod tests {
                 let groups = (0..i % 7 + 2)
                     .map(|_| vec![("representations", b"[]".to_vec())])
                     .collect();
-                store.insert(AliasedRequest::new(template, groups, None).0)
+                store.insert(AliasedRequest::new(template, groups).0)
             })
             .collect();
         for (i, request) in requests.iter().enumerate() {
@@ -906,7 +900,7 @@ mod tests {
             fragments: Vec::new(),
         })
         .operation;
-        operation.set_max_context_groups(15, vec!["representations".into(), "c".into()]);
+        operation.set_max_context_groups(15, vec!["representations".into(), "c".into()], None);
         let template = operation.context_alias_template().unwrap();
 
         let mut response = SubgraphResponse {

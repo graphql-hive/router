@@ -47,6 +47,7 @@ impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
 static EMPTY_CUSTOM_SCALAR_PATHS: CustomScalarPaths = CustomScalarPaths {
     children: std::collections::BTreeMap::new(),
     terminal: false,
+    group_suffixed: false,
 };
 
 struct SubgraphResponseSeed<'a> {
@@ -243,7 +244,7 @@ impl<'a, 'de> Visitor<'de> for PathAwareValueVisitor<'a> {
     {
         let mut entries = Vec::with_capacity(map.size_hint().unwrap_or(0));
         while let Some(key) = map.next_key::<&'de str>()? {
-            let value = match self.custom_scalar_paths.children.get(key) {
+            let value = match self.custom_scalar_paths.child(key) {
                 Some(child_paths) if !child_paths.is_empty() => map.next_value_seed(ValueSeed {
                     custom_scalar_paths: child_paths,
                 })?,
