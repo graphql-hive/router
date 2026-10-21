@@ -210,7 +210,7 @@ impl FederationRules {
         supergraph: &SupergraphState,
         subgraph_name: &String,
         type_name: &str,
-        key: &String,
+        key: &str,
     ) -> TypeAwareSelection {
         let selection_set =
             normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, key);
@@ -234,12 +234,8 @@ impl FederationRules {
         } else {
             selection
         };
-        let mut selection_set = normalize_fields_argument_value_mut(
-            supergraph,
-            type_name,
-            subgraph_name,
-            &fields.to_string(),
-        );
+        let mut selection_set =
+            normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, fields);
         selection_set.items.retain(|selection| {
             let Selection::InlineFragment(fragment) = selection else {
                 return true;
@@ -287,7 +283,7 @@ impl FederationRules {
         supergraph: &SupergraphState,
         subgraph_name: &String,
         type_name: &str,
-        requires: &String,
+        requires: &str,
     ) -> SelectionSet<'static, String> {
         normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, requires)
     }

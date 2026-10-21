@@ -240,7 +240,7 @@ impl Graph {
     }
 
     #[instrument(level = "trace", skip(self, state))]
-    fn build_graph<'state>(&mut self, state: &'state SupergraphState) -> Result<(), GraphError> {
+    fn build_graph(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
         trace!(
             "Building graph for supergraph with {} definitions",
             state.definitions.len()
