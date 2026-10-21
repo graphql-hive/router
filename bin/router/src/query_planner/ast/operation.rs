@@ -88,7 +88,7 @@ const FIELDS_END: &str = "\u{3}";
 /// `_{group}` added to their names.
 ///
 /// For two groups, `query($representations:[_Any!]!$c:ID){_entities(representations:$representations){...on T{f(a:$c)}}}`
-/// becomes `query($representations_0:[_Any!]!$c_0:ID$representations_1:[_Any!]!$c_1:ID){_entities_0:_entities(representations:$representations_0){...on T{f(a:$c_0)}}_entities_1:_entities(representations:$representations_1){...on T{f(a:$c_1)}}}`.
+/// becomes `query($representations_0:[_Any!]!$c_0:ID$representations_1:[_Any!]!$c_1:ID){_entities_0:_entities(representations:$representations_0){...on T{f(a:$c_0)}} _entities_1:_entities(representations:$representations_1){...on T{f(a:$c_1)}}}`.
 ///
 /// It's built once per fetch and is about as big as the operation. The copies are written per
 /// request and dropped with it, so they don't pile up in the plan cache.
@@ -100,8 +100,6 @@ pub struct ContextAliasTemplate {
     variables: Box<str>,
     fields: Box<str>,
     fragments: Box<str>,
-    /// Two copies of the fields need a space between them, like `a:b c:d`
-    space_between_fields: bool,
     /// The original names of the per-group variables
     group_variables: Box<[String]>,
     /// The original response key of every top-level field
@@ -122,7 +120,8 @@ impl ContextAliasTemplate {
         }
         document.push_str("){");
         for group in 0..groups {
-            if group > 0 && self.space_between_fields {
+            // fields can end and start with a name, like `a:b c:d`
+            if group > 0 {
                 document.push(' ');
             }
             push_group(&mut document, &self.fields, group);
@@ -344,13 +343,10 @@ fn build_context_alias_template(
     let (fields, fragments) = rest.split_once(FIELDS_END)?;
     let fields = fields.strip_suffix(' ').unwrap_or(fields);
     let fragments = fragments.strip_prefix('}')?;
-    let is_word =
-        |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == GROUP);
 
     Some(ContextAliasTemplate {
         head: head.into(),
         variables: variables.into(),
-        space_between_fields: is_word(fields.chars().last()) && is_word(fields.chars().next()),
         fields: fields.into(),
         fragments: fragments.into(),
         group_variables: group_variables.into(),
@@ -980,7 +976,7 @@ mod tests {
 
         let template = operation.context_alias_template().unwrap();
         let aliased = template.operation(2);
-        insta::assert_snapshot!(aliased.document_str, @"query($shared:Int$representations_0:[_Any!]!$c_0:ID$representations_1:[_Any!]!$c_1:ID){_entities_0:_entities(representations:$representations_0){...F_0...on T@include(if:$c_0){g(a:[{x:$c_0}]b:$shared)}}_entities_1:_entities(representations:$representations_1){...F_1...on T@include(if:$c_1){g(a:[{x:$c_1}]b:$shared)}}}fragment F_0 on T{f(a:$c_0)}fragment F_1 on T{f(a:$c_1)}");
+        insta::assert_snapshot!(aliased.document_str, @"query($shared:Int$representations_0:[_Any!]!$c_0:ID$representations_1:[_Any!]!$c_1:ID){_entities_0:_entities(representations:$representations_0){...F_0...on T@include(if:$c_0){g(a:[{x:$c_0}]b:$shared)}} _entities_1:_entities(representations:$representations_1){...F_1...on T@include(if:$c_1){g(a:[{x:$c_1}]b:$shared)}}}fragment F_0 on T{f(a:$c_0)}fragment F_1 on T{f(a:$c_1)}");
         assert_eq!(aliased.name_write_position, 5);
         assert_eq!(
             aliased.hash,
