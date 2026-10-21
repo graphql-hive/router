@@ -360,24 +360,26 @@ fn compile_context_alias_template(
     let open_variables = (1..=2).find(|index| is(*index, "("))?;
     let close_variables = closing_token(&printed, &tokens, open_variables)?;
     // defaults are constants, so every `$` in here starts a definition
-    let grouped_start = tokens[open_variables..close_variables]
-        .iter()
-        .filter(|(_, span)| &printed[span.clone()] == "$")
-        .nth(shared_count)?
-        .1
-        .start;
+    let grouped_start = (open_variables + 1..close_variables)
+        .filter(|index| is(*index, "$"))
+        .nth(shared_count)?;
     let open_fields = close_variables + 1;
     if !is(open_fields, "{") {
         return None;
     }
     let close_fields = closing_token(&printed, &tokens, open_fields)?;
 
+    // the text of the tokens in `range`, from the end of the token before it
     let section = |range: std::ops::Range<usize>| -> Option<TemplateSection> {
-        let mut text = String::with_capacity(range.len());
+        let start = tokens[range.start - 1].1.end;
+        let end = tokens
+            .get(range.end)
+            .map_or(printed.len(), |(_, span)| span.start);
+        let mut text = String::with_capacity(end - start);
         let mut group_positions = Vec::new();
-        let mut copied = range.start;
-        for (kind, span) in &tokens {
-            if *kind != TokenKind::Name || span.start < range.start || span.end > range.end {
+        let mut copied = start;
+        for (kind, span) in &tokens[range] {
+            if *kind != TokenKind::Name {
                 continue;
             }
             let Some(replacement) = placeholders.get(&printed[span.clone()]) else {
@@ -388,27 +390,25 @@ fn compile_context_alias_template(
             group_positions.push(u32::try_from(text.len()).ok()?);
             copied = span.end;
         }
-        text.push_str(&printed[copied..range.end]);
+        text.push_str(&printed[copied..end]);
         Some(TemplateSection {
             text: text.into(),
             group_positions: group_positions.into(),
         })
     };
     // nothing shared should have had a placeholder
-    if tokens.iter().any(|(kind, span)| {
-        *kind == TokenKind::Name
-            && span.end <= grouped_start
-            && placeholders.contains_key(&printed[span.clone()])
+    if tokens[..grouped_start].iter().any(|(kind, span)| {
+        *kind == TokenKind::Name && placeholders.contains_key(&printed[span.clone()])
     }) {
         return None;
     }
     Some(ContextAliasTemplate {
         max_groups,
         hash: hash_minified_query(document_str),
-        head: printed[..grouped_start].into(),
-        variables: section(grouped_start..tokens[close_variables].1.start)?,
-        fields: section(tokens[open_fields].1.end..tokens[close_fields].1.start)?,
-        fragments: section(tokens[close_fields].1.end..printed.len())?,
+        head: printed[..tokens[grouped_start - 1].1.end].into(),
+        variables: section(grouped_start..close_variables)?,
+        fields: section(open_fields + 1..close_fields)?,
+        fragments: section(close_fields + 1..tokens.len())?,
         group_variables: renamed_variables
             .into_iter()
             .map(|(name, _)| name)
