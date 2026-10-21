@@ -933,14 +933,6 @@ impl<'exec> Executor<'exec> {
         .boxed()
     }
 
-    /**
-     * This function is sync, because we only need the immutable borrow of `ctx.data` to prepare the subgraph request,
-     * and the actual execution of the subgraph request is done in `prepare_fetch_job` which is async.
-     * So we do everything in sync with `ctx.data` and return futures for the actual execution of the subgraph requests.
-     *
-     * A node can produce no futures (a flatten node with no data) or many (one per chunk of
-     * groups of contextual argument values, see `ContextAliasedOperation`).
-     */
     /// Splits the waves of a BatchFetch into subgraph requests. When the operation allows it,
     /// several waves go in one aliased request, the rest are sent one by one.
     fn prepare_batch_requests(
@@ -1132,6 +1124,14 @@ impl<'exec> Executor<'exec> {
         requests
     }
 
+    /**
+     * This function is sync, because we only need the immutable borrow of `ctx.data` to prepare the subgraph request,
+     * and the actual execution of the subgraph request is done in `prepare_fetch_job` which is async.
+     * So we do everything in sync with `ctx.data` and return futures for the actual execution of the subgraph requests.
+     *
+     * A node can produce no futures (a flatten node with no data) or many (one per chunk of
+     * groups of contextual argument values, see `ContextAliasTemplate`).
+     */
     fn prepare_job_future<'wave>(
         &'wave self,
         node: &'exec PlanNode,
