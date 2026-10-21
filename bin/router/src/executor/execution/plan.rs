@@ -968,7 +968,15 @@ impl<'exec> Executor<'exec> {
                     let mut merged_aliases: Vec<AliasBatchState<'exec>> = Vec::new();
                     // representations sent per alias and wave
                     let mut counts: Vec<Vec<usize>> = Vec::new();
-                    for (wave, (values, aliases)) in chunk.into_iter().enumerate() {
+                    // representations sent per alias so far, so where the next wave starts
+                    let mut offsets: Vec<usize> = Vec::new();
+                    let mut totals = vec![0; chunk[0].1.len()];
+                    for (_, aliases) in &chunk {
+                        for (total, alias) in totals.iter_mut().zip(aliases) {
+                            *total += alias.representation_hash_to_index.len();
+                        }
+                    }
+                    for (wave, (values, mut aliases)) in chunk.into_iter().enumerate() {
                         raw_variable_values.extend(values.into_iter().map(|(name, value)| {
                             (aliased.variable(name, wave).unwrap_or(name), value)
                         }));
@@ -977,20 +985,30 @@ impl<'exec> Executor<'exec> {
                                 .iter()
                                 .map(|alias| vec![alias.representation_hash_to_index.len()])
                                 .collect();
+                            offsets = counts.iter().map(|counts| counts[0]).collect();
+                            for (alias, total) in aliases.iter_mut().zip(&totals) {
+                                alias
+                                    .representation_hash_to_index
+                                    .reserve(total - alias.representation_hash_to_index.len());
+                            }
                             merged_aliases = aliases;
                             continue;
                         }
-                        for ((merged, counts), alias) in
-                            merged_aliases.iter_mut().zip(&mut counts).zip(aliases)
+                        for (((merged, counts), offset), alias) in merged_aliases
+                            .iter_mut()
+                            .zip(&mut counts)
+                            .zip(&mut offsets)
+                            .zip(aliases)
                         {
-                            let offset: usize = counts.iter().sum();
-                            counts.push(alias.representation_hash_to_index.len());
+                            let count = alias.representation_hash_to_index.len();
+                            counts.push(count);
                             merged.representation_hash_to_index.extend(
                                 alias
                                     .representation_hash_to_index
                                     .into_iter()
-                                    .map(|(hash, index)| (hash, index + offset)),
+                                    .map(|(hash, index)| (hash, index + *offset)),
                             );
+                            *offset += count;
                         }
                     }
                     requests.push((
@@ -1103,18 +1121,22 @@ impl<'exec> Executor<'exec> {
                         continue;
                     };
                     let mut raw_variable_values = Vec::new();
-                    let mut hash_to_index = AHashMap::new();
+                    let mut hash_to_index = AHashMap::with_capacity(
+                        chunk.iter().map(|group| group.hash_to_index.len()).sum(),
+                    );
                     // representations sent per group
                     let mut counts = Vec::with_capacity(chunk.len());
+                    let mut offset = 0;
                     for (index, group) in chunk.into_iter().enumerate() {
-                        let offset: usize = counts.iter().sum();
-                        counts.push(group.hash_to_index.len());
+                        let count = group.hash_to_index.len();
+                        counts.push(count);
                         hash_to_index.extend(
                             group
                                 .hash_to_index
                                 .into_iter()
                                 .map(|(hash, entity_index)| (hash, entity_index + offset)),
                         );
+                        offset += count;
                         raw_variable_values.extend(
                             group
                                 .variables
