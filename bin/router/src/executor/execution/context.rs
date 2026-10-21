@@ -872,10 +872,8 @@ mod tests {
             fragments: Vec::new(),
         })
         .operation;
-        operation.set_max_context_groups(usize::MAX);
-        let template = operation
-            .context_alias_template(&["representations"])
-            .unwrap();
+        operation.set_max_context_groups(usize::MAX, vec!["representations".to_string()]);
+        let template = operation.context_alias_template().unwrap();
 
         // enough to fill a few buckets, each with its own group count
         let store = AliasedRequests::default();
@@ -912,10 +910,8 @@ mod tests {
             fragments: Vec::new(),
         })
         .operation;
-        operation.set_max_context_groups(15);
-        let template = operation
-            .context_alias_template(&["representations", "c"])
-            .unwrap();
+        operation.set_max_context_groups(15, vec!["representations".into(), "c".into()]);
+        let template = operation.context_alias_template().unwrap();
 
         let mut response = SubgraphResponse {
             // group 0 returns too many entities, group 1 none

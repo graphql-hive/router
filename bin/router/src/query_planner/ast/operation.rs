@@ -68,6 +68,8 @@ pub struct SubgraphFetchOperation {
 #[derive(Debug, Clone)]
 struct ContextAliasing {
     max_groups: usize,
+    /// The variables every group gets its own copy of
+    group_variables: Box<[String]>,
     template: OnceLock<Option<ContextAliasTemplate>>,
 }
 
@@ -196,12 +198,13 @@ fn split_group(name: &str) -> Option<(&str, usize)> {
 
 impl SubgraphFetchOperation {
     /// Allows [`Self::context_alias_template`] to put up to `max_groups` groups of contextual
-    /// argument values into one request. Called by the planner, a `max_groups` below 2 disables
-    /// aliasing, `usize::MAX` means no limit.
-    pub fn set_max_context_groups(&mut self, max_groups: usize) {
+    /// argument values into one request, each with its own copy of `group_variables`. Called by
+    /// the planner, a `max_groups` below 2 disables aliasing, `usize::MAX` means no limit.
+    pub fn set_max_context_groups(&mut self, max_groups: usize, group_variables: Vec<String>) {
         self.context_aliased = (max_groups >= 2).then(|| {
             Box::new(ContextAliasing {
                 max_groups,
+                group_variables: group_variables.into(),
                 template: OnceLock::new(),
             })
         });
@@ -215,23 +218,27 @@ impl SubgraphFetchOperation {
     }
 
     /// Returns the template to write this operation out for several groups, see
-    /// [`ContextAliasTemplate`]. The `variables` get a separate copy per group, all other
-    /// variables are shared. Built on first use and kept with the operation.
+    /// [`ContextAliasTemplate`]. Built on first use and kept with the operation.
     ///
     /// Returns `None` when aliasing is off, or the operation can not be rewritten.
-    pub fn context_alias_template(&self, variables: &[&str]) -> Option<&ContextAliasTemplate> {
-        self.context_aliased
-            .as_ref()?
+    pub fn context_alias_template(&self) -> Option<&ContextAliasTemplate> {
+        let aliasing = self.context_aliased.as_ref()?;
+        aliasing
             .template
-            .get_or_init(|| build_context_alias_template(&self.document_str, variables))
+            .get_or_init(|| {
+                build_context_alias_template(&self.document_str, &aliasing.group_variables)
+            })
             .as_ref()
     }
 }
 
+/// The `variables` get a separate copy per group, all other variables are shared.
 fn build_context_alias_template(
     document_str: &str,
-    variables: &[&str],
+    variables: &[String],
 ) -> Option<ContextAliasTemplate> {
+    let variables: Vec<&str> = variables.iter().map(String::as_str).collect();
+    let variables = variables.as_slice();
     let document = parser::parse_query::<String>(document_str).ok()?;
     if parser::minify_query_document(&document).contains(|c| ('\0'..='\u{3}').contains(&c)) {
         return None;
@@ -723,6 +730,10 @@ mod tests {
     use graphql_tools::parser::query::Definition;
     use std::fmt;
 
+    fn strings(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| name.to_string()).collect()
+    }
+
     fn parse_document(query: &str) -> Document {
         let document = parse_operation(query);
         let mut operation = None;
@@ -910,10 +921,9 @@ mod tests {
                 "query($representations: [_Any!]!, $__context_0: String, ${shared}: Int) {{ _entities(representations: $representations) {{ ... on T {{ f(a: $__context_0, b: ${shared}) }} }} }}",
             ))
             .operation;
-            operation.set_max_context_groups(usize::MAX);
-            assert!(operation
-                .context_alias_template(&["representations", "__context_0"])
-                .is_none());
+            operation
+                .set_max_context_groups(usize::MAX, strings(&["representations", "__context_0"]));
+            assert!(operation.context_alias_template().is_none());
         }
     }
 
@@ -926,10 +936,8 @@ mod tests {
                 "query($representations: [_Any!]!, $c: ID) {{ {key}: _entities(representations: $representations) {{ ... on T {{ json(a: $c) }} }} }}",
             ))
             .operation;
-            operation.set_max_context_groups(2);
-            let template = operation
-                .context_alias_template(&["representations", "c"])
-                .unwrap();
+            operation.set_max_context_groups(2, strings(&["representations", "c"]));
+            let template = operation.context_alias_template().unwrap();
             let mut original = CustomScalarPaths::default();
             original.insert_path([key, "json"]);
             let paths = &template.custom_scalar_paths(&original, 2);
@@ -966,15 +974,11 @@ mod tests {
         );
         let mut operation = operation.operation;
         // not enabled by the planner
-        assert!(operation
-            .context_alias_template(&["representations", "c"])
-            .is_none());
-        operation.set_max_context_groups(usize::MAX);
+        assert!(operation.context_alias_template().is_none());
+        operation.set_max_context_groups(usize::MAX, strings(&["representations", "c"]));
         assert_eq!(operation.max_context_groups(), usize::MAX);
 
-        let template = operation
-            .context_alias_template(&["representations", "c"])
-            .unwrap();
+        let template = operation.context_alias_template().unwrap();
         let aliased = template.operation(2);
         insta::assert_snapshot!(aliased.document_str, @"query($shared:Int$representations_0:[_Any!]!$c_0:ID$representations_1:[_Any!]!$c_1:ID){_entities_0:_entities(representations:$representations_0){...F_0...on T@include(if:$c_0){g(a:[{x:$c_0}]b:$shared)}}_entities_1:_entities(representations:$representations_1){...F_1...on T@include(if:$c_1){g(a:[{x:$c_1}]b:$shared)}}}fragment F_0 on T{f(a:$c_0)}fragment F_1 on T{f(a:$c_1)}");
         assert_eq!(aliased.name_write_position, 5);
@@ -991,7 +995,7 @@ mod tests {
         // one template for every group count
         assert!(std::ptr::eq(
             template,
-            operation.context_alias_template(&[]).unwrap()
+            operation.context_alias_template().unwrap()
         ));
         // no limit on the group count
         let aliased = template.operation(40);
@@ -1012,11 +1016,8 @@ mod tests {
                 "query($r: [_Any!]!) {{ _entities(representations: $r) {{ ... on T {{ f(s: {value}) }} }} }}"
             ))
             .operation;
-            operation.set_max_context_groups(usize::MAX);
-            assert!(
-                operation.context_alias_template(&["r"]).is_none(),
-                "{value}"
-            );
+            operation.set_max_context_groups(usize::MAX, strings(&["r"]));
+            assert!(operation.context_alias_template().is_none(), "{value}");
         }
     }
 
@@ -1024,8 +1025,8 @@ mod tests {
     fn context_alias_template_separates_fields_that_end_with_a_name() {
         let mut operation =
             parse_subgraph_fetch_operation("query($r: [_Any!]!) { a(x: $r) b }").operation;
-        operation.set_max_context_groups(usize::MAX);
-        let template = operation.context_alias_template(&["r"]).unwrap();
+        operation.set_max_context_groups(usize::MAX, strings(&["r"]));
+        let template = operation.context_alias_template().unwrap();
         insta::assert_snapshot!(template.operation(2).document_str, @"query($r_0:[_Any!]!$r_1:[_Any!]!){a_0:a(x:$r_0)b_0:b a_1:a(x:$r_1)b_1:b}");
     }
 }

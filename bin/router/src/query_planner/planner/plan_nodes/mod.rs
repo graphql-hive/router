@@ -698,11 +698,25 @@ impl FetchNode<Planning> {
                         .iter()
                         .any(|variable| variable.variable_type.is_non_null())
                 {
-                    // one alias per group of contextual argument values
+                    // one alias per group of contextual argument values, each with its own
+                    // representations and context values
+                    let group_variables = step
+                        .context_variable_definitions
+                        .iter()
+                        .map(|variable| variable.name.clone())
+                        .chain(
+                            step.context_rewrites
+                                .iter()
+                                .flatten()
+                                .map(|rewrite| rewrite.rename_key_to.clone()),
+                        )
+                        .chain(["representations".to_string()])
+                        .collect();
                     operation.operation.set_max_context_groups(
                         options
                             .max_aliases_per_request(&step.service_name.0)
                             .unwrap_or(usize::MAX),
+                        group_variables,
                     );
                 }
                 FetchNode {

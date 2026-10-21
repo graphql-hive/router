@@ -287,10 +287,28 @@ impl<'a> BatchFetchBuilder<'a> {
             .iter()
             .any(|alias| !FetchContext::variables(&alias.context).is_empty())
         {
-            // every group of contextual argument values repeats all batch aliases
-            operation
-                .operation
-                .set_max_context_groups(max_aliases / self.batched_aliases.len().max(1));
+            // every group of contextual argument values repeats all batch aliases, each with its
+            // own representations and context values
+            let group_variables = self
+                .batched_aliases
+                .iter()
+                .flat_map(|alias| {
+                    FetchContext::variables(&alias.context)
+                        .iter()
+                        .cloned()
+                        .chain(
+                            FetchContext::rewrites(&alias.context)
+                                .into_iter()
+                                .flatten()
+                                .map(|rewrite| rewrite.rename_key_to.clone()),
+                        )
+                        .chain([alias.representations_variable_name.clone()])
+                })
+                .collect();
+            operation.operation.set_max_context_groups(
+                max_aliases / self.batched_aliases.len().max(1),
+                group_variables,
+            );
         }
 
         Ok(BatchFetchNode {

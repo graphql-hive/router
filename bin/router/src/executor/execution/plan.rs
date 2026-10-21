@@ -953,13 +953,10 @@ impl<'exec> Executor<'exec> {
         let mut waves = waves.into_iter().peekable();
         while waves.peek().is_some() {
             let chunk: Vec<_> = waves.by_ref().take(waves_per_request).collect();
-            let variables: Vec<&str> = chunk[0].0.iter().map(|(name, _)| *name).collect();
             let template = if chunk.len() < 2 {
                 None
             } else {
-                batch_fetch_node
-                    .operation
-                    .context_alias_template(&variables)
+                batch_fetch_node.operation.context_alias_template()
             };
             let Some(template) = template else {
                 requests.extend(
@@ -1073,16 +1070,10 @@ impl<'exec> Executor<'exec> {
             .peekable();
         while groups.peek().is_some() {
             let chunk: Vec<_> = groups.by_ref().take(groups_per_request).collect();
-            let variables: Vec<&str> = chunk[0]
-                .variables
-                .iter()
-                .map(|(name, _)| *name)
-                .chain(["representations"])
-                .collect();
             let template = if chunk.len() < 2 {
                 None
             } else {
-                fetch_node.operation.context_alias_template(&variables)
+                fetch_node.operation.context_alias_template()
             };
             let Some(template) = template else {
                 requests.extend(chunk.into_iter().map(|group| {
