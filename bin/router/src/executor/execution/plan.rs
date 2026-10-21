@@ -1,4 +1,4 @@
-use super::context::{collect_context_entities, unalias_response, AliasedRequests};
+use super::context::{collect_context_entities, unalias_response, AliasedRequest, AliasedRequests};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::vec;
@@ -1019,14 +1019,15 @@ impl<'exec> Executor<'exec> {
                             *offset += count;
                         }
                     }
-                    let (request, raw_variable_values) = self.aliased_requests.push(
+                    let (request, values) = AliasedRequest::new(
                         template,
                         values_per_wave,
                         batch_fetch_node.custom_scalar_paths.as_ref(),
                     );
+                    let request = self.aliased_requests.insert(request);
                     requests.push((
                         &request.operation,
-                        raw_variable_values,
+                        request.variables(values),
                         request.custom_scalar_paths.as_ref(),
                         merged_aliases,
                         Some((template, wave_count, counts)),
@@ -1172,14 +1173,15 @@ impl<'exec> Executor<'exec> {
                         values.push(("representations", group.representations));
                         values_per_group.push(values);
                     }
-                    let (request, raw_variable_values) = self.aliased_requests.push(
+                    let (request, values) = AliasedRequest::new(
                         template,
                         values_per_group,
                         fetch_node.custom_scalar_paths.as_ref(),
                     );
+                    let request = self.aliased_requests.insert(request);
                     requests.push((
                         &request.operation,
-                        raw_variable_values,
+                        request.variables(values),
                         request.custom_scalar_paths.as_ref(),
                         hash_to_index,
                         Some((template, counts)),

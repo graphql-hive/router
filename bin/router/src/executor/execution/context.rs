@@ -319,27 +319,14 @@ pub(super) struct AliasedRequest {
     pub custom_scalar_paths: Option<CustomScalarPaths>,
 }
 
-/// Keeps the [`AliasedRequest`]s of one execution around until it's done, since the subgraph
-/// request and the jobs borrow from them. They're written per request, so they're dropped with
-/// it instead of piling up in the plan cache.
-///
-/// Append-only, so nothing it hands out ever moves. Bucket `b` holds `2^b` requests and is
-/// allocated when the first one lands in it, so a push goes straight to its slot.
-#[derive(Default)]
-pub struct AliasedRequests {
-    len: AtomicUsize,
-    buckets: [OnceLock<Box<[OnceLock<AliasedRequest>]>>; 32],
-}
-
-impl AliasedRequests {
+impl AliasedRequest {
     /// Writes out a request for every group in `groups` (the variable values of each group, in
-    /// group order) and keeps it. Returns it along with its variables.
-    pub(super) fn push<'a>(
-        &'a self,
+    /// group order). Returns it with the variable values, in the order of `variable_names`.
+    pub(super) fn new(
         template: &ContextAliasTemplate,
         groups: Vec<Vec<(&str, Vec<u8>)>>,
         custom_scalar_paths: Option<&CustomScalarPaths>,
-    ) -> (&'a AliasedRequest, Vec<(&'a str, Vec<u8>)>) {
+    ) -> (Self, Vec<Vec<u8>>) {
         let count = groups.len();
         let variable_count = groups.iter().map(Vec::len).sum();
         let mut variable_names = Vec::with_capacity(variable_count);
@@ -354,26 +341,47 @@ impl AliasedRequests {
                 variable_values.push(value);
             }
         }
-        let request = AliasedRequest {
+        let request = Self {
             operation: template.operation(count),
             variable_names,
             custom_scalar_paths: custom_scalar_paths
                 .map(|paths| template.custom_scalar_paths(paths, count)),
         };
+        (request, variable_values)
+    }
+
+    /// Pairs the variable names with the values [`Self::new`] returned.
+    pub(super) fn variables(&self, values: Vec<Vec<u8>>) -> Vec<(&str, Vec<u8>)> {
+        self.variable_names
+            .iter()
+            .map(String::as_str)
+            .zip(values)
+            .collect()
+    }
+}
+
+/// Keeps the [`AliasedRequest`]s of one execution around until it's done, since the subgraph
+/// request and the jobs borrow from them. They're written per request, so they're dropped with
+/// it instead of piling up in the plan cache.
+///
+/// Append-only, so nothing it hands out ever moves. Bucket `b` holds `2^b` requests and is
+/// allocated when the first one lands in it, so a push goes straight to its slot.
+#[derive(Default)]
+pub struct AliasedRequests {
+    len: AtomicUsize,
+    buckets: [OnceLock<Box<[OnceLock<AliasedRequest>]>>; 32],
+}
+
+impl AliasedRequests {
+    /// Keeps `request` until the execution is done.
+    pub(super) fn insert(&self, request: AliasedRequest) -> &AliasedRequest {
         // 1-based, so request `i` sits in bucket `ilog2(i)`
         let index = self.len.fetch_add(1, Ordering::Relaxed) + 1;
         let bucket = index.ilog2() as usize;
         let slots = self.buckets[bucket]
             .get_or_init(|| (0..1usize << bucket).map(|_| OnceLock::new()).collect());
         // every index is handed out once, so the slot is always empty
-        let request = slots[index - (1 << bucket)].get_or_init(|| request);
-        let variables = request
-            .variable_names
-            .iter()
-            .map(String::as_str)
-            .zip(variable_values)
-            .collect();
-        (request, variables)
+        slots[index - (1 << bucket)].get_or_init(|| request)
     }
 }
 
@@ -876,7 +884,7 @@ mod tests {
                 let groups = (0..i % 7 + 2)
                     .map(|_| vec![("representations", b"[]".to_vec())])
                     .collect();
-                store.push(template, groups, None).0
+                store.insert(AliasedRequest::new(template, groups, None).0)
             })
             .collect();
         for (i, request) in requests.iter().enumerate() {
