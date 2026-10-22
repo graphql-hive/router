@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-for cmd in hey jq curl go python3; do
+for cmd in hey jq curl go node; do
   command -v "$cmd" >/dev/null || { echo "$cmd is required"; exit 1; }
 done
 
