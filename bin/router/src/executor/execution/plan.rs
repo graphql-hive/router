@@ -1407,15 +1407,6 @@ impl<'exec> Executor<'exec> {
                                 }
                             }
 
-                            let mut remaining_uses = vec![0; entities.len()];
-                            for hash in representation_hashes.iter().flatten() {
-                                if let Some(entity_index) = representation_hash_to_index.get(hash) {
-                                    if let Some(remaining) = remaining_uses.get_mut(*entity_index) {
-                                        *remaining += 1;
-                                    }
-                                }
-                            }
-
                             let mut index = 0;
                             let normalized_path = flatten_node_path.as_slice();
                             // If there is an error in the response, then collect the paths for normalizing the error
@@ -1426,6 +1417,11 @@ impl<'exec> Executor<'exec> {
                                 .errors
                                 .as_ref()
                                 .map(|_| HashMap::with_capacity(entities.len()));
+                            let mut merger = EntityMerger::new(
+                                &mut entities,
+                                representation_hashes.iter(),
+                                representation_hash_to_index,
+                            );
                             traverse_and_callback_mut(
                                 &mut ctx.data,
                                 normalized_path,
@@ -1450,26 +1446,7 @@ impl<'exec> Executor<'exec> {
                                                 .or_insert_with(Vec::new);
                                             error_paths.push(error_path);
                                         }
-                                        let move_entity = remaining_uses
-                                            .get_mut(*entity_index)
-                                            .is_some_and(|remaining| {
-                                                if *remaining == 0 {
-                                                    false
-                                                } else {
-                                                    *remaining -= 1;
-                                                    *remaining == 0
-                                                }
-                                            });
-                                        if move_entity {
-                                            if let Some(entity) = entities.get_mut(*entity_index) {
-                                                deep_merge(
-                                                    target,
-                                                    std::mem::replace(entity, Value::Null),
-                                                );
-                                            }
-                                        } else if let Some(entity) = entities.get(*entity_index) {
-                                            deep_merge_from(target, entity);
-                                        }
+                                        merger.merge_into(target, *entity_index);
                                     }
                                 },
                             );
@@ -1660,18 +1637,14 @@ impl<'exec> Executor<'exec> {
             return entity_index_error_map;
         }
 
-        // Most entities are merged into more than one response location.
-        // Count those uses so the final location can be moved instead.
-        let mut remaining_uses = vec![0; entities.len()];
-        for path_state in &alias_state.paths {
-            for hash in path_state.representation_hashes.iter().flatten() {
-                if let Some(entity_index) = alias_state.representation_hash_to_index.get(hash) {
-                    if let Some(remaining) = remaining_uses.get_mut(*entity_index) {
-                        *remaining += 1;
-                    }
-                }
-            }
-        }
+        let mut merger = EntityMerger::new(
+            entities,
+            alias_state
+                .paths
+                .iter()
+                .flat_map(|path_state| path_state.representation_hashes.iter()),
+            &alias_state.representation_hash_to_index,
+        );
 
         // We walk each merge path
         for path_state in &alias_state.paths {
@@ -1708,24 +1681,7 @@ impl<'exec> Executor<'exec> {
                                 .or_insert_with(Vec::new);
                             error_paths.push(error_path);
                         }
-                        let move_entity =
-                            remaining_uses
-                                .get_mut(*entity_index)
-                                .is_some_and(|remaining| {
-                                    if *remaining == 0 {
-                                        false
-                                    } else {
-                                        *remaining -= 1;
-                                        *remaining == 0
-                                    }
-                                });
-                        if move_entity {
-                            if let Some(entity) = entities.get_mut(*entity_index) {
-                                deep_merge(target_data, std::mem::replace(entity, Value::Null));
-                            }
-                        } else if let Some(entity) = entities.get(*entity_index) {
-                            deep_merge_from(target_data, entity);
-                        }
+                        merger.merge_into(target_data, *entity_index);
                     }
                 },
             );
@@ -1939,6 +1895,57 @@ impl<'exec> Executor<'exec> {
         })
         .instrument(subgraph_operation_span.clone())
         .await
+    }
+}
+
+/// Merges entities from an `_entities` response into the spots that asked for them.
+/// Most entities land in more than one spot, so every spot gets a clone
+/// except the last one, which gets the entity itself.
+struct EntityMerger<'e, 'exec> {
+    entities: &'e mut [Value<'exec>],
+    remaining_uses: Vec<usize>,
+}
+
+impl<'e, 'exec> EntityMerger<'e, 'exec> {
+    fn new<'h>(
+        entities: &'e mut [Value<'exec>],
+        representation_hashes: impl IntoIterator<Item = &'h Option<u64>>,
+        representation_hash_to_index: &AHashMap<u64, usize>,
+    ) -> Self {
+        let mut remaining_uses = vec![0; entities.len()];
+        for hash in representation_hashes.into_iter().flatten() {
+            if let Some(remaining) = representation_hash_to_index
+                .get(hash)
+                .and_then(|entity_index| remaining_uses.get_mut(*entity_index))
+            {
+                *remaining += 1;
+            }
+        }
+        Self {
+            entities,
+            remaining_uses,
+        }
+    }
+
+    fn merge_into<'target>(&mut self, target: &mut Value<'target>, entity_index: usize)
+    where
+        'exec: 'target,
+    {
+        let (Some(entity), Some(remaining)) = (
+            self.entities.get_mut(entity_index),
+            self.remaining_uses.get_mut(entity_index),
+        ) else {
+            return;
+        };
+        let last_use = remaining.checked_sub(1).is_some_and(|left| {
+            *remaining = left;
+            left == 0
+        });
+        if last_use {
+            deep_merge(target, std::mem::take(entity));
+        } else {
+            deep_merge_from(target, entity);
+        }
     }
 }
 
