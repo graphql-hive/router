@@ -112,7 +112,7 @@ ROUTER_PID=""
 grep '^dhat:' "$OUT_DIR/router.log" || true
 
 step "converting dhat-heap.json to pprof"
-python3 "$SCRIPT_DIR/dhat-to-pprof.py" "$OUT_DIR/dhat-heap.json" "$OUT_DIR/heap.pb.gz"
+node "$SCRIPT_DIR/dhat-to-pprof.mjs" "$OUT_DIR/dhat-heap.json" "$OUT_DIR/heap.pb.gz"
 
 step "top allocation sites (alloc_space)"
 go tool pprof -top -nodecount=25 -sample_index=alloc_space "$OUT_DIR/heap.pb.gz" 2>/dev/null
