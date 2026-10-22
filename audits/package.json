@@ -14,7 +14,7 @@
     "@graphql-hive/federation-gateway-audit": "0.0.3",
     "graphql": "^17.0.2",
     "graphql-http": "1.23.1",
-    "start-server-and-test": "3.0.12",
+    "start-server-and-test": "3.0.13",
     "typescript": "7.0.2"
   },
   "packageManager": "npm@11.11.1"
