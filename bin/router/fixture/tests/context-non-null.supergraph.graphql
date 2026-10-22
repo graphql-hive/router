@@ -1,0 +1,99 @@
+schema @link(url: "https://specs.apollo.dev/link/v1.0") @link(url: "https://specs.apollo.dev/join/v0.5", for: EXECUTION) @link(url: "https://specs.apollo.dev/context/v0.1", for: SECURITY) {
+  query: Query
+}
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__field(
+  graph: join__Graph
+  requires: join__FieldSet
+  provides: join__FieldSet
+  type: String
+  external: Boolean
+  override: String
+  usedOverridden: Boolean
+  overrideLabel: String
+  contextArguments: [join__ContextArgument!]
+) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+input join__ContextArgument {
+  name: String!
+  type: String!
+  context: String!
+  selection: join__FieldValue!
+}
+
+directive @join__implements(graph: join__Graph!, interface: String!) repeatable on OBJECT | INTERFACE
+
+directive @join__type(
+  graph: join__Graph!
+  key: join__FieldSet
+  extension: Boolean! = false
+  resolvable: Boolean! = true
+  isInterfaceObject: Boolean! = false
+) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(graph: join__Graph!, member: String!) repeatable on UNION
+
+scalar join__FieldSet
+
+scalar join__FieldValue
+
+directive @context(name: String!) repeatable on OBJECT | INTERFACE | UNION
+
+directive @context__fromContext(field: context__ContextFieldValue) on ARGUMENT_DEFINITION
+
+scalar context__ContextFieldValue
+
+directive @link(url: String, as: String, for: link__Purpose, import: [link__Import]) repeatable on SCHEMA
+
+scalar link__Import
+
+enum link__Purpose {
+  """
+  `SECURITY` features provide metadata necessary to securely resolve fields.
+  """
+  SECURITY
+  """
+  `EXECUTION` features provide metadata necessary for operation execution.
+  """
+  EXECUTION
+}
+
+enum join__Graph {
+  A @join__graph(name: "a", url: "http://a")
+}
+
+type Query @join__type(graph: A) {
+  viewer: Viewer
+}
+
+type User @join__type(graph: A) @context(name: "a__user") {
+  id: ID!
+  txs: [Transaction]
+}
+
+type Other @join__type(graph: A) @context(name: "a__other") {
+  id: ID!
+  txs: [Adjustment]
+}
+
+type Transaction @join__type(graph: A, key: "id") {
+  id: ID!
+  amount: Int @join__field(
+    graph: A
+    contextArguments: [{context: "a__user", name: "kind", type: "String!", selection: " { __typename }"}]
+  )
+}
+
+type Adjustment @join__type(graph: A, key: "id") {
+  id: ID!
+  amount: Int @join__field(
+    graph: A
+    contextArguments: [{context: "a__other", name: "kind", type: "String!", selection: " { __typename }"}]
+  )
+}
+
+union Viewer @join__type(graph: A) @join__unionMember(graph: A, member: "User") @join__unionMember(graph: A, member: "Other") = User | Other

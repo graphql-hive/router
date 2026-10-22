@@ -236,6 +236,12 @@ pub struct TrafficShapingExecutorSubgraphConfig {
     /// When omitted, `traffic_shaping.all.compression` is used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compression: Option<TrafficShapingSubgraphCompressionConfig>,
+
+    /// Overrides how many aliased `_entities` fields one entity request to this subgraph may carry.
+    ///
+    /// When omitted, `traffic_shaping.all.max_aliases_per_request` is used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_aliases_per_request: Option<usize>,
 }
 
 /// Controls which transport queries and mutations use for WebSocket-enabled subgraphs.
@@ -435,6 +441,31 @@ pub struct TrafficShapingExecutorGlobalConfig {
     /// Router, Cosmo, and Hive Gateway's behavior here.
     #[serde(default)]
     pub compression: TrafficShapingSubgraphCompressionConfig,
+
+    /// The most aliased `_entities` fields one entity request to a subgraph may carry.
+    ///
+    /// The router aliases `_entities` fields in two cases:
+    /// - When planning, entity fetches to the same subgraph that run in parallel are batched
+    ///   into one request, one alias per distinct fetch shape (`_e0`, `_e1`, ...). Batches with
+    ///   more aliases than this limit are split into several batches.
+    /// - When executing, entities with different contextual argument values (`@fromContext`)
+    ///   can not share one `_entities` field, so the field is repeated once per distinct value
+    ///   (`_entities_0`, `_entities_1`, ...). When there are more distinct values than fit in
+    ///   this limit, the router sends several such requests.
+    ///
+    /// Subgraphs often limit the number of aliases in an operation (for example, graphql-armor's
+    /// max-aliases rule), so keep this at or below that limit. Set it for such subgraphs even if
+    /// your operations look small: the number of contextual argument groups depends on the
+    /// response data, so it can grow past the subgraph's limit at any time. Aliases written in
+    /// the client's own query are not counted. A value of `1` (or `0`) allows one `_entities`
+    /// field per request.
+    ///
+    /// Per-subgraph values under `traffic_shaping.subgraphs.<name>.max_aliases_per_request` take precedence.
+    ///
+    /// Not set by default, so there's no limit: batches are never split, and all contextual
+    /// argument groups of a fetch go in one request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_aliases_per_request: Option<usize>,
 }
 
 fn default_request_timeout() -> DurationOrExpression {
@@ -468,6 +499,7 @@ impl Default for TrafficShapingExecutorGlobalConfig {
             forward_operation_name: false,
             websocket: Default::default(),
             compression: Default::default(),
+            max_aliases_per_request: None,
         }
     }
 }

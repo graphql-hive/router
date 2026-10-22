@@ -134,3 +134,54 @@ fn requires_with_union_type_condition() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+#[test]
+fn requires_root_fragment_on_inapplicable_type() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          products {
+            isExpensive
+          }
+        }"#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-inapplicable-root-fragment.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            products {
+              __typename
+              upc
+              price
+            }
+          }
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "inventory") {
+            {
+              ... on Product {
+                __typename
+                price
+                upc
+              }
+            } =>
+            {
+              ... on Product {
+                isExpensive
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}

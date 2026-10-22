@@ -23,6 +23,8 @@ export interface FetchNode {
   requires?: RequiresSelection[];
   inputRewrites?: InputRewrite[];
   outputRewrites?: OutputRewrite[];
+  contextRewrites?: KeyRenamer[];
+  contextVariables?: string[];
 }
 
 export interface BatchFetchNode {
@@ -46,6 +48,8 @@ export interface EntityBatchAlias {
   requires: RequiresSelection[];
   inputRewrites?: InputRewrite[];
   outputRewrites?: OutputRewrite[];
+  contextRewrites?: KeyRenamer[];
+  contextVariables?: string[];
 }
 
 export interface SubscriptionNode {
@@ -54,6 +58,7 @@ export interface SubscriptionNode {
 }
 
 export type FetchNodePathSegment =
+  | "Parent"
   | { TypenameEquals: string[] }
   | { Key: string };
 

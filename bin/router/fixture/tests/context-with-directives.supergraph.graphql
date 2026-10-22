@@ -1,0 +1,192 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.5", for: EXECUTION)
+  @link(url: "https://specs.apollo.dev/authenticated/v0.1", for: SECURITY)
+  @link(url: "https://specs.apollo.dev/context/v0.1", for: SECURITY)
+{
+  query: Query
+}
+
+directive @authenticated on FIELD_DEFINITION | OBJECT | INTERFACE | SCALAR | ENUM
+
+directive @context(name: String!) repeatable on INTERFACE | OBJECT | UNION
+
+directive @context__fromContext(field: context__ContextFieldValue) on ARGUMENT_DEFINITION
+
+directive @join__directive(graphs: [join__Graph!], name: String!, args: join__DirectiveArguments) repeatable on SCHEMA | OBJECT | INTERFACE | FIELD_DEFINITION
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__field(graph: join__Graph, requires: join__FieldSet, provides: join__FieldSet, type: String, external: Boolean, override: String, usedOverridden: Boolean, overrideLabel: String, contextArguments: [join__ContextArgument!]) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__implements(graph: join__Graph!, interface: String!) repeatable on OBJECT | INTERFACE
+
+directive @join__type(graph: join__Graph!, key: join__FieldSet, extension: Boolean! = false, resolvable: Boolean! = true, isInterfaceObject: Boolean! = false) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(graph: join__Graph!, member: String!) repeatable on UNION
+
+directive @link(url: String, as: String, for: link__Purpose, import: [link__Import]) repeatable on SCHEMA
+
+type Account
+  @join__type(graph: A)
+  @context(name: "a__account")
+{
+  tier: Tier!
+  meta: JSON
+  card: Card
+}
+
+type Card
+  @join__type(graph: A, key: "id", resolvable: false)
+  @join__type(graph: A, key: "number")
+{
+  id: ID!
+  number: ID!
+  perks: Int @join__field(graph: A, contextArguments: [{context: "a__account", name: "tier", type: "Tier", selection: " { tier }"}, {context: "a__account", name: "meta", type: "JSON", selection: " { meta }"}])
+}
+
+scalar context__ContextFieldValue
+
+type Coupon
+  @join__type(graph: A, key: "id")
+  @join__type(graph: B, key: "id")
+{
+  id: ID!
+  amount: Int @join__field(graph: A, contextArguments: [{context: "a__shop", name: "currency", type: "String", selection: " { currency }"}]) @join__field(graph: B)
+}
+
+input join__ContextArgument {
+  name: String!
+  type: String!
+  context: String!
+  selection: join__FieldValue!
+}
+
+scalar join__DirectiveArguments
+
+scalar join__FieldSet
+
+scalar join__FieldValue
+
+enum join__Graph {
+  A @join__graph(name: "a", url: "http://a")
+  B @join__graph(name: "b", url: "http://b")
+}
+
+scalar JSON
+  @join__type(graph: A)
+
+scalar link__Import
+
+enum link__Purpose {
+  """
+  `SECURITY` features provide metadata necessary to securely resolve fields.
+  """
+  SECURITY
+
+  """
+  `EXECUTION` features provide metadata necessary for operation execution.
+  """
+  EXECUTION
+}
+
+type Member
+  @join__type(graph: A, key: "id")
+  @join__type(graph: B, key: "id")
+  @context(name: "a__member")
+{
+  id: ID!
+  plan: String! @join__field(graph: A, external: true) @join__field(graph: B)
+  wallet: Wallet @join__field(graph: A)
+}
+
+type Offer
+  @join__type(graph: A, key: "id")
+  @join__type(graph: B, key: "id")
+{
+  id: ID!
+  value: Int @join__field(graph: A, contextArguments: [{context: "a__plan", name: "tier", type: "String", selection: " { tier }"}]) @join__field(graph: B, external: true)
+}
+
+type Plan
+  @join__type(graph: A, key: "id")
+  @join__type(graph: B, key: "id")
+  @context(name: "a__plan")
+{
+  id: ID!
+  tier: String! @join__field(graph: A)
+  offer: Offer @join__field(graph: A) @join__field(graph: B, external: true)
+  discount: Int @join__field(graph: B, requires: "offer { value }")
+}
+
+type Query
+  @join__type(graph: A)
+  @join__type(graph: B)
+{
+  member: Member @join__field(graph: A)
+  store: Store @join__field(graph: A)
+  plan: Plan @join__field(graph: A)
+  shop: Shop @join__field(graph: A)
+  account: Account @join__field(graph: A)
+  user: User @join__field(graph: A)
+  coupon: Coupon @join__field(graph: B)
+}
+
+type Shelf
+  @join__type(graph: A, key: "id")
+  @join__type(graph: B, key: "id")
+{
+  id: ID!
+  label: String @join__field(graph: A, external: true) @join__field(graph: B)
+  price: Int @join__field(graph: A, contextArguments: [{context: "a__store", name: "region", type: "String", selection: " { region }"}])
+}
+
+type Shop
+  @join__type(graph: A, key: "id")
+  @context(name: "a__shop")
+{
+  id: ID!
+  currency: String
+  coupon: Coupon
+}
+
+type Store
+  @join__type(graph: A, key: "id")
+  @context(name: "a__store")
+{
+  id: ID!
+  region: String!
+  shelf: Shelf @join__field(graph: A, provides: "label")
+}
+
+enum Tier
+  @join__type(graph: A)
+{
+  GOLD @join__enumValue(graph: A)
+  SILVER @join__enumValue(graph: A)
+}
+
+type User
+  @join__type(graph: A, key: "id")
+  @context(name: "a__user")
+{
+  id: ID!
+  secret: String @authenticated
+  vault: Vault
+}
+
+type Vault
+  @join__type(graph: A, key: "id")
+{
+  id: ID!
+  balance: Int @join__field(graph: A, contextArguments: [{context: "a__user", name: "secret", type: "String", selection: " { secret }"}]) @authenticated
+}
+
+type Wallet
+  @join__type(graph: A, key: "id")
+{
+  id: ID!
+  apply: Int @join__field(graph: A, contextArguments: [{context: "a__member", name: "plan", type: "String", selection: " { plan }"}])
+}

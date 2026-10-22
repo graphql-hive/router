@@ -1,10 +1,11 @@
 use crate::query_planner::ast::merge_path::{Condition, FieldPathSegment, MergePath, Segment};
-use crate::query_planner::ast::operation::OperationDefinition;
+use crate::query_planner::ast::operation::{OperationDefinition, VariableDefinition};
 use crate::query_planner::ast::selection_item::SelectionItem;
 use crate::query_planner::ast::selection_set::{
     FieldSelection, InlineFragmentSelection, SelectionSet,
 };
 use crate::query_planner::ast::type_aware_selection::TypeAwareSelection;
+use crate::query_planner::ast::value::Value;
 use crate::query_planner::graph::edge::{
     Edge, FieldMove, InterfaceObjectTypeMove, PlannerOverrideContext, ReentryMove,
 };
@@ -16,7 +17,9 @@ use crate::query_planner::planner::fetch::fetch_step_data::{
 use crate::query_planner::planner::fetch::response_keys::{place_of, ResponseKeys};
 use crate::query_planner::planner::fetch::selections::FetchStepSelections;
 use crate::query_planner::planner::fetch::state::{MultiTypeFetchStep, SingleTypeFetchStep};
-use crate::query_planner::planner::plan_nodes::{FetchNodePathSegment, FetchRewrite, ValueSetter};
+use crate::query_planner::planner::plan_nodes::{
+    FetchNodePathSegment, FetchRewrite, KeyRenamer, ValueSetter,
+};
 use crate::query_planner::planner::tree::query_tree::QueryTree;
 use crate::query_planner::planner::tree::query_tree_node::{MutationFieldPosition, QueryTreeNode};
 use crate::query_planner::planner::walker::path::OperationPath;
@@ -31,7 +34,7 @@ use petgraph::visit::EdgeRef;
 use petgraph::visit::{Bfs, IntoNodeReferences};
 use petgraph::Directed;
 use petgraph::Direction;
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt::{Debug, Display};
 use tracing::{instrument, trace};
 
@@ -48,6 +51,9 @@ pub struct FetchGraph<State> {
     pub(crate) entity_owners: HashMap<NodeIndex, NodeIndex>,
     /// The keys of the fields the planner adds itself. Only needed while the graph is built.
     pub(crate) response_keys: ResponseKeys,
+    pub(crate) context_producers: HashMap<(MergePath, (EdgeIndex, usize)), Vec<NodeIndex>>,
+    pub(crate) context_variable_counter: usize,
+    pub(crate) operation_variables: HashSet<String>,
 }
 
 impl FetchGraph<SingleTypeFetchStep> {
@@ -62,6 +68,9 @@ impl FetchGraph<SingleTypeFetchStep> {
             operation_kind: self.operation_kind,
             entity_owners: HashMap::new(),
             response_keys: ResponseKeys::default(),
+            context_producers: HashMap::new(),
+            context_variable_counter: 0,
+            operation_variables: HashSet::new(),
         }
     }
 
@@ -72,6 +81,9 @@ impl FetchGraph<SingleTypeFetchStep> {
             operation_kind: kind,
             entity_owners: HashMap::new(),
             response_keys: ResponseKeys::default(),
+            context_producers: HashMap::new(),
+            context_variable_counter: 0,
+            operation_variables: HashSet::new(),
         }
     }
 }
@@ -364,6 +376,9 @@ fn create_noop_fetch_step(
         variable_usages: None,
         variable_definitions: None,
         mutation_field_position: None,
+        context_rewrites: None,
+        context_variable_definitions: Vec::new(),
+        context_producers: BTreeSet::new(),
     })
 }
 
@@ -405,6 +420,9 @@ fn create_fetch_step_for_entity_call(
         variable_usages: None,
         variable_definitions: None,
         mutation_field_position: None,
+        context_rewrites: None,
+        context_variable_definitions: Vec::new(),
+        context_producers: BTreeSet::new(),
     });
     fetch_graph.entity_owners.insert(step_index, owner_index);
 
@@ -438,6 +456,9 @@ fn create_fetch_step_for_root_move(
         input_rewrites: None,
         output_rewrites: None,
         mutation_field_position,
+        context_rewrites: None,
+        context_variable_definitions: Vec::new(),
+        context_producers: BTreeSet::new(),
     });
 
     fetch_graph.connect(root_step_index, idx);
@@ -565,7 +586,9 @@ fn ensure_fetch_step_for_requirement(
             .children_of(parent_fetch_step_index)
             .find_map(|to_child_edge_ref| {
                 if let Ok(fetch_step) = fetch_graph.get_step_data(to_child_edge_ref.target()) {
-                    if fetch_step.service_name != *subgraph_name {
+                    if fetch_step.service_name != *subgraph_name
+                        || fetch_step.context_rewrites.is_some()
+                    {
                         return None;
                     }
 
@@ -961,7 +984,8 @@ fn process_interface_object_type_move_edge(
         graph,
         supergraph,
         override_context,
-        query_node.requirements.first().unwrap(),
+        query_node.requirements.first().unwrap().node_index,
+        false,
     )?;
     let key_to_reenter_subgraph = &fetch_graph.read_at(response_path, key_to_reenter_subgraph);
     let step_for_children = fetch_graph.get_step_data_mut(step_for_children_index)?;
@@ -1520,6 +1544,39 @@ fn process_plain_field_edge(
     )
 }
 
+fn context_selection_rewrites(
+    items: &[SelectionItem],
+    path: &[FetchNodePathSegment],
+    variable: &str,
+    rewrites: &mut Vec<KeyRenamer>,
+) {
+    for item in items {
+        let mut path = path.to_vec();
+        match item {
+            SelectionItem::Field(field) => {
+                path.push(FetchNodePathSegment::Key(
+                    field.selection_identifier().to_string(),
+                ));
+                if field.selections.items.is_empty() {
+                    rewrites.push(KeyRenamer {
+                        path,
+                        rename_key_to: variable.to_string(),
+                    });
+                } else {
+                    context_selection_rewrites(&field.selections.items, &path, variable, rewrites);
+                }
+            }
+            SelectionItem::InlineFragment(fragment) => {
+                path.push(FetchNodePathSegment::typename_equals_from_type(
+                    fragment.type_condition.clone(),
+                ));
+                context_selection_rewrites(&fragment.selections.items, &path, variable, rewrites);
+            }
+            SelectionItem::FragmentSpread(_) => {}
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 #[instrument(level = "trace",skip_all, fields(
   parent_fetch_step_index = parent_fetch_step_index.index(),
@@ -1539,10 +1596,7 @@ fn process_requires_field_edge(
     condition: Option<&Condition>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
-    let requires = field_move
-        .requirements
-        .as_ref()
-        .ok_or(FetchGraphError::MissingRequires)?;
+    let requires = field_move.requirements.as_ref();
 
     let head_node_index = graph.get_edge_head(&edge_index)?;
     let head_node = graph.node(head_node_index)?;
@@ -1555,10 +1609,11 @@ fn process_requires_field_edge(
         graph,
         supergraph,
         override_context,
-        query_node.requirements.first().unwrap(),
+        head_node_index,
+        !field_move.context_arguments.is_empty(),
     )?;
     // What the entity calls read, and the keys the step holding the objects writes.
-    let requires_input = fetch_graph.read_at(response_path, requires);
+    let requires_input = requires.map(|requires| fetch_graph.read_at(response_path, requires));
     let key_input = fetch_graph.read_at(response_path, key_to_reenter_subgraph);
     let key_output = fetch_graph.response_keys.output(
         &place_of(response_path),
@@ -1611,16 +1666,108 @@ fn process_requires_field_edge(
     // The new FetchStep will have `foo` as the output and `bar` as the input.
     // The `bar` should be fetched by one of the parents.
     trace!("Creating a fetch step for children of @requires");
-    let step_for_children_index = ensure_fetch_step_for_requirement(
-        fetch_graph,
-        real_parent_fetch_step_index,
-        head_subgraph_name,
-        head_type_name,
-        response_path,
-        condition,
-        &requires_input,
-    )?;
+    let step_for_children_index = if field_move.context_arguments.is_empty() {
+        ensure_fetch_step_for_requirement(
+            fetch_graph,
+            real_parent_fetch_step_index,
+            head_subgraph_name,
+            head_type_name,
+            response_path,
+            condition,
+            requires_input
+                .as_ref()
+                .ok_or(FetchGraphError::MissingRequires)?,
+        )?
+    } else {
+        create_fetch_step_for_entity_call(
+            fetch_graph,
+            real_parent_fetch_step_index,
+            head_subgraph_name,
+            head_type_name,
+            head_type_name,
+            response_path,
+            condition,
+            true,
+        )
+    };
 
+    let mut arguments = query_node
+        .selection_arguments()
+        .cloned()
+        .unwrap_or_default();
+    for requirement in query_node.resolved_context_requirements() {
+        let argument = &field_move.context_arguments[requirement.argument];
+        // a contextual field inside a @requires or context selection only sees ancestors from
+        // the root of that selection down, that root is where the selection gets planned and
+        // where its context producers get registered. a context set above the root has no
+        // ancestor path or producer here, so we error out. this is on purpose and matches
+        // the federation "spec", which resolves those selections as fresh paths from the requiring
+        // entity and treats a context above it as not set. composition reports such a query as
+        // unsatisfiable, so a valid supergraph never gets here
+        let ancestor_index = response_path
+            .inner
+            .iter()
+            .enumerate()
+            .rev()
+            .filter(|(_, segment)| matches!(segment, Segment::Field(..)))
+            .nth(requirement.levels - 1)
+            .map(|(index, _)| index)
+            .ok_or(FetchGraphError::UnsupportedContextInRequirement)?;
+        let ancestor_path = MergePath::new(response_path.inner[..ancestor_index].to_vec());
+        let producers = fetch_graph
+            .context_producers
+            .get(&(ancestor_path.clone(), (edge_index, requirement.argument)))
+            .cloned()
+            .ok_or(FetchGraphError::UnsupportedContextInRequirement)?;
+        for producer in producers {
+            let id = fetch_graph.get_step_data(producer)?.id;
+            fetch_graph.connect(producer, step_for_children_index);
+            fetch_graph
+                .get_step_data_mut(step_for_children_index)?
+                .context_producers
+                .insert(id);
+        }
+        let variable = loop {
+            let name = format!("__context_{}", fetch_graph.context_variable_counter);
+            fetch_graph.context_variable_counter += 1;
+            if !fetch_graph.operation_variables.contains(&name) {
+                break name;
+            }
+        };
+        arguments.add_argument(argument.name.clone(), Value::Variable(variable.clone()));
+        let selection = &argument.selections[requirement.selection];
+        let output = fetch_graph
+            .response_keys
+            .output(&place_of(&ancestor_path), &selection.selection_set);
+        let prefix = vec![FetchNodePathSegment::Parent; requirement.levels];
+        let mut field_prefix = prefix.clone();
+        field_prefix.push(FetchNodePathSegment::typename_equals_from_type(
+            selection.type_name.clone(),
+        ));
+        let mut rewrites = Vec::new();
+        for item in &output.items {
+            // root fields read from the matched ancestor type, root fragments carry their own type
+            let path = match item {
+                SelectionItem::Field(_) => &field_prefix,
+                _ => &prefix,
+            };
+            context_selection_rewrites(std::slice::from_ref(item), path, &variable, &mut rewrites);
+        }
+        let step = fetch_graph.get_step_data_mut(step_for_children_index)?;
+        step.context_rewrites
+            .get_or_insert_default()
+            .extend(rewrites);
+        step.context_variable_definitions.push(VariableDefinition {
+            name: variable,
+            variable_type: argument.type_in_graph.clone(),
+            default_value: None,
+        });
+    }
+    let arguments = (!arguments.is_empty()).then_some(arguments);
+    let fetch_arguments_hash = arguments
+        .as_ref()
+        .map(|arguments| arguments.hash_u64())
+        .unwrap_or(0);
     let step_for_children = fetch_graph.get_step_data_mut(step_for_children_index)?;
 
     step_for_children.output.add_at_path(
@@ -1630,7 +1777,7 @@ fn process_requires_field_edge(
                 name: field_move.name.to_string(),
                 alias: field_alias.clone(),
                 selections: SelectionSet::default(),
-                arguments: query_node.selection_arguments().cloned(),
+                arguments,
                 skip_if: None,
                 include_if: None,
                 omit_from_response: false,
@@ -1654,12 +1801,14 @@ fn process_requires_field_edge(
         }));
     }
 
-    trace!(
-        "Adding {} to fetch([{}]).input (requires)",
-        requires_input,
-        step_for_children_index.index()
-    );
-    step_for_children.input.add(&requires_input.selection_set)?;
+    if let Some(requires_input) = &requires_input {
+        trace!(
+            "Adding {} to fetch([{}]).input (requires)",
+            requires_input,
+            step_for_children_index.index()
+        );
+        step_for_children.input.add(&requires_input.selection_set)?;
+    }
     trace!(
         "Adding {} to fetch([{}]).input (key re-enter)",
         key_input,
@@ -1695,7 +1844,9 @@ fn process_requires_field_edge(
     // On a `@provides` path, some required fields only exist on that path. The subgraph can't
     // return them from `_entities`, so the fetch that went through the path gets them, and
     // whatever needs another fetch starts from there too.
-    let (step_for_requirements_index, requirements_fetch_path) = if head_node.is_using_provides() {
+    let (step_for_requirements_index, requirements_fetch_path) = if requires.is_none()
+        || head_node.is_using_provides()
+    {
         (real_parent_fetch_step_index, key_to_reenter_at)
     } else {
         trace!("Creating a fetch step for requirement of @requires");
@@ -1721,18 +1872,14 @@ fn process_requires_field_edge(
         (step_for_requirements_index, MergePath::default())
     };
 
-    let segment_args_hash = query_node
-        .selection_arguments()
-        .map(|a| a.hash_u64())
-        .unwrap_or(0);
     let segment_field = FieldPathSegment::new(field_move.name.to_string(), field_alias);
     let mut child_response_path = response_path.push(Segment::Field(
         segment_field.clone(),
-        segment_args_hash,
+        fetch_arguments_hash,
         None,
     ));
     let mut child_fetch_path =
-        MergePath::default().push(Segment::Field(segment_field, segment_args_hash, None));
+        MergePath::default().push(Segment::Field(segment_field, fetch_arguments_hash, None));
 
     if field_move.is_list {
         child_response_path = child_response_path.push(Segment::List);
@@ -1740,19 +1887,26 @@ fn process_requires_field_edge(
     }
 
     trace!("Processing requirements");
-    let leaf_fetch_step_indexes = process_query_node(
-        graph,
-        fetch_graph,
-        supergraph,
-        override_context,
-        query_node.requirements.first().unwrap(),
-        Some(step_for_requirements_index),
-        response_path,
-        &requirements_fetch_path,
-        None,
-        condition,
-        true,
-    )?;
+    let leaf_fetch_step_indexes = if requires.is_some() {
+        process_query_node(
+            graph,
+            fetch_graph,
+            supergraph,
+            override_context,
+            query_node
+                .requirements
+                .first()
+                .ok_or(FetchGraphError::MissingRequires)?,
+            Some(step_for_requirements_index),
+            response_path,
+            &requirements_fetch_path,
+            None,
+            condition,
+            true,
+        )?
+    } else {
+        Vec::new()
+    };
 
     //
     // Given `f0 { f1 @requires(fields: f2) }`
@@ -1823,13 +1977,14 @@ fn process_requires_field_edge(
 /// The key fields need to be added to the output of the parent,
 /// and input of the entity move.
 #[instrument(level = "trace",skip_all, fields(
-  node = graph.node(query_node.node_index).unwrap().to_string()
+  node = graph.node(node_index).unwrap().to_string()
 ))]
 fn find_satisfiable_key<'a>(
     graph: &'a Graph,
     supergraph: &'a SupergraphState,
     override_context: &'a PlannerOverrideContext,
-    query_node: &QueryTreeNode,
+    node_index: NodeIndex,
+    local_only: bool,
 ) -> Result<&'a TypeAwareSelection, FetchGraphError> {
     // This could be improved...
     // We added a flag to `can_satisfy_edge` and increased the complexity.
@@ -1837,10 +1992,15 @@ fn find_satisfiable_key<'a>(
     let mut entity_moves_edges_to_self: Vec<
         EdgeReference<crate::query_planner::graph::edge::Edge>,
     > = graph
-        .edges_from(query_node.node_index)
+        .edges_from(node_index)
         .filter(|edge_reference| {
             let edge = graph.edge(edge_reference.id()).unwrap();
             matches!(edge, Edge::EntityMove(_))
+                && (!local_only || {
+                    let source = graph.node(node_index).unwrap();
+                    let target = graph.node(edge_reference.target()).unwrap();
+                    source.name_str() == target.name_str() && source.graph_id() == target.graph_id()
+                })
         })
         .collect();
     entity_moves_edges_to_self.sort_by_key(|edge| std::cmp::Reverse(edge.weight().cost()));
@@ -1852,7 +2012,7 @@ fn find_satisfiable_key<'a>(
             override_context,
             &edge_ref,
             &OperationPath {
-                root_node: query_node.node_index,
+                root_node: node_index,
                 last_segment: None,
                 cost: 0,
                 union_context: None,
@@ -1899,6 +2059,36 @@ fn process_query_node(
     if let Some(edge_index) = query_node.edge_from_parent {
         let parent_fetch_step_index = parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?;
         let edge = graph.edge(edge_index)?;
+
+        if matches!(edge, Edge::FieldMove(_) | Edge::ReentryMove(_)) {
+            for requirement in query_node.context_requirements() {
+                fetch_graph
+                    .get_step_data_mut(parent_fetch_step_index)?
+                    .output
+                    .add_selection_typename(fetch_path)?;
+                let producers = process_query_node(
+                    graph,
+                    fetch_graph,
+                    supergraph,
+                    override_context,
+                    requirement,
+                    Some(parent_fetch_step_index),
+                    response_path,
+                    fetch_path,
+                    None,
+                    condition,
+                    true,
+                )?;
+                let coordinate = requirement.context_coordinate().ok_or_else(|| {
+                    FetchGraphError::Internal("Missing context argument coordinate".to_string())
+                })?;
+                fetch_graph
+                    .context_producers
+                    .entry((response_path.clone(), coordinate))
+                    .or_default()
+                    .extend(producers);
+            }
+        }
 
         match edge {
             Edge::SubgraphEntrypoint {
@@ -1956,8 +2146,9 @@ fn process_query_node(
                 requiring_fetch_step_index,
                 condition,
             ),
-            Edge::FieldMove(field) => match field.requirements.is_some()
-                && !requirements_resolve_in_place(graph, query_node)?
+            Edge::FieldMove(field) => match !field.context_arguments.is_empty()
+                || (field.requirements.is_some()
+                    && !requirements_resolve_in_place(graph, query_node)?)
             {
                 true => process_requires_field_edge(
                     graph,
@@ -2075,7 +2266,7 @@ fn requirements_resolve_in_place(
     query_node: &QueryTreeNode,
 ) -> Result<bool, FetchGraphError> {
     fn stays_in_subgraph(graph: &Graph, node: &QueryTreeNode) -> Result<bool, FetchGraphError> {
-        if !node.requirements.is_empty() {
+        if !node.requirements.is_empty() || !node.resolved_context_requirements().is_empty() {
             return Ok(false);
         }
         if let Some(edge_index) = node.edge_from_parent {
@@ -2137,6 +2328,15 @@ pub fn build_fetch_graph_from_query_tree(
             .unwrap_or(OperationKind::Query),
     );
     fetch_graph.response_keys = ResponseKeys::from_operation(&operation.selection_set);
+    // only names that look like ours can clash, so for nearly every operation this stays
+    // empty and allocates nothing
+    fetch_graph.operation_variables = operation
+        .variable_definitions
+        .iter()
+        .flatten()
+        .filter(|variable| variable.name.starts_with("__context_"))
+        .map(|variable| variable.name.clone())
+        .collect();
 
     process_query_node(
         graph,

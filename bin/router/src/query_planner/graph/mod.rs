@@ -13,10 +13,18 @@ use std::{
     fmt::{Debug, Display},
 };
 
-use super::graph::{edge::Edge, node::Node, provided::Provided};
+use super::graph::{
+    edge::{ContextArgument, Edge},
+    node::Node,
+    provided::Provided,
+};
 use crate::query_planner::planner::walker::utils::get_entrypoints;
 use crate::query_planner::{
-    ast::type_aware_selection::TypeAwareSelection,
+    ast::{
+        selection_item::SelectionItem,
+        selection_set::{InlineFragmentSelection, SelectionSet},
+        type_aware_selection::TypeAwareSelection,
+    },
     federation_spec::FederationRules,
     graph::node::{SubgraphTypeSpecialization, UnionMembersData},
     state::supergraph_state::{
@@ -273,6 +281,7 @@ impl Graph {
                 false,
                 None,
                 None,
+                vec![],
                 None,
             ),
         );
@@ -717,6 +726,73 @@ impl Graph {
                               .into(),
                           });
 
+                    let context_arguments = maybe_join_field
+                        .map(|join_field| {
+                            join_field
+                                .context_arguments
+                                .iter()
+                                .map(|argument| {
+                                    let mut selections: Vec<TypeAwareSelection> = state
+                                        .contexts
+                                        .get(&argument.context)
+                                        .into_iter()
+                                        .flatten()
+                                        .map(|type_name| {
+                                            FederationRules::parse_context_selection(
+                                                state,
+                                                join_field.graph_id.as_ref().expect(
+                                                    "context arguments must have a subgraph",
+                                                ),
+                                                type_name,
+                                                &argument.selection,
+                                            )
+                                        })
+                                        .collect();
+                                    // ancestor paths can stay on an interface even when only its
+                                    // implementations declare the context, so add an interface selection too
+                                    for (interface, members) in &state.interface_to_object_types {
+                                        // keep the direct selection if the interface already declares this context
+                                        if selections
+                                            .iter()
+                                            .any(|selection| selection.type_name == *interface)
+                                        {
+                                            continue;
+                                        }
+                                        // keep each implementation behind its type condition so both field
+                                        // fetching and context rewrites only apply to matching runtime objects
+                                        let items = selections
+                                            .iter()
+                                            .filter(|selection| {
+                                                members.contains(&selection.type_name)
+                                            })
+                                            .map(|selection| {
+                                                SelectionItem::InlineFragment(
+                                                    InlineFragmentSelection {
+                                                        type_condition: selection.type_name.clone(),
+                                                        selections: selection.selection_set.clone(),
+                                                        skip_if: None,
+                                                        include_if: None,
+                                                    },
+                                                )
+                                            })
+                                            .collect::<Vec<_>>();
+                                        if !items.is_empty() {
+                                            selections.push(TypeAwareSelection {
+                                                type_name: interface.clone(),
+                                                selection_set: SelectionSet { items },
+                                            });
+                                        }
+                                    }
+                                    ContextArgument {
+                                        name: argument.name.clone(),
+                                        type_in_graph: argument.type_in_graph.clone(),
+                                        selections,
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+
                     // Parsed once, a union field has an edge per member.
                     let provided = maybe_join_field
                         .and_then(|join_field| {
@@ -833,6 +909,7 @@ impl Graph {
                                     false,
                                     None,
                                     None,
+                                    vec![],
                                     None,
                                 ),
                             );
@@ -853,6 +930,7 @@ impl Graph {
                                     field_definition.field_type.is_list(),
                                     maybe_join_field.cloned(),
                                     requirements.clone(),
+                                    context_arguments.clone(),
                                     overridden_by.clone(),
                                 ),
                             );
@@ -905,6 +983,7 @@ impl Graph {
                             field_definition.field_type.is_list(),
                             maybe_join_field.cloned(),
                             requirements.clone(),
+                            context_arguments,
                             overridden_by.clone(),
                         ),
                     );
@@ -1124,6 +1203,7 @@ impl Graph {
                     field_definition.field_type.is_list(),
                     None,
                     None,
+                    vec![],
                     None,
                 ),
             );

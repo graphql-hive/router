@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use crate::query_planner::planner::plan_nodes::FetchNodePathSegment;
+
 use petgraph::{
     graph::NodeIndex,
     visit::{EdgeRef, NodeRef},
@@ -9,7 +11,9 @@ use tracing::{instrument, trace};
 use crate::query_planner::{
     ast::{
         merge_path::{MergePath, Segment},
-        selection_set::{find_arguments_conflicts, find_selection_set_by_path},
+        selection_set::{
+            find_arguments_conflicts, find_selection_set_by_path, response_keys_conflict,
+        },
     },
     planner::fetch::{
         error::FetchGraphError,
@@ -106,6 +110,10 @@ pub(crate) fn perform_fetch_step_merge(
         source_index.index(),
     );
 
+    target.merge_context_metadata(source);
+    let source_id = source.id;
+    let target_id = target.id;
+
     let source_condition_merged = merge_source_condition_into_non_entity_target(target, source)?;
     if !source_condition_merged {
         target.scope_fetch_conditions_before_merge(source);
@@ -194,6 +202,11 @@ pub(crate) fn perform_fetch_step_merge(
         fetch_graph.connect(parent_index, target_index);
     }
     // 3. Drop other -> child and parent -> other
+    for step in fetch_graph.graph.node_weights_mut() {
+        if step.context_producers.remove(&source_id) {
+            step.context_producers.insert(target_id);
+        }
+    }
     fetch_graph.remove_step(source_index);
 
     Ok(())
@@ -250,7 +263,123 @@ pub fn is_reachable_via_alternative_upstream_path(
     Ok(false)
 }
 
+impl FetchGraph<MultiTypeFetchStep> {
+    pub(crate) fn merge_context_producers(&mut self) -> Result<(), FetchGraphError> {
+        if !self.operation_kind.is_query() {
+            return Ok(());
+        }
+        loop {
+            let producer_ids: HashSet<_> = self
+                .graph
+                .node_weights()
+                .flat_map(|step| step.context_producers.iter().copied())
+                .collect();
+            if producer_ids.is_empty() {
+                return Ok(());
+            }
+            let mut candidate = None;
+            // scan over all step pairs, index steps by service_name if planning time shows up
+            for source_index in self.graph.node_indices() {
+                let source = self.get_step_data(source_index)?;
+                if !producer_ids.contains(&source.id) {
+                    continue;
+                }
+                // dropping incoming edges below is only safe when there's a single upstream dependency
+                if self.parents_of(source_index).count() != 1
+                    || !source.is_entity_call()
+                    || source.context_rewrites.is_some()
+                    || source.input_rewrites.is_some()
+                {
+                    continue;
+                }
+                for target_index in self.graph.node_indices() {
+                    if source_index == target_index {
+                        continue;
+                    }
+                    let target = self.get_step_data(target_index)?;
+                    // cheap checks first, the graph walk goes last
+                    if target.service_name == source.service_name
+                        && target.context_rewrites.is_none()
+                        && target.can_absorb_nested_entity_call(source)
+                        && !target.has_arguments_conflicts_with(source)
+                        && self.is_descendant_of(source_index, target_index)
+                    {
+                        candidate = Some((target_index, source_index));
+                        break;
+                    }
+                }
+                if candidate.is_some() {
+                    break;
+                }
+            }
+            let Some((target, source)) = candidate else {
+                break;
+            };
+            // the target already has every representation field, so the intervening fetches aren't prerequisites
+            let edges: Vec<_> = self
+                .graph
+                .edges_directed(source, petgraph::Direction::Incoming)
+                .map(|edge| edge.id())
+                .collect();
+            for edge in edges {
+                self.graph.remove_edge(edge);
+            }
+            perform_fetch_step_merge(target, source, self, false)?;
+        }
+        Ok(())
+    }
+}
+
 impl FetchStepData<MultiTypeFetchStep> {
+    fn field_levels_between(&self, other: &Self) -> usize {
+        let field_count = |path: &MergePath| {
+            path.inner
+                .iter()
+                .filter(|s| matches!(s, Segment::Field(..)))
+                .count()
+        };
+        field_count(&other.response_path).saturating_sub(field_count(&self.response_path))
+    }
+
+    pub(crate) fn can_merge_context(&self, other: &Self) -> bool {
+        if self.context_producers.contains(&other.id) || other.context_producers.contains(&self.id)
+        {
+            return false;
+        }
+        if self.context_rewrites.is_none() && other.context_rewrites.is_none() {
+            return true;
+        }
+        if !self.is_entity_call() {
+            return false;
+        }
+        let levels = self.field_levels_between(other);
+        other.context_rewrites.as_ref().is_none_or(|rewrites| {
+            rewrites.iter().all(|rewrite| {
+                rewrite
+                    .path
+                    .iter()
+                    .take_while(|s| matches!(s, FetchNodePathSegment::Parent))
+                    .count()
+                    >= levels
+            })
+        })
+    }
+
+    pub(crate) fn merge_context_metadata(&mut self, other: &mut Self) {
+        if let Some(mut rewrites) = other.context_rewrites.take() {
+            let levels = self.field_levels_between(other);
+            for rewrite in &mut rewrites {
+                rewrite.path.drain(..levels);
+            }
+            self.context_rewrites
+                .get_or_insert_default()
+                .extend(rewrites);
+        }
+        self.context_variable_definitions
+            .append(&mut other.context_variable_definitions);
+        self.context_producers.append(&mut other.context_producers);
+    }
+
     pub fn can_merge(
         &self,
         self_index: NodeIndex,
@@ -258,6 +387,10 @@ impl FetchStepData<MultiTypeFetchStep> {
         other: &Self,
         fetch_graph: &FetchGraph<MultiTypeFetchStep>,
     ) -> bool {
+        if !self.can_merge_context(other) {
+            return false;
+        }
+
         if self_index == other_index {
             return false;
         }
@@ -267,10 +400,18 @@ impl FetchStepData<MultiTypeFetchStep> {
         }
 
         // Is `this` FetchStep the only one `other` waits for?
-        let is_only_parent = fetch_graph.parents_of(other_index).count() == 1
+        let is_only_parent = (fetch_graph.parents_of(other_index).count() == 1
             && fetch_graph
                 .parents_of(other_index)
-                .all(|edge| edge.source() == self_index);
+                .all(|edge| edge.source() == self_index))
+            || (other.context_rewrites.is_some()
+                && fetch_graph
+                    .parents_of(other_index)
+                    .any(|edge| edge.source() == self_index)
+                && fetch_graph.parents_of(other_index).all(|edge| {
+                    edge.source() == self_index
+                        || fetch_graph.is_descendant_of(self_index, edge.source())
+                }));
 
         // A step-level condition skips the whole request, so entity calls under different
         // conditions stay apart. A root fetch takes a conditional entity call by putting its
@@ -370,6 +511,22 @@ impl FetchStepData<MultiTypeFetchStep> {
     }
 
     pub fn has_arguments_conflicts_with(&self, other: &Self) -> bool {
+        // same-object outputs can use different context variables even when their
+        // entity inputs match. keep those fetches apart so batching can put each
+        // output under its own alias
+        if self.response_path == other.response_path {
+            let output_conflicts = FetchStepSelections::<MultiTypeFetchStep>::iter_matching_types(
+                &self.output,
+                &other.output,
+                |_, self_selections, other_selections| {
+                    response_keys_conflict(self_selections, other_selections)
+                },
+            );
+            if output_conflicts.iter().any(|(_, conflict)| *conflict) {
+                return true;
+            }
+        }
+
         let input_conflicts = FetchStepSelections::<MultiTypeFetchStep>::iter_matching_types(
             &self.input,
             &other.input,
@@ -464,7 +621,99 @@ mod tests {
             mutation_field_position: None,
             input_rewrites: None,
             output_rewrites: None,
+            context_rewrites: None,
+            context_variable_definitions: Vec::new(),
+            context_producers: Default::default(),
         }
+    }
+
+    #[test]
+    fn contextual_merges_keep_values_upstream_and_rebase_parent_paths() {
+        use crate::query_planner::{
+            ast::operation::VariableDefinition,
+            planner::plan_nodes::{FetchNodePathSegment, KeyRenamer},
+            state::supergraph_state::TypeNode,
+        };
+        let mut graph =
+            FetchGraph::<SingleTypeFetchStep>::new(OperationKind::Query).to_multi_type();
+        let mut producer = entity_step(
+            "a",
+            path(&["user"]),
+            selections(&[("User", "{ id }")]),
+            selections(&[("User", "{ currency }")]),
+        );
+        producer.id = 1;
+        let producer = graph.add_step(producer);
+        let mut parent = entity_step(
+            "b",
+            path(&["user"]),
+            selections(&[("User", "{ id }")]),
+            selections(&[("User", "{ tx { __typename id } }")]),
+        );
+        parent.id = 2;
+        let parent = graph.add_step(parent);
+        let mut consumer = entity_step(
+            "b",
+            path(&["user", "tx"]),
+            selections(&[("Transaction", "{ __typename id }")]),
+            selections(&[("Transaction", "{ amount }")]),
+        );
+        consumer.id = 3;
+        consumer.context_producers.insert(1);
+        consumer.context_rewrites = Some(vec![KeyRenamer {
+            path: vec![
+                FetchNodePathSegment::Parent,
+                FetchNodePathSegment::typename_equals_from_type("User".into()),
+                FetchNodePathSegment::Key("currency".into()),
+            ],
+            rename_key_to: "__context_0".into(),
+        }]);
+        consumer
+            .context_variable_definitions
+            .push(VariableDefinition {
+                name: "__context_0".into(),
+                variable_type: TypeNode::Named("String".into()),
+                default_value: None,
+            });
+        assert!(!graph
+            .get_step_data(producer)
+            .unwrap()
+            .can_merge_context(&consumer));
+        let mut root = graph.get_step_data(parent).unwrap().clone();
+        root.kind = FetchStepKind::Root;
+        assert!(!root.can_merge_context(&consumer));
+        let mut too_high = graph.get_step_data(parent).unwrap().clone();
+        too_high.response_path = MergePath::default();
+        assert!(!too_high.can_merge_context(&consumer));
+        let consumer = graph.add_step(consumer);
+        graph.connect(producer, parent);
+        graph.connect(producer, consumer);
+        graph.connect(parent, consumer);
+        assert!(graph.get_step_data(parent).unwrap().can_merge(
+            parent,
+            consumer,
+            graph.get_step_data(consumer).unwrap(),
+            &graph
+        ));
+        perform_fetch_step_merge(parent, consumer, &mut graph, false).unwrap();
+        let merged = graph.get_step_data(parent).unwrap();
+        assert_eq!(
+            merged.context_rewrites.as_ref().unwrap()[0].path,
+            vec![
+                FetchNodePathSegment::typename_equals_from_type("User".into()),
+                FetchNodePathSegment::Key("currency".into())
+            ]
+        );
+        assert_eq!(merged.context_variable_definitions.len(), 1);
+        assert_eq!(merged.context_producers, [1].into());
+        let mut target = graph.get_step_data(producer).unwrap().clone();
+        target.id = 4;
+        let target = graph.add_step(target);
+        perform_fetch_step_merge(target, producer, &mut graph, false).unwrap();
+        assert_eq!(
+            graph.get_step_data(parent).unwrap().context_producers,
+            [4].into()
+        );
     }
 
     /// A parent that fetches two types - what `batch_multi_type` builds - must not pull in a

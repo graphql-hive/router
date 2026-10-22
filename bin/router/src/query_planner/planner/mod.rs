@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use error::QueryPlanError;
 use fetch::{error::FetchGraphError, fetch_graph::build_fetch_graph_from_query_tree};
@@ -31,6 +31,25 @@ pub mod walker;
 #[derive(Debug, Clone, Default)]
 pub struct QueryPlannerOptions {
     pub experimental_abstract_type_folding: bool,
+    /// The most aliased `_entities` fields one entity request to a subgraph may carry.
+    /// `None` means no limit: batches are never split, and all groups of contextual argument
+    /// values go in one request.
+    ///
+    /// Values in `subgraph_max_aliases_per_request` take precedence for their subgraph.
+    pub max_aliases_per_request: Option<usize>,
+    /// Per-subgraph overrides of `max_aliases_per_request`, keyed by subgraph name.
+    pub subgraph_max_aliases_per_request: HashMap<String, usize>,
+}
+
+impl QueryPlannerOptions {
+    /// Returns the alias limit for the given subgraph, never less than 1. `None` when unlimited.
+    pub fn max_aliases_per_request(&self, subgraph_name: &str) -> Option<usize> {
+        self.subgraph_max_aliases_per_request
+            .get(subgraph_name)
+            .copied()
+            .or(self.max_aliases_per_request)
+            .map(|max| max.max(1))
+    }
 }
 
 pub struct Planner {
@@ -107,8 +126,12 @@ impl Planner {
             cancellation_token,
         )?;
         add_variables_to_fetch_steps(&mut fetch_graph, &normalized_operation.variable_definitions)?;
-        let query_plan =
-            build_query_plan_from_fetch_graph(fetch_graph, &self.supergraph, cancellation_token)?;
+        let query_plan = build_query_plan_from_fetch_graph(
+            fetch_graph,
+            &self.supergraph,
+            &self.options,
+            cancellation_token,
+        )?;
 
         Ok(query_plan)
     }
@@ -118,28 +141,31 @@ pub fn add_variables_to_fetch_steps(
     graph: &mut FetchGraph<MultiTypeFetchStep>,
     variables: &Option<Vec<VariableDefinition>>,
 ) -> Result<(), PlannerError> {
-    if let Some(variables) = variables {
-        let mut nodes_to_patch: Vec<(NodeIndex, Vec<VariableDefinition>)> = Vec::new();
-
-        for (node_index, node_weight) in graph.all_nodes() {
-            if let Some(usage) = &node_weight.variable_usages {
-                let relevant_variables = usage
+    let indices: Vec<NodeIndex> = graph.step_indices().collect();
+    for node_index in indices {
+        let step = graph.get_step_data_mut(node_index)?;
+        if !step.context_variable_definitions.is_empty() {
+            step.variable_usages.get_or_insert_default().extend(
+                step.context_variable_definitions
                     .iter()
-                    .filter_map(|used_var_name| {
-                        variables
-                            .iter()
-                            .find(|op_var| op_var.name == *used_var_name)
-                    })
-                    .cloned()
-                    .collect::<Vec<VariableDefinition>>();
-
-                nodes_to_patch.push((node_index, relevant_variables));
-            }
+                    .map(|variable| variable.name.clone()),
+            );
         }
-
-        for (node_index, relevant_variables) in nodes_to_patch {
-            let step = graph.get_step_data_mut(node_index)?;
-            step.variable_definitions = Some(relevant_variables);
+        if let Some(usage) = &step.variable_usages {
+            let mut relevant_variables = usage
+                .iter()
+                .filter_map(|used_var_name| {
+                    variables
+                        .iter()
+                        .flatten()
+                        .find(|op_var| op_var.name == *used_var_name)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            relevant_variables.extend(step.context_variable_definitions.iter().cloned());
+            if variables.is_some() || !relevant_variables.is_empty() {
+                step.variable_definitions = Some(relevant_variables);
+            }
         }
     }
 

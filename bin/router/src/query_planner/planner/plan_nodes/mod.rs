@@ -3,13 +3,17 @@ use crate::query_planner::{
     ast::{
         merge_path::Condition,
         minification::minify_operation,
-        operation::{OperationDefinition, PlanningFetchOperation, VariableDefinition},
+        operation::{split_group, OperationDefinition, PlanningFetchOperation, VariableDefinition},
         selection_item::SelectionItem,
         selection_set::{FieldSelection, SelectionSet},
         value::Value,
     },
-    planner::fetch::{
-        fetch_step_data::FetchStepData, selections::FetchStepSelections, state::MultiTypeFetchStep,
+    planner::{
+        fetch::{
+            fetch_step_data::FetchStepData, selections::FetchStepSelections,
+            state::MultiTypeFetchStep,
+        },
+        QueryPlannerOptions,
     },
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
     utils::pretty_display::{get_indent, PrettyDisplay},
@@ -152,6 +156,58 @@ pub struct FetchNode<S: PlanState = Executable> {
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_rewrites: Option<Vec<FetchRewrite>>,
+    #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<Box<FetchContext>>,
+}
+
+/// What a fetch with `@fromContext` arguments needs at execution time.
+/// Boxed in plans, so all the other fetches pay only a pointer for it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FetchContext {
+    #[serde(
+        rename = "contextVariables",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub variables: Vec<String>,
+    #[serde(rename = "contextRewrites", skip_serializing_if = "Option::is_none")]
+    pub rewrites: Option<Vec<KeyRenamer>>,
+}
+
+impl FetchContext {
+    /// `None` when there's nothing contextual, so plain fetches don't allocate.
+    pub fn new(variables: Vec<String>, rewrites: Option<Vec<KeyRenamer>>) -> Option<Box<Self>> {
+        (!variables.is_empty() || rewrites.is_some()).then(|| {
+            Box::new(Self {
+                variables,
+                rewrites,
+            })
+        })
+    }
+
+    pub fn variables(context: &Option<Box<Self>>) -> &[String] {
+        context.as_ref().map_or(&[], |context| &context.variables)
+    }
+
+    pub fn rewrites(context: &Option<Box<Self>>) -> Option<&[KeyRenamer]> {
+        context.as_ref()?.rewrites.as_deref()
+    }
+
+    /// The variables every group of contextual argument values sends its own value for: the
+    /// context variables, then the rewrite targets that aren't one of them. The planner and the
+    /// executor both read it from here, so they always agree.
+    pub fn group_variables(context: &Option<Box<Self>>) -> Vec<&str> {
+        let mut names: Vec<&str> = Self::variables(context)
+            .iter()
+            .map(String::as_str)
+            .collect();
+        for rewrite in Self::rewrites(context).unwrap_or_default() {
+            if !names.contains(&rewrite.rename_key_to.as_str()) {
+                names.push(&rewrite.rename_key_to);
+            }
+        }
+        names
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -178,9 +234,23 @@ pub struct CustomScalarPaths {
     pub children: BTreeMap<String, CustomScalarPaths>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub terminal: bool,
+    /// Set on the paths of a context-aliased request, where every key here has a group number
+    /// added, so `_entities_3` reads the paths of `_entities`
+    #[serde(skip)]
+    pub group_suffixed: bool,
 }
 
 impl CustomScalarPaths {
+    /// The paths under `key`.
+    pub fn child(&self, key: &str) -> Option<&Self> {
+        let key = if self.group_suffixed {
+            split_group(key)?.0
+        } else {
+            key
+        };
+        self.children.get(key)
+    }
+
     pub fn insert_path<I, S>(&mut self, path: I)
     where
         I: IntoIterator<Item = S>,
@@ -249,7 +319,11 @@ impl CustomScalarPathState {
         }
 
         let terminal = self.custom_scalar_seen && !self.standard_scalar_seen && children.is_empty();
-        let paths = CustomScalarPaths { children, terminal };
+        let paths = CustomScalarPaths {
+            children,
+            terminal,
+            group_suffixed: false,
+        };
 
         (!paths.is_empty()).then_some(paths)
     }
@@ -385,6 +459,8 @@ pub struct EntityBatchAlias {
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_rewrites: Option<Vec<FetchRewrite>>,
+    #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<Box<FetchContext>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -462,6 +538,7 @@ pub struct KeyRenamer {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FetchNodePathSegment {
+    Parent,
     Key(String),
     TypenameEquals(BTreeSet<String>),
 }
@@ -643,25 +720,57 @@ impl FetchNode<Planning> {
     pub fn from_fetch_step(
         step: &FetchStepData<MultiTypeFetchStep>,
         supergraph: &SupergraphState,
+        options: &QueryPlannerOptions,
     ) -> Self {
         match step.is_entity_call() {
             true => {
                 let planner_requires = create_input_selection_set(&step.input);
+                let mut operation = create_output_operation(step, supergraph);
+                let custom_scalar_paths = custom_scalar_paths_from_fetch_output(
+                    &step.output,
+                    supergraph,
+                    Some("_entities"),
+                );
+                let context = FetchContext::new(
+                    step.context_variable_definitions
+                        .iter()
+                        .map(|var| var.name.clone())
+                        .collect(),
+                    step.context_rewrites.clone(),
+                );
+                if !step.context_variable_definitions.is_empty()
+                    && !step
+                        .context_variable_definitions
+                        .iter()
+                        .any(|variable| variable.variable_type.is_non_null())
+                {
+                    // one alias per group of contextual argument values, each with its own
+                    // representations and context values
+                    let group_variables = FetchContext::group_variables(&context)
+                        .into_iter()
+                        .chain(["representations"])
+                        .map(str::to_string)
+                        .collect();
+                    operation.operation.set_max_context_groups(
+                        options
+                            .max_aliases_per_request(&step.service_name.0)
+                            .unwrap_or(usize::MAX),
+                        group_variables,
+                        custom_scalar_paths.as_ref(),
+                    );
+                }
                 FetchNode {
                     id: step.id,
                     service_name: step.service_name.0.clone(),
                     variable_usages: step.variable_usages.clone(),
                     operation_kind: Some(OperationKind::Query),
-                    operation: create_output_operation(step, supergraph),
-                    custom_scalar_paths: custom_scalar_paths_from_fetch_output(
-                        &step.output,
-                        supergraph,
-                        Some("_entities"),
-                    ),
+                    operation,
+                    custom_scalar_paths,
                     requires: Some(RequiresSelectionSet::from(&planner_requires)),
                     planner_requires: Some(Box::new(planner_requires)),
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),
+                    context,
                 }
             }
             false => {
@@ -690,6 +799,13 @@ impl FetchNode<Planning> {
                     requires: None,
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),
+                    context: FetchContext::new(
+                        step.context_variable_definitions
+                            .iter()
+                            .map(|var| var.name.clone())
+                            .collect(),
+                        step.context_rewrites.clone(),
+                    ),
                 }
             }
         }
@@ -700,8 +816,9 @@ impl PlanNode<Planning> {
     pub fn from_fetch_step(
         step: &FetchStepData<MultiTypeFetchStep>,
         supergraph: &SupergraphState,
+        options: &QueryPlannerOptions,
     ) -> Self {
-        let fetch = FetchNode::from_fetch_step(step, supergraph);
+        let fetch = FetchNode::from_fetch_step(step, supergraph, options);
 
         let node = if !step.response_path.is_empty() {
             PlanNode::Flatten(FlattenNode {
@@ -1023,12 +1140,12 @@ mod stored_size_tests {
         for (name, actual, expected) in [
             ("PlanNode", size_of::<PlanNode>(), 40),
             ("ConditionNode", size_of::<ConditionNode>(), 40),
-            ("FetchNode", size_of::<FetchNode>(), 224),
-            ("BatchFetchNode", size_of::<BatchFetchNode>(), 160),
+            ("FetchNode", size_of::<FetchNode>(), 240),
+            ("BatchFetchNode", size_of::<BatchFetchNode>(), 168),
             (
                 "SubgraphFetchOperation",
                 size_of::<crate::query_planner::ast::operation::SubgraphFetchOperation>(),
-                32,
+                40,
             ),
         ] {
             assert_eq!(

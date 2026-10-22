@@ -46,6 +46,8 @@ pub enum FetchGraphError {
     ExpectedSubgraphType,
     #[error("Expected @requires")]
     MissingRequires,
+    #[error("@fromContext on a field selected by @requires or another @fromContext selection is not supported")]
+    UnsupportedContextInRequirement,
     #[error(transparent)]
     SelectionSetManipulationError(#[from] FetchStepSelectionsError),
     #[error(transparent)]

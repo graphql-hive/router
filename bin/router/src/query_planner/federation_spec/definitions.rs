@@ -45,3 +45,21 @@ pub struct JoinDirectiveArgumentsScalar {}
 impl JoinDirectiveArgumentsScalar {
     pub const NAME: &str = "join__DirectiveArguments";
 }
+
+pub struct ContextFieldValueScalar {}
+
+impl ContextFieldValueScalar {
+    pub const NAME: &str = "context__ContextFieldValue";
+}
+
+pub struct JoinContextArgumentInput {}
+
+impl JoinContextArgumentInput {
+    pub const NAME: &str = "join__ContextArgument";
+}
+
+pub struct JoinFieldValueScalar {}
+
+impl JoinFieldValueScalar {
+    pub const NAME: &str = "join__FieldValue";
+}

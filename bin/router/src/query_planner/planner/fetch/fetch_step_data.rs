@@ -13,7 +13,7 @@ use crate::query_planner::{
             selections::FetchStepSelections,
             state::{MultiTypeFetchStep, SingleTypeFetchStep},
         },
-        plan_nodes::FetchRewrite,
+        plan_nodes::{FetchRewrite, KeyRenamer},
         tree::query_tree_node::MutationFieldPosition,
     },
     state::supergraph_state::{OperationKind, SubgraphName},
@@ -45,6 +45,9 @@ pub struct FetchStepData<State> {
     pub mutation_field_position: MutationFieldPosition,
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     pub output_rewrites: Option<Vec<FetchRewrite>>,
+    pub context_rewrites: Option<Vec<KeyRenamer>>,
+    pub context_variable_definitions: Vec<VariableDefinition>,
+    pub context_producers: BTreeSet<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -229,6 +232,9 @@ impl FetchStepData<SingleTypeFetchStep> {
             mutation_field_position: self.mutation_field_position,
             input_rewrites: self.input_rewrites,
             output_rewrites: self.output_rewrites,
+            context_rewrites: self.context_rewrites,
+            context_variable_definitions: self.context_variable_definitions,
+            context_producers: self.context_producers,
         }
     }
 }

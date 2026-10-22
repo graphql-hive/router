@@ -150,58 +150,64 @@ fn walk_mut<'a, Callback>(
     }
 }
 
-pub fn traverse_and_callback<'a, Callback>(
-    current_data: &'a Value<'a>,
-    remaining_path: &'a [PathSegment],
-    possible_types: &'a PossibleTypes,
-    callback: &mut Callback,
-) where
-    Callback: FnMut(&'a Value<'a>),
-{
-    if remaining_path.is_empty() {
-        if let Value::Array(arr) = current_data {
-            for item in arr.iter() {
-                callback(item);
+/// Calls `callback` for every value at `path`, along with the stack of objects that hold the
+/// fields walked to get there (nearest last).
+pub fn traverse_and_callback<'a, 'v>(
+    data: &'a Value<'v>,
+    path: &[PathSegment],
+    possible_types: &PossibleTypes,
+    callback: &mut impl FnMut(&'a Value<'v>, &[&'a Value<'v>]),
+) {
+    walk(data, path, possible_types, &mut Vec::new(), callback);
+}
+
+fn walk<'a, 'v>(
+    data: &'a Value<'v>,
+    path: &[PathSegment],
+    possible_types: &PossibleTypes,
+    objects: &mut Vec<&'a Value<'v>>,
+    callback: &mut impl FnMut(&'a Value<'v>, &[&'a Value<'v>]),
+) {
+    if path.is_empty() {
+        if let Value::Array(items) = data {
+            for item in items {
+                callback(item, objects);
             }
         } else {
-            callback(current_data);
+            callback(data, objects);
         }
         return;
     }
-
-    let Some((first, rest_of_path)) = remaining_path.split_first() else {
-        return;
-    };
-
-    match first {
+    match &path[0] {
+        PathSegment::Field(key) => {
+            if let Value::Object(object) = data {
+                if let Some(child) = Value::object_get(object, key.as_ref()) {
+                    objects.push(data);
+                    walk(child, &path[1..], possible_types, objects, callback);
+                    objects.pop();
+                }
+            }
+        }
         PathSegment::List => {
-            if let Value::Array(arr) = current_data {
-                for item in arr.iter() {
-                    traverse_and_callback(item, rest_of_path, possible_types, callback);
+            if let Value::Array(items) = data {
+                for item in items {
+                    walk(item, &path[1..], possible_types, objects, callback);
                 }
             }
         }
-        PathSegment::Field(field_name) => {
-            if let Value::Object(map) = current_data {
-                let field_name: &str = field_name.as_ref();
-                if let Some(next_data) = Value::object_get(map, field_name) {
-                    traverse_and_callback(next_data, rest_of_path, possible_types, callback);
+        PathSegment::TypeCondition(condition) => {
+            if let Value::Object(object) = data {
+                if Value::object_get(object, TYPENAME_FIELD_NAME)
+                    .and_then(Value::as_str)
+                    .is_none_or(|name| {
+                        entity_satisfies_any_type_condition(possible_types, name, condition)
+                    })
+                {
+                    walk(data, &path[1..], possible_types, objects, callback);
                 }
-            }
-        }
-        PathSegment::TypeCondition(type_condition) => {
-            if let Value::Object(obj) = current_data {
-                let maybe_type_name =
-                    Value::object_get(obj, TYPENAME_FIELD_NAME).and_then(Value::as_str);
-
-                if maybe_type_name.is_none_or(|type_name| {
-                    entity_satisfies_any_type_condition(possible_types, type_name, type_condition)
-                }) {
-                    traverse_and_callback(current_data, rest_of_path, possible_types, callback);
-                }
-            } else if let Value::Array(arr) = current_data {
-                for item in arr.iter() {
-                    traverse_and_callback(item, remaining_path, possible_types, callback);
+            } else if let Value::Array(items) = data {
+                for item in items {
+                    walk(item, path, possible_types, objects, callback);
                 }
             }
         }
@@ -411,9 +417,14 @@ mod tests {
         let path = path(&["|Book|User"]);
         let mut matched = false;
 
-        super::traverse_and_callback(&data, path.as_slice(), &Default::default(), &mut |_value| {
-            matched = true;
-        });
+        super::traverse_and_callback(
+            &data,
+            path.as_slice(),
+            &Default::default(),
+            &mut |_value, _| {
+                matched = true;
+            },
+        );
 
         assert!(matched);
     }
@@ -424,9 +435,14 @@ mod tests {
         let path = path(&["|Book|User"]);
         let mut matched = false;
 
-        super::traverse_and_callback(&data, path.as_slice(), &Default::default(), &mut |_value| {
-            matched = true;
-        });
+        super::traverse_and_callback(
+            &data,
+            path.as_slice(),
+            &Default::default(),
+            &mut |_value, _| {
+                matched = true;
+            },
+        );
 
         assert!(!matched);
     }

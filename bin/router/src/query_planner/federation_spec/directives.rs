@@ -1,6 +1,7 @@
 pub use crate::query_planner::federation_spec::authorization::AuthenticatedDirective;
 pub use crate::query_planner::federation_spec::authorization::PolicyDirective;
 pub use crate::query_planner::federation_spec::authorization::RequiresScopesDirective;
+pub use crate::query_planner::federation_spec::context::ContextDirective;
 pub use crate::query_planner::federation_spec::directive_trait::FederationDirective;
 pub use crate::query_planner::federation_spec::inacessible::InaccessibleDirective;
 pub use crate::query_planner::federation_spec::join_enum_value::JoinEnumValueDirective;

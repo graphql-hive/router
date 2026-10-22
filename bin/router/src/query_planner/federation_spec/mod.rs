@@ -1,7 +1,7 @@
 use directives::JoinFieldDirective;
 use graphql_tools::parser::{
     parse_query,
-    query::{Definition, OperationDefinition, Selection, SelectionSet},
+    query::{Definition, OperationDefinition, Selection, SelectionSet, TypeCondition},
 };
 
 use crate::query_planner::{
@@ -16,6 +16,7 @@ pub(crate) mod definitions;
 pub(crate) mod directives;
 
 pub mod authorization;
+pub(crate) mod context;
 pub mod demand_control;
 pub(crate) mod directive_trait;
 pub(crate) mod inacessible;
@@ -113,6 +114,51 @@ impl FederationRules {
         }
     }
 
+    pub fn parse_context_selection(
+        supergraph: &SupergraphState,
+        subgraph_name: &String,
+        type_name: &str,
+        selection: &str,
+    ) -> TypeAwareSelection {
+        let selection = selection.trim();
+        let fields = if let Some(inner) = selection.strip_prefix('{') {
+            inner
+                .strip_suffix('}')
+                .expect("context selection must end with '}'")
+        } else {
+            selection
+        };
+        let mut selection_set = normalize_fields_argument_value_mut(
+            supergraph,
+            type_name,
+            subgraph_name,
+            &fields.to_string(),
+        );
+        selection_set.items.retain(|selection| {
+            let Selection::InlineFragment(fragment) = selection else {
+                return true;
+            };
+            let Some(TypeCondition::On(condition)) = &fragment.type_condition else {
+                return true;
+            };
+            if condition == type_name {
+                return true;
+            }
+            match &supergraph.definitions[type_name] {
+                SupergraphDefinition::Object(_) => false,
+                SupergraphDefinition::Interface(_) => supergraph
+                    .interface_members(type_name)
+                    .is_some_and(|members| members.contains(condition)),
+                SupergraphDefinition::Union(union) => union.types.contains(condition),
+                _ => false,
+            }
+        });
+        TypeAwareSelection {
+            type_name: type_name.to_string(),
+            selection_set: selection_set.into(),
+        }
+    }
+
     pub fn parse_provides(
         supergraph: &SupergraphState,
         join_field: &JoinFieldDirective,
@@ -197,5 +243,154 @@ impl FederationRules {
         }
 
         (false, None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::query_planner::{
+        ast::selection_item::SelectionItem, state::supergraph_state::SupergraphState,
+        utils::parsing::parse_schema,
+    };
+
+    use super::FederationRules;
+
+    fn context_supergraph() -> SupergraphState {
+        SupergraphState::new(&parse_schema(
+            r#"
+            type Query @join__type(graph: SUBGRAPH) {
+                a: A
+            }
+            interface Node @join__type(graph: SUBGRAPH) @context(name: "subgraph__shared") {
+                id: ID!
+            }
+            type A implements Node
+                @join__type(graph: SUBGRAPH)
+                @join__implements(graph: SUBGRAPH, interface: "Node")
+                @context(name: "subgraph__shared")
+                @context(name: "subgraph__shared")
+                @context(name: "subgraph__a") {
+                id: ID!
+                child: Child
+            }
+            type Child @join__type(graph: SUBGRAPH) {
+                code: String
+            }
+            type B implements Node
+                @join__type(graph: SUBGRAPH)
+                @join__implements(graph: SUBGRAPH, interface: "Node") {
+                id: ID!
+                other: String
+            }
+            type C @join__type(graph: SUBGRAPH) {
+                third: String
+            }
+            union Pair
+                @join__type(graph: SUBGRAPH)
+                @join__unionMember(graph: SUBGRAPH, member: "A")
+                @join__unionMember(graph: SUBGRAPH, member: "B")
+                @context(name: "subgraph__shared") = A | B
+            "#,
+        ))
+    }
+
+    #[test]
+    fn collects_contexts_on_objects_interfaces_and_unions() {
+        let supergraph = context_supergraph();
+        assert_eq!(
+            supergraph.contexts["subgraph__shared"],
+            ["Node", "A", "Pair"]
+        );
+        assert_eq!(supergraph.contexts["subgraph__a"], ["A"]);
+        assert_eq!(supergraph.contexts.len(), 2);
+    }
+
+    #[test]
+    fn parses_context_selection_with_outer_braces() {
+        let supergraph = context_supergraph();
+        let subgraph = "SUBGRAPH".to_string();
+        let parsed = FederationRules::parse_context_selection(
+            &supergraph,
+            &subgraph,
+            "A",
+            " \n { child { code } } \n ",
+        );
+        assert_eq!(
+            parsed,
+            FederationRules::parse_key(&supergraph, &subgraph, "A", &"child { code }".to_string())
+        );
+    }
+
+    #[test]
+    fn drops_context_branches_for_other_object_types() {
+        let supergraph = context_supergraph();
+        let subgraph = "SUBGRAPH".to_string();
+        let parsed = FederationRules::parse_context_selection(
+            &supergraph,
+            &subgraph,
+            "A",
+            " ... on A { child { code } } ... on B { other }",
+        );
+        assert_eq!(
+            parsed,
+            FederationRules::parse_key(&supergraph, &subgraph, "A", &"child { code }".to_string())
+        );
+        assert!(FederationRules::parse_context_selection(
+            &supergraph,
+            &subgraph,
+            "A",
+            " ... on B { other }",
+        )
+        .selection_set
+        .is_empty());
+    }
+
+    #[test]
+    fn drops_context_branches_outside_interface_and_union_members() {
+        let supergraph = context_supergraph();
+        let subgraph = "SUBGRAPH".to_string();
+        for type_name in ["Node", "Pair"] {
+            let parsed = FederationRules::parse_context_selection(
+                &supergraph,
+                &subgraph,
+                type_name,
+                " ... on A { child { code } } ... on B { other } ... on C { third }",
+            );
+            let conditions: Vec<&str> = parsed
+                .selection_set
+                .items
+                .iter()
+                .map(|item| match item {
+                    SelectionItem::InlineFragment(fragment) => fragment.type_condition.as_str(),
+                    _ => panic!("expected a type-conditioned selection"),
+                })
+                .collect();
+            assert_eq!(conditions, ["A", "B"]);
+        }
+    }
+
+    #[test]
+    fn normalizes_abstract_context_type_conditions() {
+        let supergraph = context_supergraph();
+        let subgraph = "SUBGRAPH".to_string();
+        let parsed = FederationRules::parse_context_selection(
+            &supergraph,
+            &subgraph,
+            "A",
+            " ... on Node { id }",
+        );
+        assert_eq!(parsed.type_name, "A");
+        assert_eq!(parsed.selection_set.items.len(), 1);
+        match &parsed.selection_set.items[0] {
+            SelectionItem::InlineFragment(fragment) => {
+                assert_eq!(fragment.type_condition, "A");
+                assert_eq!(
+                    fragment.selections,
+                    FederationRules::parse_key(&supergraph, &subgraph, "A", &"id".to_string())
+                        .selection_set
+                );
+            }
+            _ => panic!("expected a type-conditioned selection"),
+        }
     }
 }

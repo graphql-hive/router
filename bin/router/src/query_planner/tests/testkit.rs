@@ -60,8 +60,22 @@ pub fn build_query_plan(
     override_context: PlannerOverrideContext,
     options: QueryPlannerOptions,
 ) -> Result<QueryPlan, Box<dyn Error>> {
+    build_query_plan_from_sdl(
+        &read_supergraph(fixture_path),
+        query,
+        override_context,
+        options,
+    )
+}
+
+pub fn build_query_plan_from_sdl(
+    supergraph_sdl: &str,
+    query: query_ast::Document<'static, String>,
+    override_context: PlannerOverrideContext,
+    options: QueryPlannerOptions,
+) -> Result<QueryPlan, Box<dyn Error>> {
     let cancellation_token = CancellationToken::new();
-    let schema = parse_schema(&read_supergraph(fixture_path));
+    let schema = parse_schema(supergraph_sdl);
     let supergraph_state = SupergraphState::new(&schema);
     let graph = Graph::graph_from_supergraph_state(&supergraph_state)?;
     let document = normalize_operation(&supergraph_state, &query, None)?;
@@ -85,8 +99,12 @@ pub fn build_query_plan(
     )?;
     add_variables_to_fetch_steps(&mut fetch_graph, &operation.variable_definitions)?;
 
-    let plan =
-        build_query_plan_from_fetch_graph(fetch_graph, &supergraph_state, &cancellation_token)?;
+    let plan = build_query_plan_from_fetch_graph(
+        fetch_graph,
+        &supergraph_state,
+        &options,
+        &cancellation_token,
+    )?;
 
     Ok(plan)
 }

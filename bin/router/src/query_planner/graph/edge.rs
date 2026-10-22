@@ -9,7 +9,7 @@ use petgraph::graph::EdgeReference as GraphEdgeReference;
 use crate::query_planner::{
     ast::type_aware_selection::TypeAwareSelection,
     federation_spec::directives::JoinFieldDirective,
-    state::supergraph_state::{OperationKind, SubgraphName},
+    state::supergraph_state::{OperationKind, SubgraphName, TypeNode},
 };
 
 #[derive(Debug, Clone)]
@@ -30,6 +30,14 @@ pub struct InterfaceObjectTypeMove {
     pub requirements: TypeAwareSelection,
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub struct ContextArgument {
+    pub name: String,
+    pub type_in_graph: TypeNode,
+    /// The selection parsed once for each type that declares this context.
+    pub selections: Vec<TypeAwareSelection>,
+}
+
 /// Represent a simple file move
 #[derive(Debug, PartialEq, Clone)]
 pub struct FieldMove {
@@ -39,6 +47,7 @@ pub struct FieldMove {
     pub is_list: bool,
     pub join_field: Option<JoinFieldDirective>,
     pub requirements: Option<TypeAwareSelection>,
+    pub context_arguments: Vec<ContextArgument>,
     pub override_from: Option<String>,
     pub override_label: Option<OverrideLabel>,
     pub overridden_by: Option<(String, Option<OverrideLabel>)>,
@@ -210,6 +219,7 @@ impl Edge {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_field_move(
         name: String,
         type_name: String,
@@ -217,6 +227,7 @@ impl Edge {
         is_list: bool,
         join_field: Option<JoinFieldDirective>,
         requirements: Option<TypeAwareSelection>,
+        context_arguments: Vec<ContextArgument>,
         overridden_by: Option<(String, Option<OverrideLabel>)>,
     ) -> Self {
         let override_from = join_field.as_ref().and_then(|jf| jf.override_value.clone());
@@ -229,6 +240,7 @@ impl Edge {
             is_list,
             join_field,
             requirements,
+            context_arguments,
             override_from,
             override_label,
             overridden_by,
@@ -276,6 +288,9 @@ impl Edge {
             Some(selection) => selection.selection_set.cost(),
             None => 0,
         };
+
+        // context cost depends on the matched ancestor, so pathfinder costs the resolved
+        // selection instead of charging every possible declaring type here.
 
         move_cost + requirement_cost
     }
