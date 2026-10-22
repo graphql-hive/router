@@ -1,9 +1,6 @@
 use crate::executor::response::value::Value;
 
-pub fn deep_merge<'target, 'source: 'target>(
-    target: &mut Value<'target>,
-    source: Value<'source>,
-) {
+pub fn deep_merge<'target, 'source: 'target>(target: &mut Value<'target>, source: Value<'source>) {
     deep_merge_internal(target, source)
 }
 

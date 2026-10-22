@@ -28,7 +28,7 @@ fn hash_headers<H: Hasher>(headers: &HeaderMap, state: &mut H) {
     for name in names {
         name.hash(state);
         if unique_names {
-            (1 as usize).hash(state);
+            1_usize.hash(state);
             headers
                 .get(name)
                 .expect("a header key always has a value")

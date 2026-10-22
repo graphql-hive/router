@@ -153,7 +153,11 @@ mod tests {
         let copy_ptr = body.as_ptr();
         body.advance_to(1000);
         assert_eq!(&body[..], &data[2000..]);
-        assert_eq!(body.as_ptr(), copy_ptr.wrapping_add(1000), "copied only once");
+        assert_eq!(
+            body.as_ptr(),
+            copy_ptr.wrapping_add(1000),
+            "copied only once"
+        );
     }
 
     #[test]
