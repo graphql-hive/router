@@ -1,9 +1,6 @@
 use std::{
     hash::{Hash, Hasher},
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc, OnceLock,
-    },
+    sync::Arc,
 };
 
 use ahash::{HashMap as AHashMap, HashMapExt};
@@ -313,15 +310,9 @@ struct AliasedRequest {
 
 /// Keeps the [`AliasedRequest`]s of one execution around until it's done, since the subgraph
 /// request and the jobs borrow from them. They're written per request, so they're dropped with
-/// it instead of piling up in the plan cache.
-///
-/// Append-only, so nothing it hands out ever moves. Bucket `b` holds `2^b` requests and is
-/// allocated when the first one lands in it, so a push goes straight to its slot.
+/// it instead of piling up in the plan cache. Append-only, so nothing it hands out ever moves.
 #[derive(Default)]
-pub struct AliasedRequests {
-    len: AtomicUsize,
-    buckets: [OnceLock<Box<[OnceLock<AliasedRequest>]>>; 32],
-}
+pub struct AliasedRequests(boxcar::Vec<AliasedRequest>);
 
 impl AliasedRequests {
     /// Writes out a request for every group in `groups` (the variable values of each group, in
@@ -346,10 +337,10 @@ impl AliasedRequests {
                 values.push(value);
             }
         }
-        let request = self.insert(AliasedRequest {
+        let request = &self.0[self.0.push(AliasedRequest {
             operation: template.operation(count),
             variable_names,
-        });
+        })];
         let variables = request
             .variable_names
             .iter()
@@ -357,16 +348,6 @@ impl AliasedRequests {
             .zip(values)
             .collect();
         (&request.operation, variables)
-    }
-
-    fn insert(&self, request: AliasedRequest) -> &AliasedRequest {
-        // 1-based, so request `i` sits in bucket `ilog2(i)`
-        let index = self.len.fetch_add(1, Ordering::Relaxed) + 1;
-        let bucket = index.ilog2() as usize;
-        let slots = self.buckets[bucket]
-            .get_or_init(|| (0..1usize << bucket).map(|_| OnceLock::new()).collect());
-        // every index is handed out once, so the slot is always empty
-        slots[index - (1 << bucket)].get_or_init(|| request)
     }
 }
 
@@ -861,7 +842,7 @@ mod tests {
         operation.set_max_context_groups(usize::MAX, vec!["representations".to_string()], None);
         let template = operation.context_alias_template().unwrap();
 
-        // enough to fill a few buckets, each with its own group count
+        // a bunch of requests, each with its own group count
         let store = AliasedRequests::default();
         let requests: Vec<_> = (0..100)
             .map(|i| {
