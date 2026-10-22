@@ -185,7 +185,7 @@ impl ContextAliasTemplate {
 }
 
 /// Splits a name like `c_12` into `c` and `12`.
-fn split_group(name: &str) -> Option<(&str, usize)> {
+pub(crate) fn split_group(name: &str) -> Option<(&str, usize)> {
     let (name, group) = name.rsplit_once('_')?;
     if group.is_empty() || !group.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;

@@ -3,7 +3,7 @@ use crate::query_planner::{
     ast::{
         merge_path::Condition,
         minification::minify_operation,
-        operation::{OperationDefinition, PlanningFetchOperation, VariableDefinition},
+        operation::{split_group, OperationDefinition, PlanningFetchOperation, VariableDefinition},
         selection_item::SelectionItem,
         selection_set::{FieldSelection, SelectionSet},
         value::Value,
@@ -244,7 +244,7 @@ impl CustomScalarPaths {
     /// The paths under `key`.
     pub fn child(&self, key: &str) -> Option<&Self> {
         let key = if self.group_suffixed {
-            key.rsplit_once('_')?.0
+            split_group(key)?.0
         } else {
             key
         };
