@@ -1407,6 +1407,15 @@ impl<'exec> Executor<'exec> {
                                 }
                             }
 
+                            let mut remaining_uses = vec![0; entities.len()];
+                            for hash in representation_hashes.iter().flatten() {
+                                if let Some(entity_index) = representation_hash_to_index.get(hash) {
+                                    if let Some(remaining) = remaining_uses.get_mut(*entity_index) {
+                                        *remaining += 1;
+                                    }
+                                }
+                            }
+
                             let mut index = 0;
                             let normalized_path = flatten_node_path.as_slice();
                             // If there is an error in the response, then collect the paths for normalizing the error
@@ -1441,12 +1450,24 @@ impl<'exec> Executor<'exec> {
                                                 .or_insert_with(Vec::new);
                                             error_paths.push(error_path);
                                         }
-                                        if let Some(entity) = entities.get(*entity_index) {
-                                            // SAFETY: `entity` lives for `'a`.
-                                            // The transmute is to satisfy the compiler, but the lifetime
-                                            // is valid.
-                                            let entity: &Value<'_> =
-                                                unsafe { std::mem::transmute(entity) };
+                                        let move_entity = remaining_uses
+                                            .get_mut(*entity_index)
+                                            .is_some_and(|remaining| {
+                                                if *remaining == 0 {
+                                                    false
+                                                } else {
+                                                    *remaining -= 1;
+                                                    *remaining == 0
+                                                }
+                                            });
+                                        if move_entity {
+                                            if let Some(entity) = entities.get_mut(*entity_index) {
+                                                deep_merge(
+                                                    target,
+                                                    std::mem::replace(entity, Value::Null),
+                                                );
+                                            }
+                                        } else if let Some(entity) = entities.get(*entity_index) {
                                             deep_merge_from(target, entity);
                                         }
                                     }
