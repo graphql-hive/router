@@ -7,6 +7,7 @@ impl QueryPlan<Planning> {
         QueryPlan {
             kind: self.kind,
             node: self.node.map(PlanNode::into_executable),
+            ready_schedule: self.ready_schedule,
         }
     }
 }
@@ -24,6 +25,7 @@ impl FetchNode<Planning> {
             planner_requires: (),
             input_rewrites: self.input_rewrites,
             output_rewrites: self.output_rewrites,
+            entity_reuse: self.entity_reuse,
         }
     }
 }
@@ -43,6 +45,7 @@ impl PlanNode<Planning> {
                 operation: batch.operation.operation,
                 custom_scalar_paths: batch.custom_scalar_paths,
                 entity_batch: batch.entity_batch,
+                fetch_node_ids: (),
             })),
             Self::Flatten(flatten) => PlanNode::Flatten(FlattenNode {
                 path: flatten.path,

@@ -8,16 +8,17 @@ use crate::query_planner::{
         plan_nodes::planning::PlanNode,
         query_plan::optimize::{optimize_root_node, optimize_top_level_sequence},
     },
-    state::supergraph_state::SupergraphState,
+    state::supergraph_state::{OperationKind, SupergraphState},
     utils::cancellation::CancellationToken,
 };
 
 use super::{
     error::QueryPlanError,
     fetch::fetch_graph::FetchGraph,
-    plan_nodes::planning::{ParallelNode, QueryPlan, SequenceNode},
+    plan_nodes::planning::{ParallelNode, QueryPlan, ReadySchedule, SequenceNode},
 };
 
+mod entity_reuse;
 mod optimize;
 
 /// Tracks the in-degree of FetchGraph (DAG) in a dependency graph.
@@ -108,9 +109,14 @@ pub fn build_query_plan_from_fetch_graph(
     }
 
     let mut overall_plan_sequence: Vec<PlanNode> = Vec::new();
+    // Steps from finished waves. An entity fetch may copy entities they already put in the response.
+    let mut earlier_steps: Vec<NodeIndex> = Vec::new();
+    // The steps each fetch copies from, so ready scheduling waits for them too.
+    let mut reuse_parents: HashMap<i64, Vec<i64>> = HashMap::new();
 
     while !queue.is_empty() {
         let mut current_wave_nodes: Vec<PlanNode> = Vec::new();
+        let mut current_wave_steps: Vec<NodeIndex> = Vec::new();
         let wave_size = queue.len();
 
         for _ in 0..wave_size {
@@ -121,7 +127,18 @@ pub fn build_query_plan_from_fetch_graph(
                 )))?;
 
             let step_data = fetch_graph.get_step_data(step_index)?;
-            current_wave_nodes.push(PlanNode::from_fetch_step(step_data, supergraph));
+            let mut node = PlanNode::from_fetch_step(step_data, supergraph);
+            if let Some((reuse, source_steps)) = entity_reuse::find_entity_reuse(
+                &fetch_graph,
+                step_index,
+                &earlier_steps,
+                supergraph,
+            ) {
+                entity_reuse::attach_entity_reuse(&mut node, reuse);
+                reuse_parents.insert(step_data.id, source_steps);
+            }
+            current_wave_nodes.push(node);
+            current_wave_steps.push(step_index);
             planned_nodes_count += 1;
             in_degrees.mark_as_processed(step_index);
 
@@ -139,6 +156,8 @@ pub fn build_query_plan_from_fetch_graph(
                 }
             }
         }
+
+        earlier_steps.extend(current_wave_steps);
 
         if current_wave_nodes.is_empty() {
             return Err(QueryPlanError::Internal(String::from(
@@ -189,6 +208,133 @@ pub fn build_query_plan_from_fetch_graph(
 
     Ok(QueryPlan {
         kind: QUERY_PLAN_KIND,
+        ready_schedule: build_ready_schedule(&root_node, &fetch_graph, &reuse_parents),
         node: Some(root_node),
     })
+}
+
+/// Works out what each fetch of the final plan waits for, from the fetch graph's edges.
+/// Gives up (None) on anything that isn't a plain Sequence of waves made of fetches,
+/// and on mutations and subscriptions, which have to keep running wave by wave.
+fn build_ready_schedule(
+    root: &PlanNode,
+    fetch_graph: &FetchGraph<MultiTypeFetchStep>,
+    reuse_parents: &HashMap<i64, Vec<i64>>,
+) -> Option<ReadySchedule> {
+    let PlanNode::Sequence(sequence) = root else {
+        return None;
+    };
+    let root_index = fetch_graph.root_index?;
+
+    let mut parents_by_step: HashMap<i64, Vec<i64>> = HashMap::new();
+    for index in fetch_graph.step_indices() {
+        if index == root_index {
+            continue;
+        }
+        let step = fetch_graph.get_step_data(index).ok()?;
+        if !matches!(step.operation_kind, OperationKind::Query) {
+            return None;
+        }
+        let parents = fetch_graph
+            .parents_of(index)
+            .filter(|edge| edge.source() != root_index)
+            .map(|edge| {
+                fetch_graph
+                    .get_step_data(edge.source())
+                    .map(|parent| parent.id)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+        let mut parents: Vec<i64> = parents;
+        // A fetch that copies entities from earlier fetches has to wait for them as well.
+        if let Some(sources) = reuse_parents.get(&step.id) {
+            parents.extend(sources);
+        }
+        parents_by_step.insert(step.id, parents);
+    }
+
+    let mut fetches = Vec::new();
+    let mut steps_of_fetch = Vec::new();
+    for (wave, node) in sequence.nodes.iter().enumerate() {
+        match node {
+            PlanNode::Parallel(parallel) => {
+                for (position, node) in parallel.nodes.iter().enumerate() {
+                    fetches.push((wave, position));
+                    steps_of_fetch.push(step_ids(node)?);
+                }
+            }
+            node => {
+                fetches.push((wave, 0));
+                steps_of_fetch.push(step_ids(node)?);
+            }
+        }
+    }
+
+    // Every step has to land in exactly one fetch, or the plan isn't what we think it is.
+    let mut fetch_of_step: HashMap<i64, usize> = HashMap::new();
+    for (fetch, steps) in steps_of_fetch.iter().enumerate() {
+        for step in steps {
+            if fetch_of_step.insert(*step, fetch).is_some() {
+                return None;
+            }
+        }
+    }
+    if fetch_of_step.len() != parents_by_step.len() {
+        return None;
+    }
+
+    let mut waiting_on = vec![0; fetches.len()];
+    let mut dependents = vec![Vec::new(); fetches.len()];
+    for (fetch, steps) in steps_of_fetch.iter().enumerate() {
+        let mut parents = Vec::new();
+        for step in steps {
+            for parent in parents_by_step.get(step)? {
+                parents.push(*fetch_of_step.get(parent)?);
+            }
+        }
+        parents.sort_unstable();
+        parents.dedup();
+        parents.retain(|&parent| parent != fetch);
+        // Waves come from these same edges, so a parent always sits in an earlier wave.
+        if parents
+            .iter()
+            .any(|&parent| fetches[parent].0 >= fetches[fetch].0)
+        {
+            return None;
+        }
+        waiting_on[fetch] = parents.len();
+        for parent in parents {
+            dependents[parent].push(fetch);
+        }
+    }
+
+    Some(ReadySchedule {
+        fetches,
+        waiting_on,
+        dependents,
+    })
+}
+
+/// The fetch step ids a node runs, if it is a single fetch the executor can start on its own.
+fn step_ids(node: &PlanNode) -> Option<Vec<i64>> {
+    match node {
+        PlanNode::Fetch(fetch) => Some(vec![fetch.id]),
+        PlanNode::Flatten(flatten) => match flatten.node.as_ref() {
+            PlanNode::Fetch(fetch) => Some(vec![fetch.id]),
+            _ => None,
+        },
+        PlanNode::BatchFetch(batch) => Some(batch.fetch_node_ids.clone()),
+        PlanNode::Condition(condition) => {
+            let mut ids = Vec::new();
+            for node in condition
+                .if_clause
+                .iter()
+                .chain(condition.else_clause.iter())
+            {
+                ids.extend(step_ids(node)?);
+            }
+            Some(ids)
+        }
+        _ => None,
+    }
 }

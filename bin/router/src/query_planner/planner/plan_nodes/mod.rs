@@ -55,6 +55,22 @@ pub struct QueryPlan<S: PlanState = Executable> {
     pub kind: &'static str, // "QueryPlan"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node: Option<PlanNode<S>>,
+    /// What each fetch waits for, so it can start as soon as those are done
+    /// instead of waiting for the whole wave. Only set for plans it knows how to run.
+    #[serde(skip)]
+    pub ready_schedule: Option<ReadySchedule>,
+}
+
+/// The fetches of a wave-by-wave plan (a Sequence of waves) and what each one waits for.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReadySchedule {
+    /// Where each fetch sits: (wave, position in the wave).
+    /// A wave that is not a Parallel holds one fetch, at position 0.
+    pub fetches: Vec<(usize, usize)>,
+    /// How many fetches each one waits for.
+    pub waiting_on: Vec<usize>,
+    /// The fetches that wait for each one.
+    pub dependents: Vec<Vec<usize>>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -152,6 +168,18 @@ pub struct FetchNode<S: PlanState = Executable> {
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_rewrites: Option<Vec<FetchRewrite>>,
+    /// Where entities this fetch asks for might already be in the response.
+    #[serde(skip)]
+    pub entity_reuse: Option<Box<EntityReuse>>,
+}
+
+/// Places in the response, filled by earlier fetches, that hold objects of the type an entity
+/// fetch resolves, with all the fields it asks for. An entity whose representation matches one
+/// of those objects gets the `copy` fields copied from it, instead of going to the subgraph.
+#[derive(Debug, Clone)]
+pub struct EntityReuse {
+    pub sources: Vec<FlattenNodePath>,
+    pub copy: RequiresSelectionSet,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,6 +197,9 @@ pub struct BatchFetchNode<S: PlanState = Executable> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_scalar_paths: Option<CustomScalarPaths>,
     pub entity_batch: EntityBatch,
+    /// Ids of the fetches that got batched into this one.
+    #[serde(skip)]
+    pub fetch_node_ids: S::FetchNodeIds,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -385,6 +416,9 @@ pub struct EntityBatchAlias {
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_rewrites: Option<Vec<FetchRewrite>>,
+    /// Where entities this alias asks for might already be in the response.
+    #[serde(skip)]
+    pub entity_reuse: Option<Box<EntityReuse>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -662,6 +696,7 @@ impl FetchNode<Planning> {
                     planner_requires: Some(Box::new(planner_requires)),
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),
+                    entity_reuse: None,
                 }
             }
             false => {
@@ -690,6 +725,7 @@ impl FetchNode<Planning> {
                     requires: None,
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),
+                    entity_reuse: None,
                 }
             }
         }
@@ -1023,7 +1059,7 @@ mod stored_size_tests {
         for (name, actual, expected) in [
             ("PlanNode", size_of::<PlanNode>(), 40),
             ("ConditionNode", size_of::<ConditionNode>(), 40),
-            ("FetchNode", size_of::<FetchNode>(), 224),
+            ("FetchNode", size_of::<FetchNode>(), 232),
             ("BatchFetchNode", size_of::<BatchFetchNode>(), 160),
             (
                 "SubgraphFetchOperation",

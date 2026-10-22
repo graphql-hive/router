@@ -55,6 +55,43 @@ fn deep_merge_objects<'a>(
     }
 }
 
+/// Hands out `_entities` results as they get merged into their targets.
+/// An entity is cloned for every target but its last one, which gets the entity itself.
+pub struct EntitiesToMerge<'e, 'a> {
+    entities: &'e mut [Value<'a>],
+    uses_left: Vec<u32>,
+}
+
+impl<'e, 'a> EntitiesToMerge<'e, 'a> {
+    /// `uses` is the entity index of every target, in the order they will be merged.
+    /// Counting more uses than really happen is fine, we just end up cloning the last one too.
+    pub fn new(entities: &'e mut [Value<'a>], uses: impl IntoIterator<Item = usize>) -> Self {
+        let mut uses_left = vec![0; entities.len()];
+        for index in uses {
+            if let Some(count) = uses_left.get_mut(index) {
+                *count += 1;
+            }
+        }
+        Self {
+            entities,
+            uses_left,
+        }
+    }
+
+    /// The entity to merge into the next target that points at `index`.
+    #[inline]
+    pub fn next_for(&mut self, index: usize) -> Option<Value<'a>> {
+        let entity = self.entities.get_mut(index)?;
+        let uses_left = &mut self.uses_left[index];
+        *uses_left = uses_left.saturating_sub(1);
+        if *uses_left == 0 {
+            Some(std::mem::take(entity))
+        } else {
+            Some(entity.clone())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::deep_merge;
@@ -80,6 +117,30 @@ mod tests {
         assert_eq!(keys(&target), ["id", "name", "nested", "price", "stock"]);
         let nested = Value::object_get(target.as_object().unwrap(), "nested").unwrap();
         assert_eq!(keys(nested), ["x", "y"]);
+    }
+
+    #[test]
+    fn entities_to_merge_moves_each_entity_on_its_last_use() {
+        let mut entities = vec![parse(r#"{"id": "a"}"#), parse(r#"{"id": "b"}"#)];
+        // "a" goes to two targets, "b" to one, and one extra use of "b" never happens.
+        let mut to_merge = super::EntitiesToMerge::new(&mut entities, [0, 1, 0, 1]);
+
+        let id = |value: Option<Value>| {
+            value.and_then(|v| {
+                Value::object_get(v.as_object()?, "id")?
+                    .as_str()
+                    .map(String::from)
+            })
+        };
+        assert_eq!(id(to_merge.next_for(0)).as_deref(), Some("a"));
+        assert_eq!(id(to_merge.next_for(1)).as_deref(), Some("b"));
+        assert_eq!(id(to_merge.next_for(0)).as_deref(), Some("a"));
+        assert!(to_merge.next_for(2).is_none());
+        drop(to_merge);
+
+        // "a" was used up, so it was moved out. "b" still has a use left, so it was cloned.
+        assert!(entities[0].is_null());
+        assert!(entities[1].is_object());
     }
 
     #[test]
