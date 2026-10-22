@@ -32,19 +32,29 @@ pub(super) struct ContextGroup<'a> {
     pub hash_to_index: AHashMap<u64, usize>,
 }
 
-fn select_value<'v>(
-    value: &Value<'v>,
+/// Borrows existing values, including whole objects and arrays. Only projected
+/// arrays need their own structure; their selected elements remain borrowed.
+#[derive(serde::Serialize)]
+#[serde(untagged)]
+enum SelectedValue<'a, 'v> {
+    Borrowed(&'a Value<'v>),
+    Array(Vec<SelectedValue<'a, 'v>>),
+    Null,
+}
+
+fn select_value<'a, 'v>(
+    value: &'a Value<'v>,
     path: &[FetchNodePathSegment],
     possible_types: &PossibleTypes,
-) -> Option<Value<'v>> {
+) -> Option<SelectedValue<'a, 'v>> {
     if path.is_empty() || value.is_null() {
-        return Some(value.clone());
+        return Some(SelectedValue::Borrowed(value));
     }
     if let Value::Array(items) = value {
-        return Some(Value::Array(
+        return Some(SelectedValue::Array(
             items
                 .iter()
-                .map(|item| select_value(item, path, possible_types).unwrap_or_default())
+                .map(|item| select_value(item, path, possible_types).unwrap_or(SelectedValue::Null))
                 .collect(),
         ));
     }
@@ -67,12 +77,156 @@ fn select_value<'v>(
     }
 }
 
+struct ContextSource<'a> {
+    parent_depth: usize,
+    path: &'a [FetchNodePathSegment],
+}
+
+/// Groups entities by their context values while traversing one borrowed response.
+/// The `'d` lifetime ties the cached ancestors to that response, so the cache
+/// cannot outlive it or be reused for another one.
+struct ContextGroups<'a, 'd, 'v> {
+    names: Vec<&'a str>,
+    sources: Vec<Vec<ContextSource<'a>>>,
+    groups: Vec<ContextGroup<'a>>,
+    group_by_values: AHashMap<Vec<Vec<u8>>, usize>,
+    ancestor_depths: Vec<usize>,
+    // ancestors the previous entity read from, one per depth in `ancestor_depths`.
+    // `None` means the ancestor was missing
+    last_ancestors: Vec<Option<&'d Value<'v>>>,
+    last_group: Option<usize>,
+}
+
+impl<'a, 'd, 'v> ContextGroups<'a, 'd, 'v> {
+    fn new(variables: &'a [String], rewrites: &'a [KeyRenamer]) -> Self {
+        let mut names: Vec<&str> = variables.iter().map(String::as_str).collect();
+        for rewrite in rewrites {
+            if !names.contains(&rewrite.rename_key_to.as_str()) {
+                names.push(rewrite.rename_key_to.as_str());
+            }
+        }
+        let sources: Vec<Vec<ContextSource<'a>>> = names
+            .iter()
+            .map(|name| {
+                rewrites
+                    .iter()
+                    .filter(|rewrite| rewrite.rename_key_to == *name)
+                    .map(|rewrite| {
+                        let parent_depth = rewrite
+                            .path
+                            .iter()
+                            .take_while(|s| matches!(s, FetchNodePathSegment::Parent))
+                            .count();
+                        ContextSource {
+                            parent_depth,
+                            path: &rewrite.path[parent_depth..],
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        let mut ancestor_depths: Vec<usize> = sources
+            .iter()
+            .flatten()
+            .map(|source| source.parent_depth)
+            .collect();
+        ancestor_depths.sort_unstable();
+        ancestor_depths.dedup();
+
+        let mut groups = Vec::new();
+        if names.is_empty() {
+            groups.push(ContextGroup {
+                variables: Vec::new(),
+                representations: vec![b'['],
+                hash_to_index: AHashMap::new(),
+            });
+        }
+        Self {
+            names,
+            sources,
+            groups,
+            group_by_values: AHashMap::new(),
+            last_ancestors: vec![None; ancestor_depths.len()],
+            ancestor_depths,
+            last_group: None,
+        }
+    }
+
+    fn resolve(
+        &mut self,
+        entity: &'d Value<'v>,
+        objects: &[&'d Value<'v>],
+        possible_types: &PossibleTypes,
+    ) -> usize {
+        if self.names.is_empty() {
+            return 0;
+        }
+        let ancestor = |depth: usize| {
+            if depth == 0 {
+                Some(entity)
+            } else {
+                objects.get(objects.len().checked_sub(depth)?).copied()
+            }
+        };
+
+        // Check each distinct depth once, updating the cache for this entity.
+        // Include every candidate source, even those skipped by a type condition.
+        // compared by address: the response is borrowed for 'd and can't change, so the same
+        // address means the same object and thus the same selected values.
+        let mut same_ancestors = true;
+        for (depth, previous) in self.ancestor_depths.iter().zip(&mut self.last_ancestors) {
+            let current = ancestor(*depth);
+            same_ancestors &= match (*previous, current) {
+                (Some(previous), Some(current)) => std::ptr::eq(previous, current),
+                (None, None) => true,
+                _ => false,
+            };
+            *previous = current;
+        }
+        if let Some(index) = self.last_group.filter(|_| same_ancestors) {
+            return index;
+        }
+
+        let values: Vec<Vec<u8>> = self
+            .sources
+            .iter()
+            .map(|sources| {
+                let value = sources.iter().find_map(|source| {
+                    select_value(ancestor(source.parent_depth)?, source.path, possible_types)
+                });
+                // Send null like Apollo does; the subgraph enforces argument nullability.
+                sonic_rs::to_vec(&value.unwrap_or(SelectedValue::Null))
+                    .expect("context value serializes")
+            })
+            .collect();
+        let index = *self
+            .group_by_values
+            .entry(values)
+            .or_insert_with_key(|values| {
+                let index = self.groups.len();
+                self.groups.push(ContextGroup {
+                    variables: self
+                        .names
+                        .iter()
+                        .copied()
+                        .zip(values.iter().cloned())
+                        .collect(),
+                    representations: vec![b'['],
+                    hash_to_index: AHashMap::new(),
+                });
+                index
+            });
+        self.last_group = Some(index);
+        index
+    }
+}
+
 /// Walks every flatten path, deduplicates the entities by hash and projects their
 /// representations. Entities are grouped by the tuple of their context values (one request per
 /// group), without context variables there is at most one group. Identical paths share hashes.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub(super) fn collect_context_entities<'a>(
-    data: &Value<'_>,
+pub(super) fn collect_context_entities<'a, 'd, 'v>(
+    data: &'d Value<'v>,
     paths: impl IntoIterator<Item = ResponsePathRef<'a>>,
     requires: &RequiresSelectionSet,
     input_rewrites: Option<&[FetchRewrite]>,
@@ -81,22 +235,7 @@ pub(super) fn collect_context_entities<'a>(
     possible_types: &PossibleTypes,
     subgraph_keys: Option<&KeysByType>,
 ) -> (Vec<ContextGroup<'a>>, Vec<RepresentationHashes>) {
-    let mut names: Vec<&str> = context_variables.iter().map(String::as_str).collect();
-    let rewrites = context_rewrites.unwrap_or_default();
-    for rewrite in rewrites {
-        if !names.contains(&rewrite.rename_key_to.as_str()) {
-            names.push(rewrite.rename_key_to.as_str());
-        }
-    }
-    let mut groups: Vec<ContextGroup<'a>> = Vec::new();
-    if names.is_empty() {
-        groups.push(ContextGroup {
-            variables: Vec::new(),
-            representations: vec![b'['],
-            hash_to_index: AHashMap::new(),
-        });
-    }
-    let mut group_by_values: AHashMap<Vec<Vec<u8>>, usize> = AHashMap::new();
+    let mut contexts = ContextGroups::new(context_variables, context_rewrites.unwrap_or_default());
     let mut path_hashes: Vec<RepresentationHashes> = Vec::new();
     let mut seen_paths: Vec<(ResponsePathRef<'a>, RepresentationHashes)> = Vec::new();
     let required_selections = requires.root_selections();
@@ -106,59 +245,26 @@ pub(super) fn collect_context_entities<'a>(
             continue;
         }
         let mut hashes = Vec::new();
-        let mut collect = |entity: &Value<'_>, objects: &[&Value<'_>]| {
+        // the callback gets references into `data`, which the ancestor cache relies on
+        let mut collect = |entity: &'d Value<'v>, objects: &[&'d Value<'v>]| {
             if entity.is_null() {
                 hashes.push(None);
                 return;
             }
-            let values: Vec<Vec<u8>> = names
-                .iter()
-                .map(|name| {
-                    let value = rewrites
-                        .iter()
-                        .filter(|rewrite| rewrite.rename_key_to == *name)
-                        .find_map(|rewrite| {
-                            let levels = rewrite
-                                .path
-                                .iter()
-                                .take_while(|s| matches!(s, FetchNodePathSegment::Parent))
-                                .count();
-                            let ancestor = if levels == 0 {
-                                entity
-                            } else {
-                                *objects.get(objects.len().checked_sub(levels)?)?
-                            };
-                            select_value(ancestor, &rewrite.path[levels..], possible_types)
-                        });
-                    // send null like apollo does and let the subgraph enforce argument nullability
-                    sonic_rs::to_vec(&value.unwrap_or_default()).expect("context value serializes")
-                })
-                .collect();
-            let group_index = if names.is_empty() {
-                0
-            } else if let Some(index) = group_by_values.get(&values) {
-                *index
-            } else {
-                let index = groups.len();
-                groups.push(ContextGroup {
-                    variables: names.iter().copied().zip(values.iter().cloned()).collect(),
-                    representations: vec![b'['],
-                    hash_to_index: AHashMap::new(),
-                });
-                group_by_values.insert(values.clone(), index);
-                index
-            };
+            let group_index = contexts.resolve(entity, objects, possible_types);
             let entity_hash = entity.to_hash(required_selections, possible_types);
-            let hash = if values.is_empty() {
+            // every distinct set of values has its own group, so the group index stands in for
+            // the values. the same entity in two groups still gets two hashes.
+            let hash = if contexts.names.is_empty() {
                 entity_hash
             } else {
                 let mut hasher = Xxh3::new();
                 entity_hash.hash(&mut hasher);
-                values.hash(&mut hasher);
+                group_index.hash(&mut hasher);
                 hasher.finish()
             };
             hashes.push(Some(hash));
-            let group = &mut groups[group_index];
+            let group = &mut contexts.groups[group_index];
             if group.hash_to_index.contains_key(&hash) {
                 return;
             }
@@ -190,50 +296,52 @@ pub(super) fn collect_context_entities<'a>(
         seen_paths.push((path, Arc::clone(&hashes)));
         path_hashes.push(hashes);
     }
-    for group in &mut groups {
+    for group in &mut contexts.groups {
         group.representations.push(b']');
     }
-    (groups, path_hashes)
+    (contexts.groups, path_hashes)
 }
 
 /// Turns the response of a [`ContextAliasedOperation`] back into the response of the original
 /// operation, so it can be merged like any other. The entities of every group are concatenated
 /// under the original response key and error paths are pointed to them.
 ///
-/// `count(key, group)` is the number of representations sent for `key` in `group`. A group's
-/// entities are padded or cut to that, so the indexes of the following groups stay stable.
+/// `count(key, group)` is the number of representations sent for the `key`-th response key of
+/// `aliased` in `group`. A group's entities are padded or cut to that, so the indexes of the
+/// following groups stay stable.
 pub(super) fn unalias_response<'exec>(
     response: &mut SubgraphResponse<'exec>,
     aliased: &'exec ContextAliasedOperation,
-    count: impl Fn(&str, usize) -> usize,
+    count: impl Fn(usize, usize) -> usize,
 ) {
+    // where every group starts, plus where the last one ends
     let offsets: Vec<Vec<usize>> = aliased
         .response_keys
         .iter()
-        .map(|(key, aliases)| {
-            let mut offset = 0;
-            (0..aliases.len())
-                .map(|group| {
-                    let current = offset;
-                    offset += count(key, group);
-                    current
-                })
-                .collect()
+        .enumerate()
+        .map(|(key, (_, aliases))| {
+            let mut offsets = Vec::with_capacity(aliases.len() + 1);
+            offsets.push(0);
+            for group in 0..aliases.len() {
+                offsets.push(offsets[group] + count(key, group));
+            }
+            offsets
         })
         .collect();
 
     if let Value::Object(fields) = &mut response.data {
         let mut merged = Vec::with_capacity(aliased.response_keys.len());
         for ((key, aliases), offsets) in aliased.response_keys.iter().zip(&offsets) {
-            let mut entities = Vec::new();
+            let mut entities = Vec::with_capacity(offsets[aliases.len()]);
             for (group, alias) in aliases.iter().enumerate() {
-                let count = count(key, group);
+                let count = offsets[group + 1] - offsets[group];
                 if let Some(position) = Value::object_position(fields, alias) {
                     if let Value::Array(items) = fields.swap_remove(position).1 {
                         entities.extend(items.into_iter().take(count));
                     }
                 }
-                entities.resize(offsets[group] + count, Value::Null);
+                // pad missing entities with null, so the next group starts at its offset
+                entities.resize(offsets[group + 1], Value::Null);
             }
             merged.push((key.as_str(), Value::Array(entities)));
         }
@@ -247,20 +355,21 @@ pub(super) fn unalias_response<'exec>(
         let Some(GraphQLErrorPathSegment::String(first)) = path.segments.first() else {
             continue;
         };
-        let Some((key, group, offset)) =
+        let Some((key, group, offsets)) =
             aliased
                 .response_keys
                 .iter()
                 .zip(&offsets)
                 .find_map(|((key, aliases), offsets)| {
                     let group = aliases.iter().position(|alias| alias == first)?;
-                    Some((key, group, offsets[group]))
+                    Some((key, group, offsets))
                 })
         else {
             continue;
         };
+        let offset = offsets[group];
         if let Some(GraphQLErrorPathSegment::Index(index)) = path.segments.get_mut(1) {
-            if *index >= count(key, group) {
+            if *index >= offsets[group + 1] - offset {
                 error.path = None;
                 continue;
             }
@@ -285,7 +394,8 @@ mod tests {
             "users": [
                 {"__typename":"User", "currency":"USD", "txs":[{"__typename":"Transaction","id":"1"}, {"__typename":"Transaction","id":"1"}]},
                 {"__typename":"User", "currency":"EUR", "txs":[{"__typename":"Transaction","id":"1"}]},
-                {"__typename":"User", "currency":null, "txs":[{"__typename":"Transaction","id":"1"}, null]}
+                {"__typename":"User", "currency":null, "txs":[{"__typename":"Transaction","id":"1"}, null]},
+                {"__typename":"User", "currency":"USD", "txs":[{"__typename":"Transaction","id":"1"}]}
             ]
         }"#).unwrap();
         let path: FlattenNodePath = vec![
@@ -345,8 +455,192 @@ mod tests {
         assert_eq!(hashes[0][0], hashes[0][1]);
         assert_ne!(hashes[0][0], hashes[0][2]);
         assert_eq!(hashes[0][4], None);
+        // another parent with the same value lands in the same group
+        assert_eq!(hashes[0][5], hashes[0][0]);
         assert!(groups[0].hash_to_index.contains_key(&hashes[0][0].unwrap()));
         assert!(!groups[0].hash_to_index.contains_key(&hashes[0][2].unwrap()));
+    }
+
+    #[test]
+    fn ancestor_cache_invalidates_on_entity_local_values() {
+        // all posts share the same user, only the entity-local code differs, so the cached
+        // parent alone must not decide the group
+        let data: Value<'_> = sonic_rs::from_str(
+            r#"{"users":[{"currency":"USD","posts":[
+                {"__typename":"Post","id":"1","code":"A"},
+                {"__typename":"Post","id":"2","code":"B"},
+                {"__typename":"Post","id":"3","code":"A"}
+            ]}]}"#,
+        )
+        .unwrap();
+        let path: FlattenNodePath = vec![
+            PathSegment::Field("users".into()),
+            PathSegment::List,
+            PathSegment::Field("posts".into()),
+            PathSegment::List,
+        ]
+        .into();
+        let definition = parse_operation("{ __typename id }").definitions.remove(0);
+        let graphql_tools::parser::query::Definition::Operation(
+            graphql_tools::parser::query::OperationDefinition::SelectionSet(selection),
+        ) = definition
+        else {
+            panic!("selection");
+        };
+        let requires = RequiresSelectionSet::from(&SelectionSet::from(selection));
+        let rewrites = [
+            KeyRenamer {
+                path: vec![
+                    FetchNodePathSegment::Parent,
+                    FetchNodePathSegment::Key("currency".into()),
+                ],
+                rename_key_to: "__context_0".into(),
+            },
+            KeyRenamer {
+                path: vec![FetchNodePathSegment::Key("code".into())],
+                rename_key_to: "__context_1".into(),
+            },
+        ];
+        let names = ["__context_0".into(), "__context_1".into()];
+        let possible_types = PossibleTypes::default();
+        let (groups, hashes) = collect_context_entities(
+            &data,
+            [path.as_ref()],
+            &requires,
+            None,
+            Some(&rewrites),
+            &names,
+            &possible_types,
+            None,
+        );
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].variables[1].1, b"\"A\"");
+        assert_eq!(groups[1].variables[1].1, b"\"B\"");
+        let hashes: Vec<u64> = hashes[0].iter().map(|hash| hash.unwrap()).collect();
+        assert!(groups[0].hash_to_index.contains_key(&hashes[0]));
+        assert!(groups[1].hash_to_index.contains_key(&hashes[1]));
+        assert!(groups[0].hash_to_index.contains_key(&hashes[2]));
+
+        // resolving the same sources again reuses the cached group, a different entity under
+        // the same parent doesn't
+        let Value::Object(root) = &data else {
+            panic!("object");
+        };
+        let Some(Value::Array(users)) = Value::object_get(root, "users") else {
+            panic!("users");
+        };
+        let user = &users[0];
+        let Value::Object(user_fields) = user else {
+            panic!("user");
+        };
+        let Some(Value::Array(posts)) = Value::object_get(user_fields, "posts") else {
+            panic!("posts");
+        };
+        let objects = [&data, user];
+        let mut contexts = ContextGroups::new(&names, &rewrites);
+        let resolved: Vec<usize> = [0, 0, 1, 1, 2, 0]
+            .into_iter()
+            .map(|post| contexts.resolve(&posts[post], &objects, &possible_types))
+            .collect();
+        assert_eq!(resolved, vec![0, 0, 1, 1, 0, 0]);
+    }
+
+    #[test]
+    fn ancestor_cache_tracks_every_parent_depth_across_paths() {
+        // the currency is two parents up and the name one parent up. posts under the same user
+        // reuse the cached group, a new user or org must not. the drafts path starts right
+        // after the posts path ends, under different ancestors than its last entity
+        let data: Value<'_> = sonic_rs::from_str(
+            r#"{"orgs":[
+                {"currency":"USD","users":[
+                    {"name":"a",
+                     "posts":[{"__typename":"Post","id":"1"},{"__typename":"Post","id":"2"}],
+                     "drafts":[{"__typename":"Post","id":"5"}]},
+                    {"name":"b","posts":[{"__typename":"Post","id":"3"}]}
+                ]},
+                {"currency":"EUR","users":[
+                    {"name":"a",
+                     "posts":[{"__typename":"Post","id":"4"}],
+                     "drafts":[{"__typename":"Post","id":"6"}]}
+                ]}
+            ]}"#,
+        )
+        .unwrap();
+        let path = |field: &str| -> FlattenNodePath {
+            vec![
+                PathSegment::Field("orgs".into()),
+                PathSegment::List,
+                PathSegment::Field("users".into()),
+                PathSegment::List,
+                PathSegment::Field(field.into()),
+                PathSegment::List,
+            ]
+            .into()
+        };
+        let posts = path("posts");
+        let drafts = path("drafts");
+        let definition = parse_operation("{ __typename id }").definitions.remove(0);
+        let graphql_tools::parser::query::Definition::Operation(
+            graphql_tools::parser::query::OperationDefinition::SelectionSet(selection),
+        ) = definition
+        else {
+            panic!("selection");
+        };
+        let requires = RequiresSelectionSet::from(&SelectionSet::from(selection));
+        let rewrites = [
+            KeyRenamer {
+                path: vec![
+                    FetchNodePathSegment::Parent,
+                    FetchNodePathSegment::Parent,
+                    FetchNodePathSegment::Key("currency".into()),
+                ],
+                rename_key_to: "__context_0".into(),
+            },
+            KeyRenamer {
+                path: vec![
+                    FetchNodePathSegment::Parent,
+                    FetchNodePathSegment::Key("name".into()),
+                ],
+                rename_key_to: "__context_1".into(),
+            },
+        ];
+        let names = ["__context_0".into(), "__context_1".into()];
+        let (groups, hashes) = collect_context_entities(
+            &data,
+            [posts.as_ref(), drafts.as_ref()],
+            &requires,
+            None,
+            Some(&rewrites),
+            &names,
+            &PossibleTypes::default(),
+            None,
+        );
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| (
+                    std::str::from_utf8(&group.variables[0].1).unwrap(),
+                    std::str::from_utf8(&group.variables[1].1).unwrap(),
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (r#""USD""#, r#""a""#),
+                (r#""USD""#, r#""b""#),
+                (r#""EUR""#, r#""a""#),
+            ]
+        );
+        // posts 1 to 4, then drafts 5 and 6, with the group each one must land in
+        let entities = hashes[0].iter().chain(hashes[1].iter());
+        for (hash, group) in entities.zip([0, 0, 1, 2, 0, 2]) {
+            assert!(groups[group].hash_to_index.contains_key(&hash.unwrap()));
+        }
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| group.hash_to_index.len())
+                .collect::<Vec<_>>(),
+            vec![3, 1, 2]
+        );
     }
 
     #[test]
@@ -423,6 +717,41 @@ mod tests {
         );
         assert_eq!(hashes[0].len(), 1);
         assert!(hashes[0][0].is_some());
+    }
+
+    #[test]
+    fn selection_borrows_whole_values() {
+        let data: Value<'_> =
+            sonic_rs::from_str(r#"{"payload":{"items":[{"code":"USD"},{"code":"EUR"}]}}"#).unwrap();
+        let possible_types = PossibleTypes::default();
+        let path = [FetchNodePathSegment::Key("payload".into())];
+        let selected = select_value(&data, &path, &possible_types).unwrap();
+        let SelectedValue::Borrowed(value) = &selected else {
+            panic!("whole objects should remain borrowed");
+        };
+        let Value::Object(fields) = &data else {
+            panic!("object");
+        };
+        assert!(std::ptr::eq(
+            *value,
+            Value::object_get(fields, "payload").unwrap()
+        ));
+        assert_eq!(
+            sonic_rs::to_string(&selected).unwrap(),
+            r#"{"items":[{"code":"USD"},{"code":"EUR"}]}"#
+        );
+    }
+
+    #[test]
+    fn projected_arrays_preserve_nested_shape_and_missing_values() {
+        let data: Value<'_> =
+            sonic_rs::from_str(r#"[[{"code":"USD"},{}],null,[{"code":"EUR"}]]"#).unwrap();
+        let path = [FetchNodePathSegment::Key("code".into())];
+        let selected = select_value(&data, &path, &PossibleTypes::default()).unwrap();
+        assert_eq!(
+            sonic_rs::to_string(&selected).unwrap(),
+            r#"[["USD",null],null,["EUR"]]"#
+        );
     }
 
     #[test]

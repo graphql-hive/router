@@ -968,7 +968,15 @@ impl<'exec> Executor<'exec> {
                     let mut merged_aliases: Vec<AliasBatchState<'exec>> = Vec::new();
                     // representations sent per alias and wave
                     let mut counts: Vec<Vec<usize>> = Vec::new();
-                    for (wave, (values, aliases)) in chunk.into_iter().enumerate() {
+                    // representations sent per alias so far, so where the next wave starts
+                    let mut offsets: Vec<usize> = Vec::new();
+                    let mut totals = vec![0; chunk[0].1.len()];
+                    for (_, aliases) in &chunk {
+                        for (total, alias) in totals.iter_mut().zip(aliases) {
+                            *total += alias.representation_hash_to_index.len();
+                        }
+                    }
+                    for (wave, (values, mut aliases)) in chunk.into_iter().enumerate() {
                         raw_variable_values.extend(values.into_iter().map(|(name, value)| {
                             (aliased.variable(name, wave).unwrap_or(name), value)
                         }));
@@ -977,22 +985,46 @@ impl<'exec> Executor<'exec> {
                                 .iter()
                                 .map(|alias| vec![alias.representation_hash_to_index.len()])
                                 .collect();
+                            offsets = counts.iter().map(|counts| counts[0]).collect();
+                            for (alias, total) in aliases.iter_mut().zip(&totals) {
+                                alias
+                                    .representation_hash_to_index
+                                    .reserve(total - alias.representation_hash_to_index.len());
+                            }
                             merged_aliases = aliases;
                             continue;
                         }
-                        for ((merged, counts), alias) in
-                            merged_aliases.iter_mut().zip(&mut counts).zip(aliases)
+                        for (((merged, counts), offset), alias) in merged_aliases
+                            .iter_mut()
+                            .zip(&mut counts)
+                            .zip(&mut offsets)
+                            .zip(aliases)
                         {
-                            let offset: usize = counts.iter().sum();
-                            counts.push(alias.representation_hash_to_index.len());
+                            let count = alias.representation_hash_to_index.len();
+                            counts.push(count);
                             merged.representation_hash_to_index.extend(
                                 alias
                                     .representation_hash_to_index
                                     .into_iter()
-                                    .map(|(hash, index)| (hash, index + offset)),
+                                    .map(|(hash, index)| (hash, index + *offset)),
                             );
+                            *offset += count;
                         }
                     }
+                    // reorder the counts by response key of `aliased`, so unaliasing the
+                    // response doesn't have to look up the batch alias behind every key
+                    let counts: Vec<Vec<usize>> = aliased
+                        .response_keys
+                        .iter()
+                        .map(|(key, _)| {
+                            batch_fetch_node
+                                .entity_batch
+                                .aliases
+                                .iter()
+                                .position(|alias| alias.alias == *key)
+                                .map_or_else(Vec::new, |alias| std::mem::take(&mut counts[alias]))
+                        })
+                        .collect();
                     requests.push((
                         &aliased.operation,
                         raw_variable_values,
@@ -1026,12 +1058,9 @@ impl<'exec> Executor<'exec> {
                         .map_ok(move |fetch_job| {
                             let mut response = fetch_job.response();
                             if let Some((aliased, counts)) = aliased {
-                                let batch_aliases = &batch_fetch_node.entity_batch.aliases;
+                                // keys without a batch alias have no counts and sent nothing
                                 unalias_response(&mut response, aliased, |key, wave| {
-                                    batch_aliases
-                                        .iter()
-                                        .position(|alias| alias.alias == key)
-                                        .map_or(0, |alias| counts[alias][wave])
+                                    counts[key].get(wave).copied().unwrap_or(0)
                                 });
                             }
                             ExecutionJob::BatchFetch {
@@ -1103,18 +1132,22 @@ impl<'exec> Executor<'exec> {
                         continue;
                     };
                     let mut raw_variable_values = Vec::new();
-                    let mut hash_to_index = AHashMap::new();
+                    let mut hash_to_index = AHashMap::with_capacity(
+                        chunk.iter().map(|group| group.hash_to_index.len()).sum(),
+                    );
                     // representations sent per group
                     let mut counts = Vec::with_capacity(chunk.len());
+                    let mut offset = 0;
                     for (index, group) in chunk.into_iter().enumerate() {
-                        let offset: usize = counts.iter().sum();
-                        counts.push(group.hash_to_index.len());
+                        let count = group.hash_to_index.len();
+                        counts.push(count);
                         hash_to_index.extend(
                             group
                                 .hash_to_index
                                 .into_iter()
                                 .map(|(hash, entity_index)| (hash, entity_index + offset)),
                         );
+                        offset += count;
                         raw_variable_values.extend(
                             group
                                 .variables
@@ -1649,9 +1682,18 @@ impl<'exec> Executor<'exec> {
             for (alias_spec, (groups, path_hashes)) in
                 entity_batch.aliases.iter().zip(&mut prepared)
             {
-                // an alias with fewer groups still needs its context variables, it just sends no representations
-                if let Some(values) = groups.get(wave).or_else(|| groups.first()) {
-                    raw_variable_values.extend(values.variables.clone());
+                // an alias with fewer groups still needs its context variables, it just sends no
+                // representations. it borrows them from its first group, so that one is copied,
+                // every other group is read once and can be moved out.
+                let has_fewer_groups = groups.len() < wave_count;
+                if let Some(group) = groups.get_mut(wave) {
+                    if wave == 0 && has_fewer_groups {
+                        raw_variable_values.extend(group.variables.iter().cloned());
+                    } else {
+                        raw_variable_values.extend(std::mem::take(&mut group.variables));
+                    }
+                } else if let Some(first) = groups.first() {
+                    raw_variable_values.extend(first.variables.iter().cloned());
                 } else {
                     for name in FetchContext::variables(&alias_spec.context)
                         .iter()
@@ -2166,6 +2208,45 @@ mod tests {
         assert_eq!(waves.len(), 1);
         assert!(waves[0].0.contains(&("__context_0", b"null".to_vec())));
         assert!(waves[0].0.contains(&("__context_1", b"null".to_vec())));
+
+        // _e0 gets one group per product and _e1 a single group, so _e1 has fewer groups than
+        // there are waves and must send its first group's values in every wave
+        use crate::query_planner::planner::plan_nodes::{FetchNodePathSegment, KeyRenamer};
+        let data: ResponseValue = sonic_rs::from_str(
+            r#"{
+                "currency": "USD",
+                "products": [
+                    {"__typename": "Product", "upc": "1"},
+                    {"__typename": "Product", "upc": "2"}
+                ]
+            }"#,
+        )
+        .unwrap();
+        entity_batch.aliases[0].context =
+            crate::query_planner::planner::plan_nodes::FetchContext::new(
+                vec!["__context_0".into()],
+                Some(vec![KeyRenamer {
+                    path: vec![FetchNodePathSegment::Key("upc".into())],
+                    rename_key_to: "__context_0".into(),
+                }]),
+            );
+        entity_batch.aliases[1].context =
+            crate::query_planner::planner::plan_nodes::FetchContext::new(
+                vec!["__context_1".into()],
+                Some(vec![KeyRenamer {
+                    path: vec![
+                        FetchNodePathSegment::Parent,
+                        FetchNodePathSegment::Key("currency".into()),
+                    ],
+                    rename_key_to: "__context_1".into(),
+                }]),
+            );
+        let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None);
+        assert_eq!(waves.len(), 2);
+        for (wave, upc) in waves.iter().zip(["\"1\"", "\"2\""]) {
+            assert!(wave.0.contains(&("__context_0", upc.as_bytes().to_vec())));
+            assert!(wave.0.contains(&("__context_1", b"\"USD\"".to_vec())));
+        }
     }
 
     #[tokio::test]
