@@ -1,10 +1,16 @@
 use crate::executor::response::value::Value;
 
-pub fn deep_merge<'a>(target: &mut Value<'a>, source: Value<'a>) {
+pub fn deep_merge<'target, 'source: 'target>(
+    target: &mut Value<'target>,
+    source: Value<'source>,
+) {
     deep_merge_internal(target, source)
 }
 
-fn deep_merge_internal<'a>(target: &mut Value<'a>, source: Value<'a>) {
+fn deep_merge_internal<'target, 'source: 'target>(
+    target: &mut Value<'target>,
+    source: Value<'source>,
+) {
     match (target, source) {
         // If the source value is null, we do nothing.
         (_, Value::Null) => {
@@ -31,9 +37,9 @@ fn deep_merge_internal<'a>(target: &mut Value<'a>, source: Value<'a>) {
     }
 }
 
-fn deep_merge_objects<'a>(
-    target_vec: &mut Vec<(&'a str, Value<'a>)>,
-    source_obj: Vec<(&'a str, Value<'a>)>,
+fn deep_merge_objects<'target, 'source: 'target>(
+    target_vec: &mut Vec<(&'target str, Value<'target>)>,
+    source_obj: Vec<(&'source str, Value<'source>)>,
 ) {
     if source_obj.is_empty() {
         return;
@@ -58,7 +64,10 @@ fn deep_merge_objects<'a>(
 /// Same as `deep_merge(target, source.clone())`, but only clones the parts of `source`
 /// that end up in `target`. Cloning first would build the source's objects and arrays
 /// just to take them apart and throw them away.
-pub fn deep_merge_from<'a>(target: &mut Value<'a>, source: &Value<'a>) {
+pub fn deep_merge_from<'target, 'source: 'target>(
+    target: &mut Value<'target>,
+    source: &Value<'source>,
+) {
     match (target, source) {
         (_, Value::Null) => {}
         (Value::Object(target_vec), Value::Object(source_obj)) => {
@@ -73,9 +82,9 @@ pub fn deep_merge_from<'a>(target: &mut Value<'a>, source: &Value<'a>) {
     }
 }
 
-fn deep_merge_objects_from<'a>(
-    target_vec: &mut Vec<(&'a str, Value<'a>)>,
-    source_obj: &[(&'a str, Value<'a>)],
+fn deep_merge_objects_from<'target, 'source: 'target>(
+    target_vec: &mut Vec<(&'target str, Value<'target>)>,
+    source_obj: &[(&'source str, Value<'source>)],
 ) {
     if source_obj.is_empty() {
         return;

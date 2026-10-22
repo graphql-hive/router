@@ -1639,6 +1639,19 @@ impl<'exec> Executor<'exec> {
             return entity_index_error_map;
         }
 
+        // Most entities are merged into more than one response location.
+        // Count those uses so the final location can be moved instead.
+        let mut remaining_uses = vec![0; entities.len()];
+        for path_state in &alias_state.paths {
+            for hash in path_state.representation_hashes.iter().flatten() {
+                if let Some(entity_index) = alias_state.representation_hash_to_index.get(hash) {
+                    if let Some(remaining) = remaining_uses.get_mut(*entity_index) {
+                        *remaining += 1;
+                    }
+                }
+            }
+        }
+
         // We walk each merge path
         for path_state in &alias_state.paths {
             let mut index = 0;
@@ -1674,10 +1687,22 @@ impl<'exec> Executor<'exec> {
                                 .or_insert_with(Vec::new);
                             error_paths.push(error_path);
                         }
-                        if let Some(entity) = entities.get(*entity_index) {
-                            // SAFETY: `entity` lives for `'a`.
-                            // The transmute is to satisfy the compiler, but the lifetime is valid.
-                            let entity: &Value<'_> = unsafe { std::mem::transmute(entity) };
+                        let move_entity =
+                            remaining_uses
+                                .get_mut(*entity_index)
+                                .is_some_and(|remaining| {
+                                    if *remaining == 0 {
+                                        false
+                                    } else {
+                                        *remaining -= 1;
+                                        *remaining == 0
+                                    }
+                                });
+                        if move_entity {
+                            if let Some(entity) = entities.get_mut(*entity_index) {
+                                deep_merge(target_data, std::mem::replace(entity, Value::Null));
+                            }
+                        } else if let Some(entity) = entities.get(*entity_index) {
                             deep_merge_from(target_data, entity);
                         }
                     }
