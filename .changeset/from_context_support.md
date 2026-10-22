@@ -8,3 +8,4 @@ Contextual arguments are resolved per entity from the nearest ancestor that sets
 
 Fields with a non-null contextual argument are not batched into `BatchFetch` or combined into multi-type fetches. Mutation fields with contextual results finish their context-dependent fetches before the next root field runs.
 
+Closes https://github.com/graphql-hive/router/issues/1655
