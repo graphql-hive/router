@@ -3,7 +3,7 @@ use crate::query_planner::{
     ast::{
         merge_path::Condition,
         minification::minify_operation,
-        operation::{OperationDefinition, PlanningFetchOperation, VariableDefinition},
+        operation::{split_group, OperationDefinition, PlanningFetchOperation, VariableDefinition},
         selection_item::SelectionItem,
         selection_set::{FieldSelection, SelectionSet},
         value::Value,
@@ -192,6 +192,22 @@ impl FetchContext {
     pub fn rewrites(context: &Option<Box<Self>>) -> Option<&[KeyRenamer]> {
         context.as_ref()?.rewrites.as_deref()
     }
+
+    /// The variables every group of contextual argument values sends its own value for: the
+    /// context variables, then the rewrite targets that aren't one of them. The planner and the
+    /// executor both read it from here, so they always agree.
+    pub fn group_variables(context: &Option<Box<Self>>) -> Vec<&str> {
+        let mut names: Vec<&str> = Self::variables(context)
+            .iter()
+            .map(String::as_str)
+            .collect();
+        for rewrite in Self::rewrites(context).unwrap_or_default() {
+            if !names.contains(&rewrite.rename_key_to.as_str()) {
+                names.push(&rewrite.rename_key_to);
+            }
+        }
+        names
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -218,9 +234,23 @@ pub struct CustomScalarPaths {
     pub children: BTreeMap<String, CustomScalarPaths>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub terminal: bool,
+    /// Set on the paths of a context-aliased request, where every key here has a group number
+    /// added, so `_entities_3` reads the paths of `_entities`
+    #[serde(skip)]
+    pub group_suffixed: bool,
 }
 
 impl CustomScalarPaths {
+    /// The paths under `key`.
+    pub fn child(&self, key: &str) -> Option<&Self> {
+        let key = if self.group_suffixed {
+            split_group(key)?.0
+        } else {
+            key
+        };
+        self.children.get(key)
+    }
+
     pub fn insert_path<I, S>(&mut self, path: I)
     where
         I: IntoIterator<Item = S>,
@@ -289,7 +319,11 @@ impl CustomScalarPathState {
         }
 
         let terminal = self.custom_scalar_seen && !self.standard_scalar_seen && children.is_empty();
-        let paths = CustomScalarPaths { children, terminal };
+        let paths = CustomScalarPaths {
+            children,
+            terminal,
+            group_suffixed: false,
+        };
 
         (!paths.is_empty()).then_some(paths)
     }
@@ -692,15 +726,37 @@ impl FetchNode<Planning> {
             true => {
                 let planner_requires = create_input_selection_set(&step.input);
                 let mut operation = create_output_operation(step, supergraph);
+                let custom_scalar_paths = custom_scalar_paths_from_fetch_output(
+                    &step.output,
+                    supergraph,
+                    Some("_entities"),
+                );
+                let context = FetchContext::new(
+                    step.context_variable_definitions
+                        .iter()
+                        .map(|var| var.name.clone())
+                        .collect(),
+                    step.context_rewrites.clone(),
+                );
                 if !step.context_variable_definitions.is_empty()
                     && !step
                         .context_variable_definitions
                         .iter()
                         .any(|variable| variable.variable_type.is_non_null())
                 {
-                    // one alias per group of contextual argument values
+                    // one alias per group of contextual argument values, each with its own
+                    // representations and context values
+                    let group_variables = FetchContext::group_variables(&context)
+                        .into_iter()
+                        .chain(["representations"])
+                        .map(str::to_string)
+                        .collect();
                     operation.operation.set_max_context_groups(
-                        options.max_context_aliases_per_request(&step.service_name.0),
+                        options
+                            .max_aliases_per_request(&step.service_name.0)
+                            .unwrap_or(usize::MAX),
+                        group_variables,
+                        custom_scalar_paths.as_ref(),
                     );
                 }
                 FetchNode {
@@ -709,22 +765,12 @@ impl FetchNode<Planning> {
                     variable_usages: step.variable_usages.clone(),
                     operation_kind: Some(OperationKind::Query),
                     operation,
-                    custom_scalar_paths: custom_scalar_paths_from_fetch_output(
-                        &step.output,
-                        supergraph,
-                        Some("_entities"),
-                    ),
+                    custom_scalar_paths,
                     requires: Some(RequiresSelectionSet::from(&planner_requires)),
                     planner_requires: Some(Box::new(planner_requires)),
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),
-                    context: FetchContext::new(
-                        step.context_variable_definitions
-                            .iter()
-                            .map(|var| var.name.clone())
-                            .collect(),
-                        step.context_rewrites.clone(),
-                    ),
+                    context,
                 }
             }
             false => {

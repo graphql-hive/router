@@ -95,3 +95,4 @@ pub use query::parse_query;
 pub use query::parse_query_with_token_limit;
 pub use query::{minify_query, minify_query_document};
 pub use schema::parse_schema;
+pub use tokenizer::{spanned_tokens, Kind as TokenKind};

@@ -287,10 +287,23 @@ impl<'a> BatchFetchBuilder<'a> {
             .iter()
             .any(|alias| !FetchContext::variables(&alias.context).is_empty())
         {
-            // every group of contextual argument values repeats all batch aliases
-            operation
-                .operation
-                .set_max_context_groups(max_aliases / self.batched_aliases.len().max(1));
+            // every group of contextual argument values repeats all batch aliases, each with its
+            // own representations and context values
+            let group_variables = self
+                .batched_aliases
+                .iter()
+                .flat_map(|alias| {
+                    FetchContext::group_variables(&alias.context)
+                        .into_iter()
+                        .chain([alias.representations_variable_name.as_str()])
+                        .map(str::to_string)
+                })
+                .collect();
+            operation.operation.set_max_context_groups(
+                max_aliases / self.batched_aliases.len().max(1),
+                group_variables,
+                (!self.custom_scalar_paths.is_empty()).then_some(&self.custom_scalar_paths),
+            );
         }
 
         Ok(BatchFetchNode {
@@ -614,11 +627,9 @@ fn optimize_parallel_node(
 
             // every shape group is one alias, so a batch carrying more aliases than the
             // subgraph allows is split into several batches. no limit, no split.
-            let service_name = &first_candidate.service_name;
             let max_aliases = options
-                .max_aliases_per_request(service_name)
+                .max_aliases_per_request(&first_candidate.service_name)
                 .unwrap_or(usize::MAX);
-            let max_context_aliases = options.max_context_aliases_per_request(service_name);
 
             for chunk in shape_groups.chunks(max_aliases) {
                 // a single fetch has nothing to batch with, keep the original node
@@ -642,7 +653,7 @@ fn optimize_parallel_node(
 
                 // Build one `BatchFetch` node from each final group
                 let batch_fetch_node =
-                    build_batched_fetch_node(chunk, &variables, supergraph, max_context_aliases)?;
+                    build_batched_fetch_node(chunk, &variables, supergraph, max_aliases)?;
 
                 batch_node_replacements.insert(
                     first_index,

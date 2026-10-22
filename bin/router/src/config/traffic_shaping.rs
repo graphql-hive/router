@@ -454,14 +454,16 @@ pub struct TrafficShapingExecutorGlobalConfig {
     ///   this limit, the router sends several such requests.
     ///
     /// Subgraphs often limit the number of aliases in an operation (for example, graphql-armor's
-    /// max-aliases rule), so keep this at or below that limit. Aliases written in the client's
-    /// own query are not counted. A value of `1` (or `0`) allows one `_entities` field per
-    /// request.
+    /// max-aliases rule), so keep this at or below that limit. Set it for such subgraphs even if
+    /// your operations look small: the number of contextual argument groups depends on the
+    /// response data, so it can grow past the subgraph's limit at any time. Aliases written in
+    /// the client's own query are not counted. A value of `1` (or `0`) allows one `_entities`
+    /// field per request.
     ///
     /// Per-subgraph values under `traffic_shaping.subgraphs.<name>.max_aliases_per_request` take precedence.
     ///
-    /// Not set by default: batches are never split, and contextual argument groups go up to 15
-    /// per request.
+    /// Not set by default, so there's no limit: batches are never split, and all contextual
+    /// argument groups of a fetch go in one request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_aliases_per_request: Option<usize>,
 }

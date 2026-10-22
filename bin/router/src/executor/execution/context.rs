@@ -18,8 +18,11 @@ use crate::{
         utils::traverse::traverse_and_callback,
     },
     query_planner::{
-        ast::{operation::ContextAliasedOperation, requires::RequiresSelectionSet},
-        planner::plan_nodes::{FetchNodePathSegment, FetchRewrite, KeyRenamer, ResponsePathRef},
+        ast::{
+            operation::{ContextAliasTemplate, SubgraphFetchOperation},
+            requires::RequiresSelectionSet,
+        },
+        planner::plan_nodes::{FetchContext, FetchNodePathSegment, FetchRewrite, ResponsePathRef},
         state::entity_keys::KeysByType,
     },
 };
@@ -98,13 +101,9 @@ struct ContextGroups<'a, 'd, 'v> {
 }
 
 impl<'a, 'd, 'v> ContextGroups<'a, 'd, 'v> {
-    fn new(variables: &'a [String], rewrites: &'a [KeyRenamer]) -> Self {
-        let mut names: Vec<&str> = variables.iter().map(String::as_str).collect();
-        for rewrite in rewrites {
-            if !names.contains(&rewrite.rename_key_to.as_str()) {
-                names.push(rewrite.rename_key_to.as_str());
-            }
-        }
+    fn new(context: &'a Option<Box<FetchContext>>) -> Self {
+        let names = FetchContext::group_variables(context);
+        let rewrites = FetchContext::rewrites(context).unwrap_or_default();
         let sources: Vec<Vec<ContextSource<'a>>> = names
             .iter()
             .map(|name| {
@@ -230,12 +229,11 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
     paths: impl IntoIterator<Item = ResponsePathRef<'a>>,
     requires: &RequiresSelectionSet,
     input_rewrites: Option<&[FetchRewrite]>,
-    context_rewrites: Option<&'a [KeyRenamer]>,
-    context_variables: &'a [String],
+    context: &'a Option<Box<FetchContext>>,
     possible_types: &PossibleTypes,
     subgraph_keys: Option<&KeysByType>,
 ) -> (Vec<ContextGroup<'a>>, Vec<RepresentationHashes>) {
-    let mut contexts = ContextGroups::new(context_variables, context_rewrites.unwrap_or_default());
+    let mut contexts = ContextGroups::new(context);
     let mut path_hashes: Vec<RepresentationHashes> = Vec::new();
     let mut seen_paths: Vec<(ResponsePathRef<'a>, RepresentationHashes)> = Vec::new();
     let required_selections = requires.root_selections();
@@ -302,27 +300,77 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
     (contexts.groups, path_hashes)
 }
 
-/// Turns the response of a [`ContextAliasedOperation`] back into the response of the original
-/// operation, so it can be merged like any other. The entities of every group are concatenated
-/// under the original response key and error paths are pointed to them.
+/// One request that carries several groups of contextual argument values, written out from a
+/// [`ContextAliasTemplate`].
+struct AliasedRequest {
+    operation: SubgraphFetchOperation,
+    /// The names of the per-group variables in each group
+    variable_names: Vec<String>,
+}
+
+/// Keeps the [`AliasedRequest`]s of one execution around until it's done, since the subgraph
+/// request and the jobs borrow from them. They're written per request, so they're dropped with
+/// it instead of piling up in the plan cache. Append-only, so nothing it hands out ever moves.
+#[derive(Default)]
+pub struct AliasedRequests(boxcar::Vec<AliasedRequest>);
+
+impl AliasedRequests {
+    /// Writes out a request for every group in `groups` (the variable values of each group, in
+    /// group order) and keeps it until the execution is done. Returns its operation and its
+    /// variables, renamed for their group.
+    pub(super) fn write(
+        &self,
+        template: &ContextAliasTemplate,
+        groups: Vec<Vec<(&str, Vec<u8>)>>,
+    ) -> (&SubgraphFetchOperation, Vec<(&str, Vec<u8>)>) {
+        let count = groups.len();
+        let variable_count = groups.iter().map(Vec::len).sum();
+        let mut variable_names = Vec::with_capacity(variable_count);
+        let mut values = Vec::with_capacity(variable_count);
+        for (group, variables) in groups.into_iter().enumerate() {
+            for (name, value) in variables {
+                variable_names.push(
+                    template
+                        .variable(name, group)
+                        .unwrap_or_else(|| name.to_string()),
+                );
+                values.push(value);
+            }
+        }
+        let request = &self.0[self.0.push(AliasedRequest {
+            operation: template.operation(count),
+            variable_names,
+        })];
+        let variables = request
+            .variable_names
+            .iter()
+            .map(String::as_str)
+            .zip(values)
+            .collect();
+        (&request.operation, variables)
+    }
+}
+
+/// Turns the response of an aliased request for `groups` groups back into the response of the
+/// original operation, so it can be merged like any other. The entities of every group are
+/// concatenated under the original response key and error paths are pointed to them.
 ///
 /// `count(key, group)` is the number of representations sent for the `key`-th response key of
-/// `aliased` in `group`. A group's entities are padded or cut to that, so the indexes of the
+/// `template` in `group`. A group's entities are padded or cut to that, so the indexes of the
 /// following groups stay stable.
 pub(super) fn unalias_response<'exec>(
     response: &mut SubgraphResponse<'exec>,
-    aliased: &'exec ContextAliasedOperation,
+    template: &'exec ContextAliasTemplate,
+    groups: usize,
     count: impl Fn(usize, usize) -> usize,
 ) {
+    let keys = &template.response_keys;
     // where every group starts, plus where the last one ends
-    let offsets: Vec<Vec<usize>> = aliased
-        .response_keys
-        .iter()
-        .enumerate()
-        .map(|(key, (_, aliases))| {
-            let mut offsets = Vec::with_capacity(aliases.len() + 1);
+    let offsets: Vec<Vec<usize>> = (0..keys.len())
+        .map(|key| {
+            let mut offsets = Vec::with_capacity(groups + 1);
             offsets.push(0);
-            for group in 0..aliases.len() {
+            for group in 0..groups {
                 offsets.push(offsets[group] + count(key, group));
             }
             offsets
@@ -330,22 +378,28 @@ pub(super) fn unalias_response<'exec>(
         .collect();
 
     if let Value::Object(fields) = &mut response.data {
-        let mut merged = Vec::with_capacity(aliased.response_keys.len());
-        for ((key, aliases), offsets) in aliased.response_keys.iter().zip(&offsets) {
-            let mut entities = Vec::with_capacity(offsets[aliases.len()]);
-            for (group, alias) in aliases.iter().enumerate() {
-                let count = offsets[group + 1] - offsets[group];
-                if let Some(position) = Value::object_position(fields, alias) {
-                    if let Value::Array(items) = fields.swap_remove(position).1 {
-                        entities.extend(items.into_iter().take(count));
+        // every group has its own range in the merged list, so the aliases can come back in any
+        // order. a missing group or entity stays null, extra entities are dropped.
+        let mut merged: Vec<Vec<Value<'exec>>> = offsets
+            .iter()
+            .map(|offsets| vec![Value::Null; offsets[groups]])
+            .collect();
+        for (alias, value) in std::mem::take(fields) {
+            if let (Some((key, group)), Value::Array(items)) = (template.response_key(alias), value)
+            {
+                if group < groups {
+                    let range = offsets[key][group]..offsets[key][group + 1];
+                    for (slot, item) in merged[key][range].iter_mut().zip(items) {
+                        *slot = item;
                     }
                 }
-                // pad missing entities with null, so the next group starts at its offset
-                entities.resize(offsets[group + 1], Value::Null);
             }
-            merged.push((key.as_str(), Value::Array(entities)));
         }
-        *fields = merged;
+        *fields = keys
+            .iter()
+            .map(String::as_str)
+            .zip(merged.into_iter().map(Value::Array))
+            .collect();
     }
 
     for error in response.errors.iter_mut().flatten() {
@@ -355,27 +409,21 @@ pub(super) fn unalias_response<'exec>(
         let Some(GraphQLErrorPathSegment::String(first)) = path.segments.first() else {
             continue;
         };
-        let Some((key, group, offsets)) =
-            aliased
-                .response_keys
-                .iter()
-                .zip(&offsets)
-                .find_map(|((key, aliases), offsets)| {
-                    let group = aliases.iter().position(|alias| alias == first)?;
-                    Some((key, group, offsets))
-                })
+        let Some((key, group)) = template
+            .response_key(first)
+            .filter(|(_, group)| *group < groups)
         else {
             continue;
         };
-        let offset = offsets[group];
+        let offsets = &offsets[key];
         if let Some(GraphQLErrorPathSegment::Index(index)) = path.segments.get_mut(1) {
-            if *index >= offsets[group + 1] - offset {
+            if *index >= offsets[group + 1] - offsets[group] {
                 error.path = None;
                 continue;
             }
-            *index += offset;
+            *index += offsets[group];
         }
-        path.segments[0] = GraphQLErrorPathSegment::String(key.clone());
+        path.segments[0] = GraphQLErrorPathSegment::String(keys[key].clone());
     }
 }
 
@@ -384,7 +432,7 @@ mod tests {
     use super::*;
     use crate::query_planner::{
         ast::selection_set::SelectionSet,
-        planner::plan_nodes::{FlattenNodePath, PathSegment},
+        planner::plan_nodes::{FlattenNodePath, KeyRenamer, PathSegment},
         utils::parsing::parse_operation,
     };
 
@@ -413,7 +461,7 @@ mod tests {
             panic!("selection");
         };
         let requires = RequiresSelectionSet::from(&SelectionSet::from(selection));
-        let rewrites = vec![
+        let rewrites = [
             KeyRenamer {
                 path: vec![
                     FetchNodePathSegment::Parent,
@@ -431,14 +479,13 @@ mod tests {
                 rename_key_to: "__context_0".into(),
             },
         ];
-        let names = ["__context_0".into()];
+        let context = FetchContext::new(vec!["__context_0".into()], Some(rewrites.to_vec()));
         let (groups, hashes) = collect_context_entities(
             &data,
             [path.as_ref()],
             &requires,
             None,
-            Some(&rewrites),
-            &names,
+            &context,
             &PossibleTypes::default(),
             None,
         );
@@ -501,15 +548,17 @@ mod tests {
                 rename_key_to: "__context_1".into(),
             },
         ];
-        let names = ["__context_0".into(), "__context_1".into()];
+        let context = FetchContext::new(
+            vec!["__context_0".into(), "__context_1".into()],
+            Some(rewrites.to_vec()),
+        );
         let possible_types = PossibleTypes::default();
         let (groups, hashes) = collect_context_entities(
             &data,
             [path.as_ref()],
             &requires,
             None,
-            Some(&rewrites),
-            &names,
+            &context,
             &possible_types,
             None,
         );
@@ -537,7 +586,7 @@ mod tests {
             panic!("posts");
         };
         let objects = [&data, user];
-        let mut contexts = ContextGroups::new(&names, &rewrites);
+        let mut contexts = ContextGroups::new(&context);
         let resolved: Vec<usize> = [0, 0, 1, 1, 2, 0]
             .into_iter()
             .map(|post| contexts.resolve(&posts[post], &objects, &possible_types))
@@ -604,14 +653,16 @@ mod tests {
                 rename_key_to: "__context_1".into(),
             },
         ];
-        let names = ["__context_0".into(), "__context_1".into()];
+        let context = FetchContext::new(
+            vec!["__context_0".into(), "__context_1".into()],
+            Some(rewrites.to_vec()),
+        );
         let (groups, hashes) = collect_context_entities(
             &data,
             [posts.as_ref(), drafts.as_ref()],
             &requires,
             None,
-            Some(&rewrites),
-            &names,
+            &context,
             &PossibleTypes::default(),
             None,
         );
@@ -660,14 +711,13 @@ mod tests {
         let keys: KeysByType = [("Transaction".into(), vec![vec!["id".into()]])]
             .into_iter()
             .collect();
-        let names = ["__context_0".into()];
+        let context = FetchContext::new(vec!["__context_0".into()], Some(Vec::new()));
         let (groups, _) = collect_context_entities(
             &data,
             [path.as_ref()],
             &requires,
             None,
-            Some(&[]),
-            &names,
+            &context,
             &PossibleTypes::default(),
             Some(&keys),
         );
@@ -698,14 +748,13 @@ mod tests {
             path: vec![FetchNodePathSegment::Parent; 3],
             rename_key_to: "__context_0".into(),
         }];
-        let names = ["__context_0".into()];
+        let context = FetchContext::new(vec!["__context_0".into()], Some(rewrites.to_vec()));
         let (groups, hashes) = collect_context_entities(
             &data,
             [path.as_ref()],
             &requires,
             None,
-            Some(&rewrites),
-            &names,
+            &context,
             &PossibleTypes::default(),
             None,
         );
@@ -774,6 +823,46 @@ mod tests {
     }
 
     #[test]
+    fn aliased_requests_keep_every_pushed_request() {
+        use crate::query_planner::ast::{document::Document, operation::PlanningFetchOperation};
+
+        let document = parse_operation(
+            "query($representations: [_Any!]!) { _entities(representations: $representations) { __typename } }",
+        );
+        let graphql_tools::parser::query::Definition::Operation(operation) =
+            document.definitions.into_iter().next().unwrap()
+        else {
+            panic!("operation");
+        };
+        let mut operation = PlanningFetchOperation::from_anonymous_operation(Document {
+            operation: operation.into(),
+            fragments: Vec::new(),
+        })
+        .operation;
+        operation.set_max_context_groups(usize::MAX, vec!["representations".to_string()], None);
+        let template = operation.context_alias_template().unwrap();
+
+        // a bunch of requests, each with its own group count
+        let store = AliasedRequests::default();
+        let requests: Vec<_> = (0..100)
+            .map(|i| {
+                let groups = (0..i % 7 + 2)
+                    .map(|_| vec![("representations", b"[]".to_vec())])
+                    .collect();
+                store.write(template, groups)
+            })
+            .collect();
+        for (i, (operation, variables)) in requests.iter().enumerate() {
+            let last = i % 7 + 1;
+            assert_eq!(variables.len(), last + 1);
+            assert_eq!(variables[last].0, format!("representations_{last}"));
+            assert!(operation
+                .document_str
+                .contains(&format!("_entities_{last}:")));
+        }
+    }
+
+    #[test]
     fn unalias_response_concatenates_groups_and_shifts_error_paths() {
         use crate::{
             executor::response::graphql_error::{GraphQLError, GraphQLErrorPath},
@@ -793,10 +882,8 @@ mod tests {
             fragments: Vec::new(),
         })
         .operation;
-        operation.set_max_context_groups(15);
-        let aliased = operation
-            .context_aliased(3, &["representations", "c"])
-            .unwrap();
+        operation.set_max_context_groups(15, vec!["representations".into(), "c".into()], None);
+        let template = operation.context_alias_template().unwrap();
 
         let mut response = SubgraphResponse {
             // group 0 returns too many entities, group 1 none
@@ -837,7 +924,7 @@ mod tests {
             status: None,
         };
         let counts = [2, 1, 1];
-        unalias_response(&mut response, aliased, |_, group| counts[group]);
+        unalias_response(&mut response, template, 3, |_, group| counts[group]);
 
         assert_eq!(
             sonic_rs::to_string(&response.data).unwrap(),
