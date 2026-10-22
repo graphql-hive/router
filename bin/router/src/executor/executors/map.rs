@@ -726,6 +726,18 @@ impl SubgraphExecutorMap {
         subgraph_name: &str,
         endpoint_str: &str,
     ) -> Result<SubgraphExecutorBoxedArc, SubgraphExecutorError> {
+        // http subscriptions run on the same executor as queries. registering them here would
+        // store the executor under the http map, miss this cache on every subscription and
+        // replace the query executor (and its connection pool) each time
+        if self
+            .config
+            .subscriptions
+            .get_protocol_for_subgraph(subgraph_name)
+            == SubscriptionProtocol::HTTP
+        {
+            return self.get_or_create_http_executor(subgraph_name, endpoint_str);
+        }
+
         if let Some(executor) = self
             .subscription_executors_by_subgraph
             .get(subgraph_name)
@@ -1168,5 +1180,47 @@ pub fn compile_duration_or_expression(
             let hints = ProgramHints::from_program(&program);
             Ok(ValueOrProgram::Program(Box::new(program), hints))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn http_subscriptions_reuse_the_query_executor() {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let endpoint = "http://example.com/graphql";
+        let map = SubgraphExecutorMap::from_http_endpoint_map(
+            &HashMap::from([("inventory".to_string(), endpoint.to_string())]),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            None,
+            Arc::new(TelemetryContext::from_propagation_config(
+                &Default::default(),
+                &Default::default(),
+            )),
+            Arc::new(DashMap::new()),
+        )
+        .unwrap();
+
+        let query = map
+            .get_or_create_http_executor("inventory", endpoint)
+            .unwrap();
+        let first = map
+            .get_or_create_subscription_executor("inventory", endpoint)
+            .unwrap();
+        let second = map
+            .get_or_create_subscription_executor("inventory", endpoint)
+            .unwrap();
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(Arc::ptr_eq(&query, &first));
+        assert!(Arc::ptr_eq(
+            &query,
+            &map.get_or_create_http_executor("inventory", endpoint)
+                .unwrap()
+        ));
     }
 }
