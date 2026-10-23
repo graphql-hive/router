@@ -36,7 +36,8 @@ pub struct ContextArgument {
     pub name: String,
     pub type_in_graph: TypeNode,
     /// The selection parsed once for each type that declares this context.
-    pub selections: Vec<TypeAwareSelection>,
+    /// Shared by every field reading the same context selection in a subgraph.
+    pub selections: Arc<[TypeAwareSelection]>,
 }
 
 /// Represent a simple file move
