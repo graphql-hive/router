@@ -64,7 +64,7 @@ fn main() {
             let cancellation_token = CancellationToken::new();
             let best_paths_per_leaf = walk_operation(
                 &graph,
-                &supergraph_state,
+                supergraph_state,
                 &override_context,
                 &operation,
                 &cancellation_token,
@@ -130,7 +130,7 @@ fn main() {
             println!("{projection}");
         }
         _ => {
-            eprintln!("Unknown command. Available commands: consumer_graph, graph, paths, tree, fetch_graph, plan");
+            eprintln!("Unknown command. Available commands: consumer_schema, graph, paths, fetch_graph, plan");
             process::exit(1);
         }
     };
@@ -155,7 +155,7 @@ fn process_fetch_graph(
     let cancellation_token = CancellationToken::new();
     build_fetch_graph_from_query_tree(
         &graph,
-        &supergraph_state,
+        supergraph_state,
         &override_context,
         query_tree,
         &operation,
@@ -172,7 +172,7 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
 
     let best_paths_per_leaf = walk_operation(
         &graph,
-        &supergraph,
+        supergraph,
         &override_context,
         &operation,
         &cancellation_token,
@@ -182,7 +182,7 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
         find_best_combination(&graph, best_paths_per_leaf, &cancellation_token).unwrap();
     let fetch_graph = build_fetch_graph_from_query_tree(
         &graph,
-        &supergraph,
+        supergraph,
         &override_context,
         query_tree,
         &operation,
@@ -193,7 +193,7 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
 
     build_query_plan_from_fetch_graph(
         fetch_graph,
-        &supergraph,
+        supergraph,
         &QueryPlannerOptions::default(),
         &cancellation_token,
     )
@@ -203,14 +203,19 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
 fn process_merged_tree(
     supergraph_path: &str,
     operation_path: &str,
-) -> (Graph, QueryTree, SupergraphState, OperationDefinition) {
+) -> (
+    Graph<'static>,
+    QueryTree,
+    &'static SupergraphState,
+    OperationDefinition,
+) {
     let (graph, operation, supergraph_state) =
         load_graph_operation(supergraph_path, operation_path);
     let override_context = PlannerOverrideContext::default();
     let cancellation_token = CancellationToken::new();
     let best_paths_per_leaf = walk_operation(
         &graph,
-        &supergraph_state,
+        supergraph_state,
         &override_context,
         &operation,
         &cancellation_token,
@@ -234,13 +239,17 @@ fn get_operation(operation_path: &str, supergraph: &SupergraphState) -> Operatio
 fn load_graph_operation(
     supergraph_path: &str,
     operation_path: &str,
-) -> (Graph, OperationDefinition, SupergraphState) {
+) -> (
+    Graph<'static>,
+    OperationDefinition,
+    &'static SupergraphState,
+) {
     let supergraph_sdl =
         std::fs::read_to_string(supergraph_path).expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);
-    let supergraph = SupergraphState::new(&parsed_schema);
-    let graph = Graph::graph_from_supergraph_state(&supergraph).expect("failed to create graph");
-    let operation = get_operation(operation_path, &supergraph);
+    let supergraph = Box::leak(Box::new(SupergraphState::new(&parsed_schema)));
+    let graph = Graph::graph_from_supergraph_state(supergraph).expect("failed to create graph");
+    let operation = get_operation(operation_path, supergraph);
 
     (graph, operation, supergraph)
 }

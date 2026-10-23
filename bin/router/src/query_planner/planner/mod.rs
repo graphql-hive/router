@@ -53,8 +53,9 @@ impl QueryPlannerOptions {
 }
 
 pub struct Planner {
-    graph: Graph,
-    pub supergraph: SupergraphState,
+    // `graph` borrows from the `Arc` below. Keep it first so it is dropped before its owner.
+    graph: Graph<'static>,
+    pub supergraph: Arc<SupergraphState>,
     pub consumer_schema: Arc<ConsumerSchema>,
     options: QueryPlannerOptions,
 }
@@ -89,13 +90,21 @@ impl Planner {
         parsed_supergraph: &schema::Document<'static, String>,
         options: QueryPlannerOptions,
     ) -> Result<Self, PlannerError> {
-        let graph = Graph::graph_from_supergraph_state(&supergraph_state)?;
+        let supergraph = Arc::new(supergraph_state);
+        let graph = Graph::graph_from_supergraph_state(&supergraph)?;
+
+        // SAFETY: `graph` only borrows immutable data from `supergraph`. The Arc allocation is
+        // stable when the Planner is moved, the graph is private, and field drop order drops the
+        // graph before its owning Arc.
+        let graph: Graph<'static> =
+            unsafe { std::mem::transmute::<Graph<'_>, Graph<'static>>(graph) };
+
         let consumer_schema = ConsumerSchema::new_from_supergraph(parsed_supergraph);
 
         Ok(Planner {
             graph,
             consumer_schema: Arc::new(consumer_schema),
-            supergraph: supergraph_state,
+            supergraph,
             options,
         })
     }
