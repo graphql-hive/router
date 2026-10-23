@@ -25,11 +25,16 @@ use ntex::web;
 use ntex::{http::HeaderMap, util::Bytes};
 use std::sync::atomic::AtomicUsize;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::HashSet,
+    sync::{Arc, OnceLock},
+};
 use tracing::debug;
 
 #[cfg(not(feature = "graphiql"))]
-use crate::http_utils::laboratory::{render_laboratory_html, LaboratoryConfigError};
+use crate::http_utils::laboratory::{
+    build_laboratory_seed, render_laboratory_html, LaboratoryConfigError,
+};
 use crate::jwt::context::JwtTokenPayload;
 use crate::jwt::JwtAuthRuntime;
 use crate::pipeline::active_subscriptions::{ActiveSubscriptions, SubscriptionEvent};
@@ -339,9 +344,7 @@ pub struct RouterSharedState {
     pub active_subscriptions: ActiveSubscriptions,
     /// The storage manager for the router.
     pub storage_manager: Arc<StorageManager>,
-    /// The Laboratory page, with any configured seed values already injected. Rendered once
-    /// because the config cannot change while the router runs.
-    pub laboratory_html: Bytes,
+    laboratory_html: OnceLock<Bytes>,
 }
 
 impl RouterSharedState {
@@ -369,7 +372,7 @@ impl RouterSharedState {
                 .map_err(Box::new)
             })
             .transpose()?;
-        let laboratory_html = render_laboratory_page(&router_config.laboratory)?;
+        check_laboratory_config(&router_config.laboratory)?;
 
         Ok(Self {
             validation_plan: Arc::new(validation_plan),
@@ -399,26 +402,40 @@ impl RouterSharedState {
             long_lived_client_count: Arc::new(AtomicUsize::new(0)),
             active_subscriptions,
             storage_manager,
-            laboratory_html,
+            laboratory_html: OnceLock::new(),
         })
     }
 }
 
-#[cfg(not(feature = "graphiql"))]
-fn render_laboratory_page(
-    config: &crate::config::laboratory::LaboratoryConfig,
-) -> Result<Bytes, SharedStateError> {
-    let html = render_laboratory_html(crate::LABORATORY_HTML, config).map_err(Box::new)?;
+impl RouterSharedState {
+    pub fn laboratory_page(&self) -> Bytes {
+        self.laboratory_html
+            .get_or_init(|| render_laboratory_page(&self.router_config.laboratory))
+            .clone()
+    }
+}
 
-    Ok(Bytes::from(html))
+/// Fails startup on a bad config, even though the page itself is rendered later.
+#[cfg(not(feature = "graphiql"))]
+fn check_laboratory_config(
+    config: &crate::config::laboratory::LaboratoryConfig,
+) -> Result<(), SharedStateError> {
+    build_laboratory_seed(config).map_err(Box::new)?;
+    Ok(())
+}
+
+#[cfg(not(feature = "graphiql"))]
+fn render_laboratory_page(config: &crate::config::laboratory::LaboratoryConfig) -> Bytes {
+    render_laboratory_html(crate::LABORATORY_HTML, config)
+        .expect("the laboratory config is checked at startup")
 }
 
 /// The `graphiql` feature swaps the Laboratory for a static GraphiQL page, which has nowhere to
 /// put the seed values.
 #[cfg(feature = "graphiql")]
-fn render_laboratory_page(
+fn check_laboratory_config(
     config: &crate::config::laboratory::LaboratoryConfig,
-) -> Result<Bytes, SharedStateError> {
+) -> Result<(), SharedStateError> {
     if !config.operations.is_empty()
         || !config.collections.is_empty()
         || !config.global_headers.is_empty()
@@ -429,7 +446,12 @@ fn render_laboratory_page(
         );
     }
 
-    Ok(Bytes::from_static(crate::LABORATORY_HTML.as_bytes()))
+    Ok(())
+}
+
+#[cfg(feature = "graphiql")]
+fn render_laboratory_page(_config: &crate::config::laboratory::LaboratoryConfig) -> Bytes {
+    Bytes::from_static(crate::LABORATORY_HTML.as_bytes())
 }
 
 #[derive(thiserror::Error, Debug)]

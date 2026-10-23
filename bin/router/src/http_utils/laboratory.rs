@@ -8,6 +8,7 @@ use crate::config::{
     laboratory::{LaboratoryCollectionConfig, LaboratoryConfig, LaboratoryOperationConfig},
     primitives::http_header::HttpHeaderName,
 };
+use ntex::util::{Bytes, BytesMut};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
 
@@ -339,7 +340,7 @@ fn escape_for_js_string_literal(value: &str) -> String {
 pub fn render_laboratory_html(
     template: &str,
     config: &LaboratoryConfig,
-) -> Result<String, LaboratoryConfigError> {
+) -> Result<Bytes, LaboratoryConfigError> {
     let seed = build_laboratory_seed(config)?;
     let seed_json = sonic_rs::to_string(&seed).expect("laboratory seed is always serializable");
 
@@ -348,17 +349,60 @@ pub fn render_laboratory_html(
     let global_headers_json = sonic_rs::to_string(&config.global_headers)
         .expect("laboratory global headers are always serializable");
 
-    Ok(template
-        .replace(PROPS_PLACEHOLDER, &escape_for_js_string_literal(&seed_json))
-        .replace(
-            GLOBAL_HEADERS_PLACEHOLDER,
-            &escape_for_js_string_literal(&global_headers_json),
-        ))
+    let props = escape_for_js_string_literal(&seed_json);
+    let global_headers = escape_for_js_string_literal(&global_headers_json);
+    let substitutions = [
+        (PROPS_PLACEHOLDER, props.as_str()),
+        (GLOBAL_HEADERS_PLACEHOLDER, global_headers.as_str()),
+    ];
+
+    // The template is ~20MB, so we copy it once, straight into a buffer of the final size,
+    // and hand that buffer to `Bytes` as is.
+    let size = substitutions
+        .iter()
+        .fold(template.len(), |size, (placeholder, value)| {
+            let count = template.matches(placeholder).count();
+            size - placeholder.len() * count + value.len() * count
+        });
+    let mut page = BytesMut::with_capacity(size);
+    let mut rest = template;
+    while let Some((position, placeholder, value)) = substitutions
+        .iter()
+        .filter_map(|(placeholder, value)| {
+            rest.find(placeholder)
+                .map(|position| (position, placeholder, value))
+        })
+        .min_by_key(|(position, ..)| *position)
+    {
+        page.extend_from_slice(&rest.as_bytes()[..position]);
+        page.extend_from_slice(value.as_bytes());
+        rest = &rest[position + placeholder.len()..];
+    }
+    page.extend_from_slice(rest.as_bytes());
+
+    Ok(page.freeze())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // shadows the real one, so the tests can keep asserting on a `String`
+    fn render_laboratory_html(
+        template: &str,
+        config: &LaboratoryConfig,
+    ) -> Result<String, LaboratoryConfigError> {
+        super::render_laboratory_html(template, config)
+            .map(|page| String::from_utf8(page.to_vec()).expect("the page is valid UTF-8"))
+    }
+
+    #[test]
+    fn substitutes_every_placeholder_in_any_order() {
+        let template = "a__LABORATORY_GLOBAL_HEADERS__b__LABORATORY_PROPS__c__LABORATORY_PROPS__";
+        let page = super::render_laboratory_html(template, &LaboratoryConfig::default()).unwrap();
+
+        assert_eq!(&page[..], br#"a{}b{}c{}"#);
+    }
 
     fn operation(name: &str) -> LaboratoryOperationConfig {
         LaboratoryOperationConfig {

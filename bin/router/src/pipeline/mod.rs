@@ -152,7 +152,7 @@ pub async fn graphql_request_handler(
     if *response_mode == ResponseMode::Laboratory {
         return Ok(web::HttpResponse::Ok()
             .header(CONTENT_TYPE, TEXT_HTML_MIME)
-            .body(shared_state.laboratory_html.clone()));
+            .body(shared_state.laboratory_page()));
     }
 
     let started_at = Instant::now();
@@ -758,7 +758,7 @@ pub async fn execute_planned_request<'exec>(
             );
 
             Ok(SharedRouterResponse::Single(SharedRouterSingleResponse {
-                body: ntex::util::Bytes::from(result.body),
+                body: crate::utils::vec_into_ntex_bytes(result.body),
                 headers,
                 status: result.status_code,
                 error_count: result.error_count,

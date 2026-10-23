@@ -12,7 +12,10 @@ use sonic_rs::LazyValue;
 
 use crate::executor::{
     executors::error::SubgraphExecutorError,
-    response::{graphql_error::GraphQLError, value::Value},
+    response::{
+        graphql_error::GraphQLError,
+        value::{DeserializeScratch, ScratchSeed, Value},
+    },
 };
 
 #[derive(Debug, Default)]
@@ -94,6 +97,7 @@ impl<'a, 'de> Visitor<'de> for SubgraphResponseVisitor<'a> {
     {
         let mut data = None;
         let mut errors = None;
+        let mut scratch = DeserializeScratch::default();
         let mut extensions = None;
 
         while let Some(key) = map.next_key::<&str>()? {
@@ -104,6 +108,7 @@ impl<'a, 'de> Visitor<'de> for SubgraphResponseVisitor<'a> {
                     }
                     data = Some(map.next_value_seed(ValueSeed {
                         custom_scalar_paths: self.custom_scalar_paths,
+                        scratch: &mut scratch,
                     })?);
                 }
                 "errors" => {
@@ -136,31 +141,32 @@ impl<'a, 'de> Visitor<'de> for SubgraphResponseVisitor<'a> {
     }
 }
 
-#[derive(Clone, Copy)]
-struct ValueSeed<'a> {
+struct ValueSeed<'a, 's, 'de> {
     custom_scalar_paths: &'a CustomScalarPaths,
+    scratch: &'s mut DeserializeScratch<'de>,
 }
 
-impl<'a, 'de> DeserializeSeed<'de> for ValueSeed<'a> {
+impl<'de> DeserializeSeed<'de> for ValueSeed<'_, '_, 'de> {
     type Value = Value<'de>;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: Deserializer<'de>,
     {
-        deserialize_value_with_paths(deserializer, self.custom_scalar_paths)
+        deserialize_value_with_paths(deserializer, self.custom_scalar_paths, self.scratch)
     }
 }
 
-fn deserialize_value_with_paths<'a, 'de, D>(
+fn deserialize_value_with_paths<'de, D>(
     deserializer: D,
-    custom_scalar_paths: &'a CustomScalarPaths,
+    custom_scalar_paths: &CustomScalarPaths,
+    scratch: &mut DeserializeScratch<'de>,
 ) -> Result<Value<'de>, D::Error>
 where
     D: Deserializer<'de>,
 {
     if custom_scalar_paths.is_empty() {
-        return Value::deserialize(deserializer);
+        return ScratchSeed(scratch).deserialize(deserializer);
     }
 
     if custom_scalar_paths.terminal {
@@ -170,14 +176,16 @@ where
 
     deserializer.deserialize_any(PathAwareValueVisitor {
         custom_scalar_paths,
+        scratch,
     })
 }
 
-struct PathAwareValueVisitor<'a> {
+struct PathAwareValueVisitor<'a, 's, 'de> {
     custom_scalar_paths: &'a CustomScalarPaths,
+    scratch: &'s mut DeserializeScratch<'de>,
 }
 
-impl<'a, 'de> Visitor<'de> for PathAwareValueVisitor<'a> {
+impl<'de> Visitor<'de> for PathAwareValueVisitor<'_, '_, 'de> {
     type Value = Value<'de>;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -229,30 +237,32 @@ impl<'a, 'de> Visitor<'de> for PathAwareValueVisitor<'a> {
     where
         A: SeqAccess<'de>,
     {
-        let mut elements = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+        let start = self.scratch.elements_start();
         while let Some(elem) = seq.next_element_seed(ValueSeed {
             custom_scalar_paths: self.custom_scalar_paths,
+            scratch: &mut *self.scratch,
         })? {
-            elements.push(elem);
+            self.scratch.push_element(elem);
         }
-        Ok(Value::Array(elements))
+        Ok(self.scratch.finish_array(start))
     }
 
     fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
     where
         M: MapAccess<'de>,
     {
-        let mut entries = Vec::with_capacity(map.size_hint().unwrap_or(0));
+        let start = self.scratch.entries_start();
         while let Some(key) = map.next_key::<&'de str>()? {
             let value = match self.custom_scalar_paths.child(key) {
                 Some(child_paths) if !child_paths.is_empty() => map.next_value_seed(ValueSeed {
                     custom_scalar_paths: child_paths,
+                    scratch: &mut *self.scratch,
                 })?,
-                _ => map.next_value()?,
+                _ => map.next_value_seed(ScratchSeed(&mut *self.scratch))?,
             };
-            entries.push((key, value));
+            self.scratch.push_entry(key, value);
         }
-        Ok(Value::Object(entries))
+        Ok(self.scratch.finish_object(start))
     }
 }
 

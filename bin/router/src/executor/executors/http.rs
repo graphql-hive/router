@@ -30,12 +30,13 @@ use futures::stream::BoxStream;
 
 use async_trait::async_trait;
 
-use bytes::{BufMut, Bytes};
+use bytes::{BufMut, Bytes, BytesMut};
 use http::HeaderMap;
 use http::HeaderValue;
 use http::StatusCode;
 use http_body_util::BodyExt;
 use http_body_util::Full;
+use hyper::body::Body as _;
 use hyper::Version;
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
@@ -221,6 +222,46 @@ pub struct SendRequestOpts<'a> {
     pub compression: TrafficShapingSubgraphRequestCompressionConfig,
 }
 
+/// The most we reserve up front from `content-length`. Past that the buffer grows as data
+/// arrives, so a bogus header can't make us allocate a lot before reading anything.
+const MAX_BODY_PREALLOCATION: usize = 16 * 1024 * 1024;
+
+/// Reads the whole response body into one buffer. A body that arrives in one chunk is returned
+/// as is. Otherwise every chunk is copied in and dropped right away, so hyper can reuse its read
+/// buffer, instead of keeping all the chunks alive until the end and copying them then.
+async fn read_body(mut body: hyper::body::Incoming) -> Result<Bytes, hyper::Error> {
+    let Some(first) = next_chunk(&mut body).await? else {
+        return Ok(Bytes::new());
+    };
+    let Some(second) = next_chunk(&mut body).await? else {
+        return Ok(first);
+    };
+
+    let remaining = body.size_hint().lower() as usize;
+    let mut buf = BytesMut::with_capacity(
+        (first.len() + second.len()).saturating_add(remaining.min(MAX_BODY_PREALLOCATION)),
+    );
+    buf.extend_from_slice(&first);
+    buf.extend_from_slice(&second);
+    drop((first, second));
+    while let Some(chunk) = next_chunk(&mut body).await? {
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf.freeze())
+}
+
+async fn next_chunk(body: &mut hyper::body::Incoming) -> Result<Option<Bytes>, hyper::Error> {
+    while let Some(frame) = body.frame().await {
+        // trailers aren't part of the body
+        if let Ok(data) = frame?.into_data() {
+            if !data.is_empty() {
+                return Ok(Some(data));
+            }
+        }
+    }
+    Ok(None)
+}
+
 async fn send_request<'a>(
     opts: SendRequestOpts<'a>,
 ) -> Result<FetchedSubgraphResponse<'a>, SubgraphExecutorError> {
@@ -299,8 +340,8 @@ async fn send_request<'a>(
 
         let (parts, body) = res.into_parts();
 
-        let body = match body.collect().await {
-            Ok(body) => body.to_bytes(),
+        let body = match read_body(body).await {
+            Ok(body) => body,
             Err(err) => {
                 return Err(SubgraphExecutorError::ResponseBodyReadFailure(
                     endpoint.to_string(),
@@ -367,7 +408,7 @@ async fn send_request<'a>(
 
 pub enum DeduplicationHint {
     Deduped {
-        fingerprint: u64,
+        fingerprint: u128,
         leader_id: u64,
         is_leader: bool,
     },

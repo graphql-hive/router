@@ -131,10 +131,11 @@ where
             buf.clear();
 
             buf.push_str("{\"timestamp\":\"");
+            // same output as chrono's "%Y-%m-%dT%H:%M:%S%.6fZ", without allocating for every line
             let _ = write!(
                 buf,
                 "{}",
-                chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.6fZ")
+                humantime::format_rfc3339_micros(std::time::SystemTime::now())
             );
             buf.push_str("\",\"level\":\"");
             buf.push_str(meta.level().as_str());
