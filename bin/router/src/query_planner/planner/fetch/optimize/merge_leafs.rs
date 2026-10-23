@@ -9,12 +9,9 @@ use tracing::instrument;
 
 use crate::query_planner::{
     ast::merge_path::{Condition, Segment},
-    planner::{
-        fetch::{
-            error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
-            optimize::utils::perform_fetch_step_merge, state::MultiTypeFetchStep,
-        },
-        tree::query_tree_node::MutationFieldPosition,
+    planner::fetch::{
+        error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
+        optimize::utils::perform_fetch_step_merge, state::MultiTypeFetchStep,
     },
     state::supergraph_state::SubgraphName,
 };
@@ -79,7 +76,6 @@ struct GroupKey {
     response_path_hash: u64,
     input_types_hash: u64,
     condition: Option<Condition>,
-    mutation_field_position: MutationFieldPosition,
 }
 
 impl FetchGraph<MultiTypeFetchStep> {
@@ -105,7 +101,6 @@ impl FetchGraph<MultiTypeFetchStep> {
                 response_path_hash: response_path_hash(step),
                 input_types_hash: input_types_hash(step),
                 condition: step.condition.clone(),
-                mutation_field_position: step.mutation_field_position,
             };
             let group_index = match group_indexes.get(&group_key) {
                 Some(&group_index) => group_index,
