@@ -1,0 +1,72 @@
+name: resolve-pr-comment
+
+on:
+  workflow_call:
+    inputs:
+      commands:
+        description: JSON array of accepted exact comment bodies
+        required: true
+        type: string
+    secrets:
+      GITHUB_TOKEN:
+        required: true
+    outputs:
+      command:
+        description: The accepted command, or empty if the comment is not authorized
+        value: ${{ jobs.gate.outputs.command }}
+      ref:
+        description: PR head commit SHA
+        value: ${{ jobs.gate.outputs.ref }}
+      short_sha:
+        description: Short PR head commit SHA
+        value: ${{ jobs.gate.outputs.short_sha }}
+      is_fork:
+        description: Whether the PR comes from a fork
+        value: ${{ jobs.gate.outputs.is_fork }}
+
+permissions:
+  pull-requests: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      command: ${{ steps.resolve.outputs.command }}
+      ref: ${{ steps.resolve.outputs.ref }}
+      short_sha: ${{ steps.resolve.outputs.short_sha }}
+      is_fork: ${{ steps.resolve.outputs.is_fork }}
+    steps:
+      - id: resolve
+        shell: bash
+        env:
+          COMMANDS: ${{ inputs.commands }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          AUTHOR_ASSOCIATION: ${{ github.event.comment.author_association }}
+          IS_PULL_REQUEST: ${{ github.event.issue.pull_request != null }}
+          ISSUE_STATE: ${{ github.event.issue.state }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if [[ "$IS_PULL_REQUEST" != "true" || "$ISSUE_STATE" != "open" ]]; then
+            exit 0
+          fi
+
+          case "$AUTHOR_ASSOCIATION" in
+            OWNER|MEMBER|COLLABORATOR) ;;
+            *) exit 0 ;;
+          esac
+
+          COMMAND=$(jq -r --arg body "$COMMENT_BODY" 'if index($body) then $body else "" end' <<< "$COMMANDS")
+          if [[ -z "$COMMAND" ]]; then
+            exit 0
+          fi
+
+          PR_METADATA=$(gh pr view "$PR_NUMBER" --repo "$REPOSITORY" --json headRefOid,isCrossRepository)
+          PR_SHA=$(jq -r '.headRefOid' <<< "$PR_METADATA")
+          IS_FORK=$(jq -r '.isCrossRepository' <<< "$PR_METADATA")
+
+          echo "command=$COMMAND" >> "$GITHUB_OUTPUT"
+          echo "ref=$PR_SHA" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${PR_SHA:0:7}" >> "$GITHUB_OUTPUT"
+          echo "is_fork=$IS_FORK" >> "$GITHUB_OUTPUT"
