@@ -116,6 +116,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.3.6 (2026-10-23)
+
+### Features
+
+#### Batch contextual entity fetches and cap aliases per subgraph request
+
+Entity fetches with different `@fromContext` argument values now combine distinct context-value groups into one subgraph request using aliased `_entities` fields, instead of sending one request per group. Each alias receives only its group's representations and contextual arguments. Responses and error paths are mapped back to the original client response shape.
+
+The new `max_aliases_per_request` traffic-shaping option caps how many aliased `_entities` fields one subgraph request may carry. It's not set by default, and can be set globally or per subgraph.
+
+```yaml
+traffic_shaping:
+  all:
+    max_aliases_per_request: 15
+  subgraphs:
+    reviews:
+      max_aliases_per_request: 5
+```
+
+The cap applies to both places where the router adds aliases:
+
+- **Query planning.** Compatible entity fetches to the same subgraph are batched into a `BatchFetch` with one alias per fetch shape. Without a cap batches are never split, same as before. With a cap, a batch with more aliases than the cap is split into several `BatchFetch` nodes that run in parallel. A leftover single fetch stays a regular fetch.
+- **Contextual argument groups.** Without a cap, all groups of a fetch go in one request. With a cap, groups are split into additional requests rather than failing the operation. For example, a regular entity fetch with 12 distinct context-value groups and a cap of `5` sends three requests containing 5, 5, and 2 groups. A single group keeps the original query unchanged. In a batched fetch every group repeats all batch aliases, so each request carries `cap / batch aliases` groups, at least one.
+
+Higher values reduce request overhead at the cost of larger query payloads. Lower values help accommodate subgraph alias or query-complexity limits, such as graphql-armor's max-aliases rule. The number of contextual argument groups depends on the response data, so a subgraph with such a limit should always have this option set. Aliases from the client's own query are not counted. Set this option to `1` (or `0`) to send one `_entities` field per request.
+
+Both limits are decided while planning: the planner splits batches and records how many context groups fit in one request on each fetch, so execution only splits the groups it finds in the data. Plugins that build `SupergraphOptions` themselves set the limit through the new `QueryPlannerOptions::max_aliases_per_request` (`Option<usize>`) and `subgraph_max_aliases_per_request` fields, which are filled from `traffic_shaping` when converting from the router config. The query planner's default is also no cap, so query plans produced by the node addon don't split batches either.
+
+#### Support Federation `@context` / `@fromContext`
+
+Contextual arguments are resolved per entity from the nearest ancestor that sets the context and sent as `__context_{n}` variables. Entities whose ancestors hold different values are grouped per distinct value set, and the groups are sent as aliased `_entities` fields within the `max_aliases_per_request` limit. Query plan JSON gets `contextRewrites` on `Fetch` nodes and `BatchFetch` aliases, and a `Parent` path segment.
+
+Fields with a non-null contextual argument are not batched into `BatchFetch` or combined into multi-type fetches. Mutation fields with contextual results finish their context-dependent fetches before the next root field runs.
+
+Closes https://github.com/graphql-hive/router/issues/1655
+
+### Fixes
+
+#### Reduce temporary allocations during AST traversal
+
+Avoid allocating strings for temporary names when hashing query-plan ASTs and rebuilding nullified operations.
+
+#### Respect direct-only navigation when checking key fragments
+
+Inline fragment checks now honor `use_only_direct_edges`. When the planner checks whether an entity key can be satisfied using only direct edges, fragment branches can no longer use indirect paths through other subgraphs to appear satisfiable.
+
+For example, consider a fragment requirement:
+
+```graphql
+... on Tagged {
+  tag {
+    id
+  }
+}
+```
+
+Suppose reaching `Tagged` requires an indirect path:
+
+```text
+Current node in subgraph A -> entity in subgraph B -> Tagged
+```
+
+Previously, the fragment check could use that path even with `use_only_direct_edges: true`, incorrectly accepting the key as locally satisfiable. Now it rejects that candidate unless a direct path exists or the current type already matches `Tagged`. Checks that allow indirect edges retain their existing behavior.
+
+#### Reduce memory usage at startup and during request execution
+
+Reduce memory allocations and copying, lowering both idle memory usage and per-request overhead.
+
+- Render the Laboratory page lazily, avoiding unnecessary memory usage when Laboratory is not accessed.
+- Transfer response bodies to ntex without copying their buffers.
+- Read subgraph HTTP responses incrementally to allow Hyper to reuse its read buffers.
+- Reduce cloning during response merging by borrowing source values and moving entities into their final destination.
+- Allocate JSON objects and arrays with exact capacities during deserialization.
+- Avoid allocating type names during authorization metadata traversal.
+- Reduce allocations in subgraph endpoint storage, request summaries, JSON logging, and request deduplication hashing.
+
+#### Match union type conditions when resolving requirements and contexts
+
+The query planner now recognizes that a fragment on a union applies to any object type that belongs to that union, in addition to matching exact types and implemented interfaces. This prevents applicable fragment branches from being discarded when resolving requirements or contextual selections.
+
+For example:
+
+```graphql
+union SearchResult = User | Product
+
+type User {
+  id: ID!
+}
+
+type Product {
+  id: ID!
+}
+```
+
+Given this selection:
+
+```graphql
+... on SearchResult {
+  ... on User {
+    id
+  }
+}
+```
+
+When the current type is `User`, the outer `SearchResult` condition now matches because `User` is a union member. Previously, that condition did not match.
+
 ## 0.3.5 (2026-10-13)
 
 ### Features
