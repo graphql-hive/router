@@ -1,4 +1,4 @@
-use std::{collections::HashSet, vec};
+use std::vec;
 
 use graphql_tools::parser::query::{
     Definition, Field, InlineFragment, Mutation, OperationDefinition, Query, Selection,
@@ -7,7 +7,7 @@ use graphql_tools::parser::query::{
 
 use crate::query_planner::{
     ast::normalization::{context::NormalizationContext, error::NormalizationError},
-    state::supergraph_state::{SupergraphDefinition, SupergraphState},
+    state::supergraph_state::{SupergraphDefinition, SupergraphObjectType, SupergraphState},
 };
 
 /// A selection set may target an interface type.
@@ -89,18 +89,36 @@ fn handle_selection_set(
     let mut new_items = Vec::with_capacity(old_items.len());
 
     // Only perform type expansion if the current type is an interface.
+    // The subgraph has to know the interface, but we expand to every object implementing it,
+    // not only the ones that subgraph declares.
     let possible_object_types = match type_def {
-        SupergraphDefinition::Interface(interface_type) => Some(
-            match subgraph_name {
-                Some(graph_id) => {
-                    state.possible_types_in_subgraph(interface_type.name.as_str(), graph_id)
-                }
-                None => state.all_possible_types(interface_type.name.as_str()),
+        SupergraphDefinition::Interface(interface_type) => {
+            let interface_name = interface_type.name.as_str();
+            let is_known = subgraph_name.is_none_or(|graph_id| {
+                state
+                    .possible_types_in_subgraph(interface_name, graph_id)
+                    .is_some()
+            });
+            let object_names = state
+                .all_possible_types(interface_name)
+                .filter(|_| is_known)
+                .ok_or_else(|| NormalizationError::PossibleTypesNotFound {
+                    type_name: interface_type.name.clone(),
+                })?;
+            let mut objects = Vec::with_capacity(object_names.len());
+            for object_name in object_names {
+                let Some(SupergraphDefinition::Object(object)) = state.definitions.get(object_name)
+                else {
+                    return Err(NormalizationError::SchemaTypeNotFound {
+                        type_name: object_name.clone(),
+                    });
+                };
+                objects.push(object);
             }
-            .ok_or_else(|| NormalizationError::PossibleTypesNotFound {
-                type_name: interface_type.name.clone(),
-            })?,
-        ),
+            // Sorted by name for deterministic fragment order.
+            objects.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+            Some(objects)
+        }
         _ => None,
     };
 
@@ -121,7 +139,7 @@ fn handle_selection_set(
                     }
                 })?;
 
-                if let Some(possible_object_types) = possible_object_types {
+                if let Some(possible_object_types) = &possible_object_types {
                     if handle_type_expansion_candidate(
                         state,
                         subgraph_name,
@@ -182,7 +200,7 @@ type ShouldContinue = bool;
 fn handle_type_expansion_candidate<'a>(
     state: &SupergraphState,
     subgraph_name: Option<&str>,
-    possible_object_types: &HashSet<String>,
+    possible_object_types: &[&SupergraphObjectType],
     type_def: &SupergraphDefinition,
     field: &Field<'a, String>,
     new_items: &mut Vec<Selection<'a, String>>,
@@ -197,11 +215,7 @@ fn handle_type_expansion_candidate<'a>(
     }
     let interface_type = interface_type.unwrap(); // safe due to previous check
 
-    let should_expand = possible_object_types.iter().any(|object_type_name| {
-        let Some(SupergraphDefinition::Object(obj)) = state.definitions.get(object_type_name)
-        else {
-            return true;
-        };
+    let should_expand = possible_object_types.iter().any(|obj| {
         // Expand if any object type implementing the interface:
         // 1. Does not have the field.
         // 2. Has the field, but it's marked as external or is overridden.
@@ -286,23 +300,8 @@ fn handle_type_expansion_candidate<'a>(
         }
     }
 
-    // Sort object types by name for deterministic fragment order.
-    let mut sorted_object_types: Vec<_> = possible_object_types.iter().collect();
-    sorted_object_types.sort_unstable();
-
-    let mut fragments = Vec::with_capacity(sorted_object_types.len());
-    for object_type_name in sorted_object_types {
-        let obj_def = state.definitions.get(object_type_name).ok_or_else(|| {
-            NormalizationError::SchemaTypeNotFound {
-                type_name: object_type_name.clone(),
-            }
-        })?;
-        let SupergraphDefinition::Object(obj) = obj_def else {
-            return Err(NormalizationError::SchemaTypeNotFound {
-                type_name: obj_def.name().to_string(),
-            });
-        };
-
+    let mut fragments = Vec::with_capacity(possible_object_types.len());
+    for obj in possible_object_types {
         let mut new_field = field.clone();
         if !new_field.selection_set.items.is_empty() {
             if let Some(obj_field) = obj.fields.get(&new_field.name) {
