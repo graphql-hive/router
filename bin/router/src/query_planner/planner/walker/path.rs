@@ -97,16 +97,12 @@ pub struct UnionContext<'graph> {
 }
 
 impl<'graph> UnionContext<'graph> {
-    fn can_resolve_member(&self, member_type_name: &str) -> bool {
+    pub(crate) fn can_resolve_member(&self, member_type_name: &str) -> bool {
         self.possible_members.contains(member_type_name)
     }
 
     pub fn possible_members_len(&self) -> usize {
         self.possible_members.len()
-    }
-
-    pub fn possible_members_contains(&self, member_type_name: &str) -> bool {
-        self.possible_members.contains(member_type_name)
     }
 
     pub fn eq_field(&self, other: &Self) -> bool {

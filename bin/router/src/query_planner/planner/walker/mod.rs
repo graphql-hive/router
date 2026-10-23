@@ -492,7 +492,7 @@ fn narrow_partial_union_paths<'graph>(paths: &mut Vec<OperationPath<'graph>>) {
     let mut shared_members = least_members_context.possible_members();
 
     for context in &members_per_graph {
-        shared_members.retain(|member| context.possible_members_contains(member));
+        shared_members.retain(|member| context.can_resolve_member(member));
 
         if shared_members.is_empty() {
             // No union member exists in every candidate subgraph.
