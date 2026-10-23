@@ -374,7 +374,7 @@ pub fn render_laboratory_html(
         })
         .min_by_key(|(position, ..)| *position)
     {
-        page.extend_from_slice(rest[..position].as_bytes());
+        page.extend_from_slice(&rest.as_bytes()[..position]);
         page.extend_from_slice(value.as_bytes());
         rest = &rest[position + placeholder.len()..];
     }
