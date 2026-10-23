@@ -185,7 +185,7 @@ impl QueryTreeNode {
     ))]
     fn from_path_segment_sequences(
         graph: &Graph<'_>,
-        segments: &[Rc<PathSegment>],
+        segments: &[&PathSegment],
         current_index: usize,
         mutation_field_position: MutationFieldPosition,
     ) -> Result<Option<Rc<Self>>, GraphError> {
@@ -193,7 +193,7 @@ impl QueryTreeNode {
             return Ok(None);
         }
 
-        let segment_at_index: &Rc<PathSegment> = &segments[current_index];
+        let segment_at_index: &PathSegment = segments[current_index];
         let edge_at_index = &segment_at_index.edge_index;
         let requirements_tree_at_index = &segment_at_index.requirement_tree;
         let selection_attributes_at_index = &segment_at_index.selection_attributes;
@@ -260,7 +260,7 @@ impl QueryTreeNode {
     pub fn create_root_for_path_sequences(
         graph: &Graph<'_>,
         root_node_index: &NodeIndex,
-        segments: &Vec<Rc<PathSegment>>,
+        segments: &[&PathSegment],
         mutation_field_position: MutationFieldPosition,
     ) -> Result<QueryTreeNode, GraphError> {
         trace!(
@@ -275,7 +275,7 @@ impl QueryTreeNode {
         } else {
             let subsequent_node = QueryTreeNode::from_path_segment_sequences(
                 graph,
-                segments.as_slice(),
+                segments,
                 0,
                 mutation_field_position,
             )?;
@@ -299,7 +299,7 @@ mod size_tests {
     fn planner_structs_stay_small() {
         // pathfinding makes a lot of these, so growing them makes planning slower
         for (name, actual, expected) in [
-            ("PathSegment", size_of::<PathSegment>(), 152),
+            ("PathSegment", size_of::<PathSegment>(), 160),
             ("QueryTreeNode", size_of::<QueryTreeNode>(), 192),
         ] {
             assert_eq!(

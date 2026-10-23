@@ -1,4 +1,5 @@
-use std::collections::{btree_map::Entry, BTreeMap, HashMap, HashSet};
+use ahash::{HashMap, HashMapExt, HashSet};
+use std::collections::{btree_map::Entry, BTreeMap};
 
 use petgraph::graph::EdgeIndex;
 

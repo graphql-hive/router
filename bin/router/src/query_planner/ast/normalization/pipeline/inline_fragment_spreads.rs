@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use ahash::{HashMap, HashMapExt};
 
 use graphql_tools::parser::query::{
     Definition, FragmentDefinition, InlineFragment, Mutation, OperationDefinition, Query,

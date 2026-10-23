@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use ahash::HashSet;
 
 use crate::query_planner::ast::type_aware_selection::TypeAwareSelection;
 
