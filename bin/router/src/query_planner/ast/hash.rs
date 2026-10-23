@@ -15,37 +15,34 @@ use crate::query_planner::state::supergraph_state::{self, OperationKind, TypeNod
 /// A trait for hashing AST nodes, with support for both order-dependent and order-independent hashing.
 pub struct SemanticShapeHashContext<'a> {
     fragments: &'a [FragmentDefinition],
-    fragment_indices_by_name: FxHashMap<String, usize>,
-    visiting_fragment_names: RefCell<FxHashSet<String>>,
+    fragment_indices_by_name: FxHashMap<&'a str, usize>,
+    visiting_fragments: RefCell<FxHashSet<usize>>,
 }
 
 impl<'a> SemanticShapeHashContext<'a> {
     pub fn new(fragments: &'a [FragmentDefinition]) -> Self {
         let mut fragment_indices_by_name = FxHashMap::default();
         for (index, fragment) in fragments.iter().enumerate() {
-            fragment_indices_by_name.insert(fragment.name.clone(), index);
+            fragment_indices_by_name.insert(fragment.name.as_str(), index);
         }
 
         Self {
             fragments,
             fragment_indices_by_name,
-            visiting_fragment_names: RefCell::new(FxHashSet::default()),
+            visiting_fragments: RefCell::new(FxHashSet::default()),
         }
     }
 
-    fn get_fragment_by_name(&self, name: &str) -> Option<&'a FragmentDefinition> {
+    fn mark_visiting(&self, name: &str) -> Option<usize> {
         let fragment_index = *self.fragment_indices_by_name.get(name)?;
-        self.fragments.get(fragment_index)
-    }
-
-    fn mark_visiting(&self, name: &str) -> bool {
-        self.visiting_fragment_names
+        self.visiting_fragments
             .borrow_mut()
-            .insert(name.to_owned())
+            .insert(fragment_index)
+            .then_some(fragment_index)
     }
 
-    fn unmark_visiting(&self, name: &str) {
-        self.visiting_fragment_names.borrow_mut().remove(name);
+    fn unmark_visiting(&self, fragment_index: usize) {
+        self.visiting_fragments.borrow_mut().remove(&fragment_index);
     }
 }
 
@@ -206,14 +203,14 @@ impl ASTHash for SelectionItem {
             SelectionItem::Field(field) => field.semantic_shape_hash(hasher, ctx),
             SelectionItem::InlineFragment(inline) => inline.semantic_shape_hash(hasher, ctx),
             SelectionItem::FragmentSpread(name) => {
-                if !ctx.mark_visiting(name) {
+                let Some(fragment_index) = ctx.mark_visiting(name) else {
                     // Cycle detected - hash nothing (unique marker)
                     return;
-                }
-                if let Some(fragment) = ctx.get_fragment_by_name(name) {
+                };
+                if let Some(fragment) = ctx.fragments.get(fragment_index) {
                     fragment.selection_set.semantic_shape_hash(hasher, ctx);
                 }
-                ctx.unmark_visiting(name);
+                ctx.unmark_visiting(fragment_index);
             }
         }
     }

@@ -14,7 +14,7 @@ pub(crate) fn rebuild_nulled_operation(
     original_operation: &OperationDefinition,
     nulled_field_trie: &Trie,
 ) -> OperationDefinition {
-    let mut used_variables = HashSet::default();
+    let mut used_variables: HashSet<&str> = HashSet::default();
     let selection_set = rebuild_nulled_selection_set(
         &original_operation.selection_set,
         nulled_field_trie,
@@ -28,7 +28,7 @@ pub(crate) fn rebuild_nulled_operation(
         .map(|var_defs| {
             var_defs
                 .iter()
-                .filter(|var_def| used_variables.contains(&var_def.name))
+                .filter(|var_def| used_variables.contains(var_def.name.as_str()))
                 .cloned()
                 .collect()
         });
@@ -44,11 +44,11 @@ pub(crate) fn rebuild_nulled_operation(
 /// Recursively filters a selection set to remove nulled fields, collecting
 /// the set of variables used by whatever is kept along the way (so a second
 /// full traversal isn't needed afterwards to compute this).
-fn rebuild_nulled_selection_set(
-    original_selection_set: &SelectionSet,
+fn rebuild_nulled_selection_set<'a>(
+    original_selection_set: &'a SelectionSet,
     nulled_field_trie: &Trie,
     path_position: PathIndex,
-    used_variables: &mut HashSet<String>,
+    used_variables: &mut HashSet<&'a str>,
 ) -> SelectionSet {
     // If the current position, is the last one, there are no children to traverse.
     if !nulled_field_trie.has_children(path_position) {
@@ -132,7 +132,10 @@ fn rebuild_nulled_selection_set(
 /// Recursively collects variables from an entire (unfiltered) selection set.
 /// Used when a subtree is kept as-is, so it still needs to be scanned once
 /// for variable usage.
-fn collect_variables_recursive(selection_set: &SelectionSet, used_variables: &mut HashSet<String>) {
+fn collect_variables_recursive<'a>(
+    selection_set: &'a SelectionSet,
+    used_variables: &mut HashSet<&'a str>,
+) {
     for item in &selection_set.items {
         match item {
             SelectionItem::Field(field) => {
@@ -152,7 +155,10 @@ fn collect_variables_recursive(selection_set: &SelectionSet, used_variables: &mu
 
 /// Collects variables referenced directly on a field (arguments, `@skip`/`@include`),
 /// without recursing into its nested selections.
-fn collect_field_own_variables(field: &FieldSelection, used_variables: &mut HashSet<String>) {
+fn collect_field_own_variables<'a>(
+    field: &'a FieldSelection,
+    used_variables: &mut HashSet<&'a str>,
+) {
     if let Some(args) = &field.arguments {
         for arg in args.values() {
             collect_variables_from_value(arg, used_variables);
@@ -160,33 +166,33 @@ fn collect_field_own_variables(field: &FieldSelection, used_variables: &mut Hash
     }
 
     if let Some(var_name) = &field.skip_if {
-        used_variables.insert(var_name.clone());
+        used_variables.insert(var_name.as_str());
     }
 
     if let Some(var_name) = &field.include_if {
-        used_variables.insert(var_name.clone());
+        used_variables.insert(var_name.as_str());
     }
 }
 
 /// Collects variables referenced directly on an inline fragment (`@skip`/`@include`),
 /// without recursing into its nested selections.
-fn collect_fragment_own_variables(
-    fragment: &InlineFragmentSelection,
-    used_variables: &mut HashSet<String>,
+fn collect_fragment_own_variables<'a>(
+    fragment: &'a InlineFragmentSelection,
+    used_variables: &mut HashSet<&'a str>,
 ) {
     if let Some(var_name) = &fragment.skip_if {
-        used_variables.insert(var_name.clone());
+        used_variables.insert(var_name.as_str());
     }
     if let Some(var_name) = &fragment.include_if {
-        used_variables.insert(var_name.clone());
+        used_variables.insert(var_name.as_str());
     }
 }
 
 /// Recursively extracts variable references from GraphQL values.
-fn collect_variables_from_value(value: &Value, used_variables: &mut HashSet<String>) {
+fn collect_variables_from_value<'a>(value: &'a Value, used_variables: &mut HashSet<&'a str>) {
     match value {
         Value::Variable(var_name) => {
-            used_variables.insert(var_name.clone());
+            used_variables.insert(var_name.as_str());
         }
         Value::List(items) => {
             for item in items {
