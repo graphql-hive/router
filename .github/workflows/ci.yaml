@@ -4,36 +4,25 @@ on:
     branches:
       - main
   pull_request:
-  issue_comment:
-    types: [created]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.issue.number || github.ref }}-${{ github.event.comment.id || github.event_name }}
-  cancel-in-progress: ${{ github.event_name != 'issue_comment' }}
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
-  contents: read
+  actions: write
+  contents: write
   issues: read
-  pull-requests: read
+  checks: write
+  pull-requests: write
 
 env:
   NEXTEST_VERSION: 0.9.146
 
 jobs:
-  prepare_comment:
-    name: resolve on-demand command
-    uses: ./.github/workflows/resolve-pr-comment.yaml
-    with:
-      commands: '["/benchmark", "/differential"]'
-    secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    permissions:
-      pull-requests: read
-
   unit:
     name: test / unit
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: setup rust
@@ -51,7 +40,6 @@ jobs:
   e2e:
     name: test / e2e
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: setup rust
@@ -83,7 +71,6 @@ jobs:
   plugin_examples:
     name: test / plugin examples
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
@@ -105,7 +92,6 @@ jobs:
   node-addon-test:
     name: test / node-addon
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: setup node
@@ -122,7 +108,6 @@ jobs:
   build:
     name: check / build
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: setup rust
@@ -133,7 +118,6 @@ jobs:
   fmt:
     name: check / fmt
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: setup rust
@@ -146,7 +130,6 @@ jobs:
   clippy:
     name: check / clippy
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: setup rust
@@ -171,7 +154,6 @@ jobs:
           baseline-rev: origin/main
 
   benchmark:
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
     strategy:
       matrix:
         include:
@@ -210,7 +192,6 @@ jobs:
           path: ${{matrix.package}}/target/criterion
 
   router-benchmark:
-    needs: prepare_comment
     strategy:
       fail-fast: false
       matrix:
@@ -260,22 +241,15 @@ jobs:
             config: "bench/configs/persisted-documents.config.yaml"
             compare_with_default: true
     name: benchmark / router / ${{ matrix.name }}
-    if: |
-      github.event_name == 'push' || (
-        github.event_name == 'issue_comment' &&
-        needs.prepare_comment.outputs.command == '/benchmark'
-      )
     runs-on: ubuntu-latest
     env:
       NODE_NO_WARNINGS: true
       NODE_ENV: production
-      GITHUB_PR: ${{ github.event.issue.number || github.event.number }}
-      GITHUB_SHA: ${{ needs.prepare_comment.outputs.ref || github.sha }}
+      GITHUB_PR: ${{ github.event.number }}
+      GITHUB_SHA: ${{ github.sha }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.prepare_comment.outputs.ref }}
-          persist-credentials: false
       - name: setup rust
         uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - name: Setup wrk
@@ -295,26 +269,26 @@ jobs:
           sleep 5
         env:
           ROUTER_CONFIG_FILE_PATH: ${{matrix.config}}
-      - name: Run benchmark for ${{ needs.prepare_comment.outputs.ref || github.ref }}
-        if: github.event_name == 'issue_comment'
+      - name: Run benchmark for ${{ github.ref }}
+        if: github.event_name == 'pull_request'
         run: ./bench/run-benchmark.sh
         env:
           SUMMARY_PATH: ./bench/results/pr
           BENCH_PERSISTED_MODE: ${{ matrix.name == 'persisted-documents' && 'true' || '' }}
           BENCH_DOCUMENT_ID: ${{ matrix.name == 'persisted-documents' && 'bench_test_query' || '' }}
       - name: Checkout main branch in a separate directory
-        if: github.event_name == 'issue_comment'
+        if: github.event_name == 'pull_request'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           path: main-branch
 
       - name: Build router from main branch w/ default config
-        if: github.event_name == 'issue_comment' && matrix.compare_with_default == true
+        if: github.event_name == 'pull_request' && matrix.compare_with_default == true
         run: cargo build --release -p hive-router
         working-directory: main-branch
       - name: Run router from main branch w/ default config
-        if: github.event_name == 'issue_comment' && matrix.compare_with_default == true
+        if: github.event_name == 'pull_request' && matrix.compare_with_default == true
         run: |
           kill $(cat router.pid)
           ./main-branch/target/release/hive_router &
@@ -323,11 +297,11 @@ jobs:
           ROUTER_CONFIG_FILE_PATH: bench/configs/default.config.yaml
 
       - name: Build router from main branch w/ ${{ matrix.config }} config
-        if: github.event_name == 'issue_comment' && matrix.compare_with_default == false
+        if: github.event_name == 'pull_request' && matrix.compare_with_default == false
         run: cargo build --release -p ${{ matrix.package }} ${{matrix.args}}
         working-directory: main-branch
       - name: Run router from main branch w/ ${{ matrix.config }} config
-        if: github.event_name == 'issue_comment' && matrix.compare_with_default == false
+        if: github.event_name == 'pull_request' && matrix.compare_with_default == false
         run: |
           kill $(cat router.pid)
           ./main-branch/target/release/${{ matrix.binary }} &
@@ -336,24 +310,18 @@ jobs:
           ROUTER_CONFIG_FILE_PATH: ${{matrix.config}}
 
       - name: Run benchmark for main
-        if: github.event_name == 'issue_comment'
+        if: github.event_name == 'pull_request'
         run: ./bench/run-benchmark.sh
         env:
           SUMMARY_PATH: ./bench/results/main
       - name: Compare benchmark results
-        if: github.event_name == 'issue_comment'
+        if: github.event_name == 'pull_request'
         run: |
           chmod +x ./bench/ci-detect-regression.sh
           ./bench/ci-detect-regression.sh
 
   differential:
     name: test / differential
-    needs: prepare_comment
-    if: |
-      github.event_name == 'push' || (
-        github.event_name == 'issue_comment' &&
-        needs.prepare_comment.outputs.command == '/differential'
-      )
     runs-on: ubuntu-latest
     env:
       NODE_NO_WARNINGS: true
@@ -361,9 +329,6 @@ jobs:
       GRAPHQL_DIFF_QUERIES: 250
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.prepare_comment.outputs.ref }}
-          persist-credentials: false
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
@@ -420,7 +385,6 @@ jobs:
   graphql-over-http:
     name: test / graphql-over-http
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: setup rust
@@ -436,7 +400,6 @@ jobs:
   federation-audit:
     name: test / federation-audit
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
     env:
       GATEWAY_TIMEOUT: 1800000 # 30 minutes, to prevent CI timeout for long-running tests
     steps:
