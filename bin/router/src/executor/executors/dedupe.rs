@@ -18,8 +18,6 @@ impl Hash for SendRequestOpts<'_> {
 }
 
 fn hash_headers<H: Hasher>(headers: &HeaderMap, state: &mut H) {
-    let unique_names = headers.len() == headers.keys_len();
-    unique_names.hash(state);
     headers.keys_len().hash(state);
 
     let mut names: SmallVec<[&HeaderName; 16]> = headers.keys().collect();
@@ -27,18 +25,10 @@ fn hash_headers<H: Hasher>(headers: &HeaderMap, state: &mut H) {
 
     for name in names {
         name.hash(state);
-        if unique_names {
-            1_usize.hash(state);
-            headers
-                .get(name)
-                .expect("a header key always has a value")
-                .hash(state);
-        } else {
-            let values = headers.get_all(name);
-            values.iter().count().hash(state);
-            for value in values.iter() {
-                value.hash(state);
-            }
+        let values = headers.get_all(name);
+        values.iter().count().hash(state);
+        for value in values.iter() {
+            value.hash(state);
         }
     }
 }
