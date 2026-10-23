@@ -10,6 +10,9 @@
 //!
 //! `QP_GENERATED_OPS` sets how many operations per supergraph, 10 by default; set it to 200 for
 //! a larger investigation run.
+//!
+//! The fixtures are split across `CHUNKS` tests, so nextest runs them in parallel. One test for
+//! all of them got slow enough to hit the CI timeout.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
@@ -58,8 +61,28 @@ fn plan(planner: &Planner, operation: &str) -> Result<String, String> {
         .map_err(|err| format!("planning: {err}"))
 }
 
-#[test]
-fn generated_operations_plan() {
+macro_rules! chunks {
+    ($($name:ident = $chunk:literal),* $(,)?) => {
+        const CHUNKS: usize = [$(stringify!($name)),*].len();
+
+        $(#[test] fn $name() { generated_operations_plan($chunk) })*
+    };
+}
+
+// Chunking allows to run generated operations in parallel.
+chunks!(
+    chunk_0 = 0,
+    chunk_1 = 1,
+    chunk_2 = 2,
+    chunk_3 = 3,
+    chunk_4 = 4,
+    chunk_5 = 5,
+    chunk_6 = 6,
+    chunk_7 = 7
+);
+
+/// Plans generated operations against every `CHUNKS`th fixture, starting at `chunk`.
+fn generated_operations_plan(chunk: usize) {
     let ops: u64 = std::env::var("QP_GENERATED_OPS")
         .ok()
         .and_then(|value| value.parse().ok())
@@ -74,7 +97,7 @@ fn generated_operations_plan() {
     let mut failures = Vec::new();
     let (mut planned, mut left_alone) = (0, 0);
 
-    for fixture in fixtures() {
+    for fixture in fixtures().into_iter().skip(chunk).step_by(CHUNKS) {
         let name = fixture.file_stem().unwrap().to_string_lossy().to_string();
         let supergraph = parse_schema(&std::fs::read_to_string(&fixture).unwrap());
         let Ok(planner) = Planner::new_from_supergraph(&supergraph, Default::default()) else {
