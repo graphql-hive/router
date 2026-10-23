@@ -142,13 +142,13 @@ fn process_selection<'graph, 'op: 'graph>(
             stack_to_resolve.extend(next_selection_items);
         }
         SelectionItem::Field(field) => {
+            // Only fragments look at `fields_to_resolve_locally`, fields can always jump.
             let (next_selection_items, new_paths_per_leaf) = process_field(
                 graph,
                 supergraph,
                 override_context,
                 field,
                 paths,
-                fields_to_resolve_locally,
                 cancellation_token,
             )?;
             paths_per_leaf.extend(new_paths_per_leaf);
@@ -533,7 +533,6 @@ fn process_field<'graph, 'op: 'graph>(
     override_context: &'graph PlannerOverrideContext,
     field: &'op FieldSelection,
     paths: &[OperationPath<'graph>],
-    _fields_to_resolve_locally: &[String],
     cancellation_token: &'graph CancellationToken,
 ) -> Result<
     (
