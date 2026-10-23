@@ -8,10 +8,14 @@ use crate::query_planner::{
 };
 
 use super::supergraph_state::{
-    SupergraphDefinition, SupergraphInterfaceType, SupergraphObjectType, SupergraphState,
+    SupergraphDefinition, SupergraphInterfaceType, SupergraphObjectType,
 };
 
 pub type SubgraphId = String;
+
+/// A supergraph definition with its @join__type entries for one subgraph.
+pub type SubgraphDefinitionSource<'a> =
+    (&'a String, &'a SupergraphDefinition, Vec<JoinTypeDirective>);
 
 #[derive(Debug)]
 pub struct SubgraphState {
@@ -21,10 +25,10 @@ pub struct SubgraphState {
 }
 
 impl SubgraphState {
-    #[instrument(level = "trace", skip(supergraph_state))]
+    #[instrument(level = "trace", skip(sources))]
     pub fn decompose_from_supergraph(
         graph_id: &SubgraphId,
-        supergraph_state: &SupergraphState,
+        sources: Vec<SubgraphDefinitionSource>,
     ) -> Self {
         let mut instance = Self {
             graph_id: graph_id.clone(),
@@ -32,13 +36,7 @@ impl SubgraphState {
             entity_type_names: HashSet::new(),
         };
 
-        for (def_name, supergraph_def) in supergraph_state.definitions.iter() {
-            let relevant_join_types = supergraph_def.extract_join_types_for(graph_id);
-
-            if relevant_join_types.is_empty() {
-                continue;
-            }
-
+        for (def_name, supergraph_def, relevant_join_types) in sources {
             let subgraph_def = match supergraph_def {
                 SupergraphDefinition::Object(supergraph_object_type) => Self::process_object_type(
                     graph_id,
@@ -326,10 +324,9 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::query_planner::{
-        state::supergraph_state::SubgraphName, utils::parsing::parse_schema,
+        state::supergraph_state::{SubgraphName, SupergraphState},
+        utils::parsing::parse_schema,
     };
-
-    use super::*;
 
     #[test]
     fn decompose_supergraph_into_subgraphs() {
