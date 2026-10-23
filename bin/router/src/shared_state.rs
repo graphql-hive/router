@@ -344,9 +344,6 @@ pub struct RouterSharedState {
     pub active_subscriptions: ActiveSubscriptions,
     /// The storage manager for the router.
     pub storage_manager: Arc<StorageManager>,
-    /// The Laboratory page, with any configured seed values already injected. It's ~20MB,
-    /// so it's rendered on the first request for it, and a router that never serves it
-    /// never holds it. Rendered once because the config cannot change while the router runs.
     laboratory_html: OnceLock<Bytes>,
 }
 

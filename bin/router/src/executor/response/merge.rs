@@ -58,9 +58,6 @@ fn deep_merge_objects<'target, 'source: 'target>(
     }
 }
 
-/// Same as `deep_merge(target, source.clone())`, but only clones the parts of `source`
-/// that end up in `target`. Cloning first would build the source's objects and arrays
-/// just to take them apart and throw them away.
 pub fn deep_merge_from<'target, 'source: 'target>(
     target: &mut Value<'target>,
     source: &Value<'source>,
