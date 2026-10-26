@@ -474,6 +474,93 @@ mod context_e2e_tests {
         single.assert_async().await;
     }
 
+    /// graphql-armor's max-aliases rule allows 15 aliases by default, and it is a common
+    /// guard on subgraphs. The number of context groups comes from the response data, so a
+    /// router with no cap starts sending requests such a subgraph refuses the day a list
+    /// grows past 15 distinct values. The default should stay within that limit.
+    #[ntex::test]
+    async fn default_config_stays_within_graphql_armor_default_alias_limit() {
+        let mut server = mockito::Server::new_async().await;
+        let router = start_router("context-basic", &server).await;
+        let users: Vec<_> = (0..16)
+            .map(|index| {
+                json!({
+                    "__typename": "User",
+                    "currency": index.to_string(),
+                    "txs": [{"__typename": "Transaction", "id": "same"}]
+                })
+            })
+            .collect();
+        let root = server
+            .mock("POST", "/a")
+            .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({"data": {"users": users}}).to_string())
+            .expect(1)
+            .create_async()
+            .await;
+        let entity_requests = Arc::new(AtomicUsize::new(0));
+        let max_aliases_seen = Arc::new(AtomicUsize::new(0));
+        let (requests, max_seen) = (entity_requests.clone(), max_aliases_seen.clone());
+        let entities = server
+            .mock("POST", "/a")
+            .match_request(|r| body(r)["query"].as_str().unwrap().contains("_entities"))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body_from_request(move |r| {
+                let body = body(r);
+                let query = body["query"].as_str().unwrap();
+                requests.fetch_add(1, Ordering::SeqCst);
+                let aliases: Vec<usize> = (0..16)
+                    .filter(|index| query.contains(&format!("_entities_{index}:")))
+                    .collect();
+                max_seen.fetch_max(aliases.len().max(1), Ordering::SeqCst);
+                let data = if aliases.is_empty() {
+                    let currency: usize = body["variables"]["__context_0"]
+                        .as_str()
+                        .unwrap()
+                        .parse()
+                        .unwrap();
+                    json!({"_entities": [{"amount": currency}]})
+                } else {
+                    let map: serde_json::Map<_, _> = aliases
+                        .iter()
+                        .map(|index| {
+                            let currency: usize = body["variables"][format!("__context_0_{index}")]
+                                .as_str()
+                                .unwrap()
+                                .parse()
+                                .unwrap();
+                            (format!("_entities_{index}"), json!([{"amount": currency}]))
+                        })
+                        .collect();
+                    Value::Object(map)
+                };
+                json!({"data": data}).to_string().into()
+            })
+            .expect(2)
+            .create_async()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ users { txs { amount } } }", None, None)
+            .await;
+        let response: Value = serde_json::from_str(&res.json_body_string_pretty().await).unwrap();
+        let expected: Vec<_> = (0..16)
+            .map(|index| json!({"txs": [{"amount": index}]}))
+            .collect();
+        assert_eq!(response, json!({"data": {"users": expected}}));
+        root.assert_async().await;
+        entities.assert_async().await;
+        assert!(
+            max_aliases_seen.load(Ordering::SeqCst) <= 15,
+            "a request carried {} aliased _entities fields; graphql-armor refuses more than 15 by default",
+            max_aliases_seen.load(Ordering::SeqCst)
+        );
+        assert_eq!(entity_requests.load(Ordering::SeqCst), 2);
+    }
+
     #[ntex::test]
     async fn sends_all_context_groups_in_one_request_by_default() {
         let mut server = mockito::Server::new_async().await;
