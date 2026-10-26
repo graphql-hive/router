@@ -1769,4 +1769,160 @@ mod context_e2e_tests {
         root.assert_async().await;
         entities.assert_async().await;
     }
+
+    /// Port of Apollo's `test_set_context_type_mismatch_rust_qp`: the ancestor's context field
+    /// comes back with a value of the wrong runtime type (a number for a `String` argument).
+    /// Apollo passes it through to the subgraph unchanged and the operation succeeds; the
+    /// subgraph's own variable coercion is what decides.
+    #[ntex::test]
+    async fn passes_a_context_value_of_the_wrong_runtime_type_through_unchanged() {
+        let mut server = mockito::Server::new_async().await;
+        let router = start_router("context-basic", &server).await;
+        let root = server
+            .mock("POST", "/a")
+            .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({"data": {"users": [{
+                    "__typename": "User",
+                    "currency": 7,
+                    "txs": [{"__typename": "Transaction", "id": "t1"}]
+                }]}})
+                .to_string(),
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let entities = server
+            .mock("POST", "/a")
+            .match_request(|r| body(r)["variables"]["__context_0"] == json!(7))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":{"_entities":[{"amount":70}]}}"#)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ users { txs { amount } } }", None, None)
+            .await;
+        let response: Value = serde_json::from_str(&res.json_body_string_pretty().await).unwrap();
+        assert_eq!(
+            response,
+            json!({"data": {"users": [{"txs": [{"amount": 70}]}]}})
+        );
+        root.assert_async().await;
+        entities.assert_async().await;
+    }
+
+    /// Port of Apollo's `test_set_context_rust_qp` against its `_no_typenames` variant: the
+    /// client selects `__typename` on the context ancestor and on the contextual entity. What
+    /// the router injects to resolve the context, `currency` and its own `__typename`, must not
+    /// leak into the response or collide with the client's.
+    #[ntex::test]
+    async fn client_typename_on_ancestor_and_contextual_entity_does_not_leak_context_fields() {
+        let mut server = mockito::Server::new_async().await;
+        let router = start_router("context-basic", &server).await;
+        let root = server
+            .mock("POST", "/a")
+            .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({"data": {"users": [{
+                    "__typename": "User",
+                    "currency": "EUR",
+                    "txs": [{"__typename": "Transaction", "id": "t1"}]
+                }]}})
+                .to_string(),
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let entities = server
+            .mock("POST", "/a")
+            .match_request(|r| body(r)["variables"]["__context_0"] == json!("EUR"))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":{"_entities":[{"__typename":"Transaction","amount":5}]}}"#)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                "{ users { __typename txs { __typename amount } } }",
+                None,
+                None,
+            )
+            .await;
+        let response: Value = serde_json::from_str(&res.json_body_string_pretty().await).unwrap();
+        assert_eq!(
+            response,
+            json!({"data": {"users": [{
+                "__typename": "User",
+                "txs": [{"__typename": "Transaction", "amount": 5}]
+            }]}})
+        );
+        root.assert_async().await;
+        entities.assert_async().await;
+    }
+
+    /// Port of Apollo's interface-entity context case: the context is set on an interface
+    /// that is itself an entity. The ancestors in the response are `A` and `B`, so the
+    /// rewrite has to match the concrete type, as Apollo's per-implementation rewrites do.
+    #[ntex::test]
+    async fn interface_entity_context_reads_each_implementation() {
+        let mut server = mockito::Server::new_async().await;
+        let router = start_router("context-apollo-interface-entity", &server).await;
+        let root = server
+            .mock("POST", "/a")
+            .match_request(|r| !body(r)["query"].as_str().unwrap().contains("_entities"))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({"data": {"items": [
+                    {"__typename": "A", "prop": "from-a", "child": {"__typename": "C", "id": "c1"}},
+                    {"__typename": "B", "prop": "from-b", "child": {"__typename": "C", "id": "c2"}}
+                ]}})
+                .to_string(),
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let recorder = seen.clone();
+        let entities = server
+            .mock("POST", "/a")
+            .match_request(|r| body(r)["query"].as_str().unwrap().contains("_entities"))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body_from_request(move |r| {
+                let body = body(r);
+                recorder.lock().unwrap().push(body["variables"].clone());
+                let query = body["query"].as_str().unwrap().to_string();
+                let data = if query.contains("_entities_1:") {
+                    json!({"_entities_0": [{"value": 1}], "_entities_1": [{"value": 2}]})
+                } else {
+                    json!({"_entities": [{"value": 1}, {"value": 2}]})
+                };
+                json!({"data": data}).to_string().into()
+            })
+            .expect_at_least(1)
+            .create_async()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ items { child { value } } }", None, None)
+            .await;
+        let _ = res.json_body_string_pretty().await;
+        root.assert_async().await;
+        entities.assert_async().await;
+        let variables = serde_json::to_string(&*seen.lock().unwrap()).unwrap();
+        assert!(
+            variables.contains("from-a") && variables.contains("from-b"),
+            "both implementations' context values must reach the subgraph, got {variables}"
+        );
+    }
 }

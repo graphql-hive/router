@@ -1,0 +1,53 @@
+---
+source: bin/router/src/query_planner/tests/context_apollo_parity.rs
+expression: text
+---
+QueryPlan {
+  Sequence {
+    Fetch(service: "b") {
+      {
+        start {
+          __typename
+          id
+        }
+      }
+    },
+    Flatten(path: "start") {
+      Fetch(service: "a") {
+        {
+          ... on Wrapper {
+            __typename
+            id
+          }
+        } =>
+        {
+          ... on Wrapper {
+            tree {
+              __typename
+              prop
+              child {
+                __typename
+                id
+              }
+            }
+          }
+        }
+      },
+    },
+    Flatten(path: "start.tree.child") {
+      Fetch(service: "a") {
+        {
+          ... on Tree {
+            __typename
+            id
+          }
+        } =>
+        ($__context_0:String) {
+          ... on Tree {
+            value(arg: $__context_0)
+          }
+        }
+      },
+    },
+  },
+},
