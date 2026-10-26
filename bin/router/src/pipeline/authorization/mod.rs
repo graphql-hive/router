@@ -249,12 +249,10 @@ pub fn enforce_operation_authorization(
         return Ok((normalized_payload.clone(), vec![]));
     }
 
-    // Without JWT authentication there is nothing to enforce, unless the schema also
-    // carries `@policy` requirements, which are resolved externally.
-    if !router_config.jwt.enabled && !auth_metadata.has_policies() {
-        return Ok((normalized_payload.clone(), vec![]));
-    }
-
+    // Without JWT authentication no request can authenticate, so every request is
+    // anonymous: `@authenticated` and `@requiresScopes` fields are refused rather than
+    // served. A deployment that wants the directives ignored sets
+    // `authorization.directives.enabled: false`, which returned above.
     let span = GraphQLAuthorizeSpan::new();
     let _guard = span.span.enter();
 
@@ -268,7 +266,7 @@ pub fn enforce_operation_authorization(
         variable_payload,
         jwt_request_details,
         granted_policies,
-        router_config.jwt.enabled,
+        true,
         reject_mode,
     )?;
 
@@ -297,9 +295,10 @@ pub fn apply_authorization_to_operation(
     jwt_request_details: &JwtRequestDetails,
     // The `@policy` policies granted for this request by a coprocessor or a plugin.
     granted_policies: &HashSet<String>,
-    // When JWT authentication is not configured there is no way for a request to
-    // authenticate, so `@authenticated`/`@requiresScopes` are not enforced.
-    // `@policy` is decided outside of the router and stays enforced either way.
+    // Whether to enforce `@authenticated`/`@requiresScopes`. The router always does: a
+    // request with no JWT is unauthenticated, not exempt. `@policy` is decided outside
+    // of the router and stays enforced either way. Kept for callers that evaluate
+    // `@policy` alone.
     enforce_jwt_rules: bool,
     reject_mode: bool,
 ) -> Result<AuthorizationDecision, PipelineError> {
