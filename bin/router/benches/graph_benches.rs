@@ -18,7 +18,8 @@ fn graph_building(c: &mut Criterion) {
             "./fixture/abstract-many-subgraphs/supergraph.graphql",
         ),
         ("heavy_query", "./fixture/heavy-query/supergraph.graphql"),
-        // TODO: ("bfg", "./fixture/bfg/supergraph.graphql"), as it's taking forever now
+        // TODO: it's taking forever now
+        ("bfg", "./fixture/bfg/supergraph.graphql"),
         ("spotify", "./fixture/spotify-supergraph.graphql"),
         (
             "provides_union",
@@ -44,6 +45,8 @@ fn graph_building(c: &mut Criterion) {
 }
 
 fn all_benchmarks(c: &mut Criterion) {
+    let _ = tracing::subscriber::set_global_default(tracing::subscriber::NoSubscriber::default());
+
     graph_building(c);
 }
 
