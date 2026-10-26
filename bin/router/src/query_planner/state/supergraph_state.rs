@@ -246,6 +246,11 @@ impl SupergraphState {
         let progressive_overrides = Self::extract_progressive_overrides(&definitions);
         let contexts = Self::extract_contexts(&schema.definitions);
 
+        let known_scalars = Self::extract_known_scalars(schema);
+        let query_type = schema.query_type().name.to_string();
+        let mutation_type = schema.mutation_type().map(|t| t.name.to_string());
+        let subscription_type = schema.subscription_type().map(|t| t.name.to_string());
+
         let mut instance = Self {
             definitions,
             interface_object_types_in_subgraphs,
@@ -257,11 +262,11 @@ impl SupergraphState {
             known_subgraphs,
             subgraph_names,
             subgraph_endpoint_map,
-            known_scalars: Self::extract_known_scalars(schema),
+            known_scalars,
             subgraphs_state: HashMap::new(),
-            query_type: schema.query_type().name.to_string(),
-            mutation_type: schema.mutation_type().map(|t| t.name.to_string()),
-            subscription_type: schema.subscription_type().map(|t| t.name.to_string()),
+            query_type,
+            mutation_type,
+            subscription_type,
             entity_keys: Arc::default(),
         };
 
@@ -270,6 +275,7 @@ impl SupergraphState {
             let subgraph_name = instance.resolve_graph_id(subgraph_id).unwrap();
             instance.subgraphs_state.insert(subgraph_name, state);
         }
+
         instance.entity_keys = Arc::new(EntityKeys::new(&instance));
 
         instance

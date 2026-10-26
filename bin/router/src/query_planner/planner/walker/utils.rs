@@ -8,7 +8,7 @@ use crate::query_planner::{
 use super::error::WalkOperationError;
 
 pub fn get_entrypoints<'a>(
-    graph: &'a Graph,
+    graph: &'a Graph<'a>,
     operation_type: &OperationKind,
 ) -> Result<Vec<EdgeReference<'a>>, WalkOperationError> {
     let entrypoint_root = match operation_type {
