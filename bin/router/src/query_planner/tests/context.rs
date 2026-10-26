@@ -3386,3 +3386,114 @@ fn requires_selection_that_sets_its_own_context() -> Result<(), Box<dyn Error>> 
     "#);
     Ok(())
 }
+
+#[test]
+fn nested_contextual_fields_share_the_context_tree() -> Result<(), Box<dyn Error>> {
+    // every contextual field reads `currency` from the same `User`, so their context trees hang
+    // on one node. Both `next`s are the same field, so their trees are equal and merge.
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/context-nested.supergraph.graphql",
+        parse_operation(r#"{ user { child { rate { next { next { amount } } } } } }"#),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            user {
+              __typename
+              currency
+              child {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "user.child") {
+          Fetch(service: "a") {
+            {
+              ... on Child {
+                __typename
+                id
+              }
+            } =>
+            ($__context_0:String,$__context_1:String,$__context_2:String,$__context_3:String) {
+              ... on Child {
+                rate(code: $__context_0) {
+                  __typename
+                  id
+                  next(code: $__context_1) {
+                    __typename
+                    id
+                    next(code: $__context_2) {
+                      __typename
+                      id
+                      amount(code: $__context_3)
+                    }
+                  }
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    // `extra` comes in after `amount`, its context trees merge into the plan's node
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/context-nested.supergraph.graphql",
+        parse_operation(r#"{ user { child { rate { next { next { amount extra } } } } } }"#),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            user {
+              __typename
+              currency
+              child {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "user.child") {
+          Fetch(service: "a") {
+            {
+              ... on Child {
+                __typename
+                id
+              }
+            } =>
+            ($__context_0:String,$__context_1:String,$__context_2:String,$__context_4:String,$__context_3:String) {
+              ... on Child {
+                rate(code: $__context_0) {
+                  __typename
+                  id
+                  next(code: $__context_1) {
+                    __typename
+                    id
+                    next(code: $__context_2) {
+                      __typename
+                      id
+                      extra(code: $__context_4)
+                      amount(code: $__context_3)
+                    }
+                  }
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}

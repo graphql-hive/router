@@ -29,7 +29,7 @@ use crate::query_planner::{
         error::QueryPlanError,
         tree::{
             query_tree::QueryTree,
-            query_tree_node::{MutationFieldPosition, QueryTreeNode},
+            query_tree_node::{merge_query_tree_node_list, MutationFieldPosition, QueryTreeNode},
         },
         walker::{
             path::{same_selection_attributes, OperationPath, PathSegment},
@@ -63,8 +63,9 @@ impl<'graph> Candidate<'graph> {
         path: OperationPath<'graph>,
         mutation_field_position: MutationFieldPosition,
     ) -> Result<Self, QueryPlanError> {
+        let segments = path.get_segments();
         // The tree's root, then the chain.
-        let cost = FIELD_COST + chain_cost(graph, &path.get_segments())?;
+        let cost = FIELD_COST + chain_cost(graph, &segments, 0, &context_trees(&segments))?;
         let candidate = Self {
             path,
             mutation_field_position,
@@ -183,6 +184,7 @@ fn added_cost_of_candidate(
     candidate: &Candidate,
 ) -> Result<u64, QueryPlanError> {
     let segments = candidate.path.get_segments();
+    let context = context_trees(&segments);
     let mut added_cost = 0;
     let mut target = root;
 
@@ -204,6 +206,8 @@ fn added_cost_of_candidate(
                 )
                 && child.mutation_field_position == mutation_field_position
                 && child.condition == segment.condition
+                // nodes built from a path have no coordinate, only context trees do
+                && child.context_coordinate().is_none()
         });
 
         match same_node {
@@ -220,10 +224,11 @@ fn added_cost_of_candidate(
                         None => CROSS_SUBGRAPH_COST + calculate_cost_of_tree(graph, requirement),
                     };
                 }
+                added_cost += context_cost(graph, Some(same_node), segment, &context, index);
                 target = same_node;
             }
             None => {
-                added_cost += chain_cost(graph, &segments[index..])?;
+                added_cost += chain_cost(graph, &segments, index, &context)?;
                 break;
             }
         }
@@ -239,12 +244,17 @@ fn added_cost_of_candidate(
     Ok(added_cost)
 }
 
-/// The cost of the chain of tree nodes the segments become, entering the first one included.
-/// A node costs a field, plus a subgraph crossing when its edge enters a subgraph, plus its
-/// requirement, like in `calculate_cost_of_tree`.
-fn chain_cost(graph: &Graph<'_>, segments: &[&PathSegment]) -> Result<u64, QueryPlanError> {
+/// The cost of the chain of tree nodes the segments from `start` become, entering the first one
+/// included. A node costs a field, plus a subgraph crossing when its edge enters a subgraph, plus
+/// its requirement and its `@fromContext` bits, like in `calculate_cost_of_tree`.
+fn chain_cost(
+    graph: &Graph<'_>,
+    segments: &[&PathSegment],
+    start: usize,
+    context: &[(usize, Rc<QueryTreeNode>)],
+) -> Result<u64, QueryPlanError> {
     let mut cost = 0;
-    for segment in segments {
+    for (index, segment) in segments.iter().enumerate().skip(start) {
         // Building the tree looks the tail up too, and fails the same way.
         graph.get_edge_tail(&segment.edge_index)?;
 
@@ -258,8 +268,64 @@ fn chain_cost(graph: &Graph<'_>, segments: &[&PathSegment]) -> Result<u64, Query
         if let Some(requirement) = &segment.requirement_tree {
             cost += CROSS_SUBGRAPH_COST + calculate_cost_of_tree(graph, requirement);
         }
+        cost += context_cost(graph, None, segment, context, index);
     }
     Ok(cost)
+}
+
+/// The context trees of the path, with the index of the segment whose node they hang on, in the
+/// order `QueryTreeNode::from_path_segment_sequences` adds them. Empty, so free, for most paths.
+fn context_trees(segments: &[&PathSegment]) -> Vec<(usize, Rc<QueryTreeNode>)> {
+    let mut trees = Vec::new();
+    for (index, segment) in segments.iter().enumerate() {
+        for requirement in segment.context_requirements() {
+            // a tree pointing at its own segment or before the first one doesn't make it into the
+            // tree either
+            if let Some(node) = index.checked_sub(requirement.segments_back) {
+                if node < index {
+                    trees.push((node, Rc::clone(&requirement.tree)));
+                }
+            }
+        }
+    }
+    trees
+}
+
+/// What the `@fromContext` bits of the node of segment `index` cost: its context trees, merged
+/// like in the tree, and one hop for resolving any context. When `target`, the same node in the
+/// plan, is there, only what merging into it adds, like in `calculate_added_cost_of_merge`.
+fn context_cost(
+    graph: &Graph<'_>,
+    target: Option<&QueryTreeNode>,
+    segment: &PathSegment,
+    context: &[(usize, Rc<QueryTreeNode>)],
+    index: usize,
+) -> u64 {
+    let mut cost = 0;
+    if !segment.context_requirements().is_empty()
+        && target.is_none_or(|target| target.resolved_context_requirements().is_empty())
+    {
+        cost += CROSS_SUBGRAPH_COST;
+    }
+
+    if !context.iter().any(|(node, _)| *node == index) {
+        return cost;
+    }
+    let mut trees = Vec::new();
+    for (_, tree) in context.iter().filter(|(node, _)| *node == index) {
+        merge_query_tree_node_list(&mut trees, std::slice::from_ref(tree));
+    }
+    let existing = target.map_or(&[][..], |target| target.context_requirements());
+    for tree in &trees {
+        cost += match existing
+            .iter()
+            .find(|existing| existing.as_ref() == tree.as_ref())
+        {
+            Some(existing) => calculate_added_cost_of_merge(graph, existing, tree),
+            None => calculate_cost_of_tree(graph, tree),
+        };
+    }
+    cost
 }
 
 /// Calculate how much cost `source` adds when merged into `target`.

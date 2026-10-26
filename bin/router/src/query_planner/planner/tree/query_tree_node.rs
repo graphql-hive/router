@@ -58,7 +58,7 @@ impl PartialEq for QueryTreeNode {
     }
 }
 
-fn merge_query_tree_node_list(
+pub(crate) fn merge_query_tree_node_list(
     target_list: &mut Vec<Rc<QueryTreeNode>>,
     source_list: &[Rc<QueryTreeNode>],
 ) {
@@ -302,8 +302,8 @@ mod size_tests {
     fn planner_structs_stay_small() {
         // pathfinding makes a lot of these, so growing them makes planning slower
         for (name, actual, expected) in [
-            ("PathSegment", size_of::<PathSegment>(), 160),
-            ("QueryTreeNode", size_of::<QueryTreeNode>(), 192),
+            ("PathSegment", size_of::<PathSegment>(), 112),
+            ("QueryTreeNode", size_of::<QueryTreeNode>(), 144),
         ] {
             assert_eq!(
                 actual, expected,
