@@ -562,9 +562,18 @@ mod context_e2e_tests {
     }
 
     #[ntex::test]
-    async fn sends_all_context_groups_in_one_request_by_default() {
+    async fn sends_all_context_groups_in_one_request_when_the_cap_allows() {
         let mut server = mockito::Server::new_async().await;
-        let router = start_router("context-basic", &server).await;
+        let router = start_router_with_config(
+            "context-basic",
+            &server,
+            r#"
+            traffic_shaping:
+              all:
+                max_aliases_per_request: 40
+            "#,
+        )
+        .await;
         let users: Vec<_> = (0..40)
             .map(|index| {
                 json!({
