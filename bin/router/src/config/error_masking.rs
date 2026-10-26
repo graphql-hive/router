@@ -55,6 +55,11 @@ pub struct AllErrorMaskingConfig {
     ///
     /// You may pick the execution mode by setting `mode: allow` or `mode: deny`.
     /// Note: only root-level fields are supported.
+    ///
+    /// When unset and the message is masked, only the keys the router adds itself are kept
+    /// (`code`, `service`, `affectedPath` and `http`), so a subgraph's stack trace or
+    /// connection details are not forwarded under a masked message. Set an allow or deny
+    /// list to choose differently.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extensions: Option<ExtensionsMaskingConfig>,
 }
