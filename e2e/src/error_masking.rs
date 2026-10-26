@@ -230,6 +230,90 @@ mod error_masking_e2e_tests {
         );
     }
 
+    /// A subgraph error whose `extensions` carry internals: a stack trace, a database host.
+    fn leaky_products_subgraph(req: RequestLike) -> Option<ResponseLike> {
+        if req.path != "/products" {
+            return None;
+        }
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("application/json"),
+        );
+        Some(ResponseLike::new(
+            axum::http::StatusCode::OK,
+            Some(
+                r#"{"data":null,"errors":[{"message":"insert or update on table \"review_moderation\" violates foreign key constraint","extensions":{"code":"INTERNAL_SERVER_ERROR","exception":{"host":"products-pg-2.internal","port":5432},"stacktrace":["at ModerationRepository.save (ModerationRepository.java:118)"]}}]}"#
+                    .to_string(),
+            ),
+            Some(headers),
+        ))
+    }
+
+    /// Masking is on by default, and it masks the message. The subgraph's own
+    /// `extensions` pass through untouched, so the client gets the stack trace and the
+    /// database host under a message that says "Unexpected error". Masking that hides the
+    /// sentence and keeps the internals reads as safe and is not.
+    #[ntex::test]
+    async fn should_not_forward_subgraph_extensions_by_default() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(leaky_products_subgraph)
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .inline_config(config_boilerplate(&subgraphs.url(), ""))
+            .build()
+            .start()
+            .await;
+
+        let res = router.send_graphql_request(QUERY, None, None).await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        let body = res.json_body_string_pretty().await;
+
+        assert!(body.contains("Unexpected error"), "{body}");
+        assert!(!body.contains("review_moderation"), "{body}");
+        assert!(
+            !body.contains("stacktrace"),
+            "the stack trace reached the client:\n{body}"
+        );
+        assert!(
+            !body.contains("products-pg-2.internal"),
+            "the database host reached the client:\n{body}"
+        );
+        // The router's own keys are not internals, and stay.
+        assert!(body.contains(r#""service": "products""#), "{body}");
+    }
+
+    /// Turning message masking off is a request for raw errors, extensions included.
+    /// Passes before and after the fix.
+    #[ntex::test]
+    async fn should_forward_subgraph_extensions_when_masking_is_off() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(leaky_products_subgraph)
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .inline_config(config_boilerplate(
+                &subgraphs.url(),
+                r#"
+          error_masking:
+            all:
+              enabled: false
+          "#,
+            ))
+            .build()
+            .start()
+            .await;
+
+        let res = router.send_graphql_request(QUERY, None, None).await;
+        let body = res.json_body_string_pretty().await;
+        assert!(body.contains("stacktrace"), "{body}");
+    }
+
     #[ntex::test]
     async fn should_allow_to_disable_all_masking() {
         let subgraphs = TestSubgraphs::builder()
