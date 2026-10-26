@@ -13,7 +13,15 @@ pub struct ErrorMaskingRuntime {
     // Error masking for the error extensions, split by "all" and subgraph-specific
     default_extensions_masking: Option<RedactExtensionsPlan>,
     per_subgraph_extensions_masking: HashMap<String, Option<RedactExtensionsPlan>>,
+
+    // Applied when a subgraph error's message is masked and no `extensions` rule is
+    // configured for it: only the keys the router adds itself survive. Without it, a
+    // masked message sits above the subgraph's own stack trace and connection details.
+    masked_message_extensions: RedactExtensionsPlan,
 }
+
+/// The extension keys the router writes itself, as opposed to keys a subgraph sent.
+const ROUTER_EXTENSION_KEYS: [&str; 4] = ["code", "service", "affectedPath", "http"];
 
 impl ErrorMaskingRuntime {
     pub fn apply(&self, err: &mut GraphQLError) {
@@ -32,7 +40,8 @@ impl ErrorMaskingRuntime {
                 .per_subgraph_extensions_masking
                 .get(service_name)
                 .and_then(|plan| plan.as_ref())
-                .or(self.default_extensions_masking.as_ref());
+                .or(self.default_extensions_masking.as_ref())
+                .or(should_mask_message.then_some(&self.masked_message_extensions));
 
             if let Some(plan) = extensions_masking_config {
                 plan.apply(&mut err.extensions);
@@ -73,6 +82,12 @@ impl ErrorMaskingRuntime {
                         .collect()
                 })
                 .unwrap_or_default(),
+            masked_message_extensions: RedactExtensionsPlan::Allow(
+                ROUTER_EXTENSION_KEYS
+                    .iter()
+                    .map(|key| key.to_string())
+                    .collect(),
+            ),
         })
     }
 }
