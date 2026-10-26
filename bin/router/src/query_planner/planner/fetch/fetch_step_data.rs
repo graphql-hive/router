@@ -50,7 +50,7 @@ pub struct FetchStepData<State> {
     pub context_producers: BTreeSet<i64>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FetchStepKind {
     Entity,
     Root,

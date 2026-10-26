@@ -478,42 +478,83 @@ pub fn find_direct_paths<'graph>(
         .find_direct_paths(path, target)
 }
 
+#[instrument(level = "trace", skip_all, fields(
+    path = path.pretty_print(graph),
+    current_cost = path.cost,
+))]
+pub fn find_direct_path<'graph>(
+    graph: &'graph Graph,
+    supergraph: &'graph SupergraphState,
+    override_context: &'graph PlannerOverrideContext,
+    path: &OperationPath<'graph>,
+    target: &NavigationTarget<'_>,
+    cancellation_token: &'graph CancellationToken,
+) -> Result<Option<OperationPath<'graph>>, WalkOperationError> {
+    PathSearch::new(graph, supergraph, override_context, cancellation_token)
+        .find_direct_path(path, target)
+}
+
+/// Edges from the path's tail that lead straight to `target`, nothing when the path's union
+/// scope rules the target type out.
+fn direct_edges<'graph, 't>(
+    graph: &'graph Graph,
+    path: &OperationPath<'graph>,
+    target: &'t NavigationTarget<'_>,
+) -> Box<dyn Iterator<Item = EdgeReference<'graph>> + 't>
+where
+    'graph: 't,
+{
+    let path_tail_index = path.tail();
+
+    match target {
+        NavigationTarget::ConcreteType(type_name, _)
+            if !path.can_resolve_union_member(type_name) =>
+        {
+            Box::new(std::iter::empty())
+        }
+        NavigationTarget::Field { field, .. } => {
+            Box::new(graph.edges_from(path_tail_index).filter(move |e| {
+                matches!(e.weight(), Edge::FieldMove(f) if f.name == field.name)
+                    || matches!(e.weight(), Edge::ReentryMove(r) if r.name == field.name)
+            }))
+        }
+        NavigationTarget::ConcreteType(type_name, _condition) => Box::new(
+            graph
+                .edges_from(path_tail_index)
+                .filter(move |e| match e.weight() {
+                    Edge::AbstractMove(t) => t == type_name,
+                    Edge::InterfaceObjectTypeMove(t) => &t.object_type_name == type_name,
+                    _ => false,
+                }),
+        ),
+    }
+}
+
 impl<'graph> PathSearch<'graph> {
+    fn find_direct_path(
+        &mut self,
+        path: &OperationPath<'graph>,
+        target: &NavigationTarget<'_>,
+    ) -> Result<Option<OperationPath<'graph>>, WalkOperationError> {
+        for edge_ref in direct_edges(self.graph, path, target) {
+            if let Some(next_path) = self.try_advance_direct_path(path, &edge_ref, target)? {
+                trace!("Finished finding direct path, found one");
+                return Ok(Some(next_path));
+            }
+        }
+
+        trace!("Finished finding direct path, found none");
+        Ok(None)
+    }
+
     fn find_direct_paths(
         &mut self,
         path: &OperationPath<'graph>,
         target: &NavigationTarget<'_>,
     ) -> Result<Vec<OperationPath<'graph>>, WalkOperationError> {
-        let graph = self.graph;
         let mut result: Vec<OperationPath<'graph>> = vec![];
-        let path_tail_index = path.tail();
 
-        // Respect the path's current union scope when targeting a concrete type.
-        if let NavigationTarget::ConcreteType(type_name, _) = target {
-            if !path.can_resolve_union_member(type_name) {
-                return Ok(result);
-            }
-        }
-
-        let edges_iter: Box<dyn Iterator<Item = _>> = match target {
-            NavigationTarget::Field { field, .. } => {
-                Box::new(graph.edges_from(path_tail_index).filter(move |e| {
-                    matches!(e.weight(), Edge::FieldMove(f) if f.name == field.name)
-                        || matches!(e.weight(), Edge::ReentryMove(r) if r.name == field.name)
-                }))
-            }
-            NavigationTarget::ConcreteType(type_name, _condition) => Box::new(
-                graph
-                    .edges_from(path_tail_index)
-                    .filter(move |e| match e.weight() {
-                        Edge::AbstractMove(t) => t == type_name,
-                        Edge::InterfaceObjectTypeMove(t) => &t.object_type_name == type_name,
-                        _ => false,
-                    }),
-            ),
-        };
-
-        for edge_ref in edges_iter {
+        for edge_ref in direct_edges(self.graph, path, target) {
             if let Some(new_path) = self.try_advance_direct_path(path, &edge_ref, target)? {
                 result.push(new_path);
             }
