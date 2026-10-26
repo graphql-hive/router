@@ -1,0 +1,315 @@
+query TvpVod(
+  $profileId: ID!
+  $locale: String!
+  $device: String!
+  $maturity: Int!
+  $experiments: [String!]!
+) {
+  home(
+    profileId: $profileId
+    locale: $locale
+    device: $device
+    maturity: $maturity
+    experiments: $experiments
+  ) {
+    ...ScreenDeep
+    ...ScreenMarketing
+  }
+}
+
+fragment ScreenDeep on Screen {
+  id
+  slug
+  localizedTitle(locale: $locale)
+  hero(locale: $locale, device: $device) {
+    id
+    title {
+      ...TitleNest0
+    }
+    artwork(locale: $locale, device: $device) {
+      ...ArtworkFields
+    }
+    tracking(profileId: $profileId, experiments: $experiments) {
+      impressionId
+      campaignId
+    }
+  }
+  rows(profileId: $profileId, maturity: $maturity, experiments: $experiments) {
+    ...RowDeep
+  }
+}
+
+fragment ScreenMarketing on Screen {
+  rows(profileId: $profileId, maturity: $maturity, experiments: $experiments) {
+    id
+    kind
+    localizedTitle(locale: $locale)
+    items(
+      profileId: $profileId
+      maturity: $maturity
+      experiments: $experiments
+    ) {
+      id
+      badge(locale: $locale) {
+        text(locale: $locale)
+        style
+      }
+      preview(profileId: $profileId, device: $device) {
+        ...VideoFields
+      }
+      title {
+        ...TitlePersonalizationFacet
+        ...TitleMerchFacet
+      }
+    }
+  }
+}
+
+fragment RowDeep on Row {
+  id
+  rank
+  kind
+  localizedTitle(locale: $locale)
+  context(profileId: $profileId, experiments: $experiments) {
+    requestId
+    algorithm
+    explanation(locale: $locale)
+  }
+  items(profileId: $profileId, maturity: $maturity, experiments: $experiments) {
+    ...TileDeep
+  }
+}
+
+fragment TileDeep on Tile {
+  id
+  rank
+  reason(profileId: $profileId)
+  badge(locale: $locale) {
+    text(locale: $locale)
+    style
+  }
+  preview(profileId: $profileId, device: $device) {
+    ...VideoFields
+  }
+  title {
+    ...TitleNest0
+  }
+}
+
+fragment ArtworkFields on Artwork {
+  id
+  poster {
+    url
+    width
+    height
+  }
+  boxshot {
+    url
+    width
+    height
+  }
+  billboard {
+    url
+    width
+    height
+  }
+  palette
+}
+
+fragment PlaybackFields on Playback {
+  bookmarkSeconds
+  playable
+  streams(device: $device) {
+    ...VideoFields
+  }
+}
+
+fragment VideoFields on Video {
+  id
+  url(device: $device)
+  durationSeconds
+  artwork(locale: $locale, device: $device) {
+    id
+    billboard {
+      url
+      width
+      height
+    }
+  }
+}
+
+fragment SeasonLeaf on Season {
+  id
+  number
+  title(locale: $locale)
+  episodes(profileId: $profileId, maturity: $maturity) {
+    id
+    name(locale: $locale)
+    synopsis(locale: $locale)
+  }
+}
+
+fragment TitleLeaf on Title {
+  id
+  name(locale: $locale)
+  synopsis(locale: $locale)
+  artwork(locale: $locale, device: $device) {
+    ...ArtworkFields
+  }
+  playback(profileId: $profileId, device: $device) {
+    ...PlaybackFields
+  }
+  trailers(profileId: $profileId, device: $device) {
+    ...VideoFields
+  }
+  cast(locale: $locale) {
+    id
+    name(locale: $locale)
+    headshot {
+      url
+      width
+      height
+    }
+  }
+}
+
+fragment TitlePersonalizationFacet on Title {
+  availability(profileId: $profileId, maturity: $maturity) {
+    available
+    reason
+  }
+  rating(profileId: $profileId, maturity: $maturity) {
+    score
+    predicted
+    maturity
+  }
+}
+
+fragment TitleMerchFacet on Title {
+  trailers(profileId: $profileId, device: $device) {
+    id
+    artwork(locale: $locale, device: $device) {
+      id
+      billboard {
+        url
+        width
+        height
+      }
+    }
+  }
+  similarMerch: similar(profileId: $profileId, maturity: $maturity) {
+    id
+    name(locale: $locale)
+  }
+}
+
+fragment TitleNest0 on Title {
+  ...TitleLeaf
+  ...TitlePersonalizationFacet
+  ...TitleMerchFacet
+  similarLeaf0: similar(profileId: $profileId, maturity: $maturity) {
+    ...TitleLeaf
+    ...TitlePersonalizationFacet
+    ...TitleMerchFacet
+  }
+
+  similarLeaf1: similar(profileId: $profileId, maturity: $maturity) {
+    ...TitleLeaf
+    ...TitlePersonalizationFacet
+    ...TitleMerchFacet
+  }
+
+  similarLeaf2: similar(profileId: $profileId, maturity: $maturity) {
+    ...TitleLeaf
+    ...TitlePersonalizationFacet
+    ...TitleMerchFacet
+  }
+  ... on Movie {
+    runtimeSeconds
+    collectionsLeaf: collections(profileId: $profileId, maturity: $maturity) {
+      id
+      name(locale: $locale)
+      titles(profileId: $profileId, maturity: $maturity) {
+        ...TitleLeaf
+      }
+    }
+  }
+  ... on Series {
+    seasonCount
+    seasonsLeaf: seasons(profileId: $profileId, maturity: $maturity) {
+      ...SeasonLeaf
+    }
+  }
+  ... on Episode {
+    episodeNumber
+    seriesLeaf: series {
+      ...TitleLeaf
+    }
+  }
+  nextBySimilar0: similar(profileId: $profileId, maturity: $maturity) {
+    ...TitleNest1
+  }
+}
+
+fragment TitleNest1 on Title {
+  ...TitleLeaf
+  ...TitlePersonalizationFacet
+  ...TitleMerchFacet
+  similarLeaf0: similar(profileId: $profileId, maturity: $maturity) {
+    ...TitleLeaf
+    ...TitlePersonalizationFacet
+    ...TitleMerchFacet
+  }
+
+  similarLeaf1: similar(profileId: $profileId, maturity: $maturity) {
+    ...TitleLeaf
+    ...TitlePersonalizationFacet
+    ...TitleMerchFacet
+  }
+
+  similarLeaf2: similar(profileId: $profileId, maturity: $maturity) {
+    ...TitleLeaf
+    ...TitlePersonalizationFacet
+    ...TitleMerchFacet
+  }
+  ... on Movie {
+    runtimeSeconds
+    collectionsLeaf: collections(profileId: $profileId, maturity: $maturity) {
+      id
+      name(locale: $locale)
+      titles(profileId: $profileId, maturity: $maturity) {
+        ...TitleLeaf
+      }
+    }
+  }
+  ... on Series {
+    seasonCount
+    seasonsLeaf: seasons(profileId: $profileId, maturity: $maturity) {
+      ...SeasonLeaf
+    }
+  }
+  ... on Episode {
+    episodeNumber
+    seriesLeaf: series {
+      ...TitleLeaf
+    }
+  }
+}
+
+fragment SeasonToTitleNest0 on Season {
+  id
+  number
+  title(locale: $locale)
+  episodes(profileId: $profileId, maturity: $maturity) {
+    ...TitleNest0
+  }
+}
+
+fragment SeasonToTitleNest1 on Season {
+  id
+  number
+  title(locale: $locale)
+  episodes(profileId: $profileId, maturity: $maturity) {
+    ...TitleNest1
+  }
+}
