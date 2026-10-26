@@ -462,10 +462,22 @@ pub struct TrafficShapingExecutorGlobalConfig {
     ///
     /// Per-subgraph values under `traffic_shaping.subgraphs.<name>.max_aliases_per_request` take precedence.
     ///
-    /// Not set by default, so there's no limit: batches are never split, and all contextual
-    /// argument groups of a fetch go in one request.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Defaults to `15`, graphql-armor's own default for its max-aliases rule, so a router
+    /// with no configuration does not start sending requests a subgraph with that rule
+    /// refuses when a list grows past 15 distinct contextual values. Raise it for subgraphs
+    /// that allow more aliases.
+    #[serde(
+        default = "default_max_aliases_per_request",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub max_aliases_per_request: Option<usize>,
+}
+
+/// graphql-armor's default for its max-aliases rule, a common guard on subgraphs.
+pub const DEFAULT_MAX_ALIASES_PER_REQUEST: usize = 15;
+
+fn default_max_aliases_per_request() -> Option<usize> {
+    Some(DEFAULT_MAX_ALIASES_PER_REQUEST)
 }
 
 fn default_request_timeout() -> DurationOrExpression {
@@ -499,7 +511,7 @@ impl Default for TrafficShapingExecutorGlobalConfig {
             forward_operation_name: false,
             websocket: Default::default(),
             compression: Default::default(),
-            max_aliases_per_request: None,
+            max_aliases_per_request: default_max_aliases_per_request(),
         }
     }
 }
