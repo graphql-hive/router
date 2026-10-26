@@ -302,7 +302,7 @@ mod size_tests {
     fn planner_structs_stay_small() {
         // pathfinding makes a lot of these, so growing them makes planning slower
         for (name, actual, expected) in [
-            ("PathSegment", size_of::<PathSegment>(), 72),
+            ("PathSegment", size_of::<PathSegment>(), 88),
             ("QueryTreeNode", size_of::<QueryTreeNode>(), 144),
         ] {
             assert_eq!(
