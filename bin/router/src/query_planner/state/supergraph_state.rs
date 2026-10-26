@@ -1,5 +1,6 @@
+use ahash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::BTreeSet,
     fmt::{Debug, Display},
     sync::Arc,
 };
@@ -57,7 +58,8 @@ impl SubgraphName {
 #[derive(Debug, Default)]
 pub struct ProgressiveOverrides {
     /// A set of all custom string labels used in `@override(label:)`
-    pub flags: HashSet<String>,
+    /// Std set, the request pipeline keeps the labels it resolves in one.
+    pub flags: std::collections::HashSet<String>,
     /// A set of all percentage values used in `@override(label:)`
     pub percentages: HashSet<Percentage>,
 }
@@ -202,7 +204,8 @@ pub struct SupergraphState {
     /// A map from subgraph name to a subgraph state
     pub subgraphs_state: HashMap<SubgraphName, SubgraphState>,
     /// A map of (subgraph_name, endpoint) to make it easy to resolve
-    pub subgraph_endpoint_map: HashMap<String, String>,
+    /// Std map, the executor builds its subgraph clients from it.
+    pub subgraph_endpoint_map: std::collections::HashMap<String, String>,
     /// The root entrypoints
     pub query_type: String,
     pub mutation_type: Option<String>,
@@ -495,7 +498,7 @@ impl SupergraphState {
         for (type_name, definition) in definitions {
             match definition {
                 SupergraphDefinition::Object(object_type) => {
-                    let singleton = HashSet::from([type_name.clone()]);
+                    let singleton = HashSet::from_iter([type_name.clone()]);
                     all.insert(type_name.clone(), singleton.clone());
 
                     for join_type in &object_type.join_type {
@@ -641,9 +644,12 @@ impl SupergraphState {
 
     fn extract_subgraph_names_and_endpoints(
         schema: &SchemaDocument,
-    ) -> (HashMap<String, String>, HashMap<String, String>) {
+    ) -> (
+        HashMap<String, String>,
+        std::collections::HashMap<String, String>,
+    ) {
         let mut subgraph_names_map = HashMap::new();
-        let mut subgraph_endpoints_map = HashMap::new();
+        let mut subgraph_endpoints_map = std::collections::HashMap::new();
         let join_graph_enum = schema.definitions.iter().find_map(|d| match d {
             input::Definition::TypeDefinition(input::TypeDefinition::Enum(e)) => {
                 if e.name == "join__Graph" {
@@ -1455,7 +1461,7 @@ fn index_in(subgraph_names: &[String], subgraph_name: &str) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use ahash::HashSet;
 
     use crate::query_planner::utils::parsing::parse_schema;
 
@@ -1493,7 +1499,7 @@ mod tests {
         let supergraph =
             SupergraphState::new(&parse_schema(&std::fs::read_to_string(path).unwrap()));
 
-        let expected_all = HashSet::from([
+        let expected_all = HashSet::from_iter([
             "Common".to_string(),
             "OnlyA".to_string(),
             "OnlyB".to_string(),
@@ -1501,11 +1507,17 @@ mod tests {
         assert_eq!(supergraph.all_possible_types("Action"), Some(&expected_all));
         assert_eq!(
             supergraph.possible_types_in_subgraph("Action", "A"),
-            Some(&HashSet::from(["Common".to_string(), "OnlyA".to_string()]))
+            Some(&HashSet::from_iter([
+                "Common".to_string(),
+                "OnlyA".to_string()
+            ]))
         );
         assert_eq!(
             supergraph.possible_types_in_subgraph("Action", "B"),
-            Some(&HashSet::from(["Common".to_string(), "OnlyB".to_string()]))
+            Some(&HashSet::from_iter([
+                "Common".to_string(),
+                "OnlyB".to_string()
+            ]))
         );
 
         let path = concat!(
@@ -1514,7 +1526,8 @@ mod tests {
         );
         let supergraph =
             SupergraphState::new(&parse_schema(&std::fs::read_to_string(path).unwrap()));
-        let expected_implementors = HashSet::from(["Book".to_string(), "Magazine".to_string()]);
+        let expected_implementors =
+            HashSet::from_iter(["Book".to_string(), "Magazine".to_string()]);
         assert_eq!(
             supergraph.all_possible_types("Product"),
             Some(&expected_implementors)

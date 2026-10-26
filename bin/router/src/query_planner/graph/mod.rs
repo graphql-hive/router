@@ -8,8 +8,9 @@ pub use self::edge::PERCENTAGE_SCALE_FACTOR;
 
 mod tests;
 
+use ahash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::BTreeMap,
     fmt::{Debug, Display},
     sync::Arc,
 };
@@ -145,7 +146,7 @@ impl<'a> UnionDefinitions<'a> {
             if let Some(type_in_graph) = join_field.type_in_graph.as_ref().map(|t| t.inner_type()) {
                 // join__field(type:) can narrow a union-returning field to one concrete member.
                 if type_in_graph != field_type {
-                    return UnionMemberTypes::from([type_in_graph]);
+                    return UnionMemberTypes::from_iter([type_in_graph]);
                 }
             }
         }
