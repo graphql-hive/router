@@ -1,7 +1,13 @@
+use std::sync::Arc;
+
+use ahash::AHashMap;
 use directives::JoinFieldDirective;
 use graphql_tools::parser::{
     parse_query,
-    query::{Definition, OperationDefinition, Selection, SelectionSet, TypeCondition},
+    query::{
+        Definition, OperationDefinition, Selection, SelectionSet,
+        SelectionSet as QuerySelectionSet, TypeCondition,
+    },
 };
 
 use crate::query_planner::{
@@ -33,7 +39,7 @@ fn normalize_fields_argument_value_mut(
     supergraph: &SupergraphState,
     type_name: &str,
     subgraph_name: &String,
-    fields_str: &String,
+    fields_str: &str,
 ) -> SelectionSet<'static, String> {
     let selection_set_str = format!("{{{fields_str}}}");
     // TODO: Far from ideal, but we can use the graphql_parser here to get it parsed for us
@@ -99,12 +105,112 @@ fn collect_sized_field_path(
 
 pub struct FederationRules;
 
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+struct SelectionCacheKey<'a> {
+    subgraph_name: &'a str,
+    type_name: &'a str,
+    selection: &'a str,
+}
+
+/// Caches normalized federation field sets while a planner graph is being built.
+/// The cache keys borrow the immutable supergraph; cached selections are shared by graph edges.
+#[derive(Debug, Default)]
+pub(crate) struct CachedFederationRules<'a> {
+    selections: AHashMap<SelectionCacheKey<'a>, Arc<QuerySelectionSet<'static, String>>>,
+    type_aware_selections: AHashMap<SelectionCacheKey<'a>, Arc<TypeAwareSelection>>,
+}
+
+impl<'a> CachedFederationRules<'a> {
+    fn parse_selection(
+        &mut self,
+        supergraph: &'a SupergraphState,
+        subgraph_name: &'a String,
+        type_name: &'a str,
+        selection: &'a str,
+    ) -> Arc<QuerySelectionSet<'static, String>> {
+        let key = SelectionCacheKey {
+            subgraph_name: subgraph_name.as_str(),
+            type_name,
+            selection,
+        };
+        if let Some(selection_set) = self.selections.get(&key) {
+            return Arc::clone(selection_set);
+        }
+
+        let selection_set = Arc::new(normalize_fields_argument_value_mut(
+            supergraph,
+            type_name,
+            subgraph_name,
+            selection,
+        ));
+        self.selections.insert(key, Arc::clone(&selection_set));
+        selection_set
+    }
+
+    fn parse_type_aware_selection(
+        &mut self,
+        supergraph: &'a SupergraphState,
+        subgraph_name: &'a String,
+        type_name: &'a str,
+        selection: &'a str,
+    ) -> Arc<TypeAwareSelection> {
+        let key = SelectionCacheKey {
+            subgraph_name: subgraph_name.as_str(),
+            type_name,
+            selection,
+        };
+        if let Some(selection) = self.type_aware_selections.get(&key) {
+            return Arc::clone(selection);
+        }
+
+        let selection_set = self.parse_selection(supergraph, subgraph_name, type_name, selection);
+        let selection = Arc::new(TypeAwareSelection {
+            type_name: type_name.to_string(),
+            selection_set: selection_set.as_ref().clone().into(),
+        });
+        self.type_aware_selections
+            .insert(key, Arc::clone(&selection));
+        selection
+    }
+
+    pub(crate) fn parse_key(
+        &mut self,
+        supergraph: &'a SupergraphState,
+        subgraph_name: &'a String,
+        type_name: &'a str,
+        key: &'a str,
+    ) -> Arc<TypeAwareSelection> {
+        self.parse_type_aware_selection(supergraph, subgraph_name, type_name, key)
+    }
+
+    pub(crate) fn parse_requires(
+        &mut self,
+        supergraph: &'a SupergraphState,
+        subgraph_name: &'a String,
+        type_name: &'a str,
+        requires: &'a str,
+    ) -> Arc<TypeAwareSelection> {
+        self.parse_type_aware_selection(supergraph, subgraph_name, type_name, requires)
+    }
+
+    pub(crate) fn parse_provides(
+        &mut self,
+        supergraph: &'a SupergraphState,
+        join_field: &'a JoinFieldDirective,
+        subgraph_name: &'a String,
+        type_name: &'a str,
+    ) -> Option<Arc<QuerySelectionSet<'static, String>>> {
+        let provides = join_field.provides.as_deref()?;
+        Some(self.parse_selection(supergraph, subgraph_name, type_name, provides))
+    }
+}
+
 impl FederationRules {
     pub fn parse_key(
         supergraph: &SupergraphState,
         subgraph_name: &String,
         type_name: &str,
-        key: &String,
+        key: &str,
     ) -> TypeAwareSelection {
         let selection_set =
             normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, key);
@@ -128,12 +234,8 @@ impl FederationRules {
         } else {
             selection
         };
-        let mut selection_set = normalize_fields_argument_value_mut(
-            supergraph,
-            type_name,
-            subgraph_name,
-            &fields.to_string(),
-        );
+        let mut selection_set =
+            normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, fields);
         selection_set.items.retain(|selection| {
             let Selection::InlineFragment(fragment) = selection else {
                 return true;
@@ -181,7 +283,7 @@ impl FederationRules {
         supergraph: &SupergraphState,
         subgraph_name: &String,
         type_name: &str,
-        requires: &String,
+        requires: &str,
     ) -> SelectionSet<'static, String> {
         normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, requires)
     }
@@ -217,17 +319,16 @@ impl FederationRules {
         current_subgraph_id: &str,
         parent_definition: &SupergraphDefinition,
     ) -> (bool, Option<&'a JoinFieldDirective>) {
-        let involved_subgraphs = parent_definition.subgraphs();
-
         // A field i available if: it has no @join__field directives at all
         if field.join_field.is_empty() {
             // AND its parent type is available in the subgraph
-            if involved_subgraphs.contains(&current_subgraph_id) {
-                return (true, None);
-            }
-
-            // No join_field and not available in parent
-            return (false, None);
+            return (
+                parent_definition
+                    .join_types()
+                    .iter()
+                    .any(|join_type| join_type.graph_id == current_subgraph_id),
+                None,
+            );
         }
 
         // Find the relevant join_field and use it to determine availability
@@ -392,5 +493,56 @@ mod tests {
             }
             _ => panic!("expected a type-conditioned selection"),
         }
+    }
+}
+
+#[cfg(test)]
+mod cached_rules_tests {
+    use super::CachedFederationRules;
+    use crate::query_planner::{
+        state::supergraph_state::SupergraphState, utils::parsing::parse_schema,
+    };
+    use std::sync::Arc;
+
+    #[test]
+    fn shares_normalized_key_and_requires_selections() {
+        let schema = parse_schema(
+            r#"
+            enum join__Graph {
+              A @join__graph(name: "a", url: "")
+            }
+
+            type Query @join__type(graph: A) {
+              item: Item @join__field(graph: A)
+            }
+
+            type Item @join__type(graph: A, key: "id") {
+              id: ID @join__field(graph: A)
+              name: String @join__field(graph: A, requires: "id")
+            }
+            "#,
+        );
+        let supergraph = SupergraphState::new(&schema);
+        let (type_name, definition) = supergraph.definitions.get_key_value("Item").unwrap();
+        let join_type = definition.join_types().first().unwrap();
+        let key = join_type.key.as_ref().unwrap();
+        let requires = definition
+            .fields()
+            .get("name")
+            .unwrap()
+            .join_field
+            .first()
+            .unwrap()
+            .requires
+            .as_ref()
+            .unwrap();
+
+        let mut cached_rules = CachedFederationRules::default();
+        let key_selection =
+            cached_rules.parse_key(&supergraph, &join_type.graph_id, type_name, key);
+        let requires_selection =
+            cached_rules.parse_requires(&supergraph, &join_type.graph_id, type_name, requires);
+
+        assert!(Arc::ptr_eq(&key_selection, &requires_selection));
     }
 }

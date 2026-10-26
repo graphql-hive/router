@@ -2,6 +2,7 @@ use std::{
     collections::HashSet,
     fmt::{Debug, Display},
     hash::Hash,
+    sync::Arc,
 };
 
 use petgraph::graph::EdgeReference as GraphEdgeReference;
@@ -15,7 +16,7 @@ use crate::query_planner::{
 #[derive(Debug, Clone)]
 pub struct EntityMove {
     pub key: String,
-    pub requirements: TypeAwareSelection,
+    pub requirements: Arc<TypeAwareSelection>,
     /// Indicates whether the move is to an interface entity.
     ///
     /// Object @key -> Object @key (@interfaceObject)
@@ -27,7 +28,7 @@ pub struct EntityMove {
 #[derive(Debug, Clone)]
 pub struct InterfaceObjectTypeMove {
     pub object_type_name: String,
-    pub requirements: TypeAwareSelection,
+    pub requirements: Arc<TypeAwareSelection>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -35,7 +36,8 @@ pub struct ContextArgument {
     pub name: String,
     pub type_in_graph: TypeNode,
     /// The selection parsed once for each type that declares this context.
-    pub selections: Vec<TypeAwareSelection>,
+    /// Shared by every field reading the same context selection in a subgraph.
+    pub selections: Arc<[TypeAwareSelection]>,
 }
 
 /// Represent a simple file move
@@ -46,7 +48,7 @@ pub struct FieldMove {
     pub is_leaf: bool,
     pub is_list: bool,
     pub join_field: Option<JoinFieldDirective>,
-    pub requirements: Option<TypeAwareSelection>,
+    pub requirements: Option<Arc<TypeAwareSelection>>,
     pub context_arguments: Vec<ContextArgument>,
     pub override_from: Option<String>,
     pub override_label: Option<OverrideLabel>,
@@ -199,7 +201,7 @@ pub type EdgeReference<'a> = GraphEdgeReference<'a, Edge>;
 impl Edge {
     pub fn create_entity_move(
         key: &str,
-        selection: TypeAwareSelection,
+        selection: Arc<TypeAwareSelection>,
         is_interface: bool,
     ) -> Self {
         Self::EntityMove(EntityMove {
@@ -211,7 +213,7 @@ impl Edge {
 
     pub fn create_interface_object_type_move(
         object_type_name: &str,
-        selection: TypeAwareSelection,
+        selection: Arc<TypeAwareSelection>,
     ) -> Self {
         Self::InterfaceObjectTypeMove(InterfaceObjectTypeMove {
             object_type_name: object_type_name.to_string(),
@@ -226,7 +228,7 @@ impl Edge {
         is_leaf: bool,
         is_list: bool,
         join_field: Option<JoinFieldDirective>,
-        requirements: Option<TypeAwareSelection>,
+        requirements: Option<Arc<TypeAwareSelection>>,
         context_arguments: Vec<ContextArgument>,
         overridden_by: Option<(String, Option<OverrideLabel>)>,
     ) -> Self {
@@ -271,9 +273,9 @@ impl Edge {
 
     pub fn requirements(&self) -> Option<&TypeAwareSelection> {
         match self {
-            Self::EntityMove(entity_move) => Some(&entity_move.requirements),
-            Self::InterfaceObjectTypeMove(m) => Some(&m.requirements),
-            Self::FieldMove(field_move) => field_move.requirements.as_ref(),
+            Self::EntityMove(entity_move) => Some(entity_move.requirements.as_ref()),
+            Self::InterfaceObjectTypeMove(m) => Some(m.requirements.as_ref()),
+            Self::FieldMove(field_move) => field_move.requirements.as_deref(),
             _ => None,
         }
     }
