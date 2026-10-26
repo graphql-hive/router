@@ -9,14 +9,13 @@ use futures::StreamExt;
 use hive_console_sdk::agent::usage_agent::RequestDetails;
 use hive_console_sdk::agent::usage_agent::UsageAgentExt;
 use hive_console_sdk::agent::usage_agent::{ExecutionReport, UsageAgent};
+use hive_console_sdk::agent::usage_agent::{OperationType, SamplingKey};
 use hive_console_sdk::agent::utils::ReportVariables;
 use hive_console_sdk::graphql_tools::parser::parse_schema;
 use hive_console_sdk::graphql_tools::parser::schema::Document;
 use http::HeaderValue;
-use rand::RngExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::env;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -29,6 +28,8 @@ use tower::ServiceExt;
 use crate::persisted_documents::PERSISTED_DOCUMENT_HASH_KEY;
 
 pub(crate) static OPERATION_CONTEXT: &str = "hive::operation_context";
+/// Set by Apollo Router's query analysis layer; part of its documented context keys.
+static APOLLO_OPERATION_KIND: &str = "apollo::supergraph::operation_kind";
 
 #[derive(Serialize, Deserialize, Debug)]
 struct OperationContext {
@@ -37,13 +38,10 @@ struct OperationContext {
     pub(crate) timestamp: u64,
     pub(crate) operation_body: String,
     pub(crate) operation_name: Option<String>,
-    pub(crate) dropped: bool,
 }
 
 #[derive(Clone, Debug)]
 struct OperationConfig {
-    sample_rate: f64,
-    exclude: Option<Vec<String>>,
     client_name_header: String,
     client_version_header: String,
 }
@@ -60,6 +58,65 @@ pub struct UsagePlugin {
 enum UsageReportingExclude {
     Expression { expression: String },
     OperationNames(Vec<String>),
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+#[allow(clippy::enum_variant_names)] // variants are the config values
+enum AtLeastOnceSamplingKeyKind {
+    OperationName,
+    OperationType,
+    OperationBody,
+}
+
+impl From<AtLeastOnceSamplingKeyKind> for SamplingKey {
+    fn from(kind: AtLeastOnceSamplingKeyKind) -> Self {
+        match kind {
+            AtLeastOnceSamplingKeyKind::OperationName => SamplingKey::OperationName,
+            AtLeastOnceSamplingKeyKind::OperationType => SamplingKey::OperationType,
+            AtLeastOnceSamplingKeyKind::OperationBody => SamplingKey::OperationBody,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
+#[serde(untagged)]
+enum AtLeastOnceSamplingKey {
+    One(AtLeastOnceSamplingKeyKind),
+    Many(Vec<AtLeastOnceSamplingKeyKind>),
+}
+
+impl AtLeastOnceSamplingKey {
+    fn into_sdk(self) -> Vec<SamplingKey> {
+        match self {
+            AtLeastOnceSamplingKey::One(kind) => vec![kind.into()],
+            AtLeastOnceSamplingKey::Many(kinds) => kinds.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+fn default_max_distinct_keys() -> u64 {
+    100_000
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct AtLeastOnceSamplingConfig {
+    /// The key used to determine unique operations.
+    ///
+    /// Possible values:
+    ///  - `operation_name`: the name of the GraphQL operation
+    ///  - `operation_type`: the type
+    ///  - `operation_body`: the body
+    ///
+    /// You can also provide multiple values. In that case, they are combined into one key.
+    key: AtLeastOnceSamplingKey,
+    /// Maximum number of unique keys kept in memory.
+    /// When the limit is reached, older keys may be removed.
+    ///
+    /// Default: 100000
+    #[serde(default = "default_max_distinct_keys")]
+    max_distinct_keys: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Default)]
@@ -83,6 +140,18 @@ pub struct Config {
     /// 1.0 = 100% chance of being sent.
     /// Default: 1.0
     sample_rate: Option<f64>,
+    /// Report the first operation seen for each unique key, regardless of `sample_rate`.
+    /// Later operations with the same key follow `sample_rate`.
+    ///
+    /// ```yaml
+    /// sample_rate: 0.1
+    /// at_least_once:
+    ///   key:
+    ///     - operation_name
+    ///     - operation_body
+    ///   max_distinct_keys: 12000
+    /// ```
+    at_least_once: Option<AtLeastOnceSamplingConfig>,
     /// An expression in VRL to exclude certain operations from being sent to Hive Console.
     /// Returning `true` from this expression will exclude the operation, while `false` will include it.
     /// This expression is a VRL expression that has access to the request and operation details;
@@ -145,6 +214,20 @@ fn usage_report_variables(req: &supergraph::Request) -> ReportVariables {
         .collect()
 }
 
+fn operation_type_from_context(ctx: &Context) -> Option<OperationType> {
+    match ctx
+        .get::<_, String>(APOLLO_OPERATION_KIND)
+        .ok()
+        .flatten()?
+        .as_str()
+    {
+        "query" => Some(OperationType::Query),
+        "mutation" => Some(OperationType::Mutation),
+        "subscription" => Some(OperationType::Subscription),
+        _ => None,
+    }
+}
+
 impl UsagePlugin {
     fn populate_context(config: OperationConfig, req: &supergraph::Request) {
         let context = &req.context;
@@ -172,29 +255,9 @@ impl UsagePlugin {
             .clone()
             .unwrap_or_default();
 
-        let excluded_operation_names: HashSet<String> = config
-            .exclude
-            .unwrap_or_default()
-            .clone()
-            .into_iter()
-            .collect();
-
-        let mut rng = rand::rng();
-        let sampled = rng.random::<f64>() < config.sample_rate;
-        let mut dropped = !sampled;
-
-        if !dropped {
-            if let Some(name) = &operation_name {
-                if excluded_operation_names.contains(name) {
-                    dropped = true;
-                }
-            }
-        }
-
         let _ = context.insert(
             OPERATION_CONTEXT,
             OperationContext {
-                dropped,
                 client_name,
                 client_version,
                 operation_name,
@@ -268,8 +331,23 @@ impl Plugin for UsagePlugin {
 
             agent = agent.process_variables(user_config.process_variables.unwrap_or(false));
 
-            if let Some(UsageReportingExclude::Expression { expression }) = &user_config.exclude {
-                agent = agent.exclude_expression(expression.clone());
+            match user_config.exclude {
+                Some(UsageReportingExclude::Expression { expression }) => {
+                    agent = agent.exclude_expression(expression);
+                }
+                Some(UsageReportingExclude::OperationNames(names)) => {
+                    agent = agent.exclude_operation_names(names);
+                }
+                None => {}
+            }
+
+            agent = agent.sample_rate(user_config.sample_rate.unwrap_or(1.0));
+
+            if let Some(at_least_once) = user_config.at_least_once {
+                agent = agent.at_least_once_sampling(
+                    at_least_once.key.into_sdk(),
+                    at_least_once.max_distinct_keys,
+                );
             }
 
             let agent = agent.build().map_err(Box::new)?;
@@ -290,16 +368,9 @@ impl Plugin for UsagePlugin {
             .expect("Failed to parse schema")
             .into_static();
 
-        let exclude = match user_config.exclude {
-            Some(UsageReportingExclude::OperationNames(names)) => Some(names),
-            _ => None,
-        };
-
         Ok(UsagePlugin {
             schema: Arc::new(schema),
             config: OperationConfig {
-                sample_rate: user_config.sample_rate.unwrap_or(1.0),
-                exclude,
                 client_name_header: user_config
                     .client_name_header
                     .unwrap_or("graphql-client-name".to_string()),
@@ -372,16 +443,7 @@ impl Plugin for UsagePlugin {
                                     .get::<_, String>(PERSISTED_DOCUMENT_HASH_KEY)
                                     .unwrap_or_default();
 
-                                if operation_context.dropped {
-                                    tracing::debug!(
-                                        "Dropping operation (phase: SAMPLING): {}",
-                                        operation_context
-                                            .operation_name
-                                            .clone()
-                                            .unwrap_or_else(|| "anonymous".to_string())
-                                    );
-                                    return result;
-                                }
+                                let operation_type = operation_type_from_context(&ctx);
 
                                 let OperationContext {
                                     client_name,
@@ -407,6 +469,7 @@ impl Plugin for UsagePlugin {
                                                     errors: 1,
                                                     operation_body,
                                                     operation_name,
+                                                    operation_type,
                                                     persisted_document_hash,
                                                     variables: usage_variables,
                                                     ..Default::default()
@@ -438,9 +501,9 @@ impl Plugin for UsagePlugin {
                                                         errors: response.errors.len(),
                                                         operation_body: operation_body.clone(),
                                                         operation_name: operation_name.clone(),
+                                                        operation_type: operation_type.clone(),
                                                         persisted_document_hash: persisted_document_hash.clone(),
                                                         variables: usage_variables.clone(),
-                                                        ..Default::default()
                                                     };
                                                     let request_details = request_details.clone();
                                                     tokio::spawn(async move {
@@ -486,6 +549,7 @@ mod hive_usage_tests {
         plugin::{test::MockSupergraphService, Plugin, PluginInit},
         services::supergraph,
     };
+    use hive_console_sdk::agent::usage_agent::UsageAgentExt;
     use http::header::{AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
     use httpmock::{Method::POST, Mock, MockServer};
     use jsonschema::Validator;
@@ -494,7 +558,10 @@ mod hive_usage_tests {
 
     use crate::{consts::PLUGIN_VERSION, usage::UsageReportingExclude};
 
-    use super::{Config, UsagePlugin};
+    use super::{
+        AtLeastOnceSamplingConfig, AtLeastOnceSamplingKey, AtLeastOnceSamplingKeyKind, Config,
+        UsagePlugin, APOLLO_OPERATION_KIND,
+    };
 
     #[test]
     fn config_exclude_supports_expression_object() {
@@ -542,6 +609,47 @@ mod hive_usage_tests {
     }
 
     #[test]
+    fn config_at_least_once_supports_single_key() {
+        let config: Config = serde_json::from_value(json!({
+            "at_least_once": { "key": "operation_name" }
+        }))
+        .unwrap();
+
+        let at_least_once = config.at_least_once.unwrap();
+        assert_eq!(
+            at_least_once.key,
+            AtLeastOnceSamplingKey::One(AtLeastOnceSamplingKeyKind::OperationName)
+        );
+        assert_eq!(at_least_once.max_distinct_keys, 100_000);
+    }
+
+    #[test]
+    fn config_at_least_once_supports_multiple_keys() {
+        let config: Config = serde_json::from_value(json!({
+            "at_least_once": {
+                "key": ["operation_name", "operation_body"],
+                "max_distinct_keys": 12000
+            }
+        }))
+        .unwrap();
+
+        let at_least_once = config.at_least_once.unwrap();
+        assert_eq!(
+            at_least_once.key,
+            AtLeastOnceSamplingKey::Many(vec![
+                AtLeastOnceSamplingKeyKind::OperationName,
+                AtLeastOnceSamplingKeyKind::OperationBody,
+            ])
+        );
+        assert_eq!(at_least_once.max_distinct_keys, 12000);
+    }
+
+    #[test]
+    fn config_at_least_once_requires_key() {
+        assert!(serde_json::from_value::<Config>(json!({ "at_least_once": {} })).is_err());
+    }
+
+    #[test]
     fn config_process_variables_is_optional() {
         let config: Config = serde_json::from_value(json!({})).unwrap();
         assert_eq!(config.process_variables, None);
@@ -566,16 +674,28 @@ mod hive_usage_tests {
         }
 
         async fn with_options(supergraph_sdl: &str, process_variables: bool) -> Self {
+            Self::with_config(
+                supergraph_sdl,
+                Config {
+                    process_variables: Some(process_variables),
+                    ..Default::default()
+                },
+            )
+            .await
+        }
+
+        /// Starts the plugin with `config`, pointed at a mocked usage endpoint.
+        /// `buffer_size` and `flush_interval` default to 1 unless `config` sets them.
+        async fn with_config(supergraph_sdl: &str, config: Config) -> Self {
             let server: MockServer = MockServer::start();
             let usage_endpoint = server.url("/usage");
             let config = Config {
                 enabled: Some(true),
                 registry_usage_endpoint: Some(usage_endpoint.to_string()),
                 registry_token: Some("123".into()),
-                buffer_size: Some(1),
-                flush_interval: Some(1),
-                process_variables: Some(process_variables),
-                ..Default::default()
+                buffer_size: config.buffer_size.or(Some(1)),
+                flush_interval: config.flush_interval.or(Some(1)),
+                ..config
             };
 
             let plugin_service = UsagePlugin::new(
@@ -595,6 +715,18 @@ mod hive_usage_tests {
 
         fn wait_for_processing(&self) -> tokio::time::Sleep {
             tokio::time::sleep(tokio::time::Duration::from_secs(2))
+        }
+
+        /// Sends everything buffered so far in a single report.
+        async fn flush(&self) {
+            self.wait_for_processing().await;
+            self.plugin
+                .agent
+                .as_ref()
+                .expect("agent is enabled")
+                .flush()
+                .await
+                .expect("failed to flush usage reports");
         }
 
         fn activate_usage_mock(&'_ self) -> Mock<'_> {
@@ -715,6 +847,155 @@ mod hive_usage_tests {
         println!("Waiting done");
 
         mock.assert();
+        mock.assert_hits(1);
+    }
+
+    fn named_request(operation_name: &str) -> supergraph::Request {
+        supergraph::Request::fake_builder()
+            .query(format!("query {operation_name} {{ hello }}"))
+            .operation_name(operation_name)
+            .build()
+            .unwrap()
+    }
+
+    /// Never sends on its own, so a [`UsageTestHelper::flush`] sends one report with every
+    /// operation that was sampled.
+    fn at_least_once_config(kind: AtLeastOnceSamplingKeyKind) -> Config {
+        Config {
+            sample_rate: Some(0.0),
+            at_least_once: Some(AtLeastOnceSamplingConfig {
+                key: AtLeastOnceSamplingKey::One(kind),
+                max_distinct_keys: 100,
+            }),
+            buffer_size: Some(1000),
+            flush_interval: Some(3600),
+            ..Default::default()
+        }
+    }
+
+    /// The operation name of every operation in the report, sorted, or `None` when the
+    /// report does not match the schema.
+    fn reported_operation_names(r: &httpmock::prelude::HttpMockRequest) -> Option<Vec<String>> {
+        let body: serde_json::Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+        if !SCHEMA_VALIDATOR.is_valid(&body) {
+            eprintln!("usage report does not match the schema: {body}");
+            return None;
+        }
+        let mut names: Vec<String> = body["operations"]
+            .as_array()?
+            .iter()
+            .map(|operation| {
+                let key = operation["operationMapKey"].as_str().unwrap_or_default();
+                body["map"][key]["operationName"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string()
+            })
+            .collect();
+        names.sort();
+        Some(names)
+    }
+
+    #[tokio::test]
+    async fn sample_rate_zero_reports_nothing() {
+        let instance = UsageTestHelper::with_config(
+            "type Query { hello: String }",
+            Config {
+                sample_rate: Some(0.0),
+                ..Default::default()
+            },
+        )
+        .await;
+        let mock = instance.activate_usage_mock();
+
+        for _ in 0..3 {
+            instance
+                .execute_operation(named_request("A"))
+                .await
+                .next_response()
+                .await;
+        }
+
+        instance.wait_for_processing().await;
+
+        mock.assert_hits(0);
+    }
+
+    #[tokio::test]
+    async fn at_least_once_reports_first_operation_per_key() {
+        let instance = UsageTestHelper::with_config(
+            "type Query { hello: String }",
+            at_least_once_config(AtLeastOnceSamplingKeyKind::OperationName),
+        )
+        .await;
+        let mock = instance.activate_usage_mock_with(|r| {
+            reported_operation_names(r).is_some_and(|names| names == ["A", "B"])
+        });
+
+        for name in ["A", "A", "B", "A", "B"] {
+            instance
+                .execute_operation(named_request(name))
+                .await
+                .next_response()
+                .await;
+        }
+
+        instance.flush().await;
+
+        mock.assert_hits(1);
+    }
+
+    #[tokio::test]
+    async fn at_least_once_keys_by_operation_type_from_context() {
+        let instance = UsageTestHelper::with_config(
+            "type Query { hello: String }",
+            at_least_once_config(AtLeastOnceSamplingKeyKind::OperationType),
+        )
+        .await;
+        // without the operation type, every operation would share the "query" key
+        let mock = instance.activate_usage_mock_with(|r| {
+            reported_operation_names(r).is_some_and(|names| names == ["A", "A"])
+        });
+
+        // Apollo Router's query analysis sets the operation kind; the mocked supergraph
+        // service skips it, so it is set here instead.
+        for kind in ["query", "mutation", "query", "mutation"] {
+            let req = named_request("A");
+            req.context
+                .insert(APOLLO_OPERATION_KIND, kind.to_string())
+                .unwrap();
+            instance.execute_operation(req).await.next_response().await;
+        }
+
+        instance.flush().await;
+
+        mock.assert_hits(1);
+    }
+
+    #[tokio::test]
+    async fn excluded_operation_names_are_never_reported() {
+        let instance = UsageTestHelper::with_config(
+            "type Query { hello: String }",
+            Config {
+                exclude: Some(UsageReportingExclude::OperationNames(vec!["A".into()])),
+                ..at_least_once_config(AtLeastOnceSamplingKeyKind::OperationName)
+            },
+        )
+        .await;
+        let mock = instance.activate_usage_mock_with(|r| {
+            reported_operation_names(r).is_some_and(|names| names == ["B"])
+        });
+
+        for name in ["A", "A", "B"] {
+            instance
+                .execute_operation(named_request(name))
+                .await
+                .next_response()
+                .await;
+        }
+
+        instance.flush().await;
+
         mock.assert_hits(1);
     }
 

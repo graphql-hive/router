@@ -3251,7 +3251,6 @@ dependencies = [
  "httpmock",
  "jsonschema 0.29.1",
  "lazy_static",
- "rand 0.10.2",
  "schemars 1.0.4",
  "serde",
  "serde_json",
