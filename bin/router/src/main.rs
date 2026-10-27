@@ -21,6 +21,15 @@ async fn main() -> Result<(), RouterInitError> {
     // full backtraces, the default cuts them at 10 frames and recursive Value clones need more
     let _profiler = dhat::Profiler::builder().trim_backtraces(None).build();
 
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).is_some_and(|command| command == "anonymize") {
+        if let Err(err) = hive_router::anonymize::run_cli(&args[2..]) {
+            eprintln!("{err}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
     init_rustls_crypto_provider();
 
     router_entrypoint(PluginRegistry::new()).await
