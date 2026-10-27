@@ -8,4 +8,4 @@ pub mod hash;
 
 pub use self::ast::*;
 pub use self::error::ParseError;
-pub use self::grammar::parse_schema;
+pub use self::grammar::{parse_schema, parse_schema_definitions};

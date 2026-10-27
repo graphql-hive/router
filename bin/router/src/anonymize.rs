@@ -19,8 +19,10 @@ use graphql_tools::parser::query::{
     Definition as OperationDocDefinition, Directive, Number, OperationDefinition, Selection,
     SelectionSet, Type, TypeCondition, Value, VariableDefinition,
 };
-use graphql_tools::parser::schema::{Definition, Field, InputValue, TypeDefinition};
-use graphql_tools::parser::{parse_query, parse_schema};
+use graphql_tools::parser::schema::{
+    parse_schema_definitions, Definition, Field, InputValue, TypeDefinition,
+};
+use graphql_tools::parser::{parse_query, Style};
 use rand::TryRng;
 
 const KEY_ENV: &str = "HIVE_ANON_KEY";
@@ -162,8 +164,20 @@ impl Anonymizer {
     }
 
     pub fn anonymize_supergraph(&self, sdl: &str) -> Result<String, String> {
+        let mut output = Vec::with_capacity(sdl.len());
+        self.anonymize_supergraph_to(sdl, &mut output)?;
+        String::from_utf8(output).map_err(|err| err.to_string())
+    }
+
+    /// Writes each definition out as soon as it's done, so the anonymized supergraph is never
+    /// in memory as a whole.
+    pub fn anonymize_supergraph_to(
+        &self,
+        sdl: &str,
+        output: &mut impl std::io::Write,
+    ) -> Result<(), String> {
         let arena = Bump::new();
-        Run::new(&self.key, &arena).supergraph(sdl)
+        Run::new(&self.key, &arena).supergraph(sdl, output)
     }
 
     pub fn anonymize_operation(&self, source: &str) -> Result<String, String> {
@@ -186,6 +200,8 @@ struct Run<'a> {
     cache: RefCell<[HashMap<&'a str, &'a str>; Kind::Number as usize + 1]>,
     // output -> input, to catch a collision instead of silently merging two names
     seen: RefCell<HashMap<&'a str, &'a str>>,
+    // `key: "id"` shows up on every entity in every subgraph, parse each field set only once
+    field_sets: RefCell<HashMap<&'a str, &'a str>>,
 }
 
 impl<'a> Run<'a> {
@@ -195,6 +211,7 @@ impl<'a> Run<'a> {
             arena,
             cache: RefCell::default(),
             seen: RefCell::default(),
+            field_sets: RefCell::default(),
         }
     }
 
@@ -272,8 +289,14 @@ impl<'a> Run<'a> {
         }
     }
 
-    fn number(&self, input: &str) -> u32 {
-        let digest = self.digest(Kind::Number, input);
+    fn number(&self, input: impl std::fmt::Display) -> u32 {
+        // digits fit on the stack, no need for a `String` per number
+        let mut buf = [0u8; 64];
+        let mut cursor = std::io::Cursor::new(&mut buf[..]);
+        let _ = std::io::Write::write_fmt(&mut cursor, format_args!("{input}"));
+        let len = cursor.position() as usize;
+        let digits = std::str::from_utf8(&buf[..len]).unwrap_or_default();
+        let digest = self.digest(Kind::Number, digits);
         u32::from_le_bytes([digest[0], digest[1], digest[2], digest[3]])
     }
 
@@ -282,14 +305,15 @@ impl<'a> Run<'a> {
         match value {
             Value::Variable(name) => *name = self.name(Kind::Variable, name),
             Value::Int(number) => {
-                let input = number.as_i64().unwrap_or_default().to_string();
-                *number = Number::from((self.number(&input) >> 1) as i32);
+                let input = number.as_i64().unwrap_or_default();
+                *number = Number::from((self.number(input) >> 1) as i32);
             }
             // the .5 keeps it a float when printed
-            Value::Float(float) => {
-                *float = (self.number(&float.to_string()) % 1_000_000) as f64 + 0.5
+            Value::Float(float) => *float = (self.number(*float) % 1_000_000) as f64 + 0.5,
+            Value::String(string) => {
+                let name = self.name(Kind::String, string);
+                rewrite(string, name);
             }
-            Value::String(string) => *string = self.name(Kind::String, string).to_string(),
             Value::Enum(name) => *name = self.name(Kind::EnumValue, name),
             Value::List(items) => items.iter_mut().for_each(|item| self.value(item)),
             Value::Object(fields) => {
@@ -316,18 +340,24 @@ impl<'a> Run<'a> {
         }
     }
 
-    // `[User!]!` as a string, like in `@join__field(type:)`
-    fn type_string(&self, ty: &str) -> String {
+    // `[User!]!` as a string, like in `@join__field(type:)`, renamed in place
+    fn type_string(&self, ty: &mut String) {
         let name = ty.trim_matches(|c: char| matches!(c, '[' | ']' | '!') || c.is_whitespace());
-        if name.is_empty() {
-            return ty.to_string();
+        if name.is_empty() || KEPT_TYPES.contains(&name) || is_spec(name) {
+            return;
         }
-        ty.replacen(name, self.type_name(name), 1)
+        let start = name.as_ptr() as usize - ty.as_ptr() as usize;
+        let range = start..start + name.len();
+        let name = self.name(Kind::Type, name);
+        ty.replace_range(range, name);
     }
 
     // `id organization { id }` as a string, like in `@join__type(key:)`
-    fn field_set(&self, fields: &str) -> String {
+    fn field_set(&self, fields: &str) -> &'a str {
         let trimmed = fields.trim();
+        if let Some(output) = self.field_sets.borrow().get(trimmed) {
+            return output;
+        }
         // context selections come wrapped in braces already, keys and requires don't
         let braced = trimmed.starts_with('{');
         // parsed from an arena copy, so its AST can borrow the same way the document's does
@@ -344,20 +374,31 @@ impl<'a> Run<'a> {
             panic!("invalid field set {fields:?}");
         };
         self.selection_set(set);
+        let printed = document.format(&Style::default());
         // strings are hashed by now, so there's no whitespace inside a value to break
-        let printed = set
-            .to_string()
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
-        if braced {
-            return printed;
+        let mut output = bumpalo::collections::String::with_capacity_in(printed.len(), self.arena);
+        for word in printed.split_whitespace() {
+            if !output.is_empty() {
+                output.push(' ');
+            }
+            output.push_str(word);
         }
-        printed
-            .strip_prefix("{ ")
-            .and_then(|inner| inner.strip_suffix(" }"))
-            .unwrap_or(&printed)
-            .to_string()
+        let output = output.into_bump_str();
+        let output = if braced {
+            output
+        } else {
+            output
+                .strip_prefix("{ ")
+                .and_then(|inner| inner.strip_suffix(" }"))
+                .unwrap_or(output)
+        };
+        let key = if braced {
+            source
+        } else {
+            &source[1..source.len() - 1]
+        };
+        self.field_sets.borrow_mut().insert(key, output);
+        output
     }
 
     fn selection_set(&self, set: &mut SelectionSet<'a, &'a str>) {
@@ -445,13 +486,17 @@ impl<'a> Run<'a> {
                     "join__type" | "join__field",
                     "key" | "requires" | "provides",
                     Value::String(s),
-                ) => *s = self.field_set(s),
+                ) => {
+                    let fields = self.field_set(s);
+                    rewrite(s, fields);
+                }
                 ("join__field", "type", Value::String(s))
                 | ("join__implements", "interface", Value::String(s))
-                | ("join__unionMember", "member", Value::String(s)) => *s = self.type_string(s),
+                | ("join__unionMember", "member", Value::String(s)) => self.type_string(s),
                 ("join__graph", "name", Value::String(s))
                 | ("join__field", "override", Value::String(s)) => {
-                    *s = self.name(Kind::Subgraph, s).to_string()
+                    let name = self.name(Kind::Subgraph, s);
+                    rewrite(s, name);
                 }
                 // `.invalid` never resolves, so nothing can reach the real subgraph by accident
                 ("join__graph", "url", Value::String(s)) => {
@@ -472,24 +517,32 @@ impl<'a> Run<'a> {
                         for (key, value) in fields {
                             match (*key, value) {
                                 ("context", Value::String(s)) => {
-                                    *s = self.name(Kind::Context, s).to_string()
+                                    let name = self.name(Kind::Context, s);
+                                    rewrite(s, name);
                                 }
                                 ("name", Value::String(s)) => {
-                                    *s = self.name(Kind::Argument, s).to_string()
+                                    let name = self.name(Kind::Argument, s);
+                                    rewrite(s, name);
                                 }
-                                ("type", Value::String(s)) => *s = self.type_string(s),
-                                ("selection", Value::String(s)) => *s = self.field_set(s),
+                                ("type", Value::String(s)) => self.type_string(s),
+                                ("selection", Value::String(s)) => {
+                                    let fields = self.field_set(s);
+                                    rewrite(s, fields);
+                                }
                                 (_, value) => self.value(value),
                             }
                         }
                     }
                 }
                 ("context", "name", Value::String(s)) => {
-                    *s = self.name(Kind::Context, s).to_string()
+                    let name = self.name(Kind::Context, s);
+                    rewrite(s, name);
                 }
-                ("join__directive", "name", Value::String(s)) => {
-                    *s = self.directive_name(s).to_string()
+                ("join__directive", "name", Value::String(s)) if !is_kept_directive(s) => {
+                    let name = self.name(Kind::Directive, s);
+                    rewrite(s, name);
                 }
+                ("join__directive", "name", _) => {}
                 ("join__directive", "args", Value::Object(fields)) => self.arguments(fields),
                 // `input.first` is an argument followed by input fields
                 ("listSize", "slicingArguments", Value::List(items)) => {
@@ -513,8 +566,9 @@ impl<'a> Run<'a> {
                 }
                 ("listSize", "sizedFields", Value::List(items)) => {
                     for item in items {
-                        if let Value::String(fields) = item {
-                            *fields = self.field_set(fields);
+                        if let Value::String(s) = item {
+                            let fields = self.field_set(s);
+                            rewrite(s, fields);
                         }
                     }
                 }
@@ -551,10 +605,16 @@ impl<'a> Run<'a> {
         }
     }
 
-    fn supergraph(&self, sdl: &'a str) -> Result<String, String> {
-        let mut document = parse_schema::<&'a str>(sdl).map_err(|err| err.to_string())?;
-        for definition in &mut document.definitions {
-            match definition {
+    // one definition at a time, straight into the output. Only the definition being worked on
+    // is ever parsed, the rest of the supergraph is either still text or already written out
+    fn supergraph(&self, sdl: &'a str, output: &mut impl std::io::Write) -> Result<(), String> {
+        let style = Style::default();
+        // reused for every definition, it ends up as big as the biggest one
+        let mut buf = String::new();
+        let mut empty = true;
+        for definition in parse_schema_definitions::<&'a str>(sdl) {
+            let mut definition = definition.map_err(|err| err.to_string())?;
+            match &mut definition {
                 Definition::SchemaDefinition(schema) => {
                     self.directives(&mut schema.directives);
                     for root in [
@@ -580,8 +640,23 @@ impl<'a> Run<'a> {
                     return Err("a supergraph can't have type extensions".into())
                 }
             }
+            // `format_into` only puts a blank line between definitions when the buffer isn't empty,
+            // so keep a newline in it to get the same output as formatting the whole document
+            buf.clear();
+            if !empty {
+                buf.push('\n');
+            }
+            definition.format_into(&style, &mut buf);
+            let printed = if empty { &buf[..] } else { &buf[1..] };
+            output
+                .write_all(printed.as_bytes())
+                .map_err(|err| err.to_string())?;
+            empty = false;
         }
-        Ok(document.to_string())
+        if empty {
+            return Err("the supergraph has no definitions".into());
+        }
+        Ok(())
     }
 
     fn type_definition(&self, definition: &mut TypeDefinition<'a, &'a str>) {
@@ -679,7 +754,7 @@ impl<'a> Run<'a> {
                 }
             }
         }
-        Ok(document.to_string())
+        Ok(document.format(&Style::default()))
     }
 
     fn operation(
@@ -702,6 +777,12 @@ impl<'a> Run<'a> {
         self.directives(directives);
         self.selection_set(selection_set);
     }
+}
+
+// string values are owned by the parser, overwriting keeps their buffer
+fn rewrite(string: &mut String, with: &str) {
+    string.clear();
+    string.push_str(with);
 }
 
 fn to_hex(bytes: &[u8]) -> String {
@@ -741,10 +822,8 @@ pub fn run_cli(args: &[String]) -> Result<(), String> {
     match positional.as_slice() {
         ["keygen"] => println!("{}", Anonymizer::generate_key()?),
         ["supergraph", input] => {
-            print!(
-                "{}",
-                anonymizer()?.anonymize_supergraph(&read(Path::new(input))?)?
-            )
+            let sdl = read(Path::new(input))?;
+            anonymizer()?.anonymize_supergraph_to(&sdl, &mut std::io::stdout().lock())?
         }
         ["operations", input] => {
             print!(
