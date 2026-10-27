@@ -177,7 +177,9 @@ impl Anonymizer {
         output: &mut impl std::io::Write,
     ) -> Result<(), String> {
         let arena = Bump::new();
-        Run::new(&self.key, &arena).supergraph(sdl, output)
+        let mut run = Run::new(&self.key, &arena);
+        run.aliases = run.spec_aliases(sdl)?;
+        run.supergraph(sdl, output)
     }
 
     pub fn anonymize_operation(&self, source: &str) -> Result<String, String> {
@@ -202,6 +204,8 @@ struct Run<'a> {
     seen: RefCell<HashMap<&'a str, &'a str>>,
     // `key: "id"` shows up on every entity in every subgraph, parse each field set only once
     field_sets: RefCell<HashMap<&'a str, &'a str>>,
+    // spec directives imported under another name, `@myCost` -> `cost`
+    aliases: HashMap<&'a str, &'a str>,
 }
 
 impl<'a> Run<'a> {
@@ -212,6 +216,7 @@ impl<'a> Run<'a> {
             cache: RefCell::default(),
             seen: RefCell::default(),
             field_sets: RefCell::default(),
+            aliases: HashMap::new(),
         }
     }
 
@@ -268,6 +273,47 @@ impl<'a> Run<'a> {
         } else {
             self.name(Kind::Field, name)
         }
+    }
+
+    // composition can import a spec directive under another name, e.g.
+    // `@link(url: "https://specs.apollo.dev/cost/v0.1", import: [{ name: "@cost", as: "@myCost" }])`.
+    // The schema definition carries those, and it has to be read before anything uses them
+    fn spec_aliases(&self, sdl: &'a str) -> Result<HashMap<&'a str, &'a str>, String> {
+        let mut aliases = HashMap::new();
+        for definition in parse_schema_definitions::<&'a str>(sdl) {
+            let Definition::SchemaDefinition(schema) = definition.map_err(|err| err.to_string())?
+            else {
+                continue;
+            };
+            for link in schema.directives.iter().filter(|d| d.name == "link") {
+                let spec = link.arguments.iter().any(|(arg, value)| {
+                    *arg == "url" && matches!(value, Value::String(url) if url.starts_with(SPEC_URL))
+                });
+                let imports = link.arguments.iter().find(|(arg, _)| *arg == "import");
+                let Some((_, Value::List(imports))) = imports.filter(|_| spec) else {
+                    continue;
+                };
+                for import in imports {
+                    let Value::Object(fields) = import else {
+                        continue;
+                    };
+                    let field = |key| {
+                        fields.iter().find_map(|(name, value)| match value {
+                            Value::String(s) if *name == key => s.strip_prefix('@'),
+                            _ => None,
+                        })
+                    };
+                    if let (Some(name), Some(alias)) = (field("name"), field("as")) {
+                        aliases.insert(
+                            &*self.arena.alloc_str(alias),
+                            &*self.arena.alloc_str(name),
+                        );
+                    }
+                }
+            }
+            break;
+        }
+        Ok(aliases)
     }
 
     fn directive_name<'n>(&self, name: &'n str) -> &'n str
@@ -432,8 +478,12 @@ impl<'a> Run<'a> {
 
     fn directives(&self, directives: &mut [Directive<'a, &'a str>]) {
         for directive in directives {
-            if is_kept_directive(directive.name) {
-                self.spec_directive(directive);
+            if let Some(spec) = self.aliases.get(directive.name).copied() {
+                // the spec's rules for the arguments, but the name is the subgraphs' own
+                self.spec_directive(spec, directive);
+                directive.name = self.name(Kind::Directive, directive.name);
+            } else if is_kept_directive(directive.name) {
+                self.spec_directive(directive.name, directive);
             } else {
                 directive.name = self.name(Kind::Directive, directive.name);
                 self.arguments(&mut directive.arguments);
@@ -442,14 +492,27 @@ impl<'a> Run<'a> {
     }
 
     // spec directives keep their name and argument names, the values are what carries user data
-    fn spec_directive(&self, directive: &mut Directive<'a, &'a str>) {
-        let name = directive.name;
+    // `name` is the spec's name for the directive, which differs from its own for aliases
+    fn spec_directive(&self, name: &'a str, directive: &mut Directive<'a, &'a str>) {
         let spec_link = name == "link"
             && directive.arguments.iter().any(|(arg, value)| {
                 *arg == "url" && matches!(value, Value::String(url) if url.starts_with(SPEC_URL))
             });
         for (arg, value) in &mut directive.arguments {
             match (name, *arg, value) {
+                // the spec itself is public, the names a subgraph imported it under aren't
+                ("link", "import", Value::List(items)) if spec_link => {
+                    for item in items {
+                        let Value::Object(fields) = item else {
+                            continue;
+                        };
+                        for (key, value) in fields {
+                            if let ("as", Value::String(s)) = (*key, value) {
+                                *s = self.import_name(s);
+                            }
+                        }
+                    }
+                }
                 ("link", _, _) if spec_link => {}
                 // a custom spec, like the ones `@composeDirective` brings in. It has to stay a
                 // `.../name/vX.Y` URL, and its imports have to match the renamed directives
@@ -630,7 +693,10 @@ impl<'a> Run<'a> {
                 }
                 Definition::DirectiveDefinition(directive) => {
                     directive.description = None;
-                    if !is_kept_directive(directive.name) {
+                    if self.aliases.contains_key(directive.name) {
+                        // same arguments as the spec directive, only the name is hashed
+                        directive.name = self.name(Kind::Directive, directive.name);
+                    } else if !is_kept_directive(directive.name) {
                         directive.name = self.name(Kind::Directive, directive.name);
                         self.input_values(&mut directive.arguments, Kind::Argument);
                     }
@@ -1193,6 +1259,62 @@ mod tests {
         assert!(out.contains(&format!("as: \"@{renamed}\"")), "{out}");
         assert!(out.contains(".invalid/d_") && out.contains("/v1.2\""), "{out}");
         for secret in ["myspecs", "custom", "other", "renamed", "secret"] {
+            assert!(!out.contains(secret), "{secret} survived:\n{out}");
+        }
+    }
+
+    // composition imports `@cost` and `@listSize` under the subgraphs' names for them
+    #[test]
+    fn aliased_spec_directives_follow_the_spec() {
+        let sdl = r#"
+            schema
+              @link(url: "https://specs.apollo.dev/link/v1.0")
+              @link(url: "https://specs.apollo.dev/join/v0.5", for: EXECUTION)
+              @link(url: "https://specs.apollo.dev/cost/v0.1", import: [{ name: "@cost", as: "@myCost" }, { name: "@listSize", as: "@mySize" }])
+            {
+              query: Query
+            }
+
+            directive @myCost(weight: Int!) on FIELD_DEFINITION | OBJECT
+            directive @mySize(assumedSize: Int, slicingArguments: [String!], sizedFields: [String!], requireOneSlicingArgument: Boolean = true) on FIELD_DEFINITION
+            directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+            directive @join__type(graph: join__Graph!, key: join__FieldSet, extension: Boolean! = false, resolvable: Boolean! = true, isInterfaceObject: Boolean! = false) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+            directive @link(url: String, as: String, for: link__Purpose, import: [link__Import]) repeatable on SCHEMA
+
+            scalar join__FieldSet
+            scalar link__Import
+            enum join__Graph { A @join__graph(name: "a", url: "http://a") }
+            enum link__Purpose { SECURITY EXECUTION }
+
+            type Query @join__type(graph: A) @myCost(weight: 7) {
+              products(first: Int): [Product] @mySize(assumedSize: 10, slicingArguments: ["first"], sizedFields: ["items"])
+            }
+
+            type Product @join__type(graph: A) {
+              items: [ID]
+            }
+        "#;
+        let anonymizer = anonymizer(1);
+        let out = anonymizer.anonymize_supergraph(sdl).unwrap();
+        let cost = anonymizer.name(Kind::Directive, "myCost");
+        let size = anonymizer.name(Kind::Directive, "mySize");
+        let first = anonymizer.name(Kind::Argument, "first");
+        let items = anonymizer.name(Kind::Field, "items");
+        assert!(
+            out.contains(&format!(
+                r#"import: [{{name: "@cost", as: "@{cost}"}}, {{name: "@listSize", as: "@{size}"}}]"#
+            )),
+            "{out}"
+        );
+        assert!(out.contains(&format!("directive @{cost}(weight: Int!)")), "{out}");
+        assert!(out.contains(&format!("@{cost}(weight: 7)")), "{out}");
+        assert!(
+            out.contains(&format!(
+                r#"@{size}(assumedSize: 10, slicingArguments: ["{first}"], sizedFields: ["{items}"])"#
+            )),
+            "{out}"
+        );
+        for secret in ["myCost", "mySize"] {
             assert!(!out.contains(secret), "{secret} survived:\n{out}");
         }
     }
