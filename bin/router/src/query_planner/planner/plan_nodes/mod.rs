@@ -461,13 +461,27 @@ pub struct EntityBatchAlias {
     pub output_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
     pub context: Option<Box<FetchContext>>,
-    /// The alias only runs when this variable is `true`.
-    /// When it doesn't run, its representations aren't collected and an empty list is sent.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub include_if: Option<String>,
-    /// The alias only runs when this variable is `false`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub skip_if: Option<String>,
+    /// The alias only runs when all of these variables are `true`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub include_if: Vec<String>,
+    /// The alias only runs when all of these variables are `false`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skip_if: Vec<String>,
+    /// Set when the alias has conditions. The operation has `@include(if: $<this>)` on the
+    /// alias, and the router sends it as `true` only when the conditions hold, so the subgraph
+    /// skips the alias otherwise. That way aliases under other conditions can share one
+    /// representations variable, it's sent once and collected when any of them runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_variable_name: Option<String>,
+}
+
+impl EntityBatchAlias {
+    /// The variables the alias runs under, `true` for an `include_if` and `false` for a `skip_if`.
+    pub fn conditions(&self) -> impl Iterator<Item = (&str, bool)> {
+        let include = self.include_if.iter().map(|name| (name.as_str(), true));
+        let skip = self.skip_if.iter().map(|name| (name.as_str(), false));
+        include.chain(skip)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -964,11 +978,9 @@ impl<S: PlanState> PrettyDisplay for BatchFetchNode<S> {
         writeln!(f, "{indent}  {{")?;
         for alias in &self.entity_batch.aliases {
             write!(f, "{indent}    {}", alias.alias)?;
-            if let Some(variable) = &alias.include_if {
-                write!(f, " @include(if: ${variable})")?;
-            }
-            if let Some(variable) = &alias.skip_if {
-                write!(f, " @skip(if: ${variable})")?;
+            for (variable, include) in alias.conditions() {
+                let directive = if include { "include" } else { "skip" };
+                write!(f, " @{directive}(if: ${variable})")?;
             }
             writeln!(f, " {{")?;
             writeln!(f, "{indent}      paths: [")?;

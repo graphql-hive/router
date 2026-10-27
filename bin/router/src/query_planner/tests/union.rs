@@ -995,3 +995,122 @@ fn union_list_test() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+/// https://github.com/graphql-hive/router/issues/1732
+///
+/// Each union member wants other fields of its `Product`. One entity call for all three would
+/// ask every product for `a`, `b` and `c`, whatever member it's under. Each member gets its own
+/// alias instead, still in one request.
+#[test]
+fn union_members_ask_only_for_their_own_entity_fields() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          card {
+            components {
+              __typename
+              ... on ComponentA { product { id a } }
+              ... on ComponentB { product { id b } }
+              ... on ComponentC { product { id c } }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/union-member-entity-fields.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "card") {
+          {
+            card {
+              components {
+                __typename
+                ... on ComponentA {
+                  product {
+                    ...a
+                  }
+                }
+                ... on ComponentB {
+                  product {
+                    ...a
+                  }
+                }
+                ... on ComponentC {
+                  product {
+                    ...a
+                  }
+                }
+              }
+            }
+          }
+          fragment a on Product {
+            __typename
+            id
+          }
+        },
+        BatchFetch(service: "product") {
+          {
+            _e0 {
+              paths: [
+                "card.components.@|[ComponentC].product"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e1 {
+              paths: [
+                "card.components.@|[ComponentB].product"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e2 {
+              paths: [
+                "card.components.@|[ComponentA].product"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Product {
+                c
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Product {
+                b
+              }
+            }
+            _e2: _entities(representations: $__batch_reps_2) {
+              ... on Product {
+                a
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}

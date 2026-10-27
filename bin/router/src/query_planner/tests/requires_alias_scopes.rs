@@ -435,11 +435,11 @@ fn fetches(plan: &Value) -> Vec<Fetch> {
                     for alias in aliases.into_iter().flatten() {
                         // An alias can have its own condition, on top of the ones around.
                         let mut conditions = conditions.to_vec();
-                        if let Some(variable) = alias["includeIf"].as_str() {
-                            conditions.push(variable.to_string());
+                        for variable in alias["includeIf"].as_array().into_iter().flatten() {
+                            conditions.push(variable.as_str().unwrap_or_default().to_string());
                         }
-                        if let Some(variable) = alias["skipIf"].as_str() {
-                            conditions.push(format!("!{variable}"));
+                        for variable in alias["skipIf"].as_array().into_iter().flatten() {
+                            conditions.push(format!("!{}", variable.as_str().unwrap_or_default()));
                         }
                         out.push(Fetch {
                             service: map["serviceName"].as_str().unwrap_or_default().to_string(),

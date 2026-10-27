@@ -13,6 +13,7 @@ use crate::query_planner::{
         selection_set::{FieldSelection, SelectionSet},
         value::Value as AstValue,
     },
+    planner::plan_nodes::EntityBatchAlias,
     state::supergraph_state::{OperationKind, SupergraphDefinition, SupergraphState, TypeNode},
 };
 use crate::telemetry::logging::targets;
@@ -364,6 +365,68 @@ pub(crate) fn compile_cost_expr_for_operation(
     } else {
         fields_expr
     }
+}
+
+/// Like `compile_cost_expr_for_operation`, for the operation of a `BatchFetch`.
+/// Some aliases only run under a condition. The operation doesn't say that, so we cost
+/// each alias on its own and only count it when it runs.
+pub(crate) fn compile_cost_expr_for_batch_operation(
+    operation: &OperationDefinition,
+    operation_fragments: &[FragmentDefinition],
+    root_type_name: &str,
+    operation_kind: Option<&OperationKind>,
+    aliases: &[EntityBatchAlias],
+    supergraph_state: &SupergraphState,
+    default_list_size: usize,
+) -> CostExpr {
+    let mut fragments_cache = AHashMap::new();
+    let mut visited_fragments = AHashSet::new();
+    let mut alias_exprs = Vec::with_capacity(operation.selection_set.items.len());
+    for item in &operation.selection_set.items {
+        let field = match item {
+            SelectionItem::Field(field) if field.name == "_entities" => field,
+            // Each item is an aliased `_entities` field. If that ever changes, count it all.
+            _ => {
+                return compile_cost_expr_for_operation(
+                    operation,
+                    operation_fragments,
+                    root_type_name,
+                    operation_kind,
+                    supergraph_state,
+                    default_list_size,
+                )
+            }
+        };
+        // Not through `compile_cost_expr_for_field_selection`, as the `@include` on the field
+        // is the router's own run variable. The alias conditions below say when it runs.
+        let expr = compile_cost_expr_for_entities_field_selection(
+            field,
+            operation_fragments,
+            root_type_name,
+            supergraph_state,
+            &mut fragments_cache,
+            &mut visited_fragments,
+            default_list_size,
+        );
+        let conditions = aliases
+            .iter()
+            .find(|alias| field.alias.as_deref() == Some(alias.alias.as_str()))
+            .into_iter()
+            .flat_map(EntityBatchAlias::conditions);
+        alias_exprs.push(conditions.fold(expr, |expr, (variable, include)| {
+            let (if_true, if_false) = if include {
+                (expr, CostExpr::Const(0))
+            } else {
+                (CostExpr::Const(0), expr)
+            };
+            CostExpr::Cond {
+                variable: variable.to_string(),
+                if_true: Box::new(if_true),
+                if_false: Box::new(if_false),
+            }
+        }));
+    }
+    CostExpr::add_nonzero(alias_exprs)
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -781,10 +781,12 @@ type BatchWave<'exec> = (Vec<(&'exec str, Vec<u8>)>, Vec<AliasBatchState<'exec>>
 
 pub struct AliasBatchState<'exec> {
     alias_spec: &'exec EntityBatchAlias,
-    representation_hash_to_index: AHashMap<u64, usize>,
+    /// Shared by the aliases that share a representations variable.
+    representation_hash_to_index: Arc<AHashMap<u64, usize>>,
     paths: Vec<AliasPathState<'exec>>,
 }
 
+#[derive(Clone)]
 struct AliasPathState<'exec> {
     merge_path: ResponsePathRef<'exec>,
     representation_hashes: Arc<Vec<Option<u64>>>,
@@ -985,7 +987,9 @@ impl<'exec> Executor<'exec> {
                 let count = alias.representation_hash_to_index.len();
                 counts.push(vec![count]);
                 offsets.push(count);
-                alias.representation_hash_to_index.reserve(total - count);
+                // aliases that share a representations variable share the map, each one gets
+                // its own copy here since every alias takes in its own waves
+                Arc::make_mut(&mut alias.representation_hash_to_index).reserve(total - count);
             }
             for (values, aliases) in chunk {
                 values_per_wave.push(values);
@@ -997,11 +1001,11 @@ impl<'exec> Executor<'exec> {
                 {
                     let count = alias.representation_hash_to_index.len();
                     counts.push(count);
-                    merged.representation_hash_to_index.extend(
+                    Arc::make_mut(&mut merged.representation_hash_to_index).extend(
                         alias
                             .representation_hash_to_index
-                            .into_iter()
-                            .map(|(hash, index)| (hash, index + *offset)),
+                            .iter()
+                            .map(|(hash, index)| (*hash, index + *offset)),
                     );
                     *offset += count;
                 }
@@ -1691,8 +1695,9 @@ impl<'exec> Executor<'exec> {
     }
 
     // The preperation includes:
-    // - building one `_entities` input list for each alias
+    // - building one `_entities` input list for each representations variable
     // - remembering where each item came from (so we can put results back)
+    // - telling the subgraph which aliases run
     //
     // Returns one request ("wave") per group of contextual argument values, without contexts
     // that's at most one.
@@ -1703,28 +1708,42 @@ impl<'exec> Executor<'exec> {
         data: &Value<'exec>,
         subgraph_keys: Option<&KeysByType>,
     ) -> Vec<BatchWave<'exec>> {
-        let mut prepared: Vec<_> = entity_batch
+        let runs: Vec<bool> = entity_batch
             .aliases
             .iter()
-            .map(|alias_spec| {
-                // The condition says the alias won't run, so we don't collect anything for it.
-                // With no groups it still sends an empty list, the variable is declared anyway.
-                if !batch_alias_condition_met(alias_spec, self.variable_values) {
-                    return (Vec::new(), Vec::new());
-                }
-                collect_context_entities(
-                    data,
-                    alias_spec.merge_paths.iter(),
-                    &alias_spec.requires,
-                    alias_spec.input_rewrites.as_deref(),
-                    &alias_spec.context,
-                    &self.schema_metadata.possible_types,
-                    subgraph_keys,
-                )
-            })
+            .map(|alias_spec| batch_alias_condition_met(alias_spec, self.variable_values))
             .collect();
 
-        let wave_count = prepared
+        // What each representations variable collected, by the first alias that runs with it.
+        // Aliases that share a variable have the same `requires`, context and paths, so the
+        // others reuse it. An alias that doesn't run collects nothing.
+        let mut collected = Vec::new();
+        let mut collected_by: AHashMap<&'exec str, usize> =
+            AHashMap::with_capacity(entity_batch.aliases.len());
+        let mut sources: Vec<Option<usize>> = Vec::with_capacity(entity_batch.aliases.len());
+        for (alias_spec, runs) in entity_batch.aliases.iter().zip(&runs) {
+            if !runs {
+                sources.push(None);
+                continue;
+            }
+            let source = *collected_by
+                .entry(alias_spec.representations_variable_name.as_str())
+                .or_insert_with(|| {
+                    collected.push(collect_context_entities(
+                        data,
+                        alias_spec.merge_paths.iter(),
+                        &alias_spec.requires,
+                        alias_spec.input_rewrites.as_deref(),
+                        &alias_spec.context,
+                        &self.schema_metadata.possible_types,
+                        subgraph_keys,
+                    ));
+                    collected.len() - 1
+                });
+            sources.push(Some(source));
+        }
+
+        let wave_count = collected
             .iter()
             .map(|(groups, _)| groups.len())
             .max()
@@ -1733,13 +1752,44 @@ impl<'exec> Executor<'exec> {
         for wave in 0..wave_count {
             let mut raw_variable_values: Vec<(&'exec str, Vec<u8>)> =
                 Vec::with_capacity(entity_batch.aliases.len());
-            let mut aliases = Vec::with_capacity(entity_batch.aliases.len());
-            for (alias_spec, (groups, path_hashes)) in
-                entity_batch.aliases.iter().zip(&mut prepared)
+            let mut aliases: Vec<AliasBatchState<'exec>> =
+                Vec::with_capacity(entity_batch.aliases.len());
+            // where the alias that sends each collected variable sits in `aliases`
+            let mut sent_by: Vec<Option<usize>> = vec![None; collected.len()];
+            for ((alias_spec, runs), source) in entity_batch.aliases.iter().zip(&runs).zip(&sources)
             {
-                // an alias with fewer groups still needs its context variables, it just sends no
-                // representations. it borrows them from its first group, so that one is copied,
-                // every other group is read once and can be moved out.
+                if let Some(run_variable_name) = &alias_spec.run_variable_name {
+                    let run: &[u8] = if *runs { b"true" } else { b"false" };
+                    raw_variable_values.push((run_variable_name.as_str(), run.to_vec()));
+                }
+
+                // The alias won't run, so it gets nothing back.
+                let Some(source) = *source else {
+                    aliases.push(AliasBatchState {
+                        alias_spec,
+                        representation_hash_to_index: Default::default(),
+                        paths: Vec::new(),
+                    });
+                    continue;
+                };
+
+                if let Some(sender) = sent_by[source] {
+                    let sender = &aliases[sender];
+                    aliases.push(AliasBatchState {
+                        alias_spec,
+                        representation_hash_to_index: Arc::clone(
+                            &sender.representation_hash_to_index,
+                        ),
+                        paths: sender.paths.clone(),
+                    });
+                    continue;
+                }
+                sent_by[source] = Some(aliases.len());
+
+                let (groups, path_hashes) = &mut collected[source];
+                // a variable with fewer groups still needs its context variables, it just sends
+                // no representations. it borrows them from its first group, so that one is
+                // copied, every other group is read once and can be moved out.
                 let has_fewer_groups = groups.len() < wave_count;
                 if let Some(group) = groups.get_mut(wave) {
                     if wave == 0 && has_fewer_groups {
@@ -1749,33 +1799,23 @@ impl<'exec> Executor<'exec> {
                     }
                 } else if let Some(first) = groups.first() {
                     raw_variable_values.extend(first.variables.iter().cloned());
-                } else {
-                    for name in FetchContext::group_variables(&alias_spec.context) {
-                        if !raw_variable_values
-                            .iter()
-                            .any(|(existing, _)| *existing == name)
-                        {
-                            raw_variable_values.push((name, b"null".to_vec()));
-                        }
-                    }
                 }
                 let mut group = groups.get_mut(wave);
-                let variable_name = alias_spec.representations_variable_name.as_str();
-                if !raw_variable_values
-                    .iter()
-                    .any(|(name, _)| *name == variable_name)
-                {
-                    let representations = group
-                        .as_mut()
-                        .map(|group| std::mem::take(&mut group.representations))
-                        .unwrap_or_else(|| b"[]".to_vec());
-                    raw_variable_values.push((variable_name, representations));
-                }
+                let representations = group
+                    .as_mut()
+                    .map(|group| std::mem::take(&mut group.representations))
+                    .unwrap_or_else(|| b"[]".to_vec());
+                raw_variable_values.push((
+                    alias_spec.representations_variable_name.as_str(),
+                    representations,
+                ));
                 aliases.push(AliasBatchState {
                     alias_spec,
-                    representation_hash_to_index: group
-                        .map(|group| std::mem::take(&mut group.hash_to_index))
-                        .unwrap_or_default(),
+                    representation_hash_to_index: Arc::new(
+                        group
+                            .map(|group| std::mem::take(&mut group.hash_to_index))
+                            .unwrap_or_default(),
+                    ),
                     paths: alias_spec
                         .merge_paths
                         .iter()
@@ -1787,6 +1827,27 @@ impl<'exec> Executor<'exec> {
                         .collect(),
                 });
             }
+
+            // What no running alias sent is still declared in the operation, so representations
+            // get an empty list and context values null.
+            for alias_spec in &entity_batch.aliases {
+                let declared = FetchContext::group_variables(&alias_spec.context)
+                    .into_iter()
+                    .map(|name| (name, b"null".as_slice()))
+                    .chain(std::iter::once((
+                        alias_spec.representations_variable_name.as_str(),
+                        b"[]".as_slice(),
+                    )));
+                for (name, value) in declared {
+                    if !raw_variable_values
+                        .iter()
+                        .any(|(existing, _)| *existing == name)
+                    {
+                        raw_variable_values.push((name, value.to_vec()));
+                    }
+                }
+            }
+
             if aliases
                 .iter()
                 .any(|alias| !alias.representation_hash_to_index.is_empty())
@@ -1982,13 +2043,8 @@ fn batch_alias_condition_met(
     };
 
     alias
-        .include_if
-        .as_deref()
-        .is_none_or(|name| is_true(name) == Some(true))
-        && alias
-            .skip_if
-            .as_deref()
-            .is_none_or(|name| is_true(name) == Some(false))
+        .conditions()
+        .all(|(name, include)| is_true(name) == Some(include))
 }
 
 fn select_fetch_variables<'a>(
@@ -2035,7 +2091,7 @@ mod tests {
         },
         planner::plan_nodes::{
             EntityBatch, EntityBatchAlias, FetchNode, FlattenNodePath, ParallelNode, PathSegment,
-            PlanNode,
+            PlanNode, TypeCondition,
         },
         utils::parsing::parse_operation,
     };
@@ -2190,8 +2246,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn prepare_batch_fetch_job_state_deduplicates_shared_variable_payloads() {
+    /// Runs `f` with an executor for a single `inventory` subgraph.
+    fn with_test_executor(
+        variable_values: &Option<super::VariablesMap>,
+        f: impl FnOnce(&Executor),
+    ) {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let subgraph_endpoint_map = HashMap::from([(
             "inventory".to_string(),
@@ -2214,7 +2273,7 @@ mod tests {
 
         let executor = Executor {
             aliased_requests: &crate::executor::execution::context::AliasedRequests::default(),
-            variable_values: &None,
+            variable_values,
             schema_metadata: &SchemaMetadata::default(),
             executors: &executors,
             client_request: &ClientRequestDetails {
@@ -2239,6 +2298,63 @@ mod tests {
             connection_fingerprint: None,
         };
 
+        f(&executor);
+    }
+
+    /// The `requires` of an entity call, converted the same way the planner converts it.
+    fn requires_from(query: &str) -> RequiresSelectionSet {
+        let document = parse_operation(query);
+        let selection = document
+            .definitions
+            .iter()
+            .find_map(|def| match def {
+                query::Definition::Operation(query::OperationDefinition::SelectionSet(sel)) => {
+                    Some(sel.clone())
+                }
+                _ => None,
+            })
+            .unwrap();
+        let set: crate::query_planner::ast::selection_set::SelectionSet = selection.into();
+        RequiresSelectionSet::from(&set)
+    }
+
+    /// An alias that reads `Product`s by `upc` at `merge_paths`.
+    fn product_alias(
+        alias: &str,
+        representations_variable_name: &str,
+        merge_paths: Vec<FlattenNodePath>,
+    ) -> EntityBatchAlias {
+        EntityBatchAlias {
+            alias: alias.to_string(),
+            representations_variable_name: representations_variable_name.to_string(),
+            merge_paths: merge_paths.into(),
+            requires: requires_from("{ ... on Product { upc } }"),
+            input_rewrites: None,
+            output_rewrites: None,
+            context: None,
+            include_if: Vec::new(),
+            skip_if: Vec::new(),
+            run_variable_name: None,
+        }
+    }
+
+    /// `@` is a list step, `|A|B` a type condition, anything else a field.
+    fn path(steps: &[&str]) -> FlattenNodePath {
+        steps
+            .iter()
+            .map(|step| match *step {
+                "@" => PathSegment::List,
+                s if s.starts_with('|') => PathSegment::TypeCondition(Box::new(
+                    TypeCondition::from_names(s.trim_start_matches('|').split('|')),
+                )),
+                field => PathSegment::Field(field.into()),
+            })
+            .collect::<Vec<_>>()
+            .into()
+    }
+
+    #[test]
+    fn prepare_batch_fetch_job_state_deduplicates_shared_variable_payloads() {
         let data: ResponseValue = sonic_rs::from_str(
             r#"{
                 "products": [
@@ -2248,90 +2364,39 @@ mod tests {
             }"#,
         )
         .unwrap();
-
-        fn document_into_selection<'a>(
-            doc: query::Document<'a, String>,
-        ) -> query::SelectionSet<'a, String> {
-            doc.definitions
-                .iter()
-                .find_map(|def| {
-                    let query::Definition::Operation(op) = def else {
-                        return None;
-                    };
-                    match op {
-                        query::OperationDefinition::SelectionSet(sel) => Some(sel),
-                        query::OperationDefinition::Query(q) => Some(&q.selection_set),
-                        query::OperationDefinition::Mutation(m) => Some(&m.selection_set),
-                        query::OperationDefinition::Subscription(s) => Some(&s.selection_set),
-                    }
-                })
-                .unwrap()
-                .clone()
-        }
-
-        /// The selection set from the parser, converted the same way the planner converts it.
-        fn requires_from(selection: query::SelectionSet<'_, String>) -> RequiresSelectionSet {
-            let set: crate::query_planner::ast::selection_set::SelectionSet = selection.into();
-            RequiresSelectionSet::from(&set)
-        }
-
-        let requires_query = parse_operation("{ ... on Product { upc } }");
-        let requires_selection = document_into_selection(requires_query);
-
-        let shared_var = "__batch_reps_0".to_string();
-        let products_path = || -> crate::query_planner::planner::plan_nodes::MergePaths {
-            vec![FlattenNodePath::from(vec![
-                PathSegment::Field("products".into()),
-                PathSegment::List,
-            ])]
-            .into()
-        };
-        let entity_batch = EntityBatch {
+        let products = || vec![path(&["products", "@"])];
+        let mut entity_batch = EntityBatch {
             aliases: vec![
-                EntityBatchAlias {
-                    alias: "_e0".to_string(),
-                    representations_variable_name: shared_var.clone(),
-                    merge_paths: products_path(),
-                    requires: requires_from(requires_selection.clone()),
-                    input_rewrites: None,
-                    output_rewrites: None,
-                    context: None,
-                    include_if: None,
-                    skip_if: None,
-                },
-                EntityBatchAlias {
-                    alias: "_e1".to_string(),
-                    representations_variable_name: shared_var,
-                    merge_paths: products_path(),
-                    requires: requires_from(requires_selection),
-                    input_rewrites: None,
-                    output_rewrites: None,
-                    context: None,
-                    include_if: None,
-                    skip_if: None,
-                },
+                product_alias("_e0", "__batch_reps_0", products()),
+                product_alias("_e1", "__batch_reps_0", products()),
             ],
         };
 
-        let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None);
+        with_test_executor(&None, |executor| {
+            let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None);
 
-        assert_eq!(waves.len(), 1);
-        let (raw_variable_values, aliases) = &waves[0];
-        assert_eq!(aliases.len(), 2);
-        assert_eq!(raw_variable_values.len(), 1);
-        assert_eq!(raw_variable_values[0].0, "__batch_reps_0");
+            assert_eq!(waves.len(), 1);
+            let (raw_variable_values, aliases) = &waves[0];
+            assert_eq!(aliases.len(), 2);
+            assert_eq!(raw_variable_values.len(), 1);
+            assert_eq!(raw_variable_values[0].0, "__batch_reps_0");
+        });
 
-        let mut entity_batch = entity_batch;
+        // aliases under other contexts never share a representations variable, the planner keys
+        // the variable by the context too
+        entity_batch.aliases[1].representations_variable_name = "__batch_reps_1".to_string();
         for (index, alias) in entity_batch.aliases.iter_mut().enumerate() {
             alias.context = crate::query_planner::planner::plan_nodes::FetchContext::new(
                 vec![format!("__context_{index}")],
                 Some(Vec::new()),
             );
         }
-        let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None);
-        assert_eq!(waves.len(), 1);
-        assert!(waves[0].0.contains(&("__context_0", b"null".to_vec())));
-        assert!(waves[0].0.contains(&("__context_1", b"null".to_vec())));
+        with_test_executor(&None, |executor| {
+            let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None);
+            assert_eq!(waves.len(), 1);
+            assert!(waves[0].0.contains(&("__context_0", b"null".to_vec())));
+            assert!(waves[0].0.contains(&("__context_1", b"null".to_vec())));
+        });
 
         // _e0 gets one group per product and _e1 a single group, so _e1 has fewer groups than
         // there are waves and must send its first group's values in every wave
@@ -2365,11 +2430,205 @@ mod tests {
                     rename_key_to: "__context_1".into(),
                 }]),
             );
-        let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None);
-        assert_eq!(waves.len(), 2);
-        for (wave, upc) in waves.iter().zip(["\"1\"", "\"2\""]) {
-            assert!(wave.0.contains(&("__context_0", upc.as_bytes().to_vec())));
-            assert!(wave.0.contains(&("__context_1", b"\"USD\"".to_vec())));
+        with_test_executor(&None, |executor| {
+            let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None);
+            assert_eq!(waves.len(), 2);
+            for (wave, upc) in waves.iter().zip(["\"1\"", "\"2\""]) {
+                assert!(wave.0.contains(&("__context_0", upc.as_bytes().to_vec())));
+                assert!(wave.0.contains(&("__context_1", b"\"USD\"".to_vec())));
+            }
+        });
+    }
+
+    /// A folded path `items.@|[A|B].product` must collect exactly what `items.@|[A].product`
+    /// and `items.@|[B].product` collect together: the products under `A` and `B`, each once,
+    /// and nothing under `C`.
+    #[test]
+    fn folded_type_condition_collects_the_same_products_as_the_paths_it_replaces() {
+        let data: ResponseValue = sonic_rs::from_str(
+            r#"{
+                "items": [
+                    {"__typename": "A", "product": {"__typename": "Product", "upc": "1"}},
+                    {"__typename": "B", "product": {"__typename": "Product", "upc": "2"}},
+                    {"__typename": "C", "product": {"__typename": "Product", "upc": "3"}},
+                    {"__typename": "A", "product": {"__typename": "Product", "upc": "1"}}
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let folded = EntityBatch {
+            aliases: vec![product_alias(
+                "_e0",
+                "__batch_reps_0",
+                vec![path(&["items", "@", "|A|B", "product"])],
+            )],
+        };
+        let unfolded = EntityBatch {
+            aliases: vec![product_alias(
+                "_e0",
+                "__batch_reps_0",
+                vec![
+                    path(&["items", "@", "|A", "product"]),
+                    path(&["items", "@", "|B", "product"]),
+                ],
+            )],
+        };
+
+        with_test_executor(&None, |executor| {
+            let representations = |batch: &EntityBatch| {
+                let waves = executor.prepare_batch_fetch_job_state(batch, &data, None);
+                let (raw_variable_values, aliases) = &waves[0];
+                let visited: usize = aliases[0]
+                    .paths
+                    .iter()
+                    .map(|path| path.representation_hashes.len())
+                    .sum();
+                let raw = String::from_utf8(raw_variable_values[0].1.clone()).unwrap();
+                (raw, visited)
+            };
+
+            let (folded_raw, folded_visited) = representations(&folded);
+            let (unfolded_raw, unfolded_visited) = representations(&unfolded);
+
+            assert_eq!(
+                folded_raw,
+                r#"[{"__typename":"Product","upc":"1"},{"__typename":"Product","upc":"2"}]"#
+            );
+            assert_eq!(folded_raw, unfolded_raw);
+            // Three items match `A` or `B`, both ways visit each of them once.
+            assert_eq!(folded_visited, 3);
+            assert_eq!(unfolded_visited, 3);
+        });
+    }
+
+    /// The variables a batch sends, as text.
+    fn sent_variables(raw_variable_values: &[(&str, Vec<u8>)]) -> Vec<(String, String)> {
+        let mut sent: Vec<(String, String)> = raw_variable_values
+            .iter()
+            .map(|(name, raw)| (name.to_string(), String::from_utf8(raw.clone()).unwrap()))
+            .collect();
+        sent.sort();
+        sent
+    }
+
+    fn bool_variables(values: &[(&str, bool)]) -> Option<super::VariablesMap> {
+        Some(
+            values
+                .iter()
+                .map(|(name, value)| (name.to_string(), sonic_rs::to_value(value).unwrap()))
+                .collect(),
+        )
+    }
+
+    /// An alias whose condition is off collects nothing, and the subgraph is told to skip it.
+    /// Its own representations variable gets an empty list. The alias next to it still collects
+    /// its products.
+    #[test]
+    fn alias_with_condition_off_sends_an_empty_list() {
+        let data: ResponseValue =
+            sonic_rs::from_str(r#"{"products": [{"__typename": "Product", "upc": "1"}]}"#).unwrap();
+
+        let mut conditional =
+            product_alias("_e1", "__batch_reps_1", vec![path(&["products", "@"])]);
+        conditional.include_if = vec!["show".to_string()];
+        conditional.run_variable_name = Some("__batch_run_0".to_string());
+        let entity_batch = EntityBatch {
+            aliases: vec![
+                product_alias("_e0", "__batch_reps_0", vec![path(&["products", "@"])]),
+                conditional,
+            ],
+        };
+
+        with_test_executor(&bool_variables(&[("show", false)]), |executor| {
+            let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None);
+            assert_eq!(waves.len(), 1);
+            let (raw_variable_values, aliases) = &waves[0];
+
+            assert_eq!(
+                sent_variables(raw_variable_values),
+                [
+                    (
+                        "__batch_reps_0".to_string(),
+                        r#"[{"__typename":"Product","upc":"1"}]"#.to_string()
+                    ),
+                    ("__batch_reps_1".to_string(), "[]".to_string()),
+                    ("__batch_run_0".to_string(), "false".to_string()),
+                ]
+            );
+            assert!(aliases[1].representation_hash_to_index.is_empty());
+            assert!(aliases[1].paths.is_empty());
+        });
+    }
+
+    /// `_e0` and `_e1` read the same products under different conditions, so they share one
+    /// representations variable. It's collected once when any of them runs, and the run
+    /// variables tell the subgraph which ones do. With both off there's no request at all.
+    #[test]
+    fn shared_representations_are_collected_once_for_the_aliases_that_run() {
+        let data: ResponseValue = sonic_rs::from_str(
+            r#"{"products": [{"__typename": "Product", "upc": "1"}, {"__typename": "Product", "upc": "2"}]}"#,
+        )
+        .unwrap();
+        let products = r#"[{"__typename":"Product","upc":"1"},{"__typename":"Product","upc":"2"}]"#;
+
+        let mut details = product_alias("_e0", "__batch_reps_0", vec![path(&["products", "@"])]);
+        details.skip_if = vec!["skipDetails".to_string()];
+        details.run_variable_name = Some("__batch_run_0".to_string());
+        let mut inventory = product_alias("_e1", "__batch_reps_0", vec![path(&["products", "@"])]);
+        inventory.include_if = vec!["withInventory".to_string()];
+        inventory.run_variable_name = Some("__batch_run_1".to_string());
+        let entity_batch = EntityBatch {
+            aliases: vec![details, inventory],
+        };
+
+        let cases = [
+            // skipDetails, withInventory, _e0 runs, _e1 runs
+            (false, true, true, true),
+            (true, true, false, true),
+            (false, false, true, false),
+            (true, false, false, false),
+        ];
+        for (skip_details, with_inventory, details_runs, inventory_runs) in cases {
+            let variables = bool_variables(&[
+                ("skipDetails", skip_details),
+                ("withInventory", with_inventory),
+            ]);
+            with_test_executor(&variables, |executor| {
+                let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None);
+                let context = format!("skipDetails={skip_details} withInventory={with_inventory}");
+
+                if !details_runs && !inventory_runs {
+                    assert!(waves.is_empty(), "{context}");
+                    return;
+                }
+                assert_eq!(waves.len(), 1, "{context}");
+                let (raw_variable_values, aliases) = &waves[0];
+
+                assert_eq!(
+                    sent_variables(raw_variable_values),
+                    [
+                        ("__batch_reps_0".to_string(), products.to_string()),
+                        ("__batch_run_0".to_string(), details_runs.to_string()),
+                        ("__batch_run_1".to_string(), inventory_runs.to_string()),
+                    ],
+                    "{context}"
+                );
+                // Only the aliases that run get the products back.
+                for (alias, runs) in aliases.iter().zip([details_runs, inventory_runs]) {
+                    assert_eq!(
+                        alias.representation_hash_to_index.len(),
+                        if runs { 2 } else { 0 }
+                    );
+                }
+                // With both running, the second one reuses what the first one collected.
+                if details_runs && inventory_runs {
+                    assert!(Arc::ptr_eq(
+                        &aliases[0].representation_hash_to_index,
+                        &aliases[1].representation_hash_to_index
+                    ));
+                }
+            });
         }
     }
 

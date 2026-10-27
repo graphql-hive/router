@@ -1206,6 +1206,8 @@ fn qp_skip_and_include_field_level_all_merged_fields_conditional() -> Result<(),
     Ok(())
 }
 
+/// `isCheap` and `name` sit under different conditions, so each gets its own alias, and with both
+/// off no request goes out. They read the same product, so its representation is sent once.
 #[test]
 fn qp_mixed_include_skip_field_level_keeps_conditions_scoped() -> Result<(), Box<dyn Error>> {
     init_logger();
@@ -1251,26 +1253,45 @@ fn qp_mixed_include_skip_field_level_keeps_conditions_scoped() -> Result<(), Box
             id
           }
         },
-        Flatten(path: "product") {
-          Fetch(service: "b") {
-            {
-              ... on Product {
-                __typename
-                price
-                id
-              }
-            } =>
-            ($include:Boolean,$skip:Boolean) {
-              ... on Product {
-                ... on Product @skip(if: $skip) {
-                  isCheap
-                }
-                ... on Product @include(if: $include) {
-                  name
+        BatchFetch(service: "b") {
+          {
+            _e0 @skip(if: $skip) {
+              paths: [
+                "product"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  price
+                  id
                 }
               }
             }
-          },
+            _e1 @include(if: $include) {
+              paths: [
+                "product"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  price
+                  id
+                }
+              }
+            }
+          }
+          ($__batch_run_0:Boolean!,$__batch_run_1:Boolean!) {
+            _e0: _entities(representations: $__batch_reps_0) @include(if: $__batch_run_0) {
+              ... on Product {
+                isCheap
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_0) @include(if: $__batch_run_1) {
+              ... on Product {
+                name
+              }
+            }
+          }
         },
       },
     },
@@ -1507,13 +1528,13 @@ fn qp_conditioned_fetches_batch_with_unconditional_entity_fetch() -> Result<(), 
               }
             }
           }
-          {
+          ($__batch_run_0:Boolean!) {
             _e0: _entities(representations: $__batch_reps_0) {
               ... on Product {
                 ...a
               }
             }
-            _e1: _entities(representations: $__batch_reps_1) {
+            _e1: _entities(representations: $__batch_reps_1) @include(if: $__batch_run_0) {
               ... on Product {
                 ...a
               }
@@ -1530,11 +1551,11 @@ fn qp_conditioned_fetches_batch_with_unconditional_entity_fetch() -> Result<(), 
     Ok(())
 }
 
-/// Known gap: `@include` and `@skip` on one field make two nested conditions,
-/// `Skip(if: $b) { Include(if: $a) { .. } }`. Only one level gets taken out of a condition, so
-/// this inventory fetch doesn't join the one for `always`, and it costs a second request.
+/// `@include` and `@skip` on one field make two nested conditions,
+/// `Skip(if: $b) { Include(if: $a) { .. } }`. The inventory fetch for `first` still joins the one
+/// for `always`, and its alias gets both conditions.
 #[test]
-fn qp_nested_conditions_dont_batch_with_unconditional_entity_fetch() -> Result<(), Box<dyn Error>> {
+fn qp_nested_conditions_batch_with_unconditional_entity_fetch() -> Result<(), Box<dyn Error>> {
     init_logger();
 
     let document = parse_operation(
@@ -1578,9 +1599,12 @@ fn qp_nested_conditions_dont_batch_with_unconditional_entity_fetch() -> Result<(
             upc
           }
         },
-        Parallel {
-          Flatten(path: "always.@") {
-            Fetch(service: "inventory") {
+        BatchFetch(service: "inventory") {
+          {
+            _e0 {
+              paths: [
+                "always.@"
+              ]
               {
                 ... on Product {
                   __typename
@@ -1588,35 +1612,37 @@ fn qp_nested_conditions_dont_batch_with_unconditional_entity_fetch() -> Result<(
                   weight
                   upc
                 }
-              } =>
+              }
+            }
+            _e1 @include(if: $a) @skip(if: $b) {
+              paths: [
+                "first.@"
+              ]
               {
                 ... on Product {
-                  shippingEstimate
+                  __typename
+                  price
+                  weight
+                  upc
                 }
               }
-            },
-          },
-          Skip(if: $b) {
-            Include(if: $a) {
-              Flatten(path: "first.@") {
-                Fetch(service: "inventory") {
-                  {
-                    ... on Product {
-                      __typename
-                      price
-                      weight
-                      upc
-                    }
-                  } =>
-                  {
-                    ... on Product {
-                      shippingEstimate
-                    }
-                  }
-                },
-              },
-            },
-          },
+            }
+          }
+          ($__batch_run_0:Boolean!) {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Product {
+                ...a
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) @include(if: $__batch_run_0) {
+              ... on Product {
+                ...a
+              }
+            }
+          }
+          fragment a on Product {
+            shippingEstimate
+          }
         },
       },
     },
@@ -1625,12 +1651,12 @@ fn qp_nested_conditions_dont_batch_with_unconditional_entity_fetch() -> Result<(
     Ok(())
 }
 
-/// Known gap: the same conditions nested in a different order. `second` sits under
-/// `Include(if: $b) { Include(if: $a) { .. } }` and `first` under `Include(if: $a) { .. }`. Only the
-/// outer condition is compared, `$b` isn't `$a`, so with both true it's two inventory requests
-/// instead of one. The wfg `query-1` fixture hits this with two identical `service11` batches.
+/// `second` sits under `Include(if: $b) { Include(if: $a) { .. } }` and `first` under
+/// `Include(if: $a) { .. }`. The outer conditions differ, but both inventory fetches still share one
+/// batch, each alias with the conditions it was under. The wfg `query-1` fixture used to get two
+/// identical `service11` batches from this.
 #[test]
-fn qp_swapped_nested_conditions_dont_batch() -> Result<(), Box<dyn Error>> {
+fn qp_swapped_nested_conditions_batch() -> Result<(), Box<dyn Error>> {
     init_logger();
 
     let document = parse_operation(
@@ -1674,47 +1700,50 @@ fn qp_swapped_nested_conditions_dont_batch() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Parallel {
-          Include(if: $b) {
-            Include(if: $a) {
-              Flatten(path: "second.@") {
-                Fetch(service: "inventory") {
-                  {
-                    ... on Product {
-                      __typename
-                      price
-                      weight
-                      upc
-                    }
-                  } =>
-                  {
-                    ... on Product {
-                      shippingEstimate
-                    }
-                  }
-                },
-              },
-            },
-          },
-          Include(if: $a) {
-            Flatten(path: "first.@") {
-              Fetch(service: "inventory") {
-                {
-                  ... on Product {
-                    __typename
-                    price
-                    weight
-                    upc
-                  }
-                } =>
-                {
-                  ... on Product {
-                    shippingEstimate
-                  }
+        BatchFetch(service: "inventory") {
+          {
+            _e0 @include(if: $a) @include(if: $b) {
+              paths: [
+                "second.@"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  price
+                  weight
+                  upc
                 }
-              },
-            },
-          },
+              }
+            }
+            _e1 @include(if: $a) {
+              paths: [
+                "first.@"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  price
+                  weight
+                  upc
+                }
+              }
+            }
+          }
+          ($__batch_run_0:Boolean!,$__batch_run_1:Boolean!) {
+            _e0: _entities(representations: $__batch_reps_0) @include(if: $__batch_run_0) {
+              ... on Product {
+                ...a
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) @include(if: $__batch_run_1) {
+              ... on Product {
+                ...a
+              }
+            }
+          }
+          fragment a on Product {
+            shippingEstimate
+          }
         },
       },
     },
@@ -2204,26 +2233,130 @@ fn batched_entity_calls_keep_the_condition_of_their_fragment() -> Result<(), Box
           },
         },
         Include(if: $a) {
-          Flatten(path: "users.@.reviews.@.product|[Product]") {
-            Fetch(service: "products") {
-              {
-                ... on Product {
-                  __typename
-                  upc
-                }
-              } =>
-              ($a:Boolean!,$b:Boolean!) {
-                ... on Product {
-                  ... on Product @include(if: $b) {
-                    price
-                  }
-                  ... on Product @include(if: $a) {
-                    notes
+          BatchFetch(service: "products") {
+            {
+              _e0 @include(if: $b) {
+                paths: [
+                  "users.@.reviews.@.product|[Product]"
+                ]
+                {
+                  ... on Product {
+                    __typename
+                    upc
                   }
                 }
               }
-            },
+              _e1 {
+                paths: [
+                  "users.@.reviews.@.product|[Product]"
+                ]
+                {
+                  ... on Product {
+                    __typename
+                    upc
+                  }
+                }
+              }
+            }
+            ($__batch_run_0:Boolean!) {
+              _e0: _entities(representations: $__batch_reps_0) @include(if: $__batch_run_0) {
+                ... on Product {
+                  price
+                }
+              }
+              _e1: _entities(representations: $__batch_reps_0) {
+                ... on Product {
+                  notes
+                }
+              }
+            }
           },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// https://github.com/graphql-hive/router/issues/1733
+///
+/// `details` and `inventory` both come from `b`, each under its own condition. In one fetch,
+/// the conditions would go down to the subgraph and the request would go out even with both
+/// fields skipped. Each gets an alias with its condition instead, so with both skipped there's no
+/// request. Both read the same product, so its representation is sent once.
+#[test]
+fn entity_fields_under_different_conditions_skip_the_request_when_all_are_off(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($skipDetails: Boolean!, $withInventory: Boolean!) {
+          product {
+            id
+            details @skip(if: $skipDetails) { color }
+            inventory @include(if: $withInventory) { inStock }
+          }
+        }
+      "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/skip-entity-fetch.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            product {
+              __typename
+              id
+            }
+          }
+        },
+        BatchFetch(service: "b") {
+          {
+            _e0 @include(if: $withInventory) {
+              paths: [
+                "product"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e1 @skip(if: $skipDetails) {
+              paths: [
+                "product"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          ($__batch_run_0:Boolean!,$__batch_run_1:Boolean!) {
+            _e0: _entities(representations: $__batch_reps_0) @include(if: $__batch_run_0) {
+              ... on Product {
+                inventory {
+                  inStock
+                }
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_0) @include(if: $__batch_run_1) {
+              ... on Product {
+                details {
+                  color
+                }
+              }
+            }
+          }
         },
       },
     },

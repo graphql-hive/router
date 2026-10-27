@@ -50,6 +50,15 @@ export interface EntityBatchAlias {
   outputRewrites?: OutputRewrite[];
   contextRewrites?: KeyRenamer[];
   contextVariables?: string[];
+  /** The alias only runs when all of these variables are `true`. */
+  includeIf?: string[];
+  /** The alias only runs when all of these variables are `false`. */
+  skipIf?: string[];
+  /**
+   * Set when the alias has conditions. The router sends this `Boolean!` variable to tell the
+   * subgraph whether the alias runs, the operation has `@include(if: $<this>)` on it.
+   */
+  runVariableName?: string;
 }
 
 export interface SubscriptionNode {
