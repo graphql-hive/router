@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, measurement::WallTime, Bencher, Criterion};
 use graphql_tools::parser::query::Document;
 use hive_router::query_planner::ast::minification::minify_operation;
 use hive_router::query_planner::ast::normalization::normalize_operation;
@@ -14,6 +14,7 @@ use hive_router::query_planner::state::supergraph_state::SupergraphState;
 use hive_router::query_planner::utils::cancellation::CancellationToken;
 use hive_router::query_planner::utils::parsing::{parse_operation, parse_schema};
 use std::hint::black_box;
+use std::time::Duration;
 
 fn get_operation(operation_path: &str) -> Document<'static, String> {
     let document_text = std::fs::read_to_string(operation_path).expect("Unable to read input file");
@@ -40,7 +41,7 @@ fn bench_query_plan(
     let override_context = PlannerOverrideContext::default();
     let cancellation_token = CancellationToken::new();
 
-    c.bench_function(name, |b| {
+    let mut benchmark = |b: &mut Bencher<'_, WallTime>| {
         b.iter(|| {
             let bb_graph = black_box(graph);
             let bb_operation = black_box(operation);
@@ -76,7 +77,20 @@ fn bench_query_plan(
             .unwrap();
             black_box(query_plan);
         })
-    });
+    };
+
+    if matches!(
+        name,
+        "query_plan_wfg_mutation_1" | "query_plan_wfg_query_1" | "query_plan_wfg_query_2"
+    ) {
+        let mut group = c.benchmark_group(name);
+        group.sample_size(10);
+        group.measurement_time(Duration::from_secs(5));
+        group.bench_function("plan", &mut benchmark);
+        group.finish();
+    } else {
+        c.bench_function(name, &mut benchmark);
+    }
 }
 
 fn query_plan_pipeline(c: &mut Criterion) {
