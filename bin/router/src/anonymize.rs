@@ -29,6 +29,18 @@ const KEY_ENV: &str = "HIVE_ANON_KEY";
 
 const SPEC_URL: &str = "https://specs.apollo.dev/";
 
+const SUPPORTED_SPECS: &[&str] = &[
+    "link",
+    "join",
+    "context",
+    "tag",
+    "cost",
+    "inaccessible",
+    "policy",
+    "requiresScopes",
+    "authenticated",
+];
+
 const KEPT_TYPES: &[&str] = &[
     "String",
     "Int",
@@ -81,7 +93,6 @@ Usage:
   hive_router anonymize keygen
   hive_router anonymize supergraph [--key-file <path>] <supergraph.graphql>
   hive_router anonymize operations [--key-file <path>] <operation.graphql>
-  hive_router anonymize operations [--key-file <path>] <input dir> <output dir>
 
 The key comes from --key-file or the HIVE_ANON_KEY env var, 64 hex characters made by `keygen`.
 Use the same key for the supergraph and its operations.";
@@ -187,6 +198,7 @@ impl Anonymizer {
         Run::new(&self.key, &arena).operation_document(source)
     }
 
+    #[cfg(test)]
     fn name(&self, kind: Kind, input: &str) -> String {
         let arena = Bump::new();
         Run::new(&self.key, &arena).name(kind, input).to_string()
@@ -206,6 +218,8 @@ struct Run<'a> {
     field_sets: RefCell<HashMap<&'a str, &'a str>>,
     // spec directives imported under another name, `@myCost` -> `cost`
     aliases: HashMap<&'a str, &'a str>,
+    // set when the definition being worked on uses something we can't anonymize
+    unsupported: RefCell<Option<String>>,
 }
 
 impl<'a> Run<'a> {
@@ -217,6 +231,7 @@ impl<'a> Run<'a> {
             seen: RefCell::default(),
             field_sets: RefCell::default(),
             aliases: HashMap::new(),
+            unsupported: RefCell::default(),
         }
     }
 
@@ -286,11 +301,20 @@ impl<'a> Run<'a> {
                 continue;
             };
             for link in schema.directives.iter().filter(|d| d.name == "link") {
-                let spec = link.arguments.iter().any(|(arg, value)| {
-                    *arg == "url" && matches!(value, Value::String(url) if url.starts_with(SPEC_URL))
+                let spec = link.arguments.iter().find_map(|(arg, value)| match value {
+                    Value::String(url) if *arg == "url" => url.strip_prefix(SPEC_URL),
+                    _ => None,
                 });
+                if let Some(spec) = spec {
+                    let name = spec.split('/').next().unwrap_or_default();
+                    if !SUPPORTED_SPECS.contains(&name) {
+                        return Err(format!(
+                            "the supergraph links {SPEC_URL}{spec}, which Hive's composition and router don't support"
+                        ));
+                    }
+                }
                 let imports = link.arguments.iter().find(|(arg, _)| *arg == "import");
-                let Some((_, Value::List(imports))) = imports.filter(|_| spec) else {
+                let Some((_, Value::List(imports))) = imports.filter(|_| spec.is_some()) else {
                     continue;
                 };
                 for import in imports {
@@ -304,10 +328,7 @@ impl<'a> Run<'a> {
                         })
                     };
                     if let (Some(name), Some(alias)) = (field("name"), field("as")) {
-                        aliases.insert(
-                            &*self.arena.alloc_str(alias),
-                            &*self.arena.alloc_str(name),
-                        );
+                        aliases.insert(&*self.arena.alloc_str(alias), &*self.arena.alloc_str(name));
                     }
                 }
             }
@@ -478,6 +499,13 @@ impl<'a> Run<'a> {
 
     fn directives(&self, directives: &mut [Directive<'a, &'a str>]) {
         for directive in directives {
+            // join v0.5 defines it, but only Apollo Connectors and the like use it, and those
+            // aren't supported by our composition or router
+            if directive.name == "join__directive" {
+                self.unsupported.replace(Some(
+                    "the supergraph uses @join__directive, which Hive's composition and router don't support".into(),
+                ));
+            }
             if let Some(spec) = self.aliases.get(directive.name).copied() {
                 // the spec's rules for the arguments, but the name is the subgraphs' own
                 self.spec_directive(spec, directive);
@@ -601,12 +629,6 @@ impl<'a> Run<'a> {
                     let name = self.name(Kind::Context, s);
                     rewrite(s, name);
                 }
-                ("join__directive", "name", Value::String(s)) if !is_kept_directive(s) => {
-                    let name = self.name(Kind::Directive, s);
-                    rewrite(s, name);
-                }
-                ("join__directive", "name", _) => {}
-                ("join__directive", "args", Value::Object(fields)) => self.arguments(fields),
                 // `input.first` is an argument followed by input fields
                 ("listSize", "slicingArguments", Value::List(items)) => {
                     for item in items {
@@ -705,6 +727,9 @@ impl<'a> Run<'a> {
                 Definition::TypeExtension(_) => {
                     return Err("a supergraph can't have type extensions".into())
                 }
+            }
+            if let Some(err) = self.unsupported.take() {
+                return Err(err);
             }
             // `format_into` only puts a blank line between definitions when the buffer isn't empty,
             // so keep a newline in it to get the same output as formatting the whole document
@@ -896,29 +921,6 @@ pub fn run_cli(args: &[String]) -> Result<(), String> {
                 "{}",
                 anonymizer()?.anonymize_operation(&read(Path::new(input))?)?
             )
-        }
-        ["operations", input, output] => {
-            let anonymizer = anonymizer()?;
-            std::fs::create_dir_all(output).map_err(|err| format!("{output}: {err}"))?;
-            let entries = std::fs::read_dir(input).map_err(|err| format!("{input}: {err}"))?;
-            for entry in entries {
-                let path = entry.map_err(|err| err.to_string())?.path();
-                if !path.is_file() {
-                    continue;
-                }
-                let anonymized = anonymizer
-                    .anonymize_operation(&read(&path)?)
-                    .map_err(|err| format!("{}: {err}", path.display()))?;
-                // file names leak too, think `getUserSsn.graphql`
-                let file_name = path.file_name().unwrap_or_default().to_string_lossy();
-                let target = Path::new(output).join(format!(
-                    "{}.graphql",
-                    anonymizer.name(Kind::String, &file_name)
-                ));
-                std::fs::write(&target, anonymized)
-                    .map_err(|err| format!("{}: {err}", target.display()))?;
-                eprintln!("{} -> {}", path.display(), target.display());
-            }
         }
         _ => return Err(USAGE.into()),
     }
@@ -1255,12 +1257,60 @@ mod tests {
         let custom = anonymizer(1).name(Kind::Directive, "custom");
         let renamed = anonymizer(1).name(Kind::Directive, "renamed");
         assert!(out.contains(&format!("directive @{custom}(")), "{out}");
-        assert!(out.contains(&format!("import: [\"@{custom}\", {{name: \"@")), "{out}");
+        assert!(
+            out.contains(&format!("import: [\"@{custom}\", {{name: \"@")),
+            "{out}"
+        );
         assert!(out.contains(&format!("as: \"@{renamed}\"")), "{out}");
-        assert!(out.contains(".invalid/d_") && out.contains("/v1.2\""), "{out}");
+        assert!(
+            out.contains(".invalid/d_") && out.contains("/v1.2\""),
+            "{out}"
+        );
         for secret in ["myspecs", "custom", "other", "renamed", "secret"] {
             assert!(!out.contains(secret), "{secret} survived:\n{out}");
         }
+    }
+
+    #[test]
+    fn unsupported_specs_are_an_error() {
+        let header = r#"
+            schema
+              @link(url: "https://specs.apollo.dev/link/v1.0")
+              @link(url: "https://specs.apollo.dev/join/v0.5", for: EXECUTION)
+              LINK
+            {
+              query: Query
+            }
+
+            directive @join__directive(graphs: [join__Graph!], name: String!, args: join__DirectiveArguments) repeatable on SCHEMA | OBJECT | INTERFACE | FIELD_DEFINITION
+            directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+            directive @join__type(graph: join__Graph!, key: join__FieldSet, extension: Boolean! = false, resolvable: Boolean! = true, isInterfaceObject: Boolean! = false) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+            directive @link(url: String, as: String, for: link__Purpose, import: [link__Import]) repeatable on SCHEMA
+
+            scalar join__DirectiveArguments
+            scalar join__FieldSet
+            scalar link__Import
+            enum join__Graph { A @join__graph(name: "a", url: "http://a") }
+            enum link__Purpose { SECURITY EXECUTION }
+
+            type Query @join__type(graph: A) {
+              users: [ID] DIRECTIVE
+            }
+        "#;
+        let connect =
+            r#"@link(url: "https://specs.apollo.dev/connect/v0.1", import: ["@connect"])"#;
+        let join_directive =
+            r#"@join__directive(graphs: [A], name: "connect", args: { selection: "id" })"#;
+        let anonymize = |link: &str, directive: &str| {
+            anonymizer(1)
+                .anonymize_supergraph(&header.replace("LINK", link).replace("DIRECTIVE", directive))
+        };
+
+        assert!(anonymize("", "").is_ok());
+        let err = anonymize(connect, "").unwrap_err();
+        assert!(err.contains("specs.apollo.dev/connect/v0.1"), "{err}");
+        let err = anonymize("", join_directive).unwrap_err();
+        assert!(err.contains("@join__directive"), "{err}");
     }
 
     // composition imports `@cost` and `@listSize` under the subgraphs' names for them
@@ -1306,7 +1356,10 @@ mod tests {
             )),
             "{out}"
         );
-        assert!(out.contains(&format!("directive @{cost}(weight: Int!)")), "{out}");
+        assert!(
+            out.contains(&format!("directive @{cost}(weight: Int!)")),
+            "{out}"
+        );
         assert!(out.contains(&format!("@{cost}(weight: 7)")), "{out}");
         assert!(
             out.contains(&format!(
