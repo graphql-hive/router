@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::fmt::Write;
 use std::path::Path;
 
+use bumpalo::Bump;
 use graphql_tools::parser::query::{
     Definition as OperationDocDefinition, Directive, Number, OperationDefinition, Selection,
     SelectionSet, Type, TypeCondition, Value, VariableDefinition,
@@ -131,19 +132,11 @@ fn is_kept_directive(name: &str) -> bool {
 
 pub struct Anonymizer {
     key: [u8; 32],
-    // input -> output for each kind, names repeat a lot so this skips most of the hashing
-    cache: RefCell<[HashMap<String, String>; Kind::Number as usize + 1]>,
-    // output -> input, to catch a collision instead of silently merging two names
-    seen: RefCell<HashMap<String, String>>,
 }
 
 impl Anonymizer {
     pub fn new(key: [u8; 32]) -> Self {
-        Self {
-            key,
-            cache: RefCell::default(),
-            seen: RefCell::default(),
-        }
+        Self { key }
     }
 
     pub fn from_hex(hex: &str) -> Result<Self, String> {
@@ -168,57 +161,104 @@ impl Anonymizer {
         Ok(to_hex(&key))
     }
 
+    pub fn anonymize_supergraph(&self, sdl: &str) -> Result<String, String> {
+        let arena = Bump::new();
+        Run::new(&self.key, &arena).supergraph(sdl)
+    }
+
+    pub fn anonymize_operation(&self, source: &str) -> Result<String, String> {
+        let arena = Bump::new();
+        Run::new(&self.key, &arena).operation_document(source)
+    }
+
+    fn name(&self, kind: Kind, input: &str) -> String {
+        let arena = Bump::new();
+        Run::new(&self.key, &arena).name(kind, input).to_string()
+    }
+}
+
+// one document's worth of work. Names live in the arena, so the AST borrows them instead of
+// owning a `String` each, and it all goes away in one go when the run is done
+struct Run<'a> {
+    key: &'a [u8; 32],
+    arena: &'a Bump,
+    // input -> output for each kind, names repeat a lot so this skips most of the hashing
+    cache: RefCell<[HashMap<&'a str, &'a str>; Kind::Number as usize + 1]>,
+    // output -> input, to catch a collision instead of silently merging two names
+    seen: RefCell<HashMap<&'a str, &'a str>>,
+}
+
+impl<'a> Run<'a> {
+    fn new(key: &'a [u8; 32], arena: &'a Bump) -> Self {
+        Self {
+            key,
+            arena,
+            cache: RefCell::default(),
+            seen: RefCell::default(),
+        }
+    }
+
     fn digest(&self, kind: Kind, input: &str) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_keyed(&self.key);
+        let mut hasher = blake3::Hasher::new_keyed(self.key);
         hasher.update(kind.prefix().as_bytes());
         hasher.update(&[0]);
         hasher.update(input.as_bytes());
         *hasher.finalize().as_bytes()
     }
 
-    fn name(&self, kind: Kind, input: &str) -> String {
+    fn name(&self, kind: Kind, input: &str) -> &'a str {
         if let Some(output) = self.cache.borrow()[kind as usize].get(input) {
-            return output.clone();
+            return output;
         }
         // 64 bits, collisions are astronomically unlikely, but checked anyway
-        let output = format!(
-            "{}_{}",
-            kind.prefix(),
-            to_hex(&self.digest(kind, input)[..8])
-        );
-        if let Some(previous) = self
-            .seen
-            .borrow_mut()
-            .insert(output.clone(), input.to_string())
-        {
+        let digest = self.digest(kind, input);
+        let mut output = bumpalo::collections::String::with_capacity_in(18, self.arena);
+        output.push_str(kind.prefix());
+        output.push('_');
+        for byte in &digest[..8] {
+            let _ = write!(output, "{byte:02x}");
+        }
+        let output = output.into_bump_str();
+        let input = &*self.arena.alloc_str(input);
+        if let Some(previous) = self.seen.borrow_mut().insert(output, input) {
             assert!(
                 previous == input,
                 "hash collision between {previous:?} and {input:?}, generate another key"
             );
         }
-        self.cache.borrow_mut()[kind as usize].insert(input.to_string(), output.clone());
+        self.cache.borrow_mut()[kind as usize].insert(input, output);
         output
     }
 
-    fn type_name(&self, name: &str) -> String {
+    // kept names come back as they are, so these work on strings that aren't from the arena too
+    fn type_name<'n>(&self, name: &'n str) -> &'n str
+    where
+        'a: 'n,
+    {
         if KEPT_TYPES.contains(&name) || is_spec(name) {
-            name.to_string()
+            name
         } else {
             self.name(Kind::Type, name)
         }
     }
 
-    fn field_name(&self, name: &str) -> String {
+    fn field_name<'n>(&self, name: &'n str) -> &'n str
+    where
+        'a: 'n,
+    {
         if name.starts_with("__") {
-            name.to_string()
+            name
         } else {
             self.name(Kind::Field, name)
         }
     }
 
-    fn directive_name(&self, name: &str) -> String {
+    fn directive_name<'n>(&self, name: &'n str) -> &'n str
+    where
+        'a: 'n,
+    {
         if is_kept_directive(name) {
-            name.to_string()
+            name
         } else {
             self.name(Kind::Directive, name)
         }
@@ -228,7 +268,7 @@ impl Anonymizer {
     fn import_name(&self, name: &str) -> String {
         match name.strip_prefix('@') {
             Some(directive) => format!("@{}", self.directive_name(directive)),
-            None => self.type_name(name),
+            None => self.type_name(name).to_string(),
         }
     }
 
@@ -237,7 +277,8 @@ impl Anonymizer {
         u32::from_le_bytes([digest[0], digest[1], digest[2], digest[3]])
     }
 
-    fn value(&self, value: &mut Value<'static, String>) {
+    // string values are always owned by the parser, that's the one `String` left per value
+    fn value(&self, value: &mut Value<'a, &'a str>) {
         match value {
             Value::Variable(name) => *name = self.name(Kind::Variable, name),
             Value::Int(number) => {
@@ -248,7 +289,7 @@ impl Anonymizer {
             Value::Float(float) => {
                 *float = (self.number(&float.to_string()) % 1_000_000) as f64 + 0.5
             }
-            Value::String(string) => *string = self.name(Kind::String, string),
+            Value::String(string) => *string = self.name(Kind::String, string).to_string(),
             Value::Enum(name) => *name = self.name(Kind::EnumValue, name),
             Value::List(items) => items.iter_mut().for_each(|item| self.value(item)),
             Value::Object(fields) => {
@@ -261,14 +302,14 @@ impl Anonymizer {
         }
     }
 
-    fn arguments(&self, arguments: &mut [(String, Value<'static, String>)]) {
+    fn arguments(&self, arguments: &mut [(&'a str, Value<'a, &'a str>)]) {
         for (name, value) in arguments {
             *name = self.name(Kind::Argument, name);
             self.value(value);
         }
     }
 
-    fn type_ref(&self, ty: &mut Type<'static, String>) {
+    fn type_ref(&self, ty: &mut Type<'a, &'a str>) {
         match ty {
             Type::NamedType(name) => *name = self.type_name(name),
             Type::ListType(inner) | Type::NonNullType(inner) => self.type_ref(inner),
@@ -281,7 +322,7 @@ impl Anonymizer {
         if name.is_empty() {
             return ty.to_string();
         }
-        ty.replacen(name, &self.type_name(name), 1)
+        ty.replacen(name, self.type_name(name), 1)
     }
 
     // `id organization { id }` as a string, like in `@join__type(key:)`
@@ -289,14 +330,14 @@ impl Anonymizer {
         let trimmed = fields.trim();
         // context selections come wrapped in braces already, keys and requires don't
         let braced = trimmed.starts_with('{');
-        let source = if braced {
-            trimmed.to_string()
+        // parsed from an arena copy, so its AST can borrow the same way the document's does
+        let source: &'a str = if braced {
+            self.arena.alloc_str(trimmed)
         } else {
-            format!("{{{trimmed}}}")
+            bumpalo::format!(in self.arena, "{{{}}}", trimmed).into_bump_str()
         };
-        let mut document = parse_query(&source)
-            .unwrap_or_else(|err| panic!("invalid field set {fields:?}: {err}"))
-            .into_static();
+        let mut document = parse_query::<&'a str>(source)
+            .unwrap_or_else(|err| panic!("invalid field set {fields:?}: {err}"));
         let Some(OperationDocDefinition::Operation(OperationDefinition::SelectionSet(set))) =
             document.definitions.first_mut()
         else {
@@ -319,7 +360,7 @@ impl Anonymizer {
             .to_string()
     }
 
-    fn selection_set(&self, set: &mut SelectionSet<'static, String>) {
+    fn selection_set(&self, set: &mut SelectionSet<'a, &'a str>) {
         for item in &mut set.items {
             match item {
                 Selection::Field(field) => {
@@ -328,13 +369,13 @@ impl Anonymizer {
                     if let Some(alias) = &mut field.alias {
                         *alias = self.field_name(alias);
                     }
-                    field.name = self.field_name(&field.name);
+                    field.name = self.field_name(field.name);
                     self.arguments(&mut field.arguments);
                     self.directives(&mut field.directives);
                     self.selection_set(&mut field.selection_set);
                 }
                 Selection::FragmentSpread(spread) => {
-                    spread.fragment_name = self.name(Kind::Fragment, &spread.fragment_name);
+                    spread.fragment_name = self.name(Kind::Fragment, spread.fragment_name);
                     self.directives(&mut spread.directives);
                 }
                 Selection::InlineFragment(fragment) => {
@@ -348,26 +389,26 @@ impl Anonymizer {
         }
     }
 
-    fn directives(&self, directives: &mut [Directive<'static, String>]) {
+    fn directives(&self, directives: &mut [Directive<'a, &'a str>]) {
         for directive in directives {
-            if is_kept_directive(&directive.name) {
+            if is_kept_directive(directive.name) {
                 self.spec_directive(directive);
             } else {
-                directive.name = self.name(Kind::Directive, &directive.name);
+                directive.name = self.name(Kind::Directive, directive.name);
                 self.arguments(&mut directive.arguments);
             }
         }
     }
 
     // spec directives keep their name and argument names, the values are what carries user data
-    fn spec_directive(&self, directive: &mut Directive<'static, String>) {
-        let name = directive.name.as_str();
+    fn spec_directive(&self, directive: &mut Directive<'a, &'a str>) {
+        let name = directive.name;
         let spec_link = name == "link"
             && directive.arguments.iter().any(|(arg, value)| {
-                arg == "url" && matches!(value, Value::String(url) if url.starts_with(SPEC_URL))
+                *arg == "url" && matches!(value, Value::String(url) if url.starts_with(SPEC_URL))
             });
         for (arg, value) in &mut directive.arguments {
-            match (name, arg.as_str(), value) {
+            match (name, *arg, value) {
                 ("link", _, _) if spec_link => {}
                 // a custom spec, like the ones `@composeDirective` brings in. It has to stay a
                 // `.../name/vX.Y` URL, and its imports have to match the renamed directives
@@ -410,7 +451,7 @@ impl Anonymizer {
                 | ("join__unionMember", "member", Value::String(s)) => *s = self.type_string(s),
                 ("join__graph", "name", Value::String(s))
                 | ("join__field", "override", Value::String(s)) => {
-                    *s = self.name(Kind::Subgraph, s)
+                    *s = self.name(Kind::Subgraph, s).to_string()
                 }
                 // `.invalid` never resolves, so nothing can reach the real subgraph by accident
                 ("join__graph", "url", Value::String(s)) => {
@@ -429,9 +470,13 @@ impl Anonymizer {
                             continue;
                         };
                         for (key, value) in fields {
-                            match (key.as_str(), value) {
-                                ("context", Value::String(s)) => *s = self.name(Kind::Context, s),
-                                ("name", Value::String(s)) => *s = self.name(Kind::Argument, s),
+                            match (*key, value) {
+                                ("context", Value::String(s)) => {
+                                    *s = self.name(Kind::Context, s).to_string()
+                                }
+                                ("name", Value::String(s)) => {
+                                    *s = self.name(Kind::Argument, s).to_string()
+                                }
                                 ("type", Value::String(s)) => *s = self.type_string(s),
                                 ("selection", Value::String(s)) => *s = self.field_set(s),
                                 (_, value) => self.value(value),
@@ -439,8 +484,12 @@ impl Anonymizer {
                         }
                     }
                 }
-                ("context", "name", Value::String(s)) => *s = self.name(Kind::Context, s),
-                ("join__directive", "name", Value::String(s)) => *s = self.directive_name(s),
+                ("context", "name", Value::String(s)) => {
+                    *s = self.name(Kind::Context, s).to_string()
+                }
+                ("join__directive", "name", Value::String(s)) => {
+                    *s = self.directive_name(s).to_string()
+                }
                 ("join__directive", "args", Value::Object(fields)) => self.arguments(fields),
                 // `input.first` is an argument followed by input fields
                 ("listSize", "slicingArguments", Value::List(items)) => {
@@ -474,20 +523,20 @@ impl Anonymizer {
         }
     }
 
-    fn fields(&self, fields: &mut [Field<'static, String>]) {
+    fn fields(&self, fields: &mut [Field<'a, &'a str>]) {
         for field in fields {
             field.description = None;
-            field.name = self.field_name(&field.name);
+            field.name = self.field_name(field.name);
             self.input_values(&mut field.arguments, Kind::Argument);
             self.type_ref(&mut field.field_type);
             self.directives(&mut field.directives);
         }
     }
 
-    fn input_values(&self, values: &mut [InputValue<'static, String>], kind: Kind) {
+    fn input_values(&self, values: &mut [InputValue<'a, &'a str>], kind: Kind) {
         for value in values {
             value.description = None;
-            value.name = self.name(kind, &value.name);
+            value.name = self.name(kind, value.name);
             self.type_ref(&mut value.value_type);
             if let Some(default) = &mut value.default_value {
                 self.value(default);
@@ -496,16 +545,14 @@ impl Anonymizer {
         }
     }
 
-    fn rename_all(&self, names: &mut [String]) {
+    fn rename_all(&self, names: &mut [&'a str]) {
         for name in names {
             *name = self.type_name(name);
         }
     }
 
-    pub fn anonymize_supergraph(&self, sdl: &str) -> Result<String, String> {
-        let mut document = parse_schema(sdl)
-            .map_err(|err| err.to_string())?
-            .into_static();
+    fn supergraph(&self, sdl: &'a str) -> Result<String, String> {
+        let mut document = parse_schema::<&'a str>(sdl).map_err(|err| err.to_string())?;
         for definition in &mut document.definitions {
             match definition {
                 Definition::SchemaDefinition(schema) => {
@@ -523,8 +570,8 @@ impl Anonymizer {
                 }
                 Definition::DirectiveDefinition(directive) => {
                     directive.description = None;
-                    if !is_kept_directive(&directive.name) {
-                        directive.name = self.name(Kind::Directive, &directive.name);
+                    if !is_kept_directive(directive.name) {
+                        directive.name = self.name(Kind::Directive, directive.name);
                         self.input_values(&mut directive.arguments, Kind::Argument);
                     }
                 }
@@ -537,14 +584,14 @@ impl Anonymizer {
         Ok(document.to_string())
     }
 
-    fn type_definition(&self, definition: &mut TypeDefinition<'static, String>) {
+    fn type_definition(&self, definition: &mut TypeDefinition<'a, &'a str>) {
         let name = match definition {
-            TypeDefinition::Scalar(t) => &t.name,
-            TypeDefinition::Object(t) => &t.name,
-            TypeDefinition::Interface(t) => &t.name,
-            TypeDefinition::Union(t) => &t.name,
-            TypeDefinition::Enum(t) => &t.name,
-            TypeDefinition::InputObject(t) => &t.name,
+            TypeDefinition::Scalar(t) => t.name,
+            TypeDefinition::Object(t) => t.name,
+            TypeDefinition::Interface(t) => t.name,
+            TypeDefinition::Union(t) => t.name,
+            TypeDefinition::Enum(t) => t.name,
+            TypeDefinition::InputObject(t) => t.name,
         };
         // spec types stay as they are, except the subgraph names in `join__Graph`
         if is_spec(name) && name != "join__Graph" {
@@ -553,52 +600,50 @@ impl Anonymizer {
         match definition {
             TypeDefinition::Scalar(scalar) => {
                 scalar.description = None;
-                scalar.name = self.type_name(&scalar.name);
+                scalar.name = self.type_name(scalar.name);
                 self.directives(&mut scalar.directives);
             }
             TypeDefinition::Object(object) => {
                 object.description = None;
-                object.name = self.type_name(&object.name);
+                object.name = self.type_name(object.name);
                 self.rename_all(&mut object.implements_interfaces);
                 self.directives(&mut object.directives);
                 self.fields(&mut object.fields);
             }
             TypeDefinition::Interface(interface) => {
                 interface.description = None;
-                interface.name = self.type_name(&interface.name);
+                interface.name = self.type_name(interface.name);
                 self.rename_all(&mut interface.implements_interfaces);
                 self.directives(&mut interface.directives);
                 self.fields(&mut interface.fields);
             }
             TypeDefinition::Union(union) => {
                 union.description = None;
-                union.name = self.type_name(&union.name);
+                union.name = self.type_name(union.name);
                 self.rename_all(&mut union.types);
                 self.directives(&mut union.directives);
             }
             TypeDefinition::Enum(enum_type) => {
                 enum_type.description = None;
-                enum_type.name = self.type_name(&enum_type.name);
+                enum_type.name = self.type_name(enum_type.name);
                 self.directives(&mut enum_type.directives);
                 for value in &mut enum_type.values {
                     value.description = None;
-                    value.name = self.name(Kind::EnumValue, &value.name);
+                    value.name = self.name(Kind::EnumValue, value.name);
                     self.directives(&mut value.directives);
                 }
             }
             TypeDefinition::InputObject(input) => {
                 input.description = None;
-                input.name = self.type_name(&input.name);
+                input.name = self.type_name(input.name);
                 self.directives(&mut input.directives);
                 self.input_values(&mut input.fields, Kind::InputField);
             }
         }
     }
 
-    pub fn anonymize_operation(&self, source: &str) -> Result<String, String> {
-        let mut document = parse_query(source)
-            .map_err(|err| err.to_string())?
-            .into_static();
+    fn operation_document(&self, source: &'a str) -> Result<String, String> {
+        let mut document = parse_query::<&'a str>(source).map_err(|err| err.to_string())?;
         for definition in &mut document.definitions {
             match definition {
                 OperationDocDefinition::Operation(OperationDefinition::SelectionSet(set)) => {
@@ -626,7 +671,7 @@ impl Anonymizer {
                         &mut op.selection_set,
                     ),
                 OperationDocDefinition::Fragment(fragment) => {
-                    fragment.name = self.name(Kind::Fragment, &fragment.name);
+                    fragment.name = self.name(Kind::Fragment, fragment.name);
                     let TypeCondition::On(name) = &mut fragment.type_condition;
                     *name = self.type_name(name);
                     self.directives(&mut fragment.directives);
@@ -639,16 +684,16 @@ impl Anonymizer {
 
     fn operation(
         &self,
-        name: &mut Option<String>,
-        variables: &mut [VariableDefinition<'static, String>],
-        directives: &mut [Directive<'static, String>],
-        selection_set: &mut SelectionSet<'static, String>,
+        name: &mut Option<&'a str>,
+        variables: &mut [VariableDefinition<'a, &'a str>],
+        directives: &mut [Directive<'a, &'a str>],
+        selection_set: &mut SelectionSet<'a, &'a str>,
     ) {
         if let Some(name) = name {
             *name = self.name(Kind::Operation, name);
         }
         for variable in variables {
-            variable.name = self.name(Kind::Variable, &variable.name);
+            variable.name = self.name(Kind::Variable, variable.name);
             self.type_ref(&mut variable.var_type);
             if let Some(default) = &mut variable.default_value {
                 self.value(default);
@@ -743,7 +788,7 @@ mod tests {
     use graphql_tools::parser::schema::{Definition, TypeDefinition};
     use graphql_tools::parser::{parse_query, parse_schema};
 
-    use super::{is_kept_directive, is_spec, Anonymizer, KEPT_TYPES};
+    use super::{is_kept_directive, is_spec, Anonymizer, Kind, KEPT_TYPES};
     use crate::query_planner::graph::Graph;
     use crate::query_planner::state::supergraph_state::SupergraphState;
     use crate::query_planner::tests::testkit::build_query_plan_from_sdl;
@@ -1062,8 +1107,8 @@ mod tests {
             }
         "#;
         let out = anonymizer(1).anonymize_supergraph(sdl).unwrap();
-        let custom = anonymizer(1).directive_name("custom");
-        let renamed = anonymizer(1).directive_name("renamed");
+        let custom = anonymizer(1).name(Kind::Directive, "custom");
+        let renamed = anonymizer(1).name(Kind::Directive, "renamed");
         assert!(out.contains(&format!("directive @{custom}(")), "{out}");
         assert!(out.contains(&format!("import: [\"@{custom}\", {{name: \"@")), "{out}");
         assert!(out.contains(&format!("as: \"@{renamed}\"")), "{out}");
