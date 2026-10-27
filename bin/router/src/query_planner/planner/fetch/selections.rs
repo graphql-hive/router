@@ -369,6 +369,12 @@ impl FetchStepSelections<MultiTypeFetchStep> {
         selection_set: &mut SelectionSet,
         condition: &Condition,
     ) {
+        // A type slot can be declared before it gets any selections (multi-type batching does
+        // that right before a merge). Nothing to guard there, and `... on T @include { }` is
+        // invalid GraphQL that ends up in the subgraph request.
+        if selection_set.items.is_empty() {
+            return;
+        }
         let prev = selection_set.clone();
         match condition {
             Condition::Include(var_name) => {
