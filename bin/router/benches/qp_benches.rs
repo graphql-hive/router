@@ -83,10 +83,10 @@ fn bench_query_plan(
         name,
         "query_plan_wfg_mutation_1" | "query_plan_wfg_query_1" | "query_plan_wfg_query_2"
     ) {
-        let mut group = c.benchmark_group("");
+        let mut group = c.benchmark_group(name);
         group.sample_size(10);
         group.measurement_time(Duration::from_secs(5));
-        group.bench_function(name, &mut benchmark);
+        group.bench_function("plan", &mut benchmark);
         group.finish();
     } else {
         c.bench_function(name, &mut benchmark);
