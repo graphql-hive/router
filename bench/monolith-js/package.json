@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "graphql": "^17.0.2",
-    "graphql-yoga": "5.24.6"
+    "graphql-yoga": "6.0.0"
   },
   "private": false
 }
