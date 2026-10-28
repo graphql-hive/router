@@ -1245,7 +1245,12 @@ fn issue_1308_conditional_rank_keeps_concrete_requires_types() -> Result<(), Box
             {
               ... on Animal {
                 __typename
-                id
+                ... on Cat {
+                  id
+                }
+                ... on Dog {
+                  id
+                }
               }
             } =>
             {
@@ -1330,7 +1335,12 @@ fn issue_1309_requires_through_entity_interface() -> Result<(), Box<dyn Error>> 
             {
               ... on Animal {
                 __typename
-                id
+                ... on Cat {
+                  id
+                }
+                ... on Dog {
+                  id
+                }
               }
             } =>
             {
