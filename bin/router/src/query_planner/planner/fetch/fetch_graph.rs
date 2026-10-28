@@ -112,6 +112,22 @@ impl FetchGraph<SingleTypeFetchStep> {
             .get(&(parent, identity))
             .into_iter()
             .flat_map(|children| children.iter().rev().copied())
+            // nothing updates the index when an edge goes away or a step changes, so catch that
+            // in tests instead of quietly reusing the wrong step
+            .inspect(move |&child| {
+                debug_assert!(
+                    self.parents_of(child).any(|edge| edge.source() == parent),
+                    "indexed step [{}] is no longer a child of [{}]",
+                    child.index(),
+                    parent.index(),
+                );
+                debug_assert_eq!(
+                    self.get_step_data(child).ok().and_then(step_identity_of),
+                    Some(identity),
+                    "indexed step [{}] changed what it's reused on",
+                    child.index(),
+                );
+            })
     }
 }
 
@@ -209,26 +225,24 @@ impl<State> FetchGraph<State> {
     }
 
     pub fn connect(&mut self, parent_index: NodeIndex, child_index: NodeIndex) -> EdgeIndex {
-        if let Some(edge) = self.graph.find_edge(parent_index, child_index) {
-            return edge;
+        // from the child's side, as a step has a parent or two but can have thousands of children
+        if let Some(edge) = self
+            .parents_of(child_index)
+            .find(|edge| edge.source() == parent_index)
+        {
+            return edge.id();
         }
         let edge = self.graph.add_edge(parent_index, child_index, ());
-        if let (Some(index), Some(child)) = (
+        if let (Some(index), Some(identity)) = (
             self.children_by_identity.as_mut(),
-            self.graph.node_weight(child_index),
+            self.graph
+                .node_weight(child_index)
+                .and_then(step_identity_of),
         ) {
-            if let Some(input_type_name) = child.input.first_definition_name() {
-                let identity = step_identity(
-                    &child.service_name,
-                    input_type_name,
-                    &child.response_path,
-                    child.condition.as_ref(),
-                );
-                index
-                    .entry((parent_index, identity))
-                    .or_default()
-                    .push(child_index);
-            }
+            index
+                .entry((parent_index, identity))
+                .or_default()
+                .push(child_index);
         }
         edge
     }
@@ -511,8 +525,7 @@ fn create_fetch_step_for_root_move(
     idx
 }
 
-/// What a step is reused on: its subgraph, input type, response path and condition. A hash of
-/// part of each path segment is enough, as equal paths hash the same.
+/// What a step is reused on: its subgraph, input type, response path and condition.
 fn step_identity(
     subgraph_name: &SubgraphName,
     input_type_name: &str,
@@ -525,22 +538,19 @@ fn step_identity(
     subgraph_name.hash(&mut hasher);
     input_type_name.hash(&mut hasher);
     condition.hash(&mut hasher);
-    response_path.inner.len().hash(&mut hasher);
-    for segment in response_path.inner.iter() {
-        match segment {
-            Segment::Field(field, arguments, _) => {
-                0u8.hash(&mut hasher);
-                field.response_key().hash(&mut hasher);
-                arguments.hash(&mut hasher);
-            }
-            Segment::List => 1u8.hash(&mut hasher),
-            Segment::TypeCondition(type_names, _) => {
-                2u8.hash(&mut hasher);
-                type_names.hash(&mut hasher);
-            }
-        }
-    }
+    response_path.hash(&mut hasher);
     hasher.finish()
+}
+
+/// `step_identity` of a step already in the graph.
+fn step_identity_of<State>(step: &FetchStepData<State>) -> Option<u64> {
+    let input_type_name = step.input.first_definition_name()?;
+    Some(step_identity(
+        &step.service_name,
+        input_type_name,
+        &step.response_path,
+        step.condition.as_ref(),
+    ))
 }
 
 // TODO: simplfy args
@@ -569,47 +579,17 @@ fn ensure_fetch_step_for_subgraph(
                 condition,
             )
             .find(|&child_index| {
-                if let Ok(fetch_step) = fetch_graph.get_step_data(child_index) {
-                    if fetch_step.service_name != *subgraph_name {
-                        return false;
-                    }
-
-                    if fetch_step.input.definition_name() != input_type_name {
-                        return false;
-                    }
-
-                    if fetch_step.response_path != *response_path {
-                        return false;
-                    }
-
-                    if fetch_step.condition.as_ref() != condition {
-                        return false;
-                    }
-
-                    if let Some(key) = &key {
-                        if fetch_step.input.definition_name() != key.type_name
-                            || !fetch_step
-                                .input
-                                .selection_set()
-                                .contains(&key.selection_set)
-                        {
-                            // requested key fields are not part of the input
-                            return false;
-                        }
-                    }
-
-                    // If there are requirements, then we do not re-use
-                    // optimizations will try to re-use the existing step later, if possible.
-                    if fetch_step.flags.contains(FetchStepFlags::USED_FOR_REQUIRES)
-                        || requires.is_some()
-                    {
-                        return false;
-                    }
-
-                    return true;
-                }
-
-                false
+                fetch_graph.get_step_data(child_index).is_ok_and(|step| {
+                    step.has_identity(subgraph_name, input_type_name, response_path, condition)
+                        // the requested key fields have to be part of the input
+                        && key.is_none_or(|key| {
+                            step.input.definition_name() == key.type_name
+                                && step.input.selection_set().contains(&key.selection_set)
+                        })
+                        // steps with requirements aren't reused here, the optimizations
+                        // try that later
+                        && !step.flags.contains(FetchStepFlags::USED_FOR_REQUIRES)
+                })
             })
     };
 
@@ -673,36 +653,13 @@ fn ensure_fetch_step_for_requirement(
             condition,
         )
         .find(|&child_index| {
-            if let Ok(fetch_step) = fetch_graph.get_step_data(child_index) {
-                if fetch_step.service_name != *subgraph_name
-                    || fetch_step.context_rewrites.is_some()
-                {
-                    return false;
-                }
-
-                if fetch_step.condition.as_ref() != condition {
-                    return false;
-                }
-
-                if fetch_step.input.definition_name() != type_name {
-                    return false;
-                }
-
-                if fetch_step.response_path != *response_path {
-                    return false;
-                }
-
-                if !fetch_step
-                    .input
-                    .contains(requirement.type_name, &requirement.selection_set)
-                {
-                    return false;
-                }
-
-                return true;
-            }
-
-            false
+            fetch_graph.get_step_data(child_index).is_ok_and(|step| {
+                step.has_identity(subgraph_name, type_name, response_path, condition)
+                    && step.context_rewrites.is_none()
+                    && step
+                        .input
+                        .contains(requirement.type_name, &requirement.selection_set)
+            })
         });
 
     match matching_child_index {
@@ -2474,4 +2431,58 @@ pub fn build_fetch_graph_from_query_tree(
     trace!("{}", fetch_graph);
 
     Ok(fetch_graph)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn children_like_finds_reusable_children_of_one_parent_newest_first() {
+        let mut fetch_graph = FetchGraph::new(OperationKind::Query);
+        let users = SubgraphName("users".to_string());
+        let reviews = SubgraphName("reviews".to_string());
+        let path = MergePath::default();
+
+        let parent = create_noop_fetch_step(&mut fetch_graph, false);
+        let other_parent = create_noop_fetch_step(&mut fetch_graph, false);
+        let mut add_child = |parent: NodeIndex, subgraph_name: &SubgraphName| {
+            let index = create_fetch_step_for_entity_call(
+                &mut fetch_graph,
+                parent,
+                subgraph_name,
+                "User",
+                "User",
+                &path,
+                None,
+                false,
+            );
+            fetch_graph.connect(parent, index);
+            index
+        };
+        let older = add_child(parent, &users);
+        add_child(parent, &reviews);
+        let newer = add_child(parent, &users);
+        let under_other_parent = add_child(other_parent, &users);
+
+        let found = |fetch_graph: &FetchGraph<SingleTypeFetchStep>, parent: NodeIndex| {
+            fetch_graph
+                .children_like(parent, &users, "User", &path, None)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(found(&fetch_graph, parent), vec![newer, older]);
+        assert_eq!(found(&fetch_graph, other_parent), vec![under_other_parent]);
+
+        // connecting again keeps the one edge and doesn't index the child twice
+        let edge = fetch_graph.connect(parent, older);
+        assert_eq!(fetch_graph.connect(parent, older), edge);
+        assert_eq!(
+            fetch_graph
+                .children_of(parent)
+                .filter(|edge| edge.target() == older)
+                .count(),
+            1
+        );
+        assert_eq!(found(&fetch_graph, parent), vec![newer, older]);
+    }
 }

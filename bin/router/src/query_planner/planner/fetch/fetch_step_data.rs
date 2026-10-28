@@ -216,6 +216,20 @@ impl FetchStepData<MultiTypeFetchStep> {
 }
 
 impl FetchStepData<SingleTypeFetchStep> {
+    /// Whether an entity call to this subgraph, type, path and condition could reuse this step.
+    pub fn has_identity(
+        &self,
+        subgraph_name: &SubgraphName,
+        input_type_name: &str,
+        response_path: &MergePath,
+        condition: Option<&Condition>,
+    ) -> bool {
+        self.service_name == *subgraph_name
+            && self.input.definition_name() == input_type_name
+            && self.response_path == *response_path
+            && self.condition.as_ref() == condition
+    }
+
     pub fn into_multi_type(self) -> FetchStepData<MultiTypeFetchStep> {
         FetchStepData::<MultiTypeFetchStep> {
             id: self.id,
