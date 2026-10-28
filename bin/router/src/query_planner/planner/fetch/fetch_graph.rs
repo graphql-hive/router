@@ -1462,6 +1462,34 @@ fn process_abstract_edge(
     condition: Option<&Condition>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
+    // The fragment's condition goes down to its children, and each one applies it. A child with
+    // a condition of its own only carries that one though, so in
+    // `... on Dog @include(if: $x) { name @skip(if: $y) }` `name` would lose `$x`. Then the
+    // fragment keeps the condition, like a field does.
+    let child_has_other_condition = condition.is_some_and(|condition| {
+        query_node
+            .children
+            .iter()
+            .any(|child| child.condition.as_ref().is_some_and(|c| c != condition))
+    });
+    let fragment_condition = condition.filter(|_| child_has_other_condition);
+    let condition_in_path = fragment_condition.is_some_and(|condition| {
+        fetch_path.inner.iter().any(|segment| {
+            matches!(
+                segment,
+                Segment::TypeCondition(_, Some(c)) | Segment::Field(_, _, Some(c)) if c == condition
+            )
+        })
+    });
+    let condition_on_step = fragment_condition.is_some_and(|c| {
+        fetch_graph.is_condition_on_step(parent_fetch_step_index, requiring_fetch_step_index, c)
+    });
+    let segment_condition = if condition_in_path || condition_on_step {
+        None
+    } else {
+        fragment_condition.cloned()
+    };
+
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
     trace!(
         "adding output field '__typename' and starting an inline fragment for type '{}' to fetch step [{}]",
@@ -1477,8 +1505,8 @@ fn process_abstract_edge(
                 SelectionItem::InlineFragment(InlineFragmentSelection {
                     type_condition: target_type_name.clone(),
                     selections: SelectionSet::default(),
-                    skip_if: None,
-                    include_if: None,
+                    skip_if: segment_condition.as_ref().and_then(Condition::to_skip_if),
+                    include_if: segment_condition.as_ref().and_then(Condition::to_include_if),
                 }),
             ],
         },
@@ -1486,11 +1514,11 @@ fn process_abstract_edge(
 
     let child_response_path = response_path.push(Segment::TypeCondition(
         Rc::new(BTreeSet::from([target_type_name.clone()])),
-        None,
+        segment_condition.clone(),
     ));
     let child_fetch_path = fetch_path.push(Segment::TypeCondition(
         Rc::new(BTreeSet::from([target_type_name.clone()])),
-        None,
+        segment_condition,
     ));
 
     process_children_for_fetch_steps(

@@ -1934,3 +1934,127 @@ fn batched_entity_calls_keep_the_condition_of_their_fragment() -> Result<(), Box
 
     Ok(())
 }
+
+/// `F` is spread under `@include(if: $x)` and wraps a `... on Dog @skip(if: $y)`. `tricks` needs
+/// both, the spread's `$x` can't get lost on the way.
+#[test]
+fn spread_condition_kept_around_same_type_fragment_with_its_own() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($x: Boolean!, $y: Boolean!) {
+          listings {
+            pet {
+              ...F @include(if: $x)
+            }
+          }
+        }
+
+        fragment F on Dog {
+          ... on Dog @skip(if: $y) {
+            tricks
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1309.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "search") {
+          query ($x:Boolean!,$y:Boolean!) {
+            listings {
+              pet {
+                __typename
+                ... on Dog @include(if: $x) {
+                  ... on Dog @skip(if: $y) {
+                    __typename
+                    id
+                  }
+                }
+              }
+            }
+          }
+        },
+        Include(if: $x) {
+          Skip(if: $y) {
+            Flatten(path: "listings.@.pet|[Dog]|[Dog]") {
+              Fetch(service: "catalog") {
+                {
+                  ... on Dog {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Dog {
+                    tricks
+                  }
+                }
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    // The same with a field: `name` has `$y` and needs `$x` too
+    let document = parse_operation(
+        r#"
+        query($x: Boolean!, $y: Boolean!) {
+          listings {
+            pet {
+              ... on Dog @include(if: $x) {
+                name @skip(if: $y)
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1309.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "search") {
+          query ($x:Boolean!) {
+            listings {
+              pet {
+                __typename
+                ... on Dog @include(if: $x) {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+        },
+        Include(if: $x) {
+          Skip(if: $y) {
+            Flatten(path: "listings.@.pet|[Dog]") {
+              Fetch(service: "catalog") {
+                {
+                  ... on Dog {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Dog {
+                    name
+                  }
+                }
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
+}
