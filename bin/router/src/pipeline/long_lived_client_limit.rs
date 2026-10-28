@@ -151,7 +151,7 @@ pub fn try_reserve_long_lived_client(
 
     // try to reserve a slot, bail if at the limit
     counter
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
             if current < limit {
                 Some(current + 1)
             } else {

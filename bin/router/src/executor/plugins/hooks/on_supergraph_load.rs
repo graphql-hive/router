@@ -228,7 +228,7 @@ impl Supergraph {
         };
 
         let cache_id = NEXT_SUPERGRAPH_DATA_ID
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
             .expect("supergraph id space exhausted");
         let data = SupergraphData {
             name: name.into(),
