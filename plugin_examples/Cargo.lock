@@ -535,9 +535,9 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.17.0"
+version = "1.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ec2f1fc3ec205783a5da9a7e6c1509cc69dedf09a1949e412c1e18469326d00"
+checksum = "faac5829c2b74c28f830747e7818ccfb684261b5f48a1118b1e2a13d36dfab13"
 dependencies = [
  "aws-lc-sys",
  "untrusted 0.7.1",
@@ -546,14 +546,15 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.41.0"
+version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a2f9779ce85b93ab6170dd940ad0169b5766ff848247aff13bb788b832fe3f4"
+checksum = "f1622d8446a2d4b2ce0c7eefc73dd43a99779028d5ee5c2dd8073a658ba8a2bc"
 dependencies = [
  "cc",
  "cmake",
  "dunce",
  "fs_extra",
+ "pkg-config",
 ]
 
 [[package]]
@@ -728,6 +729,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "blake3"
+version = "1.8.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d9e454fc11f76977dc803893aff6304ed33d6a26efae8696573bea74baa27ae"
+dependencies = [
+ "arrayvec",
+ "cc",
+ "cfg-if",
+ "constant_time_eq",
+ "cpufeatures 0.3.0",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -781,6 +795,12 @@ name = "borrow-or-share"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
+
+[[package]]
+name = "boxcar"
+version = "0.2.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36f64beae40a84da1b4b26ff2761a5b895c12adc41dc25aaee1c4f2bbfe97a6e"
 
 [[package]]
 name = "brotli"
@@ -1244,6 +1264,12 @@ dependencies = [
  "quote",
  "unicode-xid",
 ]
+
+[[package]]
+name = "constant_time_eq"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
 name = "context-data-plugin-example"
@@ -1942,7 +1968,7 @@ dependencies = [
  "jsonwebtoken",
  "lazy_static",
  "libdd-trace-protobuf 5.1.0",
- "libdd-trace-utils 13.0.0",
+ "libdd-trace-utils 14.0.0",
  "mockito",
  "ntex",
  "opentelemetry-otlp",
@@ -2576,7 +2602,7 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
 name = "graphql-tools"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "combine",
  "itoa",
@@ -2808,7 +2834,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router"
-version = "0.3.1"
+version = "0.3.6"
 dependencies = [
  "ahash",
  "anyhow",
@@ -2816,6 +2842,8 @@ dependencies = [
  "async-stream",
  "async-trait",
  "bitflags 2.13.0",
+ "blake3",
+ "boxcar",
  "brotli",
  "bumpalo",
  "bytes",
@@ -2902,6 +2930,7 @@ dependencies = [
  "schemars 1.2.1",
  "serde",
  "serde_json",
+ "smallvec",
  "sonic-rs",
  "sonic-simd",
  "strum 0.28.0",
@@ -3878,11 +3907,12 @@ dependencies = [
 
 [[package]]
 name = "libdd-common"
-version = "7.0.0"
+version = "8.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07f750b5392281ae57764e1ad924d868d880f3b6c4f9529373adfb4823becff0"
+checksum = "6fe68e6dd16f4aa0b7b72fa7cf4c3ee5f6fd1cc9c9a569f08b712c9ef44750f3"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "bytes",
  "cc",
  "const_format",
@@ -4211,9 +4241,9 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "13.0.0"
+version = "14.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "143aef54b9a9c7569e5fc64cbfb09c6f6a2f3ab6b02233743fe5ec73c00a0070"
+checksum = "3a8a4fac534f744ab12645fcb2ef39c96ccc93d8ecf30f2469a89755fccee0de"
 dependencies = [
  "anyhow",
  "base64",
@@ -4228,7 +4258,7 @@ dependencies = [
  "indexmap 2.14.0",
  "itoa",
  "libdd-capabilities 4.0.1",
- "libdd-common 7.0.0",
+ "libdd-common 8.0.0",
  "libdd-tinybytes",
  "libdd-trace-normalization 4.2.0",
  "libdd-trace-protobuf 5.1.0",
@@ -6950,9 +6980,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.40"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef86cd5876211988985292b91c96a8f2d298df24e75989a43a3c73f2d4d8168b"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -7037,9 +7067,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.13"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "aws-lc-rs",
  "ring",
