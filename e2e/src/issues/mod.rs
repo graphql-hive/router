@@ -3580,7 +3580,8 @@ mod issues_e2e_tests {
     ///
     /// `rank` requires the pet's `whiskers` or `tricks`, which only `catalog` has. Both can
     /// come through `Animal`'s key or through their own type's key. They used to go both ways,
-    /// so `catalog` got the Cat and the Dog twice, in one batch. Now it gets every pet once.
+    /// so `catalog` got the Cat and the Dog twice, in one batch. Now it gets every pet once, and
+    /// not the Bird, nothing is asked of it there.
     ///
     /// The subgraphs are the ones in `bench/subgraphs`, so `ranking` ranks each listing by the
     /// pet it's sent. The Bird is neither a Dog nor a Cat, so its pet is only `__typename`,
@@ -3644,7 +3645,7 @@ mod issues_e2e_tests {
             .collect();
         insta::assert_snapshot!(called.join("\n"), @r#"
         /search 
-        /catalog {"__typename":"Animal","id":"c1"} {"__typename":"Animal","id":"d1"} {"__typename":"Animal","id":"b1"}
+        /catalog {"__typename":"Cat","id":"c1"} {"__typename":"Dog","id":"d1"}
         /ranking {"__typename":"Listing","pet":{"__typename":"Cat","whiskers":12},"id":"l1"} {"__typename":"Listing","pet":{"__typename":"Dog","tricks":3},"id":"l2"} {"__typename":"Listing","pet":{"__typename":"Bird"},"id":"l3"}
         "#);
     }
