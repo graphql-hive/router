@@ -12,8 +12,7 @@ use ahash::HashMapExt;
 
 use crate::{
     executor::{
-        introspection::schema::PossibleTypes, response::value::Value,
-        utils::traverse::traverse_and_callback,
+        introspection::schema::PossibleTypes, response::value::Value, utils::traverse::PathTrie,
     },
     query_planner::{
         ast::requires::{RequiresSelection, RequiresSelectionSetRef},
@@ -41,15 +40,14 @@ impl<'d, 'a> ReuseIndex<'d, 'a> {
         possible_types: &PossibleTypes,
     ) -> Self {
         let mut by_hash = AHashMap::new();
-        for source in &reuse.sources {
-            traverse_and_callback(data, source.as_slice(), possible_types, &mut |object, _| {
-                if object.is_object() {
-                    by_hash
-                        .entry(object.to_hash(required_selections, possible_types))
-                        .or_insert(object);
-                }
-            });
-        }
+        let (trie, _) = PathTrie::new(reuse.sources.iter().map(|source| source.as_slice()));
+        trie.walk(data, possible_types, &mut |_, object, _| {
+            if object.is_object() {
+                by_hash
+                    .entry(object.to_hash(required_selections, possible_types))
+                    .or_insert(object);
+            }
+        });
         Self {
             by_hash,
             copy: reuse.copy.root_selections(),
