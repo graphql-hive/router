@@ -92,7 +92,7 @@ const USAGE: &str = "\
 Usage:
   hive_router anonymize keygen
   hive_router anonymize supergraph [--key-file <path>] <supergraph.graphql>
-  hive_router anonymize operations [--key-file <path>] <operation.graphql>
+  hive_router anonymize operation [--key-file <path>] <operation.graphql>
 
 The key comes from --key-file or the HIVE_ANON_KEY env var, 64 hex characters made by `keygen`.
 Use the same key for the supergraph and its operations.";
@@ -916,7 +916,7 @@ pub fn run_cli(args: &[String]) -> Result<(), String> {
             let sdl = read(Path::new(input))?;
             anonymizer()?.anonymize_supergraph_to(&sdl, &mut std::io::stdout().lock())?
         }
-        ["operations", input] => {
+        ["operation", input] => {
             print!(
                 "{}",
                 anonymizer()?.anonymize_operation(&read(Path::new(input))?)?
