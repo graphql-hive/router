@@ -893,3 +893,45 @@ fn conditional_same_type_fragment_under_a_type_condition() -> Result<(), Box<dyn
 
     Ok(())
 }
+
+/// Both conditions stay: `$a` on the typeless fragment, `$b` on `... on User` inside it.
+#[test]
+fn conditional_type_condition_inside_a_conditional_fragment() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($a: Boolean!, $b: Boolean!) {
+          users {
+            ... @skip(if: $a) {
+              ... on User @skip(if: $b) {
+                id
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-object-with-requires.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($a:Boolean!,$b:Boolean!) {
+          users {
+            __typename
+            ... on User @skip(if: $a) {
+              ... on User @skip(if: $b) {
+                id
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
