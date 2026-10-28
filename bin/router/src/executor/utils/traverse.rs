@@ -1,3 +1,5 @@
+use ahash::HashMap as AHashMap;
+
 use crate::query_planner::planner::plan_nodes::{PathSegment, TypeCondition};
 
 use crate::executor::{
@@ -150,66 +152,355 @@ fn walk_mut<'a, Callback>(
     }
 }
 
-/// Calls `callback` for every value at `path`, along with the stack of objects that hold the
-/// fields walked to get there (nearest last).
-pub fn traverse_and_callback<'a, 'v>(
-    data: &'a Value<'v>,
-    path: &[PathSegment],
-    possible_types: &PossibleTypes,
-    callback: &mut impl FnMut(&'a Value<'v>, &[&'a Value<'v>]),
-) {
-    walk(data, path, possible_types, &mut Vec::new(), callback);
+/// From this many fields on, a trie node goes over the object's keys once instead of searching
+/// the object for every field.
+// ponytail: picked from the batch_paths bench, not tuned per object width
+const FIELDS_BY_NAME_FROM: usize = 8;
+
+/// The paths of a fetch merged into a tree, so one walk covers all of them and the steps they
+/// share are walked once.
+///
+/// Each path sees its values in the same order a walk of that path alone gives them, so hashes
+/// collected with [`PathTrie::walk`] line up with the values [`PathTrie::walk_mut`] gives later.
+pub struct PathTrie<'p> {
+    nodes: Vec<TrieNode<'p>>,
 }
 
-fn walk<'a, 'v>(
-    data: &'a Value<'v>,
-    path: &[PathSegment],
-    possible_types: &PossibleTypes,
-    objects: &mut Vec<&'a Value<'v>>,
-    callback: &mut impl FnMut(&'a Value<'v>, &[&'a Value<'v>]),
-) {
-    if path.is_empty() {
-        if let Value::Array(items) = data {
-            for item in items {
-                callback(item, objects);
-            }
-        } else {
-            callback(data, objects);
-        }
-        return;
+#[derive(Default)]
+struct TrieNode<'p> {
+    /// A path ends here
+    end: bool,
+    fields: Vec<(&'p str, usize)>,
+    /// `fields` by name, when there are enough of them
+    fields_by_name: Option<AHashMap<&'p str, usize>>,
+    list: Option<usize>,
+    type_conditions: Vec<(&'p TypeCondition, usize)>,
+}
+
+impl TrieNode<'_> {
+    fn has_children(&self) -> bool {
+        !self.fields.is_empty() || self.list.is_some() || !self.type_conditions.is_empty()
     }
-    match &path[0] {
-        PathSegment::Field(key) => {
-            if let Value::Object(object) = data {
-                if let Some(child) = Value::object_get(object, key.as_ref()) {
-                    objects.push(data);
-                    walk(child, &path[1..], possible_types, objects, callback);
-                    objects.pop();
-                }
+}
+
+fn satisfies_type_condition(
+    object: &[(&str, Value<'_>)],
+    condition: &TypeCondition,
+    possible_types: &PossibleTypes,
+) -> bool {
+    Value::object_get(object, TYPENAME_FIELD_NAME)
+        .and_then(Value::as_str)
+        .is_none_or(|name| entity_satisfies_any_type_condition(possible_types, name, condition))
+}
+
+impl<'p> PathTrie<'p> {
+    /// Returns the trie and the node each path ends at. Identical paths end at the same node.
+    pub fn new(paths: impl IntoIterator<Item = &'p [PathSegment]>) -> (Self, Vec<usize>) {
+        let mut nodes = vec![TrieNode::default()];
+        let mut ends = Vec::new();
+        for path in paths {
+            let mut node = 0;
+            for segment in path {
+                let existing = match segment {
+                    PathSegment::Field(name) => nodes[node]
+                        .fields
+                        .iter()
+                        .find(|(existing, _)| *existing == name.as_ref())
+                        .map(|(_, child)| *child),
+                    PathSegment::List => nodes[node].list,
+                    PathSegment::TypeCondition(condition) => nodes[node]
+                        .type_conditions
+                        .iter()
+                        .find(|(existing, _)| *existing == condition.as_ref())
+                        .map(|(_, child)| *child),
+                };
+                node = match existing {
+                    Some(child) => child,
+                    None => {
+                        let child = nodes.len();
+                        nodes.push(TrieNode::default());
+                        let parent = &mut nodes[node];
+                        match segment {
+                            PathSegment::Field(name) => parent.fields.push((name, child)),
+                            PathSegment::List => parent.list = Some(child),
+                            PathSegment::TypeCondition(condition) => {
+                                parent.type_conditions.push((condition, child))
+                            }
+                        }
+                        child
+                    }
+                };
+            }
+            nodes[node].end = true;
+            ends.push(node);
+        }
+        for node in &mut nodes {
+            if node.fields.len() >= FIELDS_BY_NAME_FROM {
+                node.fields_by_name = Some(node.fields.iter().copied().collect());
             }
         }
-        PathSegment::List => {
+        (Self { nodes }, ends)
+    }
+
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    /// Calls `callback` for every value at the end of every path, with the node the path ends at
+    /// and the objects that hold the fields walked to get there (nearest last).
+    pub fn walk<'d, 'v>(
+        &self,
+        data: &'d Value<'v>,
+        possible_types: &PossibleTypes,
+        callback: &mut impl FnMut(usize, &'d Value<'v>, &[&'d Value<'v>]),
+    ) {
+        self.walk_node(0, data, possible_types, &mut Vec::new(), callback);
+    }
+
+    /// Inlined, so most paths reach their end without a call. A call costs more than the
+    /// callback when a node has nothing below it.
+    #[inline(always)]
+    fn walk_node<'d, 'v>(
+        &self,
+        index: usize,
+        data: &'d Value<'v>,
+        possible_types: &PossibleTypes,
+        objects: &mut Vec<&'d Value<'v>>,
+        callback: &mut impl FnMut(usize, &'d Value<'v>, &[&'d Value<'v>]),
+    ) {
+        let node = &self.nodes[index];
+        if node.end {
             if let Value::Array(items) = data {
                 for item in items {
-                    walk(item, &path[1..], possible_types, objects, callback);
+                    callback(index, item, objects);
                 }
+            } else {
+                callback(index, data, objects);
             }
         }
-        PathSegment::TypeCondition(condition) => {
-            if let Value::Object(object) = data {
-                if Value::object_get(object, TYPENAME_FIELD_NAME)
-                    .and_then(Value::as_str)
-                    .is_none_or(|name| {
-                        entity_satisfies_any_type_condition(possible_types, name, condition)
-                    })
-                {
-                    walk(data, &path[1..], possible_types, objects, callback);
+        if node.has_children() {
+            self.walk_below(node, data, possible_types, objects, callback);
+        }
+    }
+
+    fn walk_below<'d, 'v>(
+        &self,
+        node: &TrieNode<'p>,
+        data: &'d Value<'v>,
+        possible_types: &PossibleTypes,
+        objects: &mut Vec<&'d Value<'v>>,
+        callback: &mut impl FnMut(usize, &'d Value<'v>, &[&'d Value<'v>]),
+    ) {
+        match data {
+            Value::Object(object) if !node.fields.is_empty() => {
+                objects.push(data);
+                if let Some(fields_by_name) = &node.fields_by_name {
+                    // a key the object has twice is walked twice, a search would find it once
+                    for (key, child) in object {
+                        if let Some(&child_index) = fields_by_name.get(key) {
+                            self.walk_node(child_index, child, possible_types, objects, callback);
+                        }
+                    }
+                } else {
+                    for &(name, child_index) in &node.fields {
+                        if let Some(child) = Value::object_get(object, name) {
+                            self.walk_node(child_index, child, possible_types, objects, callback);
+                        }
+                    }
                 }
-            } else if let Value::Array(items) = data {
-                for item in items {
-                    walk(item, path, possible_types, objects, callback);
+                objects.pop();
+            }
+            Value::Array(items) => {
+                if let Some(list) = node.list {
+                    for item in items {
+                        self.walk_node(list, item, possible_types, objects, callback);
+                    }
                 }
             }
+            _ => {}
+        }
+        for &(condition, child_index) in &node.type_conditions {
+            self.walk_type_condition(
+                condition,
+                child_index,
+                data,
+                possible_types,
+                objects,
+                callback,
+            );
+        }
+    }
+
+    /// A type condition doesn't add a step. On a list it's checked for each item.
+    fn walk_type_condition<'d, 'v>(
+        &self,
+        condition: &TypeCondition,
+        index: usize,
+        data: &'d Value<'v>,
+        possible_types: &PossibleTypes,
+        objects: &mut Vec<&'d Value<'v>>,
+        callback: &mut impl FnMut(usize, &'d Value<'v>, &[&'d Value<'v>]),
+    ) {
+        match data {
+            Value::Object(object) => {
+                if satisfies_type_condition(object, condition, possible_types) {
+                    self.walk_node(index, data, possible_types, objects, callback);
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    self.walk_type_condition(
+                        condition,
+                        index,
+                        item,
+                        possible_types,
+                        objects,
+                        callback,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Like [`Self::walk`], but with mutable values and, when `error_path` is given, the path to
+    /// each value. A value is given out before the walk goes below it, so a path shouldn't go
+    /// through what's written at the end of another one.
+    pub fn walk_mut<'a>(
+        &self,
+        data: &mut Value<'a>,
+        possible_types: &PossibleTypes,
+        error_path: Option<GraphQLErrorPath>,
+        callback: &mut impl FnMut(usize, &mut Value<'a>, Option<&GraphQLErrorPath>),
+    ) {
+        let mut error_path = error_path;
+        self.walk_node_mut(0, data, possible_types, &mut error_path, callback);
+    }
+
+    /// See [`Self::walk_node`]
+    #[inline(always)]
+    fn walk_node_mut<'a>(
+        &self,
+        index: usize,
+        data: &mut Value<'a>,
+        possible_types: &PossibleTypes,
+        error_path: &mut Option<GraphQLErrorPath>,
+        callback: &mut impl FnMut(usize, &mut Value<'a>, Option<&GraphQLErrorPath>),
+    ) {
+        let node = &self.nodes[index];
+        if node.end {
+            if let Value::Array(items) = &mut *data {
+                for (item_index, item) in items.iter_mut().enumerate() {
+                    push_index(error_path, item_index);
+                    callback(index, item, error_path.as_ref());
+                    pop(error_path);
+                }
+            } else {
+                callback(index, data, error_path.as_ref());
+            }
+        }
+        if node.has_children() {
+            self.walk_below_mut(node, data, possible_types, error_path, callback);
+        }
+    }
+
+    fn walk_below_mut<'a>(
+        &self,
+        node: &TrieNode<'p>,
+        data: &mut Value<'a>,
+        possible_types: &PossibleTypes,
+        error_path: &mut Option<GraphQLErrorPath>,
+        callback: &mut impl FnMut(usize, &mut Value<'a>, Option<&GraphQLErrorPath>),
+    ) {
+        match &mut *data {
+            Value::Object(object) if !node.fields.is_empty() => {
+                if let Some(fields_by_name) = &node.fields_by_name {
+                    for (key, child) in object.iter_mut() {
+                        if let Some(&child_index) = fields_by_name.get(*key) {
+                            push_field(error_path, key);
+                            self.walk_node_mut(
+                                child_index,
+                                child,
+                                possible_types,
+                                error_path,
+                                callback,
+                            );
+                            pop(error_path);
+                        }
+                    }
+                } else {
+                    for &(name, child_index) in &node.fields {
+                        if let Some(child) = Value::object_get_mut(object, name) {
+                            push_field(error_path, name);
+                            self.walk_node_mut(
+                                child_index,
+                                child,
+                                possible_types,
+                                error_path,
+                                callback,
+                            );
+                            pop(error_path);
+                        }
+                    }
+                }
+            }
+            Value::Array(items) => {
+                if let Some(list) = node.list {
+                    for (item_index, item) in items.iter_mut().enumerate() {
+                        push_index(error_path, item_index);
+                        self.walk_node_mut(list, item, possible_types, error_path, callback);
+                        pop(error_path);
+                    }
+                }
+            }
+            _ => {}
+        }
+        for &(condition, child_index) in &node.type_conditions {
+            self.walk_type_condition_mut(
+                condition,
+                child_index,
+                data,
+                possible_types,
+                error_path,
+                callback,
+            );
+        }
+    }
+
+    fn walk_type_condition_mut<'a>(
+        &self,
+        condition: &TypeCondition,
+        index: usize,
+        data: &mut Value<'a>,
+        possible_types: &PossibleTypes,
+        error_path: &mut Option<GraphQLErrorPath>,
+        callback: &mut impl FnMut(usize, &mut Value<'a>, Option<&GraphQLErrorPath>),
+    ) {
+        match data {
+            Value::Object(object) => {
+                if satisfies_type_condition(object, condition, possible_types) {
+                    self.walk_node_mut(index, data, possible_types, error_path, callback);
+                }
+            }
+            Value::Array(items) => {
+                for (item_index, item) in items.iter_mut().enumerate() {
+                    push_index(error_path, item_index);
+                    self.walk_type_condition_mut(
+                        condition,
+                        index,
+                        item,
+                        possible_types,
+                        error_path,
+                        callback,
+                    );
+                    pop(error_path);
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -412,38 +703,132 @@ mod tests {
     }
 
     #[test]
-    fn traverse_matches_multi_type_cast() {
+    fn trie_matches_multi_type_cast() {
         let data = Value::Object(vec![("__typename", Value::String("Book".into()))]);
         let path = path(&["|Book|User"]);
+        let (trie, _) = super::PathTrie::new([path.as_slice()]);
         let mut matched = false;
 
-        super::traverse_and_callback(
-            &data,
-            path.as_slice(),
-            &Default::default(),
-            &mut |_value, _| {
-                matched = true;
-            },
-        );
+        trie.walk(&data, &Default::default(), &mut |_, _, _| {
+            matched = true;
+        });
 
         assert!(matched);
     }
 
     #[test]
-    fn traverse_rejects_non_matching_multi_type_cast() {
+    fn trie_rejects_non_matching_multi_type_cast() {
         let data = Value::Object(vec![("__typename", Value::String("Magazine".into()))]);
         let path = path(&["|Book|User"]);
+        let (trie, _) = super::PathTrie::new([path.as_slice()]);
         let mut matched = false;
 
-        super::traverse_and_callback(
+        trie.walk(&data, &Default::default(), &mut |_, _, _| {
+            matched = true;
+        });
+
+        assert!(!matched);
+    }
+
+    /// Hashes collected with one walk are matched to values by position in the other, so every
+    /// path has to see the same values in the same order as a walk of that path alone.
+    #[test]
+    fn trie_walks_each_path_like_a_walk_of_it_alone() {
+        let data: Value = sonic_rs::from_str(
+            r#"{
+                "items": [
+                    {"__typename":"Book","a":{"id":1},"b":{"id":2},
+                     "f0":0,"f1":1,"f2":2,"f3":3,"f4":4,"f5":5,"f6":6,"f7":7,"f8":8,"f9":9},
+                    null,
+                    {"__typename":"User","a":{"id":3},"b":{"id":4},"f3":{"x":1}},
+                    [{"__typename":"Book","b":{"id":5}}],
+                    {"__typename":"Magazine","a":[{"id":6},null]}
+                ]
+            }"#,
+        )
+        .unwrap();
+        let mut paths = vec![
+            path(&["items", "@", "a"]),
+            path(&["items", "@"]),
+            path(&["items", "@", "|Book", "b"]),
+            path(&["items", "|Book|User"]),
+            path(&["items", "@", "a"]),
+            path(&[]),
+            path(&["items", "@", "missing"]),
+        ];
+        // enough fields on one node to go over the object's keys instead
+        let fields: Vec<String> = (0..10).map(|i| format!("f{i}")).collect();
+        paths.extend(fields.iter().map(|field| path(&["items", "@", field])));
+        let metadata = SchemaMetadata::default();
+
+        type Found = Vec<(String, Vec<GraphQLErrorPathSegment>)>;
+        let alone: Vec<Found> = paths
+            .iter()
+            .map(|path| {
+                let mut data = data.clone();
+                let mut found = Vec::new();
+                super::traverse_and_callback_mut(
+                    &mut data,
+                    path.as_slice(),
+                    &metadata,
+                    Some(GraphQLErrorPath::with_capacity(0)),
+                    &mut |value, error_path| {
+                        found.push((
+                            sonic_rs::to_string(value).unwrap(),
+                            error_path.unwrap().segments,
+                        ))
+                    },
+                );
+                found
+            })
+            .collect();
+
+        let (trie, ends) = super::PathTrie::new(paths.iter().map(|path| path.as_slice()));
+        assert_eq!(ends[0], ends[4], "identical paths end at the same node");
+        let mut by_node: Vec<Found> = vec![Vec::new(); trie.len()];
+        let mut target = data.clone();
+        trie.walk_mut(
+            &mut target,
+            &metadata.possible_types,
+            Some(GraphQLErrorPath::with_capacity(0)),
+            &mut |node, value, error_path| {
+                by_node[node].push((
+                    sonic_rs::to_string(value).unwrap(),
+                    error_path.unwrap().segments.clone(),
+                ))
+            },
+        );
+        // the objects above each value are the ones holding the fields walked to get there
+        let mut by_node_shared: Vec<Vec<(String, usize)>> = vec![Vec::new(); trie.len()];
+        trie.walk(
             &data,
-            path.as_slice(),
-            &Default::default(),
-            &mut |_value, _| {
-                matched = true;
+            &metadata.possible_types,
+            &mut |node, value, objects| {
+                by_node_shared[node].push((sonic_rs::to_string(value).unwrap(), objects.len()))
             },
         );
 
-        assert!(!matched);
+        for (index, (end, alone)) in ends.iter().zip(&alone).enumerate() {
+            assert_eq!(&by_node[*end], alone, "walk_mut of path {}", paths[index]);
+            let expected: Vec<(String, usize)> = alone
+                .iter()
+                .map(|(value, error_path)| {
+                    let fields = error_path
+                        .iter()
+                        .filter(|segment| matches!(segment, GraphQLErrorPathSegment::String(_)))
+                        .count();
+                    (value.clone(), fields)
+                })
+                .collect();
+            assert_eq!(
+                by_node_shared[*end], expected,
+                "walk of path {}",
+                paths[index]
+            );
+        }
+        assert!(
+            alone.iter().map(Vec::len).sum::<usize>() > 20,
+            "the paths find values"
+        );
     }
 }

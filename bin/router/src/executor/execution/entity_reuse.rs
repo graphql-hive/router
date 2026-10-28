@@ -9,7 +9,7 @@ use crate::{
         response::{merge::EntityMerger, value::Value},
         utils::{
             prehashed_map::PrehashedMap,
-            traverse::{traverse_and_callback, traverse_and_callback_mut},
+            traverse::{traverse_and_callback_mut, PathTrie},
         },
     },
     query_planner::{
@@ -34,14 +34,13 @@ impl<'d, 'v> ReuseIndex<'d, 'v> {
         possible_types: &PossibleTypes,
     ) -> Self {
         let mut seen = PrehashedMap::default();
-        for source in &reuse.sources {
-            traverse_and_callback(data, source.as_slice(), possible_types, &mut |object, _| {
-                if object.is_object() && holds_every_field(object, required_selections) {
-                    seen.entry(object.to_hash(required_selections, possible_types))
-                        .or_insert(Known::InResponse(object));
-                }
-            });
-        }
+        let (trie, _) = PathTrie::new(reuse.sources.iter().map(|source| source.as_slice()));
+        trie.walk(data, possible_types, &mut |_, object, _| {
+            if object.is_object() && holds_every_field(object, required_selections) {
+                seen.entry(object.to_hash(required_selections, possible_types))
+                    .or_insert(Known::InResponse(object));
+            }
+        });
         Self {
             seen,
             copy: reuse.copy.root_selections(),
