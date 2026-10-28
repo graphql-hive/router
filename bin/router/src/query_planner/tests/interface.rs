@@ -1,5 +1,7 @@
 use crate::query_planner::{
-    tests::testkit::{build_query_plan_with_defaults, init_logger},
+    tests::testkit::{
+        build_query_plan_from_sdl, build_query_plan_with_defaults, init_logger, read_supergraph,
+    },
     utils::parsing::parse_operation,
 };
 use std::error::Error;
@@ -896,6 +898,136 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
                   sku
                 }
                 ... on Magazine {
+                  sku
+                }
+              }
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Same as above, but `Book` is renamed to `Tome` so it sorts after `Magazine`. Batching then
+/// declares an empty `Magazine` slot on the conditional `Tome` step before merging, and that slot
+/// used to get its own `... on Magazine @include(if: $title) { }`, an empty selection set.
+#[test]
+fn nested_interface_field_with_redundant_inline_fragments_other_type_order(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let supergraph =
+        read_supergraph("fixture/tests/abstract-types.supergraph.graphql").replace("Book", "Tome");
+    let document = parse_operation(
+        r#"
+        query ($title: Boolean = true) {
+          products {
+            id
+            reviews {
+              product {
+                id
+                ... on Tome @include(if: $title) {
+                  title
+                  ... on Tome {
+                    sku
+                  }
+                }
+                ... on Magazine {
+                  sku
+                }
+              }
+            }
+          }
+        }
+      "#,
+    );
+    let query_plan = build_query_plan_from_sdl(
+        &supergraph,
+        document,
+        Default::default(),
+        Default::default(),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            products {
+              id
+              __typename
+            }
+          }
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "reviews") {
+            {
+              ... on Magazine {
+                __typename
+                id
+              }
+              ... on Tome {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Magazine {
+                reviews {
+                  ...a
+                }
+              }
+              ... on Tome {
+                reviews {
+                  ...a
+                }
+              }
+            }
+            fragment a on Review {
+              product {
+                id
+                __typename
+              }
+            }
+          },
+        },
+        Parallel {
+          Include(if: $title) {
+            Flatten(path: "products.@.reviews.@.product|[Tome]") {
+              Fetch(service: "books") {
+                {
+                  ... on Tome {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Tome {
+                    title
+                  }
+                }
+              },
+            },
+          },
+          Flatten(path: "products.@.reviews.@.product") {
+            Fetch(service: "products") {
+              {
+                ... on Magazine {
+                  __typename
+                  id
+                }
+                ... on Tome {
+                  __typename
+                  id
+                }
+              } =>
+              ($title:Boolean=true) {
+                ... on Magazine {
+                  sku
+                }
+                ... on Tome @include(if: $title) {
                   sku
                 }
               }
