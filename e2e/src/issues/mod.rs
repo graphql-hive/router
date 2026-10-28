@@ -3576,6 +3576,86 @@ mod issues_e2e_tests {
     }
 
     #[ntex::test]
+    /// Entities inside lists of lists: `grid: [[Product]]`, `cube: [[[Product]]]`, and
+    /// `Product.reviews: [[Review]]` inside `grid`. The products of `cube` used to go to the
+    /// subgraph as lists of products, and the reviews in `grid` were never fetched. Both came
+    /// back `null` without an error.
+    async fn entities_inside_lists_of_lists() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+
+        let product = |id: &str| json!({ "__typename": "Product", "id": id });
+        let review = |id: &str| json!({ "__typename": "Review", "id": id });
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mock_subgraphs(json!({
+                "catalog": {
+                    "query": {
+                        "grid": [[product("p1"), null], null, [product("p2")]],
+                        "cube": [[[product("p1")], [product("p2"), product("p3")]], [[product("p3")]]],
+                        "shelves": [{ "rows": [[product("p1")], [product("p3")]] }, { "rows": null }]
+                    }
+                },
+                "products": {
+                    "entities": [
+                        { "__typename": "Product", "id": "p1", "name": "Chair",
+                          "reviews": [[review("r1"), review("r2")], [review("r3")]] },
+                        { "__typename": "Product", "id": "p2", "name": "Desk",
+                          "reviews": [[review("r3")]] },
+                        { "__typename": "Product", "id": "p3", "name": "Lamp", "reviews": null }
+                    ]
+                },
+                "reviews": {
+                    "entities": [
+                        { "__typename": "Review", "id": "r1", "body": "Comfy" },
+                        { "__typename": "Review", "id": "r2", "body": "Squeaks" },
+                        { "__typename": "Review", "id": "r3", "body": "Sturdy" }
+                    ]
+                }
+            })))
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: ../bin/router/fixture/tests/nested-entity-lists.supergraph.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                "{ grid { name reviews { body } } cube { name } shelves { rows { name } } }",
+                None,
+                None,
+            )
+            .await;
+        let body: serde_json::Value =
+            serde_json::from_str(&res.json_body_string_pretty().await).unwrap();
+        let chair = json!({ "name": "Chair", "reviews": [[{ "body": "Comfy" }, { "body": "Squeaks" }], [{ "body": "Sturdy" }]] });
+        let desk = json!({ "name": "Desk", "reviews": [[{ "body": "Sturdy" }]] });
+        assert_eq!(
+            body,
+            json!({
+                "data": {
+                    "grid": [[chair, null], null, [desk]],
+                    "cube": [
+                        [[{ "name": "Chair" }], [{ "name": "Desk" }, { "name": "Lamp" }]],
+                        [[{ "name": "Lamp" }]]
+                    ],
+                    "shelves": [{ "rows": [[{ "name": "Chair" }], [{ "name": "Lamp" }]] }, { "rows": null }]
+                }
+            })
+        );
+    }
+
+    #[ntex::test]
     /// https://github.com/graphql-hive/router/issues/1309
     ///
     /// `rank` requires the pet's `whiskers` or `tricks`, which only `catalog` has. Both can

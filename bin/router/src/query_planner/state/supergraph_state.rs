@@ -1386,6 +1386,15 @@ impl TypeNode {
         }
     }
 
+    /// How many lists wrap the named type, `[[Product!]]!` is 2.
+    pub fn list_depth(&self) -> usize {
+        match self {
+            TypeNode::List(inner) => 1 + inner.as_ref().list_depth(),
+            TypeNode::NonNull(inner) => inner.as_ref().list_depth(),
+            TypeNode::Named(_) => 0,
+        }
+    }
+
     pub fn inner_type(&self) -> &str {
         match self {
             TypeNode::List(inner) => inner.as_ref().inner_type(),

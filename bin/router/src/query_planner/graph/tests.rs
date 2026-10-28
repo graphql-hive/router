@@ -684,7 +684,9 @@ mod graph_tests {
             .edge_field("items")
             .expect("failed to find edge for field items");
         match items_edge.weight() {
-            Edge::FieldMove(fm) => assert!(fm.is_list, "expected 'items' field move to be a list"),
+            Edge::FieldMove(fm) => {
+                assert_eq!(fm.list_depth, 1, "expected 'items' field move to be a list")
+            }
             other => panic!("expected a field move edge, got {:?}", other),
         }
 

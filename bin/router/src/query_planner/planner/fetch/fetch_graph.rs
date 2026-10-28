@@ -1325,7 +1325,7 @@ fn process_subgraph_reentry(
         field_alias,
     ));
     let mut child_response_path = response_path.push(Segment::Field(segment_field, 0, None));
-    if reentry_move.is_list {
+    for _ in 0..reentry_move.list_depth {
         child_response_path = child_response_path.push(Segment::List);
     }
 
@@ -1520,7 +1520,7 @@ fn process_abstract_edge(
   alias = query_node.selection_attributes.as_ref().and_then(|v| v.alias.as_ref()),
   arguments = query_node.selection_attributes.as_ref().and_then(|v| v.arguments.as_ref()).map(|v| format!("{}", v)),
   leaf = field_move.is_leaf,
-  list = field_move.is_list,
+  list_depth = field_move.list_depth,
   response_path = response_path.to_string(),
   fetch_path = fetch_path.to_string(),
 ))]
@@ -1629,7 +1629,8 @@ fn process_plain_field_edge(
         segment_condition,
     ));
 
-    if field_move.is_list {
+    // one `@` per list, `[[Product]]` is `@.@`
+    for _ in 0..field_move.list_depth {
         child_response_path = child_response_path.push(Segment::List);
         child_fetch_path = child_fetch_path.push(Segment::List);
     }
@@ -1989,7 +1990,8 @@ fn process_requires_field_edge(
     let mut child_fetch_path =
         MergePath::default().push(Segment::Field(segment_field, fetch_arguments_hash, None));
 
-    if field_move.is_list {
+    // one `@` per list, `[[Product]]` is `@.@`
+    for _ in 0..field_move.list_depth {
         child_response_path = child_response_path.push(Segment::List);
         child_fetch_path = child_fetch_path.push(Segment::List);
     }

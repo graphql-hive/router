@@ -1,0 +1,76 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION)
+{
+  query: Query
+}
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__field(graph: join__Graph, requires: join__FieldSet, provides: join__FieldSet, type: String, external: Boolean, override: String, usedOverridden: Boolean) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__implements(graph: join__Graph!, interface: String!) repeatable on OBJECT | INTERFACE
+
+directive @join__type(graph: join__Graph!, key: join__FieldSet, extension: Boolean! = false, resolvable: Boolean! = true, isInterfaceObject: Boolean! = false) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(graph: join__Graph!, member: String!) repeatable on UNION
+
+directive @link(url: String, as: String, for: link__Purpose, import: [link__Import]) repeatable on SCHEMA
+
+scalar join__FieldSet
+
+enum join__Graph {
+  CATALOG @join__graph(name: "catalog", url: "http://0.0.0.0:4200/catalog")
+  PRODUCTS @join__graph(name: "products", url: "http://0.0.0.0:4200/products")
+  REVIEWS @join__graph(name: "reviews", url: "http://0.0.0.0:4200/reviews")
+}
+
+scalar link__Import
+
+enum link__Purpose {
+  """
+  `SECURITY` features provide metadata necessary to securely resolve fields.
+  """
+  SECURITY
+
+  """
+  `EXECUTION` features provide metadata necessary for operation execution.
+  """
+  EXECUTION
+}
+
+type Product
+  @join__type(graph: CATALOG, key: "id")
+  @join__type(graph: PRODUCTS, key: "id")
+{
+  id: ID!
+  name: String @join__field(graph: PRODUCTS)
+  reviews: [[Review]] @join__field(graph: PRODUCTS)
+}
+
+type Query
+  @join__type(graph: CATALOG)
+  @join__type(graph: PRODUCTS)
+  @join__type(graph: REVIEWS)
+{
+  grid: [[Product]] @join__field(graph: CATALOG)
+  strictGrid: [[Product!]!]! @join__field(graph: CATALOG)
+  cube: [[[Product]]] @join__field(graph: CATALOG)
+  shelves: [Shelf] @join__field(graph: CATALOG)
+}
+
+type Review
+  @join__type(graph: PRODUCTS, key: "id")
+  @join__type(graph: REVIEWS, key: "id")
+{
+  id: ID!
+  body: String @join__field(graph: REVIEWS)
+}
+
+type Shelf
+  @join__type(graph: CATALOG)
+{
+  rows: [[Product]]
+}
