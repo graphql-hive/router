@@ -142,6 +142,16 @@ pub fn project_requires(
                     return false;
                 }
             }
+            // An object inside the representation that misses a field, like `searchCriteria`
+            // when the fetch for its `fullCriteria` failed, is sent as `null`.
+            // Sending it without the field would let the subgraph resolve with an
+            // input it never got.
+            if nested && applied.missing_field {
+                buffer.truncate(object_start_offset);
+                write_response_key(parent_first, response_key, buffer);
+                buffer.put(NULL);
+                return true;
+            }
             // `__typename` is written along with the object's first field. When nothing else
             // applies, it's written alone: for an object inside the representation, like a Bird in
             // `pet { ... on Dog { tricks } ... on Cat { whiskers } }`, and for an entity whose
@@ -554,7 +564,7 @@ mod tests {
 
     /// An object of none of its fragments' types still has `__typename`, which is all the
     /// selection asks of it, so it's kept, in a field or in a list. An object that misses a
-    /// selected field is still left out, so an entity without its key isn't sent.
+    /// selected field is sent as `null`, and an entity without its key isn't sent.
     #[test]
     fn project_requires_object_of_none_of_the_fragment_types() {
         let requires = "... on Listing { __typename pet { __typename ... on Dog { tricks } ... on Cat { whiskers } } id }";
@@ -615,7 +625,7 @@ mod tests {
           }
         "#);
 
-        // A Cat without its whiskers is left out
+        // A Cat without its whiskers is `null`
         insta::assert_snapshot!(
           &project_requires_pretty(
               requires,
@@ -629,6 +639,7 @@ mod tests {
           @r#"
           {
             "__typename": "Listing",
+            "pet": null,
             "id": "l1"
           }
         "#);
@@ -764,6 +775,57 @@ mod tests {
             "__typename": "FavoritesPage",
             "id": "p1",
             "petCount": null
+          }
+        "#);
+    }
+
+    /// The fetch for `fullCriteria` failed, so `searchCriteria` has no `fullCriteria`.
+    /// It goes out as `null`
+    #[test]
+    fn project_requires_nested_object_missing_a_field_is_null() {
+        let requires =
+            "... on Result { __typename searchCriteria { partialCriteria fullCriteria } }";
+        let keys = keys_of(&[("Result", &["searchCriteria"])]);
+
+        insta::assert_snapshot!(
+          &project_requires_pretty_with_keys(
+              requires,
+              json!({ "__typename": "Result", "searchCriteria": { "partialCriteria": "p1" } }),
+              Some(&keys),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Result",
+            "searchCriteria": null
+          }
+        "#);
+
+        // In a list, only the item that misses it
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+              "... on Result { __typename id criteria { partialCriteria fullCriteria } }",
+              json!({
+                  "__typename": "Result",
+                  "id": "r1",
+                  "criteria": [
+                      { "partialCriteria": "p1", "fullCriteria": "f1" },
+                      { "partialCriteria": "p2" }
+                  ]
+              }),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Result",
+            "id": "r1",
+            "criteria": [
+              {
+                "partialCriteria": "p1",
+                "fullCriteria": "f1"
+              },
+              null
+            ]
           }
         "#);
     }
