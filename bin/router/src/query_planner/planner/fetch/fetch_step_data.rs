@@ -217,7 +217,7 @@ impl FetchStepData<MultiTypeFetchStep> {
 
 impl FetchStepData<SingleTypeFetchStep> {
     /// Whether an entity call to this subgraph, type, path and condition could reuse this step.
-    pub fn has_identity(
+    pub fn matches_entity_call(
         &self,
         subgraph_name: &SubgraphName,
         input_type_name: &str,
