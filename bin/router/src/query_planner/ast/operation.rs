@@ -4,6 +4,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+use crate::executor::response::shaped::ResponseShape;
 use crate::query_planner::{
     ast::{document::Document, hash::ast_hash},
     planner::plan_nodes::{hash_minified_query, CustomScalarPaths},
@@ -67,6 +68,9 @@ pub struct SubgraphFetchOperation {
     /// pointer wide.
     #[serde(skip)]
     context_template: Option<Box<ContextAliasTemplate>>,
+    /// The fields the response has, to read it faster. Built when the plan is made executable.
+    #[serde(skip)]
+    pub response_shape: Option<Box<ResponseShape>>,
 }
 
 /// An entity fetch operation cut into the parts every group of contextual argument values
@@ -157,6 +161,7 @@ impl ContextAliasTemplate {
             name_write_position: name_write_position(&document),
             document_str: document.into_boxed_str(),
             context_template: None,
+            response_shape: None,
         }
     }
 
@@ -581,8 +586,16 @@ impl PlanningFetchOperation {
                 hash,
                 name_write_position,
                 context_template: None,
+                response_shape: None,
             },
         }
+    }
+
+    /// The operation execution sends, with the shape its response is read with.
+    pub fn into_executable(self) -> SubgraphFetchOperation {
+        let mut operation = self.operation;
+        operation.response_shape = Some(Box::new(ResponseShape::new(&self.document)));
+        operation
     }
 }
 

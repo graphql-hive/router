@@ -17,6 +17,7 @@ use crate::executor::json_writer::write_named_operation;
 use crate::executor::plugin_context::PluginRequestState;
 use crate::executor::plugin_trait::{EndControlFlow, StartControlFlow};
 use crate::executor::plugins::hooks;
+use crate::executor::response::shaped::ResponseShape;
 use crate::executor::response::subgraph_response::SubgraphResponse;
 use crate::http_utils::compression;
 use crate::query_planner::planner::plan_nodes::CustomScalarPaths;
@@ -621,8 +622,10 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             ));
         }
 
-        let response_result =
-            response.deserialize_http_response(execution_request.custom_scalar_paths);
+        let response_result = response.deserialize_http_response(
+            execution_request.custom_scalar_paths,
+            execution_request.response_shape,
+        );
 
         if let Some(mut http_request_capture) = http_request_capture {
             finish_capture_from_subgraph_result(
@@ -911,19 +914,25 @@ impl SubgraphHttpResponse {
     fn deserialize_http_response(
         self,
         custom_scalar_paths: Option<&CustomScalarPaths>,
+        response_shape: Option<&ResponseShape>,
     ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
-        SubgraphResponse::deserialize_from_bytes(self.body, custom_scalar_paths)
-            .map(|mut resp: SubgraphResponse| {
-                resp.headers = Some(self.headers.clone());
-                resp.status = Some(self.status);
-                resp
-            })
-            .map_err(|e| match e {
-                SubgraphExecutorError::ResponseDeserializationFailure(err, _) => {
-                    SubgraphExecutorError::ResponseDeserializationFailure(err, Some(self.headers))
-                }
-                other => other,
-            })
+        match response_shape {
+            Some(shape) => {
+                SubgraphResponse::deserialize_with_shape(self.body, shape, custom_scalar_paths)
+            }
+            None => SubgraphResponse::deserialize_from_bytes(self.body, custom_scalar_paths),
+        }
+        .map(|mut resp: SubgraphResponse| {
+            resp.headers = Some(self.headers.clone());
+            resp.status = Some(self.status);
+            resp
+        })
+        .map_err(|e| match e {
+            SubgraphExecutorError::ResponseDeserializationFailure(err, _) => {
+                SubgraphExecutorError::ResponseDeserializationFailure(err, Some(self.headers))
+            }
+            other => other,
+        })
     }
 }
 
@@ -947,6 +956,7 @@ mod tests {
             raw_variable_values: None,
             extensions: None,
             custom_scalar_paths: None,
+            response_shape: None,
             connection_fingerprint: None,
         };
 

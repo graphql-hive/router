@@ -19,7 +19,7 @@ impl FetchNode<Planning> {
             service_name: self.service_name,
             variable_usages: self.variable_usages,
             operation_kind: self.operation_kind,
-            operation: self.operation.operation,
+            operation: self.operation.into_executable(),
             custom_scalar_paths: self.custom_scalar_paths,
             requires: self.requires,
             planner_requires: (),
@@ -75,7 +75,7 @@ impl PlanNode<Planning> {
                 service_name: batch.service_name,
                 variable_usages: batch.variable_usages,
                 operation_kind: batch.operation_kind,
-                operation: batch.operation.operation,
+                operation: batch.operation.into_executable(),
                 custom_scalar_paths: batch.custom_scalar_paths,
                 entity_batch: {
                     let mut entity_batch = batch.entity_batch;

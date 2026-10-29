@@ -62,6 +62,10 @@ harness = false
 name = "coprocessor_benches"
 harness = false
 
+[[bench]]
+name = "deser_bench"
+harness = false
+
 
 [dependencies]
 hive-console-sdk = { path = "../../lib/hive-console-sdk", version = "0.3.23" }
