@@ -53,7 +53,12 @@ impl Hash for Value<'_> {
 /// than the compare itself.
 #[inline(always)]
 pub fn key_eq(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
+    bytes_eq(a.as_bytes(), b.as_bytes())
+}
+
+/// `key_eq` for bytes.
+#[inline(always)]
+pub fn bytes_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }

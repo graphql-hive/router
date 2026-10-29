@@ -12,7 +12,10 @@
 
 use std::ops::Range;
 
-use crate::executor::response::{graphql_error::GraphQLError, value::Value};
+use crate::executor::response::{
+    graphql_error::GraphQLError,
+    value::{bytes_eq, Value},
+};
 use crate::query_planner::ast::{
     document::Document, selection_item::SelectionItem, selection_set::SelectionSet,
 };
@@ -162,7 +165,7 @@ pub fn parse_response<'a>(
                 "errors" if !std::mem::replace(&mut has_errors, true) => {
                     parser.whitespace();
                     let start = parser.pos;
-                    parser.value()?;
+                    parser.skip_value()?;
                     let errors = &input[start..parser.pos];
                     response.errors = Some(sonic_rs::from_slice(errors).ok()?);
                 }
@@ -170,9 +173,7 @@ pub fn parse_response<'a>(
                     response.extensions = Some(parser.value()?);
                 }
                 "data" | "errors" | "extensions" => return None,
-                _ => {
-                    parser.value()?;
-                }
+                _ => parser.skip_value()?,
             }
             if !parser.more(b'}')? {
                 break;
@@ -285,9 +286,17 @@ impl<'a> Parser<'a> {
         let mut next = 0;
         loop {
             self.whitespace();
-            let (key, node) = match nodes.get(next) {
-                Some(node) if self.input[self.pos..].starts_with(&node.quoted_key) => {
-                    next += 1;
+            // usually the next field, or a later one when the ones between aren't there (another
+            // type's fields, @skip)
+            let ahead = nodes[next..].iter().position(|node| {
+                self.input
+                    .get(self.pos..self.pos + node.quoted_key.len())
+                    .is_some_and(|key| bytes_eq(key, &node.quoted_key))
+            });
+            let (key, node) = match ahead {
+                Some(ahead) => {
+                    let node = &nodes[next + ahead];
+                    next += ahead + 1;
                     let start = self.pos + 1;
                     self.pos += node.quoted_key.len();
                     // SAFETY: the input is valid UTF-8 and the key sits between two quotes
@@ -295,9 +304,11 @@ impl<'a> Parser<'a> {
                         unsafe { std::str::from_utf8_unchecked(&self.input[start..self.pos - 1]) };
                     (key, Some(node))
                 }
-                _ => {
+                None => {
                     let key = self.key()?;
-                    let index = nodes.iter().position(|node| node.key() == key.as_bytes());
+                    let index = nodes[..next]
+                        .iter()
+                        .position(|node| bytes_eq(node.key(), key.as_bytes()));
                     // the fields after it most likely follow it
                     if let Some(index) = index {
                         next = index + 1;
@@ -346,7 +357,7 @@ impl<'a> Parser<'a> {
             }
         }
         self.depth -= 1;
-        Some(Value::Object(self.entries.drain(start..).collect()))
+        Some(Value::Object(self.entries.split_off(start)))
     }
 
     fn list(&mut self, hint: Option<Hint>) -> Option<Value<'a>> {
@@ -367,16 +378,42 @@ impl<'a> Parser<'a> {
             }
         }
         self.depth -= 1;
-        Some(Value::Array(self.elements.drain(start..).collect()))
+        Some(Value::Array(self.elements.split_off(start)))
+    }
+
+    /// Checks a value like `value` does, without building it.
+    fn skip_value(&mut self) -> Option<()> {
+        self.whitespace();
+        let close = match self.peek()? {
+            b'{' => b'}',
+            b'[' => b']',
+            _ => return self.value().map(drop),
+        };
+        self.pos += 1;
+        if self.empty(close) {
+            return Some(());
+        }
+        self.enter()?;
+        loop {
+            if close == b'}' {
+                self.whitespace();
+                self.key()?;
+                self.expect(b':')?;
+            }
+            self.skip_value()?;
+            if !self.more(close)? {
+                break;
+            }
+        }
+        self.depth -= 1;
+        Some(())
     }
 
     /// A custom scalar, kept as the JSON it came as.
-    // ponytail: builds the value to check it's valid and drops it, so objects and lists as custom
-    // scalars allocate for nothing. A skip-only reader if those show up.
     fn raw(&mut self) -> Option<Value<'a>> {
         self.whitespace();
         let start = self.pos;
-        self.value()?;
+        self.skip_value()?;
         // SAFETY: the input is valid UTF-8, and a JSON value starts and ends on ASCII
         let raw = unsafe { std::str::from_utf8_unchecked(&self.input[start..self.pos]) };
         Some(Value::RawJson(raw.into()))
@@ -448,11 +485,18 @@ impl<'a> Parser<'a> {
         let negative = self.peek() == Some(b'-');
         self.pos += negative as usize;
         let integer = self.pos;
+        // read while scanning, it's only right up to 19 digits
+        let mut magnitude = 0u64;
         // no leading zeros: `0` alone, or a number that starts with 1 to 9
         match self.peek()? {
             b'0' => self.pos += 1,
             b'1'..=b'9' => {
-                self.digits();
+                while let Some(digit @ b'0'..=b'9') = self.peek() {
+                    magnitude = magnitude
+                        .wrapping_mul(10)
+                        .wrapping_add((digit - b'0') as u64);
+                    self.pos += 1;
+                }
             }
             _ => return None,
         }
@@ -476,9 +520,13 @@ impl<'a> Parser<'a> {
             float = true;
         }
         if !float {
-            let magnitude = integer.iter().try_fold(0u64, |n, &digit| {
-                n.checked_mul(10)?.checked_add((digit - b'0') as u64)
-            });
+            let magnitude = if integer.len() <= 19 {
+                Some(magnitude)
+            } else {
+                integer.iter().try_fold(0u64, |n, &digit| {
+                    n.checked_mul(10)?.checked_add((digit - b'0') as u64)
+                })
+            };
             match magnitude {
                 Some(n) if !negative => return Some(Value::U64(n)),
                 // -0 is a float to sonic
@@ -568,6 +616,8 @@ mod tests {
             r#"{"data":{"list":[{"y":3,"x":4,"z":{"k":[1]}},null,[{"x":5}]],"b":{"d":[]},"a":{"x":1}}}"#,
             // a field of one type, then of another, then a fragment's
             r#"{"data":{"u":[{"__typename":"B","b1":1},{"__typename":"A","a1":2,"f":3},{}]}}"#,
+            // a field before one that came earlier in the shape
+            r#"{"data":{"u":[{"b1":1,"__typename":"B","x":2,"a1":3}]}}"#,
             r#"{"data":null,"errors":[{"message":"boom","path":["a",0],"extensions":{"code":"X"}}]}"#,
             r#"{"errors":[{"message":"only errors"}]}"#,
             r#"{"data":{},"extensions":{"x":[1,{"y":true}],"n":null}}"#,
@@ -579,6 +629,10 @@ mod tests {
             r#"{"data":{"a":[0,-1,1.5,-0,-0.0,1e10,1E-3,2.5e+3,0.1,123456789.123456789e-5]}}"#,
             r#"{"data":{"a":[18446744073709551615,18446744073709551616,-9223372036854775808,-9223372036854775809]}}"#,
             r#"{"data":{"a":[true,false,null]}}"#,
+            // the most digits read in one go, and ones checked on the way
+            r#"{"data":{"a":[9999999999999999999,-9223372036854775807,12345678901234567890,99999999999999999999]}}"#,
+            // skipped ones are still checked
+            r#"{"data":{"a":1},"other":{"k":[1,{"x":"\n"}],"e":{}},"more":[]}"#,
             // malformed, without data or errors
             r#"{"data":null}"#,
             r#"{}"#,
@@ -620,6 +674,10 @@ mod tests {
             r#"{"data":{"a":1},"data":{}}"#,
             r#"{"errors":null}"#,
             r#"{"errors":[{"nope":1}]}"#,
+            r#"{"errors":[{"message":"\x"}]}"#,
+            r#"{"data":{},"other":[01]}"#,
+            r#"{"data":{},"other":{"k\n":1}}"#,
+            r#"{"data":{},"other":{"k":1,}}"#,
             r#"[1]"#,
             r#""#,
         ]
