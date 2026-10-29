@@ -549,11 +549,12 @@ mod tests {
         subgraph_keys: Option<&KeysByType>,
         reuse: Option<&mut ReuseIndex<'d, 'v>>,
     ) -> (Vec<ContextGroup<'a>>, Vec<TargetEntities>) {
-        let (trie, ends) = PathTrie::new(paths.into_iter().map(|path| path.as_slice()));
+        let trie = PathTrie::new(paths.into_iter().map(|path| path.as_slice()));
+        let ends = trie.ends();
         let path_values = collect_path_values(&trie, data, possible_types, context_depth(context));
         collect_context_entities(
             &path_values,
-            &ends,
+            ends,
             requires,
             input_rewrites,
             context,
@@ -658,10 +659,12 @@ mod tests {
             RequiresSelectionSet::from(&SelectionSet::from(selection))
         };
         let requires = selection("{ __typename id }");
-        let reuse = EntityReuse {
+        let mut reuse = EntityReuse {
             sources: vec![vec![PathSegment::Field("top".into()), PathSegment::List].into()],
             copy: selection("{ __typename name }"),
+            trie: Default::default(),
         };
+        reuse.build_trie();
         let possible_types = PossibleTypes::default();
         let mut index =
             ReuseIndex::build(&reuse, &data, requires.root_selections(), &possible_types);

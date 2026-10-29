@@ -72,7 +72,8 @@ fn walk<'d, 'v>(
     paths: &[FlattenNodePath],
     metadata: &SchemaMetadata,
 ) -> Vec<Vec<&'d Value<'v>>> {
-    let (trie, ends) = PathTrie::new(paths.iter().map(FlattenNodePath::as_slice));
+    let trie = PathTrie::new(paths.iter().map(FlattenNodePath::as_slice));
+    let ends = trie.ends();
     let mut by_node = vec![Vec::new(); trie.len()];
     trie.walk(data, &metadata.possible_types, &mut |node, value, _| {
         by_node[node].push(value)
@@ -136,7 +137,8 @@ fn walk_mut<'a>(
     callback: &mut impl FnMut(usize, &mut Value<'a>),
 ) {
     // the paths are all different, so every node has at most one
-    let (trie, ends) = PathTrie::new(paths.iter().map(FlattenNodePath::as_slice));
+    let trie = PathTrie::new(paths.iter().map(FlattenNodePath::as_slice));
+    let ends = trie.ends();
     let mut path_by_node = vec![usize::MAX; trie.len()];
     for (path, end) in ends.iter().enumerate() {
         path_by_node[*end] = path;

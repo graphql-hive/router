@@ -7,10 +7,7 @@ use crate::{
         execution::context::{EntityRef, Known, TargetEntities},
         introspection::schema::{PossibleTypes, SchemaMetadata},
         response::{merge::EntityMerger, value::Value},
-        utils::{
-            prehashed_map::PrehashedMap,
-            traverse::{traverse_and_callback_mut, PathTrie},
-        },
+        utils::{prehashed_map::PrehashedMap, traverse::traverse_and_callback_mut},
     },
     query_planner::{
         ast::requires::{RequiresSelection, RequiresSelectionSetRef},
@@ -34,7 +31,7 @@ impl<'d, 'v> ReuseIndex<'d, 'v> {
         possible_types: &PossibleTypes,
     ) -> Self {
         let mut seen = PrehashedMap::default();
-        let (trie, _) = PathTrie::new(reuse.sources.iter().map(|source| source.as_slice()));
+        let trie = reuse.trie();
         trie.walk(data, possible_types, &mut |_, object, _| {
             if object.is_object() && holds_every_field(object, required_selections) {
                 seen.entry(object.to_hash(required_selections, possible_types))
