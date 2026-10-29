@@ -2130,6 +2130,80 @@ fn allows_different_order_of_input_object_fields_in_arg_values() {
     assert_eq!(messages.len(), 0);
 }
 
+// `["s651"]` and `[]` aren't the same argument, one isn't a prefix of the other
+#[test]
+fn list_arg_values_of_different_lengths_conflict_through_inline_fragments() {
+    use crate::validation::test_utils::*;
+
+    let schema = "
+      type Query {
+        nnListNN(input: [String!]!): [String!]!
+      }
+    ";
+    let mut plan = create_plan_from_rule(Box::new(OverlappingFieldsCanBeMerged::new()));
+    let errors = test_operation_with_schema(
+        "{
+          ... on Query {
+            ... on Query {
+              nnListNN(input: [\"s651\"])
+            }
+          }
+          nnListNN(input: [])
+        }",
+        schema,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages, vec!["Fields \"nnListNN\" conflict because they have differing arguments. Use different aliases on the fields to fetch both if this was intentional."]);
+}
+
+#[test]
+fn list_arg_value_conflicts_with_an_empty_list() {
+    use crate::validation::test_utils::*;
+
+    let schema = "
+      type Query {
+        artists(ids: [ID!]!): [Artist]
+      }
+      type Artist {
+        id: ID!
+      }
+    ";
+    let mut plan = create_plan_from_rule(Box::new(OverlappingFieldsCanBeMerged::new()));
+    let errors = test_operation_with_schema(
+        "{
+          artists(ids: [\"id-827\", \"id-297\", \"id-17\"]) { id }
+          artists(ids: []) { id }
+        }",
+        schema,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages, vec!["Fields \"artists\" conflict because they have differing arguments. Use different aliases on the fields to fetch both if this was intentional."]);
+}
+
+#[test]
+fn allows_identical_list_arg_values() {
+    use crate::validation::test_utils::*;
+
+    let schema = "
+      type Query {
+        artists(ids: [ID!]!): [String]
+      }
+    ";
+    let mut plan = create_plan_from_rule(Box::new(OverlappingFieldsCanBeMerged::new()));
+    let errors = test_operation_with_schema(
+        "{ artists(ids: [\"a\", \"b\"]) artists(ids: [\"a\", \"b\"]) }",
+        schema,
+        &mut plan,
+    );
+
+    let messages = get_messages(&errors);
+    assert_eq!(messages.len(), 0);
+}
+
 #[test]
 fn works_for_field_names_that_are_js_keywords() {
     use crate::validation::test_utils::*;
