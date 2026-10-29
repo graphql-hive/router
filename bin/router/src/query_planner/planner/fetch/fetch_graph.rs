@@ -55,6 +55,11 @@ pub struct FetchGraph<State> {
     pub(crate) context_producers: HashMap<(MergePath, (EdgeIndex, usize)), Vec<NodeIndex>>,
     pub(crate) context_variable_counter: usize,
     pub(crate) operation_variables: HashSet<String>,
+    /// Each step's children by the entity call they make, see `entity_call_hash`, newest last. So
+    /// finding a step to reuse doesn't go through all the children, thousands on a big query.
+    /// Only kept while the graph is built: until the merges, a step keeps making the same entity
+    /// call and no edge goes away.
+    pub(crate) children_by_entity_call: Option<HashMap<(NodeIndex, u64), Vec<NodeIndex>>>,
 }
 
 impl FetchGraph<SingleTypeFetchStep> {
@@ -72,6 +77,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             context_producers: HashMap::new(),
             context_variable_counter: 0,
             operation_variables: HashSet::new(),
+            children_by_entity_call: None,
         }
     }
 
@@ -85,7 +91,44 @@ impl FetchGraph<SingleTypeFetchStep> {
             context_producers: HashMap::new(),
             context_variable_counter: 0,
             operation_variables: HashSet::new(),
+            children_by_entity_call: Some(HashMap::new()),
         }
+    }
+
+    /// The children of `parent` that may make this entity call, newest first like `children_of`.
+    /// They still need checking: different entity calls can share a hash.
+    fn same_entity_calls(
+        &self,
+        parent: NodeIndex,
+        subgraph_name: &SubgraphName,
+        input_type_name: &str,
+        response_path: &MergePath,
+        condition: Option<&Condition>,
+    ) -> impl Iterator<Item = NodeIndex> + '_ {
+        let entity_call =
+            entity_call_hash(subgraph_name, input_type_name, response_path, condition);
+        self.children_by_entity_call
+            .as_ref()
+            .expect("the children are indexed until the graph is built")
+            .get(&(parent, entity_call))
+            .into_iter()
+            .flat_map(|children| children.iter().rev().copied())
+            // nothing updates the index when an edge goes away or a step changes, so catch that
+            // in tests instead of quietly reusing the wrong step
+            .inspect(move |&child| {
+                debug_assert!(
+                    self.parents_of(child).any(|edge| edge.source() == parent),
+                    "indexed step [{}] is no longer a child of [{}]",
+                    child.index(),
+                    parent.index(),
+                );
+                debug_assert_eq!(
+                    self.get_step_data(child).ok().and_then(entity_call_hash_of),
+                    Some(entity_call),
+                    "indexed step [{}] changed what it's reused on",
+                    child.index(),
+                );
+            })
     }
 }
 
@@ -142,12 +185,12 @@ impl<State> FetchGraph<State> {
         &mut self,
         index: NodeIndex,
     ) -> Result<&mut FetchStepData<State>, FetchGraphError> {
-        self.graph
-            .node_weight_mut(index)
-            .ok_or(FetchGraphError::MissingStep(
+        self.graph.node_weight_mut(index).ok_or_else(|| {
+            FetchGraphError::MissingStep(
                 index.index(),
                 String::from("when getting mutable step data"),
-            ))
+            )
+        })
     }
 }
 
@@ -177,16 +220,32 @@ impl<State> FetchGraph<State> {
         &self,
         index: NodeIndex,
     ) -> Result<&FetchStepData<State>, FetchGraphError> {
-        self.graph
-            .node_weight(index)
-            .ok_or(FetchGraphError::MissingStep(
-                index.index(),
-                String::from("when getting step data"),
-            ))
+        self.graph.node_weight(index).ok_or_else(|| {
+            FetchGraphError::MissingStep(index.index(), String::from("when getting step data"))
+        })
     }
 
     pub fn connect(&mut self, parent_index: NodeIndex, child_index: NodeIndex) -> EdgeIndex {
-        self.graph.update_edge(parent_index, child_index, ())
+        // from the child's side, as a step has a parent or two but can have thousands of children
+        if let Some(edge) = self
+            .parents_of(child_index)
+            .find(|edge| edge.source() == parent_index)
+        {
+            return edge.id();
+        }
+        let edge = self.graph.add_edge(parent_index, child_index, ());
+        if let (Some(index), Some(entity_call)) = (
+            self.children_by_entity_call.as_mut(),
+            self.graph
+                .node_weight(child_index)
+                .and_then(entity_call_hash_of),
+        ) {
+            index
+                .entry((parent_index, entity_call))
+                .or_default()
+                .push(child_index);
+        }
+        edge
     }
 
     pub fn remove_edge(&mut self, edge_index: EdgeIndex) -> bool {
@@ -467,6 +526,35 @@ fn create_fetch_step_for_root_move(
     idx
 }
 
+/// The entity call a step makes, the part a step gets reused on: its subgraph, input type,
+/// response path and condition.
+fn entity_call_hash(
+    subgraph_name: &SubgraphName,
+    input_type_name: &str,
+    response_path: &MergePath,
+    condition: Option<&Condition>,
+) -> u64 {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = ahash::AHasher::default();
+    subgraph_name.hash(&mut hasher);
+    input_type_name.hash(&mut hasher);
+    condition.hash(&mut hasher);
+    response_path.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// `entity_call_hash` of a step already in the graph.
+fn entity_call_hash_of<State>(step: &FetchStepData<State>) -> Option<u64> {
+    let input_type_name = step.input.first_definition_name()?;
+    Some(entity_call_hash(
+        &step.service_name,
+        input_type_name,
+        &step.response_path,
+        step.condition.as_ref(),
+    ))
+}
+
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
 fn ensure_fetch_step_for_subgraph(
@@ -485,49 +573,25 @@ fn ensure_fetch_step_for_subgraph(
         None
     } else {
         fetch_graph
-            .children_of(parent_fetch_step_index)
-            .find_map(|to_child_edge_ref| {
-                if let Ok(fetch_step) = fetch_graph.get_step_data(to_child_edge_ref.target()) {
-                    if fetch_step.service_name != *subgraph_name {
-                        return None;
-                    }
-
-                    if fetch_step.input.definition_name() != input_type_name {
-                        return None;
-                    }
-
-                    if fetch_step.response_path != *response_path {
-                        return None;
-                    }
-
-                    if fetch_step.condition.as_ref() != condition {
-                        return None;
-                    }
-
-                    if let Some(key) = &key {
-                        if fetch_step.input.definition_name() != key.type_name
-                            || !fetch_step
-                                .input
-                                .selection_set()
-                                .contains(&key.selection_set)
-                        {
-                            // requested key fields are not part of the input
-                            return None;
-                        }
-                    }
-
-                    // If there are requirements, then we do not re-use
-                    // optimizations will try to re-use the existing step later, if possible.
-                    if fetch_step.flags.contains(FetchStepFlags::USED_FOR_REQUIRES)
-                        || requires.is_some()
-                    {
-                        return None;
-                    }
-
-                    return Some(to_child_edge_ref.target());
-                }
-
-                None
+            .same_entity_calls(
+                parent_fetch_step_index,
+                subgraph_name,
+                input_type_name,
+                response_path,
+                condition,
+            )
+            .find(|&child_index| {
+                fetch_graph.get_step_data(child_index).is_ok_and(|step| {
+                    step.matches_entity_call(subgraph_name, input_type_name, response_path, condition)
+                        // the requested key fields have to be part of the input
+                        && key.is_none_or(|key| {
+                            step.input.definition_name() == key.type_name
+                                && step.input.selection_set().contains(&key.selection_set)
+                        })
+                        // steps with requirements aren't reused here, the optimizations
+                        // try that later
+                        && !step.flags.contains(FetchStepFlags::USED_FOR_REQUIRES)
+                })
             })
     };
 
@@ -582,41 +646,23 @@ fn ensure_fetch_step_for_requirement(
     condition: Option<&Condition>,
     requirement: &TypeAwareSelection<'_>,
 ) -> Result<NodeIndex, FetchGraphError> {
-    let matching_child_index =
-        fetch_graph
-            .children_of(parent_fetch_step_index)
-            .find_map(|to_child_edge_ref| {
-                if let Ok(fetch_step) = fetch_graph.get_step_data(to_child_edge_ref.target()) {
-                    if fetch_step.service_name != *subgraph_name
-                        || fetch_step.context_rewrites.is_some()
-                    {
-                        return None;
-                    }
-
-                    if fetch_step.condition.as_ref() != condition {
-                        return None;
-                    }
-
-                    if fetch_step.input.definition_name() != type_name {
-                        return None;
-                    }
-
-                    if fetch_step.response_path != *response_path {
-                        return None;
-                    }
-
-                    if !fetch_step
+    let matching_child_index = fetch_graph
+        .same_entity_calls(
+            parent_fetch_step_index,
+            subgraph_name,
+            type_name,
+            response_path,
+            condition,
+        )
+        .find(|&child_index| {
+            fetch_graph.get_step_data(child_index).is_ok_and(|step| {
+                step.matches_entity_call(subgraph_name, type_name, response_path, condition)
+                    && step.context_rewrites.is_none()
+                    && step
                         .input
                         .contains(requirement.type_name, &requirement.selection_set)
-                    {
-                        return None;
-                    }
-
-                    return Some(to_child_edge_ref.target());
-                }
-
-                None
-            });
+            })
+        });
 
     match matching_child_index {
         Some(idx) => {
@@ -2387,4 +2433,58 @@ pub fn build_fetch_graph_from_query_tree(
     trace!("{}", fetch_graph);
 
     Ok(fetch_graph)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn same_entity_calls_are_children_of_one_parent_newest_first() {
+        let mut fetch_graph = FetchGraph::new(OperationKind::Query);
+        let users = SubgraphName("users".to_string());
+        let reviews = SubgraphName("reviews".to_string());
+        let path = MergePath::default();
+
+        let parent = create_noop_fetch_step(&mut fetch_graph, false);
+        let other_parent = create_noop_fetch_step(&mut fetch_graph, false);
+        let mut add_child = |parent: NodeIndex, subgraph_name: &SubgraphName| {
+            let index = create_fetch_step_for_entity_call(
+                &mut fetch_graph,
+                parent,
+                subgraph_name,
+                "User",
+                "User",
+                &path,
+                None,
+                false,
+            );
+            fetch_graph.connect(parent, index);
+            index
+        };
+        let older = add_child(parent, &users);
+        add_child(parent, &reviews);
+        let newer = add_child(parent, &users);
+        let under_other_parent = add_child(other_parent, &users);
+
+        let found = |fetch_graph: &FetchGraph<SingleTypeFetchStep>, parent: NodeIndex| {
+            fetch_graph
+                .same_entity_calls(parent, &users, "User", &path, None)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(found(&fetch_graph, parent), vec![newer, older]);
+        assert_eq!(found(&fetch_graph, other_parent), vec![under_other_parent]);
+
+        // connecting again keeps the one edge and doesn't index the child twice
+        let edge = fetch_graph.connect(parent, older);
+        assert_eq!(fetch_graph.connect(parent, older), edge);
+        assert_eq!(
+            fetch_graph
+                .children_of(parent)
+                .filter(|edge| edge.target() == older)
+                .count(),
+            1
+        );
+        assert_eq!(found(&fetch_graph, parent), vec![newer, older]);
+    }
 }

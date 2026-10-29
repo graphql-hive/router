@@ -231,9 +231,7 @@ impl FetchStepSelections<SingleTypeFetchStep> {
     }
 
     pub fn definition_name(&self) -> &str {
-        self.selections
-            .keys()
-            .next()
+        self.first_definition_name()
             .expect("SingleTypeFetchStep should have exactly one selection")
     }
 
@@ -281,6 +279,11 @@ impl FetchStepSelections<SingleTypeFetchStep> {
 }
 
 impl<State> FetchStepSelections<State> {
+    /// The first type name, which on a single-type step is its only one.
+    pub fn first_definition_name(&self) -> Option<&str> {
+        self.selections.keys().next().map(String::as_str)
+    }
+
     pub fn is_fetching_multiple_types(&self) -> bool {
         self.selections.len() > 1
     }
