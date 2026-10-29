@@ -116,6 +116,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.3.9 (2026-10-29)
+
+### Fixes
+
+#### Accept empty `@requiresScopes` and `@policy` groups
+
+Fixed an issue where the router refused to load a supergraph with an empty group in `@requiresScopes` or `@policy`, such as `@requiresScopes(scopes: [[]])` or `@policy(policies: [])`, so every request failed. Composition accepts these values, and the router now treats them as no requirement.
+
+Closes https://github.com/graphql-hive/router/issues/1792
+
 ## 0.3.8 (2026-10-29)
 
 ### Features
