@@ -3,10 +3,12 @@ use criterion::{criterion_group, criterion_main};
 use hive_router::executor::introspection::schema::SchemaWithMetadata;
 use hive_router::executor::projection::plan::ProjectionPlan;
 use hive_router::executor::projection::response::project_by_operation;
+use hive_router::executor::response::subgraph_response::SubgraphResponse;
 use hive_router::executor::response::value::Value;
 use hive_router::query_planner::ast::normalization::normalize_operation;
 use hive_router::query_planner::utils::parsing::{parse_operation, parse_schema};
 use std::hint::black_box;
+mod entity_merge;
 mod projection;
 pub mod raw_result;
 
@@ -65,11 +67,35 @@ fn project_data_by_operation_test(c: &mut Criterion) {
             black_box(result);
         });
     });
+
+    // Same fixture, but parsed the way subgraph responses are, so strings borrow the source bytes.
+    let parsed = SubgraphResponse::deserialize_from_bytes(
+        bytes::Bytes::from(result_as_string.clone()),
+        None,
+    )
+    .expect("the fixture parses as a subgraph response");
+    c.bench_function("project_parsed_data_by_operation", |b| {
+        b.iter(|| {
+            let result = project_by_operation(
+                black_box(&parsed.data),
+                vec![],
+                &Default::default(),
+                black_box(root_type_name),
+                black_box(&projection_plan),
+                &None,
+                result_as_string.len(),
+                schema_metadata,
+            )
+            .unwrap();
+            black_box(result);
+        });
+    });
 }
 
 fn all_benchmarks(c: &mut Criterion) {
     project_data_by_operation_test(c);
     projection::benchmarks(c);
+    entity_merge::benchmarks(c);
 }
 
 criterion_group!(benches, all_benchmarks);
