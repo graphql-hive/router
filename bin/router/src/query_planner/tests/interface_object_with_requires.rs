@@ -850,3 +850,46 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
 
     Ok(())
 }
+
+/// The same-type fragment keeps its own condition under `... on User`, with `users` being
+/// `[NodeWithName]`, an interface object in another subgraph.
+#[test]
+fn conditional_same_type_fragment_under_a_type_condition() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($v: Boolean!) {
+          users {
+            ... on User {
+              ... on User @skip(if: $v) {
+                id
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/interface-object-with-requires.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($v:Boolean!) {
+          users {
+            __typename
+            ... on User {
+              ... on User @skip(if: $v) {
+                id
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
