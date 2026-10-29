@@ -1,4 +1,3 @@
-use ahash::{HashMap as AHashMap, HashMapExt};
 use criterion::{BatchSize, BenchmarkId, Criterion};
 use hive_router::executor::introspection::schema::SchemaMetadata;
 use hive_router::executor::response::merge::EntityMerger;
@@ -58,25 +57,14 @@ pub fn benchmarks(c: &mut Criterion) {
             ),
         )]);
         let entities: Vec<Value> = (0..unique).map(entity).collect();
-        let representation_hashes: Vec<Option<u64>> =
-            (0..TARGETS).map(|i| Some((i % unique) as u64)).collect();
-        let mut representation_hash_to_index = AHashMap::new();
-        for i in 0..unique {
-            representation_hash_to_index.insert(i as u64, i);
-        }
+        let entity_indexes: Vec<Option<usize>> = (0..TARGETS).map(|i| Some(i % unique)).collect();
 
         group.bench_function(BenchmarkId::from_parameter(label), |b| {
             b.iter_batched(
                 || (data.clone(), entities.clone()),
                 |(mut data, mut entities)| {
-                    let mut merger = EntityMerger::new(
-                        &mut entities,
-                        representation_hashes
-                            .iter()
-                            .flatten()
-                            .filter_map(|hash| representation_hash_to_index.get(hash))
-                            .copied(),
-                    );
+                    let mut merger =
+                        EntityMerger::new(&mut entities, entity_indexes.iter().flatten().copied());
                     let mut index = 0;
                     traverse_and_callback_mut(
                         &mut data,
@@ -84,12 +72,9 @@ pub fn benchmarks(c: &mut Criterion) {
                         &schema_metadata,
                         None,
                         &mut |target, _| {
-                            let hash = representation_hashes.get(index).copied();
+                            let entity_index = entity_indexes.get(index);
                             index += 1;
-                            let Some(Some(hash)) = hash else {
-                                return;
-                            };
-                            if let Some(entity_index) = representation_hash_to_index.get(&hash) {
+                            if let Some(Some(entity_index)) = entity_index {
                                 merger.merge_into(target, *entity_index);
                             }
                         },
