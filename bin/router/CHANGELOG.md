@@ -116,6 +116,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.3.8 (2026-10-29)
+
+### Features
+
+#### `hive_router anonymize` command
+
+Anonymizes a supergraph and its operations with a secret key, so you can share them without revealing the schema.
+
+```bash
+hive_router anonymize keygen > anon.key
+hive_router anonymize supergraph --key-file anon.key supergraph.graphql > anonymous.graphql
+hive_router anonymize operation --key-file anon.key operation.graphql > anonymous-operation.graphql
+```
+
+Every type, field, argument, enum value, subgraph name, string and number goes through keyed BLAKE3, so the output is a valid supergraph that plans the same way, and nobody can reverse it without the key. The same key always gives the same names, so operations can be anonymized later on their own, without touching the supergraph again.
+
+### Fixes
+
+#### Faster fetch graph building and batching in the query planner
+
+- Find a fetch step to reuse by its subgraph, input type, response path and condition, instead of checking every child of the parent step.
+- Compare response paths without type conditions without copying them.
+- Check whether two fetch steps can be batched before the more expensive ancestor check.
+
 ## 0.3.7 (2026-10-28)
 
 ### Fixes
