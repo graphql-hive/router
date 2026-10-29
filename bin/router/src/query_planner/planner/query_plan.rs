@@ -20,6 +20,7 @@ use super::{
     plan_nodes::planning::{ParallelNode, QueryPlan, ReadySchedule, SequenceNode},
 };
 
+mod entity_reuse;
 mod optimize;
 
 /// Tracks the in-degree of FetchGraph (DAG) in a dependency graph.
@@ -111,9 +112,14 @@ pub fn build_query_plan_from_fetch_graph(
     }
 
     let mut overall_plan_sequence: Vec<PlanNode> = Vec::new();
+    // Steps from finished waves. An entity fetch may copy entities they already put in the response.
+    let mut earlier_steps: Vec<NodeIndex> = Vec::new();
+    // The steps each fetch copies from, so ready scheduling waits for them too.
+    let mut reuse_parents: HashMap<i64, Vec<i64>> = HashMap::new();
 
     while !queue.is_empty() {
         let mut current_wave_nodes: Vec<PlanNode> = Vec::new();
+        let mut current_wave_steps: Vec<NodeIndex> = Vec::new();
         let wave_size = queue.len();
 
         for _ in 0..wave_size {
@@ -124,7 +130,18 @@ pub fn build_query_plan_from_fetch_graph(
                 )))?;
 
             let step_data = fetch_graph.get_step_data(step_index)?;
-            current_wave_nodes.push(PlanNode::from_fetch_step(step_data, supergraph, options));
+            let mut node = PlanNode::from_fetch_step(step_data, supergraph, options);
+            if let Some((reuse, source_steps)) = entity_reuse::find_entity_reuse(
+                &fetch_graph,
+                step_index,
+                &earlier_steps,
+                supergraph,
+            ) {
+                entity_reuse::attach_entity_reuse(&mut node, reuse);
+                reuse_parents.insert(step_data.id, source_steps);
+            }
+            current_wave_nodes.push(node);
+            current_wave_steps.push(step_index);
             planned_nodes_count += 1;
             in_degrees.mark_as_processed(step_index);
 
@@ -142,6 +159,8 @@ pub fn build_query_plan_from_fetch_graph(
                 }
             }
         }
+
+        earlier_steps.extend(current_wave_steps);
 
         if current_wave_nodes.is_empty() {
             return Err(QueryPlanError::Internal(String::from(
@@ -192,7 +211,7 @@ pub fn build_query_plan_from_fetch_graph(
 
     Ok(QueryPlan {
         kind: QUERY_PLAN_KIND,
-        ready_schedule: build_ready_schedule(&root_node, &fetch_graph),
+        ready_schedule: build_ready_schedule(&root_node, &fetch_graph, &reuse_parents),
         node: Some(root_node),
     })
 }
@@ -203,6 +222,7 @@ pub fn build_query_plan_from_fetch_graph(
 fn build_ready_schedule(
     root: &PlanNode,
     fetch_graph: &FetchGraph<MultiTypeFetchStep>,
+    reuse_parents: &HashMap<i64, Vec<i64>>,
 ) -> Option<ReadySchedule> {
     let PlanNode::Sequence(sequence) = root else {
         return None;
@@ -228,6 +248,11 @@ fn build_ready_schedule(
             })
             .collect::<Result<Vec<_>, _>>()
             .ok()?;
+        let mut parents: Vec<i64> = parents;
+        // A fetch that copies entities from earlier fetches has to wait for them as well.
+        if let Some(sources) = reuse_parents.get(&step.id) {
+            parents.extend(sources);
+        }
         parents_by_step.insert(step.id, parents);
     }
 
