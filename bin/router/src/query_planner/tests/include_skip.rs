@@ -1981,6 +1981,73 @@ fn spread_condition_kept_around_same_type_fragment_with_its_own() -> Result<(), 
     Ok(())
 }
 
+/// `... on Animal` on an `Animal` doesn't narrow anything, its condition goes onto `... on Dog`.
+/// Otherwise the Dogs at `pet|[Animal]|[Dog]` and at `pet|[Dog]` are looked up twice.
+#[test]
+fn condition_on_a_fragment_of_the_same_type_goes_to_its_fragments() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($x: Boolean!) {
+          listings {
+            pet {
+              ... on Animal @include(if: $x) {
+                ... on Dog {
+                  tricks
+                }
+              }
+              ... on Dog {
+                name
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1309.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "search") {
+          {
+            listings {
+              pet {
+                __typename
+                ... on Dog {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+        },
+        Flatten(path: "listings.@.pet|[Dog]") {
+          Fetch(service: "catalog") {
+            {
+              ... on Dog {
+                __typename
+                id
+              }
+            } =>
+            ($x:Boolean!) {
+              ... on Dog {
+                name
+                ... on Dog @include(if: $x) {
+                  tricks
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
 #[test]
 fn fetch_that_never_runs_is_left_out() -> Result<(), Box<dyn Error>> {
     init_logger();
@@ -2009,11 +2076,9 @@ fn fetch_that_never_runs_is_left_out() -> Result<(), Box<dyn Error>> {
         query ($a:Boolean!) {
           me {
             name
-            ... on User @skip(if: $a) {
-              ... on User @include(if: $a) {
-                __typename
-                id
-              }
+            ... on User @skip(if: $a) @include(if: $a) {
+              __typename
+              id
             }
           }
         }
