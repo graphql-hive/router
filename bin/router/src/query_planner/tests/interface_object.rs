@@ -1059,3 +1059,91 @@ fn interface_object_type_condition_on_root_field() -> Result<(), Box<dyn Error>>
 
     Ok(())
 }
+
+/// `users` is `[NodeWithName]`, an interface object in `b`, so `... on User` has a path through
+/// `b` too, where the tail is still `NodeWithName`. The `@skip` fragment inside it has to keep its
+/// condition on every path, `b`'s included.
+#[test]
+fn conditional_same_type_fragment_under_a_type_condition_on_an_interface_object(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($v: Boolean!) {
+          users {
+            ... on User {
+              ... @skip(if: $v) {
+                age
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/simple-interface-object.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($v:Boolean!) {
+          users {
+            __typename
+            ... on User {
+              ... on User @skip(if: $v) {
+                age
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Same as above with `@include`, on an explicit `... on User`.
+#[test]
+fn included_same_type_fragment_under_a_type_condition_on_an_interface_object(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($v: Boolean!) {
+          users {
+            ... on User {
+              ... on User @include(if: $v) {
+                age
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/simple-interface-object.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($v:Boolean!) {
+          users {
+            __typename
+            ... on User {
+              ... on User @include(if: $v) {
+                age
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
