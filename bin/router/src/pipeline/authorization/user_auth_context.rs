@@ -311,12 +311,14 @@ impl AuthorizationMetadata {
         let scopes = requires_scopes_directives
             .first()
             .map(|directive| Self::normalize_scopes_arg(&directive.scopes, scopes_interner))
-            .transpose()?;
+            .transpose()?
+            .flatten();
 
         let policies = policy_directives
             .first()
             .map(|directive| Self::normalize_policies_arg(&directive.policies, policies_interner))
-            .transpose()?;
+            .transpose()?
+            .flatten();
 
         let rule = AuthorizationRule {
             // `@requiresScopes` implies `@authenticated`, `@policy` does not.
@@ -329,10 +331,12 @@ impl AuthorizationMetadata {
     }
 
     /// Parses and normalizes the `scopes` argument from a `@requiresScopes` directive.
+    /// Returns `None` when the argument requires nothing: an empty OR list (`[]`), or an empty
+    /// AND group (`[[]]`), which every request satisfies.
     fn normalize_scopes_arg(
         value: &Value,
         interner: &mut ScopeInterner,
-    ) -> Result<RequiredScopes, AuthorizationMetadataError> {
+    ) -> Result<Option<RequiredScopes>, AuthorizationMetadataError> {
         let Value::List(or_groups_val) = value else {
             return Err(AuthorizationMetadataError::InvalidRequiresScopesArgs(
                 format!("expected a list, got '{}'", value),
@@ -344,21 +348,21 @@ impl AuthorizationMetadata {
             .map(|v| Self::normalize_and_group(v, interner))
             .collect::<Result<_, _>>()?;
 
-        if or_groups.is_empty() {
-            return Err(AuthorizationMetadataError::InvalidRequiresScopesArgs(
-                "expected at least one AND group, got none".to_string(),
-            ));
+        if or_groups.is_empty() || or_groups.iter().any(|group| group.0.is_empty()) {
+            return Ok(None);
         }
 
         or_groups.sort();
-        Ok(RequiredScopes(or_groups))
+        Ok(Some(RequiredScopes(or_groups)))
     }
 
     /// Parses and normalizes the `policies` argument from a `@policy` directive.
+    /// Returns `None` when the argument requires nothing: an empty OR list (`[]`), or an empty
+    /// AND group (`[[]]`), which every request satisfies.
     fn normalize_policies_arg(
         value: &Value,
         interner: &mut PolicyInterner,
-    ) -> Result<RequiredPolicies, AuthorizationMetadataError> {
+    ) -> Result<Option<RequiredPolicies>, AuthorizationMetadataError> {
         let Value::List(or_groups_val) = value else {
             return Err(AuthorizationMetadataError::InvalidPolicyArgs(format!(
                 "expected a list, got '{}'",
@@ -371,14 +375,12 @@ impl AuthorizationMetadata {
             .map(|v| Self::normalize_policy_and_group(v, interner))
             .collect::<Result<_, _>>()?;
 
-        if or_groups.is_empty() {
-            return Err(AuthorizationMetadataError::InvalidPolicyArgs(
-                "expected at least one AND group, got none".to_string(),
-            ));
+        if or_groups.is_empty() || or_groups.iter().any(|group| group.0.is_empty()) {
+            return Ok(None);
         }
 
         or_groups.sort();
-        Ok(RequiredPolicies(or_groups))
+        Ok(Some(RequiredPolicies(or_groups)))
     }
 
     fn normalize_policy_and_group(
@@ -401,12 +403,6 @@ impl AuthorizationMetadata {
                 ))),
             })
             .collect::<Result<_, _>>()?;
-
-        if and_group.is_empty() {
-            return Err(AuthorizationMetadataError::InvalidPolicyArgs(
-                "empty AND group, expected at least one policy".to_string(),
-            ));
-        }
 
         and_group.sort();
         Ok(PolicyAndGroup(and_group))
@@ -432,12 +428,6 @@ impl AuthorizationMetadata {
                 ))),
             })
             .collect::<Result<_, _>>()?;
-
-        if and_group.is_empty() {
-            return Err(AuthorizationMetadataError::InvalidRequiresScopesArgs(
-                "empty AND group, expected at least one scope".to_string(),
-            ));
-        }
 
         and_group.sort();
         Ok(ScopeAndGroup(and_group))

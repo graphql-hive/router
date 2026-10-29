@@ -2980,4 +2980,32 @@ mod empty_scope_groups {
         let decision = supergraph_data.decide(Some(vec![]), "{ open }");
         insta::assert_snapshot!(decision, @"[NoChange]");
     }
+
+    #[test]
+    fn empty_and_group_in_policy_requires_nothing() {
+        let supergraph_data = build_supergraph_data(
+            r#"
+            type Query {
+              open: String @policy(policies: [[]])
+            }
+        "#,
+        );
+
+        let decision = supergraph_data.decide_with_policies(None, &[], "{ open }");
+        insta::assert_snapshot!(decision, @"[NoChange]");
+    }
+
+    #[test]
+    fn empty_or_list_in_policy_requires_nothing() {
+        let supergraph_data = build_supergraph_data(
+            r#"
+            type Query {
+              open: String @policy(policies: [])
+            }
+        "#,
+        );
+
+        let decision = supergraph_data.decide_with_policies(None, &[], "{ open }");
+        insta::assert_snapshot!(decision, @"[NoChange]");
+    }
 }
