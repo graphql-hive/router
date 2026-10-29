@@ -282,7 +282,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
             let _enter = path_span.enter();
 
             // Find a direct path that references the same type as the current tail,
-            let direct_path = find_self_referencing_direct_path(
+            let direct_path = match find_self_referencing_direct_path(
                 graph,
                 supergraph,
                 override_context,
@@ -290,11 +290,32 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
                 &fragment.type_condition,
                 condition.as_ref().expect("Condition should be present"),
                 cancellation_token,
-            )?;
+            ) {
+                Ok(direct_path) => Some(direct_path),
+                // Only the first path's tail was checked. Another one can be at an interface
+                // object that got to the type with `🔎 Type` and has no selfie edge, it takes
+                // that type condition again, with the fragment's condition on it.
+                Err(WalkOperationError::NoPathsFound(_)) => find_direct_path(
+                    graph,
+                    supergraph,
+                    override_context,
+                    path,
+                    &NavigationTarget::ConcreteType(&fragment.type_condition, condition.clone()),
+                    cancellation_token,
+                )?,
+                Err(error) => return Err(error),
+            };
 
-            trace!("advanced: {}", path.pretty_print(graph));
+            if let Some(direct_path) = direct_path {
+                trace!("advanced: {}", path.pretty_print(graph));
+                next_paths.push(direct_path);
+            }
+        }
 
-            next_paths.push(direct_path);
+        if next_paths.is_empty() {
+            return Err(WalkOperationError::NoPathsFound(
+                fragment.type_condition.to_string(),
+            ));
         }
 
         // Now process the selections under the fragment using the advanced paths
