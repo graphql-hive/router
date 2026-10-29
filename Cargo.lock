@@ -6222,6 +6222,7 @@ dependencies = [
 name = "qp-dev-cli"
 version = "0.0.0"
 dependencies = [
+ "graphql-differential",
  "graphql-tools",
  "hive-router",
  "serde_json",
