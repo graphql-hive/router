@@ -49,7 +49,7 @@ impl<'a> ExecutionContext<'a> {
         subgraph_name: &str,
         affected_path: Option<ResponsePathRef<'_>>,
         errors: Option<Vec<GraphQLError>>,
-        entity_index_error_map: Option<HashMap<&usize, Vec<GraphQLErrorPath>>>,
+        entity_index_error_map: Option<HashMap<usize, Vec<GraphQLErrorPath>>>,
     ) {
         if let Some(response_errors) = errors {
             let affected_path = affected_path.map(|path| path.to_string());
