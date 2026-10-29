@@ -23,6 +23,10 @@ use hive_router::query_planner::utils::cancellation::CancellationToken;
 use hive_router::query_planner::utils::parsing::{parse_operation, parse_schema};
 use std::hint::black_box;
 
+use hive_router::{configure_global_allocator, RouterGlobalAllocator};
+// the allocator the router runs with, since most of parsing is allocating
+configure_global_allocator!();
+
 const RESPONSES: [(&str, &str, &[u8]); 4] = [
     (
         "products",

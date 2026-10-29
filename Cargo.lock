@@ -2834,6 +2834,7 @@ dependencies = [
  "lasso2",
  "lazy-init",
  "lazy_static",
+ "libmimalloc-sys",
  "matchit 0.9.2",
  "md5",
  "mediatype",
