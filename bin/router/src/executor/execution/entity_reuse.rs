@@ -68,16 +68,27 @@ fn copy_object<'a>(
     source: &Value<'a>,
     selections: RequiresSelectionSetRef<'_>,
 ) -> Option<Value<'a>> {
-    let fields = source.as_object()?;
-    let mut copied = Vec::with_capacity(selections.len());
+    let mut copied = Vec::new();
+    // fields nearly always come in the order we ask for them, so each lookup starts where the
+    // last one stopped
+    copy_fields(source.as_object()?, selections, &mut copied, &mut 0)?;
+    Some(Value::Object(copied))
+}
+
+/// Pushes the selected fields into `copied`. Inline fragments push into the same list, so a
+/// copy is one allocation.
+fn copy_fields<'a>(
+    fields: &[(&'a str, Value<'a>)],
+    selections: RequiresSelectionSetRef<'_>,
+    copied: &mut Vec<(&'a str, Value<'a>)>,
+    cursor: &mut usize,
+) -> Option<()> {
+    copied.reserve(selections.len());
     for selection in selections.iter() {
         match selection {
             // The planner only gives us one, around the whole entity.
             RequiresSelection::InlineFragment { selections, .. } => {
-                let Value::Object(inner) = copy_object(source, selections)? else {
-                    return None;
-                };
-                copied.extend(inner);
+                copy_fields(fields, selections, copied, cursor)?
             }
             RequiresSelection::Field {
                 name,
@@ -85,7 +96,7 @@ fn copy_object<'a>(
                 selections,
                 ..
             } => {
-                let position = Value::object_position(fields, alias.unwrap_or(name))?;
+                let position = Value::object_position_from(fields, alias.unwrap_or(name), cursor)?;
                 let (key, value) = &fields[position];
                 let value = if selections.is_empty() {
                     value.clone()
@@ -97,7 +108,7 @@ fn copy_object<'a>(
             RequiresSelection::FragmentSpread(_) => return None,
         }
     }
-    Some(Value::Object(copied))
+    Some(())
 }
 
 fn copy_nested<'a>(
