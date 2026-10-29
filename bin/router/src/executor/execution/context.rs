@@ -550,11 +550,12 @@ mod tests {
         subgraph_keys: Option<&KeysByType>,
         reuse: Option<&ReuseIndex<'_, 'v>>,
     ) -> (Vec<ContextGroup<'a>>, Vec<EntityIndexes>, Vec<Value<'v>>) {
-        let (trie, ends) = PathTrie::new(paths.into_iter().map(|path| path.as_slice()));
+        let trie = PathTrie::new(paths.into_iter().map(|path| path.as_slice()));
+        let ends = trie.ends();
         let path_values = collect_path_values(&trie, data, possible_types, context_depth(context));
         collect_context_entities(
             &path_values,
-            &ends,
+            ends,
             requires,
             input_rewrites,
             context,

@@ -756,7 +756,7 @@ pub enum ExecutionJob<'exec> {
         response: SubgraphResponse<'exec>,
         aliases: Vec<AliasBatchState<'exec>>,
         /// The merge paths of all the aliases
-        trie: Arc<PathTrie<'exec>>,
+        trie: &'exec PathTrie,
     },
 }
 
@@ -1202,7 +1202,6 @@ impl<'exec> Executor<'exec> {
                             merge: aliases,
                             unalias,
                         } = request;
-                        let trie = Arc::clone(&trie);
                         if aliases.iter().all(|alias| alias.entity_count == 0) {
                             // Every entity is already in the response, no need to ask the subgraph.
                             return futures::future::ready(Ok(ExecutionJob::BatchFetch {
@@ -1270,16 +1269,16 @@ impl<'exec> Executor<'exec> {
                             possible_types,
                         )
                     });
-                let (trie, ends) = PathTrie::new([flatten_node.path.as_slice()]);
+                let trie = flatten_node.trie();
                 let path_values = collect_path_values(
-                    &trie,
+                    trie,
                     data,
                     possible_types,
                     context_depth(&fetch_node.context),
                 );
                 let (groups, mut path_indexes, reused) = collect_context_entities(
                     &path_values,
-                    &ends,
+                    trie.ends(),
                     requires_nodes,
                     fetch_node.input_rewrites.as_deref(),
                     &fetch_node.context,
@@ -1579,7 +1578,7 @@ impl<'exec> Executor<'exec> {
                         // Merge entities back into execution context (final data)
                         let entity_index_error_maps = self.merge_batch_entities(
                             ctx,
-                            &trie,
+                            trie,
                             &mut aliases,
                             &mut entities_by_alias,
                             &errors,
@@ -1712,7 +1711,7 @@ impl<'exec> Executor<'exec> {
     fn merge_batch_entities(
         &self,
         ctx: &mut ExecutionContext<'exec>,
-        trie: &PathTrie<'exec>,
+        trie: &PathTrie,
         aliases: &mut [AliasBatchState<'exec>],
         entities_by_alias: &mut [Option<Vec<Value<'exec>>>],
         errors: &BatchFetchErrors,
@@ -1840,23 +1839,18 @@ impl<'exec> Executor<'exec> {
         data: &Value<'exec>,
         subgraph_keys: Option<&KeysByType>,
         reuse_allowed: bool,
-    ) -> (Arc<PathTrie<'exec>>, Vec<BatchWave<'exec>>) {
+    ) -> (&'exec PathTrie, Vec<BatchWave<'exec>>) {
         let possible_types = &self.schema_metadata.possible_types;
         // one walk for the merge paths of every alias
-        let (trie, ends) = PathTrie::new(entity_batch.aliases.iter().flat_map(|alias_spec| {
-            alias_spec
-                .merge_paths
-                .iter()
-                .map(|merge_path| merge_path.as_slice())
-        }));
+        let trie = entity_batch.trie();
         let depth = entity_batch
             .aliases
             .iter()
             .map(|alias_spec| context_depth(&alias_spec.context))
             .max()
             .unwrap_or_default();
-        let path_values = collect_path_values(&trie, data, possible_types, depth);
-        let mut remaining_ends = ends.as_slice();
+        let path_values = collect_path_values(trie, data, possible_types, depth);
+        let mut remaining_ends = trie.ends();
         let mut prepared: Vec<_> = entity_batch
             .aliases
             .iter()
@@ -1970,7 +1964,7 @@ impl<'exec> Executor<'exec> {
             }
         }
 
-        (Arc::new(trie), waves)
+        (trie, waves)
     }
 
     async fn prepare_execution_job(
@@ -2388,7 +2382,7 @@ mod tests {
             ])]
             .into()
         };
-        let entity_batch = EntityBatch {
+        let mut entity_batch = EntityBatch {
             aliases: vec![
                 EntityBatchAlias {
                     alias: "_e0".to_string(),
@@ -2411,7 +2405,9 @@ mod tests {
                     entity_reuse: None,
                 },
             ],
+            trie: Default::default(),
         };
+        entity_batch.build_tries();
 
         let (_, waves) = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None, false);
 
@@ -2421,7 +2417,6 @@ mod tests {
         assert_eq!(raw_variable_values.len(), 1);
         assert_eq!(raw_variable_values[0].0, "__batch_reps_0");
 
-        let mut entity_batch = entity_batch;
         for (index, alias) in entity_batch.aliases.iter_mut().enumerate() {
             alias.context = crate::query_planner::planner::plan_nodes::FetchContext::new(
                 vec![format!("__context_{index}")],

@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::fmt::Display;
+use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -11,9 +12,10 @@ use super::FetchNodePathSegment;
 /// `{"Field": name}`, `{"TypeCondition": [..]}`, and a plain `"@"` for a list step.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PathSegment {
-    Field(Box<str>),
-    /// Boxing this keeps every path step small.
-    TypeCondition(Box<TypeCondition>),
+    /// Shared, so the tries built from a plan's paths point at the same names instead of copying them
+    Field(Arc<str>),
+    /// Behind a pointer, which keeps every path step small.
+    TypeCondition(Arc<TypeCondition>),
     #[serde(rename = "@")]
     List,
 }
@@ -162,9 +164,11 @@ impl From<&MergePath> for FlattenNodePath {
         path.inner
             .iter()
             .map(|segment| match segment {
-                Segment::TypeCondition(type_names, _) => PathSegment::TypeCondition(Box::new(
-                    TypeCondition::from_names(type_names.iter().map(String::as_str)),
-                )),
+                Segment::TypeCondition(type_names, _) => {
+                    PathSegment::TypeCondition(std::sync::Arc::new(TypeCondition::from_names(
+                        type_names.iter().map(String::as_str),
+                    )))
+                }
                 Segment::Field(field_seg, _args_hash, _) => {
                     PathSegment::Field(field_seg.response_key().into())
                 }
@@ -246,7 +250,9 @@ mod type_condition_tests {
     fn a_path_round_trips_through_an_unordered_condition() {
         let expected: FlattenNodePath = vec![
             PathSegment::Field("media".into()),
-            PathSegment::TypeCondition(Box::new(TypeCondition::from_names(["Book", "User"]))),
+            PathSegment::TypeCondition(std::sync::Arc::new(TypeCondition::from_names([
+                "Book", "User",
+            ]))),
         ]
         .into();
 

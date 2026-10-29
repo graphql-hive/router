@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use ahash::HashMap as AHashMap;
 
 use crate::query_planner::planner::plan_nodes::{PathSegment, TypeCondition};
@@ -162,22 +164,28 @@ const FIELDS_BY_NAME_FROM: usize = 8;
 ///
 /// Each path sees its values in the same order a walk of that path alone gives them, so hashes
 /// collected with [`PathTrie::walk`] line up with the values [`PathTrie::walk_mut`] gives later.
-pub struct PathTrie<'p> {
-    nodes: Vec<TrieNode<'p>>,
+///
+/// Plan nodes keep the tries of their paths, built when the plan is made executable, so it's
+/// done once per plan. The names are shared with the paths, not copied.
+#[derive(Debug, Clone)]
+pub struct PathTrie {
+    nodes: Vec<TrieNode>,
+    /// The node each path ends at, in the order the paths were given
+    ends: Vec<usize>,
 }
 
-#[derive(Default)]
-struct TrieNode<'p> {
+#[derive(Debug, Clone, Default)]
+struct TrieNode {
     /// A path ends here
     end: bool,
-    fields: Vec<(&'p str, usize)>,
+    fields: Vec<(Arc<str>, usize)>,
     /// `fields` by name, when there are enough of them
-    fields_by_name: Option<AHashMap<&'p str, usize>>,
+    fields_by_name: Option<AHashMap<Arc<str>, usize>>,
     list: Option<usize>,
-    type_conditions: Vec<(&'p TypeCondition, usize)>,
+    type_conditions: Vec<(Arc<TypeCondition>, usize)>,
 }
 
-impl TrieNode<'_> {
+impl TrieNode {
     fn has_children(&self) -> bool {
         !self.fields.is_empty() || self.list.is_some() || !self.type_conditions.is_empty()
     }
@@ -193,9 +201,9 @@ fn satisfies_type_condition(
         .is_none_or(|name| entity_satisfies_any_type_condition(possible_types, name, condition))
 }
 
-impl<'p> PathTrie<'p> {
-    /// Returns the trie and the node each path ends at. Identical paths end at the same node.
-    pub fn new(paths: impl IntoIterator<Item = &'p [PathSegment]>) -> (Self, Vec<usize>) {
+impl PathTrie {
+    /// Identical paths end at the same node.
+    pub fn new<'p>(paths: impl IntoIterator<Item = &'p [PathSegment]>) -> Self {
         let mut nodes = vec![TrieNode::default()];
         let mut ends = Vec::new();
         for path in paths {
@@ -205,13 +213,13 @@ impl<'p> PathTrie<'p> {
                     PathSegment::Field(name) => nodes[node]
                         .fields
                         .iter()
-                        .find(|(existing, _)| *existing == name.as_ref())
+                        .find(|(existing, _)| existing == name)
                         .map(|(_, child)| *child),
                     PathSegment::List => nodes[node].list,
                     PathSegment::TypeCondition(condition) => nodes[node]
                         .type_conditions
                         .iter()
-                        .find(|(existing, _)| *existing == condition.as_ref())
+                        .find(|(existing, _)| existing == condition)
                         .map(|(_, child)| *child),
                 };
                 node = match existing {
@@ -221,10 +229,12 @@ impl<'p> PathTrie<'p> {
                         nodes.push(TrieNode::default());
                         let parent = &mut nodes[node];
                         match segment {
-                            PathSegment::Field(name) => parent.fields.push((name, child)),
+                            PathSegment::Field(name) => {
+                                parent.fields.push((Arc::clone(name), child))
+                            }
                             PathSegment::List => parent.list = Some(child),
                             PathSegment::TypeCondition(condition) => {
-                                parent.type_conditions.push((condition, child))
+                                parent.type_conditions.push((Arc::clone(condition), child))
                             }
                         }
                         child
@@ -236,10 +246,15 @@ impl<'p> PathTrie<'p> {
         }
         for node in &mut nodes {
             if node.fields.len() >= FIELDS_BY_NAME_FROM {
-                node.fields_by_name = Some(node.fields.iter().copied().collect());
+                node.fields_by_name = Some(node.fields.iter().cloned().collect());
             }
         }
-        (Self { nodes }, ends)
+        Self { nodes, ends }
+    }
+
+    /// The node each path ends at, in the order [`Self::new`] got them
+    pub fn ends(&self) -> &[usize] {
+        &self.ends
     }
 
     pub fn len(&self) -> usize {
@@ -289,7 +304,7 @@ impl<'p> PathTrie<'p> {
 
     fn walk_below<'d, 'v>(
         &self,
-        node: &TrieNode<'p>,
+        node: &TrieNode,
         data: &'d Value<'v>,
         possible_types: &PossibleTypes,
         objects: &mut Vec<&'d Value<'v>>,
@@ -301,14 +316,14 @@ impl<'p> PathTrie<'p> {
                 if let Some(fields_by_name) = &node.fields_by_name {
                     // a key the object has twice is walked twice, a search would find it once
                     for (key, child) in object {
-                        if let Some(&child_index) = fields_by_name.get(key) {
+                        if let Some(&child_index) = fields_by_name.get(*key) {
                             self.walk_node(child_index, child, possible_types, objects, callback);
                         }
                     }
                 } else {
-                    for &(name, child_index) in &node.fields {
+                    for (name, child_index) in &node.fields {
                         if let Some(child) = Value::object_get(object, name) {
-                            self.walk_node(child_index, child, possible_types, objects, callback);
+                            self.walk_node(*child_index, child, possible_types, objects, callback);
                         }
                     }
                 }
@@ -323,10 +338,10 @@ impl<'p> PathTrie<'p> {
             }
             _ => {}
         }
-        for &(condition, child_index) in &node.type_conditions {
+        for (condition, child_index) in &node.type_conditions {
             self.walk_type_condition(
                 condition,
-                child_index,
+                *child_index,
                 data,
                 possible_types,
                 objects,
@@ -410,7 +425,7 @@ impl<'p> PathTrie<'p> {
 
     fn walk_below_mut<'a>(
         &self,
-        node: &TrieNode<'p>,
+        node: &TrieNode,
         data: &mut Value<'a>,
         possible_types: &PossibleTypes,
         error_path: &mut Option<GraphQLErrorPath>,
@@ -433,11 +448,11 @@ impl<'p> PathTrie<'p> {
                         }
                     }
                 } else {
-                    for &(name, child_index) in &node.fields {
+                    for (name, child_index) in &node.fields {
                         if let Some(child) = Value::object_get_mut(object, name) {
                             push_field(error_path, name);
                             self.walk_node_mut(
-                                child_index,
+                                *child_index,
                                 child,
                                 possible_types,
                                 error_path,
@@ -459,10 +474,10 @@ impl<'p> PathTrie<'p> {
             }
             _ => {}
         }
-        for &(condition, child_index) in &node.type_conditions {
+        for (condition, child_index) in &node.type_conditions {
             self.walk_type_condition_mut(
                 condition,
-                child_index,
+                *child_index,
                 data,
                 possible_types,
                 error_path,
@@ -515,7 +530,7 @@ mod tests {
             .iter()
             .map(|step| match *step {
                 "@" => PathSegment::List,
-                s if s.starts_with('|') => PathSegment::TypeCondition(Box::new(
+                s if s.starts_with('|') => PathSegment::TypeCondition(std::sync::Arc::new(
                     TypeCondition::from_names(s.trim_start_matches('|').split('|')),
                 )),
                 field => PathSegment::Field(field.into()),
@@ -706,7 +721,7 @@ mod tests {
     fn trie_matches_multi_type_cast() {
         let data = Value::Object(vec![("__typename", Value::String("Book".into()))]);
         let path = path(&["|Book|User"]);
-        let (trie, _) = super::PathTrie::new([path.as_slice()]);
+        let trie = super::PathTrie::new([path.as_slice()]);
         let mut matched = false;
 
         trie.walk(&data, &Default::default(), &mut |_, _, _| {
@@ -720,7 +735,7 @@ mod tests {
     fn trie_rejects_non_matching_multi_type_cast() {
         let data = Value::Object(vec![("__typename", Value::String("Magazine".into()))]);
         let path = path(&["|Book|User"]);
-        let (trie, _) = super::PathTrie::new([path.as_slice()]);
+        let trie = super::PathTrie::new([path.as_slice()]);
         let mut matched = false;
 
         trie.walk(&data, &Default::default(), &mut |_, _, _| {
@@ -783,7 +798,8 @@ mod tests {
             })
             .collect();
 
-        let (trie, ends) = super::PathTrie::new(paths.iter().map(|path| path.as_slice()));
+        let trie = super::PathTrie::new(paths.iter().map(|path| path.as_slice()));
+        let ends = trie.ends();
         assert_eq!(ends[0], ends[4], "identical paths end at the same node");
         let mut by_node: Vec<Found> = vec![Vec::new(); trie.len()];
         let mut target = data.clone();
