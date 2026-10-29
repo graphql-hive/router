@@ -1094,6 +1094,9 @@ impl<'graph> Graph<'graph> {
                                 abstract_tail,
                                 Edge::AbstractMove(member.to_string()),
                             );
+                            // a conditional `... on Union` keeps the fragment with a selfie, like
+                            // any other type, and the path stays on this member's node
+                            self.push_edge(tail, tail, Edge::Selfie(target_type.to_string()));
                         }
 
                         continue;
