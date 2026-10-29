@@ -2913,3 +2913,99 @@ mod policy_directive {
         }
     }
 }
+
+/// Composition (both Apollo's and The Guild's) accepts `@requiresScopes(scopes: [[]])` and
+/// `@requiresScopes(scopes: [])` and keeps them in the supergraph
+#[cfg(test)]
+mod empty_scope_groups {
+    use super::*;
+
+    #[test]
+    fn empty_and_group_on_field_requires_nothing() {
+        let supergraph_data = build_supergraph_data(
+            r#"
+            type Query {
+              open: String @requiresScopes(scopes: [[]])
+            }
+        "#,
+        );
+
+        let decision = supergraph_data.decide(None, "{ open }");
+        insta::assert_snapshot!(decision, @"[NoChange]");
+    }
+
+    #[test]
+    fn empty_or_list_on_field_requires_nothing() {
+        let supergraph_data = build_supergraph_data(
+            r#"
+            type Query {
+              open: String @requiresScopes(scopes: [])
+            }
+        "#,
+        );
+
+        let decision = supergraph_data.decide(None, "{ open }");
+        insta::assert_snapshot!(decision, @"[NoChange]");
+    }
+
+    #[test]
+    fn empty_and_group_on_type_requires_nothing() {
+        let supergraph_data = build_supergraph_data(
+            r#"
+            type Query {
+              user: User
+            }
+
+            type User @requiresScopes(scopes: [[]]) {
+              id: ID!
+            }
+        "#,
+        );
+
+        let decision = supergraph_data.decide(None, "{ user { id } }");
+        insta::assert_snapshot!(decision, @"[NoChange]");
+    }
+
+    /// An empty AND group next to a non-empty one still satisfies the OR.
+    #[test]
+    fn empty_and_group_satisfies_or_with_other_groups() {
+        let supergraph_data = build_supergraph_data(
+            r#"
+            type Query {
+              open: String @requiresScopes(scopes: [[], ["admin"]])
+            }
+        "#,
+        );
+
+        let decision = supergraph_data.decide(Some(vec![]), "{ open }");
+        insta::assert_snapshot!(decision, @"[NoChange]");
+    }
+
+    #[test]
+    fn empty_and_group_in_policy_requires_nothing() {
+        let supergraph_data = build_supergraph_data(
+            r#"
+            type Query {
+              open: String @policy(policies: [[]])
+            }
+        "#,
+        );
+
+        let decision = supergraph_data.decide_with_policies(None, &[], "{ open }");
+        insta::assert_snapshot!(decision, @"[NoChange]");
+    }
+
+    #[test]
+    fn empty_or_list_in_policy_requires_nothing() {
+        let supergraph_data = build_supergraph_data(
+            r#"
+            type Query {
+              open: String @policy(policies: [])
+            }
+        "#,
+        );
+
+        let decision = supergraph_data.decide_with_policies(None, &[], "{ open }");
+        insta::assert_snapshot!(decision, @"[NoChange]");
+    }
+}

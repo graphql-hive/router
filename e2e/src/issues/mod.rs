@@ -4263,4 +4263,33 @@ mod issues_e2e_tests {
         /inventory not called
         "#);
     }
+
+    #[ntex::test]
+    /// Composition accepts `@requiresScopes(scopes: [[]])` and `@requiresScopes(scopes: [])`
+    /// and keeps them in the supergraph
+    async fn requires_scopes_with_empty_groups_requires_nothing() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.requires-scopes-empty-group.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ me { id name } }", None, None)
+            .await;
+        insta::assert_snapshot!(res.string_body().await, @r#"{"data":{"me":{"id":"1","name":"Uri Goldshtein"}}}"#);
+
+        let res = router
+            .send_graphql_request("{ me { birthday username } }", None, None)
+            .await;
+        insta::assert_snapshot!(res.string_body().await, @r#"{"data":{"me":{"birthday":1234567890,"username":"urigo"}}}"#);
+    }
 }
