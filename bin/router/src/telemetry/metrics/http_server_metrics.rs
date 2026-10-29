@@ -165,6 +165,15 @@ impl HttpServerMetrics {
 }
 
 impl Capture<HttpServerRequestState<'_>> {
+    /// Whether `finish` records anything that needs the request's external wait. Tracking it
+    /// costs a lock and two clock reads per subgraph call, so it's skipped otherwise.
+    pub fn needs_external_wait(&self) -> bool {
+        self.get().is_some_and(|state| {
+            state.instruments.request_overhead_duration.is_some()
+                || state.instruments.request_external_wait_duration.is_some()
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn finish(
         self,
