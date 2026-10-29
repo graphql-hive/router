@@ -702,6 +702,30 @@ where
     Ok(doc)
 }
 
+/// Parses a schema one definition at a time. The caller decides what to keep, so a huge schema
+/// can be processed without the AST of the whole document in memory at once.
+pub fn parse_schema_definitions<'a, T>(
+    s: &'a str,
+) -> impl Iterator<Item = Result<Definition<'a, T>, ParseError>>
+where
+    T: Text<'a>,
+{
+    let mut tokens = TokenStream::new(s);
+    let mut done = false;
+    std::iter::from_fn(move || {
+        if done || eof().parse_stream(&mut tokens).into_result().is_ok() {
+            return None;
+        }
+        match parser(definition).parse_stream(&mut tokens).into_result() {
+            Ok((definition, _)) => Some(Ok(definition)),
+            Err(err) => {
+                done = true;
+                Some(Err(err.into_inner().error.into()))
+            }
+        }
+    })
+}
+
 #[cfg(test)]
 mod test {
     use super::parse_schema;
@@ -710,6 +734,28 @@ mod test {
 
     fn ast<'a>(s: &'a str) -> Document<'a, String> {
         parse_schema::<String>(s).unwrap().to_owned()
+    }
+
+    #[test]
+    fn definitions_one_by_one_match_the_document() {
+        let sdl = r#"
+            schema { query: Query }
+            "doc" type Query { a(x: Int = 1): [A!]! @d(y: "z") }
+            scalar X @x
+            union U = A | B
+            directive @d(y: String) repeatable on FIELD_DEFINITION
+        "#;
+        let style = crate::parser::Style::default();
+        let mut out = String::new();
+        for definition in super::parse_schema_definitions::<&str>(sdl) {
+            definition.unwrap().format_into(&style, &mut out);
+        }
+        assert_eq!(out, parse_schema::<&str>(sdl).unwrap().format(&style));
+
+        let mut definitions = super::parse_schema_definitions::<&str>("scalar A type {");
+        assert!(definitions.next().unwrap().is_ok());
+        assert!(definitions.next().unwrap().is_err());
+        assert!(definitions.next().is_none());
     }
 
     #[test]

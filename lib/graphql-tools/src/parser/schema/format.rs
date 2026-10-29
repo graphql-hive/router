@@ -17,6 +17,19 @@ where
     }
 }
 
+impl<'a, T> Definition<'a, T>
+where
+    T: Text<'a>,
+{
+    /// Formats the definition onto the end of `buf`, exactly like `Document::format` would
+    /// format it as one of the document's definitions
+    pub fn format_into(&self, style: &Style, buf: &mut String) {
+        let mut formatter = Formatter::with_buf(style, std::mem::take(buf));
+        self.display(&mut formatter);
+        *buf = formatter.into_string();
+    }
+}
+
 fn to_string<T: Displayable>(v: &T) -> String {
     let style = Style::default();
     let mut formatter = Formatter::new(&style);

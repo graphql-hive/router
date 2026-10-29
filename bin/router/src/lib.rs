@@ -1,6 +1,7 @@
 // Needed because of ntex's way of defining middlewares
 #![recursion_limit = "256"]
 
+pub mod anonymize;
 pub mod background_tasks;
 mod cache_state;
 pub mod config;

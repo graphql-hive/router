@@ -56,6 +56,14 @@ impl<'a> Formatter<'a> {
         }
     }
 
+    pub fn with_buf(style: &'a Style, buf: String) -> Formatter<'a> {
+        Formatter {
+            buf,
+            style,
+            indent: 0,
+        }
+    }
+
     pub fn indent(&mut self) {
         for _ in 0..self.indent {
             self.buf.push(' ');

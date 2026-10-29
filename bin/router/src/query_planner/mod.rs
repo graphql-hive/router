@@ -11,4 +11,4 @@ pub mod planner;
 pub mod state;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

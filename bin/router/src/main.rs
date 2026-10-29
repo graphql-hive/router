@@ -21,6 +21,27 @@ async fn main() -> Result<(), RouterInitError> {
     // full backtraces, the default cuts them at 10 frames and recursive Value clones need more
     let _profiler = dhat::Profiler::builder().trim_backtraces(None).build();
 
+    // `args_os`, because `args` panics on an argument that isn't valid unicode, and the router
+    // itself never reads argv
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|command| command == "anonymize")
+    {
+        let args = std::env::args_os()
+            .skip(2)
+            .map(|arg| arg.into_string())
+            .collect::<Result<Vec<_>, _>>();
+        let result = match args {
+            Ok(args) => hive_router::anonymize::run_cli(&args),
+            Err(arg) => Err(format!("{arg:?} isn't valid unicode")),
+        };
+        if let Err(err) = result {
+            eprintln!("{err}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
     init_rustls_crypto_provider();
 
     router_entrypoint(PluginRegistry::new()).await
