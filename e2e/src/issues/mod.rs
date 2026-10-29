@@ -3643,7 +3643,7 @@ mod issues_e2e_tests {
             })
             .collect();
         insta::assert_snapshot!(called.join("\n"), @r#"
-        /search
+        /search 
         /catalog {"__typename":"Animal","id":"c1"} {"__typename":"Animal","id":"d1"} {"__typename":"Animal","id":"b1"}
         /ranking {"__typename":"Listing","pet":{"__typename":"Cat","whiskers":12},"id":"l1"} {"__typename":"Listing","pet":{"__typename":"Dog","tricks":3},"id":"l2"} {"__typename":"Listing","pet":{"__typename":"Bird"},"id":"l3"}
         "#);
