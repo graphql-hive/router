@@ -1353,65 +1353,71 @@ fn qp_nested_include_skip_conditions_in_complex_products_query() -> Result<(), B
           },
         },
         Parallel {
-          Skip(if: $skipAuthor) {
-            Include(if: $nestedReviews) {
-              Include(if: $product) {
-                Flatten(path: "topProducts.@.reviews.@.author.reviews.@.product") {
-                  Fetch(service: "products") {
-                    {
-                      ... on Product {
-                        __typename
-                        upc
+          Include(if: $reviews) {
+            Skip(if: $skipAuthor) {
+              Include(if: $nestedReviews) {
+                Include(if: $product) {
+                  Flatten(path: "topProducts.@.reviews.@.author.reviews.@.product") {
+                    Fetch(service: "products") {
+                      {
+                        ... on Product {
+                          __typename
+                          upc
+                        }
+                      } =>
+                      {
+                        ... on Product {
+                          price
+                          weight
+                          name
+                        }
                       }
-                    } =>
-                    {
-                      ... on Product {
-                        price
-                        weight
-                        name
-                      }
-                    }
+                    },
                   },
                 },
               },
             },
           },
-          Skip(if: $skipAuthor) {
-            Flatten(path: "topProducts.@.reviews.@.author") {
-              Fetch(service: "accounts") {
-                {
-                  ... on User {
-                    __typename
-                    id
+          Include(if: $reviews) {
+            Skip(if: $skipAuthor) {
+              Flatten(path: "topProducts.@.reviews.@.author") {
+                Fetch(service: "accounts") {
+                  {
+                    ... on User {
+                      __typename
+                      id
+                    }
+                  } =>
+                  {
+                    ... on User {
+                      name
+                    }
                   }
-                } =>
-                {
-                  ... on User {
-                    name
-                  }
-                }
+                },
               },
             },
           },
         },
-        Skip(if: $skipAuthor) {
-          Include(if: $nestedReviews) {
-            Include(if: $product) {
-              Flatten(path: "topProducts.@.reviews.@.author.reviews.@.product") {
-                Fetch(service: "inventory") {
-                  {
-                    ... on Product {
-                      __typename
-                      price
-                      weight
-                      upc
+        Include(if: $reviews) {
+          Skip(if: $skipAuthor) {
+            Include(if: $nestedReviews) {
+              Include(if: $product) {
+                Flatten(path: "topProducts.@.reviews.@.author.reviews.@.product") {
+                  Fetch(service: "inventory") {
+                    {
+                      ... on Product {
+                        __typename
+                        price
+                        weight
+                        upc
+                      }
+                    } =>
+                    {
+                      ... on Product {
+                        shippingEstimate
+                      }
                     }
-                  } =>
-                  {
-                    ... on Product {
-                      shippingEstimate
-                    }
-                  }
+                  },
                 },
               },
             },
@@ -2465,5 +2471,72 @@ fn field_condition_kept_when_the_field_is_also_unconditional() -> Result<(), Box
       },
     },
     "#);
+    Ok(())
+}
+
+/// `... on Animal` on an `Animal` doesn't narrow anything, its condition goes onto `... on Dog`.
+/// Otherwise the Dogs at `pet|[Animal]|[Dog]` and at `pet|[Dog]` are looked up twice.
+#[test]
+fn condition_on_a_fragment_of_the_same_type_goes_to_its_fragments() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($x: Boolean!) {
+          listings {
+            pet {
+              ... on Animal @include(if: $x) {
+                ... on Dog {
+                  tricks
+                }
+              }
+              ... on Dog {
+                name
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1309.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "search") {
+          {
+            listings {
+              pet {
+                __typename
+                ... on Dog {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+        },
+        Flatten(path: "listings.@.pet|[Dog]") {
+          Fetch(service: "catalog") {
+            {
+              ... on Dog {
+                __typename
+                id
+              }
+            } =>
+            ($x:Boolean!) {
+              ... on Dog {
+                name
+                ... on Dog @include(if: $x) {
+                  tricks
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
     Ok(())
 }
