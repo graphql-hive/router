@@ -2058,3 +2058,150 @@ fn spread_condition_kept_around_same_type_fragment_with_its_own() -> Result<(), 
     "#);
     Ok(())
 }
+
+/// The Book and Magazine calls below `similar|[Book].reviews` get batched. `[Book]` is about
+/// `similar`, not about the products, so `$a` has to gate the Magazines too.
+#[test]
+fn condition_kept_on_every_type_of_a_batched_call_under_a_type_condition(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($a: Boolean!) {
+          similar(id: "x") {
+            reviews @include(if: $a) {
+              product {
+                delivery {
+                  fastestDelivery
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/abstract-types.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            similar(id: "x") {
+              __typename
+              id
+            }
+          }
+        },
+        Include(if: $a) {
+          Sequence {
+            Flatten(path: "similar.@") {
+              Fetch(service: "reviews") {
+                {
+                  ... on Book {
+                    __typename
+                    id
+                  }
+                  ... on Magazine {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Book {
+                    reviews {
+                      ...a
+                    }
+                  }
+                  ... on Magazine {
+                    reviews {
+                      ...a
+                    }
+                  }
+                }
+                fragment a on Review {
+                  product {
+                    __typename
+                    id
+                  }
+                }
+              },
+            },
+            Flatten(path: "similar.@.reviews.@.product") {
+              Fetch(service: "products") {
+                {
+                  ... on Book {
+                    __typename
+                    id
+                  }
+                  ... on Magazine {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Book {
+                    dimensions {
+                      ...a
+                    }
+                  }
+                  ... on Magazine {
+                    dimensions {
+                      ...a
+                    }
+                  }
+                }
+                fragment a on ProductDimension {
+                  weight
+                  size
+                }
+              },
+            },
+            Flatten(path: "similar.@.reviews.@.product") {
+              Fetch(service: "inventory") {
+                {
+                  ... on Book {
+                    __typename
+                    dimensions {
+                      size
+                      weight
+                    }
+                    id
+                  }
+                  ... on Magazine {
+                    __typename
+                    dimensions {
+                      size
+                      weight
+                    }
+                    id
+                  }
+                } =>
+                {
+                  ... on Book {
+                    delivery {
+                      ...a
+                    }
+                  }
+                  ... on Magazine {
+                    delivery {
+                      ...a
+                    }
+                  }
+                }
+                fragment a on DeliveryEstimates {
+                  fastestDelivery
+                }
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}

@@ -1506,7 +1506,9 @@ fn process_abstract_edge(
                     type_condition: target_type_name.clone(),
                     selections: SelectionSet::default(),
                     skip_if: segment_condition.as_ref().and_then(Condition::to_skip_if),
-                    include_if: segment_condition.as_ref().and_then(Condition::to_include_if),
+                    include_if: segment_condition
+                        .as_ref()
+                        .and_then(Condition::to_include_if),
                 }),
             ],
         },
