@@ -50,11 +50,53 @@ impl Hash for Value<'_> {
     }
 }
 
+/// `a == b` for object keys, without calling memcmp. keys are short, so the call costs more
+/// than the compare itself.
+#[inline(always)]
+pub fn key_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let (mut a, mut b) = (a, b);
+    while a.len() >= 8 {
+        let (head_a, rest_a) = a.split_at(8);
+        let (head_b, rest_b) = b.split_at(8);
+        if u64::from_ne_bytes(head_a.try_into().unwrap())
+            != u64::from_ne_bytes(head_b.try_into().unwrap())
+        {
+            return false;
+        }
+        (a, b) = (rest_a, rest_b);
+    }
+    if a.len() >= 4 {
+        let (head_a, rest_a) = a.split_at(4);
+        let (head_b, rest_b) = b.split_at(4);
+        if u32::from_ne_bytes(head_a.try_into().unwrap())
+            != u32::from_ne_bytes(head_b.try_into().unwrap())
+        {
+            return false;
+        }
+        (a, b) = (rest_a, rest_b);
+    }
+    if a.len() >= 2 {
+        let (head_a, rest_a) = a.split_at(2);
+        let (head_b, rest_b) = b.split_at(2);
+        if u16::from_ne_bytes(head_a.try_into().unwrap())
+            != u16::from_ne_bytes(head_b.try_into().unwrap())
+        {
+            return false;
+        }
+        (a, b) = (rest_a, rest_b);
+    }
+    a.first() == b.first()
+}
+
 impl<'a> Value<'a> {
     /// Finds the position of `key` in an object's entries.
     #[inline]
     pub fn object_position(obj: &[(&str, Value<'_>)], key: &str) -> Option<usize> {
-        obj.iter().position(|(k, _)| *k == key)
+        obj.iter().position(|(k, _)| key_eq(k, key))
     }
 
     /// Like object_position, but scans from `cursor` first, wraps around,
@@ -69,9 +111,9 @@ impl<'a> Value<'a> {
         let (after, before) = (&obj[start..], &obj[..start]);
         let position = after
             .iter()
-            .position(|(k, _)| *k == key)
+            .position(|(k, _)| key_eq(k, key))
             .map(|index| start + index)
-            .or_else(|| before.iter().position(|(k, _)| *k == key))?;
+            .or_else(|| before.iter().position(|(k, _)| key_eq(k, key)))?;
         *cursor = position + 1;
         Some(position)
     }
@@ -531,7 +573,7 @@ impl From<&Value<'_>> for SonicValue {
 
 #[cfg(test)]
 mod tests {
-    use super::Value;
+    use super::{key_eq, Value};
     use serde::Deserialize;
     use std::borrow::Cow;
 
@@ -574,6 +616,21 @@ mod tests {
             sonic_rs::to_string(&value).unwrap(),
             std::str::from_utf8(bytes).unwrap()
         );
+    }
+
+    #[test]
+    fn key_eq_matches_str_eq_at_every_length() {
+        let keys = "abcdefghijklmnopqrstuvwxyz";
+        for len in 0..=keys.len() {
+            let key = &keys[..len];
+            assert!(key_eq(key, key));
+            for at in 0..len {
+                let mut other = key.as_bytes().to_vec();
+                other[at] = b'_';
+                assert!(!key_eq(key, std::str::from_utf8(&other).unwrap()));
+            }
+            assert!(!key_eq(key, &keys[..len.saturating_sub(1)]) || len == 0);
+        }
     }
 
     #[test]
