@@ -116,6 +116,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.3.7 (2026-10-28)
+
+### Fixes
+
+#### Fix an empty conditional fragment in subgraph requests
+
+Fixed an issue where the query planner could generate empty fragments when batching requests with `@include` or `@skip` directives, causing subgraphs to reject the query.
+
+#### Borrow supergraph values instead of copying them
+
+The query planner now borrows type names, field names and selections from the supergraph instead of owning copies of them. This means fewer allocations and lower memory use.
+
+#### Speed up building the query planner graph
+
+- Parse each `@key`, `@requires` and `@provides` selection once and share it between edges.
+- Cache subgraph nodes while building the graph.
+- Compute the possible types of each abstract type once and reuse them during normalization.
+- Index which subgraphs resolve each root field once, instead of looking it up for every field.
+- Skip types that can't have entity moves or outgoing edges, and handle enum leaves more cheaply.
+
+#### Avoid duplicate graph edges and speed up supergraph decomposition
+
+- A type that repeats `@join__type` for the same subgraph (once per `@key`) no longer adds duplicate edges to the query planner graph.
+- Supergraph decomposition groups join types and enum values by subgraph in a single pass, instead of scanning every definition once per subgraph. This was slow for supergraphs with hundreds of subgraphs.
+
+#### Faster hashing and path cloning in the query planner
+
+- Use `ahash` for the query planner's hash maps and sets.
+- Share merge path segments, so cloning a path is cheap.
+- Borrow possible-type sets from the supergraph when merging batched fetch steps, instead of cloning them on every merge.
+
+#### Speed up the query planner walker and fetch graph
+
+- Look for indirect paths only when there's an entity or interface-object move to follow, and work out the target subgraphs only when that lookup runs.
+- Share path lists between work items instead of cloning them, and follow inline fragments with a single direct path.
+- Merge leaves and siblings faster, and price a merged plan by measuring only the nodes the merge adds.
+- Group fetch steps by a key before batching multi-type fetches, so only steps that could be batched get compared.
+
+#### Fix planning of interface fields resolvable in several subgraphs
+
+When a field returning an interface could be resolved by more than one subgraph, and its selection had more than one inline fragment, the query planner stopped using entity jumps for every field of that interface. If the selection also needed fields from other subgraphs, planning failed with `NoPathsFound`. Those fields can now be fetched from the subgraphs that provide them.
+
+#### Track a single union member after narrowing union paths
+
+When several subgraphs can resolve a field that returns a union, the query planner narrows the candidate paths down to the members those subgraphs share. Each remaining path stands for one union member, but it used to keep the whole shared member set. So the planner could still follow fragments on the other shared members through it. Each path now keeps only its own member.
+
 ## 0.3.6 (2026-10-23)
 
 ### Features
