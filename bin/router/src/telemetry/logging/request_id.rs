@@ -9,7 +9,16 @@ use http::{HeaderMap, HeaderName};
 use ntex::web::HttpRequest;
 use opentelemetry::trace::TraceContextExt;
 use tokio::task::futures::TaskLocalFuture;
-use uuid::Uuid;
+use uuid::{
+    timestamp::context::{ContextV7, ThreadLocalContext},
+    Timestamp, Uuid,
+};
+
+thread_local! {
+    // `Uuid::now_v7` shares one context behind a lock across all threads. ids only need to
+    // be ordered within a thread, so each one gets its own.
+    static UUID_CONTEXT: ContextV7 = const { ContextV7::new() };
+}
 
 #[derive(Clone)]
 pub struct RequestIdentifierExtractor {
@@ -107,7 +116,7 @@ impl RequestIdentifierExtractor {
             return req_id_header.to_string();
         }
 
-        Uuid::now_v7().to_string()
+        Uuid::new_v7(Timestamp::now(ThreadLocalContext::new(&UUID_CONTEXT))).to_string()
     }
 }
 
