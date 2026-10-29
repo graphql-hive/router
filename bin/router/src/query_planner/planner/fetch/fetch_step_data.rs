@@ -130,25 +130,21 @@ impl<State> FetchStepData<State> {
     }
 }
 
-// Extracts concrete type names from response-path type-condition segments.
-// `products.@|[Book|Magazine]` gives back `Book` and `Magazine`
+// Extracts concrete type names from the type condition the response path ends with, the types
+// the step's output is about.
+// `products.@|[Book|Magazine]` gives back `Book` and `Magazine`, `similar|[Book].reviews` nothing,
+// `[Book]` is about `similar` there, not about the reviews.
 pub(crate) fn type_condition_types_from_response_path(
     response_path: &MergePath,
 ) -> Option<BTreeSet<&str>> {
-    let conditioned_types = response_path
-        .inner
-        .iter()
-        .filter_map(|segment| match segment {
-            Segment::TypeCondition(type_names, _) => Some(type_names),
-            _ => None,
-        })
-        .flat_map(|type_names| type_names.iter().map(|type_name| type_name.as_str()))
-        .collect::<BTreeSet<_>>();
-
-    if conditioned_types.is_empty() {
-        None
-    } else {
-        Some(conditioned_types)
+    match response_path.last() {
+        Some(Segment::TypeCondition(type_names, _)) => Some(
+            type_names
+                .iter()
+                .map(|type_name| type_name.as_str())
+                .collect(),
+        ),
+        _ => None,
     }
 }
 
