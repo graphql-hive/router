@@ -72,7 +72,7 @@ use crate::executor::{
     projection::{plan::ProjectionPlan, response::project_by_operation},
     response::{
         graphql_error::{GraphQLError, GraphQLErrorPath, GraphQLErrorPathSegment},
-        merge::{deep_merge, deep_merge_from},
+        merge::{deep_merge, deep_merge_from, EntityMerger},
         subgraph_response::SubgraphResponse,
         value::Value,
     },
@@ -1419,8 +1419,11 @@ impl<'exec> Executor<'exec> {
                                 .map(|_| HashMap::with_capacity(entities.len()));
                             let mut merger = EntityMerger::new(
                                 &mut entities,
-                                representation_hashes.iter(),
-                                representation_hash_to_index,
+                                representation_hashes
+                                    .iter()
+                                    .flatten()
+                                    .filter_map(|hash| representation_hash_to_index.get(hash))
+                                    .copied(),
                             );
                             traverse_and_callback_mut(
                                 &mut ctx.data,
@@ -1642,8 +1645,9 @@ impl<'exec> Executor<'exec> {
             alias_state
                 .paths
                 .iter()
-                .flat_map(|path_state| path_state.representation_hashes.iter()),
-            &alias_state.representation_hash_to_index,
+                .flat_map(|path_state| path_state.representation_hashes.iter().flatten())
+                .filter_map(|hash| alias_state.representation_hash_to_index.get(hash))
+                .copied(),
         );
 
         // We walk each merge path
@@ -1895,57 +1899,6 @@ impl<'exec> Executor<'exec> {
         })
         .instrument(subgraph_operation_span.clone())
         .await
-    }
-}
-
-/// Merges entities from an `_entities` response into the spots that asked for them.
-/// Most entities land in more than one spot, so every spot gets a clone
-/// except the last one, which gets the entity itself.
-struct EntityMerger<'e, 'exec> {
-    entities: &'e mut [Value<'exec>],
-    remaining_uses: Vec<usize>,
-}
-
-impl<'e, 'exec> EntityMerger<'e, 'exec> {
-    fn new<'h>(
-        entities: &'e mut [Value<'exec>],
-        representation_hashes: impl IntoIterator<Item = &'h Option<u64>>,
-        representation_hash_to_index: &AHashMap<u64, usize>,
-    ) -> Self {
-        let mut remaining_uses = vec![0; entities.len()];
-        for hash in representation_hashes.into_iter().flatten() {
-            if let Some(remaining) = representation_hash_to_index
-                .get(hash)
-                .and_then(|entity_index| remaining_uses.get_mut(*entity_index))
-            {
-                *remaining += 1;
-            }
-        }
-        Self {
-            entities,
-            remaining_uses,
-        }
-    }
-
-    fn merge_into<'target>(&mut self, target: &mut Value<'target>, entity_index: usize)
-    where
-        'exec: 'target,
-    {
-        let (Some(entity), Some(remaining)) = (
-            self.entities.get_mut(entity_index),
-            self.remaining_uses.get_mut(entity_index),
-        ) else {
-            return;
-        };
-        let last_use = remaining.checked_sub(1).is_some_and(|left| {
-            *remaining = left;
-            left == 0
-        });
-        if last_use {
-            deep_merge(target, std::mem::take(entity));
-        } else {
-            deep_merge_from(target, entity);
-        }
     }
 }
 

@@ -98,6 +98,53 @@ fn deep_merge_objects_from<'target, 'source: 'target>(
     }
 }
 
+/// Merges `_entities` results into the spots that asked for them.
+/// Most entities land in more than one spot, so every spot gets merged from a borrow
+/// except the last one, which gets the entity itself.
+pub struct EntityMerger<'e, 'exec> {
+    entities: &'e mut [Value<'exec>],
+    remaining_uses: Vec<u32>,
+}
+
+impl<'e, 'exec> EntityMerger<'e, 'exec> {
+    /// `uses` is the entity index of every spot, in the order they get merged.
+    /// Counting more uses than really happen is fine, the last one just gets merged from a borrow.
+    pub fn new(entities: &'e mut [Value<'exec>], uses: impl IntoIterator<Item = usize>) -> Self {
+        let mut remaining_uses = vec![0; entities.len()];
+        for index in uses {
+            if let Some(remaining) = remaining_uses.get_mut(index) {
+                *remaining += 1;
+            }
+        }
+        Self {
+            entities,
+            remaining_uses,
+        }
+    }
+
+    #[inline]
+    pub fn merge_into<'target>(&mut self, target: &mut Value<'target>, entity_index: usize)
+    where
+        'exec: 'target,
+    {
+        let (Some(entity), Some(remaining)) = (
+            self.entities.get_mut(entity_index),
+            self.remaining_uses.get_mut(entity_index),
+        ) else {
+            return;
+        };
+        let last_use = remaining.checked_sub(1).is_some_and(|left| {
+            *remaining = left;
+            left == 0
+        });
+        if last_use {
+            deep_merge(target, std::mem::take(entity));
+        } else {
+            deep_merge_from(target, entity);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{deep_merge, deep_merge_from};
@@ -123,6 +170,32 @@ mod tests {
         assert_eq!(keys(&target), ["id", "name", "nested", "price", "stock"]);
         let nested = Value::object_get(target.as_object().unwrap(), "nested").unwrap();
         assert_eq!(keys(nested), ["x", "y"]);
+    }
+
+    #[test]
+    fn entity_merger_moves_each_entity_on_its_last_use() {
+        let mut entities = vec![parse(r#"{"id": "a"}"#), parse(r#"{"id": "b"}"#)];
+        // "a" goes to two targets, "b" to one, and one extra use of "b" never happens.
+        let mut merger = super::EntityMerger::new(&mut entities, [0, 1, 0, 1]);
+
+        let id = |value: &Value| {
+            Value::object_get(value.as_object()?, "id")?
+                .as_str()
+                .map(String::from)
+        };
+        let mut targets = vec![parse("{}"), parse("{}"), parse("{}")];
+        merger.merge_into(&mut targets[0], 0);
+        merger.merge_into(&mut targets[1], 1);
+        merger.merge_into(&mut targets[2], 0);
+        merger.merge_into(&mut parse("{}"), 2);
+        drop(merger);
+
+        assert_eq!(id(&targets[0]).as_deref(), Some("a"));
+        assert_eq!(id(&targets[1]).as_deref(), Some("b"));
+        assert_eq!(id(&targets[2]).as_deref(), Some("a"));
+        // "a" was used up, so it was moved out. "b" still has a use left, so it was borrowed.
+        assert!(entities[0].is_null());
+        assert!(entities[1].is_object());
     }
 
     #[test]
