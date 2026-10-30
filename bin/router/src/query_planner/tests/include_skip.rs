@@ -2122,6 +2122,99 @@ fn field_condition_kept_when_the_field_is_also_unconditional() -> Result<(), Box
     Ok(())
 }
 
+/// The fetch below `@skip(if: $c) @include(if: $d)` was planned under `$a` and `$b` too. `$a`
+/// sits on `anotherUsers` and the list has no spot for `$b`, it still has to wrap the fetch.
+#[test]
+fn condition_with_no_spot_on_the_path_still_wraps_the_fetch() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($a: Boolean!, $b: Boolean!, $c: Boolean!, $d: Boolean!) {
+          anotherUsers @skip(if: $a) {
+            ... @skip(if: $b) {
+              ... @skip(if: $c) @include(if: $d) {
+                __typename
+              }
+            }
+          }
+        }
+      "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/simple-interface-object.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b", if: !$a) {
+          query ($a:Boolean!,$b:Boolean!) {
+            anotherUsers @skip(if: $a) {
+              __typename
+              ... on NodeWithName @skip(if: $b) {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "anotherUsers.@") {
+          Fetch(service: "a", if: !$a && !$b) {
+            {
+              ... on NodeWithName {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on NodeWithName {
+                __typename
+              }
+            }
+          },
+        },
+        Flatten(path: "anotherUsers.@") {
+          Fetch(service: "b", if: !$a && !$b) {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on NodeWithName {
+                __typename
+                id
+              }
+            }
+          },
+        },
+        Flatten(path: "anotherUsers.@") {
+          Fetch(service: "a", if: $d && !$a && !$b && !$c) {
+            {
+              ... on NodeWithName {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on NodeWithName {
+                __typename
+                ... on User {
+                  __typename
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
 #[test]
 fn fetch_that_never_runs_is_left_out() -> Result<(), Box<dyn Error>> {
     init_logger();
