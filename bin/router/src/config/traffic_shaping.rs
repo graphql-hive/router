@@ -146,7 +146,6 @@ fn default_max_connections_per_host() -> usize {
     100
 }
 
-/// How the router keeps its HTTP clients (and connection pools) to subgraphs.
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
