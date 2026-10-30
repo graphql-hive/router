@@ -210,6 +210,7 @@ fn issue_190_test() -> Result<(), Box<dyn Error>> {
       Fetch(service: "recommender") {
         query ($included:Boolean!) {
           recommender @include(if: $included) {
+            __typename
             id
             results {
               __typename
@@ -217,7 +218,6 @@ fn issue_190_test() -> Result<(), Box<dyn Error>> {
                 id
               }
             }
-            __typename
           }
         }
       },

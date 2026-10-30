@@ -27,7 +27,7 @@ pub(crate) mod testkit;
 mod union;
 
 use crate::query_planner::{
-    tests::testkit::{build_query_plan_with_defaults, init_logger},
+    tests::testkit::{build_query_plan_with_defaults, init_logger, read_supergraph_state},
     utils::parsing::parse_operation,
 };
 
@@ -246,7 +246,8 @@ fn preparing_a_plan_preserves_its_wire_form() -> Result<(), Box<dyn std::error::
     let document = parse_operation(&std::fs::read_to_string("../../bench/operation.graphql")?);
     let planning = build_query_plan_with_defaults("../../bench/supergraph.graphql", document)?;
     let before = serde_json::to_string(&planning)?;
-    let executable = planning.into_executable();
+    let executable =
+        planning.into_executable(&read_supergraph_state("../../bench/supergraph.graphql"));
     assert_eq!(serde_json::to_string(&executable)?, before);
     Ok(())
 }

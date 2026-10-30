@@ -1,0 +1,123 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION)
+{
+  query: Query
+}
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__field(graph: join__Graph, requires: join__FieldSet, provides: join__FieldSet, type: String, external: Boolean, override: String, usedOverridden: Boolean) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__implements(graph: join__Graph!, interface: String!) repeatable on OBJECT | INTERFACE
+
+directive @join__type(graph: join__Graph!, key: join__FieldSet, extension: Boolean! = false, resolvable: Boolean! = true, isInterfaceObject: Boolean! = false) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(graph: join__Graph!, member: String!) repeatable on UNION
+
+directive @link(url: String, as: String, for: link__Purpose, import: [link__Import]) repeatable on SCHEMA
+
+scalar join__FieldSet
+
+enum join__Graph {
+  SEARCH @join__graph(name: "search", url: "http://localhost:4200/search")
+}
+
+scalar link__Import
+
+enum link__Purpose {
+  SECURITY
+  EXECUTION
+}
+
+type Query
+  @join__type(graph: SEARCH)
+{
+  search: [SearchResult!]!
+}
+
+union SearchResult
+  @join__type(graph: SEARCH)
+  @join__unionMember(graph: SEARCH, member: "Book")
+  @join__unionMember(graph: SEARCH, member: "Movie")
+  @join__unionMember(graph: SEARCH, member: "Song")
+  @join__unionMember(graph: SEARCH, member: "Podcast")
+  @join__unionMember(graph: SEARCH, member: "Game")
+ = Book | Movie | Song | Podcast | Game
+
+type Book
+  @join__type(graph: SEARCH)
+{
+  isbn: String!
+  title: String!
+  author: String!
+  pages: Int!
+  publisher: String!
+  year: Int!
+  language: String!
+  edition: String!
+  price: Float!
+  inPrint: Boolean!
+}
+
+type Movie
+  @join__type(graph: SEARCH)
+{
+  imdbId: String!
+  name: String!
+  director: String!
+  runtime: Int!
+  studio: String!
+  released: Int!
+  rating: String!
+  genre: String!
+  boxOffice: Float!
+  streaming: Boolean!
+}
+
+type Song
+  @join__type(graph: SEARCH)
+{
+  isrc: String!
+  trackName: String!
+  artist: String!
+  durationMs: Int!
+  album: String!
+  trackNumber: Int!
+  explicit: String!
+  bpm: String!
+  key: Float!
+  plays: Boolean!
+}
+
+type Podcast
+  @join__type(graph: SEARCH)
+{
+  feedUrl: String!
+  show: String!
+  host: String!
+  episodes: Int!
+  network: String!
+  since: Int!
+  category: String!
+  frequency: String!
+  listeners: Float!
+  active: Boolean!
+}
+
+type Game
+  @join__type(graph: SEARCH)
+{
+  sku: String!
+  label: String!
+  developer: String!
+  players: Int!
+  platform: String!
+  launched: Int!
+  esrb: String!
+  engine: String!
+  metascore: Float!
+  online: Boolean!
+}

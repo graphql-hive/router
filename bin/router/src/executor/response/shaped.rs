@@ -2,7 +2,8 @@
 //!
 //! Subgraphs send fields in the order the query asks for them. So for every object we check the
 //! next key we expect with one byte compare, instead of reading it as a string, and allocate
-//! the object at its field count.
+//! the object at its field count. An object of an abstract type that starts with `__typename`
+//! (the planner puts it first) is read with the fields of its own type.
 //!
 //! The shape is only a hint. A key it doesn't expect gets looked up among the fields, and one it
 //! doesn't know at all is parsed like any other JSON. Custom scalars are kept as raw JSON at the
@@ -10,6 +11,7 @@
 //! (invalid JSON, escaped keys, deep nesting) makes it give up, and the response goes through
 //! sonic instead, so what we accept and the errors we return don't change.
 
+use ahash::HashSet;
 use std::ops::Range;
 
 use crate::executor::response::{
@@ -27,15 +29,16 @@ pub struct ResponseShape {
     /// Every object's fields sit next to each other, so a field only needs to know where its
     /// own fields are.
     nodes: Vec<Node>,
-    data: Range<u32>,
+    types: Vec<TypeFields>,
+    data: Object,
 }
 
 #[derive(Debug, Clone)]
 struct Node {
     /// The response key with its quotes, `"name"`, to compare against the input as is.
     quoted_key: Box<[u8]>,
-    /// The fields of the object it holds. Empty for scalars.
-    fields: Range<u32>,
+    /// The object it holds. Empty for scalars.
+    object: Object,
 }
 
 impl Node {
@@ -44,66 +47,216 @@ impl Node {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct Object {
+    /// Fields under every type condition, in the order they first show up
+    fields: Range<u32>,
+    /// The fields of each type, sorted by name. Only for types whose type conditions select
+    /// something else than `fields`.
+    types: Range<u32>,
+}
+
+#[derive(Debug, Clone)]
+struct TypeFields {
+    name: Box<str>,
+    fields: Range<u32>,
+}
+
+/// A field of an object and the selection sets of every place it's selected in.
 struct Field<'d> {
     key: &'d str,
-    fields: Vec<Field<'d>>,
+    sets: Vec<&'d SelectionSet>,
+}
+
+impl Field<'_> {
+    fn same(a: &[Field], b: &[Field]) -> bool {
+        a.len() == b.len()
+            && a.iter().zip(b).all(|(a, b)| {
+                a.key == b.key
+                    && a.sets.len() == b.sets.len()
+                    && a.sets
+                        .iter()
+                        .zip(&b.sets)
+                        .all(|(a, b)| std::ptr::eq(*a, *b))
+            })
+    }
 }
 
 impl ResponseShape {
-    pub fn new(document: &Document) -> Self {
-        let mut data = Vec::new();
-        collect(document, &document.operation.selection_set, &mut data);
-        let mut nodes = Vec::new();
-        let data = flatten(&data, &mut nodes);
-        Self { nodes, data }
+    /// `possible_types` gives the object types of an interface or a union, so an object knows
+    /// which of its type conditions it matches.
+    pub fn new<'s>(
+        document: &Document,
+        possible_types: impl Fn(&str) -> Option<&'s HashSet<String>>,
+    ) -> Self {
+        let mut builder = Builder {
+            document,
+            possible_types,
+            shape: Self {
+                nodes: Vec::new(),
+                types: Vec::new(),
+                data: Object::default(),
+            },
+        };
+        builder.shape.data = builder.object(&[&document.operation.selection_set]);
+        builder.shape
     }
 
     fn fields(&self, range: &Range<u32>) -> &[Node] {
         &self.nodes[range.start as usize..range.end as usize]
     }
+
+    fn types(&self, range: &Range<u32>) -> &[TypeFields] {
+        &self.types[range.start as usize..range.end as usize]
+    }
 }
 
-/// Fields under every type condition go in one list, in the order they first show up. An object
-/// of one type then has its fields in the same order with gaps, which the parser skips over.
-// ponytail: objects of an abstract type get room for the fields of all its types, split the
-// shape per __typename if that memory shows up
-fn collect<'d>(document: &'d Document, set: &'d SelectionSet, out: &mut Vec<Field<'d>>) {
-    for item in &set.items {
-        match item {
-            SelectionItem::Field(field) => {
-                let key = field.selection_identifier();
-                let index = match out.iter().position(|f| f.key == key) {
-                    Some(index) => index,
-                    None => {
-                        out.push(Field {
-                            key,
-                            fields: Vec::new(),
-                        });
-                        out.len() - 1
-                    }
-                };
-                collect(document, &field.selections, &mut out[index].fields);
+struct Builder<'d, F> {
+    document: &'d Document,
+    possible_types: F,
+    shape: ResponseShape,
+}
+
+impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
+    fn object(&mut self, sets: &[&'d SelectionSet]) -> Object {
+        let merged = self.fields(sets, None);
+        let fields = self.flatten(&merged);
+
+        let mut names = Vec::new();
+        for set in sets {
+            self.conditions(set, &mut names);
+        }
+        // sorted, so the parser can binary search them
+        names.sort_unstable();
+        names.dedup();
+        let mut lists: Vec<(Vec<Field>, Range<u32>)> = Vec::new();
+        let mut types = Vec::new();
+        for name in names {
+            let own = self.fields(sets, Some(name));
+            if Field::same(&own, &merged) {
+                continue;
             }
-            SelectionItem::InlineFragment(fragment) => collect(document, &fragment.selections, out),
-            SelectionItem::FragmentSpread(name) => {
-                if let Some(fragment) = document.fragments.iter().find(|f| &f.name == name) {
-                    collect(document, &fragment.selection_set, out)
+            let fields = match lists.iter().find(|(list, _)| Field::same(list, &own)) {
+                Some((_, fields)) => fields.clone(),
+                None => {
+                    let fields = self.flatten(&own);
+                    lists.push((own, fields.clone()));
+                    fields
+                }
+            };
+            types.push(TypeFields {
+                name: name.into(),
+                fields,
+            });
+        }
+        let start = self.shape.types.len() as u32;
+        self.shape.types.extend(types);
+        Object {
+            fields,
+            types: start..self.shape.types.len() as u32,
+        }
+    }
+
+    /// The object types its type conditions match, interfaces and unions opened up.
+    fn conditions<'x>(&self, set: &'d SelectionSet, out: &mut Vec<&'x str>)
+    where
+        'd: 'x,
+        's: 'x,
+    {
+        for item in &set.items {
+            let (condition, set) = match item {
+                SelectionItem::Field(_) => continue,
+                SelectionItem::InlineFragment(fragment) => {
+                    (fragment.type_condition.as_str(), &fragment.selections)
+                }
+                SelectionItem::FragmentSpread(name) => {
+                    match self.document.fragments.iter().find(|f| &f.name == name) {
+                        Some(fragment) => {
+                            (fragment.type_condition.as_str(), &fragment.selection_set)
+                        }
+                        None => continue,
+                    }
+                }
+            };
+            match (self.possible_types)(condition) {
+                Some(types) => out.extend(types.iter().map(String::as_str)),
+                None if !condition.is_empty() => out.push(condition),
+                None => {}
+            }
+            self.conditions(set, out);
+        }
+    }
+
+    fn applies(&self, condition: &str, typename: Option<&str>) -> bool {
+        match typename {
+            None => true,
+            Some(typename) => {
+                condition.is_empty()
+                    || condition == typename
+                    || (self.possible_types)(condition)
+                        .is_some_and(|types| types.contains(typename))
+            }
+        }
+    }
+
+    /// The fields of an object of `typename`, or under every type condition when it's `None`.
+    fn fields(&self, sets: &[&'d SelectionSet], typename: Option<&str>) -> Vec<Field<'d>> {
+        let mut out = Vec::new();
+        for set in sets {
+            self.collect(set, typename, &mut out);
+        }
+        out
+    }
+
+    fn collect(&self, set: &'d SelectionSet, typename: Option<&str>, out: &mut Vec<Field<'d>>) {
+        for item in &set.items {
+            match item {
+                SelectionItem::Field(field) => {
+                    let key = field.selection_identifier();
+                    let index = match out.iter().position(|f| f.key == key) {
+                        Some(index) => index,
+                        None => {
+                            out.push(Field {
+                                key,
+                                sets: Vec::new(),
+                            });
+                            out.len() - 1
+                        }
+                    };
+                    if !field.selections.items.is_empty() {
+                        out[index].sets.push(&field.selections);
+                    }
+                }
+                SelectionItem::InlineFragment(fragment) => {
+                    if self.applies(&fragment.type_condition, typename) {
+                        self.collect(&fragment.selections, typename, out)
+                    }
+                }
+                SelectionItem::FragmentSpread(name) => {
+                    if let Some(fragment) = self.document.fragments.iter().find(|f| &f.name == name)
+                    {
+                        if self.applies(&fragment.type_condition, typename) {
+                            self.collect(&fragment.selection_set, typename, out)
+                        }
+                    }
                 }
             }
         }
     }
-}
 
-fn flatten(fields: &[Field], nodes: &mut Vec<Node>) -> Range<u32> {
-    let start = nodes.len();
-    nodes.extend(fields.iter().map(|field| Node {
-        quoted_key: format!("\"{}\"", field.key).into_bytes().into(),
-        fields: 0..0,
-    }));
-    for (i, field) in fields.iter().enumerate() {
-        nodes[start + i].fields = flatten(&field.fields, nodes);
+    fn flatten(&mut self, fields: &[Field<'d>]) -> Range<u32> {
+        let start = self.shape.nodes.len();
+        self.shape.nodes.extend(fields.iter().map(|field| Node {
+            quoted_key: format!("\"{}\"", field.key).into_bytes().into(),
+            object: Object::default(),
+        }));
+        for (i, field) in fields.iter().enumerate() {
+            if !field.sets.is_empty() {
+                self.shape.nodes[start + i].object = self.object(&field.sets);
+            }
+        }
+        start as u32..(start + fields.len()) as u32
     }
-    start as u32..(start + fields.len()) as u32
 }
 
 /// What we know about a value before reading it.
@@ -112,6 +265,7 @@ struct Hint<'h> {
     shape: &'h ResponseShape,
     /// The fields its objects have
     fields: &'h [Node],
+    types: &'h [TypeFields],
     /// Where the custom scalars under it are, `None` when there aren't any
     scalars: Option<&'h CustomScalarPaths>,
 }
@@ -158,7 +312,8 @@ pub fn parse_response<'a>(
                 "data" if !std::mem::replace(&mut has_data, true) => {
                     response.data = parser.shaped(Hint {
                         shape,
-                        fields: shape.fields(&shape.data),
+                        fields: shape.fields(&shape.data.fields),
+                        types: shape.types(&shape.data.types),
                         scalars: custom_scalar_paths.filter(|paths| !paths.is_empty()),
                     })?;
                 }
@@ -281,8 +436,9 @@ impl<'a> Parser<'a> {
             return Some(Value::Object(Vec::new()));
         }
         self.enter()?;
-        let nodes = hint.fields;
-        let mut entries = Vec::with_capacity(nodes.len());
+        let mut nodes = hint.fields;
+        // allocated after the first entry, which may say the object's type
+        let mut entries = Vec::new();
         let mut next = 0;
         loop {
             self.whitespace();
@@ -317,7 +473,12 @@ impl<'a> Parser<'a> {
                 }
             };
             self.expect(b':')?;
-            let fields = node.map_or(&[][..], |node| hint.shape.fields(&node.fields));
+            let (fields, types) = node.map_or((&[][..], &[][..]), |node| {
+                (
+                    hint.shape.fields(&node.object.fields),
+                    hint.shape.types(&node.object.types),
+                )
+            });
             let scalars = hint
                 .scalars
                 .and_then(|paths| paths.child(key))
@@ -328,9 +489,25 @@ impl<'a> Parser<'a> {
                 self.shaped(Hint {
                     shape: hint.shape,
                     fields,
+                    types,
                     scalars,
                 })?
             };
+            if entries.capacity() == 0 {
+                // planned queries ask for __typename first, so an object of an abstract type can
+                // read the rest with the fields of its own type
+                if let ("__typename", Value::String(name)) = (key, &value) {
+                    let types = hint.types;
+                    if let Ok(index) = types.binary_search_by(|t| t.name.as_ref().cmp(name)) {
+                        nodes = hint.shape.fields(&types[index].fields);
+                        next = nodes
+                            .iter()
+                            .position(|node| node.key() == b"__typename")
+                            .map_or(0, |index| index + 1);
+                    }
+                }
+                entries.reserve_exact(nodes.len());
+            }
             entries.push((key, value));
             if !self.more(b'}')? {
                 self.depth -= 1;
@@ -545,11 +722,14 @@ impl<'a> Parser<'a> {
 
 #[cfg(test)]
 mod tests {
+    use ahash::{HashSet, HashSetExt};
+
     use bytes::Bytes;
     use graphql_tools::parser::query;
 
     use super::{parse_response, ResponseShape, MAX_DEPTH};
     use crate::executor::response::subgraph_response::SubgraphResponse;
+    use crate::executor::response::value::Value;
     use crate::query_planner::ast::{
         document::Document, fragment::FragmentDefinition, operation::OperationDefinition,
     };
@@ -578,19 +758,25 @@ mod tests {
                 query::Definition::Operation(_) => {}
             }
         }
-        ResponseShape::new(&Document {
-            operation: OperationDefinition {
-                name: None,
-                operation_kind: None,
-                selection_set: selection_set.expect("a query"),
-                variable_definitions: None,
+        // `I` is an interface that A and C implement
+        let mut interface = HashSet::new();
+        interface.extend(["A".to_string(), "C".to_string()]);
+        ResponseShape::new(
+            &Document {
+                operation: OperationDefinition {
+                    name: None,
+                    operation_kind: None,
+                    selection_set: selection_set.expect("a query"),
+                    variable_definitions: None,
+                },
+                fragments,
             },
-            fragments,
-        })
+            |name| (name == "I").then_some(&interface),
+        )
     }
 
-    const QUERY: &str =
-        "{ a b { c d } list { x y } u { __typename ... on A { a1 } ... on B { b1 } ...F } }
+    const QUERY: &str = "{ a b { c d } list { x y }
+        u { __typename ... on A { a1 n { x } } ... on B { b1 n { y } } ...F ... on I { i } } }
         fragment F on A { f }";
 
     /// Whatever the shaped parser does with a body, the response or the error, must be what
@@ -645,6 +831,61 @@ mod tests {
             );
             same_as_sonic(body.as_bytes(), None);
         }
+    }
+
+    /// How many fields each object of `u` has room for.
+    fn capacities(body: &str) -> Vec<usize> {
+        same_as_sonic(body.as_bytes(), None);
+        let shape = shape(QUERY);
+        let response = parse_response(body.as_bytes(), &shape, None).expect("shaped");
+        let Value::Object(data) = response.data else {
+            panic!("data");
+        };
+        let Some((_, Value::Array(list))) = data.into_iter().find(|(key, _)| *key == "u") else {
+            panic!("u");
+        };
+        list.into_iter()
+            .map(|item| match item {
+                Value::Object(fields) => fields.capacity(),
+                _ => panic!("object"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn reads_objects_with_the_fields_of_their_type() {
+        // all of them: __typename a1 n b1 f i
+        let all = 6;
+        assert_eq!(
+            capacities(
+                r#"{"data":{"u":[{"__typename":"A","a1":1,"n":{"x":1},"f":2,"i":3},{"__typename":"B","b1":1,"n":{"y":2}},{"__typename":"C","i":1}]}}"#
+            ),
+            // A gets I's fields too, C only gets I's
+            [5, 3, 2]
+        );
+        // a field of a type has the fields that type selected under it
+        let body = r#"{"data":{"u":[{"__typename":"A","n":{"x":1}}]}}"#;
+        let shape = shape(QUERY);
+        let data = parse_response(body.as_bytes(), &shape, None)
+            .expect("shaped")
+            .data;
+        let Value::Object(data) = data else { panic!() };
+        let Value::Array(u) = &data[0].1 else {
+            panic!()
+        };
+        let Value::Object(a) = &u[0] else { panic!() };
+        let Value::Object(n) = &a[1].1 else { panic!() };
+        assert_eq!(n.capacity(), 1);
+
+        // __typename not first, a type the shape doesn't know, no __typename, not a string
+        assert_eq!(
+            capacities(
+                r#"{"data":{"u":[{"a1":1,"__typename":"A"},{"__typename":"Z","z":1},{"b1":2},{"__typename":null,"i":1}]}}"#
+            ),
+            [all, all, all, all]
+        );
+        // a type that gets other fields than it asked for still reads them
+        capacities(r#"{"data":{"u":[{"__typename":"B","a1":1,"z":{"k":[1]},"b1":2}]}}"#);
     }
 
     #[test]

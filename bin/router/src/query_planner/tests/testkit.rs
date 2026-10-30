@@ -54,6 +54,10 @@ pub fn read_supergraph(fixture_path: &str) -> String {
     std::fs::read_to_string(supergraph_path).expect("Unable to read input file")
 }
 
+pub fn read_supergraph_state(fixture_path: &str) -> SupergraphState {
+    SupergraphState::new(&parse_schema(&read_supergraph(fixture_path)))
+}
+
 pub fn build_query_plan(
     fixture_path: &str,
     query: query_ast::Document<'static, String>,

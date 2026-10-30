@@ -1189,8 +1189,8 @@ fn requires_reentry_selects_entity_typename() -> Result<(), Box<dyn Error>> {
             productSearchResult(partialCriteria: "partialCriteria") {
               __typename
               searchCriteria {
-                partialCriteria
                 __typename
+                partialCriteria
               }
             }
           }

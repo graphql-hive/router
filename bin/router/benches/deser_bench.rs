@@ -5,6 +5,10 @@
 //! re-record, put a logging proxy between the router and the subgraphs and send the operation
 //! once.
 //!
+//! `search` is hand-written: a list of 200 results of a 5-type union, each type with 10 fields of
+//! its own (search.supergraph.graphql, made by no composer, and search.graphql as both the
+//! operation and the query its plan sends). It isn't part of the request.
+//!
 //! - `sonic` is how the router reads a body when it doesn't know the fields.
 //! - `shaped` is how it reads one with the shape of the fetch's query, from a real plan.
 //! - `sonic_dom` is sonic building its own tree from the same bytes, the speed a parser that
@@ -21,13 +25,13 @@ use hive_router::query_planner::planner::plan_nodes::PlanNode;
 use hive_router::query_planner::planner::{Planner, QueryPlannerOptions};
 use hive_router::query_planner::utils::cancellation::CancellationToken;
 use hive_router::query_planner::utils::parsing::{parse_operation, parse_schema};
+use hive_router::{configure_global_allocator, RouterGlobalAllocator};
 use std::hint::black_box;
 
-use hive_router::{configure_global_allocator, RouterGlobalAllocator};
 // the allocator the router runs with, since most of parsing is allocating
 configure_global_allocator!();
 
-const RESPONSES: [(&str, &str, &[u8]); 4] = [
+const RESPONSES: [(&str, &str, &[u8]); 5] = [
     (
         "products",
         include_str!("deser/products.graphql"),
@@ -47,6 +51,26 @@ const RESPONSES: [(&str, &str, &[u8]); 4] = [
         "reviews",
         include_str!("deser/reviews.graphql"),
         include_bytes!("deser/reviews.json"),
+    ),
+    (
+        "search",
+        include_str!("deser/search.graphql"),
+        include_bytes!("deser/search.json"),
+    ),
+];
+
+/// The ones one bench/operation.graphql request parses
+const REQUEST: usize = 4;
+
+/// Supergraphs and operations whose plans send the recorded queries
+const PLANS: [(&str, &str); 2] = [
+    (
+        include_str!("../../../bench/supergraph.graphql"),
+        include_str!("../../../bench/operation.graphql"),
+    ),
+    (
+        include_str!("deser/search.supergraph.graphql"),
+        include_str!("deser/search.graphql"),
     ),
 ];
 
@@ -80,21 +104,25 @@ fn fetches<'p>(node: &'p PlanNode, out: &mut Vec<&'p SubgraphFetchOperation>) {
 
 /// The shape of every recorded fetch, from the plan the router makes for the operation.
 fn shapes() -> Vec<ResponseShape> {
-    let supergraph = parse_schema(include_str!("../../../bench/supergraph.graphql"));
-    let planner = Planner::new_from_supergraph(&supergraph, QueryPlannerOptions::default())
-        .expect("a planner");
-    let operation = parse_operation(include_str!("../../../bench/operation.graphql"));
-    let normalized = normalize_operation(&planner.supergraph, &operation, None).expect("valid");
-    let plan = planner
-        .plan_from_normalized_operation(
-            normalized.executable_operation(),
-            PlannerOverrideContext::default(),
-            &CancellationToken::new(),
-        )
-        .expect("a plan")
-        .into_executable();
     let mut operations = Vec::new();
-    fetches(plan.node.as_ref().expect("fetches"), &mut operations);
+    for (supergraph, operation) in PLANS {
+        let planner =
+            Planner::new_from_supergraph(&parse_schema(supergraph), QueryPlannerOptions::default())
+                .expect("a planner");
+        let operation = parse_operation(operation);
+        let normalized = normalize_operation(&planner.supergraph, &operation, None).expect("valid");
+        let plan = planner
+            .plan_from_normalized_operation(
+                normalized.executable_operation(),
+                PlannerOverrideContext::default(),
+                &CancellationToken::new(),
+            )
+            .expect("a plan")
+            .into_executable(&planner.supergraph);
+        let mut fetched = Vec::new();
+        fetches(plan.node.as_ref().expect("fetches"), &mut fetched);
+        operations.extend(fetched.into_iter().cloned());
+    }
 
     RESPONSES
         .iter()
@@ -131,12 +159,15 @@ fn benchmarks(c: &mut Criterion) {
     }
 
     // Everything one request parses.
-    let total = RESPONSES.iter().map(|(_, _, body)| body.len() as u64).sum();
+    let total = RESPONSES[..REQUEST]
+        .iter()
+        .map(|(_, _, body)| body.len() as u64)
+        .sum();
     group.throughput(Throughput::Bytes(total));
     for (parser, parse) in PARSERS {
         group.bench_function(BenchmarkId::new(parser, "request"), |b| {
             b.iter(|| {
-                for ((_, _, body), shape) in RESPONSES.iter().zip(&shapes) {
+                for ((_, _, body), shape) in RESPONSES[..REQUEST].iter().zip(&shapes) {
                     parse(body, shape)
                 }
             })

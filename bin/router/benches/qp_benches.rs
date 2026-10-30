@@ -231,7 +231,7 @@ fn cache_preparation(c: &mut Criterion) {
         group.bench_function(name, |b| {
             b.iter_batched(
                 || plan.clone(),
-                |plan| black_box(plan.into_executable()),
+                |plan| black_box(plan.into_executable(&planner.supergraph)),
                 criterion::BatchSize::SmallInput,
             )
         });
