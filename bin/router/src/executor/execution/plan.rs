@@ -40,7 +40,7 @@ use tracing::{debug, error, warn, Instrument};
 
 use crate::executor::execution::client_request_details::OperationDetails;
 use crate::executor::execution::demand_control::DemandControlExecutionContext;
-use crate::executor::execution::entity_reuse::{append_reused, ReuseIndex, ENTITY_REUSE};
+use crate::executor::execution::entity_reuse::{append_reused, ReuseIndex};
 use crate::executor::execution::error_masking::ErrorMaskingRuntime;
 use crate::executor::execution::operation_name::OperationNameFactory;
 use crate::executor::executors::common::ConnectionFingerprint;
@@ -1165,7 +1165,7 @@ impl<'exec> Executor<'exec> {
         let data = &ctx.data;
         // Once anything failed, a value in the response might be a `null` from an error,
         // so we stop copying from it and ask the subgraphs.
-        let reuse_allowed = *ENTITY_REUSE && ctx.errors.is_empty();
+        let reuse_allowed = self.executors.entity_reuse_enabled() && ctx.errors.is_empty();
         match node {
             PlanNode::Fetch(fetch_node) if !self.runs(fetch_node.run_if.as_deref()) => Vec::new(),
             PlanNode::Fetch(fetch_node) => vec![self

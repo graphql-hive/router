@@ -6,17 +6,11 @@ mod entity_batching_e2e_tests {
     use sonic_rs::JsonValueTrait;
 
     use crate::testkit::{
-        mock_subgraphs::mock_subgraphs, ClientResponseExt, EnvVarsGuard, TestRouter, TestSubgraphs,
+        mock_subgraphs::mock_subgraphs, ClientResponseExt, TestRouter, TestSubgraphs,
     };
 
     #[ntex::test]
     async fn measure_bench_operation_subgraph_calls() {
-        // With entity reuse, most of these batches never go out, so it's off here.
-        // See `entity_reuse.rs` for the counts with it on.
-        let _env = EnvVarsGuard::new()
-            .set("HIVE_ROUTER_EXPERIMENTAL_ENTITY_REUSE", "0")
-            .apply()
-            .await;
         let subgraphs = TestSubgraphs::builder().build().start().await;
 
         let router = TestRouter::builder()
