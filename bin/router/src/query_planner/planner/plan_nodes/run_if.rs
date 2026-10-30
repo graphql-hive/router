@@ -304,4 +304,163 @@ mod tests {
         assert!(!either.holds(values(&[("a", Some(true))])));
         assert!(!RunIf::any_of([]).unwrap().holds(values(&[])));
     }
+
+    /// Every group over `names`, each variable left out, `true` or `false`.
+    fn all_groups(names: &[&'static str]) -> Vec<ConditionGroup> {
+        let mut all: Vec<Vec<(&str, bool)>> = vec![vec![]];
+        for name in names {
+            all = all
+                .into_iter()
+                .flat_map(|literals| {
+                    let with = |include| [literals.clone(), vec![(*name, include)]].concat();
+                    [with(true), with(false), literals]
+                })
+                .collect();
+        }
+        all.iter().map(|literals| group(literals)).collect()
+    }
+
+    /// Every list of up to `size` of `groups`, duplicates included.
+    fn all_lists(groups: &[ConditionGroup], size: usize) -> Vec<Vec<ConditionGroup>> {
+        let mut lists = vec![vec![]];
+        let mut last = lists.clone();
+        for _ in 0..size {
+            last = last
+                .iter()
+                .flat_map(|list| {
+                    groups
+                        .iter()
+                        .map(|g| [list.clone(), vec![g.clone()]].concat())
+                })
+                .collect();
+            lists.extend(last.iter().cloned());
+        }
+        lists
+    }
+
+    const NAMES: [&str; 3] = ["a", "b", "c"];
+
+    /// Each bit of `values` is a variable of `NAMES`. Validation fills every variable in, so
+    /// `true` and `false` is all a condition ever sees.
+    fn value(values: u32) -> impl Fn(&str) -> Option<bool> {
+        move |name| {
+            let index = NAMES.iter().position(|n| *n == name).unwrap();
+            Some(values >> index & 1 == 1)
+        }
+    }
+
+    fn runs(run_if: &Option<RunIf>, values: u32) -> bool {
+        run_if
+            .as_ref()
+            .is_none_or(|run_if| run_if.holds(value(values)))
+    }
+
+    fn all_values() -> std::ops::Range<u32> {
+        0..1 << NAMES.len()
+    }
+
+    #[test]
+    fn any_of_holds_when_one_of_its_groups_does() {
+        for list in all_lists(&all_groups(&NAMES), 3) {
+            let run_if = RunIf::any_of(list.clone());
+            for values in all_values() {
+                let expected = list.iter().any(|group| group.holds(value(values)));
+                assert_eq!(runs(&run_if, values), expected, "{list:?} at {values:03b}");
+            }
+            // normalized already, nothing left to do
+            if let Some(run_if) = &run_if {
+                assert_eq!(
+                    RunIf::any_of(run_if.groups().to_vec()).as_ref(),
+                    Some(run_if)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn and_holds_when_both_do() {
+        let lists = all_lists(&all_groups(&NAMES[..2]), 2);
+        for left in &lists {
+            let left = RunIf::any_of(left.clone());
+            for right in &lists {
+                let right = RunIf::any_of(right.clone());
+                let both = RunIf::and(left.as_ref(), right.as_ref());
+                for values in all_values() {
+                    assert_eq!(
+                        runs(&both, values),
+                        runs(&left, values) && runs(&right, values),
+                        "{left:?} and {right:?} at {values:03b}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn assuming_holds_the_same_whenever_what_is_known_does() {
+        let groups = all_groups(&NAMES);
+        for list in all_lists(&groups, 2) {
+            let Some(run_if) = RunIf::any_of(list) else {
+                continue;
+            };
+            for known in &groups {
+                let left = run_if.assuming(known);
+                for values in all_values().filter(|values| known.holds(value(*values))) {
+                    assert_eq!(
+                        runs(&left, values),
+                        run_if.holds(value(values)),
+                        "{run_if:?} assuming {known:?} at {values:03b}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn json_round_trip_holds_the_same() {
+        for list in all_lists(&all_groups(&NAMES), 2) {
+            let Some(run_if) = RunIf::any_of(list) else {
+                continue;
+            };
+            let json = serde_json::to_string(&run_if).unwrap();
+            let back: RunIf = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, run_if, "{json}");
+            for values in all_values() {
+                assert_eq!(back.holds(value(values)), run_if.holds(value(values)));
+            }
+        }
+    }
+
+    #[test]
+    fn json_shape() {
+        use crate::query_planner::planner::plan_nodes::PathGroup;
+        use serde_json::json;
+
+        let path_group = |json| serde_json::from_value::<PathGroup>(json).unwrap();
+        let to_json = |group: &PathGroup| serde_json::to_value(group).unwrap();
+
+        // no `runIf` is always
+        let always = path_group(json!({ "paths": [] }));
+        assert_eq!(always.run_if, None);
+        assert!(always.is_active(|_| None));
+        assert_eq!(to_json(&always), json!({ "paths": [] }));
+
+        // no groups is never
+        let never = path_group(json!({ "runIf": [], "paths": [] }));
+        assert_eq!(never.run_if, RunIf::any_of([]));
+        assert!(!never.is_active(|_| Some(true)));
+        assert_eq!(to_json(&never), json!({ "runIf": [], "paths": [] }));
+
+        // a group lists only what it has
+        let groups = json!({
+            "runIf": [{ "includeIf": ["a"], "skipIf": ["b"] }, { "skipIf": ["c"] }],
+            "paths": []
+        });
+        let some = path_group(groups.clone());
+        assert_eq!(
+            some.run_if.as_ref().map(ToString::to_string).as_deref(),
+            Some("($a && !$b) || !$c")
+        );
+        assert_eq!(to_json(&some), groups);
+    }
 }

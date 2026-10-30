@@ -3420,6 +3420,15 @@ fn entity_fetch_whose_fields_are_never_asked_for_never_runs() -> Result<(), Box<
     },
     "#);
 
+    // in the plan's JSON, a fetch that always runs has no `runIf`, one that never does has none
+    // of the groups
+    let json = serde_json::to_value(&query_plan)?;
+    assert_eq!(json.pointer("/node/nodes/0/runIf"), None);
+    assert_eq!(
+        json.pointer("/node/nodes/1/node/runIf"),
+        Some(&serde_json::json!([]))
+    );
+
     Ok(())
 }
 
