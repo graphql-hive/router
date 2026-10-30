@@ -3,14 +3,33 @@ use std::fmt::{Display, Formatter, Result as FmtResult};
 use serde::{Deserialize, Serialize};
 
 /// Variables that all have to say yes: every `include_if` is `true` and every `skip_if` is
-/// `false`. An empty group always holds. The names are sorted and unique.
+/// `false`. An empty group always holds. The names are sorted and unique, and no name is in
+/// both. Only `new` makes one, reading it from JSON goes through it too.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", try_from = "ConditionGroupJson")]
 pub struct ConditionGroup {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub include_if: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub skip_if: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    include_if: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    skip_if: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConditionGroupJson {
+    #[serde(default)]
+    include_if: Vec<String>,
+    #[serde(default)]
+    skip_if: Vec<String>,
+}
+
+impl TryFrom<ConditionGroupJson> for ConditionGroup {
+    type Error = &'static str;
+
+    fn try_from(json: ConditionGroupJson) -> Result<Self, Self::Error> {
+        Self::new(json.include_if, json.skip_if)
+            .ok_or("a condition group can't both include and skip a variable")
+    }
 }
 
 impl ConditionGroup {
@@ -462,5 +481,25 @@ mod tests {
             Some("($a && !$b) || !$c")
         );
         assert_eq!(to_json(&some), groups);
+    }
+
+    #[test]
+    fn a_group_read_from_json_is_normalized() {
+        let read = |json| serde_json::from_value::<ConditionGroup>(json);
+
+        let group = read(serde_json::json!({ "includeIf": ["b", "a", "b"], "skipIf": ["c", "c"] }))
+            .unwrap();
+        assert_eq!(group.to_string(), "$a && $b && !$c");
+        assert_eq!(
+            serde_json::to_value(&group).unwrap(),
+            serde_json::json!({ "includeIf": ["a", "b"], "skipIf": ["c"] })
+        );
+
+        // it would never hold, and nothing we write looks like that
+        let error = read(serde_json::json!({ "includeIf": ["a"], "skipIf": ["a"] })).unwrap_err();
+        assert!(
+            error.to_string().contains("both include and skip"),
+            "{error}"
+        );
     }
 }
