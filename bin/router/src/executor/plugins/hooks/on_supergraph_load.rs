@@ -135,8 +135,6 @@ pub struct SupergraphData {
 #[derive(Clone)]
 pub struct SupergraphSnapshot {
     data: Arc<SupergraphData>,
-    // behind an `Arc` because cloning or dropping a `CancellationToken` takes a mutex shared by
-    // every clone, and every request clones a snapshot
     retirement: Arc<CancellationToken>,
 }
 
