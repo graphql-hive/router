@@ -32,6 +32,22 @@ test('a key of another subgraph is not enough', () => {
   assert.equal(hasKeyIn('Product', 'products', { __typename: 'Product', id: 'Product:1' }), true);
 });
 
+test('a malformed key value is not a key, and does not throw', () => {
+  const { hasKeyIn } = fixture('complex-entity-call.supergraph.graphql');
+  const product = { __typename: 'Product', id: 'Product:1', pid: 'p' };
+  // `category { id tag }` needs an object
+  assert.equal(hasKeyIn('Product', 'price', { ...product, category: 'broken' }), false);
+  assert.equal(hasKeyIn('Product', 'price', { ...product, category: 7 }), false);
+  // `products { id pid }` needs objects in its list
+  assert.equal(hasKeyIn('ProductList', 'list', { __typename: 'ProductList', products: ['broken'] }), false);
+  assert.equal(
+    hasKeyIn('ProductList', 'list', { __typename: 'ProductList', products: [{ id: '1', pid: 'p' }, null] }),
+    true,
+  );
+  // a null key value is still for the data checks to judge
+  assert.equal(hasKeyIn('Product', 'price', { ...product, category: null }), true);
+});
+
 test('both batch alias formats are read', () => {
   const { schema } = fixture('complex-entity-call.supergraph.graphql');
   const requires = [{ kind: 'InlineFragment', typeCondition: 'Product', selections: [{ kind: 'Field', name: 'id' }] }];

@@ -417,13 +417,15 @@ export function loadSupergraph(sdl) {
    * of another subgraph doesn't count, the receiving one can't look the entity up with it.
    */
   function hasKeyIn(typeName, graphName, representation) {
+    // a value with subfields has to be an object, or a list of them. Anything else, like a
+    // string where `category { id }` goes, isn't a key
+    const fits = (tree, value) => {
+      if (value == null) return true;
+      if (Array.isArray(value)) return value.every((item) => fits(tree, item));
+      return typeof value === 'object' && covers(tree, value);
+    };
     const covers = (tree, value) =>
-      Object.entries(tree).every(([name, subtree]) => {
-        if (!(name in value)) return false;
-        const inner = value[name];
-        if (!subtree || inner == null) return true;
-        return Array.isArray(inner) ? inner.every((item) => item == null || covers(subtree, item)) : covers(subtree, inner);
-      });
+      Object.entries(tree).every(([name, subtree]) => name in value && (!subtree || fits(subtree, value[name])));
     return (joinTypes.get(typeName) ?? [])
       .filter((type) => type.graph === graphName && type.key && type.resolvable !== false)
       .some((type) => covers(fieldSetTree(type.key), representation));
