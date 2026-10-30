@@ -135,7 +135,7 @@ pub struct SupergraphData {
 #[derive(Clone)]
 pub struct SupergraphSnapshot {
     data: Arc<SupergraphData>,
-    retirement: Arc<CancellationToken>,
+    retirement: CancellationToken,
 }
 
 impl Deref for SupergraphSnapshot {
@@ -167,7 +167,7 @@ impl SupergraphSnapshot {
     /// onto it independently of the rest of the snapshot.
     #[inline]
     pub fn retirement_token(&self) -> CancellationToken {
-        CancellationToken::clone(&self.retirement)
+        self.retirement.clone()
     }
 }
 
@@ -183,7 +183,7 @@ impl SupergraphSnapshot {
 /// owner's drop.
 pub struct Supergraph {
     data: Arc<SupergraphData>,
-    retirement: Arc<CancellationToken>,
+    retirement: CancellationToken,
 }
 
 impl Deref for Supergraph {
@@ -204,7 +204,7 @@ impl From<&Supergraph> for SupergraphSnapshot {
     fn from(val: &Supergraph) -> Self {
         SupergraphSnapshot {
             data: val.data.clone(),
-            retirement: Arc::clone(&val.retirement),
+            retirement: val.retirement.clone(),
         }
     }
 }
@@ -242,7 +242,7 @@ impl Supergraph {
 
         Ok(Self {
             data: Arc::new(data),
-            retirement: Arc::new(CancellationToken::new()),
+            retirement: CancellationToken::new(),
         })
     }
 

@@ -50,51 +50,11 @@ impl Hash for Value<'_> {
     }
 }
 
-#[inline(always)]
-pub fn key_eq(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    if a.len() != b.len() {
-        return false;
-    }
-    let (mut a, mut b) = (a, b);
-    while a.len() >= 8 {
-        let (head_a, rest_a) = a.split_at(8);
-        let (head_b, rest_b) = b.split_at(8);
-        if u64::from_ne_bytes(head_a.try_into().expect("split_at(8) yields 8 bytes"))
-            != u64::from_ne_bytes(head_b.try_into().expect("split_at(8) yields 8 bytes"))
-        {
-            return false;
-        }
-        (a, b) = (rest_a, rest_b);
-    }
-    if a.len() >= 4 {
-        let (head_a, rest_a) = a.split_at(4);
-        let (head_b, rest_b) = b.split_at(4);
-        if u32::from_ne_bytes(head_a.try_into().expect("split_at(4) yields 4 bytes"))
-            != u32::from_ne_bytes(head_b.try_into().expect("split_at(4) yields 4 bytes"))
-        {
-            return false;
-        }
-        (a, b) = (rest_a, rest_b);
-    }
-    if a.len() >= 2 {
-        let (head_a, rest_a) = a.split_at(2);
-        let (head_b, rest_b) = b.split_at(2);
-        if u16::from_ne_bytes(head_a.try_into().expect("split_at(2) yields 2 bytes"))
-            != u16::from_ne_bytes(head_b.try_into().expect("split_at(2) yields 2 bytes"))
-        {
-            return false;
-        }
-        (a, b) = (rest_a, rest_b);
-    }
-    a.first() == b.first()
-}
-
 impl<'a> Value<'a> {
     /// Finds the position of `key` in an object's entries.
     #[inline]
     pub fn object_position(obj: &[(&str, Value<'_>)], key: &str) -> Option<usize> {
-        obj.iter().position(|(k, _)| key_eq(k, key))
+        obj.iter().position(|(k, _)| *k == key)
     }
 
     /// Like object_position, but scans from `cursor` first, wraps around,
@@ -109,9 +69,9 @@ impl<'a> Value<'a> {
         let (after, before) = (&obj[start..], &obj[..start]);
         let position = after
             .iter()
-            .position(|(k, _)| key_eq(k, key))
+            .position(|(k, _)| *k == key)
             .map(|index| start + index)
-            .or_else(|| before.iter().position(|(k, _)| key_eq(k, key)))?;
+            .or_else(|| before.iter().position(|(k, _)| *k == key))?;
         *cursor = position + 1;
         Some(position)
     }
@@ -571,7 +531,7 @@ impl From<&Value<'_>> for SonicValue {
 
 #[cfg(test)]
 mod tests {
-    use super::{key_eq, Value};
+    use super::Value;
     use serde::Deserialize;
     use std::borrow::Cow;
 

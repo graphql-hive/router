@@ -9,14 +9,7 @@ use http::{HeaderMap, HeaderName};
 use ntex::web::HttpRequest;
 use opentelemetry::trace::TraceContextExt;
 use tokio::task::futures::TaskLocalFuture;
-use uuid::{
-    timestamp::context::{ContextV7, ThreadLocalContext},
-    Timestamp, Uuid,
-};
-
-thread_local! {
-    static UUID_CONTEXT: ContextV7 = const { ContextV7::new() };
-}
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct RequestIdentifierExtractor {
@@ -114,7 +107,7 @@ impl RequestIdentifierExtractor {
             return req_id_header.to_string();
         }
 
-        Uuid::new_v7(Timestamp::now(ThreadLocalContext::new(&UUID_CONTEXT))).to_string()
+        Uuid::now_v7().to_string()
     }
 }
 

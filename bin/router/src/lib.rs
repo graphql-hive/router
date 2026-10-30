@@ -213,23 +213,17 @@ async fn graphql_endpoint_handler(
         "http request started",
     );
 
-    let overhead_tracker = http_request_capture
-        .needs_external_wait()
-        .then(ExternalWaitTracker::new);
-    let dispatch = graphql_endpoint_dispatch(
+    let overhead_tracker = ExternalWaitTracker::new();
+    let response = graphql_endpoint_dispatch(
         &mut request,
         body_stream,
         schema_state,
         app_state.clone(),
         parent_ctx,
-    );
-    let response = match &overhead_tracker {
-        Some(tracker) => dispatch.with_external_wait_tracker(tracker.clone()).await,
-        None => dispatch.await,
-    };
-    let external_wait = overhead_tracker
-        .map(|tracker| tracker.total())
-        .unwrap_or_default();
+    )
+    .with_external_wait_tracker(overhead_tracker.clone())
+    .await;
+    let external_wait = overhead_tracker.total();
 
     let status_code = response.status().as_u16();
     let payload_bytes = match response.body().size() {
