@@ -20,7 +20,7 @@ use crate::telemetry::TelemetryContext;
 
 use crate::executor::executors::common::{SubgraphExecutionRequest, SubgraphExecutor};
 use crate::executor::executors::error::SubgraphExecutorError;
-use crate::executor::executors::http::{build_request_body, HttpClient};
+use crate::executor::executors::http::{build_request_body, HttpClientProvider};
 use crate::executor::plugin_context::PluginRequestState;
 use crate::executor::response::graphql_error::GraphQLError;
 use crate::executor::response::subgraph_response::SubgraphResponse;
@@ -72,7 +72,7 @@ impl Drop for CallbackSubscriptionGuard {
 pub struct HttpCallbackSubgraphExecutor {
     pub subgraph_name: String,
     pub endpoint: http::Uri,
-    pub http_client: Arc<HttpClient>,
+    pub http_client: Arc<HttpClientProvider>,
     pub header_map: HeaderMap,
     pub callback_base_url: String,
     pub heartbeat_interval_ms: u64,
@@ -84,7 +84,7 @@ impl HttpCallbackSubgraphExecutor {
     pub fn new(
         subgraph_name: String,
         endpoint: http::Uri,
-        http_client: Arc<HttpClient>,
+        http_client: Arc<HttpClientProvider>,
         callback_base_url: String,
         heartbeat_interval_ms: u64,
         active_subscriptions: CallbackSubscriptionsMap,
@@ -221,7 +221,7 @@ impl SubgraphExecutor for HttpCallbackSubgraphExecutor {
             "sending HTTP callback subscription request to subgraph",
         );
 
-        let req_fut = self.http_client.request(req);
+        let req_fut = self.http_client.client().request(req);
         let res = if let Some(timeout_duration) = timeout {
             tokio::time::timeout(timeout_duration, req_fut)
                 .await?
