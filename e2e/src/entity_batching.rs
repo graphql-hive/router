@@ -2,9 +2,12 @@
 mod entity_batching_e2e_tests {
     use std::collections::BTreeMap;
 
+    use serde_json::json;
     use sonic_rs::JsonValueTrait;
 
-    use crate::testkit::{ClientResponseExt, TestRouter, TestSubgraphs};
+    use crate::testkit::{
+        mock_subgraphs::mock_subgraphs, ClientResponseExt, TestRouter, TestSubgraphs,
+    };
 
     #[ntex::test]
     async fn measure_bench_operation_subgraph_calls() {
@@ -122,5 +125,64 @@ mod entity_batching_e2e_tests {
           }
         ]
         "#);
+    }
+
+    #[ntex::test]
+    /// `userInB`'s calls to `a` and `c` sit under `$x`, next to an unconditional one for `userInC`.
+    /// The plan has them as `Parallel { Include(if: $x) { Parallel { a, c } }, .. }`, and the
+    /// executor used to drop a `Parallel` nested like that, leaving `userInB` null without an error.
+    async fn entity_calls_under_one_condition_next_to_others_run() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mock_subgraphs(json!({
+                "b": {
+                    "query": { "userInB": { "__typename": "User", "id": "u1", "name": "Ann" } },
+                    "entities": [{ "__typename": "User", "id": "u2", "name": "Bob" }]
+                },
+                "c": {
+                    "query": { "userInC": { "__typename": "User", "id": "u2" } },
+                    "entities": [
+                        { "__typename": "User", "id": "u1", "name": "Ann", "cName": "c-Ann" },
+                        { "__typename": "User", "id": "u2", "name": "Bob", "cName": "c-Bob" }
+                    ]
+                },
+                "a": {
+                    "entities": [{ "__typename": "User", "id": "u1", "name": "Ann", "aName": "a-Ann" }]
+                }
+            })))
+            .build()
+            .start()
+            .await;
+        // the fixture leaves subgraph URLs empty
+        let urls: String = ["a", "b", "c"]
+            .iter()
+            .map(|name| format!("    {name}:\n      url: \"{}/{name}\"\n", subgraphs.url()))
+            .collect();
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(format!(
+                "supergraph:\n  source: file\n  path: ../bin/router/fixture/tests/override_requires.supergraph.graphql\noverride_subgraph_urls:\n  subgraphs:\n{urls}"
+            ))
+            .build()
+            .start()
+            .await;
+        let query = r#"
+          query($x: Boolean!) {
+            userInC { cName }
+            userInB @include(if: $x) { cName aName }
+          }
+        "#;
+
+        for x in [true, false] {
+            let variables = sonic_rs::from_str(&json!({ "x": x }).to_string()).unwrap();
+            let res = router
+                .send_graphql_request(query, Some(variables), None)
+                .await;
+            let body: serde_json::Value = serde_json::from_str(&res.string_body().await).unwrap();
+            let mut data = json!({ "userInC": { "cName": "c-Bob" } });
+            if x {
+                data["userInB"] = json!({ "cName": "c-Ann", "aName": "a-Ann" });
+            }
+            assert_eq!(body, json!({ "data": data }), "x={x}");
+        }
     }
 }
