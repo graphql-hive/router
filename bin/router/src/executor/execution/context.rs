@@ -8,7 +8,10 @@ use xxhash_rust::xxh3::Xxh3;
 
 use crate::{
     executor::{
-        execution::rewrites::FetchRewriteExt,
+        execution::{
+            entity_reuse::{ReuseIndex, REUSED_ENTITY},
+            rewrites::FetchRewriteExt,
+        },
         introspection::schema::PossibleTypes,
         projection::request::project_requires,
         response::{
@@ -225,6 +228,10 @@ impl<'a, 'd, 'v> ContextGroups<'a, 'd, 'v> {
 /// Walks every flatten path, deduplicates the entities by hash and projects their
 /// representations. Entities are grouped by the tuple of their context values (one request per
 /// group), without context variables there is at most one group. Identical paths share indexes.
+///
+/// With `reuse`, an entity already in the response is copied instead of sent. Its index gets
+/// the `REUSED_ENTITY` bit and points into the returned copies. Only without context variables,
+/// so there's one group and the copies go after everything that group fetches.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn collect_context_entities<'a, 'd, 'v>(
     data: &'d Value<'v>,
@@ -234,8 +241,12 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
     context: &'a Option<Box<FetchContext>>,
     possible_types: &PossibleTypes,
     subgraph_keys: Option<&KeysByType>,
-) -> (Vec<ContextGroup<'a>>, Vec<EntityIndexes>) {
+    reuse: Option<&ReuseIndex<'_, 'v>>,
+) -> (Vec<ContextGroup<'a>>, Vec<EntityIndexes>, Vec<Value<'v>>) {
     let mut contexts = ContextGroups::new(context);
+    let reuse = reuse.filter(|_| contexts.names.is_empty());
+    let mut reused: Vec<Value<'v>> = Vec::new();
+    let mut reused_by_hash: AHashMap<u64, usize> = AHashMap::new();
     let mut path_indexes: Vec<EntityIndexes> = Vec::new();
     let mut seen_paths: Vec<(ResponsePathRef<'a>, EntityIndexes)> = Vec::new();
     let required_selections = requires.root_selections();
@@ -264,8 +275,19 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
                 hasher.finish()
             };
             let group = &mut contexts.groups[group_index];
-            if let Some(index) = group.hash_to_index.get(&hash) {
+            if let Some(index) = group
+                .hash_to_index
+                .get(&hash)
+                .or_else(|| reused_by_hash.get(&hash))
+            {
                 indexes.push(Some((group_index, *index)));
+                return;
+            }
+            if let Some(copy) = reuse.and_then(|reuse| reuse.copy_for(hash)) {
+                let index = REUSED_ENTITY | reused.len();
+                reused.push(copy);
+                reused_by_hash.insert(hash, index);
+                indexes.push(Some((group_index, index)));
                 return;
             }
             let mut rewritten;
@@ -303,7 +325,7 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
     for group in &mut contexts.groups {
         group.representations.push(b']');
     }
-    (contexts.groups, path_indexes)
+    (contexts.groups, path_indexes, reused)
 }
 
 /// One request that carries several groups of contextual argument values, written out from a
@@ -486,13 +508,14 @@ mod tests {
             },
         ];
         let context = FetchContext::new(vec!["__context_0".into()], Some(rewrites.to_vec()));
-        let (groups, targets) = collect_context_entities(
+        let (groups, targets, _) = collect_context_entities(
             &data,
             [path.as_ref()],
             &requires,
             None,
             &context,
             &PossibleTypes::default(),
+            None,
             None,
         );
         assert_eq!(groups.len(), 3);
@@ -559,13 +582,14 @@ mod tests {
             Some(rewrites.to_vec()),
         );
         let possible_types = PossibleTypes::default();
-        let (groups, targets) = collect_context_entities(
+        let (groups, targets, _) = collect_context_entities(
             &data,
             [path.as_ref()],
             &requires,
             None,
             &context,
             &possible_types,
+            None,
             None,
         );
         assert_eq!(groups.len(), 2);
@@ -661,13 +685,14 @@ mod tests {
             vec!["__context_0".into(), "__context_1".into()],
             Some(rewrites.to_vec()),
         );
-        let (groups, targets) = collect_context_entities(
+        let (groups, targets, _) = collect_context_entities(
             &data,
             [posts.as_ref(), drafts.as_ref()],
             &requires,
             None,
             &context,
             &PossibleTypes::default(),
+            None,
             None,
         );
         assert_eq!(
@@ -716,7 +741,7 @@ mod tests {
             .into_iter()
             .collect();
         let context = FetchContext::new(vec!["__context_0".into()], Some(Vec::new()));
-        let (groups, _) = collect_context_entities(
+        let (groups, _, _) = collect_context_entities(
             &data,
             [path.as_ref()],
             &requires,
@@ -724,6 +749,7 @@ mod tests {
             &context,
             &PossibleTypes::default(),
             Some(&keys),
+            None,
         );
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].variables, vec![("__context_0", b"null".to_vec())]);
@@ -753,13 +779,14 @@ mod tests {
             rename_key_to: "__context_0".into(),
         }];
         let context = FetchContext::new(vec!["__context_0".into()], Some(rewrites.to_vec()));
-        let (groups, targets) = collect_context_entities(
+        let (groups, targets, _) = collect_context_entities(
             &data,
             [path.as_ref()],
             &requires,
             None,
             &context,
             &PossibleTypes::default(),
+            None,
             None,
         );
         assert_eq!(groups.len(), 1);
