@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::executor::execution::plan::CoerceVariablesPayload;
 use crate::executor::hooks::on_supergraph_load::SupergraphSnapshot;
-use crate::executor::variables::collect_variables;
+use crate::executor::variables::collect_variables_with_options;
 use crate::telemetry::logging::targets;
 use crate::telemetry::traces::spans::graphql::GraphQLVariableCoercionSpan;
 use sonic_rs::Value;
@@ -10,19 +10,22 @@ use tracing::{debug, warn};
 
 use crate::pipeline::error::{ClientPipelineError, PipelineError};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
+use graphql_tools::validation::rules::ValidationOptions;
 
 #[inline]
 pub fn coerce_request_variables(
     supergraph: &SupergraphSnapshot,
     variables: &mut HashMap<String, Value>,
     normalized_operation: &GraphQLNormalizationPayload,
+    validation_options: ValidationOptions,
 ) -> Result<CoerceVariablesPayload, PipelineError> {
     let span = GraphQLVariableCoercionSpan::new();
     let _guard = span.span.enter();
-    match collect_variables(
+    match collect_variables_with_options(
         &normalized_operation.operation_for_plan,
         variables,
         &supergraph.metadata,
+        validation_options,
     ) {
         Ok(values) => {
             debug!(

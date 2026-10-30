@@ -17,7 +17,7 @@ use crate::telemetry::metrics::Metrics;
 use crate::telemetry::TelemetryContext;
 use crate::vrl::expressions::{BooleanOrProgram, ExpressionCompileError};
 use futures::Stream;
-use graphql_tools::validation::validate::ValidationPlan;
+use graphql_tools::validation::{rules::ValidationOptions, validate::ValidationPlan};
 use http::StatusCode;
 use moka::future::Cache;
 use moka::Expiry;
@@ -322,6 +322,7 @@ impl Expiry<String, Arc<JwtTokenPayload>> for JwtClaimsExpiry {
 }
 pub struct RouterSharedState {
     pub validation_plan: Arc<ValidationPlan>,
+    pub validation_options: ValidationOptions,
     pub parse_cache: Cache<u64, ParseCacheEntry>,
     pub router_config: &'static HiveRouterConfig,
     pub extensions_plan: Arc<ExtensionsPlan>,
@@ -353,6 +354,7 @@ impl RouterSharedState {
         router_config: &'static HiveRouterConfig,
         jwt_auth_runtime: Option<JwtAuthRuntime>,
         validation_plan: ValidationPlan,
+        validation_options: ValidationOptions,
         telemetry_context: Arc<TelemetryContext>,
         plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
         active_subscriptions: ActiveSubscriptions,
@@ -376,6 +378,7 @@ impl RouterSharedState {
 
         Ok(Self {
             validation_plan: Arc::new(validation_plan),
+            validation_options,
             extensions_plan: Arc::new(compile_extensions_plan(&router_config.response_extensions)),
             parse_cache,
             cors_runtime: Cors::from_config(&router_config.cors).map_err(Box::new)?,
