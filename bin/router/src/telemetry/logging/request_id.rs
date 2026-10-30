@@ -15,8 +15,6 @@ use uuid::{
 };
 
 thread_local! {
-    // `Uuid::now_v7` shares one context behind a lock across all threads. ids only need to
-    // be ordered within a thread, so each one gets its own.
     static UUID_CONTEXT: ContextV7 = const { ContextV7::new() };
 }
 

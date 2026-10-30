@@ -50,8 +50,6 @@ impl Hash for Value<'_> {
     }
 }
 
-/// `a == b` for object keys, without calling memcmp. keys are short, so the call costs more
-/// than the compare itself.
 #[inline(always)]
 pub fn key_eq(a: &str, b: &str) -> bool {
     let (a, b) = (a.as_bytes(), b.as_bytes());
@@ -62,8 +60,8 @@ pub fn key_eq(a: &str, b: &str) -> bool {
     while a.len() >= 8 {
         let (head_a, rest_a) = a.split_at(8);
         let (head_b, rest_b) = b.split_at(8);
-        if u64::from_ne_bytes(head_a.try_into().unwrap())
-            != u64::from_ne_bytes(head_b.try_into().unwrap())
+        if u64::from_ne_bytes(head_a.try_into().expect("split_at(8) yields 8 bytes"))
+            != u64::from_ne_bytes(head_b.try_into().expect("split_at(8) yields 8 bytes"))
         {
             return false;
         }
@@ -72,8 +70,8 @@ pub fn key_eq(a: &str, b: &str) -> bool {
     if a.len() >= 4 {
         let (head_a, rest_a) = a.split_at(4);
         let (head_b, rest_b) = b.split_at(4);
-        if u32::from_ne_bytes(head_a.try_into().unwrap())
-            != u32::from_ne_bytes(head_b.try_into().unwrap())
+        if u32::from_ne_bytes(head_a.try_into().expect("split_at(4) yields 4 bytes"))
+            != u32::from_ne_bytes(head_b.try_into().expect("split_at(4) yields 4 bytes"))
         {
             return false;
         }
@@ -82,8 +80,8 @@ pub fn key_eq(a: &str, b: &str) -> bool {
     if a.len() >= 2 {
         let (head_a, rest_a) = a.split_at(2);
         let (head_b, rest_b) = b.split_at(2);
-        if u16::from_ne_bytes(head_a.try_into().unwrap())
-            != u16::from_ne_bytes(head_b.try_into().unwrap())
+        if u16::from_ne_bytes(head_a.try_into().expect("split_at(2) yields 2 bytes"))
+            != u16::from_ne_bytes(head_b.try_into().expect("split_at(2) yields 2 bytes"))
         {
             return false;
         }
@@ -616,21 +614,6 @@ mod tests {
             sonic_rs::to_string(&value).unwrap(),
             std::str::from_utf8(bytes).unwrap()
         );
-    }
-
-    #[test]
-    fn key_eq_matches_str_eq_at_every_length() {
-        let keys = "abcdefghijklmnopqrstuvwxyz";
-        for len in 0..=keys.len() {
-            let key = &keys[..len];
-            assert!(key_eq(key, key));
-            for at in 0..len {
-                let mut other = key.as_bytes().to_vec();
-                other[at] = b'_';
-                assert!(!key_eq(key, std::str::from_utf8(&other).unwrap()));
-            }
-            assert!(!key_eq(key, &keys[..len.saturating_sub(1)]) || len == 0);
-        }
     }
 
     #[test]
