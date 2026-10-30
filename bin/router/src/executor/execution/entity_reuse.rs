@@ -21,10 +21,10 @@ use crate::{
     },
 };
 
-/// On unless `HIVE_ROUTER_EXPERIMENTAL_ENTITY_REUSE` is `0` or `false`.
+/// Off unless `HIVE_ROUTER_EXPERIMENTAL_ENTITY_REUSE` is `1` or `true`.
 pub static ENTITY_REUSE: LazyLock<bool> = LazyLock::new(|| {
-    !std::env::var("HIVE_ROUTER_EXPERIMENTAL_ENTITY_REUSE")
-        .is_ok_and(|v| v == "0" || v.eq_ignore_ascii_case("false"))
+    std::env::var("HIVE_ROUTER_EXPERIMENTAL_ENTITY_REUSE")
+        .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
 });
 
 /// Entities in the response one fetch could copy, by the hash of their representation.

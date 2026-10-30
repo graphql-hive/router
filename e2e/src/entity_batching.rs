@@ -112,20 +112,18 @@ mod entity_batching_e2e_tests {
             data[0], data[1],
             "splitting batches must not change the data"
         );
-        // Entity reuse copies what the last accounts, inventory and products fetches would ask
-        // for, so only reviews still has two aliases to split.
         insta::assert_snapshot!(sonic_rs::to_string_pretty(&counts).unwrap(), @r#"
         [
           {
-            "accounts": 1,
-            "inventory": 1,
-            "products": 1,
+            "accounts": 2,
+            "inventory": 2,
+            "products": 2,
             "reviews": 1
           },
           {
-            "accounts": 1,
-            "inventory": 1,
-            "products": 1,
+            "accounts": 2,
+            "inventory": 2,
+            "products": 2,
             "reviews": 2
           }
         ]
