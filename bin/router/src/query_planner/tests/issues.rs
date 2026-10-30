@@ -1605,3 +1605,106 @@ fn issue_1647_include_on_fragment_after_conditional_entity_call() -> Result<(), 
 
     Ok(())
 }
+
+/// `nested-field-key` resolves `Item` by `group { tag }`, `source` by `group { id }`. The call
+/// for `valueNestedField` goes to `nested-field-key`, so it sends `group { tag }`, not the key
+/// of another subgraph.
+#[test]
+fn requires_sends_the_key_of_its_own_subgraph() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          list {
+            items {
+              valueNestedField
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/issues/requires-circular-keys.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "source") {
+          {
+            list {
+              items {
+                __typename
+                group {
+                  tag
+                }
+              }
+            }
+          }
+        },
+        Flatten(path: "list.items.@") {
+          Fetch(service: "nested-field-key") {
+            {
+              ... on Item {
+                __typename
+                group {
+                  tag
+                }
+              }
+            } =>
+            {
+              ... on Item {
+                __typename
+                group {
+                  id
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "list.items.@") {
+          Fetch(service: "source") {
+            {
+              ... on Item {
+                __typename
+                group {
+                  id
+                }
+              }
+            } =>
+            {
+              ... on Item {
+                tag {
+                  id
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "list.items.@") {
+          Fetch(service: "nested-field-key") {
+            {
+              ... on Item {
+                __typename
+                tag {
+                  id
+                }
+                group {
+                  tag
+                }
+              }
+            } =>
+            {
+              ... on Item {
+                valueNestedField
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
