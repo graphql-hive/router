@@ -14,6 +14,7 @@ use crate::query_planner::{
         merge_path::{Condition, MergePath, Segment},
         selection_set::{
             find_arguments_conflicts, find_selection_set_by_path, response_keys_conflict,
+            selection_sets_by_path,
         },
     },
     planner::fetch::{
@@ -118,12 +119,30 @@ pub(crate) fn perform_fetch_step_merge(
     let source_id = source.id;
     let target_id = target.id;
 
+    let source_condition = source.condition.clone();
     let source_condition_merged = merge_source_condition_into_non_entity_target(target, source)?;
     if !source_condition_merged {
         target.scope_fetch_conditions_before_merge(source);
     }
 
-    let source_fetch_path = source.response_path.slice_from(target.response_path.len());
+    let mut source_fetch_path = source.response_path.slice_from(target.response_path.len());
+    // `cage.|[Cage] @include(if: $a)` or `pet @include(if: $a)` into `cage` or `pet`, the same
+    // objects (see `writes_same_objects_as`). Our output has no `|[Cage]` to find, so the
+    // source's fields go in at our level, under the conditions of its path we don't have. Its
+    // input too, like at the same path.
+    let same_objects =
+        target.is_entity_call() && source.is_entity_call() && target.writes_same_objects_as(source);
+    if same_objects {
+        let target_conditions: Vec<&Condition> = target.response_path.conditions().collect();
+        for condition in source.response_path.conditions() {
+            if !target_conditions.contains(&condition)
+                && source_condition.as_ref() != Some(condition)
+            {
+                source.output.wrap_with_condition(condition.clone());
+            }
+        }
+        source_fetch_path = MergePath::default();
+    }
     // At the same spot both steps write the same object. If the target fetches one type and
     // the source another, the source's fields would land on the target's type: `Cat` fields
     // on `Animal`. `can_merge` keeps such steps apart, so getting here is a bug.
@@ -164,7 +183,7 @@ pub(crate) fn perform_fetch_step_merge(
         // It's safe to not check if a condition was turned into an inline fragment,
         // because if a condition is present and "me" is a non-entity fetch step,
         // then the type_name values of the inputs are different.
-        if target.response_path == source.response_path {
+        if target.response_path == source.response_path || same_objects {
             target
                 .input
                 .migrate_from_another(&source.input, &MergePath::default())?;
@@ -453,24 +472,25 @@ impl FetchStepData<MultiTypeFetchStep> {
                 }));
 
         // A step-level condition skips the whole request, so entity calls under different
-        // conditions stay apart. A root fetch takes a conditional entity call by putting its
-        // fields under `... on T @include(if: $x)`.
+        // conditions mostly stay apart. A root fetch takes a conditional entity call by putting
+        // its fields under `... on T @include(if: $x)`.
         //
         // An unconditional entity call can do the same with a nested entity call only it feeds:
         // `listings { ... on Listing @include(if: $x) { pet } }`.
         //
         // See `issue_1308_conditional_rank_keeps_concrete_requires_types` test
         //
-        // Two entity calls for the same objects can share a request when one of them has no
-        // condition, as that request goes out anyway: `... on User @include(if: $x) { name }`.
+        // Two entity calls for the same objects share a request, each side's fields under its
+        // own condition: `... on User @include(if: $x) { name }`. The merged fetch runs when
+        // any of them is asked for, see `run_if_of_fetch_output`, so one `__resolveReference`
+        // per object, and still no request with every field off.
         //
         // See `client_alias_named_like_a_key_field_under_a_condition` test
         if self.is_entity_call() && other.is_entity_call() && self.condition != other.condition {
             let absorbs_conditional_child = self.condition.is_none()
                 && is_only_parent
                 && self.can_absorb_nested_entity_call(other);
-            let one_call_for_same_objects = self.response_path == other.response_path
-                && (self.condition.is_none() || other.condition.is_none());
+            let one_call_for_same_objects = self.writes_same_objects_as(other);
             if !absorbs_conditional_child && !one_call_for_same_objects {
                 return false;
             }
@@ -481,7 +501,7 @@ impl FetchStepData<MultiTypeFetchStep> {
         // The one exception is a nested entity call that we feed ourselves,
         // see `can_absorb_nested_entity_call`.
         if matches!(self.kind, FetchStepKind::Entity) && self.kind == other.kind {
-            if self.response_path.eq(&other.response_path) {
+            if self.writes_same_objects_as(other) {
                 // Same objects, but their fields sit under other types: an `Animal` call next to
                 // a `Cat | Dog` one. Merged, the `Cat` fields would end up on `Animal`.
                 // Outputs, not inputs: an `@interfaceObject` call reads `User`s and writes
@@ -519,6 +539,52 @@ impl FetchStepData<MultiTypeFetchStep> {
         true
     }
 
+    /// `other` writes the objects we do: at our path, maybe with more conditions on it, maybe
+    /// below it by a type condition naming the type we already fetch. `cage` and
+    /// `cage.|[Cage] @include(if: $a)`, from `... @include(if: $a)` on a `Cage`, or `pet` and
+    /// `pet @include(if: $a)`. Never with a condition we have and `other` doesn't, the plan puts
+    /// a fetch under the conditions of its path, `other`'s fields would go with it.
+    pub(crate) fn writes_same_objects_as(&self, other: &Self) -> bool {
+        if self.response_path == other.response_path {
+            return true;
+        }
+        let ours = &self.response_path.inner;
+        let theirs = &other.response_path.inner;
+        if theirs.len() < ours.len() {
+            return false;
+        }
+        let same_or_no_condition =
+            |ours: &Option<Condition>, theirs: &Option<Condition>| ours.is_none() || ours == theirs;
+        let same_place = ours.iter().zip(theirs.iter()).all(|pair| match pair {
+            (
+                Segment::Field(ours, ours_args, ours_condition),
+                Segment::Field(theirs, theirs_args, theirs_condition),
+            ) => {
+                ours == theirs
+                    && ours_args == theirs_args
+                    && same_or_no_condition(ours_condition, theirs_condition)
+            }
+            (Segment::List, Segment::List) => true,
+            (
+                Segment::TypeCondition(ours, ours_condition),
+                Segment::TypeCondition(theirs, theirs_condition),
+            ) => ours == theirs && same_or_no_condition(ours_condition, theirs_condition),
+            _ => false,
+        });
+        if !same_place {
+            return false;
+        }
+        let Some(output_type) = self.output.try_as_single() else {
+            return false;
+        };
+        theirs[ours.len()..].iter().all(|segment| match segment {
+            Segment::TypeCondition(type_names, _) => {
+                type_names.len() == 1 && type_names.contains(output_type)
+            }
+            _ => false,
+        })
+    }
+
     /// Only call this when we are the only step `other` waits for.
     /// If something else feeds it, the keys it sends may come from there,
     /// and pointing its other parents at us could change the order of the graph,
@@ -553,7 +619,7 @@ impl FetchStepData<MultiTypeFetchStep> {
         // same-object outputs can use different context variables even when their
         // entity inputs match. keep those fetches apart so batching can put each
         // output under its own alias
-        if self.response_path == other.response_path {
+        if self.writes_same_objects_as(other) {
             let output_conflicts = FetchStepSelections::<MultiTypeFetchStep>::iter_matching_types(
                 &self.output,
                 &other.output,
@@ -562,6 +628,32 @@ impl FetchStepData<MultiTypeFetchStep> {
                 },
             );
             if output_conflicts.iter().any(|(_, conflict)| *conflict) {
+                return true;
+            }
+        } else if other.response_path.starts_with(&self.response_path) {
+            // a nested call we take in (see `can_absorb_nested_entity_call`) lands under our
+            // fields at its path. The same response key with other arguments there, like
+            // `amountInUserCurrency` with another context variable, makes the operation invalid.
+            // Up to the object the path ends at, as its fields meet wherever they sit in
+            // fragments: `... on T @skip(if: $s) { a(x: $c0) }` next to `a(x: $c1)`.
+            let path = &other.response_path.inner[self.response_path.len()..];
+            let object_end = path
+                .iter()
+                .rposition(|segment| !matches!(segment, Segment::TypeCondition(..)))
+                .map_or(0, |last| last + 1);
+            let object_path = &path[..object_end];
+            let conflict = self
+                .output
+                .iter_selections()
+                .flat_map(|(_, self_selections)| {
+                    selection_sets_by_path(self_selections, object_path)
+                })
+                .any(|at_path| {
+                    other.output.iter_selections().any(|(_, other_selections)| {
+                        response_keys_conflict(at_path, other_selections)
+                    })
+                });
+            if conflict {
                 return true;
             }
         }

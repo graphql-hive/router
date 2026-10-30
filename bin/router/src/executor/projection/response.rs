@@ -3,7 +3,7 @@ use crate::executor::projection::error::ProjectionError;
 use crate::executor::projection::plan::{
     Condition, ConditionId, FieldRecord, ProjectionPlan, ShapeFlags,
 };
-use crate::executor::response::graphql_error::GraphQLError;
+use crate::executor::response::graphql_error::{GraphQLError, GraphQLErrorPathSegment};
 use crate::executor::response::value::Value;
 use bytes::BufMut;
 use sonic_rs::JsonValueTrait;
@@ -179,6 +179,7 @@ pub fn project_by_operation(
     }
 
     if !out.errors.is_empty() {
+        trim_error_paths(&mut out.errors, plan);
         let serialized = sonic_rs::to_vec(&out.errors)
             .map_err(|e| ProjectionError::ErrorsSerializationFailure(e.to_string()))?;
         out.buffer.put(COMMA);
@@ -202,6 +203,44 @@ pub fn project_by_operation(
 
     out.buffer.put(CLOSE_BRACE);
     Ok(out.buffer)
+}
+
+/// Cuts error paths at the first key the client didn't ask for. A subgraph's path can go into a
+/// field the router fetched for itself, like a `@requires` value under `_internal_qp_alias_0`, and
+/// that key means nothing to the client. The error points at the closest value it asked for then.
+/// The client's own keys are known from the plan, it may use `_internal_qp_alias_0` itself.
+fn trim_error_paths(errors: &mut [GraphQLError], plan: &ProjectionPlan) {
+    // no fields to check against, every path would go
+    if plan.is_empty() {
+        return;
+    }
+    for error in errors {
+        let Some(path) = error.path.as_mut() else {
+            continue;
+        };
+        let mut fields: Vec<&FieldRecord> = plan.root_fields().iter().collect();
+        let cut = path.segments.iter().position(|segment| {
+            let GraphQLErrorPathSegment::String(key) = segment else {
+                return false;
+            };
+            let asked = |field: &FieldRecord| plan.response_key(field) == key;
+            if !fields.iter().any(|field| asked(field)) {
+                return true;
+            }
+            // a key can have a variant per type, their selections all count
+            fields = fields
+                .iter()
+                .filter(|field| asked(field))
+                .flat_map(|field| plan.fields(field.children))
+                .collect();
+            false
+        });
+        match cut {
+            Some(0) => error.path = None,
+            Some(keep) => path.segments.truncate(keep),
+            None => {}
+        }
+    }
 }
 
 pub fn serialize_value_to_buffer(data: &Value, buffer: &mut Vec<u8>) {
@@ -1259,5 +1298,67 @@ mod tests {
         {
             assert_eq!(actual, expected, "case {index}: {name}");
         }
+    }
+
+    /// An error inside a field the router fetched for itself, like a `@requires` value under
+    /// `_internal_qp_alias_0`, points at the closest value the client asked for. One in a key the
+    /// client named that way itself stays, and one with no key the client asked for loses its path.
+    #[test]
+    fn error_paths_stop_at_keys_the_client_asked_for() {
+        let supergraph = parse_schema(
+            r#"
+            type Query { user: User }
+            type User { orders: [Order] }
+            type Order { id: ID }
+            "#,
+        );
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let schema_metadata = consumer_schema.schema_metadata();
+        let supergraph_state = SupergraphState::new(&supergraph);
+        let operation =
+            parse_operation(r#"{ user { orders { id } _internal_qp_alias_0: orders { id } } }"#);
+        let normalized = normalize_operation(&supergraph_state, &operation, None).unwrap();
+        let (root_type_name, plan) =
+            ProjectionPlan::from_operation(normalized.executable_operation(), &schema_metadata);
+        let data_json: sonic_rs::Value = sonic_rs::from_str(
+            r#"{"user":{"orders":[{"id":"1"},null],"_internal_qp_alias_0":[{"id":"1"},null]}}"#,
+        )
+        .unwrap();
+        let data = Value::from(data_json.as_ref());
+        let errors: Vec<GraphQLError> = sonic_rs::from_str(
+            r#"[
+                {"message":"router's own","path":["user","orders",1,"_internal_qp_alias_0"]},
+                {"message":"client's own","path":["user","_internal_qp_alias_0",1,"id"]},
+                {"message":"nothing asked","path":["_internal_qp_alias_1"]}
+            ]"#,
+        )
+        .unwrap();
+
+        let output = project_by_operation(
+            &data,
+            errors,
+            &Default::default(),
+            root_type_name,
+            &plan,
+            &None,
+            1024,
+            &schema_metadata,
+        )
+        .unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        let paths: Vec<String> = response["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|error| error["path"].to_string())
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                r#"["user","orders",1]"#,
+                r#"["user","_internal_qp_alias_0",1,"id"]"#,
+                "null"
+            ]
+        );
     }
 }

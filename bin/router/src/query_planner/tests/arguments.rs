@@ -115,13 +115,17 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
                 {
                   "alias": "_e0",
                   "representationsVariableName": "__batch_reps_0",
-                  "paths": [
-                    [
-                      {
-                        "Field": "products"
-                      },
-                      "@"
-                    ]
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "products"
+                          },
+                          "@"
+                        ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {
@@ -162,13 +166,17 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
                 {
                   "alias": "_e1",
                   "representationsVariableName": "__batch_reps_1",
-                  "paths": [
-                    [
-                      {
-                        "Field": "products"
-                      },
-                      "@"
-                    ]
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "products"
+                          },
+                          "@"
+                        ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {
@@ -1035,12 +1043,16 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
                 {
                   "alias": "_e0",
                   "representationsVariableName": "__batch_reps_0",
-                  "paths": [
-                    [
-                      {
-                        "Field": "test"
-                      }
-                    ]
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "test"
+                          }
+                        ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {
@@ -1067,12 +1079,16 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
                 {
                   "alias": "_e1",
                   "representationsVariableName": "__batch_reps_1",
-                  "paths": [
-                    [
-                      {
-                        "Field": "test"
-                      }
-                    ]
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "test"
+                          }
+                        ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {
@@ -1253,12 +1269,16 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
                 {
                   "alias": "_e0",
                   "representationsVariableName": "__batch_reps_0",
-                  "paths": [
-                    [
-                      {
-                        "Field": "test"
-                      }
-                    ]
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "test"
+                          }
+                        ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {
@@ -1285,12 +1305,16 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
                 {
                   "alias": "_e1",
                   "representationsVariableName": "__batch_reps_1",
-                  "paths": [
-                    [
-                      {
-                        "Field": "test"
-                      }
-                    ]
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "test"
+                          }
+                        ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {
@@ -2123,17 +2147,21 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
                     {
                       "alias": "_e0",
                       "representationsVariableName": "__batch_reps_0",
-                      "paths": [
-                        [
-                          {
-                            "Field": "secondProduct"
-                          }
-                        ],
-                        [
-                          {
-                            "Field": "firstProduct"
-                          }
-                        ]
+                      "pathGroups": [
+                        {
+                          "paths": [
+                            [
+                              {
+                                "Field": "secondProduct"
+                              }
+                            ],
+                            [
+                              {
+                                "Field": "firstProduct"
+                              }
+                            ]
+                          ]
+                        }
                       ],
                       "requires": [
                         {
@@ -2165,17 +2193,21 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
                     {
                       "alias": "_e0",
                       "representationsVariableName": "__batch_reps_0",
-                      "paths": [
-                        [
-                          {
-                            "Field": "secondProduct"
-                          }
-                        ],
-                        [
-                          {
-                            "Field": "firstProduct"
-                          }
-                        ]
+                      "pathGroups": [
+                        {
+                          "paths": [
+                            [
+                              {
+                                "Field": "secondProduct"
+                              }
+                            ],
+                            [
+                              {
+                                "Field": "firstProduct"
+                              }
+                            ]
+                          ]
+                        }
                       ],
                       "requires": [
                         {
@@ -2209,23 +2241,27 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
                 {
                   "alias": "_e0",
                   "representationsVariableName": "__batch_reps_0",
-                  "paths": [
-                    [
-                      {
-                        "Field": "secondProduct"
-                      },
-                      {
-                        "Field": "category"
-                      }
-                    ],
-                    [
-                      {
-                        "Field": "firstProduct"
-                      },
-                      {
-                        "Field": "category"
-                      }
-                    ]
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "secondProduct"
+                          },
+                          {
+                            "Field": "category"
+                          }
+                        ],
+                        [
+                          {
+                            "Field": "firstProduct"
+                          },
+                          {
+                            "Field": "category"
+                          }
+                        ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {

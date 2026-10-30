@@ -529,6 +529,7 @@ fn include_interface_fragment_at_root_fetch_test() -> Result<(), Box<dyn Error>>
       Fetch(service: "b") {
         query ($bool:Boolean) {
           accounts {
+            __typename
             id
             ... on Account @include(if: $bool) {
               name
@@ -1206,6 +1207,9 @@ fn qp_skip_and_include_field_level_all_merged_fields_conditional() -> Result<(),
     Ok(())
 }
 
+/// `isCheap` and `name` sit under different conditions, but they're one fetch, each under its
+/// own condition, that only runs when either one is asked for. One lookup for the product, and
+/// no request with both off.
 #[test]
 fn qp_mixed_include_skip_field_level_keeps_conditions_scoped() -> Result<(), Box<dyn Error>> {
     init_logger();
@@ -1252,7 +1256,7 @@ fn qp_mixed_include_skip_field_level_keeps_conditions_scoped() -> Result<(), Box
           }
         },
         Flatten(path: "product") {
-          Fetch(service: "b") {
+          Fetch(service: "b", if: !$skip || $include) {
             {
               ... on Product {
                 __typename
@@ -1416,6 +1420,261 @@ fn qp_nested_include_skip_conditions_in_complex_products_query() -> Result<(), B
               },
             },
           },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn qp_conditioned_fetches_batch_with_unconditional_entity_fetch() -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let document = parse_operation(
+        r#"
+        query ($showConditional: Boolean!) {
+          first: topProducts(first: 1) {
+            upc
+            shippingEstimate @include(if: $showConditional)
+          }
+          second: topProducts(first: 2) {
+            upc
+            shippingEstimate @include(if: $showConditional)
+          }
+          always: topProducts(first: 3) {
+            upc
+            shippingEstimate
+          }
+        }
+      "#,
+    );
+
+    let query_plan =
+        build_query_plan_with_defaults("fixture/products-example.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{query_plan}"), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          query ($showConditional:Boolean!) {
+            first: topProducts(first: 1) {
+              ...a
+            }
+            second: topProducts(first: 2) {
+              ...a
+            }
+            always: topProducts(first: 3) {
+              ...b
+            }
+          }
+          fragment a on Product {
+            __typename
+            upc
+            ... on Product @include(if: $showConditional) {
+              ...b
+            }
+          }
+          fragment b on Product {
+            price
+            weight
+            __typename
+            upc
+          }
+        },
+        BatchFetch(service: "inventory") {
+          {
+            _e0 {
+              paths: [
+                "always.@"
+              ]
+              paths if $showConditional: [
+                "second.@"
+                "first.@"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  price
+                  weight
+                  upc
+                }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Product {
+                shippingEstimate
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `@include` and `@skip` on one field make two nested conditions,
+/// `Skip(if: $b) { Include(if: $a) { .. } }`. The inventory fetch for `first` still joins the one
+/// for `always`, and its alias gets both conditions.
+#[test]
+fn qp_nested_conditions_batch_with_unconditional_entity_fetch() -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let document = parse_operation(
+        r#"
+        query ($a: Boolean!, $b: Boolean!) {
+          first: topProducts(first: 1) {
+            upc
+            shippingEstimate @include(if: $a) @skip(if: $b)
+          }
+          always: topProducts(first: 3) {
+            upc
+            shippingEstimate
+          }
+        }
+      "#,
+    );
+
+    let query_plan =
+        build_query_plan_with_defaults("fixture/products-example.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{query_plan}"), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          query ($a:Boolean!,$b:Boolean!) {
+            first: topProducts(first: 1) {
+              __typename
+              upc
+              ... on Product @skip(if: $b) @include(if: $a) {
+                ...a
+              }
+            }
+            always: topProducts(first: 3) {
+              ...a
+            }
+          }
+          fragment a on Product {
+            price
+            weight
+            __typename
+            upc
+          }
+        },
+        BatchFetch(service: "inventory") {
+          {
+            _e0 {
+              paths: [
+                "always.@"
+              ]
+              paths if $a && !$b: [
+                "first.@"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  price
+                  weight
+                  upc
+                }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Product {
+                shippingEstimate
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `second` sits under `Include(if: $b) { Include(if: $a) { .. } }` and `first` under
+/// `Include(if: $a) { .. }`. The outer conditions differ, but both inventory fetches still share one
+/// batch, each alias with the conditions it was under. The wfg `query-1` fixture used to get two
+/// identical `service11` batches from this.
+#[test]
+fn qp_swapped_nested_conditions_batch() -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let document = parse_operation(
+        r#"
+        query ($a: Boolean!, $b: Boolean!) {
+          first: topProducts(first: 1) {
+            upc
+            shippingEstimate @include(if: $a)
+          }
+          second: topProducts(first: 2) @include(if: $b) {
+            upc
+            shippingEstimate @include(if: $a)
+          }
+        }
+      "#,
+    );
+
+    let query_plan =
+        build_query_plan_with_defaults("fixture/products-example.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{query_plan}"), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          query ($a:Boolean!,$b:Boolean!) {
+            first: topProducts(first: 1) {
+              ...a
+            }
+            second: topProducts(first: 2) @include(if: $b) {
+              ...a
+            }
+          }
+          fragment a on Product {
+            __typename
+            upc
+            ... on Product @include(if: $a) {
+              price
+              weight
+              __typename
+              upc
+            }
+          }
+        },
+        BatchFetch(service: "inventory") {
+          {
+            _e0 {
+              paths if $a && $b: [
+                "second.@"
+              ]
+              paths if $a: [
+                "first.@"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  price
+                  weight
+                  upc
+                }
+              }
+            }
+          }
+          ($__batch_run_0:Boolean!) {
+            _e0: _entities(representations: $__batch_reps_0) @include(if: $__batch_run_0) {
+              ... on Product {
+                shippingEstimate
+              }
+            }
+          }
         },
       },
     },
@@ -1721,7 +1980,7 @@ fn conditional_root_fragment_survives_merges() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
-        Fetch(service: "b") {
+        Fetch(service: "b", if: $x) {
           query ($x:Boolean!) {
             ... on Query @include(if: $x) {
               userInB {
@@ -1847,7 +2106,8 @@ fn entity_call_under_nested_conditional_fragments() -> Result<(), Box<dyn Error>
 
 /// `notes` and `price` are in `... on Product @include(if: $a)`, and `reviews` only sends the
 /// `__typename` that the `products` call needs when `$a` is true. `price` has its own condition
-/// too, so it gets its own call, and batching the two calls into one used to drop `$a`.
+/// too, and batching two calls into one used to drop `$a`. Now it's one call under `$a`: it runs
+/// for `$a || ($a && $b)`, and that's just `$a`, which the `Include` already checks.
 #[test]
 fn batched_entity_calls_keep_the_condition_of_their_fragment() -> Result<(), Box<dyn Error>> {
     init_logger();
@@ -1925,6 +2185,159 @@ fn batched_entity_calls_keep_the_condition_of_their_fragment() -> Result<(), Box
               }
             },
           },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// https://github.com/graphql-hive/router/issues/1733
+///
+/// `details` and `inventory` both come from `b`, each under its own condition. They're one
+/// fetch, so the product is looked up once, and the fetch only runs when either field is asked
+/// for, so with both skipped there's no request.
+#[test]
+fn entity_fields_under_different_conditions_skip_the_request_when_all_are_off(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($skipDetails: Boolean!, $withInventory: Boolean!) {
+          product {
+            id
+            details @skip(if: $skipDetails) { color }
+            inventory @include(if: $withInventory) { inStock }
+          }
+        }
+      "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/skip-entity-fetch.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            product {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "product") {
+          Fetch(service: "b", if: !$skipDetails || $withInventory) {
+            {
+              ... on Product {
+                __typename
+                id
+              }
+            } =>
+            ($skipDetails:Boolean!,$withInventory:Boolean!) {
+              ... on Product {
+                ... on Product @include(if: $withInventory) {
+                  inventory {
+                    inStock
+                  }
+                }
+                ... on Product @skip(if: $skipDetails) {
+                  details {
+                    color
+                  }
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// The `Cat` entity call always runs, the `Bird` one only with `$x`. Merged into one call, the
+/// birds would still be sent as representations with `$x` off, just with nothing to ask for.
+#[test]
+fn conditional_member_entity_call_stays_apart_from_unconditional_one() -> Result<(), Box<dyn Error>>
+{
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($x: Boolean!) {
+          listings {
+            pet {
+              ... on Bird { name @include(if: $x) }
+              ... on Cat { name }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1309.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "search") {
+          {
+            listings {
+              pet {
+                __typename
+                ... on Bird {
+                  __typename
+                  id
+                }
+                ... on Cat {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+        },
+        BatchFetch(service: "catalog") {
+          {
+            _e0 {
+              paths: [
+                "listings.@.pet|[Cat]"
+              ]
+              {
+                ... on Cat {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e1 {
+              paths if $x: [
+                "listings.@.pet|[Bird]"
+              ]
+              {
+                ... on Bird {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          ($__batch_run_0:Boolean!) {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Cat {
+                name
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) @include(if: $__batch_run_0) {
+              ... on Bird {
+                name
+              }
+            }
+          }
         },
       },
     },
@@ -2047,6 +2460,113 @@ fn spread_condition_kept_around_same_type_fragment_with_its_own() -> Result<(), 
                     name
                   }
                 }
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
+}
+
+/// `orders` is asked twice, once under `@include(if: $a)`. With `$a` off, the unconditional one
+/// still has the orders, so the calls for `name` need `$a` as well as their own `$b`.
+#[test]
+fn field_condition_kept_when_the_field_is_also_unconditional() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($a: Boolean!, $b: Boolean!) {
+          user {
+            orders {
+              id
+            }
+            orders @include(if: $a) {
+              ... on Order @include(if: $b) {
+                name
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-partly-provided-after-hop.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "users") {
+          {
+            user {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "user") {
+          Fetch(service: "orders") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            ($a:Boolean!,$b:Boolean!) {
+              ... on User {
+                ... on User @include(if: $a) {
+                  orders {
+                    ... on Order @include(if: $b) {
+                      __typename
+                      id
+                      sku
+                    }
+                  }
+                }
+                orders {
+                  id
+                }
+              }
+            }
+          },
+        },
+        Include(if: $a) {
+          Include(if: $b) {
+            Sequence {
+              Flatten(path: "user.orders.@|[Order]") {
+                Fetch(service: "catalog") {
+                  {
+                    ... on Order {
+                      __typename
+                      id
+                    }
+                  } =>
+                  {
+                    ... on Order {
+                      weight
+                    }
+                  }
+                },
+              },
+              Flatten(path: "user.orders.@|[Order]") {
+                Fetch(service: "orders") {
+                  {
+                    ... on Order {
+                      __typename
+                      sku
+                      weight
+                      id
+                    }
+                  } =>
+                  {
+                    ... on Order {
+                      name
+                    }
+                  }
+                },
               },
             },
           },
@@ -2204,6 +2724,97 @@ fn condition_kept_on_every_type_of_a_batched_call_under_a_type_condition(
     Ok(())
 }
 
+/// Only Dogs are asked something always, Birds and Cats only with `$b`. Batched together the
+/// Birds and Cats would go along with the Dogs and be looked up for nothing with `$b` off.
+#[test]
+fn conditional_types_keep_their_own_alias_next_to_an_unconditional_one(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($b: Boolean!) {
+          listings {
+            pet {
+              ... on Dog {
+                tricks
+              }
+              name @include(if: $b)
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1309.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "search") {
+          {
+            listings {
+              pet {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        BatchFetch(service: "catalog") {
+          {
+            _e0 {
+              paths: [
+                "listings.@.pet|[Dog]"
+              ]
+              {
+                ... on Dog {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e1 {
+              paths if $b: [
+                "listings.@.pet|[Bird|Cat]"
+              ]
+              {
+                ... on Bird {
+                  __typename
+                  id
+                }
+                ... on Cat {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          ($__batch_run_0:Boolean!,$b:Boolean!) {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Dog {
+                ... on Dog @include(if: $b) {
+                  name
+                }
+                tricks
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) @include(if: $__batch_run_0) {
+              ... on Bird {
+                name
+              }
+              ... on Cat {
+                name
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
 /// `orders` comes under `$a` and under `$c` both. The `name` call has its own `$b` and was planned
 /// under `$a` too: with `$a` off the orders still come from the `$c` branch, so it needs both.
 /// The `weight` it requires is fetched for that branch as well.
@@ -2248,88 +2859,59 @@ fn condition_kept_when_another_branch_fetches_the_same_field() -> Result<(), Box
             }
           }
         },
-        Parallel {
-          Skip(if: $c) {
-            Flatten(path: "user|[User]") {
-              Fetch(service: "orders") {
-                {
-                  ... on User {
-                    __typename
-                    id
-                  }
-                } =>
-                {
-                  ... on User {
-                    orders {
+        Flatten(path: "user") {
+          Fetch(service: "orders", if: !$c || $a) {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            ($a:Boolean!,$b:Boolean!,$c:Boolean!) {
+              ... on User {
+                ... on User @include(if: $a) {
+                  orders {
+                    ... on Order @include(if: $b) {
                       __typename
                       id
+                      sku
                     }
                   }
                 }
-              },
-            },
-          },
-          Include(if: $a) {
-            Flatten(path: "user") {
-              Fetch(service: "orders") {
-                {
-                  ... on User {
+                ... on User @skip(if: $c) {
+                  orders {
                     __typename
                     id
                   }
-                } =>
-                ($b:Boolean!) {
-                  ... on User {
-                    orders {
-                      ... on Order @include(if: $b) {
-                        __typename
-                        id
-                        sku
-                      }
-                    }
-                  }
                 }
-              },
-            },
+              }
+            }
           },
         },
-        Parallel {
-          Skip(if: $c) {
-            Flatten(path: "user|[User].orders.@") {
-              Fetch(service: "catalog") {
-                {
-                  ... on Order {
-                    __typename
-                    id
-                  }
-                } =>
-                {
-                  ... on Order {
-                    weight
-                  }
+        BatchFetch(service: "catalog") {
+          {
+            _e0 {
+              paths if !$c: [
+                "user|[User].orders.@"
+              ]
+              paths if $a && $b: [
+                "user.orders.@|[Order]"
+              ]
+              {
+                ... on Order {
+                  __typename
+                  id
                 }
-              },
-            },
-          },
-          Include(if: $a) {
-            Include(if: $b) {
-              Flatten(path: "user.orders.@|[Order]") {
-                Fetch(service: "catalog") {
-                  {
-                    ... on Order {
-                      __typename
-                      id
-                    }
-                  } =>
-                  {
-                    ... on Order {
-                      weight
-                    }
-                  }
-                },
-              },
-            },
-          },
+              }
+            }
+          }
+          ($__batch_run_0:Boolean!) {
+            _e0: _entities(representations: $__batch_reps_0) @include(if: $__batch_run_0) {
+              ... on Order {
+                weight
+              }
+            }
+          }
         },
         Include(if: $a) {
           Include(if: $b) {
@@ -2356,113 +2938,6 @@ fn condition_kept_when_another_branch_fetches_the_same_field() -> Result<(), Box
     },
     "#);
 
-    Ok(())
-}
-
-/// `orders` is asked twice, once under `@include(if: $a)`. With `$a` off, the unconditional one
-/// still has the orders, so the calls for `name` need `$a` as well as their own `$b`.
-#[test]
-fn field_condition_kept_when_the_field_is_also_unconditional() -> Result<(), Box<dyn Error>> {
-    init_logger();
-    let document = parse_operation(
-        r#"
-        query($a: Boolean!, $b: Boolean!) {
-          user {
-            orders {
-              id
-            }
-            orders @include(if: $a) {
-              ... on Order @include(if: $b) {
-                name
-              }
-            }
-          }
-        }
-        "#,
-    );
-    let query_plan = build_query_plan_with_defaults(
-        "fixture/tests/requires-partly-provided-after-hop.supergraph.graphql",
-        document,
-    )?;
-
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Sequence {
-        Fetch(service: "users") {
-          {
-            user {
-              __typename
-              id
-            }
-          }
-        },
-        Flatten(path: "user") {
-          Fetch(service: "orders") {
-            {
-              ... on User {
-                __typename
-                id
-              }
-            } =>
-            ($a:Boolean!,$b:Boolean!) {
-              ... on User {
-                ... on User @include(if: $a) {
-                  orders {
-                    ... on Order @include(if: $b) {
-                      __typename
-                      id
-                      sku
-                    }
-                  }
-                }
-                orders {
-                  id
-                }
-              }
-            }
-          },
-        },
-        Include(if: $a) {
-          Include(if: $b) {
-            Sequence {
-              Flatten(path: "user.orders.@|[Order]") {
-                Fetch(service: "catalog") {
-                  {
-                    ... on Order {
-                      __typename
-                      id
-                    }
-                  } =>
-                  {
-                    ... on Order {
-                      weight
-                    }
-                  }
-                },
-              },
-              Flatten(path: "user.orders.@|[Order]") {
-                Fetch(service: "orders") {
-                  {
-                    ... on Order {
-                      __typename
-                      sku
-                      weight
-                      id
-                    }
-                  } =>
-                  {
-                    ... on Order {
-                      name
-                    }
-                  }
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-    "#);
     Ok(())
 }
 
@@ -2533,6 +3008,421 @@ fn condition_on_a_fragment_of_the_same_type_goes_to_its_fragments() -> Result<()
     Ok(())
 }
 
+/// `... @include(if: $a)` on a `Cage` puts its fields at `cage.|[Cage]`, the same cages as
+/// `cage`. One call for both, the conditional fields under `$a`, not one alias each.
+#[test]
+fn fields_under_a_condition_on_the_same_type_share_the_call() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($a: Boolean!) {
+          cage {
+            listings {
+              id
+            }
+            ... @include(if: $a) {
+              listings {
+                pet {
+                  id
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1308.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "catalog") {
+          query ($a:Boolean!) {
+            cage {
+              __typename
+              id
+              ... on Cage @include(if: $a) {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "cage") {
+          Fetch(service: "search") {
+            {
+              ... on Cage {
+                __typename
+                id
+              }
+            } =>
+            ($a:Boolean!) {
+              ... on Cage {
+                listings {
+                  id
+                }
+                ... on Cage @include(if: $a) {
+                  listings {
+                    pet {
+                      id
+                    }
+                  }
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `pet` and `pet @include(if: $a)` are the same pet, one call for both.
+#[test]
+fn fields_of_a_field_repeated_under_a_condition_share_the_call() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($a: Boolean!) {
+          pet {
+            weight
+          }
+          pet @include(if: $a) {
+            id
+            weight
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1310.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "clinic") {
+          query ($a:Boolean!) {
+            pet {
+              ...a
+            }
+            pet @include(if: $a) {
+              ...a
+            }
+          }
+          fragment a on Pet {
+            __typename
+            id
+          }
+        },
+        Flatten(path: "pet") {
+          Fetch(service: "records") {
+            {
+              ... on Pet {
+                __typename
+                id
+              }
+            } =>
+            ($a:Boolean!) {
+              ... on Pet {
+                weight
+                ... on Pet @include(if: $a) {
+                  weight
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// The `@requires` inputs of the conditional call come along when it joins the other one:
+/// `canAffordWithAndWithoutDiscount2` needs `isExpensiveWithDiscount`, `canAfford2` doesn't.
+#[test]
+fn requires_inputs_kept_when_a_conditional_call_joins_another() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($a: Boolean!) {
+          product {
+            canAfford2
+            ... @include(if: $a) {
+              canAffordWithAndWithoutDiscount2
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires_requires.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          query ($a:Boolean!) {
+            product {
+              __typename
+              id
+              ... on Product @include(if: $a) {
+                __typename
+                id
+                hasDiscount
+              }
+            }
+          }
+        },
+        Parallel {
+          Include(if: $a) {
+            Flatten(path: "product|[Product]") {
+              Fetch(service: "c") {
+                {
+                  ... on Product {
+                    __typename
+                    hasDiscount
+                    id
+                  }
+                } =>
+                {
+                  ... on Product {
+                    isExpensiveWithDiscount
+                  }
+                }
+              },
+            },
+          },
+          Flatten(path: "product") {
+            Fetch(service: "a") {
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              } =>
+              ($a:Boolean!) {
+                ... on Product {
+                  price
+                  ... on Product @include(if: $a) {
+                    price
+                  }
+                }
+              }
+            },
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "c") {
+            {
+              ... on Product {
+                __typename
+                price
+                id
+              }
+            } =>
+            ($a:Boolean!) {
+              ... on Product {
+                isExpensive
+                ... on Product @include(if: $a) {
+                  isExpensive
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "d") {
+            {
+              ... on Product {
+                __typename
+                isExpensive
+                id
+                isExpensiveWithDiscount
+              }
+            } =>
+            ($a:Boolean!) {
+              ... on Product {
+                canAfford2
+                ... on Product @include(if: $a) {
+                  canAffordWithAndWithoutDiscount2
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `product` and `product @include(if: $a)` are the same product, but each `price` reads its own
+/// context value, `price(locale: $__context_0)` and `price(locale: $__context_1)` can't share a
+/// selection. Two calls.
+#[test]
+fn same_objects_under_a_condition_with_other_context_values_stay_apart(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($a: Boolean!) {
+          product {
+            price
+          }
+          product @include(if: $a) {
+            price
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/context-query-root.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          query ($a:Boolean!) {
+            __typename
+            me {
+              ...a
+            }
+            product {
+              ...b
+            }
+            me @include(if: $a) {
+              ...a
+            }
+            product @include(if: $a) {
+              ...b
+            }
+          }
+          fragment a on User {
+            locale
+          }
+          fragment b on Product {
+            __typename
+            id
+          }
+        },
+        BatchFetch(service: "a") {
+          {
+            _e0 {
+              paths if $a: [
+                "product"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e1 {
+              paths: [
+                "product"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          ($__batch_run_0:Boolean!,$__context_1:String,$__context_0:String) {
+            _e0: _entities(representations: $__batch_reps_0) @include(if: $__batch_run_0) {
+              ... on Product {
+                price(locale: $__context_1)
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Product {
+                price(locale: $__context_0)
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `@include(if: $x) @skip(if: $x)` on every field `b` gives is never asked for, so its fetch
+/// never runs, rather than always.
+#[test]
+fn entity_fetch_whose_fields_are_never_asked_for_never_runs() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($x: Boolean!, $y: Boolean!) {
+          product {
+            id
+            details @include(if: $x) @skip(if: $x) { color }
+            inventory @include(if: $y) @skip(if: $y) { inStock }
+          }
+        }
+      "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/skip-entity-fetch.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            product {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "product") {
+          Fetch(service: "b", if: false) {
+            {
+              ... on Product {
+                __typename
+                id
+              }
+            } =>
+            ($x:Boolean!,$y:Boolean!) {
+              ... on Product {
+                ... on Product @skip(if: $y) @include(if: $y) {
+                  inventory {
+                    inStock
+                  }
+                }
+                ... on Product @skip(if: $x) @include(if: $x) {
+                  details {
+                    color
+                  }
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
 /// The fetch below `@skip(if: $c) @include(if: $d)` was planned under `$a` and `$b` too. `$a`
 /// sits on `anotherUsers` and the list has no spot for `$b`, it still has to wrap the fetch.
 #[test]
@@ -2559,7 +3449,7 @@ fn condition_with_no_spot_on_the_path_still_wraps_the_fetch() -> Result<(), Box<
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
-        Fetch(service: "b") {
+        Fetch(service: "b", if: !$a) {
           query ($a:Boolean!,$b:Boolean!) {
             anotherUsers @skip(if: $a) {
               __typename

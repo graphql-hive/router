@@ -73,13 +73,17 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                 {
                   "alias": "_e0",
                   "representationsVariableName": "__batch_reps_0",
-                  "paths": [
-                    [
-                      {
-                        "Field": "topProducts"
-                      },
-                      "@"
-                    ]
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "topProducts"
+                          },
+                          "@"
+                        ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {
@@ -101,13 +105,17 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                 {
                   "alias": "_e1",
                   "representationsVariableName": "__batch_reps_1",
-                  "paths": [
-                    [
-                      {
-                        "Field": "users"
-                      },
-                      "@"
-                    ]
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "users"
+                          },
+                          "@"
+                        ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {
@@ -144,67 +152,71 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                 {
                   "alias": "_e0",
                   "representationsVariableName": "__batch_reps_0",
-                  "paths": [
-                    [
-                      {
-                        "Field": "topProducts"
-                      },
-                      "@",
-                      {
-                        "Field": "reviews"
-                      },
-                      "@",
-                      {
-                        "Field": "author"
-                      },
-                      {
-                        "Field": "reviews"
-                      },
-                      "@",
-                      {
-                        "Field": "product"
-                      }
-                    ],
-                    [
-                      {
-                        "Field": "users"
-                      },
-                      "@",
-                      {
-                        "Field": "reviews"
-                      },
-                      "@",
-                      {
-                        "Field": "product"
-                      }
-                    ],
-                    [
-                      {
-                        "Field": "users"
-                      },
-                      "@",
-                      {
-                        "Field": "reviews"
-                      },
-                      "@",
-                      {
-                        "Field": "product"
-                      },
-                      {
-                        "Field": "reviews"
-                      },
-                      "@",
-                      {
-                        "Field": "author"
-                      },
-                      {
-                        "Field": "reviews"
-                      },
-                      "@",
-                      {
-                        "Field": "product"
-                      }
-                    ]
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "topProducts"
+                          },
+                          "@",
+                          {
+                            "Field": "reviews"
+                          },
+                          "@",
+                          {
+                            "Field": "author"
+                          },
+                          {
+                            "Field": "reviews"
+                          },
+                          "@",
+                          {
+                            "Field": "product"
+                          }
+                        ],
+                        [
+                          {
+                            "Field": "users"
+                          },
+                          "@",
+                          {
+                            "Field": "reviews"
+                          },
+                          "@",
+                          {
+                            "Field": "product"
+                          }
+                        ],
+                        [
+                          {
+                            "Field": "users"
+                          },
+                          "@",
+                          {
+                            "Field": "reviews"
+                          },
+                          "@",
+                          {
+                            "Field": "product"
+                          },
+                          {
+                            "Field": "reviews"
+                          },
+                          "@",
+                          {
+                            "Field": "author"
+                          },
+                          {
+                            "Field": "reviews"
+                          },
+                          "@",
+                          {
+                            "Field": "product"
+                          }
+                        ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {
@@ -236,40 +248,44 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
                 {
                   "alias": "_e0",
                   "representationsVariableName": "__batch_reps_0",
-                  "paths": [
-                    [
-                      {
-                        "Field": "topProducts"
-                      },
-                      "@",
-                      {
-                        "Field": "reviews"
-                      },
-                      "@",
-                      {
-                        "Field": "author"
-                      }
-                    ],
-                    [
-                      {
-                        "Field": "users"
-                      },
-                      "@",
-                      {
-                        "Field": "reviews"
-                      },
-                      "@",
-                      {
-                        "Field": "product"
-                      },
-                      {
-                        "Field": "reviews"
-                      },
-                      "@",
-                      {
-                        "Field": "author"
-                      }
-                    ]
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "topProducts"
+                          },
+                          "@",
+                          {
+                            "Field": "reviews"
+                          },
+                          "@",
+                          {
+                            "Field": "author"
+                          }
+                        ],
+                        [
+                          {
+                            "Field": "users"
+                          },
+                          "@",
+                          {
+                            "Field": "reviews"
+                          },
+                          "@",
+                          {
+                            "Field": "product"
+                          },
+                          {
+                            "Field": "reviews"
+                          },
+                          "@",
+                          {
+                            "Field": "author"
+                          }
+                        ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {
@@ -303,67 +319,71 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
             {
               "alias": "_e0",
               "representationsVariableName": "__batch_reps_0",
-              "paths": [
-                [
-                  {
-                    "Field": "topProducts"
-                  },
-                  "@",
-                  {
-                    "Field": "reviews"
-                  },
-                  "@",
-                  {
-                    "Field": "author"
-                  },
-                  {
-                    "Field": "reviews"
-                  },
-                  "@",
-                  {
-                    "Field": "product"
-                  }
-                ],
-                [
-                  {
-                    "Field": "users"
-                  },
-                  "@",
-                  {
-                    "Field": "reviews"
-                  },
-                  "@",
-                  {
-                    "Field": "product"
-                  }
-                ],
-                [
-                  {
-                    "Field": "users"
-                  },
-                  "@",
-                  {
-                    "Field": "reviews"
-                  },
-                  "@",
-                  {
-                    "Field": "product"
-                  },
-                  {
-                    "Field": "reviews"
-                  },
-                  "@",
-                  {
-                    "Field": "author"
-                  },
-                  {
-                    "Field": "reviews"
-                  },
-                  "@",
-                  {
-                    "Field": "product"
-                  }
-                ]
+              "pathGroups": [
+                {
+                  "paths": [
+                    [
+                      {
+                        "Field": "topProducts"
+                      },
+                      "@",
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "author"
+                      },
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "product"
+                      }
+                    ],
+                    [
+                      {
+                        "Field": "users"
+                      },
+                      "@",
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "product"
+                      }
+                    ],
+                    [
+                      {
+                        "Field": "users"
+                      },
+                      "@",
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "product"
+                      },
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "author"
+                      },
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "product"
+                      }
+                    ]
+                  ]
+                }
               ],
               "requires": [
                 {
@@ -485,13 +505,17 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
                 {
                   "alias": "_e0",
                   "representationsVariableName": "__batch_reps_0",
-                  "paths": [
-                    [
-                      {
-                        "Field": "topProducts"
-                      },
-                      "@"
-                    ]
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "topProducts"
+                          },
+                          "@"
+                        ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {
@@ -513,13 +537,17 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
                 {
                   "alias": "_e1",
                   "representationsVariableName": "__batch_reps_1",
-                  "paths": [
-                    [
-                      {
-                        "Field": "users"
-                      },
-                      "@"
-                    ]
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "users"
+                          },
+                          "@"
+                        ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {
@@ -556,67 +584,71 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
                 {
                   "alias": "_e0",
                   "representationsVariableName": "__batch_reps_0",
-                  "paths": [
-                    [
-                      {
-                        "Field": "topProducts"
-                      },
-                      "@",
-                      {
-                        "Field": "reviews"
-                      },
-                      "@",
-                      {
-                        "Field": "author"
-                      },
-                      {
-                        "Field": "reviews"
-                      },
-                      "@",
-                      {
-                        "Field": "product"
-                      }
-                    ],
-                    [
-                      {
-                        "Field": "users"
-                      },
-                      "@",
-                      {
-                        "Field": "reviews"
-                      },
-                      "@",
-                      {
-                        "Field": "product"
-                      }
-                    ],
-                    [
-                      {
-                        "Field": "users"
-                      },
-                      "@",
-                      {
-                        "Field": "reviews"
-                      },
-                      "@",
-                      {
-                        "Field": "product"
-                      },
-                      {
-                        "Field": "reviews"
-                      },
-                      "@",
-                      {
-                        "Field": "author"
-                      },
-                      {
-                        "Field": "reviews"
-                      },
-                      "@",
-                      {
-                        "Field": "product"
-                      }
-                    ]
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "topProducts"
+                          },
+                          "@",
+                          {
+                            "Field": "reviews"
+                          },
+                          "@",
+                          {
+                            "Field": "author"
+                          },
+                          {
+                            "Field": "reviews"
+                          },
+                          "@",
+                          {
+                            "Field": "product"
+                          }
+                        ],
+                        [
+                          {
+                            "Field": "users"
+                          },
+                          "@",
+                          {
+                            "Field": "reviews"
+                          },
+                          "@",
+                          {
+                            "Field": "product"
+                          }
+                        ],
+                        [
+                          {
+                            "Field": "users"
+                          },
+                          "@",
+                          {
+                            "Field": "reviews"
+                          },
+                          "@",
+                          {
+                            "Field": "product"
+                          },
+                          {
+                            "Field": "reviews"
+                          },
+                          "@",
+                          {
+                            "Field": "author"
+                          },
+                          {
+                            "Field": "reviews"
+                          },
+                          "@",
+                          {
+                            "Field": "product"
+                          }
+                        ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {
@@ -648,40 +680,44 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
                 {
                   "alias": "_e0",
                   "representationsVariableName": "__batch_reps_0",
-                  "paths": [
-                    [
-                      {
-                        "Field": "topProducts"
-                      },
-                      "@",
-                      {
-                        "Field": "reviews"
-                      },
-                      "@",
-                      {
-                        "Field": "author"
-                      }
-                    ],
-                    [
-                      {
-                        "Field": "users"
-                      },
-                      "@",
-                      {
-                        "Field": "reviews"
-                      },
-                      "@",
-                      {
-                        "Field": "product"
-                      },
-                      {
-                        "Field": "reviews"
-                      },
-                      "@",
-                      {
-                        "Field": "author"
-                      }
-                    ]
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "topProducts"
+                          },
+                          "@",
+                          {
+                            "Field": "reviews"
+                          },
+                          "@",
+                          {
+                            "Field": "author"
+                          }
+                        ],
+                        [
+                          {
+                            "Field": "users"
+                          },
+                          "@",
+                          {
+                            "Field": "reviews"
+                          },
+                          "@",
+                          {
+                            "Field": "product"
+                          },
+                          {
+                            "Field": "reviews"
+                          },
+                          "@",
+                          {
+                            "Field": "author"
+                          }
+                        ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {
@@ -715,67 +751,71 @@ exports[`fixtures > should planAsync federation-example/query.graphql 1`] = `
             {
               "alias": "_e0",
               "representationsVariableName": "__batch_reps_0",
-              "paths": [
-                [
-                  {
-                    "Field": "topProducts"
-                  },
-                  "@",
-                  {
-                    "Field": "reviews"
-                  },
-                  "@",
-                  {
-                    "Field": "author"
-                  },
-                  {
-                    "Field": "reviews"
-                  },
-                  "@",
-                  {
-                    "Field": "product"
-                  }
-                ],
-                [
-                  {
-                    "Field": "users"
-                  },
-                  "@",
-                  {
-                    "Field": "reviews"
-                  },
-                  "@",
-                  {
-                    "Field": "product"
-                  }
-                ],
-                [
-                  {
-                    "Field": "users"
-                  },
-                  "@",
-                  {
-                    "Field": "reviews"
-                  },
-                  "@",
-                  {
-                    "Field": "product"
-                  },
-                  {
-                    "Field": "reviews"
-                  },
-                  "@",
-                  {
-                    "Field": "author"
-                  },
-                  {
-                    "Field": "reviews"
-                  },
-                  "@",
-                  {
-                    "Field": "product"
-                  }
-                ]
+              "pathGroups": [
+                {
+                  "paths": [
+                    [
+                      {
+                        "Field": "topProducts"
+                      },
+                      "@",
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "author"
+                      },
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "product"
+                      }
+                    ],
+                    [
+                      {
+                        "Field": "users"
+                      },
+                      "@",
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "product"
+                      }
+                    ],
+                    [
+                      {
+                        "Field": "users"
+                      },
+                      "@",
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "product"
+                      },
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "author"
+                      },
+                      {
+                        "Field": "reviews"
+                      },
+                      "@",
+                      {
+                        "Field": "product"
+                      }
+                    ]
+                  ]
+                }
               ],
               "requires": [
                 {

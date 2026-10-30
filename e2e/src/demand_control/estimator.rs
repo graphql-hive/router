@@ -1170,4 +1170,90 @@ mod estimator_tests {
         );
         assert!(allowed_json["data"]["searchByCostlyInput"].is_array());
     }
+
+    // `first` asks for `shippingEstimate` only under `$withShipping`, `always` asks for `inStock`
+    // every time. Both inventory calls share one batch, `first` gets its own alias with the
+    // condition:
+    //
+    //   BatchFetch(inventory)
+    //   ├─ _e0                                    always.@
+    //   └─ _e1  paths if $withShipping: first.@
+    //
+    // With `$withShipping: false` the estimate has to match the query without that field.
+    // Counting `_e1` anyway would reject queries that fit under the max.
+    #[ntex::test]
+    async fn conditional_alias_in_entity_batch_is_left_out_of_estimate() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                demand_control:
+                    enabled: true
+                    operation_cost:
+                      max: 1000
+                      mode: measure
+                      expose_headers:
+                        estimated: true
+                    default_list_size:
+                      all: 1
+                    subgraphs_budget:
+                      mode: measure
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let conditional = r#"
+            query($withShipping: Boolean!) {
+                first: topProducts(first: 1) {
+                    upc
+                    shippingEstimate @include(if: $withShipping)
+                }
+                always: topProducts(first: 3) {
+                    upc
+                    inStock
+                }
+            }
+        "#;
+        let without_field = r#"
+            query {
+                first: topProducts(first: 1) {
+                    upc
+                }
+                always: topProducts(first: 3) {
+                    upc
+                    inStock
+                }
+            }
+        "#;
+
+        let estimate = |query: &'static str, variables: Option<sonic_rs::Value>| {
+            let router = &router;
+            async move {
+                router
+                    .send_graphql_request(query, variables, None)
+                    .await
+                    .cost_header("x-cost-estimated")
+                    .expect("estimated cost header should be present")
+            }
+        };
+
+        let with_shipping = estimate(conditional, Some(json!({ "withShipping": true }))).await;
+        let without_shipping = estimate(conditional, Some(json!({ "withShipping": false }))).await;
+        let baseline = estimate(without_field, None).await;
+
+        assert!(
+            with_shipping > baseline,
+            "the conditional fetch should cost something when it runs: {with_shipping} vs {baseline}"
+        );
+        assert_eq!(
+            without_shipping, baseline,
+            "a skipped alias shouldn't add to the estimate"
+        );
+    }
 }

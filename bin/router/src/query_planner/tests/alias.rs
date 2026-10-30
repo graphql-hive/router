@@ -318,6 +318,7 @@ fn circular_reference_interface() -> Result<(), Box<dyn Error>> {
                 __typename
                 id
                 samePriceProduct {
+                  __typename
                   id
                   price
                 }

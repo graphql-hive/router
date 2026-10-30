@@ -543,45 +543,43 @@ fn context_under_conditional_ancestor_fragments() -> Result<(), Box<dyn Error>> 
             id
           }
         },
-        Parallel {
-          Skip(if: $skip) {
-            Include(if: $include) {
-              Flatten(path: "viewer|[Other].txs.@") {
-                Fetch(service: "a") {
-                  {
-                    ... on Transaction {
-                      __typename
-                      id
-                    }
-                  } =>
-                  ($__context_1:String) {
-                    ... on Transaction {
-                      fromUnion(code: $__context_1)
-                    }
-                  }
-                },
-              },
-            },
-          },
-          Include(if: $include) {
-            Skip(if: $skip) {
-              Flatten(path: "viewer|[User].txs.@") {
-                Fetch(service: "a") {
-                  {
-                    ... on Transaction {
-                      __typename
-                      id
-                    }
-                  } =>
-                  ($__context_0:String) {
-                    ... on Transaction {
-                      fromUnion(code: $__context_0)
-                    }
-                  }
-                },
-              },
-            },
-          },
+        BatchFetch(service: "a") {
+          {
+            _e0 {
+              paths if $include && !$skip: [
+                "viewer|[Other].txs.@"
+              ]
+              {
+                ... on Transaction {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e1 {
+              paths if $include && !$skip: [
+                "viewer|[User].txs.@"
+              ]
+              {
+                ... on Transaction {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          ($__batch_run_0:Boolean!,$__batch_run_1:Boolean!,$__context_1:String,$__context_0:String) {
+            _e0: _entities(representations: $__batch_reps_0) @include(if: $__batch_run_0) {
+              ... on Transaction {
+                fromUnion(code: $__context_1)
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) @include(if: $__batch_run_1) {
+              ... on Transaction {
+                fromUnion(code: $__context_0)
+              }
+            }
+          }
         },
       },
     },
@@ -2015,15 +2013,19 @@ fn unrelated_objects_share_a_context_name() -> Result<(), Box<dyn Error>> {
                 {
                   "alias": "_e0",
                   "representationsVariableName": "__batch_reps_0",
-                  "paths": [
-                    [
-                      {
-                        "Field": "bar"
-                      },
-                      {
-                        "Field": "u"
-                      }
-                    ]
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "bar"
+                          },
+                          {
+                            "Field": "u"
+                          }
+                        ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {
@@ -2064,15 +2066,19 @@ fn unrelated_objects_share_a_context_name() -> Result<(), Box<dyn Error>> {
                 {
                   "alias": "_e1",
                   "representationsVariableName": "__batch_reps_1",
-                  "paths": [
-                    [
-                      {
-                        "Field": "foo"
-                      },
-                      {
-                        "Field": "u"
-                      }
-                    ]
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "foo"
+                          },
+                          {
+                            "Field": "u"
+                          }
+                        ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {
@@ -2218,15 +2224,19 @@ fn shared_context_name_selects_fields_by_type() -> Result<(), Box<dyn Error>> {
                 {
                   "alias": "_e0",
                   "representationsVariableName": "__batch_reps_0",
-                  "paths": [
-                    [
-                      {
-                        "Field": "bar"
-                      },
-                      {
-                        "Field": "u"
-                      }
-                    ]
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "bar"
+                          },
+                          {
+                            "Field": "u"
+                          }
+                        ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {
@@ -2267,15 +2277,19 @@ fn shared_context_name_selects_fields_by_type() -> Result<(), Box<dyn Error>> {
                 {
                   "alias": "_e1",
                   "representationsVariableName": "__batch_reps_1",
-                  "paths": [
-                    [
-                      {
-                        "Field": "foo"
-                      },
-                      {
-                        "Field": "u"
-                      }
-                    ]
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "foo"
+                          },
+                          {
+                            "Field": "u"
+                          }
+                        ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {
@@ -2427,21 +2441,25 @@ fn union_context_with_type_conditions() -> Result<(), Box<dyn Error>> {
                 {
                   "alias": "_e0",
                   "representationsVariableName": "__batch_reps_0",
-                  "paths": [
-                    [
-                      {
-                        "Field": "viewer"
-                      },
-                      {
-                        "TypeCondition": [
-                          "Other"
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "viewer"
+                          },
+                          {
+                            "TypeCondition": [
+                              "Other"
+                            ]
+                          },
+                          {
+                            "Field": "txs"
+                          },
+                          "@"
                         ]
-                      },
-                      {
-                        "Field": "txs"
-                      },
-                      "@"
-                    ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {
@@ -2496,21 +2514,25 @@ fn union_context_with_type_conditions() -> Result<(), Box<dyn Error>> {
                 {
                   "alias": "_e1",
                   "representationsVariableName": "__batch_reps_1",
-                  "paths": [
-                    [
-                      {
-                        "Field": "viewer"
-                      },
-                      {
-                        "TypeCondition": [
-                          "User"
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "viewer"
+                          },
+                          {
+                            "TypeCondition": [
+                              "User"
+                            ]
+                          },
+                          {
+                            "Field": "txs"
+                          },
+                          "@"
                         ]
-                      },
-                      {
-                        "Field": "txs"
-                      },
-                      "@"
-                    ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {
@@ -2717,6 +2739,90 @@ fn context_field_under_include() -> Result<(), Box<dyn Error>> {
               ($__context_0:String) {
                 ... on Transaction {
                   amount(code: $__context_0)
+                }
+              }
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `amountInUserCurrency` once under a condition and once without. Each one gets its own context
+/// variable, so the two can't share a fetch: `amountInUserCurrency(currencyCode: $__context_0)` and
+/// `amountInUserCurrency(currencyCode: $__context_1)` under one object is an invalid operation.
+#[test]
+fn same_contextual_field_with_and_without_a_condition() -> Result<(), Box<dyn Error>> {
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/context-cross.supergraph.graphql",
+        parse_operation(
+            r#"
+            query($s: Boolean!) {
+              user {
+                lastTransaction {
+                  ... on Transaction @skip(if: $s) { amountInUserCurrency }
+                  amountInUserCurrency
+                }
+              }
+            }
+            "#,
+        ),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            user {
+              __typename
+              id
+              userCurrency {
+                isoCode
+              }
+            }
+          }
+        },
+        Flatten(path: "user") {
+          Fetch(service: "b") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            ($s:Boolean!,$__context_1:String) {
+              ... on User {
+                __typename
+                id
+                lastTransaction {
+                  __typename
+                  ... on Transaction @skip(if: $s) {
+                    __typename
+                    id
+                  }
+                  id
+                  amountInUserCurrency(currencyCode: $__context_1)
+                }
+              }
+            }
+          },
+        },
+        Skip(if: $s) {
+          Flatten(path: "user.lastTransaction|[Transaction]") {
+            Fetch(service: "b") {
+              {
+                ... on Transaction {
+                  __typename
+                  id
+                }
+              } =>
+              ($__context_0:String) {
+                ... on Transaction {
+                  amountInUserCurrency(currencyCode: $__context_0)
                 }
               }
             },

@@ -8,9 +8,7 @@ use tracing::{instrument, trace};
 
 use crate::query_planner::ast::merge_path::Condition;
 use crate::query_planner::ast::selection_set::response_keys_conflict;
-use crate::query_planner::planner::fetch::fetch_step_data::{
-    type_condition_types_from_response_path, FetchStepFlags, FetchStepKind,
-};
+use crate::query_planner::planner::fetch::fetch_step_data::{FetchStepFlags, FetchStepKind};
 use crate::query_planner::planner::fetch::selections::FetchStepSelections;
 use crate::query_planner::state::supergraph_state::{SubgraphName, SupergraphState, TypeNode};
 use crate::query_planner::{
@@ -154,7 +152,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                         let can_still_batch = {
                             let left = self.get_step_data(*target_index)?;
                             let right = self.get_step_data(source_index)?;
-                            left.can_be_batched_with(right)
+                            left.can_be_batched_with(right, supergraph)
                         };
 
                         // After the cheaper check, as it walks the graph.
@@ -207,23 +205,6 @@ impl FetchGraph<MultiTypeFetchStep> {
                             *target_normalized_path,
                             &possible_types_by_position,
                         );
-                        if merged_step.is_fetching_multiple_types() {
-                            if let Some(condition) = merged_step.condition.clone() {
-                                if let Some(conditioned_types) =
-                                    type_condition_types_from_response_path(
-                                        &merged_step.response_path,
-                                    )
-                                {
-                                    // Keep a fetch-level condition on only the matching type
-                                    // branches rather than gating the entire batched fetch.
-                                    merged_step.output.wrap_with_condition_for_types(
-                                        condition,
-                                        &conditioned_types,
-                                    );
-                                    merged_step.condition = None;
-                                }
-                            }
-                        }
 
                         merged_steps.record(source_index, *target_index);
                         merged = true;
@@ -513,7 +494,7 @@ fn type_condition_layout_hash(path: &MergePath) -> u64 {
 }
 
 impl FetchStepData<MultiTypeFetchStep> {
-    pub fn can_be_batched_with(&self, other: &Self) -> bool {
+    pub fn can_be_batched_with(&self, other: &Self, supergraph: &SupergraphState) -> bool {
         if !self.can_merge_context(other) {
             return false;
         }
@@ -570,6 +551,16 @@ impl FetchStepData<MultiTypeFetchStep> {
                     != matches!(right, Segment::TypeCondition(_, _))
             })
         {
+            return false;
+        }
+
+        // Merged, two different step-level conditions go down into the fields, and the fetch
+        // runs when any of those fields is asked for (its `run_if`). At the same path that's
+        // one call for the same objects. At other paths the types get folded together and the
+        // conditions scoped per type, so those stay apart, `BatchFetch` still sends them in one
+        // request. One step unconditional too: the request goes out anyway, but the other one's
+        // entities would go with it, asked for nothing with its condition off.
+        if self.condition != other.condition && self.response_path != other.response_path {
             return false;
         }
 
@@ -644,6 +635,17 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
+        // Merged, every entity at either path gets the fields of both. `... on Product { a }`
+        // under `ComponentA` and `... on Product { b }` under `ComponentB` would ask the
+        // `ComponentA` products for `b` too, and the `ComponentB` ones for `a`.
+        // Those stay apart, `BatchFetch` still sends them in one request, an alias each.
+        // At the same path it's the same entities, so asking for both is fine.
+        if self.response_path != other.response_path
+            && outputs_differ_for_a_shared_type(&self.output, &other.output, supergraph)
+        {
+            return false;
+        }
+
         let self_used_for_requires = self.flags.contains(FetchStepFlags::USED_FOR_REQUIRES);
         let other_used_for_requires = other.flags.contains(FetchStepFlags::USED_FOR_REQUIRES);
         // Mixing @requires and non-@requires steps can widen paths incorrectly.
@@ -654,6 +656,42 @@ impl FetchStepData<MultiTypeFetchStep> {
 
         true
     }
+}
+
+/// Whether an object type gets other fields from `left` than from `right`.
+/// Abstract types count for every object type they can be.
+/// A type only one side asks for is fine. The paths differ at one type condition only, so
+/// either that's the entity's own (`pet|[Cat]` and `pet|[Bird]`, the other side never reaches
+/// it), or the rest of the path is the same and so are the types both sides end up at.
+fn outputs_differ_for_a_shared_type(
+    left: &FetchStepSelections<MultiTypeFetchStep>,
+    right: &FetchStepSelections<MultiTypeFetchStep>,
+    supergraph: &SupergraphState,
+) -> bool {
+    if left.iter_selections().eq(right.iter_selections()) {
+        return false;
+    }
+
+    let overlap = |left_type: &str, right_type: &str| {
+        left_type == right_type
+            || match (
+                supergraph.all_possible_types(left_type),
+                supergraph.all_possible_types(right_type),
+            ) {
+                (Some(left), Some(right)) => !left.is_disjoint(right),
+                (Some(left), None) => left.contains(right_type),
+                (None, Some(right)) => right.contains(left_type),
+                (None, None) => false,
+            }
+    };
+
+    left.iter_selections().any(|(left_type, left_selections)| {
+        right
+            .iter_selections()
+            .any(|(right_type, right_selections)| {
+                left_selections != right_selections && overlap(left_type, right_type)
+            })
+    })
 }
 
 #[cfg(test)]

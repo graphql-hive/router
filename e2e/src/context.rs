@@ -319,11 +319,6 @@ mod context_e2e_tests {
                   "errors": [
                     {
                       "message": "unrelated failed",
-                      "path": [
-                        "_entities",
-                        0,
-                        "b"
-                      ],
                       "extensions": {
                         "code": "DOWNSTREAM_SERVICE_ERROR",
                         "service": "b",
@@ -1295,6 +1290,75 @@ mod context_e2e_tests {
     "#);
         _root.assert_async().await;
         entities.assert_async().await;
+    }
+
+    /// `amountInUserCurrency` with and without a condition. Each gets its own context variable,
+    /// and in one request they'd be the same response key with other arguments, which a subgraph
+    /// rejects. So every request to `b` asks for it at most once.
+    #[ntex::test]
+    async fn same_contextual_field_with_and_without_a_condition() {
+        let mut server = mockito::Server::new_async().await;
+        let router = start_router("context-cross", &server).await;
+        let query_of = |r: &mockito::Request| body(r)["query"].as_str().unwrap().to_string();
+        let asks_once =
+            move |r: &mockito::Request| query_of(r).matches("amountInUserCurrency(").count() <= 1;
+        let _root = server
+            .mock("POST", "/a")
+            .match_request(move |r| !query_of(r).contains("_entities"))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"user":{"__typename":"User","id":"1","userCurrency":{"isoCode":"EUR"}}}}"#,
+            )
+            .create_async()
+            .await;
+        let users = server
+            .mock("POST", "/b")
+            .match_request(move |r| {
+                asks_once(r) && query_of(r).contains("...on User")
+            })
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"_entities":[{"__typename":"User","id":"1","lastTransaction":{"__typename":"Transaction","id":"t1","amountInUserCurrency":2}}]}}"#,
+            )
+            .expect(2)
+            .create_async()
+            .await;
+        let transactions = server
+            .mock("POST", "/b")
+            .match_request(move |r| asks_once(r) && query_of(r).contains("...on Transaction{"))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":{"_entities":[{"amountInUserCurrency":2}]}}"#)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let query = r#"
+          query($s: Boolean!) {
+            user {
+              lastTransaction {
+                ... on Transaction @skip(if: $s) { amountInUserCurrency }
+                amountInUserCurrency
+              }
+            }
+          }
+        "#;
+        for s in [false, true] {
+            let res = router
+                .send_graphql_request(query, Some(sonic_rs::json!({ "s": s })), None)
+                .await;
+            let response: Value =
+                serde_json::from_str(&res.json_body_string_pretty().await).unwrap();
+            assert_eq!(
+                response,
+                json!({ "data": { "user": { "lastTransaction": { "amountInUserCurrency": 2 } } } }),
+                "s={s}"
+            );
+        }
+        users.assert_async().await;
+        transactions.assert_async().await;
     }
 
     #[ntex::test]

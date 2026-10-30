@@ -73,7 +73,17 @@ impl FetchGraph<MultiTypeFetchStep> {
                 groups[group_index].push(sibling_index);
             }
 
-            for group in groups {
+            for mut group in groups {
+                // `cage` takes in `cage.|[Cage]` and `pet` takes in `pet @include(if: $a)`, not
+                // the other way around
+                group.sort_by_cached_key(|index| {
+                    self.get_step_data(*index).map_or((0, 0), |step| {
+                        (
+                            step.response_path.len(),
+                            step.response_path.conditions().count(),
+                        )
+                    })
+                });
                 let mut targets = Vec::<NodeIndex>::new();
 
                 for source_index in group {
@@ -125,20 +135,25 @@ impl FetchGraph<MultiTypeFetchStep> {
 fn response_path_shape_hash(step: &FetchStepData<MultiTypeFetchStep>) -> u64 {
     let mut hasher = FxHasher::default();
 
-    for segment in step.response_path.inner.iter() {
+    // without conditions and the type conditions it ends with, `cage`, `cage.|[Cage]` and
+    // `cage @include(if: $a)` may be the same objects, `can_merge` tells
+    let segments = &step.response_path.inner;
+    let end = segments
+        .iter()
+        .rposition(|segment| !matches!(segment, Segment::TypeCondition(..)))
+        .map_or(0, |last| last + 1);
+    for segment in segments[..end].iter() {
         match segment {
-            Segment::Field(field_path, _, condition) => {
+            Segment::Field(field_path, _, _) => {
                 0u8.hash(&mut hasher);
                 field_path.hash(&mut hasher);
-                condition.hash(&mut hasher);
             }
             Segment::List => 1u8.hash(&mut hasher),
-            Segment::TypeCondition(types, condition) => {
+            Segment::TypeCondition(types, _) => {
                 2u8.hash(&mut hasher);
                 for type_name in types.iter() {
                     type_name.hash(&mut hasher);
                 }
-                condition.hash(&mut hasher);
             }
         }
     }

@@ -17,8 +17,15 @@
 //! This is intentionally a small, schema-less executor: it knows nothing
 //! about the subgraph schema, just walks the query AST against pre-baked
 //! JSON. That is enough to feed the demand-control fixtures.
+//!
+//! `strict_mock_subgraphs` is the same mock, but `_entities` checks what the
+//! router asks for. An entity lookup fails the request when, after `@skip`,
+//! `@include` and type conditions, it selects no field (a request that
+//! shouldn't have gone out), or a field the entity's JSON doesn't have (a
+//! field asked for on the wrong type). It also counts lookups per entity.
 
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
 use graphql_tools::parser::{
@@ -47,11 +54,54 @@ use super::{RequestLike, ResponseLike};
 pub fn mock_subgraphs(
     config: JsonValue,
 ) -> impl Fn(RequestLike) -> Option<ResponseLike> + Send + Sync + 'static {
+    mock_subgraphs_with(config, None)
+}
+
+/// How many times each entity was looked up, by `subgraph/Type:id`.
+#[derive(Clone, Default)]
+pub struct Lookups(Arc<Mutex<BTreeMap<String, usize>>>);
+
+impl Lookups {
+    /// The counts so far, and starts over.
+    pub fn take(&self) -> BTreeMap<String, usize> {
+        std::mem::take(&mut *self.0.lock().unwrap())
+    }
+
+    fn record(&self, subgraph: &str, representation: &JsonValue) {
+        let typename = representation["__typename"].as_str().unwrap_or("?");
+        let key = match &representation["id"] {
+            JsonValue::String(id) => format!("{subgraph}/{typename}:{id}"),
+            _ => format!("{subgraph}/{representation}"),
+        };
+        *self.0.lock().unwrap().entry(key).or_default() += 1;
+    }
+}
+
+/// Like `mock_subgraphs`, with the `_entities` checks described at the top.
+pub fn strict_mock_subgraphs(
+    config: JsonValue,
+) -> (
+    impl Fn(RequestLike) -> Option<ResponseLike> + Send + Sync + 'static,
+    Lookups,
+) {
+    let lookups = Lookups::default();
+    (mock_subgraphs_with(config, Some(lookups.clone())), lookups)
+}
+
+fn mock_subgraphs_with(
+    config: JsonValue,
+    strict: Option<Lookups>,
+) -> impl Fn(RequestLike) -> Option<ResponseLike> + Send + Sync + 'static {
     let configs: BTreeMap<String, SubgraphMock> = config
         .as_object()
         .expect("mock_subgraphs: top-level must be an object")
         .iter()
-        .map(|(name, value)| (name.clone(), SubgraphMock::from_json(value)))
+        .map(|(name, value)| {
+            let mut mock = SubgraphMock::from_json(value);
+            mock.name = name.clone();
+            mock.strict = strict.clone();
+            (name.clone(), mock)
+        })
         .collect();
 
     move |req: RequestLike| {
@@ -74,16 +124,20 @@ pub fn mock_subgraphs(
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct SubgraphMock {
+    name: String,
     query: JsonValue,
     mutation: Option<JsonValue>,
     entities: Vec<JsonValue>,
+    strict: Option<Lookups>,
 }
 
 impl SubgraphMock {
     fn from_json(value: &JsonValue) -> Self {
         Self {
+            name: String::new(),
+            strict: None,
             query: value.get("query").cloned().unwrap_or_else(|| json!({})),
             mutation: value.get("mutation").cloned(),
             entities: value
@@ -160,9 +214,111 @@ impl SubgraphMock {
             &self.query
         };
 
-        let data = self.resolve_selection_set(selection_set, root, &variables, &fragments);
+        if let Some(lookups) = &self.strict {
+            if let Err(message) =
+                self.check_entity_calls(selection_set, &variables, &fragments, lookups)
+            {
+                return error_response(message);
+            }
+        }
 
-        json!({ "data": data })
+        let data = self.resolve_selection_set(selection_set, root, &variables, &fragments);
+        let errors = self.entity_errors(selection_set, &variables);
+
+        if errors.is_empty() {
+            json!({ "data": data })
+        } else {
+            json!({ "data": data, "errors": errors })
+        }
+    }
+
+    /// An entity with `"__error": "message"` resolves to null, with that error at its place.
+    fn entity_errors(
+        &self,
+        selection_set: &SelectionSet<'_, String>,
+        variables: &JsonValue,
+    ) -> Vec<JsonValue> {
+        let mut errors = Vec::new();
+        for selection in &selection_set.items {
+            let Selection::Field(field) = selection else {
+                continue;
+            };
+            if field.name != "_entities" || !is_included(&field.directives, variables) {
+                continue;
+            }
+            let key = field.alias.as_ref().unwrap_or(&field.name);
+            let representations = field
+                .arguments
+                .iter()
+                .find(|(name, _)| name == "representations")
+                .map(|(_, value)| coerce_value(value, variables))
+                .unwrap_or(JsonValue::Null);
+            for (index, representation) in
+                representations.as_array().into_iter().flatten().enumerate()
+            {
+                if let Some(message) = self
+                    .find_entity(representation)
+                    .and_then(|entity| entity["__error"].as_str())
+                {
+                    errors.push(json!({ "message": message, "path": [key, index] }));
+                }
+            }
+        }
+        errors
+    }
+
+    /// The strict checks, for every `_entities` field that isn't skipped.
+    fn check_entity_calls(
+        &self,
+        selection_set: &SelectionSet<'_, String>,
+        variables: &JsonValue,
+        fragments: &BTreeMap<String, FragmentDefinition<'_, String>>,
+        lookups: &Lookups,
+    ) -> Result<(), String> {
+        for selection in &selection_set.items {
+            let Selection::Field(field) = selection else {
+                continue;
+            };
+            if field.name != "_entities" || !is_included(&field.directives, variables) {
+                continue;
+            }
+            let representations = field
+                .arguments
+                .iter()
+                .find(|(name, _)| name == "representations")
+                .map(|(_, value)| coerce_value(value, variables))
+                .unwrap_or(JsonValue::Null);
+            for representation in representations.as_array().into_iter().flatten() {
+                lookups.record(&self.name, representation);
+                let Some(entity) = self.find_entity(representation) else {
+                    continue;
+                };
+                let mut asked = Vec::new();
+                active_fields(
+                    &field.selection_set,
+                    entity,
+                    variables,
+                    fragments,
+                    &mut asked,
+                );
+                if !asked.iter().any(|name| name != "__typename") {
+                    return Err(format!(
+                        "{}: {representation} was looked up for no field",
+                        self.name
+                    ));
+                }
+                if let Some(missing) = asked
+                    .iter()
+                    .find(|name| *name != "__typename" && entity.get(name.as_str()).is_none())
+                {
+                    return Err(format!(
+                        "{}: {representation} has no `{missing}`",
+                        self.name
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     fn resolve_selection_set(
@@ -198,6 +354,14 @@ impl SubgraphMock {
                 out.insert(key, value);
             }
             Selection::InlineFragment(frag) => {
+                // strict mocks also skip fragments of other types, like a real subgraph
+                if let (Some(_), Some(graphql_tools::parser::query::TypeCondition::On(name))) =
+                    (&self.strict, &frag.type_condition)
+                {
+                    if parent["__typename"].as_str().is_some_and(|t| t != name) {
+                        return;
+                    }
+                }
                 for sel in &frag.selection_set.items {
                     self.collect_selection(sel, parent, variables, fragments, out);
                 }
@@ -232,6 +396,7 @@ impl SubgraphMock {
             let entities: Vec<JsonValue> = representations
                 .iter()
                 .map(|repr| match self.find_entity(repr) {
+                    Some(entity) if entity.get("__error").is_some() => JsonValue::Null,
                     Some(entity) => self.resolve_selection_set(
                         &field.selection_set,
                         entity,
@@ -297,6 +462,46 @@ impl SubgraphMock {
                 .iter()
                 .all(|(k, v)| entity_obj.get(k).is_some_and(|ev| is_a_match(ev, v)))
         })
+    }
+}
+
+/// The fields `selection_set` asks of `entity`, after `@skip`, `@include` and type conditions.
+fn active_fields(
+    selection_set: &SelectionSet<'_, String>,
+    entity: &JsonValue,
+    variables: &JsonValue,
+    fragments: &BTreeMap<String, FragmentDefinition<'_, String>>,
+    out: &mut Vec<String>,
+) {
+    let typename = entity["__typename"].as_str();
+    let applies = |type_condition: Option<&str>| {
+        type_condition.is_none_or(|type_condition| typename.is_none_or(|t| t == type_condition))
+    };
+    for selection in &selection_set.items {
+        match selection {
+            Selection::Field(field) if is_included(&field.directives, variables) => {
+                out.push(field.name.clone());
+            }
+            Selection::InlineFragment(fragment)
+                if is_included(&fragment.directives, variables)
+                    && applies(fragment.type_condition.as_ref().map(|condition| {
+                        let graphql_tools::parser::query::TypeCondition::On(name) = condition;
+                        name.as_str()
+                    })) =>
+            {
+                active_fields(&fragment.selection_set, entity, variables, fragments, out);
+            }
+            Selection::FragmentSpread(spread) if is_included(&spread.directives, variables) => {
+                if let Some(fragment) = fragments.get(&spread.fragment_name) {
+                    let graphql_tools::parser::query::TypeCondition::On(name) =
+                        &fragment.type_condition;
+                    if applies(Some(name)) {
+                        active_fields(&fragment.selection_set, entity, variables, fragments, out);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }
 

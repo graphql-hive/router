@@ -327,13 +327,20 @@ impl AliasedRequests {
         let variable_count = groups.iter().map(Vec::len).sum();
         let mut variable_names = Vec::with_capacity(variable_count);
         let mut values = Vec::with_capacity(variable_count);
+        // variables all groups share, like the run flags of a batch. every group has them with
+        // the same value, so they're sent once.
+        let mut shared: Vec<&str> = Vec::new();
         for (group, variables) in groups.into_iter().enumerate() {
             for (name, value) in variables {
-                variable_names.push(
-                    template
-                        .variable(name, group)
-                        .unwrap_or_else(|| name.to_string()),
-                );
+                let name = match template.variable(name, group) {
+                    Some(renamed) => renamed,
+                    None if shared.contains(&name) => continue,
+                    None => {
+                        shared.push(name);
+                        name.to_string()
+                    }
+                };
+                variable_names.push(name);
                 values.push(value);
             }
         }
@@ -860,6 +867,56 @@ mod tests {
                 .document_str
                 .contains(&format!("_entities_{last}:")));
         }
+    }
+
+    /// The run flags of a batch aren't per group, every group has them. Sent once, as the
+    /// operation declares them once.
+    #[test]
+    fn aliased_request_sends_shared_variables_once() {
+        use crate::query_planner::ast::{document::Document, operation::PlanningFetchOperation};
+
+        let document = parse_operation(
+            "query($representations: [_Any!]!, $c: ID, $run: Boolean!) { _entities(representations: $representations) @include(if: $run) { ... on T { f(a: $c) } } }",
+        );
+        let graphql_tools::parser::query::Definition::Operation(operation) =
+            document.definitions.into_iter().next().unwrap()
+        else {
+            panic!("operation");
+        };
+        let mut operation = PlanningFetchOperation::from_anonymous_operation(Document {
+            operation: operation.into(),
+            fragments: Vec::new(),
+        })
+        .operation;
+        operation.set_max_context_groups(15, vec!["representations".into(), "c".into()], None);
+        let template = operation.context_alias_template().unwrap();
+
+        let store = AliasedRequests::default();
+        let groups = ["1", "2", "3"]
+            .iter()
+            .map(|c| {
+                vec![
+                    ("run", b"true".to_vec()),
+                    ("c", c.as_bytes().to_vec()),
+                    ("representations", b"[]".to_vec()),
+                ]
+            })
+            .collect();
+        let (operation, variables) = store.write(template, groups);
+        let names: Vec<&str> = variables.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            names,
+            [
+                "run",
+                "c_0",
+                "representations_0",
+                "c_1",
+                "representations_1",
+                "c_2",
+                "representations_2"
+            ]
+        );
+        assert_eq!(operation.document_str.matches("$run:").count(), 1);
     }
 
     #[test]

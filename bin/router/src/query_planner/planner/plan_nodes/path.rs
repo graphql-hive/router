@@ -9,7 +9,7 @@ use super::FetchNodePathSegment;
 
 /// Uses the tagged format that `lib/node-addon` and `hive-expose-query-plan` expect:
 /// `{"Field": name}`, `{"TypeCondition": [..]}`, and a plain `"@"` for a list step.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum PathSegment {
     Field(Box<str>),
     /// Boxing this keeps every path step small.
@@ -19,7 +19,7 @@ pub enum PathSegment {
 }
 
 /// The type names an entity may match. Sorted, with duplicates removed.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct TypeCondition {
     names: Box<[Box<str>]>,
@@ -40,7 +40,7 @@ impl TypeCondition {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct FlattenNodePath(Box<[PathSegment]>);
 
@@ -83,6 +83,10 @@ impl MergePaths {
 
     pub fn iter(&self) -> impl Iterator<Item = ResponsePathRef<'_>> + '_ {
         self.0.iter().map(FlattenNodePath::as_ref)
+    }
+
+    pub fn as_slice(&self) -> &[FlattenNodePath] {
+        &self.0
     }
 }
 

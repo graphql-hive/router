@@ -654,6 +654,28 @@ pub fn find_selection_set_by_path<'a>(
     Some(current_selection_set)
 }
 
+/// Like `find_selection_set_by_path`, every selection set at `path`, not only the first one. The
+/// same field (key, arguments and condition) can be there more than once, each with its own
+/// selections.
+pub fn selection_sets_by_path<'a>(
+    root_selection_set: &'a SelectionSet,
+    path: &[Segment],
+) -> Vec<&'a SelectionSet> {
+    let mut current = vec![root_selection_set];
+    for path_element in path {
+        if matches!(path_element, Segment::List) {
+            continue;
+        }
+        current = current
+            .into_iter()
+            .flat_map(|selection_set| &selection_set.items)
+            .filter(|item| segment_selects(path_element, item))
+            .filter_map(item_selections)
+            .collect();
+    }
+    current
+}
+
 pub fn find_selection_set_by_path_mut<'a>(
     root_selection_set: &'a mut SelectionSet,
     path: &MergePath,

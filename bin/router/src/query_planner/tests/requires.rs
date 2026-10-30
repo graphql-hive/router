@@ -144,13 +144,17 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
                 {
                   "alias": "_e0",
                   "representationsVariableName": "__batch_reps_0",
-                  "paths": [
-                    [
-                      {
-                        "Field": "products"
-                      },
-                      "@"
-                    ]
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "products"
+                          },
+                          "@"
+                        ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {
@@ -177,13 +181,17 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
                 {
                   "alias": "_e1",
                   "representationsVariableName": "__batch_reps_1",
-                  "paths": [
-                    [
-                      {
-                        "Field": "products"
-                      },
-                      "@"
-                    ]
+                  "pathGroups": [
+                    {
+                      "paths": [
+                        [
+                          {
+                            "Field": "products"
+                          },
+                          "@"
+                        ]
+                      ]
+                    }
                   ],
                   "requires": [
                     {

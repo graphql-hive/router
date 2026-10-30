@@ -14,7 +14,7 @@ use crate::executor::execution::demand_control::{
 use crate::executor::execution::plan::CoerceVariablesPayload;
 use crate::executor::hooks::on_supergraph_load::SupergraphSnapshot;
 use crate::query_planner::ast::operation::{OperationDefinition, PlanningFetchOperation};
-use crate::query_planner::planner::plan_nodes::{PlanNode, Planning, QueryPlan};
+use crate::query_planner::planner::plan_nodes::{EntityBatchAlias, PlanNode, Planning, QueryPlan};
 use crate::query_planner::state::supergraph_state::{OperationKind, SupergraphState};
 use crate::telemetry::logging::targets;
 use crate::telemetry::metrics::demand_control_metrics::DemandControlResultCode;
@@ -27,8 +27,8 @@ use tracing::{debug, info, warn};
 use crate::pipeline::error::{ClientPipelineError, PipelineError};
 
 use super::formula::{
-    compile_cost_expr_for_operation, evaluate_formula_plan, DemandControlFormulaPlan,
-    FormulaFetchNode, FormulaPlanNode,
+    compile_cost_expr_for_batch_operation, compile_cost_expr_for_operation, evaluate_formula_plan,
+    CostExpr, DemandControlFormulaPlan, FormulaFetchNode, FormulaPlanNode,
 };
 
 pub struct DemandControlRuntime {
@@ -278,6 +278,7 @@ impl DemandControlRuntime {
         service_name: &str,
         operation_kind: Option<&OperationKind>,
         operation: &PlanningFetchOperation,
+        batch_aliases: Option<&[EntityBatchAlias]>,
         supergraph_state: &SupergraphState,
         actual_plans_by_fetch_hash: &mut Option<AHashMap<u64, CompiledSubgraphActualCostPlan>>,
     ) -> FormulaFetchNode {
@@ -291,14 +292,25 @@ impl DemandControlRuntime {
         }
         FormulaFetchNode {
             service_name: service_name.to_string(),
-            estimated_expr: compile_cost_expr_for_operation(
-                &document.operation,
-                &document.fragments,
-                root_type,
-                operation_kind,
-                supergraph_state,
-                default_list_size,
-            ),
+            estimated_expr: match batch_aliases {
+                Some(aliases) => compile_cost_expr_for_batch_operation(
+                    &document.operation,
+                    &document.fragments,
+                    root_type,
+                    operation_kind,
+                    aliases,
+                    supergraph_state,
+                    default_list_size,
+                ),
+                None => compile_cost_expr_for_operation(
+                    &document.operation,
+                    &document.fragments,
+                    root_type,
+                    operation_kind,
+                    supergraph_state,
+                    default_list_size,
+                ),
+            },
         }
     }
 
@@ -312,17 +324,24 @@ impl DemandControlRuntime {
             self.compile_formula_plan_node(node, supergraph_state, actual_plans_by_fetch_hash)
         };
         match node {
-            PlanNode::Fetch(fetch) => FormulaPlanNode::Fetch(self.compile_formula_fetch_node(
-                &fetch.service_name,
-                fetch.operation_kind.as_ref(),
-                &fetch.operation,
-                supergraph_state,
-                actual_plans_by_fetch_hash,
-            )),
+            PlanNode::Fetch(fetch) => {
+                let mut fetch_node = self.compile_formula_fetch_node(
+                    &fetch.service_name,
+                    fetch.operation_kind.as_ref(),
+                    &fetch.operation,
+                    None,
+                    supergraph_state,
+                    actual_plans_by_fetch_hash,
+                );
+                fetch_node.estimated_expr =
+                    CostExpr::any_of(fetch.run_if.as_ref(), fetch_node.estimated_expr);
+                FormulaPlanNode::Fetch(fetch_node)
+            }
             PlanNode::BatchFetch(fetch) => FormulaPlanNode::Fetch(self.compile_formula_fetch_node(
                 &fetch.service_name,
                 fetch.operation_kind.as_ref(),
                 &fetch.operation,
+                Some(&fetch.entity_batch.aliases),
                 supergraph_state,
                 actual_plans_by_fetch_hash,
             )),
@@ -332,6 +351,7 @@ impl DemandControlRuntime {
                     &fetch.service_name,
                     fetch.operation_kind.as_ref(),
                     &fetch.operation,
+                    None,
                     supergraph_state,
                     actual_plans_by_fetch_hash,
                 ))

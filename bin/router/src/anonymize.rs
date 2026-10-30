@@ -1020,14 +1020,24 @@ mod tests {
         cases
     }
 
-    // strings differ by design, everything else (kinds, nesting, counts) has to match
+    // strings differ by design, everything else (kinds, nesting, counts) has to match.
+    // Batch aliases are the exception: the planner orders steps by type name in places, so
+    // renamed types can swap two aliases, and their order doesn't change what runs.
     fn shape(value: &serde_json::Value) -> serde_json::Value {
         match value {
             serde_json::Value::String(_) => serde_json::Value::Null,
             serde_json::Value::Array(items) => items.iter().map(shape).collect(),
             serde_json::Value::Object(fields) => fields
                 .iter()
-                .map(|(key, value)| (key.clone(), shape(value)))
+                .map(|(key, value)| {
+                    let mut value = shape(value);
+                    if let ("aliases", serde_json::Value::Array(aliases)) =
+                        (key.as_str(), &mut value)
+                    {
+                        aliases.sort_by_cached_key(|alias| alias.to_string());
+                    }
+                    (key.clone(), value)
+                })
                 .collect(),
             other => other.clone(),
         }

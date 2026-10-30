@@ -30,7 +30,7 @@ fn issue_1189_variable_skip_is_preserved_in_subgraph_operation() -> Result<(), B
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
-      Fetch(service: "a") {
+      Fetch(service: "a", if: !$v) {
         query ($v:Boolean!) {
           product @skip(if: $v) {
             price
@@ -178,6 +178,50 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// The response projection picks `id` for `Product`s by `__typename`, as the client asks for it on
+/// every `Recommendable` and on `Product`s. The `__typename` under `$a` isn't there with `$a` off, so
+/// the plain `results` gets its own.
+#[test]
+fn abstract_field_selected_again_under_a_condition_gets_its_typename() -> Result<(), Box<dyn Error>>
+{
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($a: Boolean!) {
+          recommender {
+            results { id }
+            results @include(if: $a) { ... on Product { id } }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/190.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "recommender") {
+        query ($a:Boolean!) {
+          recommender {
+            results {
+              __typename
+              id
+            }
+            results @include(if: $a) {
+              __typename
+              ... on Product {
+                id
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
 #[test]
 fn issue_190_test() -> Result<(), Box<dyn Error>> {
     init_logger();
@@ -207,7 +251,7 @@ fn issue_190_test() -> Result<(), Box<dyn Error>> {
         build_query_plan_with_defaults("fixture/issues/190.supergraph.graphql", document)?;
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
-      Fetch(service: "recommender") {
+      Fetch(service: "recommender", if: $included) {
         query ($included:Boolean!) {
           recommender @include(if: $included) {
             id
@@ -247,7 +291,7 @@ fn issue_190_test() -> Result<(), Box<dyn Error>> {
         build_query_plan_with_defaults("fixture/issues/190.supergraph.graphql", document)?;
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
-      Fetch(service: "recommender") {
+      Fetch(service: "recommender", if: $included) {
         query ($included:Boolean!) {
           recommender @include(if: $included) {
             id
@@ -284,7 +328,7 @@ fn issue_190_test() -> Result<(), Box<dyn Error>> {
         build_query_plan_with_defaults("fixture/issues/190.supergraph.graphql", document)?;
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
-      Fetch(service: "recommender") {
+      Fetch(service: "recommender", if: $included) {
         query ($included:Boolean!) {
           recommender @include(if: $included) {
             id
@@ -1569,7 +1613,7 @@ fn issue_1647_include_on_fragment_after_conditional_entity_call() -> Result<(), 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
-        Fetch(service: "accounts") {
+        Fetch(service: "accounts", if: $withDetails) {
           query ($id:ID!="",$term:String!="",$withDetails:Boolean!) {
             record(id: $id) @include(if: $withDetails) {
               __typename

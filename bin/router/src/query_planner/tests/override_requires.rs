@@ -217,17 +217,21 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
                     {
                       "alias": "_e0",
                       "representationsVariableName": "__batch_reps_0",
-                      "paths": [
-                        [
-                          {
-                            "Field": "userInC"
-                          }
-                        ],
-                        [
-                          {
-                            "Field": "userInA"
-                          }
-                        ]
+                      "pathGroups": [
+                        {
+                          "paths": [
+                            [
+                              {
+                                "Field": "userInC"
+                              }
+                            ],
+                            [
+                              {
+                                "Field": "userInA"
+                              }
+                            ]
+                          ]
+                        }
                       ],
                       "requires": [
                         {
@@ -332,17 +336,21 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
                     {
                       "alias": "_e0",
                       "representationsVariableName": "__batch_reps_0",
-                      "paths": [
-                        [
-                          {
-                            "Field": "userInC"
-                          }
-                        ],
-                        [
-                          {
-                            "Field": "userInA"
-                          }
-                        ]
+                      "pathGroups": [
+                        {
+                          "paths": [
+                            [
+                              {
+                                "Field": "userInC"
+                              }
+                            ],
+                            [
+                              {
+                                "Field": "userInA"
+                              }
+                            ]
+                          ]
+                        }
                       ],
                       "requires": [
                         {
@@ -378,17 +386,21 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
                     {
                       "alias": "_e0",
                       "representationsVariableName": "__batch_reps_0",
-                      "paths": [
-                        [
-                          {
-                            "Field": "userInC"
-                          }
-                        ],
-                        [
-                          {
-                            "Field": "userInA"
-                          }
-                        ]
+                      "pathGroups": [
+                        {
+                          "paths": [
+                            [
+                              {
+                                "Field": "userInC"
+                              }
+                            ],
+                            [
+                              {
+                                "Field": "userInA"
+                              }
+                            ]
+                          ]
+                        }
                       ],
                       "requires": [
                         {

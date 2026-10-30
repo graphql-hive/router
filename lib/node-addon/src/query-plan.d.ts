@@ -25,6 +25,20 @@ export interface FetchNode {
   outputRewrites?: OutputRewrite[];
   contextRewrites?: KeyRenamer[];
   contextVariables?: string[];
+  /**
+   * The fetch only runs when this holds, missing means always. It runs when any of the groups
+   * holds, see `ConditionGroup`.
+   */
+  runIf?: ConditionGroup[];
+}
+
+/**
+ * Holds when every `includeIf` variable is `true` and every `skipIf` variable is `false`.
+ * A missing variable fails the group.
+ */
+export interface ConditionGroup {
+  includeIf?: string[];
+  skipIf?: string[];
 }
 
 export interface BatchFetchNode {
@@ -44,12 +58,27 @@ export interface EntityBatch {
 export interface EntityBatchAlias {
   alias: string;
   representationsVariableName: string;
-  paths: FlattenNodePathSegment[][];
+  /**
+   * Each path sits in exactly one group. Representations are only collected from the paths of
+   * the groups that hold, and the alias runs when at least one does.
+   */
+  pathGroups: PathGroup[];
   requires: RequiresSelection[];
   inputRewrites?: InputRewrite[];
   outputRewrites?: OutputRewrite[];
   contextRewrites?: KeyRenamer[];
   contextVariables?: string[];
+  /**
+   * Set when no group runs always. The router sends this `Boolean!` variable to tell the
+   * subgraph whether the alias runs, the operation has `@include(if: $<this>)` on it.
+   */
+  runVariableName?: string;
+}
+
+export interface PathGroup {
+  /** Missing means always, otherwise any of the groups has to hold. */
+  runIf?: ConditionGroup[];
+  paths: FlattenNodePathSegment[][];
 }
 
 export interface SubscriptionNode {

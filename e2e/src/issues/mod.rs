@@ -3576,6 +3576,86 @@ mod issues_e2e_tests {
     }
 
     #[ntex::test]
+    /// Like `requires_with_argument_conflict_after_entity_hop`, with `orders` failing on the EUR
+    /// price, which the router asked for as `_internal_qp_alias_0`. The client never sees that
+    /// key, so the error points at the order it belongs to.
+    async fn error_in_a_requires_value_under_an_internal_alias() {
+        use crate::testkit::{mock_subgraphs::mock_subgraphs, ResponseLike};
+        use serde_json::json;
+
+        let mocks = mock_subgraphs(json!({
+            "users": {
+                "query": { "user": { "__typename": "User", "id": "u1" } }
+            },
+            "catalog": {
+                "entities": [
+                    { "__typename": "Order", "id": "o1", "price": 100, "usd": 100, "eur": 100 }
+                ]
+            }
+        }));
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(move |req| {
+                if req.path != "/orders" {
+                    return mocks(req);
+                }
+                let mut headers = http::HeaderMap::new();
+                headers.insert(
+                    http::header::CONTENT_TYPE,
+                    http::HeaderValue::from_static("application/json"),
+                );
+                Some(ResponseLike::new(
+                    axum::http::StatusCode::OK,
+                    Some(
+                        json!({
+                            "data": { "_entities": [{ "orders": [{
+                                "__typename": "Order",
+                                "id": "o1",
+                                "price": 100,
+                                "_internal_qp_alias_0": null
+                            }] }] },
+                            "errors": [{
+                                "message": "no EUR price",
+                                "path": ["_entities", 0, "orders", 0, "_internal_qp_alias_0"]
+                            }]
+                        })
+                        .to_string(),
+                    ),
+                    Some(headers),
+                ))
+            })
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.requires-argument-conflict-after-hop.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ user { orders { id usd eur } } }", None, None)
+            .await;
+        let body: serde_json::Value =
+            serde_json::from_str(&res.json_body_string_pretty().await).unwrap();
+        // messages are masked, the path is what matters
+        let paths: Vec<serde_json::Value> = body["errors"]
+            .as_array()
+            .expect("the error reaches the client")
+            .iter()
+            .map(|error| error["path"].clone())
+            .collect();
+        assert_eq!(paths, [json!(["user", "orders", 0])]);
+    }
+
+    #[ntex::test]
     /// Entities inside lists of lists: `grid: [[Product]]`, `cube: [[[Product]]]`, and
     /// `Product.reviews: [[Review]]` inside `grid`. The products of `cube` used to go to the
     /// subgraph as lists of products, and the reviews in `grid` were never fetched. Both came
@@ -3833,10 +3913,18 @@ mod issues_e2e_tests {
                     let body: serde_json::Value =
                         serde_json::from_slice(request.body.as_deref().unwrap_or_default())
                             .unwrap_or_default();
-                    seen_by_mocks
-                        .lock()
-                        .unwrap()
-                        .push(body["variables"]["representations"].to_string());
+                    // One list per entity call, a batch sends them as `__batch_reps_N`.
+                    // An alias skipped by its condition gets an empty one, nothing was sent for it.
+                    let variables = body["variables"].as_object().cloned().unwrap_or_default();
+                    seen_by_mocks.lock().unwrap().extend(
+                        variables
+                            .iter()
+                            .filter(|(name, _)| {
+                                *name == "representations" || name.starts_with("__batch_reps")
+                            })
+                            .filter(|(_, list)| list.as_array().is_some_and(|l| !l.is_empty()))
+                            .map(|(_, list)| list.to_string()),
+                    );
                 }
                 mocks(request)
             })
@@ -3874,7 +3962,7 @@ mod issues_e2e_tests {
         }
 
         insta::assert_snapshot!(results.join("\n"), @r#"
-        x=true y=true => [{"__typename":"Node","price":11,"id":"c1"},{"__typename":"Node","price":33,"id":"d1"}] [{"__typename":"Node","price":11,"id":"c1"}]
+        x=true y=true => [{"__typename":"Node","price":11,"id":"c1"},{"__typename":"Node","price":33,"id":"d1"}]
         x=true y=false => [{"__typename":"Node","price":11,"id":"c1"},{"__typename":"Node","price":33,"id":"d1"}]
         x=false y=true => [{"__typename":"Node","price":11,"id":"c1"}]
         x=false y=false =>

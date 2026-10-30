@@ -13,6 +13,7 @@ use crate::query_planner::{
         selection_set::{FieldSelection, SelectionSet},
         value::Value as AstValue,
     },
+    planner::plan_nodes::{EntityBatchAlias, RunIf},
     state::supergraph_state::{OperationKind, SupergraphDefinition, SupergraphState, TypeNode},
 };
 use crate::telemetry::logging::targets;
@@ -43,6 +44,9 @@ pub(crate) enum CostExpr {
         if_true: Box<CostExpr>,
         if_false: Box<CostExpr>,
     },
+    /// `expr` when any group of `run_if` holds, otherwise 0. A fetch or an alias that runs when
+    /// any of its fields is asked for.
+    AnyOf { run_if: RunIf, expr: Box<CostExpr> },
     /// Integer resolved from request variables (list size via slicing arguments).
     ListSize {
         field_name: String,
@@ -82,6 +86,18 @@ impl CostExpr {
         }
     }
 
+    /// `expr` only when `run_if` holds, `None` means always.
+    pub(crate) fn any_of(run_if: Option<&RunIf>, expr: Self) -> Self {
+        match (run_if, expr) {
+            (_, Self::Const(0)) => Self::Const(0),
+            (None, expr) => expr,
+            (Some(run_if), expr) => Self::AnyOf {
+                run_if: run_if.clone(),
+                expr: Box::new(expr),
+            },
+        }
+    }
+
     /// Build a Mul with constant-folding.
     fn mul(lhs: Self, rhs: Self) -> Self {
         match (&lhs, &rhs) {
@@ -116,6 +132,7 @@ impl fmt::Display for CostExpr {
             } => {
                 write!(f, "(if ${variable} then {if_true} else {if_false})")
             }
+            Self::AnyOf { run_if, expr } => write!(f, "(if {run_if} then {expr} else 0)"),
             Self::ListSize {
                 field_name: _,
                 args,
@@ -279,6 +296,14 @@ fn eval_cost_expr(
                 eval_cost_expr(if_false, supergraph_state, variable_payload)
             }
         }
+        // read the same way the executor does, so it counts exactly when the fetch runs
+        CostExpr::AnyOf { run_if, expr } => {
+            if run_if.holds(|name| variable_payload.variable_is_true(name)) {
+                eval_cost_expr(expr, supergraph_state, variable_payload)
+            } else {
+                Ok(0)
+            }
+        }
         CostExpr::ListSize {
             field_name,
             args,
@@ -366,6 +391,70 @@ pub(crate) fn compile_cost_expr_for_operation(
     }
 }
 
+/// Like `compile_cost_expr_for_operation`, for the operation of a `BatchFetch`.
+/// An alias that only runs under conditions has `@include(if: $__batch_run_N)`, the router's own
+/// variable that the client never sends. Its cost goes under the conditions it stands for.
+pub(crate) fn compile_cost_expr_for_batch_operation(
+    operation: &OperationDefinition,
+    operation_fragments: &[FragmentDefinition],
+    root_type_name: &str,
+    operation_kind: Option<&OperationKind>,
+    aliases: &[EntityBatchAlias],
+    supergraph_state: &SupergraphState,
+    default_list_size: usize,
+) -> CostExpr {
+    let expr = compile_cost_expr_for_operation(
+        operation,
+        operation_fragments,
+        root_type_name,
+        operation_kind,
+        supergraph_state,
+        default_list_size,
+    );
+    replace_run_conditions(expr, aliases)
+}
+
+fn replace_run_conditions(expr: CostExpr, aliases: &[EntityBatchAlias]) -> CostExpr {
+    match expr {
+        CostExpr::Cond {
+            variable,
+            if_true,
+            if_false,
+        } => {
+            let if_true = replace_run_conditions(*if_true, aliases);
+            let if_false = replace_run_conditions(*if_false, aliases);
+            let Some(alias) = aliases
+                .iter()
+                .find(|alias| alias.run_variable_name.as_deref() == Some(variable.as_str()))
+            else {
+                return CostExpr::Cond {
+                    variable,
+                    if_true: Box::new(if_true),
+                    if_false: Box::new(if_false),
+                };
+            };
+            // the run variable is only `true` when one of the alias's groups holds. The cost of
+            // `_entities` doesn't depend on how many paths it reads, so that's all it takes.
+            CostExpr::any_of(alias.run_if().as_ref(), if_true)
+        }
+        CostExpr::AnyOf { run_if, expr } => CostExpr::AnyOf {
+            run_if,
+            expr: Box::new(replace_run_conditions(*expr, aliases)),
+        },
+        CostExpr::Add(exprs) => CostExpr::Add(
+            exprs
+                .into_iter()
+                .map(|expr| replace_run_conditions(expr, aliases))
+                .collect(),
+        ),
+        CostExpr::Mul(left, right) => CostExpr::Mul(
+            Box::new(replace_run_conditions(*left, aliases)),
+            Box::new(replace_run_conditions(*right, aliases)),
+        ),
+        expr => expr,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn compile_cost_expr_for_selection_set<'exec>(
     selection_set: &'exec SelectionSet,
@@ -404,7 +493,7 @@ fn compile_cost_expr_for_selection_set<'exec>(
                 ));
             }
             SelectionItem::InlineFragment(fragment) => {
-                field_exprs.push(compile_cost_expr_for_selection_set(
+                let fragment_expr = compile_cost_expr_for_selection_set(
                     &fragment.selections,
                     operation_fragments,
                     fragment.type_condition.as_str(),
@@ -413,6 +502,11 @@ fn compile_cost_expr_for_selection_set<'exec>(
                     visited_fragments,
                     inherited_overrides,
                     default_list_size,
+                );
+                field_exprs.push(apply_conditions(
+                    fragment.include_if.as_ref(),
+                    fragment.skip_if.as_ref(),
+                    fragment_expr,
                 ));
             }
             SelectionItem::FragmentSpread(fragment_name) => {
@@ -623,15 +717,30 @@ fn compile_cost_expr_for_entities_field_selection<'exec>(
 }
 
 fn apply_field_conditions(field: &FieldSelection, field_cost_expr: CostExpr) -> CostExpr {
-    let mut expr = field_cost_expr;
-    if let Some(include_if) = &field.include_if {
+    apply_conditions(
+        field.include_if.as_ref(),
+        field.skip_if.as_ref(),
+        field_cost_expr,
+    )
+}
+
+fn apply_conditions(
+    include_if: Option<&String>,
+    skip_if: Option<&String>,
+    expr: CostExpr,
+) -> CostExpr {
+    if matches!(expr, CostExpr::Const(0)) {
+        return expr;
+    }
+    let mut expr = expr;
+    if let Some(include_if) = include_if {
         expr = CostExpr::Cond {
             variable: include_if.clone(),
             if_true: Box::new(expr),
             if_false: Box::new(CostExpr::Const(0)),
         };
     }
-    if let Some(skip_if) = &field.skip_if {
+    if let Some(skip_if) = skip_if {
         expr = CostExpr::Cond {
             variable: skip_if.clone(),
             if_true: Box::new(CostExpr::Const(0)),
@@ -859,4 +968,152 @@ fn resolve_integer_from_json_value(value: &Value, path: &[String]) -> Option<u64
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        compile_cost_expr_for_selection_set, eval_cost_expr, replace_run_conditions, CostExpr,
+    };
+    use crate::executor::execution::plan::CoerceVariablesPayload;
+    use crate::query_planner::{
+        ast::selection_set::SelectionSet,
+        planner::plan_nodes::{ConditionGroup, EntityBatchAlias, PathGroup, RunIf},
+        state::supergraph_state::SupergraphState,
+        utils::parsing::{parse_operation, parse_schema},
+    };
+    use graphql_tools::parser::query::{Definition, OperationDefinition};
+
+    fn supergraph() -> SupergraphState {
+        SupergraphState::new(&parse_schema(
+            "type Query { items: [Item] } type Item { id: ID }",
+        ))
+    }
+
+    fn variables(json: &str) -> CoerceVariablesPayload {
+        CoerceVariablesPayload {
+            variables_map: Some(sonic_rs::from_str(json).unwrap()),
+        }
+    }
+
+    fn eval(expr: &CostExpr, json: &str) -> u64 {
+        eval_cost_expr(expr, &supergraph(), &variables(json)).unwrap()
+    }
+
+    fn group(literals: &[(&str, bool)]) -> ConditionGroup {
+        ConditionGroup::from_literals(literals.iter().copied()).unwrap()
+    }
+
+    /// An alias with a group of paths for each of `groups`.
+    fn alias(run: &str, groups: &[&[(&str, bool)]]) -> EntityBatchAlias {
+        EntityBatchAlias {
+            alias: "_e0".to_string(),
+            representations_variable_name: "__batch_reps_0".to_string(),
+            path_groups: groups
+                .iter()
+                .map(|literals| PathGroup {
+                    run_if: RunIf::any_of([group(literals)]),
+                    paths: Default::default(),
+                })
+                .collect(),
+            requires: Default::default(),
+            input_rewrites: None,
+            output_rewrites: None,
+            context: None,
+            run_variable_name: Some(run.to_string()),
+        }
+    }
+
+    fn cond(variable: &str, if_true: CostExpr, if_false: CostExpr) -> CostExpr {
+        CostExpr::Cond {
+            variable: variable.to_string(),
+            if_true: Box::new(if_true),
+            if_false: Box::new(if_false),
+        }
+    }
+
+    /// The run variable of an alias is swapped for its conditions, wherever it sits.
+    /// Other conditions, like a client's own `@include`, stay.
+    #[test]
+    fn run_variables_are_replaced_by_the_conditions_of_their_alias() {
+        let expr = CostExpr::Add(vec![
+            CostExpr::Const(3),
+            cond("__batch_run_0", CostExpr::Const(5), CostExpr::Const(0)),
+            CostExpr::Mul(
+                Box::new(CostExpr::Const(2)),
+                Box::new(cond("own", CostExpr::Const(7), CostExpr::Const(0))),
+            ),
+        ]);
+
+        let replaced = replace_run_conditions(
+            expr,
+            &[alias("__batch_run_0", &[&[("a", true), ("b", false)]])],
+        );
+
+        let expected = CostExpr::Add(vec![
+            CostExpr::Const(3),
+            CostExpr::AnyOf {
+                run_if: RunIf::any_of([group(&[("a", true), ("b", false)])]).unwrap(),
+                expr: Box::new(CostExpr::Const(5)),
+            },
+            CostExpr::Mul(
+                Box::new(CostExpr::Const(2)),
+                Box::new(cond("own", CostExpr::Const(7), CostExpr::Const(0))),
+            ),
+        ]);
+        assert_eq!(format!("{replaced:?}"), format!("{expected:?}"));
+    }
+
+    /// `AnyOf` counts its cost when any group holds. A missing variable fails its group, like
+    /// in the executor, for a skip too.
+    #[test]
+    fn any_of_counts_when_a_group_holds() {
+        let expr = CostExpr::AnyOf {
+            run_if: RunIf::any_of([group(&[("a", true), ("b", false)]), group(&[("c", true)])])
+                .unwrap(),
+            expr: Box::new(CostExpr::Const(5)),
+        };
+        assert_eq!(expr.to_string(), "(if ($a && !$b) || $c then 5 else 0)");
+        assert_eq!(eval(&expr, r#"{"a": true, "b": false, "c": false}"#), 5);
+        assert_eq!(eval(&expr, r#"{"a": true, "b": true, "c": false}"#), 0);
+        assert_eq!(eval(&expr, r#"{"a": false, "b": true, "c": true}"#), 5);
+        assert_eq!(eval(&expr, r#"{"a": true}"#), 0);
+        assert_eq!(eval(&expr, r#"{"a": true, "b": null}"#), 5);
+        assert_eq!(eval(&expr, r#"{}"#), 0);
+    }
+
+    /// `@include`/`@skip` on an inline fragment count like they do on a field.
+    #[test]
+    fn inline_fragment_conditions_are_applied() {
+        let document = parse_operation(
+            "{ ... on Query @include(if: $x) { items { id } } ... on Query @skip(if: $y) { items { id } } }",
+        );
+        let selection_set: SelectionSet = document
+            .definitions
+            .iter()
+            .find_map(|definition| match definition {
+                Definition::Operation(OperationDefinition::SelectionSet(selection_set)) => {
+                    Some(selection_set.clone().into())
+                }
+                _ => None,
+            })
+            .unwrap();
+        let supergraph = supergraph();
+        let expr = compile_cost_expr_for_selection_set(
+            &selection_set,
+            &[],
+            "Query",
+            &supergraph,
+            &mut Default::default(),
+            &mut Default::default(),
+            &Vec::new(),
+            2,
+        );
+
+        let both = eval(&expr, r#"{"x": true, "y": false}"#);
+        let one = eval(&expr, r#"{"x": true, "y": true}"#);
+        assert!(both > 0, "{expr}");
+        assert_eq!(both, one * 2, "{expr}");
+        assert_eq!(eval(&expr, r#"{"x": false, "y": true}"#), 0, "{expr}");
+    }
 }

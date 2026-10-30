@@ -42,6 +42,9 @@ pub mod planning {
 
 mod path;
 pub use path::{FlattenNodePath, MergePaths, PathSegment, ResponsePathRef, TypeCondition};
+mod run_if;
+pub use run_if::{ConditionGroup, RunIf};
+mod typename;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::{Display, Formatter as FmtFormatter, Result as FmtResult},
@@ -158,6 +161,11 @@ pub struct FetchNode<S: PlanState = Executable> {
     pub output_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
     pub context: Option<Box<FetchContext>>,
+    /// The fetch only runs when this holds, `None` means always. It's what's left of its
+    /// fields' `@include`/`@skip` once the `Include`/`Skip` nodes around it are accounted for:
+    /// with every field skipped there's nothing to ask for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_if: Option<RunIf>,
 }
 
 /// What a fetch with `@fromContext` arguments needs at execution time.
@@ -447,13 +455,32 @@ pub struct EntityBatch {
     pub aliases: Vec<EntityBatchAlias>,
 }
 
+/// Paths of an alias that run under the same condition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathGroup {
+    /// `None` means always.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_if: Option<RunIf>,
+    pub paths: MergePaths,
+}
+
+impl PathGroup {
+    pub fn is_active(&self, value: impl Fn(&str) -> Option<bool>) -> bool {
+        self.run_if
+            .as_ref()
+            .is_none_or(|run_if| run_if.holds(value))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EntityBatchAlias {
     pub alias: String,
     pub representations_variable_name: String,
-    #[serde(rename = "paths")]
-    pub merge_paths: MergePaths,
+    /// Each path sits in exactly one group. Representations are only collected from the paths
+    /// of the groups that hold, and the alias runs when at least one does.
+    pub path_groups: Vec<PathGroup>,
     pub requires: RequiresSelectionSet,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_rewrites: Option<Vec<FetchRewrite>>,
@@ -461,6 +488,23 @@ pub struct EntityBatchAlias {
     pub output_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
     pub context: Option<Box<FetchContext>>,
+    /// Set when no group runs always. The operation has `@include(if: $<this>)` on the alias,
+    /// and the router sends it as `true` only when some group holds, so the subgraph skips the
+    /// alias otherwise. That way aliases under other conditions can share one representations
+    /// variable, it's sent once and collected when any of them runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_variable_name: Option<String>,
+}
+
+impl EntityBatchAlias {
+    /// When the alias runs, `None` means always: any of the conditions of its groups.
+    pub fn run_if(&self) -> Option<RunIf> {
+        let mut groups = Vec::new();
+        for group in &self.path_groups {
+            groups.extend(group.run_if.as_ref()?.groups().iter().cloned());
+        }
+        RunIf::any_of(groups)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -688,6 +732,8 @@ fn create_output_operation(
         variables.extend(additional_vars.clone());
     }
 
+    let mut selections = step.output.to_non_root_selection_set();
+    typename::add_typename_for_projection_to_entities(&mut selections, supergraph);
     let operation_def = OperationDefinition {
         name: None,
         operation_kind: Some(OperationKind::Query),
@@ -695,7 +741,7 @@ fn create_output_operation(
         selection_set: SelectionSet {
             items: vec![SelectionItem::Field(FieldSelection {
                 name: "_entities".to_string(),
-                selections: step.output.to_non_root_selection_set(),
+                selections,
                 alias: None,
                 arguments: Some(
                     (
@@ -771,14 +817,21 @@ impl FetchNode<Planning> {
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),
                     context,
+                    run_if: None,
                 }
             }
             false => {
                 let root_type_name = supergraph.expect_root_type_name(Some(&step.operation_kind));
+                let mut selection_set = step.output.to_root_selection_set(root_type_name);
+                typename::add_typename_for_projection(
+                    &mut selection_set,
+                    root_type_name,
+                    supergraph,
+                );
                 let operation_def = OperationDefinition {
                     name: None,
                     operation_kind: Some(step.operation_kind.clone()),
-                    selection_set: step.output.to_root_selection_set(root_type_name),
+                    selection_set,
                     variable_definitions: step.variable_definitions.clone(),
                 };
                 let document =
@@ -806,10 +859,58 @@ impl FetchNode<Planning> {
                             .collect(),
                         step.context_rewrites.clone(),
                     ),
+                    run_if: None,
                 }
             }
         }
     }
+}
+
+/// When any field of a fetch is asked for, `None` when one always is. Two steps under other
+/// conditions merge into one by putting each side's fields under its own condition
+/// (`... on T @include(if: $a) { .. }`), so this is when either side would have run.
+fn run_if_of_fetch_output(output: &FetchStepSelections<MultiTypeFetchStep>) -> Option<RunIf> {
+    let mut groups = Vec::new();
+    for (_, selection_set) in output.iter_selections() {
+        groups.extend(
+            run_if_of_selection_set(selection_set)?
+                .groups()
+                .iter()
+                .cloned(),
+        );
+    }
+    // no groups means nothing is ever asked for, like `@include(if: $a) @skip(if: $a)` on
+    // every field, so the fetch never runs
+    RunIf::any_of(groups)
+}
+
+fn run_if_of_selection_set(selection_set: &SelectionSet) -> Option<RunIf> {
+    let mut groups = Vec::new();
+    for item in &selection_set.items {
+        let (own, inner) = match item {
+            SelectionItem::Field(field) => (
+                ConditionGroup::new(field.include_if.clone(), field.skip_if.clone()),
+                None,
+            ),
+            SelectionItem::InlineFragment(fragment) => (
+                ConditionGroup::new(fragment.include_if.clone(), fragment.skip_if.clone()),
+                run_if_of_selection_set(&fragment.selections),
+            ),
+            SelectionItem::FragmentSpread(_) => return None,
+        };
+        // `@include(if: $a) @skip(if: $a)` is never asked for
+        let Some(own) = own else {
+            continue;
+        };
+        let own = RunIf::any_of([own]);
+        groups.extend(
+            RunIf::and(own.as_ref(), inner.as_ref())?
+                .groups()
+                .iter()
+                .cloned(),
+        );
+    }
+    RunIf::any_of(groups)
 }
 
 impl PlanNode<Planning> {
@@ -818,18 +919,7 @@ impl PlanNode<Planning> {
         supergraph: &SupergraphState,
         options: &QueryPlannerOptions,
     ) -> Self {
-        let fetch = FetchNode::from_fetch_step(step, supergraph, options);
-
-        let node = if !step.response_path.is_empty() {
-            PlanNode::Flatten(FlattenNode {
-                path: step.response_path.clone().into(),
-                node: Box::new(PlanNode::Fetch(Box::new(fetch))),
-            })
-        } else if matches!(fetch.operation_kind, Some(OperationKind::Subscription)) {
-            PlanNode::Subscription(Box::new(SubscriptionNode { primary: fetch }))
-        } else {
-            PlanNode::Fetch(Box::new(fetch))
-        };
+        let mut fetch = FetchNode::from_fetch_step(step, supergraph, options);
 
         // A fetch planned under fragments or fields with `@include`/`@skip` runs only when all
         // of them hold. The step has the innermost condition, its path has the ones around it:
@@ -846,6 +936,30 @@ impl PlanNode<Planning> {
                 conditions.push(condition);
             }
         }
+
+        if !matches!(fetch.operation_kind, Some(OperationKind::Subscription)) {
+            // the conditions above hold whenever the fetch gets to run, so only what's left of
+            // its fields' own conditions decides if there's anything to ask for
+            let known = ConditionGroup::from_literals(conditions.iter().flat_map(|condition| {
+                let include = condition.to_include_if().map(|name| (name, true));
+                let skip = condition.to_skip_if().map(|name| (name, false));
+                include.into_iter().chain(skip)
+            }));
+            fetch.run_if = run_if_of_fetch_output(&step.output)
+                .zip(known)
+                .and_then(|(run_if, known)| run_if.assuming(&known));
+        }
+
+        let node = if !step.response_path.is_empty() {
+            PlanNode::Flatten(FlattenNode {
+                path: step.response_path.clone().into(),
+                node: Box::new(PlanNode::Fetch(Box::new(fetch))),
+            })
+        } else if matches!(fetch.operation_kind, Some(OperationKind::Subscription)) {
+            PlanNode::Subscription(Box::new(SubscriptionNode { primary: fetch }))
+        } else {
+            PlanNode::Fetch(Box::new(fetch))
+        };
 
         conditions
             .into_iter()
@@ -935,7 +1049,14 @@ impl<S: PlanState> PrettyDisplay for QueryPlan<S> {
 impl<S: PlanState> PrettyDisplay for FetchNode<S> {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
-        writeln!(f, "{indent}Fetch(service: \"{}\") {{", self.service_name)?;
+        match &self.run_if {
+            Some(run_if) => writeln!(
+                f,
+                "{indent}Fetch(service: \"{}\", if: {run_if}) {{",
+                self.service_name
+            )?,
+            None => writeln!(f, "{indent}Fetch(service: \"{}\") {{", self.service_name)?,
+        }
         if let Some(requires) = &self.requires {
             writeln!(f, "{indent}  {{")?;
             requires.pretty_fmt(f, depth + 2)?;
@@ -959,11 +1080,16 @@ impl<S: PlanState> PrettyDisplay for BatchFetchNode<S> {
         writeln!(f, "{indent}  {{")?;
         for alias in &self.entity_batch.aliases {
             writeln!(f, "{indent}    {} {{", alias.alias)?;
-            writeln!(f, "{indent}      paths: [")?;
-            for merge_path in alias.merge_paths.iter() {
-                writeln!(f, "{indent}        \"{}\"", merge_path)?;
+            for group in &alias.path_groups {
+                match &group.run_if {
+                    Some(run_if) => writeln!(f, "{indent}      paths if {run_if}: [")?,
+                    None => writeln!(f, "{indent}      paths: [")?,
+                }
+                for merge_path in group.paths.iter() {
+                    writeln!(f, "{indent}        \"{}\"", merge_path)?;
+                }
+                writeln!(f, "{indent}      ]")?;
             }
-            writeln!(f, "{indent}      ]")?;
             writeln!(f, "{indent}      {{")?;
             alias.requires.pretty_fmt(f, depth + 4)?;
             writeln!(f, "{indent}      }}")?;
@@ -1142,7 +1268,7 @@ mod stored_size_tests {
         for (name, actual, expected) in [
             ("PlanNode", size_of::<PlanNode>(), 40),
             ("ConditionNode", size_of::<ConditionNode>(), 40),
-            ("FetchNode", size_of::<FetchNode>(), 240),
+            ("FetchNode", size_of::<FetchNode>(), 256),
             ("BatchFetchNode", size_of::<BatchFetchNode>(), 168),
             (
                 "SubgraphFetchOperation",

@@ -864,6 +864,44 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
           },
         },
         Parallel {
+          BatchFetch(service: "products") {
+            {
+              _e0 {
+                paths if $title: [
+                  "products.@.reviews.@.product|[Book]"
+                ]
+                {
+                  ... on Book {
+                    __typename
+                    id
+                  }
+                }
+              }
+              _e1 {
+                paths: [
+                  "products.@.reviews.@.product|[Magazine]"
+                ]
+                {
+                  ... on Magazine {
+                    __typename
+                    id
+                  }
+                }
+              }
+            }
+            ($__batch_run_0:Boolean!) {
+              _e0: _entities(representations: $__batch_reps_0) @include(if: $__batch_run_0) {
+                ... on Book {
+                  sku
+                }
+              }
+              _e1: _entities(representations: $__batch_reps_1) {
+                ... on Magazine {
+                  sku
+                }
+              }
+            }
+          },
           Include(if: $title) {
             Flatten(path: "products.@.reviews.@.product|[Book]") {
               Fetch(service: "books") {
@@ -879,28 +917,6 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
                   }
                 }
               },
-            },
-          },
-          Flatten(path: "products.@.reviews.@.product") {
-            Fetch(service: "products") {
-              {
-                ... on Book {
-                  __typename
-                  id
-                }
-                ... on Magazine {
-                  __typename
-                  id
-                }
-              } =>
-              ($title:Boolean=true) {
-                ... on Book @include(if: $title) {
-                  sku
-                }
-                ... on Magazine {
-                  sku
-                }
-              }
             },
           },
         },
@@ -994,6 +1010,44 @@ fn nested_interface_field_with_redundant_inline_fragments_other_type_order(
           },
         },
         Parallel {
+          BatchFetch(service: "products") {
+            {
+              _e0 {
+                paths if $title: [
+                  "products.@.reviews.@.product|[Tome]"
+                ]
+                {
+                  ... on Tome {
+                    __typename
+                    id
+                  }
+                }
+              }
+              _e1 {
+                paths: [
+                  "products.@.reviews.@.product|[Magazine]"
+                ]
+                {
+                  ... on Magazine {
+                    __typename
+                    id
+                  }
+                }
+              }
+            }
+            ($__batch_run_0:Boolean!) {
+              _e0: _entities(representations: $__batch_reps_0) @include(if: $__batch_run_0) {
+                ... on Tome {
+                  sku
+                }
+              }
+              _e1: _entities(representations: $__batch_reps_1) {
+                ... on Magazine {
+                  sku
+                }
+              }
+            }
+          },
           Include(if: $title) {
             Flatten(path: "products.@.reviews.@.product|[Tome]") {
               Fetch(service: "books") {
@@ -1009,28 +1063,6 @@ fn nested_interface_field_with_redundant_inline_fragments_other_type_order(
                   }
                 }
               },
-            },
-          },
-          Flatten(path: "products.@.reviews.@.product") {
-            Fetch(service: "products") {
-              {
-                ... on Magazine {
-                  __typename
-                  id
-                }
-                ... on Tome {
-                  __typename
-                  id
-                }
-              } =>
-              ($title:Boolean=true) {
-                ... on Magazine {
-                  sku
-                }
-                ... on Tome @include(if: $title) {
-                  sku
-                }
-              }
             },
           },
         },
