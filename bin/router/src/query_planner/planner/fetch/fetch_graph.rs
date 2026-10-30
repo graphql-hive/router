@@ -944,8 +944,6 @@ fn process_entity_move_edge(
     );
     fetch_step.input.add(&requirement.selection_set)?;
 
-    // A narrowed input sends Dogs as Dogs, every implementation of an entity interface is an
-    // entity in its subgraph. As `Animal`, a Bird would match `... on Dog` too.
     if is_interface && !narrowed {
         // We use `output_type_name` as there's no connection from `Interface` to `Object`,
         // it's always Object -> Interface.
@@ -1629,7 +1627,6 @@ fn process_plain_field_edge(
         segment_condition,
     ));
 
-    // one `@` per list, `[[Product]]` is `@.@`
     for _ in 0..field_move.list_depth {
         child_response_path = child_response_path.push(Segment::List);
         child_fetch_path = child_fetch_path.push(Segment::List);
@@ -1990,7 +1987,6 @@ fn process_requires_field_edge(
     let mut child_fetch_path =
         MergePath::default().push(Segment::Field(segment_field, fetch_arguments_hash, None));
 
-    // one `@` per list, `[[Product]]` is `@.@`
     for _ in 0..field_move.list_depth {
         child_response_path = child_response_path.push(Segment::List);
         child_fetch_path = child_fetch_path.push(Segment::List);

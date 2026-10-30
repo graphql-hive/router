@@ -142,10 +142,6 @@ pub fn project_requires(
                     return false;
                 }
             }
-            // An object inside the representation that misses a field, like `searchCriteria`
-            // when the fetch for its `fullCriteria` failed, is sent as `null`.
-            // Sending it without the field would let the subgraph resolve with an
-            // input it never got.
             if nested && applied.missing_field {
                 buffer.truncate(object_start_offset);
                 write_response_key(parent_first, response_key, buffer);
@@ -158,9 +154,6 @@ pub fn project_requires(
             // selection asks for `__typename`.
             // An object that misses a selected field, like an entity without its key when its
             // keys aren't known, is left out, and so is an entity of none of the selection's types.
-            // An entity with keys of real fields is left out too, like a Bird when the selection
-            // is `... on Animal { __typename ... on Dog { id } ... on Cat { id } }`, `__typename`
-            // alone can't find it.
             let typename_finds_it =
                 type_keys.is_none_or(|type_keys| type_keys.iter().any(|key| key.is_empty()));
             if first

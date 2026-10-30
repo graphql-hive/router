@@ -46,7 +46,6 @@ pub struct FieldMove<'graph> {
     pub name: &'graph str,
     pub type_name: &'graph str,
     pub is_leaf: bool,
-    /// How many lists wrap the field's type, each one is a `@` in a response path.
     pub list_depth: usize,
     pub join_field: Option<JoinFieldDirective>,
     pub requirements: Option<Arc<TypeAwareSelection<'graph>>>,
@@ -61,7 +60,6 @@ pub struct FieldMove<'graph> {
 pub struct ReentryMove {
     pub name: String,
     pub type_name: String,
-    /// See `FieldMove::list_depth`.
     pub list_depth: usize,
 }
 
