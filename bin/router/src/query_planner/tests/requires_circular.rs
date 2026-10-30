@@ -27,7 +27,6 @@ fn requires_circular_1() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             feed {
-              __typename
               id
             }
           }
@@ -43,7 +42,6 @@ fn requires_circular_1() -> Result<(), Box<dyn Error>> {
             {
               ... on Post {
                 author {
-                  __typename
                   id
                 }
               }
@@ -113,7 +111,6 @@ fn requires_circular_2() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             feed {
-              __typename
               id
             }
           }
@@ -129,7 +126,6 @@ fn requires_circular_2() -> Result<(), Box<dyn Error>> {
             {
               ... on Post {
                 author {
-                  __typename
                   id
                 }
               }

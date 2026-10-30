@@ -762,7 +762,6 @@ fn nested_partial_union_uses_members_from_subgraph_reached_by_entity_move(
         Fetch(service: "a") {
           {
             rootA {
-              __typename
               id
             }
           }
@@ -847,7 +846,6 @@ fn union_overfetching_test() -> Result<(), Box<dyn Error>> {
             }
           }
           fragment a on Product {
-            __typename
             id
           }
         },
@@ -969,7 +967,6 @@ fn union_list_test() -> Result<(), Box<dyn Error>> {
             }
           }
           fragment a on Product {
-            __typename
             id
           }
         },
@@ -1047,7 +1044,6 @@ fn union_members_ask_only_for_their_own_entity_fields() -> Result<(), Box<dyn Er
             }
           }
           fragment a on Product {
-            __typename
             id
           }
         },

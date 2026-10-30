@@ -205,11 +205,11 @@ mod operation_name_e2e_tests {
         insta::assert_snapshot!(
             to_string_pretty(&accounts_body).unwrap(),
             @r#"
-            {
-              "operationName": "GetMeReviews__2",
-              "query": "query GetMeReviews__2 {me{__typename id}}"
-            }
-            "#
+        {
+          "operationName": "GetMeReviews__2",
+          "query": "query GetMeReviews__2 {me{id}}"
+        }
+        "#
         );
 
         let reviews_body = first_request_from(&subgraphs, "reviews");
@@ -267,10 +267,10 @@ mod operation_name_e2e_tests {
         insta::assert_snapshot!(
             to_string_pretty(&accounts_body).unwrap(),
             @r#"
-            {
-              "query": "{me{__typename id}}"
-            }
-            "#
+        {
+          "query": "{me{id}}"
+        }
+        "#
         );
 
         let reviews_body = first_request_from(&subgraphs, "reviews");
