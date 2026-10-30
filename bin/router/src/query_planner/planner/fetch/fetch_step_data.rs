@@ -40,6 +40,11 @@ pub struct FetchStepData<State> {
     pub operation_kind: OperationKind,
     pub flags: FetchStepFlags,
     pub condition: Option<Condition>,
+    /// Every condition the step was planned under, from the root down. A step under
+    /// `orders @include(if: $a) { ... on Order @include(if: $b) { name } }` only has `$b`, it
+    /// relies on the `orders` step for `$a`. Merged with a step of another branch, only the
+    /// conditions both have stay.
+    pub planned_under: Vec<Condition>,
     pub variable_usages: Option<BTreeSet<String>>,
     pub variable_definitions: Option<Vec<VariableDefinition>>,
     pub mutation_field_position: MutationFieldPosition,
@@ -237,6 +242,7 @@ impl FetchStepData<SingleTypeFetchStep> {
             operation_kind: self.operation_kind,
             flags: self.flags,
             condition: self.condition,
+            planned_under: self.planned_under,
             variable_usages: self.variable_usages,
             variable_definitions: self.variable_definitions,
             mutation_field_position: self.mutation_field_position,

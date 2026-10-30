@@ -266,6 +266,28 @@ impl MergePath {
         self.common_prefix_len(other) == other.len()
     }
 
+    /// The path with `condition` on its deepest field or type condition that has none yet.
+    /// `None` when every one has a condition already.
+    pub fn with_condition(&self, condition: &Condition) -> Option<Self> {
+        let index = self.inner.iter().rposition(|segment| {
+            matches!(
+                segment,
+                Segment::Field(_, _, None) | Segment::TypeCondition(_, None)
+            )
+        })?;
+        let mut segments = self.inner.to_vec();
+        segments[index] = match &segments[index] {
+            Segment::Field(field, args_hash, _) => {
+                Segment::Field(field.clone(), *args_hash, Some(condition.clone()))
+            }
+            Segment::TypeCondition(type_names, _) => {
+                Segment::TypeCondition(type_names.clone(), Some(condition.clone()))
+            }
+            Segment::List => unreachable!("lists have no condition"),
+        };
+        Some(Self::new(segments))
+    }
+
     /// The conditions along the path, outermost first.
     pub fn conditions(&self) -> impl Iterator<Item = &Condition> {
         self.inner.iter().filter_map(|segment| match segment {

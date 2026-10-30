@@ -2205,3 +2205,265 @@ fn condition_kept_on_every_type_of_a_batched_call_under_a_type_condition(
 
     Ok(())
 }
+
+/// `orders` comes under `$a` and under `$c` both. The `name` call has its own `$b` and was planned
+/// under `$a` too: with `$a` off the orders still come from the `$c` branch, so it needs both.
+/// The `weight` it requires is fetched for that branch as well.
+#[test]
+fn condition_kept_when_another_branch_fetches_the_same_field() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($a: Boolean!, $b: Boolean!, $c: Boolean!) {
+          user {
+            orders @include(if: $a) {
+              ... on Order @include(if: $b) {
+                name
+              }
+            }
+            ... @skip(if: $c) {
+              orders {
+                weight
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-partly-provided-after-hop.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "users") {
+          query ($c:Boolean!) {
+            user {
+              __typename
+              id
+              ... on User @skip(if: $c) {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Parallel {
+          Skip(if: $c) {
+            Flatten(path: "user|[User]") {
+              Fetch(service: "orders") {
+                {
+                  ... on User {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on User {
+                    orders {
+                      __typename
+                      id
+                    }
+                  }
+                }
+              },
+            },
+          },
+          Include(if: $a) {
+            Flatten(path: "user") {
+              Fetch(service: "orders") {
+                {
+                  ... on User {
+                    __typename
+                    id
+                  }
+                } =>
+                ($b:Boolean!) {
+                  ... on User {
+                    orders {
+                      ... on Order @include(if: $b) {
+                        __typename
+                        id
+                        sku
+                      }
+                    }
+                  }
+                }
+              },
+            },
+          },
+        },
+        Parallel {
+          Skip(if: $c) {
+            Flatten(path: "user|[User].orders.@") {
+              Fetch(service: "catalog") {
+                {
+                  ... on Order {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Order {
+                    weight
+                  }
+                }
+              },
+            },
+          },
+          Include(if: $a) {
+            Include(if: $b) {
+              Flatten(path: "user.orders.@|[Order]") {
+                Fetch(service: "catalog") {
+                  {
+                    ... on Order {
+                      __typename
+                      id
+                    }
+                  } =>
+                  {
+                    ... on Order {
+                      weight
+                    }
+                  }
+                },
+              },
+            },
+          },
+        },
+        Include(if: $a) {
+          Include(if: $b) {
+            Flatten(path: "user.orders.@|[Order]") {
+              Fetch(service: "orders") {
+                {
+                  ... on Order {
+                    __typename
+                    sku
+                    weight
+                    id
+                  }
+                } =>
+                {
+                  ... on Order {
+                    name
+                  }
+                }
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `orders` is asked twice, once under `@include(if: $a)`. With `$a` off, the unconditional one
+/// still has the orders, so the calls for `name` need `$a` as well as their own `$b`.
+#[test]
+fn field_condition_kept_when_the_field_is_also_unconditional() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($a: Boolean!, $b: Boolean!) {
+          user {
+            orders {
+              id
+            }
+            orders @include(if: $a) {
+              ... on Order @include(if: $b) {
+                name
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-partly-provided-after-hop.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "users") {
+          {
+            user {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "user") {
+          Fetch(service: "orders") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            ($a:Boolean!,$b:Boolean!) {
+              ... on User {
+                ... on User @include(if: $a) {
+                  orders {
+                    ... on Order @include(if: $b) {
+                      __typename
+                      id
+                      sku
+                    }
+                  }
+                }
+                orders {
+                  id
+                }
+              }
+            }
+          },
+        },
+        Include(if: $a) {
+          Include(if: $b) {
+            Sequence {
+              Flatten(path: "user.orders.@|[Order]") {
+                Fetch(service: "catalog") {
+                  {
+                    ... on Order {
+                      __typename
+                      id
+                    }
+                  } =>
+                  {
+                    ... on Order {
+                      weight
+                    }
+                  }
+                },
+              },
+              Flatten(path: "user.orders.@|[Order]") {
+                Fetch(service: "orders") {
+                  {
+                    ... on Order {
+                      __typename
+                      sku
+                      weight
+                      id
+                    }
+                  } =>
+                  {
+                    ... on Order {
+                      name
+                    }
+                  }
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
+}

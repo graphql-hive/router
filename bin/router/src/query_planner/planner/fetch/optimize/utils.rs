@@ -11,7 +11,7 @@ use tracing::{instrument, trace};
 
 use crate::query_planner::{
     ast::{
-        merge_path::{MergePath, Segment},
+        merge_path::{Condition, MergePath, Segment},
         selection_set::{
             find_arguments_conflicts, find_selection_set_by_path, response_keys_conflict,
         },
@@ -112,6 +112,9 @@ pub(crate) fn perform_fetch_step_merge(
     );
 
     target.merge_context_metadata(source);
+    target
+        .planned_under
+        .retain(|condition| source.planned_under.contains(condition));
     let source_id = source.id;
     let target_id = target.id;
 
@@ -211,6 +214,40 @@ pub(crate) fn perform_fetch_step_merge(
     fetch_graph.remove_step(source_index);
 
     Ok(())
+}
+
+/// Makes `step` run only when `condition` holds too: as its own condition when it has none,
+/// on its path otherwise, the plan puts a fetch under all of them.
+fn keep_condition(step: &mut FetchStepData<MultiTypeFetchStep>, condition: &Condition) {
+    if step.condition.as_ref() == Some(condition)
+        || step.response_path.conditions().any(|c| c == condition)
+    {
+        return;
+    }
+    if step.condition.is_none() {
+        step.condition = Some(condition.clone());
+    } else if let Some(path) = step.response_path.with_condition(condition) {
+        step.response_path = path;
+    }
+}
+
+impl FetchGraph<MultiTypeFetchStep> {
+    /// A step under `orders @include(if: $a) { ... on Order @include(if: $b) { name } }` only has
+    /// `$b`, it counted on the `orders` step: skipped, there are no orders to look up. Merged with
+    /// an unconditional `orders`, that step lost `$a` and the orders come anyway. So a step gets
+    /// every condition it was planned under, merges only leave the ones both sides had.
+    #[instrument(level = "trace", skip_all)]
+    pub(crate) fn keep_conditions_steps_were_planned_under(
+        &mut self,
+    ) -> Result<(), FetchGraphError> {
+        for index in self.step_indices().collect::<Vec<_>>() {
+            let step = self.get_step_data_mut(index)?;
+            for condition in step.planned_under.clone() {
+                keep_condition(step, &condition);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Checks if an ancestor node (`target_ancestor_index`) is reachable from a
@@ -619,6 +656,7 @@ mod tests {
             operation_kind: OperationKind::Query,
             flags: FetchStepFlags::empty(),
             condition: None,
+            planned_under: Vec::new(),
             variable_usages: None,
             variable_definitions: None,
             mutation_field_position: None,
