@@ -1353,65 +1353,71 @@ fn qp_nested_include_skip_conditions_in_complex_products_query() -> Result<(), B
           },
         },
         Parallel {
-          Skip(if: $skipAuthor) {
-            Include(if: $nestedReviews) {
-              Include(if: $product) {
-                Flatten(path: "topProducts.@.reviews.@.author.reviews.@.product") {
-                  Fetch(service: "products") {
-                    {
-                      ... on Product {
-                        __typename
-                        upc
+          Include(if: $reviews) {
+            Skip(if: $skipAuthor) {
+              Include(if: $nestedReviews) {
+                Include(if: $product) {
+                  Flatten(path: "topProducts.@.reviews.@.author.reviews.@.product") {
+                    Fetch(service: "products") {
+                      {
+                        ... on Product {
+                          __typename
+                          upc
+                        }
+                      } =>
+                      {
+                        ... on Product {
+                          price
+                          weight
+                          name
+                        }
                       }
-                    } =>
-                    {
-                      ... on Product {
-                        price
-                        weight
-                        name
-                      }
-                    }
+                    },
                   },
                 },
               },
             },
           },
-          Skip(if: $skipAuthor) {
-            Flatten(path: "topProducts.@.reviews.@.author") {
-              Fetch(service: "accounts") {
-                {
-                  ... on User {
-                    __typename
-                    id
+          Include(if: $reviews) {
+            Skip(if: $skipAuthor) {
+              Flatten(path: "topProducts.@.reviews.@.author") {
+                Fetch(service: "accounts") {
+                  {
+                    ... on User {
+                      __typename
+                      id
+                    }
+                  } =>
+                  {
+                    ... on User {
+                      name
+                    }
                   }
-                } =>
-                {
-                  ... on User {
-                    name
-                  }
-                }
+                },
               },
             },
           },
         },
-        Skip(if: $skipAuthor) {
-          Include(if: $nestedReviews) {
-            Include(if: $product) {
-              Flatten(path: "topProducts.@.reviews.@.author.reviews.@.product") {
-                Fetch(service: "inventory") {
-                  {
-                    ... on Product {
-                      __typename
-                      price
-                      weight
-                      upc
+        Include(if: $reviews) {
+          Skip(if: $skipAuthor) {
+            Include(if: $nestedReviews) {
+              Include(if: $product) {
+                Flatten(path: "topProducts.@.reviews.@.author.reviews.@.product") {
+                  Fetch(service: "inventory") {
+                    {
+                      ... on Product {
+                        __typename
+                        price
+                        weight
+                        upc
+                      }
+                    } =>
+                    {
+                      ... on Product {
+                        shippingEstimate
+                      }
                     }
-                  } =>
-                  {
-                    ... on Product {
-                      shippingEstimate
-                    }
-                  }
+                  },
                 },
               },
             },
@@ -1925,6 +1931,713 @@ fn batched_entity_calls_keep_the_condition_of_their_fragment() -> Result<(), Box
                   }
                 }
               }
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `F` is spread under `@include(if: $x)` and wraps a `... on Dog @skip(if: $y)`. `tricks` needs
+/// both, the spread's `$x` can't get lost on the way.
+#[test]
+fn spread_condition_kept_around_same_type_fragment_with_its_own() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($x: Boolean!, $y: Boolean!) {
+          listings {
+            pet {
+              ...F @include(if: $x)
+            }
+          }
+        }
+
+        fragment F on Dog {
+          ... on Dog @skip(if: $y) {
+            tricks
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1309.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "search") {
+          query ($x:Boolean!,$y:Boolean!) {
+            listings {
+              pet {
+                __typename
+                ... on Dog @include(if: $x) {
+                  ... on Dog @skip(if: $y) {
+                    __typename
+                    id
+                  }
+                }
+              }
+            }
+          }
+        },
+        Include(if: $x) {
+          Skip(if: $y) {
+            Flatten(path: "listings.@.pet|[Dog]|[Dog]") {
+              Fetch(service: "catalog") {
+                {
+                  ... on Dog {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Dog {
+                    tricks
+                  }
+                }
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    // The same with a field: `name` has `$y` and needs `$x` too
+    let document = parse_operation(
+        r#"
+        query($x: Boolean!, $y: Boolean!) {
+          listings {
+            pet {
+              ... on Dog @include(if: $x) {
+                name @skip(if: $y)
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1309.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "search") {
+          query ($x:Boolean!) {
+            listings {
+              pet {
+                __typename
+                ... on Dog @include(if: $x) {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+        },
+        Include(if: $x) {
+          Skip(if: $y) {
+            Flatten(path: "listings.@.pet|[Dog]") {
+              Fetch(service: "catalog") {
+                {
+                  ... on Dog {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Dog {
+                    name
+                  }
+                }
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
+}
+
+/// The Book and Magazine calls below `similar|[Book].reviews` get batched. `[Book]` is about
+/// `similar`, not about the products, so `$a` has to gate the Magazines too.
+#[test]
+fn condition_kept_on_every_type_of_a_batched_call_under_a_type_condition(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($a: Boolean!) {
+          similar(id: "x") {
+            reviews @include(if: $a) {
+              product {
+                delivery {
+                  fastestDelivery
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/abstract-types.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            similar(id: "x") {
+              __typename
+              id
+            }
+          }
+        },
+        Include(if: $a) {
+          Sequence {
+            Flatten(path: "similar.@") {
+              Fetch(service: "reviews") {
+                {
+                  ... on Book {
+                    __typename
+                    id
+                  }
+                  ... on Magazine {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Book {
+                    reviews {
+                      ...a
+                    }
+                  }
+                  ... on Magazine {
+                    reviews {
+                      ...a
+                    }
+                  }
+                }
+                fragment a on Review {
+                  product {
+                    __typename
+                    id
+                  }
+                }
+              },
+            },
+            Flatten(path: "similar.@.reviews.@.product") {
+              Fetch(service: "products") {
+                {
+                  ... on Book {
+                    __typename
+                    id
+                  }
+                  ... on Magazine {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Book {
+                    dimensions {
+                      ...a
+                    }
+                  }
+                  ... on Magazine {
+                    dimensions {
+                      ...a
+                    }
+                  }
+                }
+                fragment a on ProductDimension {
+                  weight
+                  size
+                }
+              },
+            },
+            Flatten(path: "similar.@.reviews.@.product") {
+              Fetch(service: "inventory") {
+                {
+                  ... on Book {
+                    __typename
+                    dimensions {
+                      size
+                      weight
+                    }
+                    id
+                  }
+                  ... on Magazine {
+                    __typename
+                    dimensions {
+                      size
+                      weight
+                    }
+                    id
+                  }
+                } =>
+                {
+                  ... on Book {
+                    delivery {
+                      ...a
+                    }
+                  }
+                  ... on Magazine {
+                    delivery {
+                      ...a
+                    }
+                  }
+                }
+                fragment a on DeliveryEstimates {
+                  fastestDelivery
+                }
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `orders` comes under `$a` and under `$c` both. The `name` call has its own `$b` and was planned
+/// under `$a` too: with `$a` off the orders still come from the `$c` branch, so it needs both.
+/// The `weight` it requires is fetched for that branch as well.
+#[test]
+fn condition_kept_when_another_branch_fetches_the_same_field() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($a: Boolean!, $b: Boolean!, $c: Boolean!) {
+          user {
+            orders @include(if: $a) {
+              ... on Order @include(if: $b) {
+                name
+              }
+            }
+            ... @skip(if: $c) {
+              orders {
+                weight
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-partly-provided-after-hop.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "users") {
+          query ($c:Boolean!) {
+            user {
+              __typename
+              id
+              ... on User @skip(if: $c) {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Parallel {
+          Skip(if: $c) {
+            Flatten(path: "user|[User]") {
+              Fetch(service: "orders") {
+                {
+                  ... on User {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on User {
+                    orders {
+                      __typename
+                      id
+                    }
+                  }
+                }
+              },
+            },
+          },
+          Include(if: $a) {
+            Flatten(path: "user") {
+              Fetch(service: "orders") {
+                {
+                  ... on User {
+                    __typename
+                    id
+                  }
+                } =>
+                ($b:Boolean!) {
+                  ... on User {
+                    orders {
+                      ... on Order @include(if: $b) {
+                        __typename
+                        id
+                        sku
+                      }
+                    }
+                  }
+                }
+              },
+            },
+          },
+        },
+        Parallel {
+          Skip(if: $c) {
+            Flatten(path: "user|[User].orders.@") {
+              Fetch(service: "catalog") {
+                {
+                  ... on Order {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Order {
+                    weight
+                  }
+                }
+              },
+            },
+          },
+          Include(if: $a) {
+            Include(if: $b) {
+              Flatten(path: "user.orders.@|[Order]") {
+                Fetch(service: "catalog") {
+                  {
+                    ... on Order {
+                      __typename
+                      id
+                    }
+                  } =>
+                  {
+                    ... on Order {
+                      weight
+                    }
+                  }
+                },
+              },
+            },
+          },
+        },
+        Include(if: $a) {
+          Include(if: $b) {
+            Flatten(path: "user.orders.@|[Order]") {
+              Fetch(service: "orders") {
+                {
+                  ... on Order {
+                    __typename
+                    sku
+                    weight
+                    id
+                  }
+                } =>
+                {
+                  ... on Order {
+                    name
+                  }
+                }
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `orders` is asked twice, once under `@include(if: $a)`. With `$a` off, the unconditional one
+/// still has the orders, so the calls for `name` need `$a` as well as their own `$b`.
+#[test]
+fn field_condition_kept_when_the_field_is_also_unconditional() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($a: Boolean!, $b: Boolean!) {
+          user {
+            orders {
+              id
+            }
+            orders @include(if: $a) {
+              ... on Order @include(if: $b) {
+                name
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-partly-provided-after-hop.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "users") {
+          {
+            user {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "user") {
+          Fetch(service: "orders") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            ($a:Boolean!,$b:Boolean!) {
+              ... on User {
+                ... on User @include(if: $a) {
+                  orders {
+                    ... on Order @include(if: $b) {
+                      __typename
+                      id
+                      sku
+                    }
+                  }
+                }
+                orders {
+                  id
+                }
+              }
+            }
+          },
+        },
+        Include(if: $a) {
+          Include(if: $b) {
+            Sequence {
+              Flatten(path: "user.orders.@|[Order]") {
+                Fetch(service: "catalog") {
+                  {
+                    ... on Order {
+                      __typename
+                      id
+                    }
+                  } =>
+                  {
+                    ... on Order {
+                      weight
+                    }
+                  }
+                },
+              },
+              Flatten(path: "user.orders.@|[Order]") {
+                Fetch(service: "orders") {
+                  {
+                    ... on Order {
+                      __typename
+                      sku
+                      weight
+                      id
+                    }
+                  } =>
+                  {
+                    ... on Order {
+                      name
+                    }
+                  }
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
+}
+
+/// `... on Animal` on an `Animal` doesn't narrow anything, its condition goes onto `... on Dog`.
+/// Otherwise the Dogs at `pet|[Animal]|[Dog]` and at `pet|[Dog]` are looked up twice.
+#[test]
+fn condition_on_a_fragment_of_the_same_type_goes_to_its_fragments() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($x: Boolean!) {
+          listings {
+            pet {
+              ... on Animal @include(if: $x) {
+                ... on Dog {
+                  tricks
+                }
+              }
+              ... on Dog {
+                name
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/1309.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "search") {
+          {
+            listings {
+              pet {
+                __typename
+                ... on Dog {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+        },
+        Flatten(path: "listings.@.pet|[Dog]") {
+          Fetch(service: "catalog") {
+            {
+              ... on Dog {
+                __typename
+                id
+              }
+            } =>
+            ($x:Boolean!) {
+              ... on Dog {
+                name
+                ... on Dog @include(if: $x) {
+                  tricks
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// The fetch below `@skip(if: $c) @include(if: $d)` was planned under `$a` and `$b` too. `$a`
+/// sits on `anotherUsers` and the list has no spot for `$b`, it still has to wrap the fetch.
+#[test]
+fn condition_with_no_spot_on_the_path_still_wraps_the_fetch() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($a: Boolean!, $b: Boolean!, $c: Boolean!, $d: Boolean!) {
+          anotherUsers @skip(if: $a) {
+            ... @skip(if: $b) {
+              ... @skip(if: $c) @include(if: $d) {
+                __typename
+              }
+            }
+          }
+        }
+      "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/simple-interface-object.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          query ($a:Boolean!,$b:Boolean!) {
+            anotherUsers @skip(if: $a) {
+              __typename
+              ... on NodeWithName @skip(if: $b) {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Skip(if: $a) {
+          Sequence {
+            Skip(if: $b) {
+              Sequence {
+                Flatten(path: "anotherUsers.@") {
+                  Fetch(service: "a") {
+                    {
+                      ... on NodeWithName {
+                        __typename
+                        id
+                      }
+                    } =>
+                    {
+                      ... on NodeWithName {
+                        __typename
+                      }
+                    }
+                  },
+                },
+                Flatten(path: "anotherUsers.@") {
+                  Fetch(service: "b") {
+                    {
+                      ... on User {
+                        __typename
+                        id
+                      }
+                    } =>
+                    {
+                      ... on NodeWithName {
+                        __typename
+                        id
+                      }
+                    }
+                  },
+                },
+              },
+            },
+            Skip(if: $c) {
+              Include(if: $d) {
+                Skip(if: $b) {
+                  Flatten(path: "anotherUsers.@") {
+                    Fetch(service: "a") {
+                      {
+                        ... on NodeWithName {
+                          __typename
+                          id
+                        }
+                      } =>
+                      {
+                        ... on NodeWithName {
+                          __typename
+                          ... on User {
+                            __typename
+                          }
+                        }
+                      }
+                    },
+                  },
+                },
+              },
             },
           },
         },

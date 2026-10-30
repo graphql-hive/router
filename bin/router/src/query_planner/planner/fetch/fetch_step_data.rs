@@ -40,6 +40,11 @@ pub struct FetchStepData<State> {
     pub operation_kind: OperationKind,
     pub flags: FetchStepFlags,
     pub condition: Option<Condition>,
+    /// Every condition the step was planned under, from the root down. A step under
+    /// `orders @include(if: $a) { ... on Order @include(if: $b) { name } }` only has `$b`, it
+    /// relies on the `orders` step for `$a`. Merged with a step of another branch, only the
+    /// conditions both have stay.
+    pub planned_under: Vec<Condition>,
     pub variable_usages: Option<BTreeSet<String>>,
     pub variable_definitions: Option<Vec<VariableDefinition>>,
     pub mutation_field_position: MutationFieldPosition,
@@ -130,25 +135,21 @@ impl<State> FetchStepData<State> {
     }
 }
 
-// Extracts concrete type names from response-path type-condition segments.
-// `products.@|[Book|Magazine]` gives back `Book` and `Magazine`
+// Extracts concrete type names from the type condition the response path ends with, the types
+// the step's output is about.
+// `products.@|[Book|Magazine]` gives back `Book` and `Magazine`, `similar|[Book].reviews` nothing,
+// `[Book]` is about `similar` there, not about the reviews.
 pub(crate) fn type_condition_types_from_response_path(
     response_path: &MergePath,
 ) -> Option<BTreeSet<&str>> {
-    let conditioned_types = response_path
-        .inner
-        .iter()
-        .filter_map(|segment| match segment {
-            Segment::TypeCondition(type_names, _) => Some(type_names),
-            _ => None,
-        })
-        .flat_map(|type_names| type_names.iter().map(|type_name| type_name.as_str()))
-        .collect::<BTreeSet<_>>();
-
-    if conditioned_types.is_empty() {
-        None
-    } else {
-        Some(conditioned_types)
+    match response_path.last() {
+        Some(Segment::TypeCondition(type_names, _)) => Some(
+            type_names
+                .iter()
+                .map(|type_name| type_name.as_str())
+                .collect(),
+        ),
+        _ => None,
     }
 }
 
@@ -241,6 +242,7 @@ impl FetchStepData<SingleTypeFetchStep> {
             operation_kind: self.operation_kind,
             flags: self.flags,
             condition: self.condition,
+            planned_under: self.planned_under,
             variable_usages: self.variable_usages,
             variable_definitions: self.variable_definitions,
             mutation_field_position: self.mutation_field_position,

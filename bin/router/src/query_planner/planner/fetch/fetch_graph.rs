@@ -60,6 +60,9 @@ pub struct FetchGraph<State> {
     /// Only kept while the graph is built: until the merges, a step keeps making the same entity
     /// call and no edge goes away.
     pub(crate) children_by_entity_call: Option<HashMap<(NodeIndex, u64), Vec<NodeIndex>>>,
+    /// The conditions of the query nodes being processed, from the root down. Only needed while
+    /// the graph is built.
+    pub(crate) condition_chain: Vec<Condition>,
 }
 
 impl FetchGraph<SingleTypeFetchStep> {
@@ -78,6 +81,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             context_variable_counter: 0,
             operation_variables: HashSet::new(),
             children_by_entity_call: None,
+            condition_chain: Vec::new(),
         }
     }
 
@@ -92,6 +96,7 @@ impl FetchGraph<SingleTypeFetchStep> {
             context_variable_counter: 0,
             operation_variables: HashSet::new(),
             children_by_entity_call: Some(HashMap::new()),
+            condition_chain: Vec::new(),
         }
     }
 
@@ -429,6 +434,7 @@ fn create_noop_fetch_step(
         output: FetchStepSelections::new_empty(),
         flags,
         condition: None,
+        planned_under: Vec::new(),
         kind: FetchStepKind::Root,
         operation_kind: OperationKind::Query,
         input_rewrites: None,
@@ -473,6 +479,7 @@ fn create_fetch_step_for_entity_call(
         output: FetchStepSelections::new(output_type_name),
         flags,
         condition: condition.cloned(),
+        planned_under: fetch_graph.condition_chain.clone(),
         kind: FetchStepKind::Entity,
         operation_kind: OperationKind::Query,
         input_rewrites: None,
@@ -509,6 +516,7 @@ fn create_fetch_step_for_root_move(
         output: FetchStepSelections::new(type_name),
         flags: FetchStepFlags::empty(),
         condition: condition.cloned(),
+        planned_under: fetch_graph.condition_chain.clone(),
         kind: FetchStepKind::Root,
         operation_kind,
         variable_usages: None,
@@ -604,6 +612,13 @@ fn ensure_fetch_step_for_subgraph(
                 key.map(|r| r.to_string()).unwrap_or_default(),
                 parent_fetch_step_index.index(),
             );
+            let chain = &fetch_graph.condition_chain;
+            let step = fetch_graph
+                .graph
+                .node_weight_mut(idx)
+                .ok_or(FetchGraphError::IndexNone)?;
+            step.planned_under
+                .retain(|condition| chain.contains(condition));
             Ok(idx)
         }
         None => {
@@ -1462,6 +1477,34 @@ fn process_abstract_edge(
     condition: Option<&Condition>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
+    // The fragment's condition goes down to its children, and each one applies it. A child with
+    // a condition of its own only carries that one though, so in
+    // `... on Dog @include(if: $x) { name @skip(if: $y) }` `name` would lose `$x`. Then the
+    // fragment keeps the condition, like a field does.
+    let child_has_other_condition = condition.is_some_and(|condition| {
+        query_node
+            .children
+            .iter()
+            .any(|child| child.condition.as_ref().is_some_and(|c| c != condition))
+    });
+    let fragment_condition = condition.filter(|_| child_has_other_condition);
+    let condition_in_path = fragment_condition.is_some_and(|condition| {
+        fetch_path.inner.iter().any(|segment| {
+            matches!(
+                segment,
+                Segment::TypeCondition(_, Some(c)) | Segment::Field(_, _, Some(c)) if c == condition
+            )
+        })
+    });
+    let condition_on_step = fragment_condition.is_some_and(|c| {
+        fetch_graph.is_condition_on_step(parent_fetch_step_index, requiring_fetch_step_index, c)
+    });
+    let segment_condition = if condition_in_path || condition_on_step {
+        None
+    } else {
+        fragment_condition.cloned()
+    };
+
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
     trace!(
         "adding output field '__typename' and starting an inline fragment for type '{}' to fetch step [{}]",
@@ -1477,8 +1520,10 @@ fn process_abstract_edge(
                 SelectionItem::InlineFragment(InlineFragmentSelection {
                     type_condition: target_type_name.clone(),
                     selections: SelectionSet::default(),
-                    skip_if: None,
-                    include_if: None,
+                    skip_if: segment_condition.as_ref().and_then(Condition::to_skip_if),
+                    include_if: segment_condition
+                        .as_ref()
+                        .and_then(Condition::to_include_if),
                 }),
             ],
         },
@@ -1486,11 +1531,11 @@ fn process_abstract_edge(
 
     let child_response_path = response_path.push(Segment::TypeCondition(
         Rc::new(BTreeSet::from([target_type_name.clone()])),
-        None,
+        segment_condition.clone(),
     ));
     let child_fetch_path = fetch_path.push(Segment::TypeCondition(
         Rc::new(BTreeSet::from([target_type_name.clone()])),
-        None,
+        segment_condition,
     ));
 
     process_children_for_fetch_steps(
@@ -2147,6 +2192,47 @@ fn find_satisfiable_key<'a>(
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
 fn process_query_node(
+    graph: &Graph<'_>,
+    fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
+    supergraph: &SupergraphState,
+    override_context: &PlannerOverrideContext,
+    query_node: &QueryTreeNode,
+    parent_fetch_step_index: Option<NodeIndex>,
+    response_path: &MergePath,
+    fetch_path: &MergePath,
+    requiring_fetch_step_index: Option<NodeIndex>,
+    condition: Option<&Condition>,
+    created_from_requires: bool,
+) -> Result<Vec<NodeIndex>, FetchGraphError> {
+    let own = query_node
+        .condition
+        .as_ref()
+        .filter(|own| fetch_graph.condition_chain.last() != Some(*own));
+    if let Some(own) = own {
+        fetch_graph.condition_chain.push(own.clone());
+    }
+    let result = process_query_node_edge(
+        graph,
+        fetch_graph,
+        supergraph,
+        override_context,
+        query_node,
+        parent_fetch_step_index,
+        response_path,
+        fetch_path,
+        requiring_fetch_step_index,
+        condition,
+        created_from_requires,
+    );
+    if own.is_some() {
+        fetch_graph.condition_chain.pop();
+    }
+    result
+}
+
+// TODO: simplfy args
+#[allow(clippy::too_many_arguments)]
+fn process_query_node_edge(
     graph: &Graph<'_>,
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     supergraph: &SupergraphState,

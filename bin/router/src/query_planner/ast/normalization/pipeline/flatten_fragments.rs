@@ -187,12 +187,51 @@ fn process_inline_fragment(
                 }
             }
 
+            if let Some(children) = with_conditions_pushed_down(&fragment) {
+                return Ok(children);
+            }
+
             Ok(vec![Selection::InlineFragment(fragment)])
         }
     } else {
         // The fragment has a different type condition from its parent, so we must expand it.
         expand_fragment_with_type_condition(state, subgraph_name, parent_type_def, fragment)
     }
+}
+
+/// `... on Animal @include(if: $x) { ... on Dog { tricks } }` on an `Animal` is
+/// `... on Dog @include(if: $x) { tricks }`. Kept as is, those Dogs are at another path than a
+/// `... on Dog` next to it, and get looked up twice. `None` when a child isn't an inline fragment
+/// or already has the same directive with other arguments, the two can't go on one fragment.
+fn with_conditions_pushed_down(
+    fragment: &InlineFragment<'static, String>,
+) -> Option<Vec<Selection<'static, String>>> {
+    if fragment
+        .directives
+        .iter()
+        .any(|directive| directive.name != "include" && directive.name != "skip")
+    {
+        return None;
+    }
+    fragment
+        .selection_set
+        .items
+        .iter()
+        .map(|item| {
+            let Selection::InlineFragment(child) = item else {
+                return None;
+            };
+            let mut child = child.clone();
+            for directive in &fragment.directives {
+                match child.directives.iter().find(|d| d.name == directive.name) {
+                    Some(existing) if existing.arguments == directive.arguments => {}
+                    Some(_) => return None,
+                    None => child.directives.push(directive.clone()),
+                }
+            }
+            Some(Selection::InlineFragment(child))
+        })
+        .collect()
 }
 
 /// Expands a fragment that has a specific type condition.

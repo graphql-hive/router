@@ -148,6 +148,8 @@ fn perform_passthrough_child_merge(
 
     me.output.migrate_from_another(&other.output, &path)?;
     me.merge_context_metadata(other);
+    me.planned_under
+        .retain(|condition| other.planned_under.contains(condition));
     let source_id = other.id;
     let target_id = me.id;
 
