@@ -96,6 +96,16 @@ pub fn project_requires(
                 if projected {
                     // Only update `first` if we actually write something
                     first = false;
+                } else if nested {
+                    // An item of a list inside the representation keeps its place, the subgraph
+                    // may read the list's length or positions. One with nothing to send, like a
+                    // `null`, is sent as `null`. A list of entities still leaves out the ones
+                    // that can't be sent.
+                    if !first {
+                        buffer.put(COMMA);
+                    }
+                    buffer.put(NULL);
+                    first = false;
                 }
             }
             buffer.put(CLOSE_BRACKET);
@@ -493,6 +503,51 @@ mod tests {
 
         let pretty = project_requires_pretty("contactOptions", json!({}));
         assert_eq!(pretty, None);
+    }
+
+    /// A list inside the representation keeps its length and every item's place: a `null`, and
+    /// an item with nothing to send, are sent as `null`, in nested lists too.
+    #[test]
+    fn project_requires_list_items_keep_their_place() {
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+              "id items { value } grid { value }",
+              json!({
+                  "__typename": "Product",
+                  "id": "1",
+                  "items": [null, { "value": "v1" }, null, { "value": "v2" }, {}],
+                  "grid": [[null, { "value": "v3" }], null, []]
+              }),
+          )
+          .expect("projection should produce output"),
+          @r#"
+        {
+          "__typename": "Product",
+          "id": "1",
+          "items": [
+            null,
+            {
+              "value": "v1"
+            },
+            null,
+            {
+              "value": "v2"
+            },
+            null
+          ],
+          "grid": [
+            [
+              null,
+              {
+                "value": "v3"
+              }
+            ],
+            null,
+            []
+          ]
+        }
+        "#
+        );
     }
 
     /// Regression testt for https://github.com/graphql-hive/router/issues/1099:

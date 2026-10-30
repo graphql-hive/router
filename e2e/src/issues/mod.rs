@@ -1,6 +1,10 @@
 #[cfg(test)]
 mod issues_e2e_tests {
-    use crate::testkit::{ClientResponseExt, Started, TestRouter, TestSubgraphs};
+    use serde_json::json;
+
+    use crate::testkit::{
+        mock_subgraphs::mock_subgraphs, ClientResponseExt, Started, TestRouter, TestSubgraphs,
+    };
 
     #[ntex::test]
     /// https://github.com/graphql-hive/federation-gateway-audit `src/test-suites/null-keys`
@@ -4291,5 +4295,81 @@ mod issues_e2e_tests {
             .send_graphql_request("{ me { birthday username } }", None, None)
             .await;
         insta::assert_snapshot!(res.string_body().await, @r#"{"data":{"me":{"birthday":1234567890,"username":"urigo"}}}"#);
+    }
+
+    #[ntex::test]
+    /// `reviewsOfSimilar` `@requires(fields: "similar { id }")`, and `similar` is `[Book]`. The
+    /// `null`s in it have to reach `reviews` too, it may count them or read their positions.
+    async fn requires_keeps_null_list_items() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mock_subgraphs(json!({
+                "books": {
+                    "query": { "books": [{ "__typename": "Book", "id": "1" }] }
+                },
+                "products": {
+                    "entities": [{
+                        "__typename": "Book",
+                        "id": "1",
+                        "similar": [
+                            null,
+                            { "__typename": "Book", "id": "2" },
+                            null,
+                            { "__typename": "Book", "id": "3" }
+                        ]
+                    }]
+                },
+                "reviews": {
+                    "entities": [{
+                        "__typename": "Book",
+                        "id": "1",
+                        "similar": [
+                            null,
+                            { "__typename": "Book", "id": "2" },
+                            null,
+                            { "__typename": "Book", "id": "3" }
+                        ],
+                        "reviewsOfSimilar": [{ "__typename": "Review", "id": 7 }]
+                    }]
+                }
+            })))
+            .build()
+            .start()
+            .await;
+        let url = subgraphs.url();
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: ../bin/router/fixture/tests/abstract-types.supergraph.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      books:
+                        url: "{url}/books"
+                      products:
+                        url: "{url}/products"
+                      reviews:
+                        url: "{url}/reviews"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ books { reviewsOfSimilar { id } } }", None, None)
+            .await;
+        insta::assert_snapshot!(
+            res.string_body().await,
+            @r#"{"data":{"books":[{"reviewsOfSimilar":[{"id":7}]}]}}"#
+        );
+
+        let requests = subgraphs.get_requests_log("reviews").unwrap();
+        let body: serde_json::Value =
+            serde_json::from_slice(requests[0].body.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            body["variables"]["representations"][0]["similar"],
+            json!([null, { "id": "2" }, null, { "id": "3" }])
+        );
     }
 }
