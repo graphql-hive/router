@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Variables that all have to say yes: every `include_if` is `true` and every `skip_if` is
 /// `false`. An empty group always holds. The names are sorted and unique, and no name is in
@@ -120,20 +120,28 @@ impl Display for ConditionGroup {
     }
 }
 
-/// Runs when any of the groups holds. Kept normalized: no group that never holds, no group that
-/// holds whenever a smaller one does (`$a || ($a && $b)` is just `$a`), sorted and unique.
-/// "Always" isn't a `RunIf`, everything that builds one returns `None` for it.
-/// No groups at all means never.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct RunIf(Box<[ConditionGroup]>);
+/// When a fetch, or a group of an alias's paths, runs.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum RunIf {
+    #[default]
+    Always,
+    /// Nothing it'd fetch is ever asked for, like `@include(if: $a) @skip(if: $a)` on every
+    /// field.
+    Never,
+    /// When any of the groups holds. Only `any_of` makes one, and keeps it normalized: at least
+    /// one group, no empty one, no group that holds whenever a smaller one does
+    /// (`$a || ($a && $b)` is just `$a`), sorted and unique.
+    AnyOf(Box<[ConditionGroup]>),
+}
 
 impl RunIf {
-    /// `None` when it always holds.
-    pub fn any_of(groups: impl IntoIterator<Item = ConditionGroup>) -> Option<Self> {
+    pub fn any_of(groups: impl IntoIterator<Item = ConditionGroup>) -> Self {
         let mut groups: Vec<ConditionGroup> = groups.into_iter().collect();
         if groups.iter().any(ConditionGroup::is_empty) {
-            return None;
+            return Self::Always;
+        }
+        if groups.is_empty() {
+            return Self::Never;
         }
         groups.sort_unstable();
         groups.dedup();
@@ -150,40 +158,60 @@ impl RunIf {
             if let [(name, include)] = group.literals().collect::<Vec<_>>()[..] {
                 let opposite = ConditionGroup::from_literals([(name, !include)]);
                 if opposite.is_some_and(|opposite| kept.contains(&opposite)) {
-                    return None;
+                    return Self::Always;
                 }
             }
         }
         kept.sort_unstable();
-        Some(Self(kept.into_boxed_slice()))
+        Self::AnyOf(kept.into_boxed_slice())
     }
 
-    pub fn groups(&self) -> &[ConditionGroup] {
-        &self.0
+    /// When any of them holds, like a fetch runs when any of its fields is asked for.
+    /// Nothing at all is never.
+    pub fn or(run_ifs: impl IntoIterator<Item = Self>) -> Self {
+        let mut groups = Vec::new();
+        for run_if in run_ifs {
+            match run_if {
+                Self::Always => return Self::Always,
+                Self::Never => {}
+                Self::AnyOf(more) => groups.extend(more),
+            }
+        }
+        Self::any_of(groups)
+    }
+
+    pub fn is_always(&self) -> bool {
+        matches!(self, Self::Always)
     }
 
     pub fn holds(&self, value: impl Fn(&str) -> Option<bool>) -> bool {
-        self.0.iter().any(|group| group.holds(&value))
+        match self {
+            Self::Always => true,
+            Self::Never => false,
+            Self::AnyOf(groups) => groups.iter().any(|group| group.holds(&value)),
+        }
     }
 
-    /// Both of them, `None` (always) gives the other one.
-    pub fn and(left: Option<&Self>, right: Option<&Self>) -> Option<Self> {
-        match (left, right) {
-            (None, None) => None,
-            (Some(only), None) | (None, Some(only)) => Some(only.clone()),
-            (Some(left), Some(right)) => Self::any_of(
-                left.0
-                    .iter()
-                    .flat_map(|l| right.0.iter().filter_map(move |r| l.and(r))),
+    /// Both of them.
+    pub fn and(&self, other: &Self) -> Self {
+        match (self, other) {
+            (Self::Always, only) | (only, Self::Always) => only.clone(),
+            (Self::Never, _) | (_, Self::Never) => Self::Never,
+            (Self::AnyOf(left), Self::AnyOf(right)) => Self::any_of(
+                left.iter()
+                    .flat_map(|l| right.iter().filter_map(move |r| l.and(r))),
             ),
         }
     }
 
     /// What's left to check when `known` is already known to hold, like the conditions of the
-    /// `Include`/`Skip` nodes around a fetch. `None` when nothing is left.
-    pub fn assuming(&self, known: &ConditionGroup) -> Option<Self> {
+    /// `Include`/`Skip` nodes around a fetch.
+    pub fn assuming(&self, known: &ConditionGroup) -> Self {
+        let Self::AnyOf(groups) = self else {
+            return self.clone();
+        };
         let known: Vec<(&str, bool)> = known.literals().collect();
-        Self::any_of(self.0.iter().filter_map(|group| {
+        Self::any_of(groups.iter().filter_map(|group| {
             let mut left = Vec::new();
             for (name, include) in group.literals() {
                 match known.iter().find(|(known_name, _)| *known_name == name) {
@@ -198,13 +226,38 @@ impl RunIf {
     }
 }
 
+/// In JSON `Always` is left out (`null` on its own), `Never` is no groups and `AnyOf` is its
+/// groups. Reading it goes through `any_of`, so it comes back normalized.
+impl Serialize for RunIf {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Always => serializer.serialize_none(),
+            Self::Never => serializer.collect_seq(&[] as &[ConditionGroup]),
+            Self::AnyOf(groups) => serializer.collect_seq(groups.iter()),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for RunIf {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(
+            match Option::<Vec<ConditionGroup>>::deserialize(deserializer)? {
+                None => Self::Always,
+                Some(groups) => Self::any_of(groups),
+            },
+        )
+    }
+}
+
 impl Display for RunIf {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        if self.0.is_empty() {
-            return write!(f, "false");
-        }
-        let parenthesize = self.0.len() > 1;
-        for (index, group) in self.0.iter().enumerate() {
+        let groups = match self {
+            Self::Always => return write!(f, "true"),
+            Self::Never => return write!(f, "false"),
+            Self::AnyOf(groups) => groups,
+        };
+        let parenthesize = groups.len() > 1;
+        for (index, group) in groups.iter().enumerate() {
             if index > 0 {
                 write!(f, " || ")?;
             }
@@ -226,14 +279,12 @@ mod tests {
         ConditionGroup::from_literals(literals.iter().copied()).expect("not a contradiction")
     }
 
-    fn run_if(groups: &[&[(&str, bool)]]) -> Option<RunIf> {
+    fn run_if(groups: &[&[(&str, bool)]]) -> RunIf {
         RunIf::any_of(groups.iter().map(|literals| group(literals)))
     }
 
-    fn shown(run_if: &Option<RunIf>) -> String {
-        run_if
-            .as_ref()
-            .map_or("always".to_string(), ToString::to_string)
+    fn shown(run_if: &RunIf) -> String {
+        run_if.to_string()
     }
 
     #[test]
@@ -263,11 +314,11 @@ mod tests {
             "!$a || $b"
         );
         // an empty group is always
-        assert_eq!(shown(&run_if(&[&[("a", true)], &[]])), "always");
+        assert_eq!(shown(&run_if(&[&[("a", true)], &[]])), "true");
         // no groups is never
         assert_eq!(shown(&RunIf::any_of([])), "false");
         // `$a || !$a`
-        assert_eq!(shown(&run_if(&[&[("a", true)], &[("a", false)]])), "always");
+        assert_eq!(shown(&run_if(&[&[("a", true)], &[("a", false)]])), "true");
         // not a general tautology check
         assert_eq!(
             shown(&run_if(&[&[("a", true), ("b", true)], &[("a", false)]])),
@@ -279,28 +330,25 @@ mod tests {
     fn and() {
         let a = run_if(&[&[("a", true)]]);
         let b = run_if(&[&[("b", false)]]);
-        assert_eq!(shown(&RunIf::and(a.as_ref(), b.as_ref())), "$a && !$b");
-        assert_eq!(shown(&RunIf::and(a.as_ref(), None)), "$a");
-        assert_eq!(shown(&RunIf::and(None, None)), "always");
+        assert_eq!(shown(&a.and(&b)), "$a && !$b");
+        assert_eq!(shown(&a.and(&RunIf::Always)), "$a");
+        assert_eq!(shown(&RunIf::Always.and(&RunIf::Always)), "true");
 
         let a_or_b = run_if(&[&[("a", true)], &[("b", true)]]);
         let c = run_if(&[&[("c", true)]]);
-        assert_eq!(
-            shown(&RunIf::and(a_or_b.as_ref(), c.as_ref())),
-            "($a && $c) || ($b && $c)"
-        );
+        assert_eq!(shown(&a_or_b.and(&c)), "($a && $c) || ($b && $c)");
         // `$a && !$a` never holds
         let not_a = run_if(&[&[("a", false)]]);
-        assert_eq!(shown(&RunIf::and(a.as_ref(), not_a.as_ref())), "false");
+        assert_eq!(shown(&a.and(&not_a)), "false");
     }
 
     #[test]
     fn assuming_drops_what_is_known() {
-        let either = run_if(&[&[("a", true), ("b", true)], &[("a", true)]]).unwrap();
+        let either = run_if(&[&[("a", true), ("b", true)], &[("a", true)]]);
         // absorbed into `$a`, which is known
-        assert_eq!(shown(&either.assuming(&group(&[("a", true)]))), "always");
+        assert_eq!(shown(&either.assuming(&group(&[("a", true)]))), "true");
 
-        let either = run_if(&[&[("a", true), ("b", true)], &[("c", true)]]).unwrap();
+        let either = run_if(&[&[("a", true), ("b", true)], &[("c", true)]]);
         assert_eq!(shown(&either.assuming(&group(&[("a", true)]))), "$b || $c");
         // a group asking for the opposite can't hold
         assert_eq!(shown(&either.assuming(&group(&[("a", false)]))), "$c");
@@ -312,7 +360,7 @@ mod tests {
 
     #[test]
     fn holds_needs_every_variable_of_one_group() {
-        let either = run_if(&[&[("a", true), ("b", false)], &[("c", true)]]).unwrap();
+        let either = run_if(&[&[("a", true), ("b", false)], &[("c", true)]]);
         let values = |pairs: &'static [(&'static str, Option<bool>)]| {
             move |name: &str| pairs.iter().find(|(n, _)| *n == name).and_then(|(_, v)| *v)
         };
@@ -321,7 +369,7 @@ mod tests {
         assert!(!either.holds(values(&[("a", Some(true)), ("b", Some(true))])));
         // a missing variable fails its group, for `skip_if` too
         assert!(!either.holds(values(&[("a", Some(true))])));
-        assert!(!RunIf::any_of([]).unwrap().holds(values(&[])));
+        assert!(!RunIf::Never.holds(values(&[])));
     }
 
     /// Every group over `names`, each variable left out, `true` or `false`.
@@ -368,10 +416,8 @@ mod tests {
         }
     }
 
-    fn runs(run_if: &Option<RunIf>, values: u32) -> bool {
-        run_if
-            .as_ref()
-            .is_none_or(|run_if| run_if.holds(value(values)))
+    fn runs(run_if: &RunIf, values: u32) -> bool {
+        run_if.holds(value(values))
     }
 
     fn all_values() -> std::ops::Range<u32> {
@@ -387,11 +433,8 @@ mod tests {
                 assert_eq!(runs(&run_if, values), expected, "{list:?} at {values:03b}");
             }
             // normalized already, nothing left to do
-            if let Some(run_if) = &run_if {
-                assert_eq!(
-                    RunIf::any_of(run_if.groups().to_vec()).as_ref(),
-                    Some(run_if)
-                );
+            if let RunIf::AnyOf(groups) = &run_if {
+                assert_eq!(RunIf::any_of(groups.to_vec()), run_if);
             }
         }
     }
@@ -403,7 +446,7 @@ mod tests {
             let left = RunIf::any_of(left.clone());
             for right in &lists {
                 let right = RunIf::any_of(right.clone());
-                let both = RunIf::and(left.as_ref(), right.as_ref());
+                let both = left.and(&right);
                 for values in all_values() {
                     assert_eq!(
                         runs(&both, values),
@@ -419,9 +462,7 @@ mod tests {
     fn assuming_holds_the_same_whenever_what_is_known_does() {
         let groups = all_groups(&NAMES);
         for list in all_lists(&groups, 2) {
-            let Some(run_if) = RunIf::any_of(list) else {
-                continue;
-            };
+            let run_if = RunIf::any_of(list);
             for known in &groups {
                 let left = run_if.assuming(known);
                 for values in all_values().filter(|values| known.holds(value(*values))) {
@@ -438,9 +479,7 @@ mod tests {
     #[test]
     fn json_round_trip_holds_the_same() {
         for list in all_lists(&all_groups(&NAMES), 2) {
-            let Some(run_if) = RunIf::any_of(list) else {
-                continue;
-            };
+            let run_if = RunIf::any_of(list);
             let json = serde_json::to_string(&run_if).unwrap();
             let back: RunIf = serde_json::from_str(&json).unwrap();
             assert_eq!(back, run_if, "{json}");
@@ -460,26 +499,23 @@ mod tests {
 
         // no `runIf` is always
         let always = path_group(json!({ "paths": [] }));
-        assert_eq!(always.run_if, None);
+        assert_eq!(always.run_if, RunIf::Always);
         assert!(always.is_active(|_| None));
         assert_eq!(to_json(&always), json!({ "paths": [] }));
 
         // no groups is never
         let never = path_group(json!({ "runIf": [], "paths": [] }));
-        assert_eq!(never.run_if, RunIf::any_of([]));
+        assert_eq!(never.run_if, RunIf::Never);
         assert!(!never.is_active(|_| Some(true)));
         assert_eq!(to_json(&never), json!({ "runIf": [], "paths": [] }));
 
         // a group lists only what it has
         let groups = json!({
-            "runIf": [{ "includeIf": ["a"], "skipIf": ["b"] }, { "skipIf": ["c"] }],
+            "runIf": [{ "skipIf": ["c"] }, { "includeIf": ["a"], "skipIf": ["b"] }],
             "paths": []
         });
         let some = path_group(groups.clone());
-        assert_eq!(
-            some.run_if.as_ref().map(ToString::to_string).as_deref(),
-            Some("($a && !$b) || !$c")
-        );
+        assert_eq!(some.run_if.to_string(), "!$c || ($a && !$b)");
         assert_eq!(to_json(&some), groups);
     }
 
@@ -501,5 +537,30 @@ mod tests {
             error.to_string().contains("both include and skip"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn groups_read_from_json_are_normalized() {
+        let read = |json| serde_json::from_value::<RunIf>(json).unwrap().to_string();
+        assert_eq!(
+            read(serde_json::json!([
+                { "includeIf": ["b"] },
+                { "includeIf": ["a", "b"] },
+                { "includeIf": ["a"] },
+                { "includeIf": ["a"] }
+            ])),
+            "$a || $b"
+        );
+        // nothing we write looks like these, they still hold as their groups do
+        assert_eq!(read(serde_json::json!([{}])), "true");
+        assert_eq!(
+            read(serde_json::json!([{ "includeIf": ["a"] }, { "skipIf": ["a"] }])),
+            "true"
+        );
+        // a group that never holds isn't read at all, it can't turn into always
+        assert!(serde_json::from_value::<RunIf>(serde_json::json!([
+            { "includeIf": ["a"], "skipIf": ["a"] }
+        ]))
+        .is_err());
     }
 }

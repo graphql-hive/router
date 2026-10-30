@@ -114,7 +114,7 @@ struct RepresentationsInputKey {
     /// `None` for an alias with one group, all of its paths run together. With more groups,
     /// some paths of an alias may run while others don't, so only aliases with the same
     /// groups collect the same representations.
-    path_groups: Option<Vec<(Option<RunIf>, Vec<FlattenNodePath>)>>,
+    path_groups: Option<Vec<(RunIf, Vec<FlattenNodePath>)>>,
 }
 
 struct BatchFetchBuilder<'a> {
@@ -176,7 +176,7 @@ impl<'a> BatchFetchBuilder<'a> {
         let representations_variable_name =
             self.get_or_create_representations_var(representative, &path_groups);
         // The router works out the conditions, the subgraph only gets a yes or no.
-        let can_be_off = path_groups.iter().all(|group| group.run_if.is_some());
+        let can_be_off = path_groups.iter().all(|group| !group.run_if.is_always());
         let run_variable_name = can_be_off.then(|| {
             let name = next_unique_variable_name(
                 "__batch_run_",
@@ -237,26 +237,21 @@ impl<'a> BatchFetchBuilder<'a> {
     /// A path runs when any of the fetches that reach it does. Paths that run under the same
     /// condition form a group, in the order they first show up.
     fn collect_path_groups(shape_group: &[EntityFetch]) -> Vec<PathGroup> {
-        // the groups of every fetch that reaches a path, `None` once one always runs. They're
-        // normalized once per path below, not once per fetch.
-        let mut paths: IndexMap<&FlattenNodePath, Option<Vec<ConditionGroup>>, RandomState> =
+        // when each fetch that reaches a path runs. They're normalized once per path below, not
+        // once per fetch.
+        let mut paths: IndexMap<&FlattenNodePath, Vec<RunIf>, RandomState> =
             IndexMap::with_capacity_and_hasher(shape_group.len(), RandomState::default());
         for candidate in shape_group {
-            let groups = paths
+            paths
                 .entry(&candidate.flatten_path)
-                .or_insert_with(|| Some(Vec::new()));
-            match (groups.as_mut(), &candidate.run_if) {
-                (Some(groups), Some(run_if)) => groups.extend(run_if.groups().iter().cloned()),
-                (_, None) => *groups = None,
-                (None, Some(_)) => {}
-            }
+                .or_default()
+                .push(candidate.run_if.clone());
         }
 
-        let mut groups: IndexMap<Option<RunIf>, Vec<FlattenNodePath>, RandomState> =
-            IndexMap::default();
-        for (path, path_groups) in paths {
+        let mut groups: IndexMap<RunIf, Vec<FlattenNodePath>, RandomState> = IndexMap::default();
+        for (path, run_ifs) in paths {
             groups
-                .entry(path_groups.and_then(RunIf::any_of))
+                .entry(RunIf::or(run_ifs))
                 .or_default()
                 .push(path.clone());
         }
@@ -509,9 +504,8 @@ struct EntityFetch {
     context: Option<Box<FetchContext>>,
     shape_key: ShapeKey,
     non_representations_variable_definitions: Vec<VariableDefinition>,
-    /// When it runs, `None` means always: the `Include`s and `Skip`s it sits under, and the
-    /// fetch's own `run_if`.
-    run_if: Option<RunIf>,
+    /// When it runs: the `Include`s and `Skip`s it sits under, and the fetch's own `run_if`.
+    run_if: RunIf,
 }
 
 impl EntityFetch {
@@ -547,14 +541,8 @@ impl EntityFetch {
         let Some(conditions) = ConditionGroup::from_literals(conditions) else {
             return Ok(None);
         };
-        let run_if = RunIf::and(
-            RunIf::any_of([conditions]).as_ref(),
-            fetch_node.run_if.as_ref(),
-        );
-        if run_if
-            .as_ref()
-            .is_some_and(|run_if| run_if.groups().is_empty())
-        {
+        let run_if = RunIf::any_of([conditions]).and(&fetch_node.run_if);
+        if run_if == RunIf::Never {
             return Ok(None);
         }
 
@@ -1364,6 +1352,7 @@ mod tests {
         },
         response::value::Value,
     };
+    use crate::query_planner::planner::plan_nodes::RunIf;
     use crate::query_planner::{
         ast::{
             document::Document,
@@ -2025,8 +2014,8 @@ mod tests {
             .map(|group| {
                 let paths: Vec<String> = group.paths.iter().map(|p| p.to_string()).collect();
                 match &group.run_if {
-                    Some(run_if) => format!("{run_if}: {}", paths.join(", ")),
-                    None => format!("always: {}", paths.join(", ")),
+                    RunIf::Always => format!("always: {}", paths.join(", ")),
+                    run_if => format!("{run_if}: {}", paths.join(", ")),
                 }
             })
             .collect();
@@ -3538,7 +3527,7 @@ mod tests {
             input_rewrites: None,
             output_rewrites: None,
             context: None,
-            run_if: None,
+            run_if: RunIf::Always,
         };
 
         let path = FlattenNodePath::from(&MergePath::new(vec![
@@ -3608,7 +3597,7 @@ mod tests {
             input_rewrites: None,
             output_rewrites: None,
             context: None,
-            run_if: None,
+            run_if: RunIf::Always,
         }
     }
 

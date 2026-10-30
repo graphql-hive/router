@@ -86,12 +86,12 @@ impl CostExpr {
         }
     }
 
-    /// `expr` only when `run_if` holds, `None` means always.
-    pub(crate) fn any_of(run_if: Option<&RunIf>, expr: Self) -> Self {
+    /// `expr` only when `run_if` holds.
+    pub(crate) fn any_of(run_if: &RunIf, expr: Self) -> Self {
         match (run_if, expr) {
             (_, Self::Const(0)) => Self::Const(0),
-            (None, expr) => expr,
-            (Some(run_if), expr) => Self::AnyOf {
+            (RunIf::Always, expr) => expr,
+            (run_if, expr) => Self::AnyOf {
                 run_if: run_if.clone(),
                 expr: Box::new(expr),
             },
@@ -435,7 +435,7 @@ fn replace_run_conditions(expr: CostExpr, aliases: &[EntityBatchAlias]) -> CostE
             };
             // the run variable is only `true` when one of the alias's groups holds. The cost of
             // `_entities` doesn't depend on how many paths it reads, so that's all it takes.
-            CostExpr::any_of(alias.run_if().as_ref(), if_true)
+            CostExpr::any_of(&alias.run_if(), if_true)
         }
         CostExpr::AnyOf { run_if, expr } => CostExpr::AnyOf {
             run_if,
@@ -1053,7 +1053,7 @@ mod tests {
         let expected = CostExpr::Add(vec![
             CostExpr::Const(3),
             CostExpr::AnyOf {
-                run_if: RunIf::any_of([group(&[("a", true), ("b", false)])]).unwrap(),
+                run_if: RunIf::any_of([group(&[("a", true), ("b", false)])]),
                 expr: Box::new(CostExpr::Const(5)),
             },
             CostExpr::Mul(
@@ -1069,8 +1069,7 @@ mod tests {
     #[test]
     fn any_of_counts_when_a_group_holds() {
         let expr = CostExpr::AnyOf {
-            run_if: RunIf::any_of([group(&[("a", true), ("b", false)]), group(&[("c", true)])])
-                .unwrap(),
+            run_if: RunIf::any_of([group(&[("a", true), ("b", false)]), group(&[("c", true)])]),
             expr: Box::new(CostExpr::Const(5)),
         };
         assert_eq!(expr.to_string(), "(if ($a && !$b) || $c then 5 else 0)");

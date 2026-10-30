@@ -161,11 +161,11 @@ pub struct FetchNode<S: PlanState = Executable> {
     pub output_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
     pub context: Option<Box<FetchContext>>,
-    /// The fetch only runs when this holds, `None` means always. It's what's left of its
-    /// fields' `@include`/`@skip` once the `Include`/`Skip` nodes around it are accounted for:
-    /// with every field skipped there's nothing to ask for.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run_if: Option<RunIf>,
+    /// The fetch only runs when this holds. It's what's left of its fields' `@include`/`@skip`
+    /// once the `Include`/`Skip` nodes around it are accounted for: with every field skipped
+    /// there's nothing to ask for.
+    #[serde(default, skip_serializing_if = "RunIf::is_always")]
+    pub run_if: RunIf,
 }
 
 /// What a fetch with `@fromContext` arguments needs at execution time.
@@ -459,17 +459,14 @@ pub struct EntityBatch {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PathGroup {
-    /// `None` means always.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run_if: Option<RunIf>,
+    #[serde(default, skip_serializing_if = "RunIf::is_always")]
+    pub run_if: RunIf,
     pub paths: MergePaths,
 }
 
 impl PathGroup {
     pub fn is_active(&self, value: impl Fn(&str) -> Option<bool>) -> bool {
-        self.run_if
-            .as_ref()
-            .is_none_or(|run_if| run_if.holds(value))
+        self.run_if.holds(value)
     }
 }
 
@@ -497,13 +494,9 @@ pub struct EntityBatchAlias {
 }
 
 impl EntityBatchAlias {
-    /// When the alias runs, `None` means always: any of the conditions of its groups.
-    pub fn run_if(&self) -> Option<RunIf> {
-        let mut groups = Vec::new();
-        for group in &self.path_groups {
-            groups.extend(group.run_if.as_ref()?.groups().iter().cloned());
-        }
-        RunIf::any_of(groups)
+    /// When the alias runs: any of the conditions of its groups.
+    pub fn run_if(&self) -> RunIf {
+        RunIf::or(self.path_groups.iter().map(|group| group.run_if.clone()))
     }
 }
 
@@ -817,7 +810,7 @@ impl FetchNode<Planning> {
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),
                     context,
-                    run_if: None,
+                    run_if: RunIf::Always,
                 }
             }
             false => {
@@ -859,58 +852,45 @@ impl FetchNode<Planning> {
                             .collect(),
                         step.context_rewrites.clone(),
                     ),
-                    run_if: None,
+                    run_if: RunIf::Always,
                 }
             }
         }
     }
 }
 
-/// When any field of a fetch is asked for, `None` when one always is. Two steps under other
+/// When any field of a fetch is asked for. Two steps under other
 /// conditions merge into one by putting each side's fields under its own condition
 /// (`... on T @include(if: $a) { .. }`), so this is when either side would have run.
-fn run_if_of_fetch_output(output: &FetchStepSelections<MultiTypeFetchStep>) -> Option<RunIf> {
-    let mut groups = Vec::new();
-    for (_, selection_set) in output.iter_selections() {
-        groups.extend(
-            run_if_of_selection_set(selection_set)?
-                .groups()
-                .iter()
-                .cloned(),
-        );
-    }
-    // no groups means nothing is ever asked for, like `@include(if: $a) @skip(if: $a)` on
-    // every field, so the fetch never runs
-    RunIf::any_of(groups)
+fn run_if_of_fetch_output(output: &FetchStepSelections<MultiTypeFetchStep>) -> RunIf {
+    // with nothing ever asked for, like `@include(if: $a) @skip(if: $a)` on every field, the
+    // fetch never runs
+    RunIf::or(
+        output
+            .iter_selections()
+            .map(|(_, selection_set)| run_if_of_selection_set(selection_set)),
+    )
 }
 
-fn run_if_of_selection_set(selection_set: &SelectionSet) -> Option<RunIf> {
-    let mut groups = Vec::new();
-    for item in &selection_set.items {
+fn run_if_of_selection_set(selection_set: &SelectionSet) -> RunIf {
+    RunIf::or(selection_set.items.iter().map(|item| {
         let (own, inner) = match item {
             SelectionItem::Field(field) => (
                 ConditionGroup::new(field.include_if.clone(), field.skip_if.clone()),
-                None,
+                RunIf::Always,
             ),
             SelectionItem::InlineFragment(fragment) => (
                 ConditionGroup::new(fragment.include_if.clone(), fragment.skip_if.clone()),
                 run_if_of_selection_set(&fragment.selections),
             ),
-            SelectionItem::FragmentSpread(_) => return None,
+            SelectionItem::FragmentSpread(_) => return RunIf::Always,
         };
-        // `@include(if: $a) @skip(if: $a)` is never asked for
-        let Some(own) = own else {
-            continue;
-        };
-        let own = RunIf::any_of([own]);
-        groups.extend(
-            RunIf::and(own.as_ref(), inner.as_ref())?
-                .groups()
-                .iter()
-                .cloned(),
-        );
-    }
-    RunIf::any_of(groups)
+        match own {
+            Some(own) => RunIf::any_of([own]).and(&inner),
+            // `@include(if: $a) @skip(if: $a)` is never asked for
+            None => RunIf::Never,
+        }
+    }))
 }
 
 impl PlanNode<Planning> {
@@ -945,9 +925,11 @@ impl PlanNode<Planning> {
                 let skip = condition.to_skip_if().map(|name| (name, false));
                 include.into_iter().chain(skip)
             }));
-            fetch.run_if = run_if_of_fetch_output(&step.output)
-                .zip(known)
-                .and_then(|(run_if, known)| run_if.assuming(&known));
+            fetch.run_if = match known {
+                Some(known) => run_if_of_fetch_output(&step.output).assuming(&known),
+                // they can't all hold, so the nodes around never run it anyway
+                None => RunIf::Always,
+            };
         }
 
         let node = if !step.response_path.is_empty() {
@@ -1050,12 +1032,12 @@ impl<S: PlanState> PrettyDisplay for FetchNode<S> {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
         match &self.run_if {
-            Some(run_if) => writeln!(
+            RunIf::Always => writeln!(f, "{indent}Fetch(service: \"{}\") {{", self.service_name)?,
+            run_if => writeln!(
                 f,
                 "{indent}Fetch(service: \"{}\", if: {run_if}) {{",
                 self.service_name
             )?,
-            None => writeln!(f, "{indent}Fetch(service: \"{}\") {{", self.service_name)?,
         }
         if let Some(requires) = &self.requires {
             writeln!(f, "{indent}  {{")?;
@@ -1082,8 +1064,8 @@ impl<S: PlanState> PrettyDisplay for BatchFetchNode<S> {
             writeln!(f, "{indent}    {} {{", alias.alias)?;
             for group in &alias.path_groups {
                 match &group.run_if {
-                    Some(run_if) => writeln!(f, "{indent}      paths if {run_if}: [")?,
-                    None => writeln!(f, "{indent}      paths: [")?,
+                    RunIf::Always => writeln!(f, "{indent}      paths: [")?,
+                    run_if => writeln!(f, "{indent}      paths if {run_if}: [")?,
                 }
                 for merge_path in group.paths.iter() {
                     writeln!(f, "{indent}        \"{}\"", merge_path)?;
@@ -1268,7 +1250,10 @@ mod stored_size_tests {
         for (name, actual, expected) in [
             ("PlanNode", size_of::<PlanNode>(), 40),
             ("ConditionNode", size_of::<ConditionNode>(), 40),
-            ("FetchNode", size_of::<FetchNode>(), 256),
+            // `run_if` naming `Always` and `Never` costs a tag next to its boxed groups, 8 B more
+            // than `Option<Box<[_]>>` did
+            ("FetchNode", size_of::<FetchNode>(), 264),
+            ("RunIf", size_of::<RunIf>(), 24),
             ("BatchFetchNode", size_of::<BatchFetchNode>(), 168),
             (
                 "SubgraphFetchOperation",

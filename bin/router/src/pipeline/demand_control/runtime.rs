@@ -334,7 +334,7 @@ impl DemandControlRuntime {
                     actual_plans_by_fetch_hash,
                 );
                 fetch_node.estimated_expr =
-                    CostExpr::any_of(fetch.run_if.as_ref(), fetch_node.estimated_expr);
+                    CostExpr::any_of(&fetch.run_if, fetch_node.estimated_expr);
                 FormulaPlanNode::Fetch(fetch_node)
             }
             PlanNode::BatchFetch(fetch) => FormulaPlanNode::Fetch(self.compile_formula_fetch_node(

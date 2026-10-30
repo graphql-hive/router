@@ -923,8 +923,7 @@ impl<'exec> Executor<'exec> {
     fn fetch_runs(&self, fetch_node: &FetchNode) -> bool {
         fetch_node
             .run_if
-            .as_ref()
-            .is_none_or(|run_if| run_if.holds(|name| variable_is_true(self.variable_values, name)))
+            .holds(|name| variable_is_true(self.variable_values, name))
     }
 
     fn prepare_root_reentry_fetch_job<'wave>(
@@ -2392,7 +2391,7 @@ mod tests {
             alias: alias.to_string(),
             representations_variable_name: representations_variable_name.to_string(),
             path_groups: vec![PathGroup {
-                run_if: None,
+                run_if: RunIf::Always,
                 paths: merge_paths.into(),
             }],
             requires: requires_from("{ ... on Product { upc } }"),
@@ -2404,7 +2403,7 @@ mod tests {
     }
 
     /// One group with these variables, `true` for an include and `false` for a skip.
-    fn run_if(literals: &[(&str, bool)]) -> Option<RunIf> {
+    fn run_if(literals: &[(&str, bool)]) -> RunIf {
         RunIf::any_of(ConditionGroup::from_literals(literals.iter().copied()))
     }
 
@@ -2961,7 +2960,7 @@ mod tests {
                             output_rewrites: None,
                             variable_usages: None,
                             operation_kind: None,
-                            run_if: None,
+                            run_if: RunIf::Always,
                         })),
                         PlanNode::Fetch(Box::new(FetchNode {
                             id: 2,
@@ -2978,7 +2977,7 @@ mod tests {
                             output_rewrites: None,
                             variable_usages: None,
                             operation_kind: None,
-                            run_if: None,
+                            run_if: RunIf::Always,
                         })),
                     ],
                 }),
