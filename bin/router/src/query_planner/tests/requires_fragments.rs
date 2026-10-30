@@ -27,7 +27,6 @@ fn requires_with_fragments_on_interfaces() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             userFromA {
-              __typename
               id
               profile {
                 __typename
@@ -102,7 +101,6 @@ fn requires_with_union_type_condition() -> Result<(), Box<dyn Error>> {
         Fetch(service: "catalog") {
           {
             products {
-              __typename
               id
               book {
                 title
@@ -157,7 +155,6 @@ fn requires_root_fragment_on_inapplicable_type() -> Result<(), Box<dyn Error>> {
         Fetch(service: "products") {
           {
             products {
-              __typename
               upc
               price
             }

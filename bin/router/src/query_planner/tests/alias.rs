@@ -110,7 +110,6 @@ fn client_alias_named_like_a_key_field() -> Result<(), Box<dyn Error>> {
         Fetch(service: "catalog") {
           {
             things {
-              __typename
               _internal_qp_alias_0: id
             }
           }
@@ -156,10 +155,8 @@ fn client_alias_named_like_a_key_field_under_a_condition() -> Result<(), Box<dyn
         Fetch(service: "a") {
           query ($x:Boolean!) {
             userInA {
-              __typename
               _internal_qp_alias_0: id
               ... on User @include(if: $x) {
-                __typename
                 _internal_qp_alias_0: id
               }
             }
@@ -545,7 +542,6 @@ fn aliasing_both_parent_and_leaf() -> Result<(), Box<dyn Error>> {
         Fetch(service: "store") {
           {
             allProducts: products {
-              __typename
               id
             }
           }
@@ -649,7 +645,6 @@ fn simple_mismatch_between_union_fields() -> Result<(), Box<dyn Error>> {
           Fetch(service: "a") {
             {
               users {
-                __typename
                 id
               }
             }
@@ -713,7 +708,7 @@ fn simple_mismatch_between_union_fields() -> Result<(), Box<dyn Error>> {
                 "kind": "Fetch",
                 "serviceName": "a",
                 "operationKind": "query",
-                "operation": "{users{__typename id}}"
+                "operation": "{users{id}}"
               }
             ]
           },
@@ -843,7 +838,6 @@ fn nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>> {
           Fetch(service: "a") {
             {
               users {
-                __typename
                 id
               }
             }
@@ -959,7 +953,7 @@ fn nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>> {
                 "kind": "Fetch",
                 "serviceName": "a",
                 "operationKind": "query",
-                "operation": "{users{__typename id}}"
+                "operation": "{users{id}}"
               }
             ]
           },
@@ -1146,7 +1140,6 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
           Fetch(service: "a") {
             {
               users {
-                __typename
                 id
               }
             }
@@ -1398,7 +1391,7 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
                 "kind": "Fetch",
                 "serviceName": "a",
                 "operationKind": "query",
-                "operation": "{users{__typename id}}"
+                "operation": "{users{id}}"
               }
             ]
           },

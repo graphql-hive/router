@@ -324,7 +324,7 @@ impl<'a> BatchFetchBuilder<'a> {
             ))
         })?;
 
-        let mut operation = PlanningFetchOperation::from_anonymous_operation(document);
+        let mut operation = PlanningFetchOperation::from_planned_operation(document, supergraph);
         if self
             .batched_aliases
             .iter()

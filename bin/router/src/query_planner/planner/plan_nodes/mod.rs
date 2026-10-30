@@ -757,7 +757,7 @@ fn create_output_operation(
 
     let document = minify_operation(operation_def, supergraph).expect("Failed to minify");
 
-    PlanningFetchOperation::from_anonymous_operation(document)
+    PlanningFetchOperation::from_planned_operation(document, supergraph)
 }
 
 impl FetchNode<Planning> {
@@ -835,7 +835,7 @@ impl FetchNode<Planning> {
                     variable_usages: step.variable_usages.clone(),
                     operation_kind: Some(step.operation_kind.clone()),
                     planner_requires: None,
-                    operation: PlanningFetchOperation::from_anonymous_operation(document),
+                    operation: PlanningFetchOperation::from_planned_operation(document, supergraph),
                     custom_scalar_paths: custom_scalar_paths_from_fetch_output(
                         &step.output,
                         supergraph,
