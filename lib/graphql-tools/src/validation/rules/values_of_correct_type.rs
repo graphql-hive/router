@@ -7,9 +7,12 @@ use crate::{
     validation::utils::ValidationErrorContext,
 };
 
+use super::defaults::ValidationOptions;
 use super::ValidationRule;
 
-pub struct ValuesOfCorrectType {}
+pub struct ValuesOfCorrectType {
+    disable_int_value_range_validation: bool,
+}
 
 impl Default for ValuesOfCorrectType {
     fn default() -> Self {
@@ -19,7 +22,13 @@ impl Default for ValuesOfCorrectType {
 
 impl ValuesOfCorrectType {
     pub fn new() -> Self {
-        Self {}
+        Self::with_options(ValidationOptions::default())
+    }
+
+    pub fn with_options(options: ValidationOptions) -> Self {
+        Self {
+            disable_int_value_range_validation: options.disable_int_value_range_validation,
+        }
     }
 
     pub fn is_custom_scalar(&self, type_name: &str) -> bool {
@@ -50,7 +59,8 @@ impl ValuesOfCorrectType {
                 if let TypeDefinition::Scalar(scalar_type_def) = &type_def {
                     match (scalar_type_def.name.as_ref(), raw_value) {
                         ("Int", Value::Int(value))
-                            if value.as_i64().is_some_and(|n| i32::try_from(n).is_err()) =>
+                            if !self.disable_int_value_range_validation
+                                && value.as_i64().is_some_and(|n| i32::try_from(n).is_err()) =>
                         {
                             user_context.report_error(ValidationError {
                                 error_code: self.error_code(),
@@ -243,7 +253,9 @@ impl ValidationRule for ValuesOfCorrectType {
     }
 
     fn visitor<'doc>(&self) -> super::ValidationVisitor<'doc> {
-        Box::new(ValuesOfCorrectType::new())
+        Box::new(ValuesOfCorrectType::with_options(ValidationOptions {
+            disable_int_value_range_validation: self.disable_int_value_range_validation,
+        }))
     }
 }
 
@@ -2160,4 +2172,22 @@ fn int_out_of_32_bit_range() {
             "Int cannot represent non 32-bit signed integer value: -2147483649",
         ]
     );
+}
+
+#[test]
+fn int_out_of_32_bit_range_can_be_disabled() {
+    use crate::validation::test_utils::*;
+
+    let mut plan = create_plan_from_rule(Box::new(ValuesOfCorrectType::with_options(
+        ValidationOptions {
+            disable_int_value_range_validation: true,
+        },
+    )));
+    let errors = test_operation_with_schema(
+        "query OutOfRange($a: Int = 2147483648, $b: Int = -2147483649) { dog { name } }",
+        TEST_SCHEMA,
+        &mut plan,
+    );
+
+    assert!(get_messages(&errors).is_empty(), "{errors:?}");
 }
