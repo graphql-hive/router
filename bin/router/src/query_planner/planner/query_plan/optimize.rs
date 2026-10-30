@@ -72,7 +72,7 @@ use crate::query_planner::{
     planner::error::QueryPlanError,
     planner::plan_nodes::planning::{
         custom_scalar_paths_for_entities_selection, BatchFetchNode, ConditionGroup,
-        CustomScalarPaths, EntityBatch, EntityBatchAlias, FetchContext, FetchRewrite,
+        CustomScalarPaths, EntityBatch, EntityBatchAlias, EntityReuse, FetchContext, FetchRewrite,
         FlattenNodePath, PlanNode,
     },
     planner::QueryPlannerOptions,
@@ -198,6 +198,9 @@ impl<'a> BatchFetchBuilder<'a> {
             output_rewrites: representative.output_rewrites.clone(),
             context: representative.context.clone(),
             run_if: representative.run_if.clone(),
+            // the fetches in a shape group come from one wave and ask for the same fields, so
+            // they can all copy from the same places
+            entity_reuse: representative.entity_reuse.clone(),
         });
 
         Ok(())
@@ -360,6 +363,7 @@ struct EntityFetch {
     run_if: Option<Vec<ConditionGroup>>,
     shape_key: ShapeKey,
     non_representations_variable_definitions: Vec<VariableDefinition>,
+    entity_reuse: Option<Box<EntityReuse>>,
 }
 
 impl EntityFetch {
@@ -489,6 +493,7 @@ impl EntityFetch {
             run_if: fetch_node.run_if.clone(),
             shape_key,
             non_representations_variable_definitions,
+            entity_reuse: fetch_node.entity_reuse.clone(),
         }))
     }
 }
@@ -2785,6 +2790,7 @@ mod tests {
             output_rewrites: None,
             context: None,
             run_if: None,
+            entity_reuse: None,
         };
 
         let path = FlattenNodePath::from(&MergePath::new(vec![
@@ -2866,6 +2872,7 @@ mod tests {
             output_rewrites: None,
             context: None,
             run_if: None,
+            entity_reuse: None,
         }
     }
 

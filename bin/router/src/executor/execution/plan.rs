@@ -40,6 +40,7 @@ use tracing::{debug, error, warn, Instrument};
 
 use crate::executor::execution::client_request_details::OperationDetails;
 use crate::executor::execution::demand_control::DemandControlExecutionContext;
+use crate::executor::execution::entity_reuse::{append_reused, ReuseIndex, ENTITY_REUSE};
 use crate::executor::execution::error_masking::ErrorMaskingRuntime;
 use crate::executor::execution::operation_name::OperationNameFactory;
 use crate::executor::executors::common::ConnectionFingerprint;
@@ -746,6 +747,10 @@ pub enum ExecutionJob<'exec> {
         /// the group.
         context_group_offsets: Vec<Option<usize>>,
         output_rewrites: Option<&'exec [FetchRewrite]>,
+        // How many entities we asked the subgraph for.
+        fetched_count: usize,
+        // Entities copied from the response instead. They go after the fetched ones.
+        reused: Vec<Value<'exec>>,
     },
     BatchFetch {
         subgraph_name: &'exec str,
@@ -793,6 +798,8 @@ pub struct AliasBatchState<'exec> {
     /// Where each context group's entities start in the alias's response, if this request
     /// sent the group.
     context_group_offsets: Vec<Option<usize>>,
+    // Entities copied from the response instead. They go after the fetched ones.
+    reused: Vec<Value<'exec>>,
     paths: Vec<AliasPathState<'exec>>,
 }
 
@@ -802,14 +809,19 @@ struct AliasPathState<'exec> {
 }
 
 /// Where an entity sits in an `_entities` response that carries the context groups in
-/// `context_group_offsets`.
+/// `context_group_offsets`. Copies come after the `fetched_count` entities the subgraph returns.
 #[inline]
 fn entity_index(
     entity: Option<EntityRef>,
     context_group_offsets: &[Option<usize>],
+    fetched_count: usize,
 ) -> Option<usize> {
     let entity = entity?;
-    Some((*context_group_offsets.get(entity.context_group)?)? + entity.index)
+    let offset = (*context_group_offsets.get(entity.context_group())?)?;
+    Some(match entity {
+        EntityRef::Fetched { index, .. } => offset + index,
+        EntityRef::Copied { index, .. } => fetched_count + index,
+    })
 }
 
 /// Offsets for a request that only carries `context_group`. All `None` when it's out of range.
@@ -905,7 +917,7 @@ impl<'exec> Executor<'exec> {
                 for child in &parallel_node.nodes {
                     // We borrow `ctx.data` only for sync preparation of the job future,
                     // and the actual execution of the job future is done without the borrow of `ctx.data`
-                    for fut in self.prepare_job_future(child, &ctx.data) {
+                    for fut in self.prepare_job_future(child, ctx) {
                         scope.push(fut);
                     }
                 }
@@ -922,10 +934,8 @@ impl<'exec> Executor<'exec> {
                 }
             }
             node => {
-                let mut scope: FuturesUnordered<_> = self
-                    .prepare_job_future(node, &ctx.data)
-                    .into_iter()
-                    .collect();
+                let mut scope: FuturesUnordered<_> =
+                    self.prepare_job_future(node, ctx).into_iter().collect();
                 while let Some(job) = scope.next().await {
                     self.process_job_result(ctx, job);
                 }
@@ -1150,8 +1160,12 @@ impl<'exec> Executor<'exec> {
     fn prepare_job_future<'wave>(
         &'wave self,
         node: &'exec PlanNode,
-        data: &Value<'exec>,
+        ctx: &ExecutionContext<'exec>,
     ) -> Vec<BoxFuture<'wave, Result<ExecutionJob<'exec>, PlanExecutionError>>> {
+        let data = &ctx.data;
+        // Once anything failed, a value in the response might be a `null` from an error,
+        // so we stop copying from it and ask the subgraphs.
+        let reuse_allowed = *ENTITY_REUSE && ctx.errors.is_empty();
         match node {
             PlanNode::Fetch(fetch_node) if !self.runs(fetch_node.run_if.as_deref()) => Vec::new(),
             PlanNode::Fetch(fetch_node) => vec![self
@@ -1176,6 +1190,7 @@ impl<'exec> Executor<'exec> {
                     self.schema_metadata
                         .entity_keys
                         .of_subgraph(&batch_fetch_node.service_name),
+                    reuse_allowed,
                 );
 
                 if waves.is_empty() {
@@ -1198,6 +1213,16 @@ impl<'exec> Executor<'exec> {
                             merge: aliases,
                             unalias,
                         } = request;
+                        if aliases.iter().all(|alias| alias.entity_count == 0) {
+                            // Every entity is already in the response, no need to ask the subgraph.
+                            return futures::future::ready(Ok(ExecutionJob::BatchFetch {
+                                operation: &batch_fetch_node.operation,
+                                subgraph_name: &batch_fetch_node.service_name,
+                                response: SubgraphResponse::default(),
+                                aliases,
+                            }))
+                            .boxed();
+                        }
                         self.prepare_execution_job(PrepareExecutionJobOpts {
                             subgraph_name: &batch_fetch_node.service_name,
                             variable_usages: batch_fetch_node.variable_usages.as_ref(),
@@ -1243,20 +1268,59 @@ impl<'exec> Executor<'exec> {
                     return vec![self.prepare_root_reentry_fetch_job(flatten_node, fetch_node)];
                 };
 
+                let possible_types = &self.schema_metadata.possible_types;
+                let mut reuse = fetch_node
+                    .entity_reuse
+                    .as_deref()
+                    .filter(|_| reuse_allowed)
+                    .map(|reuse| {
+                        ReuseIndex::build(
+                            reuse,
+                            data,
+                            requires_nodes.root_selections(),
+                            possible_types,
+                        )
+                    });
                 let (groups, mut path_entities) = collect_context_entities(
                     data,
                     [flatten_node.path.as_ref()],
                     requires_nodes,
                     fetch_node.input_rewrites.as_deref(),
                     &fetch_node.context,
-                    &self.schema_metadata.possible_types,
+                    possible_types,
                     self.schema_metadata
                         .entity_keys
                         .of_subgraph(&fetch_node.service_name),
+                    reuse.as_mut(),
                 );
+                let reused = reuse.map(ReuseIndex::into_copies).unwrap_or_default();
                 let target_entities = path_entities.pop().unwrap_or_default();
+                // Copies only happen without context variables, so with a single group,
+                // and they go after everything that group fetches.
+                let fetched_count = groups.first().map_or(0, |group| group.hash_to_index.len());
 
-                self.prepare_flatten_requests(fetch_node, groups)
+                let requests = self.prepare_flatten_requests(fetch_node, groups);
+                if requests.is_empty() {
+                    if reused.is_empty() {
+                        return Vec::new();
+                    }
+                    // Every entity is already in the response, no need to ask the subgraph.
+                    return vec![futures::future::ready(Ok(ExecutionJob::FlattenFetch {
+                        operation: &fetch_node.operation,
+                        flatten_node_path: &flatten_node.path,
+                        response: SubgraphResponse::default(),
+                        subgraph_name: fetch_node.service_name.as_str(),
+                        target_entities,
+                        context_group_offsets: vec![Some(0)],
+                        output_rewrites: fetch_node.output_rewrites.as_deref(),
+                        fetched_count: 0,
+                        reused,
+                    }))
+                    .boxed()];
+                }
+
+                let mut reused = Some(reused);
+                requests
                     .into_iter()
                     .map(|request| {
                         let PreparedRequest {
@@ -1267,6 +1331,7 @@ impl<'exec> Executor<'exec> {
                             unalias,
                         } = request;
                         let target_entities = Arc::clone(&target_entities);
+                        let reused = reused.take().unwrap_or_default();
                         self.prepare_execution_job(PrepareExecutionJobOpts {
                             subgraph_name: &fetch_node.service_name,
                             variable_usages: fetch_node.variable_usages.as_ref(),
@@ -1293,6 +1358,8 @@ impl<'exec> Executor<'exec> {
                                 target_entities,
                                 context_group_offsets,
                                 output_rewrites: fetch_node.output_rewrites.as_deref(),
+                                fetched_count,
+                                reused,
                             }
                         })
                         .boxed()
@@ -1422,12 +1489,16 @@ impl<'exec> Executor<'exec> {
                         ref target_entities,
                         ref context_group_offsets,
                         output_rewrites,
+                        fetched_count,
+                        reused,
                         ..
                     } => {
                         if let Some(response_bytes) = response.bytes {
                             ctx.response_storage.add_response(response_bytes);
                         }
-                        if let Some(mut entities) = response.data.take_entities() {
+                        let fetched = response.data.take_entities();
+                        if fetched.is_some() || !reused.is_empty() {
+                            let mut entities = fetched.unwrap_or_default();
                             if let Some(output_rewrites) = output_rewrites {
                                 for output_rewrite in output_rewrites {
                                     for entity in &mut entities {
@@ -1436,6 +1507,7 @@ impl<'exec> Executor<'exec> {
                                     }
                                 }
                             }
+                            append_reused(&mut entities, fetched_count, reused);
 
                             let mut index = 0;
                             let normalized_path = flatten_node_path.as_slice();
@@ -1450,7 +1522,7 @@ impl<'exec> Executor<'exec> {
                             let mut merger = EntityMerger::new(
                                 &mut entities,
                                 target_entities.iter().filter_map(|entity| {
-                                    entity_index(*entity, context_group_offsets)
+                                    entity_index(*entity, context_group_offsets, fetched_count)
                                 }),
                             );
                             traverse_and_callback_mut(
@@ -1463,7 +1535,7 @@ impl<'exec> Executor<'exec> {
                                     index += 1;
 
                                     if let Some(entity_index) =
-                                        entity_index(entity, context_group_offsets)
+                                        entity_index(entity, context_group_offsets, fetched_count)
                                     {
                                         if let (Some(error_path), Some(entity_index_error_map)) =
                                             (error_path, entity_index_error_map.as_mut())
@@ -1490,7 +1562,7 @@ impl<'exec> Executor<'exec> {
                     }
                     ExecutionJob::BatchFetch {
                         mut response,
-                        aliases,
+                        mut aliases,
                         ..
                     } => {
                         if let Some(response_bytes) = response.bytes {
@@ -1504,7 +1576,9 @@ impl<'exec> Executor<'exec> {
                         let mut entities_by_alias =
                             Self::collect_batched_entities_by_alias(&mut response.data, &aliases);
 
-                        for (alias_index, alias_state) in aliases.iter().enumerate() {
+                        for (alias_index, alias_state) in aliases.iter_mut().enumerate() {
+                            let reused = std::mem::take(&mut alias_state.reused);
+                            let alias_state = &*alias_state;
                             let alias_index = AliasIndex(alias_index);
                             let mut alias_errors = errors.by_alias_index.remove(&alias_index);
                             // Merge entities back into execution context (final data)
@@ -1513,6 +1587,7 @@ impl<'exec> Executor<'exec> {
                                 ctx,
                                 alias_state,
                                 entities_by_alias.get_mut(&alias_index),
+                                reused,
                                 alias_errors.as_deref(),
                             );
 
@@ -1644,12 +1719,16 @@ impl<'exec> Executor<'exec> {
         ctx: &mut ExecutionContext<'exec>,
         alias_state: &'alias AliasBatchState<'exec>,
         entities: Option<&mut Vec<Value<'exec>>>,
+        reused: Vec<Value<'exec>>,
         alias_errors: Option<&[GraphQLError]>,
     ) -> Option<HashMap<usize, Vec<GraphQLErrorPath>>> {
         let has_alias_errors = alias_errors.is_some();
         let mut entity_index_error_map = has_alias_errors.then(HashMap::new);
-        let Some(entities) = entities else {
-            return entity_index_error_map;
+        let mut nothing_fetched = Vec::new();
+        let entities = match entities {
+            Some(entities) => entities,
+            None if reused.is_empty() => return entity_index_error_map,
+            None => &mut nothing_fetched,
         };
 
         if let Some(output_rewrites) = alias_state.alias_spec.output_rewrites.as_ref() {
@@ -1660,9 +1739,10 @@ impl<'exec> Executor<'exec> {
             }
         }
 
-        if alias_state.entity_count == 0 {
+        if alias_state.entity_count == 0 && reused.is_empty() {
             return entity_index_error_map;
         }
+        append_reused(entities, alias_state.entity_count, reused);
 
         let mut merger = EntityMerger::new(
             entities,
@@ -1670,7 +1750,13 @@ impl<'exec> Executor<'exec> {
                 .paths
                 .iter()
                 .flat_map(|path_state| path_state.target_entities.iter())
-                .filter_map(|entity| entity_index(*entity, &alias_state.context_group_offsets)),
+                .filter_map(|entity| {
+                    entity_index(
+                        *entity,
+                        &alias_state.context_group_offsets,
+                        alias_state.entity_count,
+                    )
+                }),
         );
 
         // We walk each merge path
@@ -1691,9 +1777,11 @@ impl<'exec> Executor<'exec> {
                     let entity = path_state.target_entities.get(index).copied().flatten();
                     index += 1;
 
-                    if let Some(entity_index) =
-                        entity_index(entity, &alias_state.context_group_offsets)
-                    {
+                    if let Some(entity_index) = entity_index(
+                        entity,
+                        &alias_state.context_group_offsets,
+                        alias_state.entity_count,
+                    ) {
                         // If this alias has errors, we also collect target paths
                         // so one subgraph error can be copied to all matching targets.
                         if let (Some(error_path), Some(entity_index_error_map)) =
@@ -1725,30 +1813,59 @@ impl<'exec> Executor<'exec> {
         entity_batch: &'exec EntityBatch,
         data: &Value<'exec>,
         subgraph_keys: Option<&KeysByType>,
+        reuse_allowed: bool,
     ) -> Vec<BatchWave<'exec>> {
+        let possible_types = &self.schema_metadata.possible_types;
         let mut prepared: Vec<_> = entity_batch
             .aliases
             .iter()
             .map(|alias_spec| {
                 // an alias that's off sends `[]`
                 if !self.runs(alias_spec.run_if.as_deref()) {
-                    return (Vec::new(), Vec::new());
+                    return (Vec::new(), Vec::new(), Vec::new());
                 }
-                collect_context_entities(
+                // Aliases that send the same list share one variable, and only the first one's
+                // list goes out. Copying could leave different entities out of each, so they
+                // don't copy.
+                let shares_variable = entity_batch
+                    .aliases
+                    .iter()
+                    .filter(|other| {
+                        other.representations_variable_name
+                            == alias_spec.representations_variable_name
+                    })
+                    .count()
+                    > 1;
+                let mut reuse = alias_spec
+                    .entity_reuse
+                    .as_deref()
+                    .filter(|_| reuse_allowed && !shares_variable)
+                    .map(|reuse| {
+                        ReuseIndex::build(
+                            reuse,
+                            data,
+                            alias_spec.requires.root_selections(),
+                            possible_types,
+                        )
+                    });
+                let (groups, path_entities) = collect_context_entities(
                     data,
                     alias_spec.merge_paths.iter(),
                     &alias_spec.requires,
                     alias_spec.input_rewrites.as_deref(),
                     &alias_spec.context,
-                    &self.schema_metadata.possible_types,
+                    possible_types,
                     subgraph_keys,
-                )
+                    reuse.as_mut(),
+                );
+                let reused = reuse.map(ReuseIndex::into_copies).unwrap_or_default();
+                (groups, path_entities, reused)
             })
             .collect();
 
         let wave_count = prepared
             .iter()
-            .map(|(groups, _)| groups.len())
+            .map(|(groups, _, _)| groups.len())
             .max()
             .unwrap_or_default();
         let mut waves = Vec::with_capacity(wave_count);
@@ -1756,7 +1873,7 @@ impl<'exec> Executor<'exec> {
             let mut raw_variable_values: Vec<(&'exec str, Vec<u8>)> =
                 Vec::with_capacity(entity_batch.aliases.len());
             let mut aliases = Vec::with_capacity(entity_batch.aliases.len());
-            for (alias_spec, (groups, path_entities)) in
+            for (alias_spec, (groups, path_entities, reused)) in
                 entity_batch.aliases.iter().zip(&mut prepared)
             {
                 // an alias with fewer groups still needs its context variables, it just sends no
@@ -1793,10 +1910,13 @@ impl<'exec> Executor<'exec> {
                         .unwrap_or_else(|| b"[]".to_vec());
                     raw_variable_values.push((variable_name, representations));
                 }
+                // Copies only happen with a single group, so they all go in the first wave.
+                let reused = std::mem::take(reused);
                 aliases.push(AliasBatchState {
                     alias_spec,
                     entity_count: group.map_or(0, |group| group.hash_to_index.len()),
                     context_group_offsets: single_context_group_offsets(wave, groups.len()),
+                    reused,
                     paths: alias_spec
                         .merge_paths
                         .iter()
@@ -1808,7 +1928,10 @@ impl<'exec> Executor<'exec> {
                         .collect(),
                 });
             }
-            if aliases.iter().any(|alias| alias.entity_count > 0) {
+            if aliases
+                .iter()
+                .any(|alias| alias.entity_count > 0 || !alias.reused.is_empty())
+            {
                 waves.push((raw_variable_values, aliases));
             }
         }
@@ -2227,6 +2350,7 @@ mod tests {
                     output_rewrites: None,
                     context: None,
                     run_if: None,
+                    entity_reuse: None,
                 },
                 EntityBatchAlias {
                     alias: "_e1".to_string(),
@@ -2237,11 +2361,12 @@ mod tests {
                     output_rewrites: None,
                     context: None,
                     run_if: None,
+                    entity_reuse: None,
                 },
             ],
         };
 
-        let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None);
+        let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None, false);
 
         assert_eq!(waves.len(), 1);
         let (raw_variable_values, aliases) = &waves[0];
@@ -2256,7 +2381,7 @@ mod tests {
                 Some(Vec::new()),
             );
         }
-        let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None);
+        let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None, false);
         assert_eq!(waves.len(), 1);
         assert!(waves[0].0.contains(&("__context_0", b"null".to_vec())));
         assert!(waves[0].0.contains(&("__context_1", b"null".to_vec())));
@@ -2293,7 +2418,7 @@ mod tests {
                     rename_key_to: "__context_1".into(),
                 }]),
             );
-        let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None);
+        let waves = executor.prepare_batch_fetch_job_state(&entity_batch, &data, None, false);
         assert_eq!(waves.len(), 2);
         for (wave, upc) in waves.iter().zip(["\"1\"", "\"2\""]) {
             assert!(wave.0.contains(&("__context_0", upc.as_bytes().to_vec())));
@@ -2424,6 +2549,7 @@ mod tests {
                             output_rewrites: None,
                             variable_usages: None,
                             operation_kind: None,
+                            entity_reuse: None,
                         })),
                         PlanNode::Fetch(Box::new(FetchNode {
                             id: 2,
@@ -2441,6 +2567,7 @@ mod tests {
                             output_rewrites: None,
                             variable_usages: None,
                             operation_kind: None,
+                            entity_reuse: None,
                         })),
                     ],
                 }),

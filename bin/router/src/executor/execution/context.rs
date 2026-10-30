@@ -8,7 +8,7 @@ use xxhash_rust::xxh3::Xxh3;
 
 use crate::{
     executor::{
-        execution::rewrites::FetchRewriteExt,
+        execution::{entity_reuse::ReuseIndex, rewrites::FetchRewriteExt},
         introspection::schema::PossibleTypes,
         projection::request::project_requires,
         response::{
@@ -27,17 +27,28 @@ use crate::{
     },
 };
 
-/// Which entity goes into a target: the context group it was sent in, and its index among that
-/// group's representations.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct EntityRef {
-    pub context_group: usize,
-    pub index: usize,
-}
-
-/// The [`EntityRef`] of each target on a path, in walk order. `None` when the target sends
+/// Which entity goes into each target on a path, in walk order. `None` when the target sends
 /// nothing (null, or not projected).
 pub(super) type TargetEntities = Arc<Vec<Option<EntityRef>>>;
+
+/// Which entity goes into a target, and the context group it belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntityRef {
+    /// Sent to the subgraph, `index` is its place among the context group's representations.
+    Fetched { context_group: usize, index: usize },
+    /// Copied from the response instead, `index` is its place among the copies. Copies only
+    /// happen without context variables, so always in group 0.
+    Copied { index: usize },
+}
+
+impl EntityRef {
+    pub fn context_group(self) -> usize {
+        match self {
+            Self::Fetched { context_group, .. } => context_group,
+            Self::Copied { .. } => 0,
+        }
+    }
+}
 
 pub(super) struct ContextGroup<'a> {
     pub variables: Vec<(&'a str, Vec<u8>)>,
@@ -234,6 +245,10 @@ impl<'a, 'd, 'v> ContextGroups<'a, 'd, 'v> {
 /// representations. Entities are grouped by the tuple of their context values (one request per
 /// group), without context variables there is at most one group. Identical paths share their
 /// target entities.
+///
+/// With `reuse`, an entity already in the response is copied instead of sent. Its target is
+/// `EntityRef::Copied` and points into `reuse`'s copies. Only without context variables, so
+/// there's one group and the copies go after everything that group fetches.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn collect_context_entities<'a, 'd, 'v>(
     data: &'d Value<'v>,
@@ -243,8 +258,10 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
     context: &'a Option<Box<FetchContext>>,
     possible_types: &PossibleTypes,
     subgraph_keys: Option<&KeysByType>,
+    reuse: Option<&mut ReuseIndex<'_, 'v>>,
 ) -> (Vec<ContextGroup<'a>>, Vec<TargetEntities>) {
     let mut contexts = ContextGroups::new(context);
+    let mut reuse = reuse.filter(|_| contexts.names.is_empty());
     let mut path_entities: Vec<TargetEntities> = Vec::new();
     let mut seen_paths: Vec<(ResponsePathRef<'a>, TargetEntities)> = Vec::new();
     let required_selections = requires.root_selections();
@@ -274,10 +291,14 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
             };
             let group = &mut contexts.groups[group_index];
             if let Some(index) = group.hash_to_index.get(&hash) {
-                entities.push(Some(EntityRef {
+                entities.push(Some(EntityRef::Fetched {
                     context_group: group_index,
                     index: *index,
                 }));
+                return;
+            }
+            if let Some(index) = reuse.as_mut().and_then(|reuse| reuse.copy(hash)) {
+                entities.push(Some(EntityRef::Copied { index }));
                 return;
             }
             let mut rewritten;
@@ -302,7 +323,7 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
             ) {
                 let index = group.hash_to_index.len();
                 group.hash_to_index.insert(hash, index);
-                entities.push(Some(EntityRef {
+                entities.push(Some(EntityRef::Fetched {
                     context_group: group_index,
                     index,
                 }));
@@ -509,6 +530,7 @@ mod tests {
             &context,
             &PossibleTypes::default(),
             None,
+            None,
         );
         assert_eq!(groups.len(), 3);
         assert_eq!(
@@ -525,8 +547,8 @@ mod tests {
         assert_eq!(targets[0][4], None);
         // another parent with the same value lands in the same group
         assert_eq!(targets[0][5], targets[0][0]);
-        assert_eq!(targets[0][0].unwrap().context_group, 0);
-        assert_ne!(targets[0][2].unwrap().context_group, 0);
+        assert_eq!(targets[0][0].unwrap().context_group(), 0);
+        assert_ne!(targets[0][2].unwrap().context_group(), 0);
     }
 
     #[test]
@@ -582,13 +604,14 @@ mod tests {
             &context,
             &possible_types,
             None,
+            None,
         );
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].variables[1].1, b"\"A\"");
         assert_eq!(groups[1].variables[1].1, b"\"B\"");
         let entity_groups: Vec<usize> = targets[0]
             .iter()
-            .map(|entity| entity.unwrap().context_group)
+            .map(|entity| entity.unwrap().context_group())
             .collect();
         assert_eq!(entity_groups[..3], [0, 1, 0]);
 
@@ -687,6 +710,7 @@ mod tests {
             &context,
             &PossibleTypes::default(),
             None,
+            None,
         );
         assert_eq!(
             groups
@@ -705,7 +729,7 @@ mod tests {
         // posts 1 to 4, then drafts 5 and 6, with the group each one must land in
         let entities = targets[0].iter().chain(targets[1].iter());
         for (entity, group) in entities.zip([0, 0, 1, 2, 0, 2]) {
-            assert_eq!(entity.unwrap().context_group, group);
+            assert_eq!(entity.unwrap().context_group(), group);
         }
         assert_eq!(
             groups
@@ -742,6 +766,7 @@ mod tests {
             &context,
             &PossibleTypes::default(),
             Some(&keys),
+            None,
         );
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].variables, vec![("__context_0", b"null".to_vec())]);
@@ -778,6 +803,7 @@ mod tests {
             None,
             &context,
             &PossibleTypes::default(),
+            None,
             None,
         );
         assert_eq!(groups.len(), 1);
