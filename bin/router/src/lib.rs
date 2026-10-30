@@ -93,7 +93,9 @@ pub use arc_swap::ArcSwap;
 pub use async_trait::async_trait;
 pub use dashmap::DashMap;
 pub use graphql_tools;
-use graphql_tools::validation::rules::default_rules_validation_plan;
+use graphql_tools::validation::rules::{
+    default_rules_validation_plan_with_options, ValidationOptions,
+};
 pub use http;
 pub use mimalloc::MiMalloc as RouterGlobalAllocator;
 pub use ntex;
@@ -626,7 +628,14 @@ pub async fn configure_app_from_config(
     .await?;
     let schema_state_arc = Arc::new(schema_state);
 
-    let mut validation_plan = default_rules_validation_plan();
+    let validation_options = ValidationOptions {
+        disable_int_value_range_validation: std::env::var(
+            "ROUTER_DISABLE_INT_VALUE_RANGE_VALIDATION",
+        )
+        .map(|value| matches!(value.as_str(), "true" | "1"))
+        .unwrap_or(false),
+    };
+    let mut validation_plan = default_rules_validation_plan_with_options(validation_options);
     if let Some(max_depth_config) = &router_config.limits.max_depth {
         validation_plan.add_rule(Box::new(MaxDepthRule {
             config: max_depth_config.clone(),
@@ -647,6 +656,7 @@ pub async fn configure_app_from_config(
         router_config,
         jwt_runtime,
         validation_plan,
+        validation_options,
         telemetry_context_arc.clone(),
         plugins_arc,
         active_subscriptions.clone(),

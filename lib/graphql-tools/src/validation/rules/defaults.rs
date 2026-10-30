@@ -10,7 +10,16 @@ use super::{
     ValuesOfCorrectType, VariablesAreInputTypes, VariablesInAllowedPosition,
 };
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ValidationOptions {
+    pub disable_int_value_range_validation: bool,
+}
+
 pub fn default_rules_validation_plan() -> ValidationPlan {
+    default_rules_validation_plan_with_options(ValidationOptions::default())
+}
+
+pub fn default_rules_validation_plan_with_options(options: ValidationOptions) -> ValidationPlan {
     let rules: Vec<Box<dyn ValidationRule>> = vec![
         Box::new(UniqueOperationNames::new()),
         Box::new(LoneAnonymousOperation::new()),
@@ -34,7 +43,7 @@ pub fn default_rules_validation_plan() -> ValidationPlan {
         Box::new(ProvidedRequiredArguments::new()),
         Box::new(KnownDirectives::new()),
         Box::new(VariablesInAllowedPosition::new()),
-        Box::new(ValuesOfCorrectType::new()),
+        Box::new(ValuesOfCorrectType::with_options(options)),
         Box::new(UniqueInputFieldNames::new()),
         Box::new(UniqueDirectivesPerLocation::new()),
     ];

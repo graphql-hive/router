@@ -22,7 +22,8 @@ fn allow_null_values_for_nullable_scalar_types() {
 
         let value = sonic_rs::ValueRef::Null;
 
-        let result = super::validate_runtime_value(value, &type_node, &schema_metadata);
+        let result =
+            super::validate_runtime_value(value, &type_node, &schema_metadata, Default::default());
         assert_eq!(result, Ok(()));
     }
 }
@@ -33,7 +34,8 @@ fn allow_null_values_for_nullable_list_types() {
         crate::executor::variables::TypeNode::Named("String".to_string()),
     ));
     let value = sonic_rs::ValueRef::Null;
-    let result = super::validate_runtime_value(value, &type_node, &schema_metadata);
+    let result =
+        super::validate_runtime_value(value, &type_node, &schema_metadata, Default::default());
     assert_eq!(result, Ok(()));
 }
 #[test]
@@ -43,7 +45,8 @@ fn allow_matching_non_list_values_for_list_types() {
         crate::executor::variables::TypeNode::Named("String".to_string()),
     ));
     let value = sonic_rs::ValueRef::String("not a list");
-    let result = super::validate_runtime_value(value, &type_node, &schema_metadata);
+    let result =
+        super::validate_runtime_value(value, &type_node, &schema_metadata, Default::default());
     assert_eq!(result, Ok(()));
 }
 #[test]
@@ -53,6 +56,7 @@ fn disallow_non_matching_non_list_values_for_list_types() {
         crate::executor::variables::TypeNode::Named("String".to_string()),
     ));
     let value = sonic_rs::ValueRef::Number(sonic_rs::Number::from(123));
-    let result = super::validate_runtime_value(value, &type_node, &schema_metadata);
+    let result =
+        super::validate_runtime_value(value, &type_node, &schema_metadata, Default::default());
     assert!(result.is_err());
 }

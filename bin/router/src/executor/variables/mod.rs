@@ -5,6 +5,7 @@ use crate::query_planner::state::supergraph_state::TypeNode;
 use sonic_rs::{JsonNumberTrait, Value, ValueRef};
 
 use crate::executor::introspection::schema::{InputObjectInfo, SchemaMetadata};
+use graphql_tools::validation::rules::ValidationOptions;
 
 /// A request error raised while coercing an operation's variable values
 /// (spec: "Coercing Variable Values"). Messages follow graphql-js.
@@ -141,6 +142,21 @@ pub fn collect_variables(
     variables_map: &mut HashMap<String, Value>,
     schema_metadata: &SchemaMetadata,
 ) -> Result<Option<HashMap<String, Value>>, VariableCoercionError> {
+    collect_variables_with_options(
+        operation,
+        variables_map,
+        schema_metadata,
+        ValidationOptions::default(),
+    )
+}
+
+#[inline]
+pub fn collect_variables_with_options(
+    operation: &crate::query_planner::ast::operation::OperationDefinition,
+    variables_map: &mut HashMap<String, Value>,
+    schema_metadata: &SchemaMetadata,
+    options: ValidationOptions,
+) -> Result<Option<HashMap<String, Value>>, VariableCoercionError> {
     let Some(variable_definitions) = operation.variable_definitions.as_ref() else {
         return Ok(None);
     };
@@ -153,15 +169,20 @@ pub fn collect_variables(
         let variable_type = &variable_definition.variable_type;
 
         if let Some(variable_value) = variables_map.remove(variable_name) {
-            validate_runtime_value(variable_value.as_ref(), variable_type, schema_metadata)
-                .map_err(|invalid| {
-                    let (path, reason) = invalid.path();
-                    VariableCoercionError::InvalidValue {
-                        name: variable_name.to_string(),
-                        path,
-                        reason,
-                    }
-                })?;
+            validate_runtime_value(
+                variable_value.as_ref(),
+                variable_type,
+                schema_metadata,
+                options,
+            )
+            .map_err(|invalid| {
+                let (path, reason) = invalid.path();
+                VariableCoercionError::InvalidValue {
+                    name: variable_name.to_string(),
+                    path,
+                    reason,
+                }
+            })?;
             variable_values.insert(variable_name.to_string(), variable_value);
             continue;
         }
@@ -172,6 +193,7 @@ pub fn collect_variables(
                 default_value_coerced.as_ref(),
                 variable_type,
                 schema_metadata,
+                options,
             )
             .map_err(|invalid| {
                 let (path, reason) = invalid.path();
@@ -208,6 +230,7 @@ fn validate_runtime_value(
     value: ValueRef,
     type_node: &TypeNode,
     schema_metadata: &SchemaMetadata,
+    options: ValidationOptions,
 ) -> Result<(), InvalidValue> {
     if let ValueRef::Null = value {
         return if type_node.is_non_null() {
@@ -235,27 +258,26 @@ fn validate_runtime_value(
                     }));
                 }
             } else if let Some(input_object) = schema_metadata.input_objects.get(name) {
-                validate_input_object(value, name, input_object, schema_metadata)?;
+                validate_input_object(value, name, input_object, schema_metadata, options)?;
             } else {
-                validate_scalar(name, value).map_err(InvalidValue::new)?;
+                validate_scalar(name, value, options).map_err(InvalidValue::new)?;
             }
         }
         TypeNode::NonNull(inner_type) => {
             // The null check is now handled above, so we can just recurse.
-            validate_runtime_value(value, inner_type, schema_metadata)?;
+            validate_runtime_value(value, inner_type, schema_metadata, options)?;
         }
         TypeNode::List(inner_type) => {
             if let ValueRef::Array(arr) = value {
                 for (index, item) in arr.iter().enumerate() {
-                    validate_runtime_value(item.as_ref(), inner_type, schema_metadata).map_err(
-                        |mut invalid| {
+                    validate_runtime_value(item.as_ref(), inner_type, schema_metadata, options)
+                        .map_err(|mut invalid| {
                             invalid.reversed_path.push(PathSegment::Index(index));
                             invalid
-                        },
-                    )?;
+                        })?;
                 }
             } else {
-                validate_runtime_value(value, inner_type, schema_metadata)?;
+                validate_runtime_value(value, inner_type, schema_metadata, options)?;
             }
         }
     }
@@ -270,6 +292,7 @@ fn validate_input_object(
     type_name: &str,
     input_object: &InputObjectInfo,
     schema_metadata: &SchemaMetadata,
+    options: ValidationOptions,
 ) -> Result<(), InvalidValue> {
     let ValueRef::Object(object) = value else {
         return Err(InvalidValue::new(InvalidValueReason::ExpectedObject {
@@ -300,15 +323,18 @@ fn validate_input_object(
 
     for field in fields {
         match object.get(&field.name) {
-            Some(field_value) => {
-                validate_runtime_value(field_value.as_ref(), &field.field_type, schema_metadata)
-                    .map_err(|mut invalid| {
-                        invalid
-                            .reversed_path
-                            .push(PathSegment::Field(field.name.clone()));
-                        invalid
-                    })?
-            }
+            Some(field_value) => validate_runtime_value(
+                field_value.as_ref(),
+                &field.field_type,
+                schema_metadata,
+                options,
+            )
+            .map_err(|mut invalid| {
+                invalid
+                    .reversed_path
+                    .push(PathSegment::Field(field.name.clone()));
+                invalid
+            })?,
             // A field is required only when it is non-null and has no default.
             None if field.field_type.is_non_null() && !field.has_default => {
                 return Err(InvalidValue::new(
@@ -340,7 +366,11 @@ fn validate_input_object(
 /// Checks a value against a built-in scalar. Like Apollo Router, Int and ID only accept JSON
 /// numbers written as integers: `1.0` or `1e3` are floats, even with no fractional part.
 #[inline]
-fn validate_scalar(name: &str, value: ValueRef) -> Result<(), InvalidValueReason> {
+fn validate_scalar(
+    name: &str,
+    value: ValueRef,
+    options: ValidationOptions,
+) -> Result<(), InvalidValueReason> {
     let is_integer = |num: &sonic_rs::Number| num.is_i64() || num.is_u64();
     match (name, &value) {
         ("String", ValueRef::String(_))
@@ -350,7 +380,9 @@ fn validate_scalar(name: &str, value: ValueRef) -> Result<(), InvalidValueReason
         ("ID", ValueRef::String(_)) => Ok(()),
         ("ID", ValueRef::Number(num)) if is_integer(num) => Ok(()),
         ("Int", ValueRef::Number(num)) if is_integer(num) => {
-            if num.as_i64().is_some_and(|n| i32::try_from(n).is_ok()) {
+            if options.disable_int_value_range_validation
+                || num.as_i64().is_some_and(|n| i32::try_from(n).is_ok())
+            {
                 Ok(())
             } else {
                 Err(InvalidValueReason::IntegerOutOfRange {

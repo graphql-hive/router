@@ -5,12 +5,13 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::LazyLock;
 
 use graphql_tools::validation::rules::default_rules_validation_plan;
+use graphql_tools::validation::rules::ValidationOptions;
 use graphql_tools::validation::validate::validate;
 use sonic_rs::Value;
 
 use crate::executor::introspection::partition::partition_operation;
 use crate::executor::introspection::schema::{SchemaMetadata, SchemaWithMetadata};
-use crate::executor::variables::{collect_variables, VariableCoercionError};
+use crate::executor::variables::{collect_variables_with_options, VariableCoercionError};
 use crate::query_planner::ast::normalization::normalize_operation;
 use crate::query_planner::consumer_schema::ConsumerSchema;
 use crate::query_planner::state::supergraph_state::SupergraphState;
@@ -48,6 +49,14 @@ pub(super) enum Outcome {
 
 /// Coerces `variables` (a JSON object) for `operation`, without running validation first.
 pub(super) fn coerce(operation: &str, variables: &str) -> Outcome {
+    coerce_with_options(operation, variables, ValidationOptions::default())
+}
+
+pub(super) fn coerce_with_options(
+    operation: &str,
+    variables: &str,
+    options: ValidationOptions,
+) -> Outcome {
     let document = safe_parse_operation(operation)
         .unwrap_or_else(|err| panic!("failed to parse operation: {err}\n{operation}"));
     let normalized = normalize_operation(&SCHEMA.supergraph_state, &document, None)
@@ -57,7 +66,12 @@ pub(super) fn coerce(operation: &str, variables: &str) -> Outcome {
     let mut variables: HashMap<String, Value> = sonic_rs::from_str(variables)
         .unwrap_or_else(|err| panic!("variables must be a JSON object: {err}\n{variables}"));
 
-    match collect_variables(&operation_for_plan, &mut variables, &SCHEMA.metadata) {
+    match collect_variables_with_options(
+        &operation_for_plan,
+        &mut variables,
+        &SCHEMA.metadata,
+        options,
+    ) {
         Ok(coerced) => Outcome::Coerced(coerced.unwrap_or_default().into_iter().collect()),
         Err(err) => Outcome::Rejected(messages(&err)),
     }

@@ -2,8 +2,9 @@
 
 use super::harness::{
     assert_coerced, assert_forwarded, assert_invalid_json, assert_rejected,
-    assert_rejected_by_validation,
+    assert_rejected_by_validation, coerce_with_options, Outcome,
 };
+use graphql_tools::validation::rules::ValidationOptions;
 
 /// `query ($v: <variable_type>) { <field>(input: $v) }`
 fn operation(variable_type: &str, field: &str) -> String {
@@ -62,6 +63,24 @@ mod int {
             &op(),
             "2147483648",
             "Int cannot represent non 32-bit signed integer value: 2147483648",
+        );
+    }
+
+    #[test]
+    fn int_out_of_range_is_accepted_when_range_validation_is_disabled() {
+        assert_eq!(
+            coerce_with_options(
+                &op(),
+                r#"{"v":2147483648}"#,
+                ValidationOptions {
+                    disable_int_value_range_validation: true,
+                },
+            ),
+            Outcome::Coerced(
+                [("v".to_string(), sonic_rs::from_str("2147483648").unwrap())]
+                    .into_iter()
+                    .collect()
+            )
         );
     }
 
