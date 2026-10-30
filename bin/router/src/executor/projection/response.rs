@@ -4,7 +4,7 @@ use crate::executor::projection::plan::{
     Condition, ConditionId, FieldRecord, ProjectionPlan, ShapeFlags,
 };
 use crate::executor::response::graphql_error::GraphQLError;
-use crate::executor::response::value::{key_eq, Value};
+use crate::executor::response::value::Value;
 use bytes::BufMut;
 use sonic_rs::JsonValueTrait;
 use std::cell::OnceCell;
@@ -477,7 +477,7 @@ fn find_field<'a>(
     // It's only a hint though, so check the key.
     if let Some(index) = hint.as_deref().copied() {
         if let Some((key, value)) = obj.get(index) {
-            if key_eq(key, response_key) {
+            if *key == response_key {
                 *cursor = index + 1;
                 return Some(value);
             }
