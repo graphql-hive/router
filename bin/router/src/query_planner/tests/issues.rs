@@ -1,4 +1,5 @@
 use crate::query_planner::{
+    graph::PlannerOverrideContext,
     planner::QueryPlannerOptions,
     tests::testkit::{build_query_plan, build_query_plan_with_defaults, init_logger},
     utils::parsing::parse_operation,
@@ -1587,6 +1588,418 @@ fn issue_1647_include_on_fragment_after_conditional_entity_call() -> Result<(), 
             {
               ... on User {
                 invoices
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `nested-field-key` resolves `Item` by `group { tag }`, `source` by `group { id }`. The call
+/// for `valueNestedField` goes to `nested-field-key`, so it sends `group { tag }`, not the key
+/// of another subgraph.
+#[test]
+fn requires_sends_the_key_of_its_own_subgraph() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          list {
+            items {
+              valueNestedField
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/issues/requires-circular-keys.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "source") {
+          {
+            list {
+              items {
+                __typename
+                group {
+                  tag
+                  id
+                }
+                tag {
+                  id
+                }
+              }
+            }
+          }
+        },
+        Flatten(path: "list.items.@") {
+          Fetch(service: "nested-field-key") {
+            {
+              ... on Item {
+                __typename
+                tag {
+                  id
+                }
+                group {
+                  tag
+                }
+              }
+            } =>
+            {
+              ... on Item {
+                valueNestedField
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `head` resolves `Item` by `code`, `price` requires `weight` from `other`, which takes `id`.
+/// `source` holds the items and has `id` too, so it fetches it for the jump to `other`. No call
+/// to `head` just for `id`.
+#[test]
+fn requires_jump_key_comes_from_the_subgraph_holding_the_objects() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          items {
+            price
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/issues/requires-jump-to-other-subgraph.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "source") {
+          {
+            items {
+              __typename
+              code
+              id
+            }
+          }
+        },
+        Flatten(path: "items.@") {
+          Fetch(service: "other") {
+            {
+              ... on Item {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Item {
+                weight
+              }
+            }
+          },
+        },
+        Flatten(path: "items.@") {
+          Fetch(service: "head") {
+            {
+              ... on Item {
+                __typename
+                weight
+                code
+              }
+            } =>
+            {
+              ... on Item {
+                price
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Same as above, but only `head` and `other` have `id`. `source` can't fetch it, so `head` is
+/// called for `id` first.
+#[test]
+fn requires_jump_key_only_in_the_requiring_subgraph() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          items {
+            price
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/issues/requires-jump-key-not-held.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "source") {
+          {
+            items {
+              __typename
+              code
+            }
+          }
+        },
+        Flatten(path: "items.@") {
+          Fetch(service: "head") {
+            {
+              ... on Item {
+                __typename
+                code
+              }
+            } =>
+            {
+              ... on Item {
+                __typename
+                id
+              }
+            }
+          },
+        },
+        Flatten(path: "items.@") {
+          Fetch(service: "other") {
+            {
+              ... on Item {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Item {
+                weight
+              }
+            }
+          },
+        },
+        Flatten(path: "items.@") {
+          Fetch(service: "head") {
+            {
+              ... on Item {
+                __typename
+                weight
+                code
+              }
+            } =>
+            {
+              ... on Item {
+                price
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Like above, but `source` only has `id` on `items @provides(fields: "id")`. Its fetch goes
+/// through that field, so it fetches `id` for the jump to `other`.
+#[test]
+fn requires_jump_key_provided_to_the_subgraph_holding_the_objects() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation("{ items { price } }");
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/issues/requires-jump-key-provided.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "source") {
+          {
+            items {
+              __typename
+              code
+              id
+            }
+          }
+        },
+        Flatten(path: "items.@") {
+          Fetch(service: "other") {
+            {
+              ... on Item {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Item {
+                weight
+              }
+            }
+          },
+        },
+        Flatten(path: "items.@") {
+          Fetch(service: "head") {
+            {
+              ... on Item {
+                __typename
+                weight
+                code
+              }
+            } =>
+            {
+              ... on Item {
+                price
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `source` takes `id` from `legacy` behind the `id_in_source` label. With the flag on, `source`
+/// fetches `id` for the jump to `other`. With it off, `source` doesn't serve `id`, so `head` is
+/// called for it.
+#[test]
+fn requires_jump_key_follows_progressive_override() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let plan = |override_context| {
+        build_query_plan(
+            "fixture/issues/requires-jump-key-overridden.supergraph.graphql",
+            parse_operation("{ items { price } }"),
+            override_context,
+            Default::default(),
+        )
+    };
+
+    let query_plan = plan(PlannerOverrideContext::from_flag("id_in_source".into()))?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "source") {
+          {
+            items {
+              __typename
+              code
+              id
+            }
+          }
+        },
+        Flatten(path: "items.@") {
+          Fetch(service: "other") {
+            {
+              ... on Item {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Item {
+                weight
+              }
+            }
+          },
+        },
+        Flatten(path: "items.@") {
+          Fetch(service: "head") {
+            {
+              ... on Item {
+                __typename
+                weight
+                code
+              }
+            } =>
+            {
+              ... on Item {
+                price
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    let query_plan = plan(PlannerOverrideContext::from_flag("different_flag".into()))?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "source") {
+          {
+            items {
+              __typename
+              code
+            }
+          }
+        },
+        Flatten(path: "items.@") {
+          Fetch(service: "head") {
+            {
+              ... on Item {
+                __typename
+                code
+              }
+            } =>
+            {
+              ... on Item {
+                __typename
+                id
+              }
+            }
+          },
+        },
+        Flatten(path: "items.@") {
+          Fetch(service: "other") {
+            {
+              ... on Item {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Item {
+                weight
+              }
+            }
+          },
+        },
+        Flatten(path: "items.@") {
+          Fetch(service: "head") {
+            {
+              ... on Item {
+                __typename
+                weight
+                code
+              }
+            } =>
+            {
+              ... on Item {
+                price
               }
             }
           },
