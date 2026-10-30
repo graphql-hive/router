@@ -42,6 +42,7 @@ pub mod planning {
 
 mod path;
 pub use path::{FlattenNodePath, MergePaths, PathSegment, ResponsePathRef, TypeCondition};
+mod typename;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::{Display, Formatter as FmtFormatter, Result as FmtResult},
@@ -688,6 +689,9 @@ fn create_output_operation(
         variables.extend(additional_vars.clone());
     }
 
+    let mut selections = step.output.to_non_root_selection_set();
+    typename::add_typename_for_projection_to_entities(&mut selections, supergraph);
+
     let operation_def = OperationDefinition {
         name: None,
         operation_kind: Some(OperationKind::Query),
@@ -695,7 +699,7 @@ fn create_output_operation(
         selection_set: SelectionSet {
             items: vec![SelectionItem::Field(FieldSelection {
                 name: "_entities".to_string(),
-                selections: step.output.to_non_root_selection_set(),
+                selections,
                 alias: None,
                 arguments: Some(
                     (
@@ -775,10 +779,16 @@ impl FetchNode<Planning> {
             }
             false => {
                 let root_type_name = supergraph.expect_root_type_name(Some(&step.operation_kind));
+                let mut selection_set = step.output.to_root_selection_set(root_type_name);
+                typename::add_typename_for_projection(
+                    &mut selection_set,
+                    root_type_name,
+                    supergraph,
+                );
                 let operation_def = OperationDefinition {
                     name: None,
                     operation_kind: Some(step.operation_kind.clone()),
-                    selection_set: step.output.to_root_selection_set(root_type_name),
+                    selection_set,
                     variable_definitions: step.variable_definitions.clone(),
                 };
                 let document =

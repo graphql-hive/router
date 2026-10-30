@@ -529,6 +529,7 @@ fn include_interface_fragment_at_root_fetch_test() -> Result<(), Box<dyn Error>>
       Fetch(service: "b") {
         query ($bool:Boolean) {
           accounts {
+            __typename
             id
             ... on Account @include(if: $bool) {
               name
@@ -1928,6 +1929,50 @@ fn batched_entity_calls_keep_the_condition_of_their_fragment() -> Result<(), Box
             },
           },
         },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// `results` once on its own and once under `$a` with `... on Product { id }`. The projection
+/// picks the `id` of a `Product` by `__typename`, so the subgraph has to send it with `$a` off
+/// too, not only under the condition.
+#[test]
+fn abstract_field_selected_again_under_a_condition_asks_for_its_typename(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query($a: Boolean!) {
+          recommender {
+            results { id }
+            results @include(if: $a) { ... on Product { id } }
+          }
+        }
+      "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/issues/190.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "recommender") {
+        query ($a:Boolean!) {
+          recommender {
+            results {
+              __typename
+              id
+            }
+            results @include(if: $a) {
+              __typename
+              ... on Product {
+                id
+              }
+            }
+          }
+        }
       },
     },
     "#);
