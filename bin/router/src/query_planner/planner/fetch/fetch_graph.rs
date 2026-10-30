@@ -1658,13 +1658,11 @@ fn process_requires_field_edge(
         _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
 
-    let key_to_reenter_subgraph = find_satisfiable_key(
-        graph,
-        supergraph,
-        override_context,
-        head_node_index,
-        !field_move.context_arguments.is_empty(),
-    )?;
+    // The entity call goes to the subgraph of the field, so it takes one of that subgraph's own
+    // keys. The other edges have the keys of other subgraphs, `group { id }` where this one
+    // wants `group { tag }`.
+    let key_to_reenter_subgraph =
+        find_satisfiable_key(graph, supergraph, override_context, head_node_index, true)?;
     // What the entity calls read, and the keys the step holding the objects writes.
     let requires_input = requires.map(|requires| fetch_graph.read_at(response_path, requires));
     let key_input = fetch_graph.read_at(response_path, key_to_reenter_subgraph);

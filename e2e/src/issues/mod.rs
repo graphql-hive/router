@@ -1,6 +1,10 @@
 #[cfg(test)]
 mod issues_e2e_tests {
-    use crate::testkit::{ClientResponseExt, Started, TestRouter, TestSubgraphs};
+    use serde_json::json;
+
+    use crate::testkit::{
+        mock_subgraphs::mock_subgraphs, ClientResponseExt, Started, TestRouter, TestSubgraphs,
+    };
 
     #[ntex::test]
     /// https://github.com/graphql-hive/federation-gateway-audit `src/test-suites/null-keys`
@@ -4291,5 +4295,89 @@ mod issues_e2e_tests {
             .send_graphql_request("{ me { birthday username } }", None, None)
             .await;
         insta::assert_snapshot!(res.string_body().await, @r#"{"data":{"me":{"birthday":1234567890,"username":"urigo"}}}"#);
+    }
+
+    /// `nested-field-key` resolves `Item` by `group { tag }`, `source` by `group { id }`. The
+    /// call for `valueNestedField` has to send `group { tag }`, the mock finds nothing with
+    /// `group { id }`, like a real subgraph wouldn't.
+    #[ntex::test]
+    async fn requires_sends_the_key_of_its_own_subgraph() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mock_subgraphs(json!({
+                "source": {
+                    "query": {
+                        "list": {
+                            "items": [{
+                                "__typename": "Item",
+                                "group": { "id": "g1", "tag": "t1" },
+                                "tag": { "id": "tag1" }
+                            }]
+                        }
+                    },
+                    "entities": [{
+                        "__typename": "Item",
+                        "group": { "id": "g1" },
+                        "tag": { "id": "tag1" }
+                    }]
+                },
+                "nested-field-key": {
+                    "entities": [
+                        { "__typename": "Item", "group": { "tag": "t1", "id": "g1" } },
+                        {
+                            "__typename": "Item",
+                            "group": { "tag": "t1" },
+                            "tag": { "id": "tag1" },
+                            "valueNestedField": "v1"
+                        }
+                    ]
+                }
+            })))
+            .build()
+            .start()
+            .await;
+        let url = subgraphs.url();
+        let router = TestRouter::builder()
+            .inline_config(format!(
+                r#"
+                  supergraph:
+                    source: file
+                    path: ../bin/router/fixture/issues/requires-circular-keys.supergraph.graphql
+                  override_subgraph_urls:
+                    subgraphs:
+                      source:
+                        url: "{url}/source"
+                      nested-field-key:
+                        url: "{url}/nested-field-key"
+                      value:
+                        url: "{url}/value"
+                      direct-key:
+                        url: "{url}/direct-key"
+                      object-fragment-key:
+                        url: "{url}/object-fragment-key"
+                      interface-fragment-key:
+                        url: "{url}/interface-fragment-key"
+                      interface-key:
+                        url: "{url}/interface-key"
+                  "#
+            ))
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request("{ list { items { valueNestedField } } }", None, None)
+            .await;
+        insta::assert_snapshot!(
+            res.string_body().await,
+            @r#"{"data":{"list":{"items":[{"valueNestedField":"v1"}]}}}"#
+        );
+
+        let requests = subgraphs.get_requests_log("nested-field-key").unwrap();
+        let body: serde_json::Value =
+            serde_json::from_slice(requests.last().unwrap().body.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            body["variables"]["representations"][0]["group"],
+            json!({ "tag": "t1" })
+        );
     }
 }
