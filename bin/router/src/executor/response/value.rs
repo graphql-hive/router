@@ -571,7 +571,7 @@ impl From<&Value<'_>> for SonicValue {
 
 #[cfg(test)]
 mod tests {
-    use super::{key_eq, Value};
+    use super::Value;
     use serde::Deserialize;
     use std::borrow::Cow;
 
