@@ -5,8 +5,6 @@
 //! representations. When a representation matches one, it's the same entity with the same
 //! `@requires` inputs, so we copy the fields and leave it out of the request.
 
-use std::sync::LazyLock;
-
 use ahash::HashMap as AHashMap;
 use ahash::HashMapExt;
 
@@ -20,12 +18,6 @@ use crate::{
         planner::plan_nodes::EntityReuse,
     },
 };
-
-/// Off unless `HIVE_ROUTER_EXPERIMENTAL_ENTITY_REUSE` is `1` or `true`.
-pub static ENTITY_REUSE: LazyLock<bool> = LazyLock::new(|| {
-    std::env::var("HIVE_ROUTER_EXPERIMENTAL_ENTITY_REUSE")
-        .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-});
 
 /// Entities in the response one fetch could copy, by the hash of their representation.
 pub struct ReuseIndex<'d, 'a> {

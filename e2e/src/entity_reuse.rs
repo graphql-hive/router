@@ -11,24 +11,14 @@ mod entity_reuse_e2e_tests {
     use sonic_rs::{JsonContainerTrait, JsonValueTrait};
 
     use crate::testkit::{
-        some_header_map, ClientResponseExt, EnvVarsGuard, ResponseLike, Started, TestRouter,
-        TestSubgraphs,
+        some_header_map, ClientResponseExt, ResponseLike, Started, TestRouter, TestSubgraphs,
     };
-
-    // Reuse is off by default, so every test here turns it on.
-    async fn reuse_on() -> EnvVarsGuard {
-        EnvVarsGuard::new()
-            .set("HIVE_ROUTER_EXPERIMENTAL_ENTITY_REUSE", "1")
-            .apply()
-            .await
-    }
 
     // In the bench operation, every product, user and inventory entity the last two waves ask
     // for was already fetched by `topProducts`, `users` and the first inventory fetch.
     // With reuse on, those fetches copy them instead of calling the subgraphs again.
     #[ntex::test]
     async fn bench_operation_copies_entities_it_already_has() {
-        let _env = reuse_on().await;
         let subgraphs = TestSubgraphs::builder().build().start().await;
 
         let router = TestRouter::builder()
@@ -39,6 +29,7 @@ mod entity_reuse_e2e_tests {
                     source: file
                     path: supergraph.graphql
                   traffic_shaping:
+                    experimental_entity_reuse: true
                     all:
                       dedupe_enabled: false
                   "#,
@@ -98,6 +89,7 @@ mod entity_reuse_e2e_tests {
                     source: file
                     path: supergraph.graphql
                   traffic_shaping:
+                    experimental_entity_reuse: true
                     all:
                       dedupe_enabled: false
                   "#,
@@ -131,7 +123,6 @@ mod entity_reuse_e2e_tests {
 
     #[ntex::test]
     async fn deep_fetch_copies_everything_when_shallow_fetch_worked() {
-        let _env = reuse_on().await;
         let subgraphs = TestSubgraphs::builder().build().start().await;
         let body = send_shallow_and_deep_inventory(&subgraphs).await;
 
@@ -161,7 +152,6 @@ mod entity_reuse_e2e_tests {
     // response, so there'd be nothing to copy anyway. Either way, the deep fetch asks `inventory`.
     #[ntex::test]
     async fn deep_fetch_asks_subgraph_when_shallow_request_fails() {
-        let _env = reuse_on().await;
         let inventory_calls = Arc::new(AtomicUsize::new(0));
         let subgraphs = TestSubgraphs::builder()
             .with_on_request({
@@ -205,7 +195,6 @@ mod entity_reuse_e2e_tests {
     // With `topProducts` null there's nothing to copy from, so the deep fetch asks `inventory`.
     #[ntex::test]
     async fn deep_fetch_asks_subgraph_when_shallow_target_is_null() {
-        let _env = reuse_on().await;
         let subgraphs = TestSubgraphs::builder()
             .with_on_request(|req| {
                 let asks_for_top_products = req
