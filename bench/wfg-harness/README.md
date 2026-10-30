@@ -7,7 +7,8 @@ Runs operations through the router against mocked subgraphs with deterministic d
   has errors
 - no subgraph is asked for a field it doesn't resolve (`not-owned`), `@provides` included
 - every representation decodes to an entity and carries that entity's real key and `@requires`
-  values (`undecodable-representation`, `wrong-representation`)
+  values (`undecodable-representation`, `wrong-representation`), with every field of a key the
+  receiving subgraph resolves the entity by (`incomplete-key`)
 - no entity is sent without anything asked of it (`empty-lookup`), or twice in one list
   (`duplicate-representation`)
 - every `String`/`ID` the subgraphs return ends up in the response or in a later subgraph request
@@ -51,6 +52,7 @@ node run.js --operation query-1 --cases full
 node fuzz.js --ops 20
 node fuzz.js --only context --only requires --ops 50
 node selftest.js --ops 20
+node --test test.js
 ```
 
 `run.js` options: `--operation` (`query-1`, `query-2`, `mutation-1` or a path), `--router` (binary,

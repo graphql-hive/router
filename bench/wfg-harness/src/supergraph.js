@@ -412,6 +412,23 @@ export function loadSupergraph(sdl) {
     );
   }
 
+  /**
+   * Whether `representation` has every field of one key `graphName` resolves `typeName` by. A key
+   * of another subgraph doesn't count, the receiving one can't look the entity up with it.
+   */
+  function hasKeyIn(typeName, graphName, representation) {
+    const covers = (tree, value) =>
+      Object.entries(tree).every(([name, subtree]) => {
+        if (!(name in value)) return false;
+        const inner = value[name];
+        if (!subtree || inner == null) return true;
+        return Array.isArray(inner) ? inner.every((item) => item == null || covers(subtree, item)) : covers(subtree, inner);
+      });
+    return (joinTypes.get(typeName) ?? [])
+      .filter((type) => type.graph === graphName && type.key && type.resolvable !== false)
+      .some((type) => covers(fieldSetTree(type.key), representation));
+  }
+
   const urls = Object.values(graphNames);
   return {
     schema,
@@ -420,6 +437,7 @@ export function loadSupergraph(sdl) {
     concreteCandidates,
     keyTree,
     resolvesEntity,
+    hasKeyIn,
     graphNames: urls,
     contextArguments: (typeName, fieldName) => contextArguments.get(`${typeName}.${fieldName}`),
     contextTypes: (name) => contextTypes.get(name) ?? new Set(),

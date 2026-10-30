@@ -9,7 +9,7 @@ import { FIELD_ERROR, stableJson } from './data.js';
 export const INJECTED = /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+ failed$/;
 
 export function createExecutor(supergraph, data) {
-  const { schema, resolves, resolvesEntity, requires } = supergraph;
+  const { schema, resolves, resolvesEntity, hasKeyIn, requires } = supergraph;
 
   function resolveEntities(representations, context, info) {
     const responseKey = info.fieldNodes[0].alias?.value ?? info.fieldName;
@@ -20,6 +20,7 @@ export function createExecutor(supergraph, data) {
       if (seen.has(json)) context.issue('duplicate-representation', `${typeName} in ${responseKey}`);
       seen.add(json);
       if (!resolvesEntity(typeName, context.graph)) context.issue('entity-not-resolvable', typeName);
+      else if (!hasKeyIn(typeName, context.graph, representation)) context.issue('incomplete-key', json);
       const ref = data.decodeEntity(typeName, representation);
       if (!ref) {
         context.issue('undecodable-representation', json, data.whyUndecodable(typeName, representation));

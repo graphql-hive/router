@@ -121,9 +121,10 @@ export function switchedOffInputs(plan, variables, schema) {
         if (off || (node.runIf && !node.runIf.some(holds))) add(node.requires);
         break;
       case 'BatchFetch':
-        // a group that's off leaves its paths out, the alias may still run for the others
+        // a group that's off leaves its paths out, the alias may still run for the others.
+        // A plan from before `pathGroups` has plain `paths`, those always run
         for (const alias of node.entityBatch.aliases) {
-          if (off || alias.pathGroups.some((group) => group.runIf && !group.runIf.some(holds))) add(alias.requires);
+          if (off || (alias.pathGroups ?? []).some((group) => group.runIf && !group.runIf.some(holds))) add(alias.requires);
         }
         break;
       case 'Condition':
