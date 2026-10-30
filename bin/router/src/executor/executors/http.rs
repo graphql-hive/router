@@ -75,8 +75,6 @@ const OPERATION_NAME_STR: &[u8] = b",\"operationName\":";
 
 pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
 
-/// Hands out the hyper client (and with it, the connection pool) for subgraph requests.
-// built once per client config and kept behind an Arc, so its size doesn't matter
 #[allow(clippy::large_enum_variant)]
 pub enum HttpClientProvider {
     /// One client for all workers.
@@ -85,10 +83,6 @@ pub enum HttpClientProvider {
     PerWorker(WorkerLocalClients),
 }
 
-/// One client per worker thread, built the first time that thread sends a request.
-/// Every ntex worker runs its own single-threaded runtime. With one shared pool, a connection
-/// opened on one worker gets picked up by requests on the others, so each response has to wake
-/// up another thread. With a pool per worker, a request stays on its thread from start to end.
 pub struct WorkerLocalClients {
     builder: hyper_util::client::legacy::Builder,
     connector: HttpsConnector<HttpConnector>,
