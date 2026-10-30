@@ -111,9 +111,6 @@ impl<'a> Value<'a> {
         selections: RequiresSelectionSetRef<'_>,
         possible_types: &PossibleTypes,
     ) -> u64 {
-        // The walk feeds the hasher lots of tiny writes, which ahash handles much faster
-        // than a streaming Xxh3. Its keys are picked once per process, which is fine:
-        // these hashes are only compared within one request.
         let mut hasher = ahash::AHasher::default();
         self.hash_with_requires(&mut hasher, selections, possible_types);
         hasher.finish()
