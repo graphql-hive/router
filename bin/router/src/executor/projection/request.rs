@@ -142,13 +142,24 @@ pub fn project_requires(
                     return false;
                 }
             }
+            if nested && applied.missing_field {
+                buffer.truncate(object_start_offset);
+                write_response_key(parent_first, response_key, buffer);
+                buffer.put(NULL);
+                return true;
+            }
             // `__typename` is written along with the object's first field. When nothing else
             // applies, it's written alone: for an object inside the representation, like a Bird in
             // `pet { ... on Dog { tricks } ... on Cat { whiskers } }`, and for an entity whose
             // selection asks for `__typename`.
             // An object that misses a selected field, like an entity without its key when its
             // keys aren't known, is left out, and so is an entity of none of the selection's types.
-            if first && !applied.missing_field && (nested || applied.typename) {
+            let typename_finds_it =
+                type_keys.is_none_or(|type_keys| type_keys.iter().any(|key| key.is_empty()));
+            if first
+                && !applied.missing_field
+                && (nested || (applied.typename && typename_finds_it))
+            {
                 if let Some(type_name) =
                     Value::object_get(entity_obj, TYPENAME_FIELD_NAME).and_then(Value::as_str)
                 {
@@ -554,7 +565,7 @@ mod tests {
 
     /// An object of none of its fragments' types still has `__typename`, which is all the
     /// selection asks of it, so it's kept, in a field or in a list. An object that misses a
-    /// selected field is still left out, so an entity without its key isn't sent.
+    /// selected field is sent as `null`, and an entity without its key isn't sent.
     #[test]
     fn project_requires_object_of_none_of_the_fragment_types() {
         let requires = "... on Listing { __typename pet { __typename ... on Dog { tricks } ... on Cat { whiskers } } id }";
@@ -615,7 +626,7 @@ mod tests {
           }
         "#);
 
-        // A Cat without its whiskers is left out
+        // A Cat without its whiskers is `null`
         insta::assert_snapshot!(
           &project_requires_pretty(
               requires,
@@ -629,6 +640,7 @@ mod tests {
           @r#"
           {
             "__typename": "Listing",
+            "pet": null,
             "id": "l1"
           }
         "#);
@@ -764,6 +776,102 @@ mod tests {
             "__typename": "FavoritesPage",
             "id": "p1",
             "petCount": null
+          }
+        "#);
+    }
+
+    /// The fetch for `fullCriteria` failed, so `searchCriteria` has no `fullCriteria`.
+    /// It goes out as `null`
+    #[test]
+    fn project_requires_nested_object_missing_a_field_is_null() {
+        let requires =
+            "... on Result { __typename searchCriteria { partialCriteria fullCriteria } }";
+        let keys = keys_of(&[("Result", &["searchCriteria"])]);
+
+        insta::assert_snapshot!(
+          &project_requires_pretty_with_keys(
+              requires,
+              json!({ "__typename": "Result", "searchCriteria": { "partialCriteria": "p1" } }),
+              Some(&keys),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Result",
+            "searchCriteria": null
+          }
+        "#);
+
+        // In a list, only the item that misses it
+        insta::assert_snapshot!(
+          &project_requires_pretty(
+              "... on Result { __typename id criteria { partialCriteria fullCriteria } }",
+              json!({
+                  "__typename": "Result",
+                  "id": "r1",
+                  "criteria": [
+                      { "partialCriteria": "p1", "fullCriteria": "f1" },
+                      { "partialCriteria": "p2" }
+                  ]
+              }),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Result",
+            "id": "r1",
+            "criteria": [
+              {
+                "partialCriteria": "p1",
+                "fullCriteria": "f1"
+              },
+              null
+            ]
+          }
+        "#);
+    }
+
+    /// The selection only asks for Dogs and Cats, so a Bird would go as `__typename` alone, and
+    /// the subgraph can't find a Bird by that.
+    #[test]
+    fn project_requires_entity_of_none_of_the_asked_types_is_left_out() {
+        // What `... on Animal` holds, the tests have no possible types for `Animal` itself
+        let requires = "__typename ... on Dog { id } ... on Cat { id }";
+        let keys = keys_of(&[("Dog", &["id"]), ("Cat", &["id"]), ("Bird", &["id"])]);
+
+        let pretty = project_requires_pretty_with_keys(
+            requires,
+            json!({ "__typename": "Bird", "id": "b1" }),
+            Some(&keys),
+        );
+        assert_eq!(pretty, None);
+
+        insta::assert_snapshot!(
+          &project_requires_pretty_with_keys(
+              requires,
+              json!({ "__typename": "Dog", "id": "d1" }),
+              Some(&keys),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Dog",
+            "id": "d1"
+          }
+        "#);
+
+        // A Bird keyed by `__typename` alone is still sent
+        let keys = keys_of(&[("Bird", &["__typename"])]);
+        insta::assert_snapshot!(
+          &project_requires_pretty_with_keys(
+              requires,
+              json!({ "__typename": "Bird", "id": "b1" }),
+              Some(&keys),
+          )
+          .expect("projection should produce output"),
+          @r#"
+          {
+            "__typename": "Bird"
           }
         "#);
     }

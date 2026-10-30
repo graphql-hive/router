@@ -646,3 +646,163 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
     "#);
     Ok(())
 }
+
+/// Entities inside lists of lists. Every list is a `@` in the path the executor walks, so
+/// `cube: [[[Product]]]` is `cube.@.@.@`. With one `@` per field instead, the products of `cube`
+/// were sent as lists of products, and `grid { reviews { body } }` never reached the reviews.
+#[test]
+fn entities_inside_lists_of_lists() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+            query {
+              grid {
+                name
+                reviews {
+                  body
+                }
+              }
+              cube {
+                name
+              }
+            }"#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/nested-entity-lists.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "catalog") {
+          {
+            grid {
+              ...a
+            }
+            cube {
+              ...a
+            }
+          }
+          fragment a on Product {
+            __typename
+            id
+          }
+        },
+        BatchFetch(service: "products") {
+          {
+            _e0 {
+              paths: [
+                "cube.@.@.@"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e1 {
+              paths: [
+                "grid.@.@"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Product {
+                name
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Product {
+                name
+                reviews {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+        },
+        Flatten(path: "grid.@.@.reviews.@.@") {
+          Fetch(service: "reviews") {
+            {
+              ... on Review {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Review {
+                body
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// A list of lists under a list: `shelves: [Shelf]` with `rows: [[Product]]`.
+#[test]
+fn entities_inside_a_list_of_lists_under_a_list() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+            query {
+              shelves {
+                rows {
+                  name
+                }
+              }
+            }"#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/nested-entity-lists.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "catalog") {
+          {
+            shelves {
+              rows {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "shelves.@.rows.@.@") {
+          Fetch(service: "products") {
+            {
+              ... on Product {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Product {
+                name
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
