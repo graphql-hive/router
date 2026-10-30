@@ -789,11 +789,13 @@ impl PlanNode<Planning> {
         // A fetch runs when the `@include`/`@skip` around it hold and any of its fields is asked
         // for. The step has the innermost condition, its path has the ones around it, and the
         // fields can have their own, like `details @include(if: $d)` and `inventory @include(if: $i)`.
+        // `gated_by` has the rest, the ones it counted on a step above for.
         if !matches!(fetch.operation_kind, Some(OperationKind::Subscription)) {
             let path_conditions = || {
                 step.response_path
                     .conditions()
                     .chain(step.condition.as_ref())
+                    .chain(&step.gated_by)
             };
             // conditions that can't all hold, it never runs
             let around = ConditionGroup::new(

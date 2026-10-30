@@ -375,6 +375,9 @@ impl FetchStepData<MultiTypeFetchStep> {
     }
 
     pub(crate) fn merge_context_metadata(&mut self, other: &mut Self) {
+        // the merged step runs for both, so only what both were planned under still holds
+        self.gated_by
+            .retain(|condition| other.gated_by.contains(condition));
         if let Some(mut rewrites) = other.context_rewrites.take() {
             let levels = self.field_levels_between(other);
             for rewrite in &mut rewrites {
@@ -683,6 +686,7 @@ mod tests {
             operation_kind: OperationKind::Query,
             flags: FetchStepFlags::empty(),
             condition: None,
+            gated_by: Vec::new(),
             variable_usages: None,
             variable_definitions: None,
             mutation_field_position: None,
