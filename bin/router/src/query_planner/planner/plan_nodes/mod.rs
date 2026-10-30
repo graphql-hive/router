@@ -833,12 +833,14 @@ impl PlanNode<Planning> {
 
         // A fetch planned under fragments or fields with `@include`/`@skip` runs only when all
         // of them hold. The step has the innermost condition, its path has the ones around it:
-        // `... on User @include(if: $a) { ... on User @include(if: $b) { name } }`.
+        // `... on User @include(if: $a) { ... on User @include(if: $b) { name } }`. One that
+        // found no spot on the path is only in `planned_under`.
         let mut conditions: Vec<&Condition> = Vec::new();
         for condition in step
             .response_path
             .conditions()
             .chain(step.condition.as_ref())
+            .chain(&step.planned_under)
         {
             if !conditions.contains(&condition) {
                 conditions.push(condition);

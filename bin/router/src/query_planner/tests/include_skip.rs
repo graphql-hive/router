@@ -2540,3 +2540,110 @@ fn condition_on_a_fragment_of_the_same_type_goes_to_its_fragments() -> Result<()
 
     Ok(())
 }
+
+/// The fetch below `@skip(if: $c) @include(if: $d)` was planned under `$a` and `$b` too. `$a`
+/// sits on `anotherUsers` and the list has no spot for `$b`, it still has to wrap the fetch.
+#[test]
+fn condition_with_no_spot_on_the_path_still_wraps_the_fetch() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($a: Boolean!, $b: Boolean!, $c: Boolean!, $d: Boolean!) {
+          anotherUsers @skip(if: $a) {
+            ... @skip(if: $b) {
+              ... @skip(if: $c) @include(if: $d) {
+                __typename
+              }
+            }
+          }
+        }
+      "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/simple-interface-object.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          query ($a:Boolean!,$b:Boolean!) {
+            anotherUsers @skip(if: $a) {
+              __typename
+              ... on NodeWithName @skip(if: $b) {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Skip(if: $a) {
+          Sequence {
+            Skip(if: $b) {
+              Sequence {
+                Flatten(path: "anotherUsers.@") {
+                  Fetch(service: "a") {
+                    {
+                      ... on NodeWithName {
+                        __typename
+                        id
+                      }
+                    } =>
+                    {
+                      ... on NodeWithName {
+                        __typename
+                      }
+                    }
+                  },
+                },
+                Flatten(path: "anotherUsers.@") {
+                  Fetch(service: "b") {
+                    {
+                      ... on User {
+                        __typename
+                        id
+                      }
+                    } =>
+                    {
+                      ... on NodeWithName {
+                        __typename
+                        id
+                      }
+                    }
+                  },
+                },
+              },
+            },
+            Skip(if: $c) {
+              Include(if: $d) {
+                Skip(if: $b) {
+                  Flatten(path: "anotherUsers.@") {
+                    Fetch(service: "a") {
+                      {
+                        ... on NodeWithName {
+                          __typename
+                          id
+                        }
+                      } =>
+                      {
+                        ... on NodeWithName {
+                          __typename
+                          ... on User {
+                            __typename
+                          }
+                        }
+                      }
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}

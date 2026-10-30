@@ -217,7 +217,8 @@ pub(crate) fn perform_fetch_step_merge(
 }
 
 /// Makes `step` run only when `condition` holds too: as its own condition when it has none,
-/// on its path otherwise, the plan puts a fetch under all of them.
+/// on its path otherwise, the plan puts a fetch under all of them. With no spot left on the path
+/// it's only in `planned_under`, the plan puts the fetch under those too.
 fn keep_condition(step: &mut FetchStepData<MultiTypeFetchStep>, condition: &Condition) {
     if step.condition.as_ref() == Some(condition)
         || step.response_path.conditions().any(|c| c == condition)
