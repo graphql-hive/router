@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod traffic_shaping_e2e_tests {
-    use crate::testkit::TestRouter;
+    use crate::testkit::{ClientResponseExt, TestRouter, TestSubgraphs};
+    use ntex::http::StatusCode;
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
@@ -146,5 +147,42 @@ mod traffic_shaping_e2e_tests {
             second.contains("200"),
             "t=6 expected 200 OK, got: {second:?}"
         );
+    }
+
+    /// `per_worker` gives every worker its own subgraph client, and must answer exactly like
+    /// the default `shared` client.
+    #[ntex::test]
+    async fn per_worker_http_client_mode_matches_shared() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let query = "{ topProducts { upc name reviews { body author { id username name } } } me { id name } }";
+
+        let mut bodies = Vec::new();
+        for mode in ["shared", "per_worker"] {
+            let router = TestRouter::builder()
+                .with_subgraphs(&subgraphs)
+                .inline_config(format!(
+                    r#"
+                    supergraph:
+                        source: file
+                        path: supergraph.graphql
+                    traffic_shaping:
+                        http_client_mode: {mode}
+                    "#,
+                ))
+                .build()
+                .start()
+                .await;
+
+            let res = router.send_graphql_request(query, None, None).await;
+            assert_eq!(res.status(), StatusCode::OK, "{mode}: expected 200 OK");
+            let body = res.json_body().await;
+            assert!(
+                !body.to_string().contains("\"errors\""),
+                "{mode}: unexpected errors: {body}"
+            );
+            bodies.push(body);
+        }
+
+        assert_eq!(bodies[0], bodies[1]);
     }
 }
