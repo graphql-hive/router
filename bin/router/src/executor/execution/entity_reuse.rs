@@ -119,10 +119,6 @@ fn copy_nested<'a>(
     }
 }
 
-/// A copied entity's index has this bit set, because where copies start (after the fetched
-/// ones) is only known once all targets were visited. The rest is its place among the copies.
-pub const REUSED_ENTITY: usize = 1 << (usize::BITS - 1);
-
 /// Lines up the subgraph's entities with the indexes the targets point at, and puts the copies
 /// after them. A subgraph that sends too few or too many can't shift the copies.
 pub fn append_reused<'a>(

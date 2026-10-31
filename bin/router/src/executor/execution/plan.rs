@@ -1,5 +1,6 @@
 use super::context::{
     collect_context_entities, unalias_response, AliasedRequests, ContextGroup, EntityIndexes,
+    Target,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -38,7 +39,7 @@ use tracing::{debug, error, warn, Instrument};
 
 use crate::executor::execution::client_request_details::OperationDetails;
 use crate::executor::execution::demand_control::DemandControlExecutionContext;
-use crate::executor::execution::entity_reuse::{append_reused, ReuseIndex, REUSED_ENTITY};
+use crate::executor::execution::entity_reuse::{append_reused, ReuseIndex};
 use crate::executor::execution::error_masking::ErrorMaskingRuntime;
 use crate::executor::execution::operation_name::OperationNameFactory;
 use crate::executor::executors::common::ConnectionFingerprint;
@@ -808,16 +809,15 @@ struct AliasPathState<'exec> {
 /// Copies come after the `fetched_count` entities the subgraph returns.
 #[inline]
 fn entity_index(
-    target: Option<(usize, usize)>,
+    target: Option<Target>,
     group_offsets: &[Option<usize>],
     fetched_count: usize,
 ) -> Option<usize> {
-    let (group, index) = target?;
-    let offset = (*group_offsets.get(group)?)?;
-    Some(if index & REUSED_ENTITY != 0 {
-        fetched_count + (index & !REUSED_ENTITY)
-    } else {
-        offset + index
+    let target = target?;
+    let offset = (*group_offsets.get(target.group())?)?;
+    Some(match target {
+        Target::Fetched { index, .. } => offset + index,
+        Target::Copied { index, .. } => fetched_count + index,
     })
 }
 

@@ -8,10 +8,7 @@ use xxhash_rust::xxh3::Xxh3;
 
 use crate::{
     executor::{
-        execution::{
-            entity_reuse::{ReuseIndex, REUSED_ENTITY},
-            rewrites::FetchRewriteExt,
-        },
+        execution::{entity_reuse::ReuseIndex, rewrites::FetchRewriteExt},
         introspection::schema::PossibleTypes,
         projection::request::project_requires,
         response::{
@@ -30,9 +27,26 @@ use crate::{
     },
 };
 
-/// For each target of a path, in walk order: the context group it was sent in and its index
-/// among that group's representations. `None` when the target sends nothing (null, or not projected).
-pub(super) type EntityIndexes = Arc<Vec<Option<(usize, usize)>>>;
+/// For each target of a path, in walk order, where its entity comes from. `None` when the target
+/// sends nothing (null, or not projected).
+pub(super) type EntityIndexes = Arc<Vec<Option<Target>>>;
+
+/// Where a target's entity comes from. `group` is the context group it belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Target {
+    /// Sent to the subgraph, `index` is its place among the group's representations.
+    Fetched { group: usize, index: usize },
+    /// Copied from the response instead, `index` is its place among the copies.
+    Copied { group: usize, index: usize },
+}
+
+impl Target {
+    pub fn group(self) -> usize {
+        match self {
+            Self::Fetched { group, .. } | Self::Copied { group, .. } => group,
+        }
+    }
+}
 
 pub(super) struct ContextGroup<'a> {
     pub variables: Vec<(&'a str, Vec<u8>)>,
@@ -229,9 +243,9 @@ impl<'a, 'd, 'v> ContextGroups<'a, 'd, 'v> {
 /// representations. Entities are grouped by the tuple of their context values (one request per
 /// group), without context variables there is at most one group. Identical paths share indexes.
 ///
-/// With `reuse`, an entity already in the response is copied instead of sent. Its index gets
-/// the `REUSED_ENTITY` bit and points into the returned copies. Only without context variables,
-/// so there's one group and the copies go after everything that group fetches.
+/// With `reuse`, an entity already in the response is copied instead of sent. Its target is
+/// `Target::Copied` and points into the returned copies. Only without context variables, so
+/// there's one group and the copies go after everything that group fetches.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn collect_context_entities<'a, 'd, 'v>(
     data: &'d Value<'v>,
@@ -275,19 +289,24 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
                 hasher.finish()
             };
             let group = &mut contexts.groups[group_index];
-            if let Some(index) = group
-                .hash_to_index
-                .get(&hash)
-                .or_else(|| reused_by_hash.get(&hash))
-            {
-                indexes.push(Some((group_index, *index)));
+            if let Some(&index) = group.hash_to_index.get(&hash) {
+                indexes.push(Some(Target::Fetched {
+                    group: group_index,
+                    index,
+                }));
                 return;
             }
-            if let Some(copy) = reuse.and_then(|reuse| reuse.copy_for(hash)) {
-                let index = REUSED_ENTITY | reused.len();
+            let copied = reused_by_hash.get(&hash).copied().or_else(|| {
+                let copy = reuse?.copy_for(hash)?;
                 reused.push(copy);
-                reused_by_hash.insert(hash, index);
-                indexes.push(Some((group_index, index)));
+                reused_by_hash.insert(hash, reused.len() - 1);
+                Some(reused.len() - 1)
+            });
+            if let Some(index) = copied {
+                indexes.push(Some(Target::Copied {
+                    group: group_index,
+                    index,
+                }));
                 return;
             }
             let mut rewritten;
@@ -312,7 +331,10 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
             ) {
                 let index = group.hash_to_index.len();
                 group.hash_to_index.insert(hash, index);
-                indexes.push(Some((group_index, index)));
+                indexes.push(Some(Target::Fetched {
+                    group: group_index,
+                    index,
+                }));
             } else {
                 indexes.push(None);
             }
@@ -533,8 +555,8 @@ mod tests {
         assert_eq!(targets[0][4], None);
         // another parent with the same value lands in the same group
         assert_eq!(targets[0][5], targets[0][0]);
-        assert_eq!(targets[0][0].unwrap().0, 0);
-        assert_ne!(targets[0][2].unwrap().0, 0);
+        assert_eq!(targets[0][0].unwrap().group(), 0);
+        assert_ne!(targets[0][2].unwrap().group(), 0);
     }
 
     #[test]
@@ -595,7 +617,10 @@ mod tests {
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].variables[1].1, b"\"A\"");
         assert_eq!(groups[1].variables[1].1, b"\"B\"");
-        let entity_groups: Vec<usize> = targets[0].iter().map(|entity| entity.unwrap().0).collect();
+        let entity_groups: Vec<usize> = targets[0]
+            .iter()
+            .map(|entity| entity.unwrap().group())
+            .collect();
         assert_eq!(entity_groups[..3], [0, 1, 0]);
 
         // resolving the same sources again reuses the cached group, a different entity under
@@ -712,7 +737,7 @@ mod tests {
         // posts 1 to 4, then drafts 5 and 6, with the group each one must land in
         let entities = targets[0].iter().chain(targets[1].iter());
         for (entity, group) in entities.zip([0, 0, 1, 2, 0, 2]) {
-            assert_eq!(entity.unwrap().0, group);
+            assert_eq!(entity.unwrap().group(), group);
         }
         assert_eq!(
             groups
