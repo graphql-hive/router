@@ -7,7 +7,8 @@ use petgraph::{graph::NodeIndex, Direction};
 use tracing::{instrument, trace};
 
 use crate::query_planner::ast::merge_path::Condition;
-use crate::query_planner::ast::selection_set::response_keys_conflict;
+use crate::query_planner::ast::selection_item::SelectionItem;
+use crate::query_planner::ast::selection_set::{response_keys_conflict, SelectionSet};
 use crate::query_planner::planner::fetch::fetch_step_data::{
     type_condition_types_from_response_path, FetchStepFlags, FetchStepKind,
 };
@@ -677,7 +678,14 @@ fn outputs_differ_for_a_shared_type(
     right: &FetchStepSelections<MultiTypeFetchStep>,
     supergraph: &SupergraphState,
 ) -> bool {
-    if left.iter_selections().eq(right.iter_selections()) {
+    // both are sorted by type name
+    if left.iter_selections().count() == right.iter_selections().count()
+        && left.iter_selections().zip(right.iter_selections()).all(
+            |((left_type, left), (right_type, right))| {
+                left_type == right_type && same_selections(left, right)
+            },
+        )
+    {
         return false;
     }
 
@@ -698,9 +706,37 @@ fn outputs_differ_for_a_shared_type(
         right
             .iter_selections()
             .any(|(right_type, right_selections)| {
-                left_selections != right_selections && overlap(left_type, right_type)
+                overlap(left_type, right_type)
+                    && !same_selections(left_selections, right_selections)
             })
     })
+}
+
+/// `==` on selections only looks at field names, so `discount(plan: $a)` and
+/// `other: discount(plan: $b)` would pass as the same. Here aliases, arguments and conditions
+/// count too.
+fn same_selections(left: &SelectionSet, right: &SelectionSet) -> bool {
+    left.items.len() == right.items.len()
+        && left.items.iter().zip(&right.items).all(|pair| match pair {
+            (SelectionItem::Field(left), SelectionItem::Field(right)) => {
+                left.name == right.name
+                    && left.alias == right.alias
+                    && left.arguments() == right.arguments()
+                    && left.include_if == right.include_if
+                    && left.skip_if == right.skip_if
+                    && same_selections(&left.selections, &right.selections)
+            }
+            (SelectionItem::InlineFragment(left), SelectionItem::InlineFragment(right)) => {
+                left.type_condition == right.type_condition
+                    && left.include_if == right.include_if
+                    && left.skip_if == right.skip_if
+                    && same_selections(&left.selections, &right.selections)
+            }
+            (SelectionItem::FragmentSpread(left), SelectionItem::FragmentSpread(right)) => {
+                left == right
+            }
+            _ => false,
+        })
 }
 
 #[cfg(test)]
