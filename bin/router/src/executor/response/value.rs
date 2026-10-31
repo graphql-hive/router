@@ -10,7 +10,6 @@ use std::{
     fmt::Display,
     hash::{Hash, Hasher},
 };
-use xxhash_rust::xxh3::Xxh3;
 
 use crate::executor::{introspection::schema::PossibleTypes, utils::consts::TYPENAME_FIELD_NAME};
 
@@ -112,7 +111,7 @@ impl<'a> Value<'a> {
         selections: RequiresSelectionSetRef<'_>,
         possible_types: &PossibleTypes,
     ) -> u64 {
-        let mut hasher = Xxh3::new();
+        let mut hasher = ahash::AHasher::default();
         self.hash_with_requires(&mut hasher, selections, possible_types);
         hasher.finish()
     }
