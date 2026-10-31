@@ -404,15 +404,20 @@ fn compile_cost_expr_for_selection_set<'exec>(
                 ));
             }
             SelectionItem::InlineFragment(fragment) => {
-                field_exprs.push(compile_cost_expr_for_selection_set(
-                    &fragment.selections,
-                    operation_fragments,
-                    fragment.type_condition.as_str(),
-                    supergraph_state,
-                    fragments_cache,
-                    visited_fragments,
-                    inherited_overrides,
-                    default_list_size,
+                // `... on T @include(if: $a)` goes to the subgraph as it is, costed only when on
+                field_exprs.push(apply_conditions(
+                    &fragment.include_if,
+                    &fragment.skip_if,
+                    compile_cost_expr_for_selection_set(
+                        &fragment.selections,
+                        operation_fragments,
+                        fragment.type_condition.as_str(),
+                        supergraph_state,
+                        fragments_cache,
+                        visited_fragments,
+                        inherited_overrides,
+                        default_list_size,
+                    ),
                 ));
             }
             SelectionItem::FragmentSpread(fragment_name) => {
@@ -623,15 +628,22 @@ fn compile_cost_expr_for_entities_field_selection<'exec>(
 }
 
 fn apply_field_conditions(field: &FieldSelection, field_cost_expr: CostExpr) -> CostExpr {
-    let mut expr = field_cost_expr;
-    if let Some(include_if) = &field.include_if {
+    apply_conditions(&field.include_if, &field.skip_if, field_cost_expr)
+}
+
+fn apply_conditions(
+    include_if: &Option<String>,
+    skip_if: &Option<String>,
+    mut expr: CostExpr,
+) -> CostExpr {
+    if let Some(include_if) = include_if {
         expr = CostExpr::Cond {
             variable: include_if.clone(),
             if_true: Box::new(expr),
             if_false: Box::new(CostExpr::Const(0)),
         };
     }
-    if let Some(skip_if) = &field.skip_if {
+    if let Some(skip_if) = skip_if {
         expr = CostExpr::Cond {
             variable: skip_if.clone(),
             if_true: Box::new(CostExpr::Const(0)),
