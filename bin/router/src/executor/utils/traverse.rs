@@ -5,7 +5,7 @@ use ahash::HashMap as AHashMap;
 use crate::query_planner::planner::plan_nodes::{PathSegment, TypeCondition};
 
 use crate::executor::{
-    introspection::schema::{PossibleTypes, SchemaMetadata},
+    introspection::schema::PossibleTypes,
     response::{graphql_error::GraphQLErrorPath, value::Value},
     utils::consts::TYPENAME_FIELD_NAME,
 };
@@ -19,25 +19,6 @@ fn entity_satisfies_any_type_condition(
         .names()
         .iter()
         .any(|name| possible_types.entity_satisfies_type_condition(type_name, name))
-}
-
-pub fn traverse_and_callback_mut<'a, Callback>(
-    current_data: &mut Value<'a>,
-    remaining_path: &[PathSegment],
-    schema_metadata: &SchemaMetadata,
-    current_error_path: Option<GraphQLErrorPath>,
-    callback: &mut Callback,
-) where
-    Callback: FnMut(&mut Value<'a>, Option<GraphQLErrorPath>),
-{
-    let mut error_path = current_error_path;
-    walk_mut(
-        current_data,
-        remaining_path,
-        schema_metadata,
-        &mut error_path,
-        callback,
-    );
 }
 
 fn push_index(error_path: &mut Option<GraphQLErrorPath>, index: usize) {
@@ -55,102 +36,6 @@ fn push_field(error_path: &mut Option<GraphQLErrorPath>, field: &str) {
 fn pop(error_path: &mut Option<GraphQLErrorPath>) {
     if let Some(error_path) = error_path.as_mut() {
         error_path.pop();
-    }
-}
-
-/// Walks `remaining_path` while carrying a single error path. Steps are added as the walk goes
-/// deeper and removed as it comes back, instead of copying the path built so far at every step.
-/// Only the callback needs to own a path, so only the callback allocates one.
-fn walk_mut<'a, Callback>(
-    current_data: &mut Value<'a>,
-    remaining_path: &[PathSegment],
-    schema_metadata: &SchemaMetadata,
-    error_path: &mut Option<GraphQLErrorPath>,
-    callback: &mut Callback,
-) where
-    Callback: FnMut(&mut Value<'a>, Option<GraphQLErrorPath>),
-{
-    if remaining_path.is_empty() {
-        if let Value::Array(arr) = current_data {
-            // If the path is empty, we call the callback on each item in the array
-            // We iterate because we want the entity objects directly
-            for (index, item) in arr.iter_mut().enumerate() {
-                push_index(error_path, index);
-                callback(item, error_path.clone());
-                pop(error_path);
-            }
-        } else {
-            // If the path is empty and current_data is not an array, just call the callback
-            callback(current_data, error_path.clone());
-        }
-        return;
-    }
-
-    let Some((first, rest_of_path)) = remaining_path.split_first() else {
-        return;
-    };
-
-    match first {
-        PathSegment::List => {
-            // If the key is List, we expect current_data to be an array
-            if let Value::Array(arr) = current_data {
-                for (index, item) in arr.iter_mut().enumerate() {
-                    push_index(error_path, index);
-                    walk_mut(item, rest_of_path, schema_metadata, error_path, callback);
-                    pop(error_path);
-                }
-            }
-        }
-        PathSegment::Field(field_name) => {
-            // If the key is Field, we expect current_data to be an object
-            if let Value::Object(map) = current_data {
-                let field_name: &str = field_name.as_ref();
-                if let Some(next_data) = Value::object_get_mut(map, field_name) {
-                    push_field(error_path, field_name);
-                    walk_mut(
-                        next_data,
-                        rest_of_path,
-                        schema_metadata,
-                        error_path,
-                        callback,
-                    );
-                    pop(error_path);
-                }
-            }
-        }
-        PathSegment::TypeCondition(type_condition) => {
-            // If the key is Cast, we expect current_data to be an object or an array
-            if let Value::Object(obj) = current_data {
-                let maybe_type_name =
-                    Value::object_get(obj, TYPENAME_FIELD_NAME).and_then(Value::as_str);
-
-                if maybe_type_name.is_none_or(|type_name| {
-                    entity_satisfies_any_type_condition(
-                        &schema_metadata.possible_types,
-                        type_name,
-                        type_condition,
-                    )
-                }) {
-                    // A type condition does not add a path step.
-                    walk_mut(
-                        current_data,
-                        rest_of_path,
-                        schema_metadata,
-                        error_path,
-                        callback,
-                    );
-                }
-            } else if let Value::Array(arr) = current_data {
-                // If the current data is an array, we need to check each item
-                for (index, item) in arr.iter_mut().enumerate() {
-                    push_index(error_path, index);
-                    // Pass `remaining_path` rather than `rest_of_path`, so the type condition
-                    // is checked again for each item.
-                    walk_mut(item, remaining_path, schema_metadata, error_path, callback);
-                    pop(error_path);
-                }
-            }
-        }
     }
 }
 
@@ -547,6 +432,20 @@ mod tests {
         },
     };
 
+    /// Walks `path` with a trie of it alone, like a flatten fetch does.
+    fn walk_alone<'a>(
+        data: &mut Value<'a>,
+        path: &FlattenNodePath,
+        callback: &mut impl FnMut(&mut Value<'a>, Option<&GraphQLErrorPath>),
+    ) {
+        super::PathTrie::new([path.as_slice()]).walk_mut(
+            data,
+            &Default::default(),
+            Some(GraphQLErrorPath::default()),
+            &mut |_, value, error_path| callback(value, error_path),
+        );
+    }
+
     #[test]
     /**
      * Collect error paths for each item in a list at one level
@@ -563,15 +462,9 @@ mod tests {
         )]);
         let path = path(&["items", "@"]);
         let mut collected = vec![];
-        super::traverse_and_callback_mut(
-            &mut data,
-            path.as_slice(),
-            &SchemaMetadata::default(),
-            Some(GraphQLErrorPath::default()),
-            &mut |_item, error_path| {
-                collected.push(error_path.unwrap());
-            },
-        );
+        walk_alone(&mut data, &path, &mut |_item, error_path| {
+            collected.push(error_path.unwrap().clone());
+        });
         assert_eq!(collected.len(), 2);
         assert_eq!(
             collected[0].segments,
@@ -620,15 +513,9 @@ mod tests {
         )]);
         let path = path(&["users", "@", "posts", "@"]);
         let mut collected = vec![];
-        super::traverse_and_callback_mut(
-            &mut data,
-            path.as_slice(),
-            &SchemaMetadata::default(),
-            Some(GraphQLErrorPath::default()),
-            &mut |_item, error_path| {
-                collected.push(error_path.unwrap());
-            },
-        );
+        walk_alone(&mut data, &path, &mut |_item, error_path| {
+            collected.push(error_path.unwrap().clone());
+        });
         assert_eq!(collected.len(), 3);
         assert_eq!(
             collected[0].segments,
@@ -686,15 +573,9 @@ mod tests {
 
         let path = path(&["media", "@", "|Book", "pages", "@"]);
         let mut collected = vec![];
-        super::traverse_and_callback_mut(
-            &mut data,
-            path.as_slice(),
-            &SchemaMetadata::default(),
-            Some(GraphQLErrorPath::default()),
-            &mut |_item, error_path| {
-                collected.push(error_path.expect("error path is tracked").segments);
-            },
-        );
+        walk_alone(&mut data, &path, &mut |_item, error_path| {
+            collected.push(error_path.expect("error path is tracked").segments.clone());
+        });
 
         use crate::executor::response::graphql_error::GraphQLErrorPathSegment::{Index, String};
         assert_eq!(
@@ -747,6 +628,7 @@ mod tests {
 
     /// Hashes collected with one walk are matched to values by position in the other, so every
     /// path has to see the same values in the same order as a walk of that path alone.
+    /// The trie of the whole set has to walk each path like a trie of that path alone.
     #[test]
     fn trie_walks_each_path_like_a_walk_of_it_alone() {
         let data: Value = sonic_rs::from_str(
@@ -782,18 +664,12 @@ mod tests {
             .map(|path| {
                 let mut data = data.clone();
                 let mut found = Vec::new();
-                super::traverse_and_callback_mut(
-                    &mut data,
-                    path.as_slice(),
-                    &metadata,
-                    Some(GraphQLErrorPath::with_capacity(0)),
-                    &mut |value, error_path| {
-                        found.push((
-                            sonic_rs::to_string(value).unwrap(),
-                            error_path.unwrap().segments,
-                        ))
-                    },
-                );
+                walk_alone(&mut data, path, &mut |value, error_path| {
+                    found.push((
+                        sonic_rs::to_string(value).unwrap(),
+                        error_path.unwrap().segments.clone(),
+                    ))
+                });
                 found
             })
             .collect();

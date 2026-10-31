@@ -5,13 +5,13 @@
 use crate::{
     executor::{
         execution::context::{EntityRef, Known, TargetEntities},
-        introspection::schema::{PossibleTypes, SchemaMetadata},
+        introspection::schema::PossibleTypes,
         response::{merge::EntityMerger, value::Value},
-        utils::{prehashed_map::PrehashedMap, traverse::traverse_and_callback_mut},
+        utils::{prehashed_map::PrehashedMap, traverse::PathTrie},
     },
     query_planner::{
         ast::requires::{RequiresSelection, RequiresSelectionSetRef},
-        planner::plan_nodes::{EntityReuse, ResponsePathRef},
+        planner::plan_nodes::EntityReuse,
     },
 };
 
@@ -55,8 +55,10 @@ impl<'d, 'v> ReuseIndex<'d, 'v> {
     }
 }
 
+/// The entities one fetch copied, and the trie node each of its paths ends at, with its targets.
 pub struct Copies<'a, 'v> {
-    pub paths: Vec<(ResponsePathRef<'a>, TargetEntities)>,
+    pub trie: &'a PathTrie,
+    pub paths: Vec<(usize, TargetEntities)>,
     pub copies: Vec<Value<'v>>,
 }
 
@@ -64,13 +66,18 @@ pub struct Copies<'a, 'v> {
 pub fn merge_copies<'v>(
     data: &mut Value<'v>,
     copies: Vec<Copies<'_, 'v>>,
-    schema_metadata: &SchemaMetadata,
+    possible_types: &PossibleTypes,
 ) {
     let copied = |target: &Option<EntityRef>| match target {
         Some(EntityRef::Copied { index }) => Some(*index as usize),
         _ => None,
     };
-    for Copies { paths, mut copies } in copies {
+    for Copies {
+        trie,
+        paths,
+        mut copies,
+    } in copies
+    {
         let mut merger = EntityMerger::new(
             &mut copies,
             paths
@@ -78,20 +85,18 @@ pub fn merge_copies<'v>(
                 .flat_map(|(_, targets)| targets.iter())
                 .filter_map(copied),
         );
-        for (path, targets) in &paths {
-            let mut targets = targets.iter();
-            traverse_and_callback_mut(
-                data,
-                path.as_slice(),
-                schema_metadata,
-                None,
-                &mut |target, _| {
-                    if let Some(index) = targets.next().and_then(copied) {
+        // the next target on every path
+        let mut next = vec![0; paths.len()];
+        trie.walk_mut(data, possible_types, None, &mut |node, target, _| {
+            for ((end, targets), next) in paths.iter().zip(&mut next) {
+                if *end == node {
+                    if let Some(index) = targets.get(*next).and_then(copied) {
                         merger.merge_into(target, index);
                     }
-                },
-            );
-        }
+                    *next += 1;
+                }
+            }
+        });
     }
 }
 
