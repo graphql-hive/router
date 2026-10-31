@@ -1,4 +1,0 @@
-query($__batch_reps_0:[_Any!]!, $__batch_reps_1:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{reviews{...a}}} _e1: _entities(representations: $__batch_reps_1){...on User{reviews{id body product{__typename upc reviews{...a}}}}}}
-
-fragment a on Review {id body author{__typename id username reviews{id body product{__typename upc}}}}
-
