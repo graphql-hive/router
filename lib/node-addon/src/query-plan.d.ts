@@ -25,6 +25,14 @@ export interface FetchNode {
   outputRewrites?: OutputRewrite[];
   contextRewrites?: KeyRenamer[];
   contextVariables?: string[];
+  /** The fetch runs when any of these holds, always when missing. */
+  runIf?: ConditionGroup[];
+}
+
+/** Holds when every `includeIf` variable is `true` and no `skipIf` one is. */
+export interface ConditionGroup {
+  includeIf?: string[];
+  skipIf?: string[];
 }
 
 export interface BatchFetchNode {

@@ -42,6 +42,8 @@ pub mod planning {
 
 mod path;
 pub use path::{FlattenNodePath, MergePaths, PathSegment, ResponsePathRef, TypeCondition};
+mod conditions;
+pub use conditions::{display_run_if, ConditionGroup};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::{Display, Formatter as FmtFormatter, Result as FmtResult},
@@ -158,6 +160,11 @@ pub struct FetchNode<S: PlanState = Executable> {
     pub output_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
     pub context: Option<Box<FetchContext>>,
+    /// The fetch runs when any of these holds, always when missing. It's what's left of its
+    /// fields' `@include`/`@skip` once the `Include`/`Skip` nodes around it are accounted for:
+    /// with every field off there's nothing to ask for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_if: Option<Vec<ConditionGroup>>,
 }
 
 /// What a fetch with `@fromContext` arguments needs at execution time.
@@ -771,6 +778,7 @@ impl FetchNode<Planning> {
                     input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: step.output_rewrites.clone(),
                     context,
+                    run_if: None,
                 }
             }
             false => {
@@ -806,6 +814,7 @@ impl FetchNode<Planning> {
                             .collect(),
                         step.context_rewrites.clone(),
                     ),
+                    run_if: None,
                 }
             }
         }
@@ -818,18 +827,7 @@ impl PlanNode<Planning> {
         supergraph: &SupergraphState,
         options: &QueryPlannerOptions,
     ) -> Self {
-        let fetch = FetchNode::from_fetch_step(step, supergraph, options);
-
-        let node = if !step.response_path.is_empty() {
-            PlanNode::Flatten(FlattenNode {
-                path: step.response_path.clone().into(),
-                node: Box::new(PlanNode::Fetch(Box::new(fetch))),
-            })
-        } else if matches!(fetch.operation_kind, Some(OperationKind::Subscription)) {
-            PlanNode::Subscription(Box::new(SubscriptionNode { primary: fetch }))
-        } else {
-            PlanNode::Fetch(Box::new(fetch))
-        };
+        let mut fetch = FetchNode::from_fetch_step(step, supergraph, options);
 
         // A fetch planned under fragments or fields with `@include`/`@skip` runs only when all
         // of them hold. The step has the innermost condition, its path has the ones around it:
@@ -844,6 +842,42 @@ impl PlanNode<Planning> {
                 conditions.push(condition);
             }
         }
+
+        // Its fields can have conditions of their own, like `details @include(if: $d)` and
+        // `inventory @include(if: $i)`, so with all of them off there's nothing to ask for. The
+        // conditions around it hold whenever it gets to run, only the rest is checked.
+        if !matches!(fetch.operation_kind, Some(OperationKind::Subscription)) {
+            let known = ConditionGroup::new(
+                conditions
+                    .iter()
+                    .filter_map(|condition| condition.to_include_if())
+                    .collect(),
+                conditions
+                    .iter()
+                    .filter_map(|condition| condition.to_skip_if())
+                    .collect(),
+            );
+            // with conditions that can't all hold, the nodes around never run it anyway
+            fetch.run_if = known.and_then(|known| {
+                conditions::run_if_of_output(
+                    step.output
+                        .iter_selections()
+                        .map(|(_, selections)| selections),
+                    &known,
+                )
+            });
+        }
+
+        let node = if !step.response_path.is_empty() {
+            PlanNode::Flatten(FlattenNode {
+                path: step.response_path.clone().into(),
+                node: Box::new(PlanNode::Fetch(Box::new(fetch))),
+            })
+        } else if matches!(fetch.operation_kind, Some(OperationKind::Subscription)) {
+            PlanNode::Subscription(Box::new(SubscriptionNode { primary: fetch }))
+        } else {
+            PlanNode::Fetch(Box::new(fetch))
+        };
 
         conditions
             .into_iter()
@@ -933,7 +967,15 @@ impl<S: PlanState> PrettyDisplay for QueryPlan<S> {
 impl<S: PlanState> PrettyDisplay for FetchNode<S> {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
-        writeln!(f, "{indent}Fetch(service: \"{}\") {{", self.service_name)?;
+        match &self.run_if {
+            None => writeln!(f, "{indent}Fetch(service: \"{}\") {{", self.service_name)?,
+            Some(run_if) => writeln!(
+                f,
+                "{indent}Fetch(service: \"{}\", if: {}) {{",
+                self.service_name,
+                display_run_if(run_if)
+            )?,
+        }
         if let Some(requires) = &self.requires {
             writeln!(f, "{indent}  {{")?;
             requires.pretty_fmt(f, depth + 2)?;
@@ -1140,7 +1182,8 @@ mod stored_size_tests {
         for (name, actual, expected) in [
             ("PlanNode", size_of::<PlanNode>(), 40),
             ("ConditionNode", size_of::<ConditionNode>(), 40),
-            ("FetchNode", size_of::<FetchNode>(), 240),
+            // `run_if` is an `Option<Vec<_>>`
+            ("FetchNode", size_of::<FetchNode>(), 264),
             ("BatchFetchNode", size_of::<BatchFetchNode>(), 168),
             (
                 "SubgraphFetchOperation",

@@ -1110,6 +1110,21 @@ impl<'exec> Executor<'exec> {
         requests
     }
 
+    /// Whether any of the fetch's fields is asked for, see `FetchNode::run_if`. A variable counts
+    /// when it's `true`, like a `Condition` node reads it.
+    fn fetch_runs(&self, fetch_node: &FetchNode) -> bool {
+        fetch_node.run_if.as_ref().is_none_or(|groups| {
+            groups.iter().any(|group| {
+                group.holds(|name| {
+                    self.variable_values
+                        .as_ref()
+                        .and_then(|vars| vars.get(name))
+                        .is_some_and(|value| matches!(value.as_ref(), ValueRef::Bool(true)))
+                })
+            })
+        })
+    }
+
     /**
      * This function is sync, because we only need the immutable borrow of `ctx.data` to prepare the subgraph request,
      * and the actual execution of the subgraph request is done in `prepare_fetch_job` which is async.
@@ -1124,6 +1139,7 @@ impl<'exec> Executor<'exec> {
         data: &Value<'exec>,
     ) -> Vec<BoxFuture<'wave, Result<ExecutionJob<'exec>, PlanExecutionError>>> {
         match node {
+            PlanNode::Fetch(fetch_node) if !self.fetch_runs(fetch_node) => Vec::new(),
             PlanNode::Fetch(fetch_node) => vec![self
                 .prepare_execution_job(PrepareExecutionJobOpts {
                     subgraph_name: &fetch_node.service_name,
@@ -1202,6 +1218,9 @@ impl<'exec> Executor<'exec> {
                     PlanNode::Fetch(fetch_node) => fetch_node,
                     _ => return Vec::new(),
                 };
+                if !self.fetch_runs(fetch_node) {
+                    return Vec::new();
+                }
 
                 // If there are no requirements in the node (no _entities call), then we only need to make
                 // a regular call. This happens when we perform subgraph re-entry.
@@ -2454,6 +2473,7 @@ mod tests {
                             planner_requires: (),
                             service_name: "subgraph_a".to_string(),
                             context: None,
+                            run_if: None,
                             operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_a }"),
                             )
@@ -2470,6 +2490,7 @@ mod tests {
                             planner_requires: (),
                             service_name: "subgraph_b".to_string(),
                             context: None,
+                            run_if: None,
                             operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_b }"),
                             )

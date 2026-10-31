@@ -1252,7 +1252,7 @@ fn qp_mixed_include_skip_field_level_keeps_conditions_scoped() -> Result<(), Box
           }
         },
         Flatten(path: "product") {
-          Fetch(service: "b") {
+          Fetch(service: "b", if: !$skip || $include) {
             {
               ... on Product {
                 __typename
@@ -1721,7 +1721,7 @@ fn conditional_root_fragment_survives_merges() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
-        Fetch(service: "b") {
+        Fetch(service: "b", if: $x) {
           query ($x:Boolean!) {
             ... on Query @include(if: $x) {
               userInB {
