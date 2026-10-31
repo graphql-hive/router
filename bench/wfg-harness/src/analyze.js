@@ -124,10 +124,8 @@ export function switchedOffInputs(plan, variables, schema) {
         // a group that's off leaves its paths out, the alias may still run for the others.
         // A plan from before `pathGroups` has plain `paths`, those always run
         for (const alias of node.entityBatch.aliases) {
-          // an alias with its own `Include`/`Skip`, `@include`/`@skip` on its `_entities`
-          const aliasOff =
-            (alias.includeIf && variables[alias.includeIf] !== true) || (alias.skipIf && variables[alias.skipIf] === true);
-          if (off || aliasOff || (alias.pathGroups ?? []).some((group) => group.runIf && !group.runIf.some(holds))) add(alias.requires);
+          // an alias with its own `Include`s/`Skip`s
+          if (off || !holds(alias) || (alias.pathGroups ?? []).some((group) => group.runIf && !group.runIf.some(holds))) add(alias.requires);
         }
         break;
       case 'Condition':
