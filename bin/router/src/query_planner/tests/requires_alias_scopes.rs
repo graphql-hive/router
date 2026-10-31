@@ -433,11 +433,26 @@ fn fetches(plan: &Value) -> Vec<Fetch> {
                 if map.get("kind").and_then(Value::as_str) == Some("BatchFetch") {
                     let aliases = map["entityBatch"]["aliases"].as_array();
                     for alias in aliases.into_iter().flatten() {
+                        // and its own `Include`/`Skip`
+                        let mut conditions = conditions.to_vec();
+                        for (key, prefix) in [("includeIf", ""), ("skipIf", "!")] {
+                            for variable in alias
+                                .get(key)
+                                .and_then(Value::as_array)
+                                .into_iter()
+                                .flatten()
+                            {
+                                conditions.push(format!(
+                                    "{prefix}{}",
+                                    variable.as_str().unwrap_or_default()
+                                ));
+                            }
+                        }
                         out.push(Fetch {
                             service: map["serviceName"].as_str().unwrap_or_default().to_string(),
                             operation: map["operation"].as_str().unwrap_or_default().to_string(),
                             requires: alias["requires"].clone(),
-                            conditions: conditions.to_vec(),
+                            conditions,
                             paths: alias["paths"]
                                 .as_array()
                                 .into_iter()

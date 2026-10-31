@@ -63,6 +63,8 @@ export interface EntityBatchAlias {
   outputRewrites?: OutputRewrite[];
   contextRewrites?: KeyRenamer[];
   contextVariables?: string[];
+  includeIf?: string[];
+  skipIf?: string[];
 }
 
 export interface SubscriptionNode {

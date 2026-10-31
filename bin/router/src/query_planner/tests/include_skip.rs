@@ -2256,88 +2256,97 @@ fn condition_kept_when_another_branch_fetches_the_same_field() -> Result<(), Box
             }
           }
         },
-        Parallel {
-          Skip(if: $c) {
-            Flatten(path: "user|[User]") {
-              Fetch(service: "orders") {
-                {
-                  ... on User {
+        BatchFetch(service: "orders") {
+          {
+            _e0 {
+              skipIf: $c
+              paths: [
+                "user|[User]"
+              ]
+              {
+                ... on User {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e1 {
+              includeIf: $a
+              paths: [
+                "user"
+              ]
+              {
+                ... on User {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          ($b:Boolean!) {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on User {
+                orders {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on User {
+                orders {
+                  ... on Order @include(if: $b) {
                     __typename
                     id
-                  }
-                } =>
-                {
-                  ... on User {
-                    orders {
-                      __typename
-                      id
-                    }
+                    sku
                   }
                 }
-              },
-            },
-          },
-          Include(if: $a) {
-            Flatten(path: "user") {
-              Fetch(service: "orders") {
-                {
-                  ... on User {
-                    __typename
-                    id
-                  }
-                } =>
-                ($b:Boolean!) {
-                  ... on User {
-                    orders {
-                      ... on Order @include(if: $b) {
-                        __typename
-                        id
-                        sku
-                      }
-                    }
-                  }
-                }
-              },
-            },
-          },
+              }
+            }
+          }
         },
-        Parallel {
-          Skip(if: $c) {
-            Flatten(path: "user|[User].orders.@") {
-              Fetch(service: "catalog") {
-                {
-                  ... on Order {
-                    __typename
-                    id
-                  }
-                } =>
-                {
-                  ... on Order {
-                    weight
-                  }
+        BatchFetch(service: "catalog") {
+          {
+            _e0 {
+              skipIf: $c
+              paths: [
+                "user|[User].orders.@"
+              ]
+              {
+                ... on Order {
+                  __typename
+                  id
                 }
-              },
-            },
-          },
-          Include(if: $a) {
-            Include(if: $b) {
-              Flatten(path: "user.orders.@|[Order]") {
-                Fetch(service: "catalog") {
-                  {
-                    ... on Order {
-                      __typename
-                      id
-                    }
-                  } =>
-                  {
-                    ... on Order {
-                      weight
-                    }
-                  }
-                },
-              },
-            },
-          },
+              }
+            }
+            _e1 {
+              includeIf: $a, $b
+              paths: [
+                "user.orders.@|[Order]"
+              ]
+              {
+                ... on Order {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Order {
+                ...a
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Order {
+                ...a
+              }
+            }
+          }
+          fragment a on Order {
+            weight
+          }
         },
         Include(if: $a) {
           Include(if: $b) {

@@ -867,19 +867,24 @@ struct PrepareExecutionJobOpts<'exec> {
 impl<'exec> Executor<'exec> {
     async fn execute_plan_node(&self, ctx: &mut ExecutionContext<'exec>, node: &'exec PlanNode) {
         match node {
-            PlanNode::Parallel(parallel_node) => {
+            PlanNode::Parallel(_) => {
                 let mut scope = FuturesUnordered::new();
+                // children that aren't a fetch, like the `Sequence` in
+                // `Parallel { Include(if: $a) { Parallel { Sequence { .. }, Fetch } } }`, they run
+                // once the fetches are done. Siblings don't depend on each other, so that's fine.
+                // They run one after another though, two `Sequence`s don't overlap.
+                let mut after = Vec::new();
 
-                for child in &parallel_node.nodes {
-                    // We borrow `ctx.data` only for sync preparation of the job future,
-                    // and the actual execution of the job future is done without the borrow of `ctx.data`
-                    for fut in self.prepare_job_future(child, &ctx.data) {
-                        scope.push(fut);
-                    }
-                }
+                // We borrow `ctx.data` only for sync preparation of the job future,
+                // and the actual execution of the job future is done without the borrow of `ctx.data`
+                self.prepare_parallel_child(node, &ctx.data, &mut scope, &mut after);
 
                 while let Some(job) = scope.next().await {
                     self.process_job_result(ctx, job);
+                }
+
+                for node in after {
+                    Box::pin(self.execute_plan_node(ctx, node)).await;
                 }
             }
             PlanNode::Sequence(sequence_node) => {
@@ -1108,6 +1113,37 @@ impl<'exec> Executor<'exec> {
         }
 
         requests
+    }
+
+    /// Adds the fetches of a `Parallel` node to `scope`, looking through the conditions that hold
+    /// and nested `Parallel`s. Anything else goes to `after`.
+    fn prepare_parallel_child<'wave>(
+        &'wave self,
+        node: &'exec PlanNode,
+        data: &Value<'exec>,
+        scope: &mut FuturesUnordered<
+            BoxFuture<'wave, Result<ExecutionJob<'exec>, PlanExecutionError>>,
+        >,
+        after: &mut Vec<&'exec PlanNode>,
+    ) {
+        match node {
+            PlanNode::Condition(condition_node) => {
+                if let Some(next_node) =
+                    condition_node_by_variables(condition_node, self.variable_values)
+                {
+                    self.prepare_parallel_child(next_node, data, scope, after);
+                }
+            }
+            PlanNode::Parallel(parallel_node) => {
+                for child in &parallel_node.nodes {
+                    self.prepare_parallel_child(child, data, scope, after);
+                }
+            }
+            PlanNode::Fetch(_) | PlanNode::Flatten(_) | PlanNode::BatchFetch(_) => {
+                scope.extend(self.prepare_job_future(node, data));
+            }
+            node => after.push(node),
+        }
     }
 
     /**
@@ -1690,6 +1726,19 @@ impl<'exec> Executor<'exec> {
         entity_index_error_map
     }
 
+    /// Whether the alias's `Include`s and `Skip`s let it run, read like `condition_node_by_variables`
+    /// reads a `Condition` node: without a value neither side runs.
+    fn alias_runs(&self, alias_spec: &EntityBatchAlias) -> bool {
+        let value = |variable: &String| {
+            self.variable_values
+                .as_ref()
+                .and_then(|vars| vars.get(variable))
+                .map(|value| matches!(value.as_ref(), ValueRef::Bool(true)))
+        };
+        alias_spec.include_if.iter().all(|v| value(v) == Some(true))
+            && alias_spec.skip_if.iter().all(|v| value(v) == Some(false))
+    }
+
     // The preperation includes:
     // - building one `_entities` input list for each alias
     // - remembering where each item came from (so we can put results back)
@@ -1707,6 +1756,10 @@ impl<'exec> Executor<'exec> {
             .aliases
             .iter()
             .map(|alias_spec| {
+                // off like the `Include`/`Skip` it came from, it collects nothing and sends `[]`
+                if !self.alias_runs(alias_spec) {
+                    return (Vec::new(), Vec::new());
+                }
                 collect_context_entities(
                     data,
                     alias_spec.merge_paths.iter(),
@@ -2269,6 +2322,8 @@ mod tests {
                     input_rewrites: None,
                     output_rewrites: None,
                     context: None,
+                    include_if: vec![],
+                    skip_if: vec![],
                 },
                 EntityBatchAlias {
                     alias: "_e1".to_string(),
@@ -2278,6 +2333,8 @@ mod tests {
                     input_rewrites: None,
                     output_rewrites: None,
                     context: None,
+                    include_if: vec![],
+                    skip_if: vec![],
                 },
             ],
         };

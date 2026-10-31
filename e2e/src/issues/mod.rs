@@ -3833,10 +3833,18 @@ mod issues_e2e_tests {
                     let body: serde_json::Value =
                         serde_json::from_slice(request.body.as_deref().unwrap_or_default())
                             .unwrap_or_default();
-                    seen_by_mocks
-                        .lock()
-                        .unwrap()
-                        .push(body["variables"]["representations"].to_string());
+                    // one list per entity call, batched ones as `__batch_reps_N`, an alias
+                    // that's off sends `[]`
+                    let lists = body["variables"]
+                        .as_object()
+                        .into_iter()
+                        .flatten()
+                        .filter(|(name, _)| {
+                            *name == "representations" || name.starts_with("__batch_reps_")
+                        })
+                        .filter(|(_, list)| list.as_array().is_some_and(|list| !list.is_empty()))
+                        .map(|(_, list)| list.to_string());
+                    seen_by_mocks.lock().unwrap().extend(lists);
                 }
                 mocks(request)
             })
