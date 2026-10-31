@@ -89,6 +89,12 @@ impl ArgumentsMap {
         self.arguments_map.insert(key, value);
     }
 
+    pub fn rename_variable(&mut self, from: &str, to: &str) {
+        self.arguments_map
+            .values_mut()
+            .for_each(|value| value.rename_variable(from, to));
+    }
+
     pub fn has_argument(&self, key: &str) -> bool {
         self.arguments_map.contains_key(key)
     }

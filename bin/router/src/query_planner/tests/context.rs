@@ -422,11 +422,11 @@ fn context_variables_do_not_collide_with_client_variables_or_requires() -> Resul
                 base
               }
             } =>
-            ($__context_0:Int=2,$__context_1:Boolean!,$__context_3:Int,$__context_4:String,$__context_2:String) {
+            ($__context_0:Int=2,$__context_1:Boolean!,$__context_3:Int,$__context_4:String) {
               ... on Transaction {
                 amount(code: $__context_4, multiplier: $__context_3)
                 ... on Transaction @include(if: $__context_1) {
-                  required(code: $__context_2, multiplier: $__context_0)
+                  required(code: $__context_4, multiplier: $__context_0)
                 }
               }
             }
@@ -3384,5 +3384,85 @@ fn requires_selection_that_sets_its_own_context() -> Result<(), Box<dyn Error>> 
       },
     },
     "#);
+    Ok(())
+}
+
+/// `amountInUserCurrency` under `@include` and again under `@skip` reads the same `userCurrency`.
+/// Merged into one call, both copies take the same context variable, with one each they'd be one
+/// response key with other arguments, which the subgraph rejects.
+#[test]
+fn same_context_value_under_a_condition_shares_its_variable() -> Result<(), Box<dyn Error>> {
+    let document = parse_operation(
+        r#"
+        query ($a: Boolean!, $b: Boolean!) {
+          user {
+            lastTransaction {
+              ... @include(if: $a) {
+                amountInUserCurrency
+              }
+              ... @skip(if: $b) {
+                amountInUserCurrency
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/context-cross.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{query_plan}"), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            user {
+              __typename
+              id
+              userCurrency {
+                isoCode
+              }
+            }
+          }
+        },
+        Flatten(path: "user") {
+          Fetch(service: "b") {
+            {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            ($a:Boolean!,$b:Boolean!,$__context_1:String) {
+              ... on User {
+                __typename
+                id
+                lastTransaction {
+                  ... on Transaction @include(if: $a) {
+                    __typename
+                    id
+                    ... on Transaction @include(if: $a) {
+                      ...a
+                    }
+                  }
+                  ... on Transaction @skip(if: $b) {
+                    __typename
+                    id
+                    ... on Transaction @skip(if: $b) {
+                      ...a
+                    }
+                  }
+                }
+              }
+            }
+            fragment a on Transaction {
+              amountInUserCurrency(currencyCode: $__context_1)
+            }
+          },
+        },
+      },
+    },
+    "#);
+
     Ok(())
 }

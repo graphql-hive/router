@@ -83,6 +83,24 @@ impl SelectionSet {
         selection_items_are_subset_of(&self.items, &other.items)
     }
 
+    /// Every `$from` in arguments becomes `$to`.
+    pub fn rename_variable(&mut self, from: &str, to: &str) {
+        for item in &mut self.items {
+            match item {
+                SelectionItem::Field(field) => {
+                    if let Some(arguments) = &mut field.arguments {
+                        arguments.rename_variable(from, to);
+                    }
+                    field.selections.rename_variable(from, to);
+                }
+                SelectionItem::InlineFragment(fragment) => {
+                    fragment.selections.rename_variable(from, to)
+                }
+                SelectionItem::FragmentSpread(_) => {}
+            }
+        }
+    }
+
     pub fn variable_usages(&self) -> BTreeSet<String> {
         self.items
             .iter()

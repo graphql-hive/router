@@ -83,6 +83,19 @@ impl Hash for Value {
 }
 
 impl Value {
+    pub fn rename_variable(&mut self, from: &str, to: &str) {
+        match self {
+            Value::Variable(name) if name == from => *name = to.to_string(),
+            Value::List(values) => values
+                .iter_mut()
+                .for_each(|value| value.rename_variable(from, to)),
+            Value::Object(map) => map
+                .values_mut()
+                .for_each(|value| value.rename_variable(from, to)),
+            _ => {}
+        }
+    }
+
     pub fn variable_usages(&self) -> BTreeSet<String> {
         match self {
             Value::Variable(name) => BTreeSet::from([name.clone()]),
