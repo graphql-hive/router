@@ -3386,3 +3386,146 @@ fn requires_selection_that_sets_its_own_context() -> Result<(), Box<dyn Error>> 
     "#);
     Ok(())
 }
+
+/// `wallet` sits on the `Account` interface, so its `discount` is planned per account type, each
+/// with a context variable that reads that type's `plan`. The `Member` call asks for `discount`,
+/// the `Guest` one for `a3_discount: discount`. Merged, every wallet would get both, and a
+/// `Member` wallet's `a3_discount` would read a `Guest` plan, `null` for it.
+#[test]
+fn per_type_contextual_fields_under_other_aliases_stay_apart() -> Result<(), Box<dyn Error>> {
+    let document = parse_operation(
+        r#"
+        query ($v15: Boolean! = false, $v4: Boolean!, $v6: Boolean! = false) {
+          accounts {
+            ... @skip(if: $v15) {
+              wallet {
+                discount
+                ... {
+                  a3_discount: discount @skip(if: $v6)
+                  discount @skip(if: $v4)
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/context-interface-implementation.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{query_plan}"), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          query ($v15:Boolean!=false) {
+            accounts {
+              __typename
+              ... on Guest {
+                __typename
+                plan @skip(if: $v15)
+                wallet @skip(if: $v15) {
+                  ...a
+                }
+              }
+              ... on Member {
+                __typename
+                plan @skip(if: $v15)
+                wallet @skip(if: $v15) {
+                  ...a
+                }
+              }
+            }
+          }
+          fragment a on Wallet {
+            __typename
+            id
+          }
+        },
+        Parallel {
+          Skip(if: $v15) {
+            Flatten(path: "accounts.@|[Member].wallet") {
+              Fetch(service: "a") {
+                {
+                  ... on Wallet {
+                    __typename
+                    id
+                  }
+                } =>
+                ($v4:Boolean!,$v6:Boolean!=false,$__context_5:String,$__context_4:String) {
+                  ... on Wallet {
+                    ... on Wallet @skip(if: $v4) {
+                      discount(plan: $__context_5)
+                    }
+                    ... on Wallet @skip(if: $v6) {
+                      a3_discount: discount(plan: $__context_4)
+                    }
+                  }
+                }
+              },
+            },
+          },
+          Skip(if: $v15) {
+            Flatten(path: "accounts.@|[Member].wallet") {
+              Fetch(service: "a") {
+                {
+                  ... on Wallet {
+                    __typename
+                    id
+                  }
+                } =>
+                ($__context_3:String) {
+                  ... on Wallet {
+                    discount(plan: $__context_3)
+                  }
+                }
+              },
+            },
+          },
+          Skip(if: $v15) {
+            Flatten(path: "accounts.@|[Guest].wallet") {
+              Fetch(service: "a") {
+                {
+                  ... on Wallet {
+                    __typename
+                    id
+                  }
+                } =>
+                ($v4:Boolean!,$v6:Boolean!=false,$__context_2:String,$__context_1:String) {
+                  ... on Wallet {
+                    ... on Wallet @skip(if: $v4) {
+                      discount(plan: $__context_2)
+                    }
+                    ... on Wallet @skip(if: $v6) {
+                      a3_discount: discount(plan: $__context_1)
+                    }
+                  }
+                }
+              },
+            },
+          },
+          Skip(if: $v15) {
+            Flatten(path: "accounts.@|[Guest].wallet") {
+              Fetch(service: "a") {
+                {
+                  ... on Wallet {
+                    __typename
+                    id
+                  }
+                } =>
+                ($__context_0:String) {
+                  ... on Wallet {
+                    discount(plan: $__context_0)
+                  }
+                }
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
