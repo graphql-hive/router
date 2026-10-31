@@ -20,6 +20,7 @@ use super::{
     plan_nodes::planning::{ParallelNode, QueryPlan, SequenceNode},
 };
 
+mod entity_reuse;
 mod optimize;
 
 /// Tracks the in-degree of FetchGraph (DAG) in a dependency graph.
@@ -111,9 +112,12 @@ pub fn build_query_plan_from_fetch_graph(
     }
 
     let mut overall_plan_sequence: Vec<PlanNode> = Vec::new();
+    // Steps from finished waves. An entity fetch may copy entities they already put in the response.
+    let mut earlier_steps: Vec<NodeIndex> = Vec::new();
 
     while !queue.is_empty() {
         let mut current_wave_nodes: Vec<PlanNode> = Vec::new();
+        let mut current_wave_steps: Vec<NodeIndex> = Vec::new();
         let wave_size = queue.len();
 
         for _ in 0..wave_size {
@@ -124,7 +128,17 @@ pub fn build_query_plan_from_fetch_graph(
                 )))?;
 
             let step_data = fetch_graph.get_step_data(step_index)?;
-            current_wave_nodes.push(PlanNode::from_fetch_step(step_data, supergraph, options));
+            let mut node = PlanNode::from_fetch_step(step_data, supergraph, options);
+            if let Some(reuse) = entity_reuse::find_entity_reuse(
+                &fetch_graph,
+                step_index,
+                &earlier_steps,
+                supergraph,
+            ) {
+                entity_reuse::attach_entity_reuse(&mut node, reuse);
+            }
+            current_wave_nodes.push(node);
+            current_wave_steps.push(step_index);
             planned_nodes_count += 1;
             in_degrees.mark_as_processed(step_index);
 
@@ -142,6 +156,8 @@ pub fn build_query_plan_from_fetch_graph(
                 }
             }
         }
+
+        earlier_steps.extend(current_wave_steps);
 
         if current_wave_nodes.is_empty() {
             return Err(QueryPlanError::Internal(String::from(

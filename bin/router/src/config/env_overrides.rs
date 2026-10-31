@@ -77,6 +77,10 @@ pub struct EnvVarOverrides {
     #[envconfig(from = "QUERY_PLANNER_EXPERIMENTAL_ABSTRACT_TYPE_FOLDING")]
     pub query_planner_experimental_abstract_type_folding: Option<bool>,
 
+    // Executor overrides
+    #[envconfig(from = "ROUTER_EXPERIMENTAL_ENTITY_REUSE")]
+    pub experimental_entity_reuse: Option<bool>,
+
     // Error masking
     #[envconfig(from = "DISABLE_SUBGRAPH_ERROR_MASKING")]
     pub disable_subgraph_error_masking: Option<bool>,
@@ -276,6 +280,14 @@ impl EnvVarOverrides {
             )?;
         }
 
+        if let Some(experimental_entity_reuse) = self.experimental_entity_reuse.take() {
+            debug!(target: CONFIG_LOGGING_TARGET, value = experimental_entity_reuse, "overriding 'traffic_shaping.experimental_entity_reuse'");
+            config = config.set_override(
+                "traffic_shaping.experimental_entity_reuse",
+                experimental_entity_reuse,
+            )?;
+        }
+
         if let Some(disable_subgraph_error_masking) = self.disable_subgraph_error_masking.take() {
             debug!(
                 "[config-override] 'disable_subgraph_error_masking' = {}",
@@ -449,6 +461,35 @@ query_planner:
         .unwrap();
 
         assert!(config.query_planner.experimental_abstract_type_folding);
+    }
+
+    #[test]
+    fn experimental_entity_reuse_is_off_by_default() {
+        let config = config_from_overrides(EnvVarOverrides::default());
+
+        assert!(!config.traffic_shaping.experimental_entity_reuse);
+    }
+
+    #[test]
+    fn experimental_entity_reuse_override_wins_over_config_file_value() {
+        let config = EnvVarOverrides {
+            experimental_entity_reuse: Some(true),
+            ..Default::default()
+        }
+        .apply_overrides(Config::builder().add_source(File::from_str(
+            r#"
+traffic_shaping:
+  experimental_entity_reuse: false
+"#,
+            FileFormat::Yaml,
+        )))
+        .unwrap()
+        .build()
+        .unwrap()
+        .try_deserialize::<HiveRouterConfig>()
+        .unwrap();
+
+        assert!(config.traffic_shaping.experimental_entity_reuse);
     }
 
     #[test]
