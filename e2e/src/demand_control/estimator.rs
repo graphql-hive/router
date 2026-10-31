@@ -1170,4 +1170,64 @@ mod estimator_tests {
         );
         assert!(allowed_json["data"]["searchByCostlyInput"].is_array());
     }
+
+    // `... on Review @include(if: $b)` stays in the `reviews` call as it is, and is only costed
+    // when it's asked for, like a field with `@include(if: $b)`.
+    #[ntex::test]
+    async fn conditional_fragments_are_estimated_like_the_query() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                demand_control:
+                    enabled: true
+                    operation_cost:
+                      max: 1000
+                      mode: measure
+                      expose_headers:
+                        estimated: true
+                    default_list_size:
+                      all: 1
+                    subgraphs_budget:
+                      mode: measure
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = |b: &str| {
+            let variables = if b.starts_with('$') {
+                "($b: Boolean!)"
+            } else {
+                ""
+            };
+            format!(
+                "query{variables} {{
+                    topProducts(first: 4) {{
+                        upc
+                        reviews {{ id ... on Review @include(if: {b}) {{ author {{ id }} }} }}
+                    }}
+                }}"
+            )
+        };
+
+        let router = &router;
+        let estimate = |query: String, variables| async move {
+            router
+                .send_graphql_request(&query, variables, None)
+                .await
+                .cost_header("x-cost-estimated")
+                .expect("estimated cost header should be present")
+        };
+        let on = estimate(query("$b"), Some(json!({ "b": true }))).await;
+        let off = estimate(query("$b"), Some(json!({ "b": false }))).await;
+        // with `$b` off it costs like the query without that fragment
+        assert_eq!(off, estimate(query("false"), None).await);
+        assert!(on > off, "on={on} off={off}");
+    }
 }
