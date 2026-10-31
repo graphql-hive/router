@@ -1726,6 +1726,20 @@ impl<'exec> Executor<'exec> {
         entity_index_error_map
     }
 
+    /// Whether the alias's `Include`/`Skip` lets it run, read like `condition_node_by_variables`
+    /// reads a `Condition` node: without a value neither side runs.
+    fn alias_runs(&self, alias_spec: &EntityBatchAlias) -> bool {
+        let (variable, include) = match (&alias_spec.include_if, &alias_spec.skip_if) {
+            (None, None) => return true,
+            (Some(variable), _) => (variable, true),
+            (None, Some(variable)) => (variable, false),
+        };
+        self.variable_values
+            .as_ref()
+            .and_then(|vars| vars.get(variable))
+            .is_some_and(|value| matches!(value.as_ref(), ValueRef::Bool(true)) == include)
+    }
+
     // The preperation includes:
     // - building one `_entities` input list for each alias
     // - remembering where each item came from (so we can put results back)
@@ -1743,6 +1757,10 @@ impl<'exec> Executor<'exec> {
             .aliases
             .iter()
             .map(|alias_spec| {
+                // off like the `Include`/`Skip` it came from, it collects nothing and sends `[]`
+                if !self.alias_runs(alias_spec) {
+                    return (Vec::new(), Vec::new());
+                }
                 collect_context_entities(
                     data,
                     alias_spec.merge_paths.iter(),
@@ -2305,6 +2323,8 @@ mod tests {
                     input_rewrites: None,
                     output_rewrites: None,
                     context: None,
+                    include_if: None,
+                    skip_if: None,
                 },
                 EntityBatchAlias {
                     alias: "_e1".to_string(),
@@ -2314,6 +2334,8 @@ mod tests {
                     input_rewrites: None,
                     output_rewrites: None,
                     context: None,
+                    include_if: None,
+                    skip_if: None,
                 },
             ],
         };

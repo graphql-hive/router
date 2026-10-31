@@ -2248,50 +2248,52 @@ fn condition_kept_when_another_branch_fetches_the_same_field() -> Result<(), Box
             }
           }
         },
-        Parallel {
-          Skip(if: $c) {
-            Flatten(path: "user|[User]") {
-              Fetch(service: "orders") {
-                {
-                  ... on User {
+        BatchFetch(service: "orders") {
+          {
+            _e0 {
+              paths: [
+                "user|[User]"
+              ]
+              {
+                ... on User {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e1 {
+              paths: [
+                "user"
+              ]
+              {
+                ... on User {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          ($c:Boolean!,$b:Boolean!,$a:Boolean!) {
+            _e0: _entities(representations: $__batch_reps_0) @skip(if: $c) {
+              ... on User {
+                orders {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) @include(if: $a) {
+              ... on User {
+                orders {
+                  ... on Order @include(if: $b) {
                     __typename
                     id
-                  }
-                } =>
-                {
-                  ... on User {
-                    orders {
-                      __typename
-                      id
-                    }
+                    sku
                   }
                 }
-              },
-            },
-          },
-          Include(if: $a) {
-            Flatten(path: "user") {
-              Fetch(service: "orders") {
-                {
-                  ... on User {
-                    __typename
-                    id
-                  }
-                } =>
-                ($b:Boolean!) {
-                  ... on User {
-                    orders {
-                      ... on Order @include(if: $b) {
-                        __typename
-                        id
-                        sku
-                      }
-                    }
-                  }
-                }
-              },
-            },
-          },
+              }
+            }
+          }
         },
         Parallel {
           Skip(if: $c) {

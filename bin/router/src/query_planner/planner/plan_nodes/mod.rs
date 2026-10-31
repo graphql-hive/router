@@ -461,6 +461,13 @@ pub struct EntityBatchAlias {
     pub output_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
     pub context: Option<Box<FetchContext>>,
+    /// The `Include` around the fetches of this alias. With the variable not `true` the alias
+    /// collects no entities, and the subgraph skips it too, the field has the same `@include`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_if: Option<String>,
+    /// Same for a `Skip`, the alias collects nothing with the variable `true`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip_if: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

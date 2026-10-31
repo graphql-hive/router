@@ -1091,45 +1091,43 @@ fn conditional_union_type_condition_on_its_own_field_include_mixed_members(
             id
           }
         },
-        Include(if: $v) {
-          BatchFetch(service: "product") {
-            {
-              _e0 {
-                paths: [
-                  "card.components.@|[Component]|[ComponentC].product"
-                ]
-                {
-                  ... on Product {
-                    __typename
-                    id
-                  }
-                }
-              }
-              _e1 {
-                paths: [
-                  "card.components.@|[Component]|[ComponentA].product"
-                ]
-                {
-                  ... on Product {
-                    __typename
-                    id
-                  }
+        BatchFetch(service: "product") {
+          {
+            _e0 {
+              paths: [
+                "card.components.@|[Component]|[ComponentC].product"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  id
                 }
               }
             }
-            {
-              _e0: _entities(representations: $__batch_reps_0) {
+            _e1 {
+              paths: [
+                "card.components.@|[Component]|[ComponentA].product"
+              ]
+              {
                 ... on Product {
-                  c
-                }
-              }
-              _e1: _entities(representations: $__batch_reps_1) {
-                ... on Product {
-                  a
+                  __typename
+                  id
                 }
               }
             }
-          },
+          }
+          ($v:Boolean!) {
+            _e0: _entities(representations: $__batch_reps_0) @include(if: $v) {
+              ... on Product {
+                c
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) @include(if: $v) {
+              ... on Product {
+                a
+              }
+            }
+          }
         },
       },
     },

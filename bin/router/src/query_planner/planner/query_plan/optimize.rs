@@ -29,6 +29,8 @@
 //! - Fetches must target the same subgraph
 //! - Variable type and default value must be compatible
 //! - `input + output + rewrites` must match
+//! - A fetch right under an `Include`/`Skip` keeps it as its alias's `@include`/`@skip`, so
+//!   fetches under other conditions get other aliases
 //!
 //! Each final shape group becomes one alias in `BatchFetchNode`.
 //!
@@ -91,7 +93,11 @@ struct ShapeKey {
     input_rewrites_hash: u64,
     output_rewrites_hash: u64,
     context_rewrites_hash: u64,
+    condition_hash: u64,
 }
+
+/// An `Include` (`true`) or a `Skip` (`false`) of a variable around a fetch.
+type FetchCondition = (String, bool);
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct RepresentationsInputKey {
@@ -99,6 +105,9 @@ struct RepresentationsInputKey {
     input_rewrites: Option<Vec<FetchRewrite>>,
     context: Option<Box<FetchContext>>,
     merge_paths: Vec<FlattenNodePath>,
+    // the first alias of a shared list fills it, so one that's off would leave it empty for the
+    // others
+    condition: Option<FetchCondition>,
 }
 
 struct BatchFetchBuilder<'a> {
@@ -157,6 +166,11 @@ impl<'a> BatchFetchBuilder<'a> {
         let merge_paths = Self::collect_merge_paths(shape_group);
         let representations_variable_name =
             self.get_or_create_representations_var(representative, &merge_paths);
+        let (include_if, skip_if) = match &representative.condition {
+            Some((variable, true)) => (Some(variable.clone()), None),
+            Some((variable, false)) => (None, Some(variable.clone())),
+            None => (None, None),
+        };
 
         self.operation_selection_items
             .push(SelectionItem::Field(FieldSelection {
@@ -170,8 +184,8 @@ impl<'a> BatchFetchBuilder<'a> {
                     )
                         .into(),
                 ),
-                skip_if: None,
-                include_if: None,
+                skip_if: skip_if.clone(),
+                include_if: include_if.clone(),
                 omit_from_response: false,
             }));
 
@@ -192,6 +206,8 @@ impl<'a> BatchFetchBuilder<'a> {
             input_rewrites: representative.input_rewrites.clone(),
             output_rewrites: representative.output_rewrites.clone(),
             context: representative.context.clone(),
+            include_if,
+            skip_if,
         });
 
         Ok(())
@@ -221,6 +237,7 @@ impl<'a> BatchFetchBuilder<'a> {
             input_rewrites: representative.input_rewrites.clone(),
             context: representative.context.clone(),
             merge_paths: merge_paths.to_vec(),
+            condition: representative.condition.clone(),
         };
 
         if let Some(existing_name) = self
@@ -350,6 +367,8 @@ struct EntityFetch {
     input_rewrites: Option<Vec<FetchRewrite>>,
     output_rewrites: Option<Vec<FetchRewrite>>,
     context: Option<Box<FetchContext>>,
+    /// The `Include`/`Skip` the fetch sits in, its alias gets it as `@include`/`@skip`.
+    condition: Option<FetchCondition>,
     shape_key: ShapeKey,
     non_representations_variable_definitions: Vec<VariableDefinition>,
 }
@@ -365,9 +384,28 @@ impl EntityFetch {
             && self.input_rewrites == right.input_rewrites
             && self.output_rewrites == right.output_rewrites
             && self.context == right.context
+            && self.condition == right.condition
     }
 
     fn from_node(index: usize, node: &PlanNode) -> Result<Option<Self>, QueryPlanError> {
+        // An `Include` or a `Skip` right around one goes with it, as the alias's condition.
+        // ponytail: one level only, nested or two-sided conditions stay as they are and get
+        // batched inside, see `merge_parallel_conditions`.
+        let (node, condition) = match node {
+            PlanNode::Condition(condition) => {
+                match (&condition.if_clause, &condition.else_clause) {
+                    (Some(body), None) => {
+                        (body.as_ref(), Some((condition.condition.clone(), true)))
+                    }
+                    (None, Some(body)) => {
+                        (body.as_ref(), Some((condition.condition.clone(), false)))
+                    }
+                    _ => return Ok(None),
+                }
+            }
+            node => (node, None),
+        };
+
         // We only batch Flatten(Fetch) as those represent the entity calls
         let PlanNode::Flatten(flatten_node) = node else {
             return Ok(None);
@@ -432,7 +470,7 @@ impl EntityFetch {
                 return Ok(None);
             }
         }
-        let non_representations_variable_definitions = fetch_node
+        let mut non_representations_variable_definitions = fetch_node
             .operation
             .document
             .operation
@@ -442,6 +480,26 @@ impl EntityFetch {
             .into_iter()
             .filter(|var| var.name != representations_var)
             .collect::<Vec<_>>();
+        let mut variable_usages = fetch_node.variable_usages.clone();
+        if let Some((variable, _)) = &condition {
+            // the alias's `@include`/`@skip` reads it, the client's own is a `Boolean!` or has a
+            // default, either way there's a value
+            if !non_representations_variable_definitions
+                .iter()
+                .any(|var| &var.name == variable)
+            {
+                non_representations_variable_definitions.push(VariableDefinition {
+                    name: variable.clone(),
+                    variable_type: TypeNode::NonNull(Box::new(TypeNode::Named(
+                        "Boolean".to_string(),
+                    ))),
+                    default_value: None,
+                });
+            }
+            variable_usages
+                .get_or_insert_with(BTreeSet::new)
+                .insert(variable.clone());
+        }
 
         let fragments = &fetch_node.operation.document.fragments;
 
@@ -463,6 +521,11 @@ impl EntityFetch {
             input_rewrites_hash: fetch_rewrites_hash(input_rewrites.as_deref()),
             output_rewrites_hash: fetch_rewrites_hash(output_rewrites.as_deref()),
             context_rewrites_hash: fetch_rewrites_hash(FetchContext::rewrites(&context)),
+            condition_hash: {
+                let mut hasher = Xxh3::new();
+                condition.hash(&mut hasher);
+                hasher.finish()
+            },
         };
 
         Ok(Some(EntityFetch {
@@ -470,12 +533,13 @@ impl EntityFetch {
             fetch_node_id: fetch_node.id,
             service_name: fetch_node.service_name.clone(),
             flatten_path: flatten_node.path.clone(),
-            variable_usages: fetch_node.variable_usages.clone(),
+            variable_usages,
             requires,
             entities_selection,
             input_rewrites,
             output_rewrites,
             context,
+            condition,
             shape_key,
             non_representations_variable_definitions,
         }))
@@ -538,8 +602,15 @@ impl PlanOptimizer<'_> {
                 Ok(PlanNode::sequence(sequence_node.nodes))
             }
             PlanNode::Parallel(parallel_node) => {
-                let nodes =
-                    merge_parallel_conditions(PlanNode::flatten_parallel(parallel_node.nodes));
+                // fetches right under an `Include`/`Skip` batch first, whatever the condition,
+                // each alias keeps its own. What's left, like conditions inside conditions, is
+                // grouped by condition and batched inside.
+                let nodes = optimize_parallel_node(
+                    PlanNode::flatten_parallel(parallel_node.nodes),
+                    self.supergraph,
+                    self.options,
+                )?;
+                let nodes = merge_parallel_conditions(nodes);
                 // If all children are fetching nodes, skip recursive optimize walk.
                 let optimized_nodes = if nodes.iter().all(|node| node.is_fetching_node()) {
                     nodes
@@ -1347,10 +1418,11 @@ mod tests {
         "#);
     }
 
-    /// Entity fetches under the same condition get batched under it. Others stay apart: an
-    /// `Include` and a `Skip` of the same variable, or another variable.
+    /// Entity fetches under an `Include`/`Skip` go into one batch whatever the condition, an
+    /// alias per condition with the same `@include`/`@skip`. Same paths and inputs under another
+    /// condition, like `$a` and `!$a` on `products.@`, don't share a representations list.
     #[test]
-    fn optimize_parallel_node_batches_fetches_under_the_same_condition() {
+    fn optimize_parallel_node_batches_fetches_under_conditions() {
         let supergraph = test_supergraph_state();
         let requires_query = "query { ... on Product { upc } }";
         let entities_query = "
@@ -1389,63 +1461,60 @@ mod tests {
 
         insta::assert_snapshot!(format!("{query_plan}"), @r#"
         QueryPlan {
-          Parallel {
-            Include(if: $a) {
-              BatchFetch(service: "inventory") {
+          BatchFetch(service: "inventory") {
+            {
+              _e0 {
+                paths: [
+                  "products.@"
+                  "topProducts.@"
+                ]
                 {
-                  _e0 {
-                    paths: [
-                      "products.@"
-                      "topProducts.@"
-                    ]
-                    {
-                      ... on Product {
-                        upc
-                      }
-                    }
+                  ... on Product {
+                    upc
                   }
                 }
+              }
+              _e1 {
+                paths: [
+                  "products.@"
+                ]
                 {
-                  _e0: _entities(representations: $__batch_reps_0) {
-                    ... on Product {
-                      shippingEstimate
-                    }
+                  ... on Product {
+                    upc
                   }
                 }
-              },
-            },
-            Skip(if: $a) {
-              Flatten(path: "products.@") {
-                Fetch(service: "inventory") {
-                  {
-                    ... on Product {
-                      upc
-                    }
-                  } =>
-                  {
-                    ... on Product {
-                      shippingEstimate
-                    }
+              }
+              _e2 {
+                paths: [
+                  "products.@"
+                ]
+                {
+                  ... on Product {
+                    upc
                   }
-                },
-              },
-            },
-            Include(if: $b) {
-              Flatten(path: "products.@") {
-                Fetch(service: "inventory") {
-                  {
-                    ... on Product {
-                      upc
-                    }
-                  } =>
-                  {
-                    ... on Product {
-                      shippingEstimate
-                    }
-                  }
-                },
-              },
-            },
+                }
+              }
+            }
+            ($a:Boolean!,$b:Boolean!) {
+              _e0: _entities(representations: $__batch_reps_0) @include(if: $a) {
+                ... on Product {
+                  ...a
+                }
+              }
+              _e1: _entities(representations: $__batch_reps_1) @skip(if: $a) {
+                ... on Product {
+                  ...a
+                }
+              }
+              _e2: _entities(representations: $__batch_reps_2) @include(if: $b) {
+                ... on Product {
+                  ...a
+                }
+              }
+            }
+            fragment a on Product {
+              shippingEstimate
+            }
           },
         },
         "#);
