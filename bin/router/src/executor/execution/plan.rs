@@ -1807,22 +1807,10 @@ impl<'exec> Executor<'exec> {
             .aliases
             .iter()
             .map(|alias_spec| {
-                // Aliases that send the same list share one variable, and only the first one's
-                // list goes out. Copying could leave different entities out of each, so they
-                // don't copy.
-                let shares_variable = entity_batch
-                    .aliases
-                    .iter()
-                    .filter(|other| {
-                        other.representations_variable_name
-                            == alias_spec.representations_variable_name
-                    })
-                    .count()
-                    > 1;
                 let reuse = alias_spec
                     .entity_reuse
                     .as_deref()
-                    .filter(|_| reuse_allowed && !shares_variable)
+                    .filter(|_| reuse_allowed)
                     .map(|reuse| {
                         ReuseIndex::build(
                             reuse,
