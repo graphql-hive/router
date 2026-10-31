@@ -154,7 +154,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                         let can_still_batch = {
                             let left = self.get_step_data(*target_index)?;
                             let right = self.get_step_data(source_index)?;
-                            left.can_be_batched_with(right)
+                            left.can_be_batched_with(right, supergraph)
                         };
 
                         // After the cheaper check, as it walks the graph.
@@ -513,7 +513,7 @@ fn type_condition_layout_hash(path: &MergePath) -> u64 {
 }
 
 impl FetchStepData<MultiTypeFetchStep> {
-    pub fn can_be_batched_with(&self, other: &Self) -> bool {
+    pub fn can_be_batched_with(&self, other: &Self, supergraph: &SupergraphState) -> bool {
         if !self.can_merge_context(other) {
             return false;
         }
@@ -644,6 +644,17 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
+        // Merged, every entity at either path gets the fields of both. `... on Product { a }`
+        // under `ComponentA` and `... on Product { b }` under `ComponentB` would ask the
+        // `ComponentA` products for `b` too, and the `ComponentB` ones for `a`.
+        // Those stay apart, `BatchFetch` still sends them in one request, an alias each.
+        // At the same path it's the same entities, so asking for both is fine.
+        if self.response_path != other.response_path
+            && outputs_differ_for_a_shared_type(&self.output, &other.output, supergraph)
+        {
+            return false;
+        }
+
         let self_used_for_requires = self.flags.contains(FetchStepFlags::USED_FOR_REQUIRES);
         let other_used_for_requires = other.flags.contains(FetchStepFlags::USED_FOR_REQUIRES);
         // Mixing @requires and non-@requires steps can widen paths incorrectly.
@@ -654,6 +665,42 @@ impl FetchStepData<MultiTypeFetchStep> {
 
         true
     }
+}
+
+/// Whether an object type gets other fields from `left` than from `right`.
+/// Abstract types count for every object type they can be.
+/// A type only one side asks for is fine. The paths differ at one type condition only, so
+/// either that's the entity's own (`pet|[Cat]` and `pet|[Bird]`, the other side never reaches
+/// it), or the rest of the path is the same and so are the types both sides end up at.
+fn outputs_differ_for_a_shared_type(
+    left: &FetchStepSelections<MultiTypeFetchStep>,
+    right: &FetchStepSelections<MultiTypeFetchStep>,
+    supergraph: &SupergraphState,
+) -> bool {
+    if left.iter_selections().eq(right.iter_selections()) {
+        return false;
+    }
+
+    let overlap = |left_type: &str, right_type: &str| {
+        left_type == right_type
+            || match (
+                supergraph.all_possible_types(left_type),
+                supergraph.all_possible_types(right_type),
+            ) {
+                (Some(left), Some(right)) => !left.is_disjoint(right),
+                (Some(left), None) => left.contains(right_type),
+                (None, Some(right)) => right.contains(left_type),
+                (None, None) => false,
+            }
+    };
+
+    left.iter_selections().any(|(left_type, left_selections)| {
+        right
+            .iter_selections()
+            .any(|(right_type, right_selections)| {
+                left_selections != right_selections && overlap(left_type, right_type)
+            })
+    })
 }
 
 #[cfg(test)]
