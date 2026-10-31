@@ -61,7 +61,22 @@ node --test test.js
 
 `fuzz.js` options: `--only <part of a fixture path>` (repeatable), `--ops <n>` per fixture,
 `--seed <first>`, `--no-faults`, `--router`, `--dev-cli` (`target/release/qp-dev-cli`, which
-generates the operations), `--subgraph-port`, `--router-port`, `--out`.
+generates the operations), `--subgraph-port`, `--router-port`, `--out`, and
+`--assignments <n>`: each operation also runs with `n` more random sets of its `Boolean!`
+variables, now and then leaving out one with a default. They're seeded by the operation's seed
+(`seed * 1000 + k`), so a run repeats. Most `@include`/`@skip` bugs only show for some values.
+`summary.json` also has, per operation, the requests, bytes and representations the router sent
+(`stats`), to compare routers on the same operations.
+
+`MAX_ALIASES=<n>` sets the router's `max_aliases_per_request` for every subgraph, for both
+scripts. Some bugs only show when a batch is split over several requests.
+
+`node reduce.mjs <router> <port> <supergraph> <seed-file> <problem> <out>` shrinks a failing
+operation from a `seed-<n>.json`: it drops selections and directives while a problem containing
+`<problem>` (like `"data differences"`) still shows, and writes `reduced.graphql` and
+`reduced.json` to `<out>`. `node run-manual.mjs <router> <port> <supergraph> <operation-file> <out>`
+runs one operation, a seed file, a reduced one or `{ "document", "variables" }`, and prints the
+subgraph requests, the problems and the response.
 
 `run.js` exits with 1 when a case fails. It writes `out/report.json`, and `out/<case>.log.json`
 with the router's response, the monolith's, and every subgraph request with its response, for the

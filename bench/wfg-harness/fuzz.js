@@ -20,6 +20,8 @@ const { values: options } = parseArgs({
     // a fixture path, or part of one
     only: { type: 'string', multiple: true },
     ops: { type: 'string', default: '20' },
+    // each operation also runs with this many more random sets of its Boolean variables
+    assignments: { type: 'string', default: '0' },
     seed: { type: 'string', default: '0' },
     // some nullable fields null, some leaf fields failing
     faults: { type: 'boolean', default: true },
@@ -32,6 +34,25 @@ const { values: options } = parseArgs({
   },
 });
 const faults = options.faults && !options['no-faults'];
+
+/** `count` copies of `operation` with its Boolean variables set at random, one left out now and
+ * then when it has a default. Seeded by the operation's seed, so a run repeats. */
+function variants(operation, count) {
+  const definitions = parse(operation.document).definitions.find((d) => d.kind === 'OperationDefinition')?.variableDefinitions ?? [];
+  const booleans = definitions.filter((d) => d.type.kind === 'NonNullType' && d.type.type.name?.value === 'Boolean');
+  if (!booleans.length) return [];
+  let state = (operation.seed * 2654435761) >>> 0 || 1;
+  const random = () => ((state = (state * 1103515245 + 12345) >>> 0), state / 2 ** 32);
+  return Array.from({ length: count }, (_, k) => {
+    const variables = { ...operation.variables };
+    for (const d of booleans) {
+      const name = d.variable.name.value;
+      if (d.defaultValue && random() < 0.2) delete variables[name];
+      else variables[name] = random() < 0.5;
+    }
+    return { ...operation, seed: operation.seed * 1000 + k + 1, variables };
+  });
+}
 
 const fixtureRoot = join(repo, 'bin/router/fixture');
 // every supergraph under it, in directories too (`bfg/supergraph.graphql`)
@@ -164,6 +185,8 @@ for (const fixture of fixtures) {
   // `generate` keeps only valid operations and gives up after 50 seeds for each
   row.generated = operations.length;
   row.shortfall = row.requested - row.generated;
+  // the extra variable sets run as operations of their own, they don't count as generated
+  operations = operations.flatMap((operation) => [operation, ...variants(operation, Number(options.assignments))]);
 
   for (const operation of operations) {
     row.ran++;
@@ -223,6 +246,25 @@ for (const fixture of fixtures) {
         outcome = 'harness-error';
         problems = [`harness: ${error.message}`];
         result ??= { response: null, expected: null, log: [] };
+      }
+      // what the router sent to the subgraphs, to compare routers on the same operations
+      if (result?.log) {
+        const stats = { requests: 0, bytes: 0, representations: 0, duplicates: 0, outcome };
+        for (const request of result.log) {
+          stats.requests += 1;
+          stats.bytes += JSON.stringify({ query: request.query, variables: request.variables ?? {} }).length;
+          const seen = new Set();
+          for (const [name, list] of Object.entries(request.variables ?? {})) {
+            if (name !== 'representations' && !name.startsWith('__batch_reps')) continue;
+            for (const entity of list ?? []) {
+              const key = JSON.stringify(entity);
+              stats.representations += 1;
+              if (seen.has(key)) stats.duplicates += 1;
+              seen.add(key);
+            }
+          }
+        }
+        (row.stats ??= {})[`${operation.seed}-${mode}`] = stats;
       }
       if (outcome === 'passed' || outcome === 'invalid-rejected') continue;
 

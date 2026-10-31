@@ -43,7 +43,7 @@ traffic_shaping:
   router:
     request_timeout: 600s
   all:
-    request_timeout: 600s
+    request_timeout: 600s${globalThis.process.env.MAX_ALIASES ? '\n    max_aliases_per_request: ' + globalThis.process.env.MAX_ALIASES : ''}
 limits:
   max_request_body_size: 20MB
 error_masking:
