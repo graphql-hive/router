@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod traffic_shaping_e2e_tests {
-    use crate::testkit::{ClientResponseExt, TestRouter, TestSubgraphs};
-    use ntex::http::StatusCode;
+    use crate::testkit::TestRouter;
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
