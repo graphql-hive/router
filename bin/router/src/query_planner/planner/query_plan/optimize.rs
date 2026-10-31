@@ -363,6 +363,7 @@ impl<'a> BatchFetchBuilder<'a> {
                 .then_some(self.custom_scalar_paths),
             entity_batch: EntityBatch {
                 aliases: self.batched_aliases,
+                trie: Default::default(),
             },
         })
     }
@@ -1883,6 +1884,7 @@ mod tests {
                             PathSegment::List,
                         ])],
                         copy: Default::default(),
+                        trie: Default::default(),
                     }));
                 }
             }
@@ -2805,6 +2807,7 @@ mod tests {
         PlanNode::Flatten(FlattenNode {
             path,
             node: Box::new(PlanNode::Fetch(Box::new(fetch_node))),
+            trie: Default::default(),
         })
     }
 

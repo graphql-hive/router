@@ -1,3 +1,4 @@
+use crate::executor::utils::traverse::PathTrie;
 use crate::query_planner::ast::requires::RequiresSelectionSet;
 use crate::query_planner::{
     ast::{
@@ -220,7 +221,17 @@ impl FetchContext {
 pub struct EntityReuse {
     pub sources: Vec<FlattenNodePath>,
     pub copy: RequiresSelectionSet,
+    /// `sources` as a trie, built when the plan is made executable
+    pub trie: Option<Box<PathTrie>>,
 }
+
+impl EntityReuse {
+    pub fn trie(&self) -> &PathTrie {
+        self.trie.as_deref().expect(TRIE_BUILT)
+    }
+}
+
+const TRIE_BUILT: &str = "path tries are built when the plan is made executable";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -457,6 +468,15 @@ pub fn custom_scalar_paths_for_entities_selection(
 #[serde(rename_all = "camelCase")]
 pub struct EntityBatch {
     pub aliases: Vec<EntityBatchAlias>,
+    /// The merge paths of every alias as one trie, built when the plan is made executable
+    #[serde(skip)]
+    pub trie: Option<Box<PathTrie>>,
+}
+
+impl EntityBatch {
+    pub fn trie(&self) -> &PathTrie {
+        self.trie.as_deref().expect(TRIE_BUILT)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -484,6 +504,15 @@ pub struct EntityBatchAlias {
 pub struct FlattenNode<S: PlanState = Executable> {
     pub path: FlattenNodePath,
     pub node: Box<PlanNode<S>>,
+    /// `path` as a trie, built when the plan is made executable
+    #[serde(skip)]
+    pub trie: Option<Box<PathTrie>>,
+}
+
+impl<S: PlanState> FlattenNode<S> {
+    pub fn trie(&self) -> &PathTrie {
+        self.trie.as_deref().expect(TRIE_BUILT)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -841,6 +870,7 @@ impl PlanNode<Planning> {
             PlanNode::Flatten(FlattenNode {
                 path: step.response_path.clone().into(),
                 node: Box::new(PlanNode::Fetch(Box::new(fetch))),
+                trie: Default::default(),
             })
         } else if matches!(fetch.operation_kind, Some(OperationKind::Subscription)) {
             PlanNode::Subscription(Box::new(SubscriptionNode { primary: fetch }))
@@ -1158,7 +1188,7 @@ mod stored_size_tests {
             ("PlanNode", size_of::<PlanNode>(), 40),
             ("ConditionNode", size_of::<ConditionNode>(), 40),
             ("FetchNode", size_of::<FetchNode>(), 248),
-            ("BatchFetchNode", size_of::<BatchFetchNode>(), 168),
+            ("BatchFetchNode", size_of::<BatchFetchNode>(), 176),
             (
                 "SubgraphFetchOperation",
                 size_of::<crate::query_planner::ast::operation::SubgraphFetchOperation>(),

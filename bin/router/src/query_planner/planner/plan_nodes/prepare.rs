@@ -1,4 +1,5 @@
 use super::*;
+use crate::executor::utils::traverse::PathTrie;
 
 impl QueryPlan<Planning> {
     /// Drops the parsed documents the planner used,
@@ -25,8 +26,40 @@ impl FetchNode<Planning> {
             input_rewrites: self.input_rewrites,
             output_rewrites: self.output_rewrites,
             context: self.context,
-            entity_reuse: self.entity_reuse,
+            entity_reuse: with_trie(self.entity_reuse),
         }
+    }
+}
+
+/// The paths are final once the plan is, so that's when their tries get built.
+fn with_trie(mut reuse: Option<Box<EntityReuse>>) -> Option<Box<EntityReuse>> {
+    if let Some(reuse) = &mut reuse {
+        reuse.build_trie();
+    }
+    reuse
+}
+
+impl EntityReuse {
+    pub fn build_trie(&mut self) {
+        let sources = self.sources.iter().map(FlattenNodePath::as_slice);
+        self.trie = Some(Box::new(PathTrie::new(sources)));
+    }
+}
+
+impl EntityBatch {
+    /// Builds the trie of every alias's merge paths, and of where each alias's entities might
+    /// already be.
+    pub fn build_tries(&mut self) {
+        for alias in &mut self.aliases {
+            alias.entity_reuse = with_trie(alias.entity_reuse.take());
+        }
+        let merge_paths = self.aliases.iter().flat_map(|alias| {
+            alias
+                .merge_paths
+                .iter()
+                .map(|merge_path| merge_path.as_slice())
+        });
+        self.trie = Some(Box::new(PathTrie::new(merge_paths)));
     }
 }
 
@@ -44,9 +77,14 @@ impl PlanNode<Planning> {
                 operation_kind: batch.operation_kind,
                 operation: batch.operation.operation,
                 custom_scalar_paths: batch.custom_scalar_paths,
-                entity_batch: batch.entity_batch,
+                entity_batch: {
+                    let mut entity_batch = batch.entity_batch;
+                    entity_batch.build_tries();
+                    entity_batch
+                },
             })),
             Self::Flatten(flatten) => PlanNode::Flatten(FlattenNode {
+                trie: Some(Box::new(PathTrie::new([flatten.path.as_slice()]))),
                 path: flatten.path,
                 node: boxed(*flatten.node),
             }),

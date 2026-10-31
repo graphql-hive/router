@@ -96,6 +96,7 @@ pub(super) fn find_entity_reuse(
     Some(EntityReuse {
         sources,
         copy: RequiresSelectionSet::from(&copy),
+        trie: Default::default(),
     })
 }
 
@@ -169,7 +170,7 @@ fn collect_positions(
             SelectionItem::InlineFragment(fragment) => {
                 let mut child_path = path.clone();
                 if fragment.type_condition != current_type {
-                    child_path.push(PathSegment::TypeCondition(Box::new(
+                    child_path.push(PathSegment::TypeCondition(std::sync::Arc::new(
                         TypeCondition::from_names([fragment.type_condition.as_str()]),
                     )));
                 }

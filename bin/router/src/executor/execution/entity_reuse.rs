@@ -9,10 +9,7 @@ use ahash::HashMap as AHashMap;
 use ahash::HashMapExt;
 
 use crate::{
-    executor::{
-        introspection::schema::PossibleTypes, response::value::Value,
-        utils::traverse::traverse_and_callback,
-    },
+    executor::{introspection::schema::PossibleTypes, response::value::Value},
     query_planner::{
         ast::requires::{RequiresSelection, RequiresSelectionSetRef},
         planner::plan_nodes::EntityReuse,
@@ -33,15 +30,14 @@ impl<'d, 'a> ReuseIndex<'d, 'a> {
         possible_types: &PossibleTypes,
     ) -> Self {
         let mut by_hash = AHashMap::new();
-        for source in &reuse.sources {
-            traverse_and_callback(data, source.as_slice(), possible_types, &mut |object, _| {
-                if object.is_object() {
-                    by_hash
-                        .entry(object.to_hash(required_selections, possible_types))
-                        .or_insert(object);
-                }
-            });
-        }
+        let trie = reuse.trie();
+        trie.walk(data, possible_types, &mut |_, object, _| {
+            if object.is_object() {
+                by_hash
+                    .entry(object.to_hash(required_selections, possible_types))
+                    .or_insert(object);
+            }
+        });
         Self {
             by_hash,
             copy: reuse.copy.root_selections(),
@@ -172,13 +168,15 @@ mod tests {
                 {"__typename": "Product", "upc": "2", "price": 20}
             ]}"#,
         );
-        let reuse = EntityReuse {
+        let mut reuse = EntityReuse {
             sources: vec![FlattenNodePath::from(vec![
                 PathSegment::Field("topProducts".into()),
                 PathSegment::List,
             ])],
             copy: selection("{ ... on Product { __typename name price } }"),
+            trie: Default::default(),
         };
+        reuse.build_trie();
         let requires = selection("{ ... on Product { __typename upc } }");
         let possible_types = PossibleTypes::default();
         let index = ReuseIndex::build(&reuse, &data, requires.root_selections(), &possible_types);

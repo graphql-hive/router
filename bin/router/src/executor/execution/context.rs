@@ -15,14 +15,14 @@ use crate::{
             graphql_error::GraphQLErrorPathSegment, subgraph_response::SubgraphResponse,
             value::Value,
         },
-        utils::traverse::traverse_and_callback,
+        utils::traverse::PathTrie,
     },
     query_planner::{
         ast::{
             operation::{ContextAliasTemplate, SubgraphFetchOperation},
             requires::RequiresSelectionSet,
         },
-        planner::plan_nodes::{FetchContext, FetchNodePathSegment, FetchRewrite, ResponsePathRef},
+        planner::plan_nodes::{FetchContext, FetchNodePathSegment, FetchRewrite},
         state::entity_keys::KeysByType,
     },
 };
@@ -239,7 +239,54 @@ impl<'a, 'd, 'v> ContextGroups<'a, 'd, 'v> {
     }
 }
 
-/// Walks every flatten path, deduplicates the entities by hash and projects their
+/// The values at the end of one path, each with the nearest objects above it, which context
+/// values are read from.
+#[derive(Default)]
+pub(super) struct PathValues<'d, 'v> {
+    /// Each value, with where its objects end in `objects`
+    values: Vec<(&'d Value<'v>, usize)>,
+    objects: Vec<&'d Value<'v>>,
+}
+
+/// How many objects above an entity its context values may be read from
+pub(super) fn context_depth(context: &Option<Box<FetchContext>>) -> usize {
+    FetchContext::rewrites(context)
+        .unwrap_or_default()
+        .iter()
+        .map(|rewrite| {
+            rewrite
+                .path
+                .iter()
+                .take_while(|s| matches!(s, FetchNodePathSegment::Parent))
+                .count()
+        })
+        .max()
+        .unwrap_or_default()
+}
+
+/// Walks all the paths of `trie` at once and keeps the values at their ends, by end node. Each
+/// value keeps up to `depth` of the objects above it, see [`context_depth`].
+pub(super) fn collect_path_values<'d, 'v>(
+    trie: &PathTrie,
+    data: &'d Value<'v>,
+    possible_types: &PossibleTypes,
+    depth: usize,
+) -> Vec<PathValues<'d, 'v>> {
+    let mut by_node: Vec<PathValues> = std::iter::repeat_with(PathValues::default)
+        .take(trie.len())
+        .collect();
+    trie.walk(data, possible_types, &mut |node, value, objects| {
+        let path_values = &mut by_node[node];
+        path_values
+            .objects
+            .extend_from_slice(&objects[objects.len().saturating_sub(depth)..]);
+        path_values.values.push((value, path_values.objects.len()));
+    });
+    by_node
+}
+
+/// Goes over the values at the end of every path (`ends` are the nodes the paths end at, see
+/// [`collect_path_values`]), deduplicates the entities by hash and projects their
 /// representations. Entities are grouped by the tuple of their context values (one request per
 /// group), without context variables there is at most one group. Identical paths share indexes.
 ///
@@ -248,8 +295,8 @@ impl<'a, 'd, 'v> ContextGroups<'a, 'd, 'v> {
 /// there's one group and the copies go after everything that group fetches.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn collect_context_entities<'a, 'd, 'v>(
-    data: &'d Value<'v>,
-    paths: impl IntoIterator<Item = ResponsePathRef<'a>>,
+    path_values: &[PathValues<'d, 'v>],
+    ends: &[usize],
     requires: &RequiresSelectionSet,
     input_rewrites: Option<&[FetchRewrite]>,
     context: &'a Option<Box<FetchContext>>,
@@ -262,10 +309,10 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
     let mut reused: Vec<Value<'v>> = Vec::new();
     let mut reused_by_hash: AHashMap<u64, usize> = AHashMap::new();
     let mut path_indexes: Vec<EntityIndexes> = Vec::new();
-    let mut seen_paths: Vec<(ResponsePathRef<'a>, EntityIndexes)> = Vec::new();
+    let mut seen_ends: Vec<(usize, EntityIndexes)> = Vec::new();
     let required_selections = requires.root_selections();
-    for path in paths {
-        if let Some((_, indexes)) = seen_paths.iter().find(|(seen, _)| *seen == path) {
+    for &end in ends {
+        if let Some((_, indexes)) = seen_ends.iter().find(|(seen, _)| *seen == end) {
             path_indexes.push(Arc::clone(indexes));
             continue;
         }
@@ -339,9 +386,14 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
                 indexes.push(None);
             }
         };
-        traverse_and_callback(data, path.as_slice(), possible_types, &mut collect);
+        let values = &path_values[end];
+        let mut objects_start = 0;
+        for &(entity, objects_end) in &values.values {
+            collect(entity, &values.objects[objects_start..objects_end]);
+            objects_start = objects_end;
+        }
         let indexes = Arc::new(indexes);
-        seen_paths.push((path, Arc::clone(&indexes)));
+        seen_ends.push((end, Arc::clone(&indexes)));
         path_indexes.push(indexes);
     }
     for group in &mut contexts.groups {
@@ -482,9 +534,36 @@ mod tests {
     use super::*;
     use crate::query_planner::{
         ast::selection_set::SelectionSet,
-        planner::plan_nodes::{FlattenNodePath, KeyRenamer, PathSegment},
+        planner::plan_nodes::{FlattenNodePath, KeyRenamer, PathSegment, ResponsePathRef},
         utils::parsing::parse_operation,
     };
+
+    /// Collects the entities at `paths` like a fetch does
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    fn collect<'a, 'v>(
+        data: &Value<'v>,
+        paths: impl IntoIterator<Item = ResponsePathRef<'a>>,
+        requires: &RequiresSelectionSet,
+        input_rewrites: Option<&[FetchRewrite]>,
+        context: &'a Option<Box<FetchContext>>,
+        possible_types: &PossibleTypes,
+        subgraph_keys: Option<&KeysByType>,
+        reuse: Option<&ReuseIndex<'_, 'v>>,
+    ) -> (Vec<ContextGroup<'a>>, Vec<EntityIndexes>, Vec<Value<'v>>) {
+        let trie = PathTrie::new(paths.into_iter().map(|path| path.as_slice()));
+        let ends = trie.ends();
+        let path_values = collect_path_values(&trie, data, possible_types, context_depth(context));
+        collect_context_entities(
+            &path_values,
+            ends,
+            requires,
+            input_rewrites,
+            context,
+            possible_types,
+            subgraph_keys,
+            reuse,
+        )
+    }
 
     #[test]
     fn contexts_group_and_deduplicate_by_ancestor_values() {
@@ -530,7 +609,7 @@ mod tests {
             },
         ];
         let context = FetchContext::new(vec!["__context_0".into()], Some(rewrites.to_vec()));
-        let (groups, targets, _) = collect_context_entities(
+        let (groups, targets, _) = collect(
             &data,
             [path.as_ref()],
             &requires,
@@ -604,7 +683,7 @@ mod tests {
             Some(rewrites.to_vec()),
         );
         let possible_types = PossibleTypes::default();
-        let (groups, targets, _) = collect_context_entities(
+        let (groups, targets, _) = collect(
             &data,
             [path.as_ref()],
             &requires,
@@ -710,7 +789,7 @@ mod tests {
             vec!["__context_0".into(), "__context_1".into()],
             Some(rewrites.to_vec()),
         );
-        let (groups, targets, _) = collect_context_entities(
+        let (groups, targets, _) = collect(
             &data,
             [posts.as_ref(), drafts.as_ref()],
             &requires,
@@ -766,7 +845,7 @@ mod tests {
             .into_iter()
             .collect();
         let context = FetchContext::new(vec!["__context_0".into()], Some(Vec::new()));
-        let (groups, _, _) = collect_context_entities(
+        let (groups, _, _) = collect(
             &data,
             [path.as_ref()],
             &requires,
@@ -804,7 +883,7 @@ mod tests {
             rename_key_to: "__context_0".into(),
         }];
         let context = FetchContext::new(vec!["__context_0".into()], Some(rewrites.to_vec()));
-        let (groups, targets, _) = collect_context_entities(
+        let (groups, targets, _) = collect(
             &data,
             [path.as_ref()],
             &requires,
