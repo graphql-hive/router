@@ -23,6 +23,9 @@ pub struct TrafficShapingConfig {
     /// Limits the concurrent amount of requests/connections per host/subgraph.
     #[serde(default = "default_max_connections_per_host")]
     pub max_connections_per_host: usize,
+    /// How the router keeps its HTTP clients (and connection pools) to subgraphs.
+    #[serde(default)]
+    pub http_client_mode: HttpClientMode,
 
     #[serde(default)]
     /// Configuration for the router itself, e.g., for handling incoming requests, or other router-level traffic shaping configurations.
@@ -35,6 +38,7 @@ impl Default for TrafficShapingConfig {
             all: TrafficShapingExecutorGlobalConfig::default(),
             subgraphs: HashMap::new(),
             max_connections_per_host: default_max_connections_per_host(),
+            http_client_mode: HttpClientMode::default(),
             router: TrafficShapingRouterConfig::default(),
         }
     }
@@ -47,6 +51,7 @@ pub struct SupergraphTrafficShapingConfig {
     pub all: TrafficShapingExecutorGlobalConfig,
     pub subgraphs: HashMap<String, TrafficShapingExecutorSubgraphConfig>,
     pub max_connections_per_host: usize,
+    pub http_client_mode: HttpClientMode,
 }
 
 impl SupergraphTrafficShapingConfig {
@@ -121,6 +126,7 @@ impl Default for SupergraphTrafficShapingConfig {
             all: TrafficShapingExecutorGlobalConfig::default(),
             subgraphs: HashMap::new(),
             max_connections_per_host: default_max_connections_per_host(),
+            http_client_mode: HttpClientMode::default(),
         }
     }
 }
@@ -131,12 +137,29 @@ impl From<&TrafficShapingConfig> for SupergraphTrafficShapingConfig {
             all: config.all.clone(),
             subgraphs: config.subgraphs.clone(),
             max_connections_per_host: config.max_connections_per_host,
+            http_client_mode: config.http_client_mode,
         }
     }
 }
 
 fn default_max_connections_per_host() -> usize {
     100
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum HttpClientMode {
+    /// One client for all workers. A connection opened by one worker can serve requests from
+    /// any other, so fewer connections stay open, but a response often has to wake up another
+    /// thread.
+    #[default]
+    Shared,
+    /// One client per worker, so a subgraph request stays on the worker that handles the
+    /// incoming request. It uses less CPU per request, but each worker keeps its own idle
+    /// connections, so more connections can stay open. `max_connections_per_host` still caps
+    /// the requests in flight.
+    PerWorker,
 }
 
 fn default_pool_idle_timeout() -> Duration {

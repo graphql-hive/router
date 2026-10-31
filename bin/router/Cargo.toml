@@ -166,6 +166,7 @@ hyper-util = { version = "0.1.16", features = [
   "http2",
   "tokio",
 ] }
+thread_local = "1.1.9"
 itoa = "1.0.15"
 ryu = "1.0.20"
 indexmap = "2.10.0"
