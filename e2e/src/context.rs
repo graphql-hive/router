@@ -319,11 +319,6 @@ mod context_e2e_tests {
                   "errors": [
                     {
                       "message": "unrelated failed",
-                      "path": [
-                        "_entities",
-                        0,
-                        "b"
-                      ],
                       "extensions": {
                         "code": "DOWNSTREAM_SERVICE_ERROR",
                         "service": "b",
