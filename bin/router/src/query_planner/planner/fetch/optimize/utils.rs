@@ -19,7 +19,7 @@ use crate::query_planner::{
     planner::fetch::{
         error::FetchGraphError,
         fetch_graph::FetchGraph,
-        fetch_step_data::{FetchStepData, FetchStepKind},
+        fetch_step_data::{FetchStepData, FetchStepFlags, FetchStepKind},
         response_keys::read_as_written,
         selections::FetchStepSelections,
         state::MultiTypeFetchStep,
@@ -118,6 +118,16 @@ pub(crate) fn perform_fetch_step_merge(
     let source_id = source.id;
     let target_id = target.id;
 
+    // merged from sides under other conditions, the input is only all there when theirs hold
+    if target.is_entity_call()
+        && source.is_entity_call()
+        && (source.flags.contains(FetchStepFlags::CONDITIONAL_INPUT)
+            || !(target.input_covers(source) && target.is_unconditional()
+                || source.input_covers(target) && source.is_unconditional()
+                || !target.conditions_differ(source)))
+    {
+        target.flags.insert(FetchStepFlags::CONDITIONAL_INPUT);
+    }
     let source_condition_merged = merge_source_condition_into_non_entity_target(target, source)?;
     if !source_condition_merged {
         target.scope_fetch_conditions_before_merge(source);
@@ -489,6 +499,9 @@ impl FetchStepData<MultiTypeFetchStep> {
                 if !self.output.selecting_same_types(&other.output) {
                     return false;
                 }
+                if !self.inputs_hold_when_merged(other) {
+                    return false;
+                }
             } else if !(is_only_parent && self.can_absorb_nested_entity_call(other)) {
                 return false;
             }
@@ -517,6 +530,47 @@ impl FetchStepData<MultiTypeFetchStep> {
         }
 
         true
+    }
+
+    /// Under other conditions, a side's `@requires` inputs are only fetched when its conditions
+    /// hold. Merged, its representations would miss them when they don't, and an object missing
+    /// a field goes out as `null` for the side that runs too. So a side's input has to be there
+    /// whenever the merged call runs: covered by an unconditional side, or the same on both.
+    pub(crate) fn inputs_hold_when_merged(&self, other: &Self) -> bool {
+        !self.conditions_differ(other)
+            || (self.is_unconditional() && self.input_covers(other))
+            || (other.is_unconditional() && other.input_covers(self))
+            || (self.input_covers(other) && other.input_covers(self))
+    }
+
+    /// Other conditions on the steps or their paths, or an input that has them.
+    fn conditions_differ(&self, other: &Self) -> bool {
+        self.condition != other.condition
+            || !self
+                .response_path
+                .conditions()
+                .eq(other.response_path.conditions())
+            || self.flags.contains(FetchStepFlags::CONDITIONAL_INPUT)
+            || other.flags.contains(FetchStepFlags::CONDITIONAL_INPUT)
+    }
+
+    /// No condition on the step, its path or its input.
+    fn is_unconditional(&self) -> bool {
+        self.condition.is_none()
+            && self.response_path.conditions().next().is_none()
+            && !self.flags.contains(FetchStepFlags::CONDITIONAL_INPUT)
+    }
+
+    /// Our input asks for everything `other`'s does, for the types we both send. A type only
+    /// `other` sends is its own representations, merged they stay what they were.
+    fn input_covers(&self, other: &Self) -> bool {
+        other
+            .input
+            .iter_selections()
+            .all(|(type_name, selections)| {
+                !self.input.is_selecting_definition(type_name)
+                    || self.input.contains(type_name, selections)
+            })
     }
 
     /// Only call this when we are the only step `other` waits for.

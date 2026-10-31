@@ -396,40 +396,56 @@ fn context_variables_do_not_collide_with_client_variables_or_requires() -> Resul
             }
           }
         },
-        Include(if: $__context_1) {
+        Parallel {
+          Include(if: $__context_1) {
+            Flatten(path: "users.@.txs.@") {
+              Fetch(service: "b") {
+                {
+                  ... on Transaction {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Transaction {
+                    base
+                  }
+                }
+              },
+            },
+          },
           Flatten(path: "users.@.txs.@") {
-            Fetch(service: "b") {
+            Fetch(service: "a") {
               {
                 ... on Transaction {
                   __typename
                   id
                 }
               } =>
-              {
+              ($__context_3:Int,$__context_4:String) {
                 ... on Transaction {
-                  base
+                  amount(code: $__context_4, multiplier: $__context_3)
                 }
               }
             },
           },
         },
-        Flatten(path: "users.@.txs.@") {
-          Fetch(service: "a") {
-            {
-              ... on Transaction {
-                __typename
-                id
-                base
-              }
-            } =>
-            ($__context_0:Int=2,$__context_1:Boolean!,$__context_3:Int,$__context_4:String,$__context_2:String) {
-              ... on Transaction {
-                amount(code: $__context_4, multiplier: $__context_3)
-                ... on Transaction @include(if: $__context_1) {
+        Include(if: $__context_1) {
+          Flatten(path: "users.@.txs.@") {
+            Fetch(service: "a") {
+              {
+                ... on Transaction {
+                  __typename
+                  base
+                  id
+                }
+              } =>
+              ($__context_0:Int=2,$__context_2:String) {
+                ... on Transaction {
                   required(code: $__context_2, multiplier: $__context_0)
                 }
               }
-            }
+            },
           },
         },
       },

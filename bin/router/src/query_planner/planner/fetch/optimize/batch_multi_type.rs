@@ -573,6 +573,10 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
+        if !self.inputs_hold_when_merged(other) {
+            return false;
+        }
+
         // Type-condition conditions must also match at each position.
         // Example: |[Book] @skip(if: $x) vs |[Book] with no condition.
         if self

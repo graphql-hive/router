@@ -46,6 +46,10 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
+        if !self.inputs_hold_when_merged(other) {
+            return false;
+        }
+
         // `other` must still be a leaf node (no children).
         if fetch_graph.children_of(other_index).next().is_some() {
             return false;
