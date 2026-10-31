@@ -461,13 +461,13 @@ pub struct EntityBatchAlias {
     pub output_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
     pub context: Option<Box<FetchContext>>,
-    /// The `Include` around the fetches of this alias. With the variable not `true` the alias
-    /// collects no entities, and the subgraph skips it too, the field has the same `@include`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub include_if: Option<String>,
-    /// Same for a `Skip`, the alias collects nothing with the variable `true`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub skip_if: Option<String>,
+    /// The `Include`s around the fetches of this alias. With any of them not `true` the alias
+    /// collects no entities and sends `[]`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub include_if: Vec<String>,
+    /// Same for the `Skip`s, the alias collects nothing with any of them `true`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skip_if: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -966,6 +966,12 @@ impl<S: PlanState> PrettyDisplay for BatchFetchNode<S> {
         writeln!(f, "{indent}  {{")?;
         for alias in &self.entity_batch.aliases {
             writeln!(f, "{indent}    {} {{", alias.alias)?;
+            for (label, variables) in [("includeIf", &alias.include_if), ("skipIf", &alias.skip_if)]
+            {
+                if !variables.is_empty() {
+                    writeln!(f, "{indent}      {label}: ${}", variables.join(", $"))?;
+                }
+            }
             writeln!(f, "{indent}      paths: [")?;
             for merge_path in alias.merge_paths.iter() {
                 writeln!(f, "{indent}        \"{}\"", merge_path)?;

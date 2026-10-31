@@ -1726,18 +1726,17 @@ impl<'exec> Executor<'exec> {
         entity_index_error_map
     }
 
-    /// Whether the alias's `Include`/`Skip` lets it run, read like `condition_node_by_variables`
+    /// Whether the alias's `Include`s and `Skip`s let it run, read like `condition_node_by_variables`
     /// reads a `Condition` node: without a value neither side runs.
     fn alias_runs(&self, alias_spec: &EntityBatchAlias) -> bool {
-        let (variable, include) = match (&alias_spec.include_if, &alias_spec.skip_if) {
-            (None, None) => return true,
-            (Some(variable), _) => (variable, true),
-            (None, Some(variable)) => (variable, false),
+        let value = |variable: &String| {
+            self.variable_values
+                .as_ref()
+                .and_then(|vars| vars.get(variable))
+                .map(|value| matches!(value.as_ref(), ValueRef::Bool(true)))
         };
-        self.variable_values
-            .as_ref()
-            .and_then(|vars| vars.get(variable))
-            .is_some_and(|value| matches!(value.as_ref(), ValueRef::Bool(true)) == include)
+        alias_spec.include_if.iter().all(|v| value(v) == Some(true))
+            && alias_spec.skip_if.iter().all(|v| value(v) == Some(false))
     }
 
     // The preperation includes:
@@ -2323,8 +2322,8 @@ mod tests {
                     input_rewrites: None,
                     output_rewrites: None,
                     context: None,
-                    include_if: None,
-                    skip_if: None,
+                    include_if: vec![],
+                    skip_if: vec![],
                 },
                 EntityBatchAlias {
                     alias: "_e1".to_string(),
@@ -2334,8 +2333,8 @@ mod tests {
                     input_rewrites: None,
                     output_rewrites: None,
                     context: None,
-                    include_if: None,
-                    skip_if: None,
+                    include_if: vec![],
+                    skip_if: vec![],
                 },
             ],
         };

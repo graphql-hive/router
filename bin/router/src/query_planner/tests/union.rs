@@ -1094,6 +1094,7 @@ fn conditional_union_type_condition_on_its_own_field_include_mixed_members(
         BatchFetch(service: "product") {
           {
             _e0 {
+              includeIf: $v
               paths: [
                 "card.components.@|[Component]|[ComponentC].product"
               ]
@@ -1105,6 +1106,7 @@ fn conditional_union_type_condition_on_its_own_field_include_mixed_members(
               }
             }
             _e1 {
+              includeIf: $v
               paths: [
                 "card.components.@|[Component]|[ComponentA].product"
               ]
@@ -1116,13 +1118,13 @@ fn conditional_union_type_condition_on_its_own_field_include_mixed_members(
               }
             }
           }
-          ($v:Boolean!) {
-            _e0: _entities(representations: $__batch_reps_0) @include(if: $v) {
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
               ... on Product {
                 c
               }
             }
-            _e1: _entities(representations: $__batch_reps_1) @include(if: $v) {
+            _e1: _entities(representations: $__batch_reps_1) {
               ... on Product {
                 a
               }

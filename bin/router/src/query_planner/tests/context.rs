@@ -543,45 +543,47 @@ fn context_under_conditional_ancestor_fragments() -> Result<(), Box<dyn Error>> 
             id
           }
         },
-        Parallel {
-          Skip(if: $skip) {
-            Include(if: $include) {
-              Flatten(path: "viewer|[Other].txs.@") {
-                Fetch(service: "a") {
-                  {
-                    ... on Transaction {
-                      __typename
-                      id
-                    }
-                  } =>
-                  ($__context_1:String) {
-                    ... on Transaction {
-                      fromUnion(code: $__context_1)
-                    }
-                  }
-                },
-              },
-            },
-          },
-          Include(if: $include) {
-            Skip(if: $skip) {
-              Flatten(path: "viewer|[User].txs.@") {
-                Fetch(service: "a") {
-                  {
-                    ... on Transaction {
-                      __typename
-                      id
-                    }
-                  } =>
-                  ($__context_0:String) {
-                    ... on Transaction {
-                      fromUnion(code: $__context_0)
-                    }
-                  }
-                },
-              },
-            },
-          },
+        BatchFetch(service: "a") {
+          {
+            _e0 {
+              includeIf: $include
+              skipIf: $skip
+              paths: [
+                "viewer|[Other].txs.@"
+              ]
+              {
+                ... on Transaction {
+                  __typename
+                  id
+                }
+              }
+            }
+            _e1 {
+              includeIf: $include
+              skipIf: $skip
+              paths: [
+                "viewer|[User].txs.@"
+              ]
+              {
+                ... on Transaction {
+                  __typename
+                  id
+                }
+              }
+            }
+          }
+          ($__context_1:String,$__context_0:String) {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Transaction {
+                fromUnion(code: $__context_1)
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Transaction {
+                fromUnion(code: $__context_0)
+              }
+            }
+          }
         },
       },
     },

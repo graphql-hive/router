@@ -186,10 +186,10 @@ mod entity_batching_e2e_tests {
         }
     }
     #[ntex::test]
-    /// `first` and `second` both call `c` for `cName`, one under `$x`, one under `!$y`. Both users
-    /// and their keys are always there, so only the alias's condition keeps an off one from
-    /// collecting. They go out as one request with an alias each, `@include`/`@skip` on it, and an
-    /// alias that's off sends no representations. With both off there's no request.
+    /// `first` and `second` both call `c` for `cName`, one under `$x`, one under `$x` and `!$y`.
+    /// Both users and their keys are always there, so only the alias's conditions keep an off one
+    /// from collecting. They go out as one request with an alias each, and an alias that's off
+    /// sends no representations. With both off there's no request.
     async fn entity_calls_under_other_conditions_share_one_request() {
         let subgraphs = TestSubgraphs::builder()
             .with_on_request(mock_subgraphs(json!({
@@ -221,7 +221,7 @@ mod entity_batching_e2e_tests {
         let query = r#"
           query($x: Boolean!, $y: Boolean!) {
             first: userInB { id name ... @include(if: $x) { cName } }
-            second: userInB { id name ... @skip(if: $y) { cName } }
+            second: userInB { id name ... @include(if: $x) { ... @skip(if: $y) { cName } } }
           }
         "#;
         let requests_to_c = || subgraphs.get_requests_log("c").unwrap_or_default();
@@ -238,14 +238,14 @@ mod entity_batching_e2e_tests {
             if x {
                 data["first"]["cName"] = json!("c-Ann");
             }
-            if !y {
+            if x && !y {
                 data["second"]["cName"] = json!("c-Ann");
             }
             assert_eq!(body, json!({ "data": data }), "x={x} y={y}");
 
             let requests = requests_to_c();
             let sent = &requests[before..];
-            if !x && y {
+            if !x {
                 assert!(sent.is_empty(), "x={x} y={y}: no call is on");
                 continue;
             }
@@ -259,7 +259,7 @@ mod entity_batching_e2e_tests {
                 .filter(|(name, _)| name.starts_with("__batch_reps_"))
                 .map(|(_, list)| list.as_array().unwrap().len())
                 .collect();
-            let mut expected = vec![usize::from(x), usize::from(!y)];
+            let mut expected = vec![usize::from(x), usize::from(x && !y)];
             let mut lists = lists;
             expected.sort();
             lists.sort();
