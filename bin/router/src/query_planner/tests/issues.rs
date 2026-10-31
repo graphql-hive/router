@@ -97,7 +97,6 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
             }
           }
           fragment a on Product {
-            __typename
             id
           }
         },
@@ -210,7 +209,6 @@ fn issue_190_test() -> Result<(), Box<dyn Error>> {
       Fetch(service: "recommender") {
         query ($included:Boolean!) {
           recommender @include(if: $included) {
-            __typename
             id
             results {
               __typename
@@ -844,7 +842,6 @@ fn requires_self_dependency_false_positive() -> Result<(), Box<dyn Error>> {
         Fetch(service: "library") {
           {
             books {
-              __typename
               edition {
                 book {
                   catalogId
@@ -908,7 +905,6 @@ fn issue_1539_requires_after_entity_hop() -> Result<(), Box<dyn Error>> {
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }
@@ -924,7 +920,6 @@ fn issue_1539_requires_after_entity_hop() -> Result<(), Box<dyn Error>> {
             {
               ... on User {
                 orders {
-                  __typename
                   id
                   sku
                 }
@@ -980,7 +975,6 @@ fn issue_1539_requires_after_entity_hop_with_explicit_requirement() -> Result<()
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }
@@ -996,7 +990,6 @@ fn issue_1539_requires_after_entity_hop_with_explicit_requirement() -> Result<()
             {
               ... on User {
                 orders {
-                  __typename
                   sku
                   id
                 }
@@ -1051,7 +1044,6 @@ fn issue_1539_requires_on_root_parent() -> Result<(), Box<dyn Error>> {
         Fetch(service: "orders") {
           {
             order {
-              __typename
               id
               sku
             }
@@ -1108,7 +1100,6 @@ fn issue_1539_requires_on_self_referential_entity() -> Result<(), Box<dyn Error>
         Fetch(service: "users") {
           {
             order {
-              __typename
               id
             }
           }
@@ -1124,7 +1115,6 @@ fn issue_1539_requires_on_self_referential_entity() -> Result<(), Box<dyn Error>
             {
               ... on Order {
                 related {
-                  __typename
                   id
                   sku
                 }
@@ -1210,7 +1200,6 @@ fn issue_1308_conditional_rank_keeps_concrete_requires_types() -> Result<(), Box
         Fetch(service: "catalog") {
           {
             cage {
-              __typename
               id
             }
           }
@@ -1226,7 +1215,6 @@ fn issue_1308_conditional_rank_keeps_concrete_requires_types() -> Result<(), Box
             ($includeRank:Boolean!) {
               ... on Cage {
                 listings {
-                  __typename
                   id
                   ... on Listing @include(if: $includeRank) {
                     pet {
@@ -1319,7 +1307,6 @@ fn issue_1309_requires_through_entity_interface() -> Result<(), Box<dyn Error>> 
         Fetch(service: "search") {
           {
             listings {
-              __typename
               id
               pet {
                 __typename

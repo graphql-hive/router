@@ -30,7 +30,6 @@ fn mutations() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           mutation {
             addProduct(input: {name: "new", price: 599.99}) {
-              __typename
               name
               price
               id
@@ -68,7 +67,7 @@ fn mutations() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "mutation",
-            "operation": "mutation{addProduct(input: {name: \"new\", price: 599.99}){__typename name price id}}"
+            "operation": "mutation{addProduct(input: {name: \"new\", price: 599.99}){name price id}}"
           },
           {
             "kind": "Flatten",
@@ -262,7 +261,6 @@ fn next_field_waits_for_entity_fetch_of_previous_one() -> Result<(), Box<dyn Err
         Fetch(service: "a") {
           mutation {
             create: addProduct(input: {name: "new", price: 599.99}) {
-              __typename
               id
               price
             }
@@ -322,7 +320,6 @@ fn next_field_waits_for_conditional_entity_fetch_of_previous_one() -> Result<(),
           mutation ($includeRemote:Boolean!) {
             create: addProduct(input: {name: "new", price: 599.99}) {
               ... on Product @include(if: $includeRemote) {
-                __typename
                 id
                 price
               }
@@ -384,7 +381,6 @@ fn neighbours_in_one_graph_share_a_fetch_when_first_needs_another_fetch(
         Fetch(service: "a") {
           mutation {
             create: addProduct(input: {name: "new", price: 599.99}) {
-              __typename
               id
               price
             }
@@ -439,7 +435,6 @@ fn next_graph_waits_for_entity_fetch_of_the_group() -> Result<(), Box<dyn Error>
         Fetch(service: "a") {
           mutation {
             create: addProduct(input: {name: "new", price: 599.99}) {
-              __typename
               id
               price
             }
@@ -499,7 +494,6 @@ fn next_graph_waits_for_entity_fetch_of_a_later_field_in_the_group() -> Result<(
           mutation {
             double: multiply(by: 2)
             create: addProduct(input: {name: "new", price: 599.99}) {
-              __typename
               id
               price
             }
@@ -558,7 +552,6 @@ fn next_graph_waits_for_entity_fetch_to_the_same_graph() -> Result<(), Box<dyn E
         Fetch(service: "a") {
           mutation {
             create: addProduct(input: {name: "new", price: 599.99}) {
-              __typename
               id
               price
             }
@@ -622,7 +615,6 @@ fn fields_of_one_graph_with_another_graph_between_stay_apart() -> Result<(), Box
         Fetch(service: "a") {
           mutation {
             create: addProduct(input: {name: "new", price: 599.99}) {
-              __typename
               id
               price
             }

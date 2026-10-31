@@ -31,7 +31,6 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
         Fetch(service: "b") {
           {
             products {
-              __typename
               upc
               name
               price(currency: "USD")
@@ -103,7 +102,7 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "{products{__typename upc name price(currency: \"USD\") weight _internal_qp_alias_0: price(currency: \"EUR\") category{averagePrice(currency: \"USD\")}}}"
+            "operation": "{products{upc name price(currency: \"USD\") weight _internal_qp_alias_0: price(currency: \"EUR\") category{averagePrice(currency: \"USD\")}}}"
           },
           {
             "kind": "BatchFetch",
@@ -236,7 +235,6 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
         Fetch(service: "c") {
           {
             feed {
-              __typename
               id
             }
           }
@@ -252,7 +250,6 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
             {
               ... on Post {
                 _internal_qp_alias_0: comments(limit: 3) {
-                  __typename
                   id
                 }
                 comments(limit: 1) {
@@ -311,7 +308,7 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "c",
             "operationKind": "query",
-            "operation": "{feed{__typename id}}"
+            "operation": "{feed{id}}"
           },
           {
             "kind": "Flatten",
@@ -325,7 +322,7 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "d",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Post{_internal_qp_alias_0: comments(limit: 3){__typename id} comments(limit: 1){id}}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Post{_internal_qp_alias_0: comments(limit: 3){id} comments(limit: 1){id}}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -458,7 +455,6 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
         Fetch(service: "c") {
           {
             feed {
-              __typename
               id
             }
           }
@@ -474,7 +470,6 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
             ($limit:Int=1) {
               ... on Post {
                 _internal_qp_alias_0: comments(limit: 3) {
-                  __typename
                   id
                 }
                 comments(limit: $limit) {
@@ -533,7 +528,7 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
             "kind": "Fetch",
             "serviceName": "c",
             "operationKind": "query",
-            "operation": "{feed{__typename id}}"
+            "operation": "{feed{id}}"
           },
           {
             "kind": "Flatten",
@@ -550,7 +545,7 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
                 "limit"
               ],
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!, $limit:Int=1){_entities(representations: $representations){...on Post{_internal_qp_alias_0: comments(limit: 3){__typename id} comments(limit: $limit){id}}}}",
+              "operation": "query($representations:[_Any!]!, $limit:Int=1){_entities(representations: $representations){...on Post{_internal_qp_alias_0: comments(limit: 3){id} comments(limit: $limit){id}}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -694,7 +689,6 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
         Fetch(service: "c") {
           {
             feed {
-              __typename
               id
             }
           }
@@ -710,7 +704,6 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
             ($limit:Int=1) {
               ... on Post {
                 _internal_qp_alias_0: comments(limit: 3) {
-                  __typename
                   id
                 }
                 comments(limit: $limit) {
@@ -769,7 +762,7 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
             "kind": "Fetch",
             "serviceName": "c",
             "operationKind": "query",
-            "operation": "{feed{__typename id}}"
+            "operation": "{feed{id}}"
           },
           {
             "kind": "Flatten",
@@ -786,7 +779,7 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
                 "limit"
               ],
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!, $limit:Int=1){_entities(representations: $representations){...on Post{_internal_qp_alias_0: comments(limit: 3){__typename id} comments(limit: $limit){id}}}}",
+              "operation": "query($representations:[_Any!]!, $limit:Int=1){_entities(representations: $representations){...on Post{_internal_qp_alias_0: comments(limit: 3){id} comments(limit: $limit){id}}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -918,7 +911,6 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             test {
-              __typename
               id
             }
           }
@@ -993,7 +985,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{test{__typename id}}"
+            "operation": "{test{id}}"
           },
           {
             "kind": "Flatten",
@@ -1135,7 +1127,6 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
         Fetch(service: "a") {
           {
             test {
-              __typename
               id
             }
           }
@@ -1211,7 +1202,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{test{__typename id}}"
+            "operation": "{test{id}}"
           },
           {
             "kind": "Flatten",
@@ -1353,7 +1344,6 @@ fn multiple_plain_field_and_requires_with_args_that_does_not_conflicts_should_me
         Fetch(service: "a") {
           {
             test {
-              __typename
               id
             }
           }
@@ -1403,7 +1393,7 @@ fn multiple_plain_field_and_requires_with_args_that_does_not_conflicts_should_me
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{test{__typename id}}"
+            "operation": "{test{id}}"
           },
           {
             "kind": "Flatten",
@@ -1500,7 +1490,6 @@ fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             test {
-              __typename
               id
             }
           }
@@ -1550,7 +1539,7 @@ fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{test{__typename id}}"
+            "operation": "{test{id}}"
           },
           {
             "kind": "Flatten",
@@ -1648,7 +1637,6 @@ fn requires_with_arguments() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             feed {
-              __typename
               id
             }
           }
@@ -1664,7 +1652,6 @@ fn requires_with_arguments() -> Result<(), Box<dyn Error>> {
             {
               ... on Post {
                 comments(limit: 3) {
-                  __typename
                   id
                 }
               }
@@ -1879,7 +1866,6 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
             }
           }
           fragment a on Product {
-            __typename
             id
             name
           }
@@ -1929,7 +1915,6 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
               _e0: _entities(representations: $__batch_reps_0) {
                 ... on Product {
                   category {
-                    __typename
                     id
                   }
                 }
@@ -2010,7 +1995,6 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
             }
           }
           fragment a on Product {
-            __typename
             id
             name
           }
@@ -2060,7 +2044,6 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
               _e0: _entities(representations: $__batch_reps_0) {
                 ... on Product {
                   category {
-                    __typename
                     id
                   }
                 }
@@ -2108,7 +2091,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
               "secondProductId"
             ],
             "operationKind": "query",
-            "operation": "query($secondProductId:ID!){firstProduct: productFromD(id: \"1\"){...a} secondProduct: productFromD(id: $secondProductId){...a}}\n\nfragment a on Product {__typename id name}\n"
+            "operation": "query($secondProductId:ID!){firstProduct: productFromD(id: \"1\"){...a} secondProduct: productFromD(id: $secondProductId){...a}}\n\nfragment a on Product {id name}\n"
           },
           {
             "kind": "Parallel",
@@ -2159,7 +2142,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
                 "kind": "BatchFetch",
                 "serviceName": "b",
                 "operationKind": "query",
-                "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{category{__typename id}}}}",
+                "operation": "query($__batch_reps_0:[_Any!]!){_e0: _entities(representations: $__batch_reps_0){...on Product{category{id}}}}",
                 "entityBatch": {
                   "aliases": [
                     {
@@ -2290,7 +2273,6 @@ fn requires_with_argument_conflict_after_entity_hop() -> Result<(), Box<dyn Erro
         Fetch(service: "users") {
           {
             user {
-              __typename
               id
             }
           }
@@ -2306,7 +2288,6 @@ fn requires_with_argument_conflict_after_entity_hop() -> Result<(), Box<dyn Erro
             {
               ... on User {
                 orders {
-                  __typename
                   id
                   price(currency: "USD")
                   _internal_qp_alias_0: price(currency: "EUR")

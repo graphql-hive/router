@@ -4,7 +4,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use crate::executor::response::shaped::ResponseShape;
+use crate::executor::response::shaped::{ResponseShape, StaticTypenames};
 use crate::query_planner::{
     ast::{document::Document, hash::ast_hash},
     planner::plan_nodes::{hash_minified_query, CustomScalarPaths},
@@ -544,6 +544,10 @@ fn name_write_position(document_str: &str) -> usize {
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlanningFetchOperation {
     pub document: Box<Document>,
+    /// `document` as it's sent, without the `__typename`s execution fills in itself. Only
+    /// when it's different.
+    #[serde(skip)]
+    sent: Option<Box<Document>>,
     #[serde(flatten)]
     pub operation: SubgraphFetchOperation,
 }
@@ -592,24 +596,83 @@ fn typename_first(set: &mut SelectionSet) {
     }
 }
 
+/// Leaves out the `__typename`s execution fills in itself, see `ResponseShape::fill_typenames`.
+/// It goes children first, so a set is checked before anything moves it. True if it left
+/// something out.
+fn strip_static_typenames(set: &mut SelectionSet, static_typenames: &StaticTypenames) -> bool {
+    let strip = static_typenames.contains(set);
+    let mut stripped = false;
+    for item in &mut set.items {
+        stripped |= match item {
+            SelectionItem::Field(field) => {
+                strip_static_typenames(&mut field.selections, static_typenames)
+            }
+            SelectionItem::InlineFragment(fragment) => {
+                strip_static_typenames(&mut fragment.selections, static_typenames)
+            }
+            SelectionItem::FragmentSpread(_) => false,
+        };
+    }
+    let is_static = |item: &SelectionItem| {
+        matches!(item, SelectionItem::Field(field) if field.name == "__typename"
+            && field.alias.is_none()
+            && field.skip_if.is_none()
+            && field.include_if.is_none())
+    };
+    // `{ __typename }` alone stays, a selection set can't be empty
+    if strip && set.items.iter().any(|item| !is_static(item)) {
+        let len = set.items.len();
+        set.items.retain(|item| !is_static(item));
+        stripped |= set.items.len() != len;
+    }
+    stripped
+}
+
 impl PlanningFetchOperation {
-    pub fn from_anonymous_operation(mut document: Document) -> Self {
+    pub fn from_anonymous_operation(document: Document) -> Self {
+        Self::new(document, None)
+    }
+
+    /// Same as `from_anonymous_operation`, but the query sent leaves out the `__typename`s
+    /// execution fills in itself, see `strip_static_typenames`.
+    pub fn from_planned_operation(document: Document, supergraph: &SupergraphState) -> Self {
+        Self::new(document, Some(supergraph))
+    }
+
+    fn new(mut document: Document, supergraph: Option<&SupergraphState>) -> Self {
         typename_first(&mut document.operation.selection_set);
         for fragment in &mut document.fragments {
             typename_first(&mut fragment.selection_set);
         }
-        let document_str = document.to_string();
+        // the plan keeps the full document, the planner merges fetches from it later
+        let (document_str, response_shape, sent) = match supergraph {
+            Some(supergraph) => {
+                let mut sent = document.clone();
+                let (shape, static_typenames) = response_shape(&sent, supergraph);
+                let mut stripped =
+                    strip_static_typenames(&mut sent.operation.selection_set, &static_typenames);
+                for fragment in &mut sent.fragments {
+                    stripped |=
+                        strip_static_typenames(&mut fragment.selection_set, &static_typenames);
+                }
+                let document_str = sent.to_string();
+                let sent = stripped.then(|| Box::new(sent));
+                (document_str, Some(Box::new(shape)), sent)
+            }
+            None => (document.to_string(), None, None),
+        };
         let hash = hash_minified_query(&document_str);
         let name_write_position = name_write_position(&document_str);
 
         Self {
             document: Box::new(document),
+            sent,
             operation: SubgraphFetchOperation {
                 document_str: document_str.into_boxed_str(),
                 hash,
                 name_write_position,
                 context_template: None,
-                response_shape: None,
+                response_shape,
             },
         }
     }
@@ -617,11 +680,24 @@ impl PlanningFetchOperation {
     /// The operation execution sends, with the shape its response is read with.
     pub fn into_executable(self, supergraph: &SupergraphState) -> SubgraphFetchOperation {
         let mut operation = self.operation;
-        operation.response_shape = Some(Box::new(ResponseShape::new(&self.document, |name| {
-            supergraph.all_possible_types(name)
-        })));
+        if operation.response_shape.is_none() {
+            let (shape, _) = response_shape(&self.document, supergraph);
+            operation.response_shape = Some(Box::new(shape));
+        }
         operation
     }
+}
+
+fn response_shape(
+    document: &Document,
+    supergraph: &SupergraphState,
+) -> (ResponseShape, StaticTypenames) {
+    ResponseShape::with_static_typenames(
+        document,
+        Some(supergraph.expect_root_type_name(document.operation.operation_kind.as_ref())),
+        |name| supergraph.all_possible_types(name),
+        |parent, field| supergraph.field_return_type_name(parent, field),
+    )
 }
 
 impl Serialize for SubgraphFetchOperation {
@@ -648,7 +724,7 @@ impl PrettyDisplay for SubgraphFetchOperation {
 impl PrettyDisplay for PlanningFetchOperation {
     fn pretty_fmt(&self, f: &mut std::fmt::Formatter<'_>, depth: usize) -> std::fmt::Result {
         let indent = get_indent(depth);
-        let document = &self.document;
+        let document = self.sent.as_ref().unwrap_or(&self.document);
         // TODO: improve
         let has_variables = document
             .operation

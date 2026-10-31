@@ -47,7 +47,6 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
           Fetch(service: "products") {
             {
               topProducts {
-                __typename
                 upc
                 name
                 price
@@ -58,7 +57,6 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
           Fetch(service: "accounts") {
             {
               users {
-                __typename
                 id
                 username
                 name
@@ -124,7 +122,6 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
                     id
                     body
                     product {
-                      __typename
                       upc
                       reviews {
                         ...a
@@ -138,14 +135,12 @@ fn test_bench_operation() -> Result<(), Box<dyn std::error::Error>> {
               id
               body
               author {
-                __typename
                 id
                 username
                 reviews {
                   id
                   body
                   product {
-                    __typename
                     upc
                   }
                 }

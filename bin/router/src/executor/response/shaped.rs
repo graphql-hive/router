@@ -11,7 +11,7 @@
 //! (invalid JSON, escaped keys, deep nesting) makes it give up, and the response goes through
 //! sonic instead, so what we accept and the errors we return don't change.
 
-use ahash::HashSet;
+use ahash::{HashMap, HashSet};
 use std::ops::Range;
 
 use crate::executor::response::{
@@ -31,6 +31,9 @@ pub struct ResponseShape {
     nodes: Vec<Node>,
     types: Vec<TypeFields>,
     data: Object,
+    /// Whether the planner left a `__typename` out of the query, so `fill_typenames` has
+    /// something to do
+    fills: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +57,10 @@ struct Object {
     /// The fields of each type, sorted by name. Only for types whose type conditions select
     /// something else than `fields`.
     types: Range<u32>,
+    /// The object's type, when its field returns an object type and the query asks for its
+    /// `__typename`. The planner leaves that `__typename` out of the query, so it's put back
+    /// from here.
+    typename: Option<Box<str>>,
 }
 
 #[derive(Debug, Clone)]
@@ -63,12 +70,14 @@ struct TypeFields {
 }
 
 /// A field of an object and the selection sets of every place it's selected in.
-struct Field<'d> {
+struct Field<'d, 's> {
     key: &'d str,
     sets: Vec<&'d SelectionSet>,
+    /// The type it returns, `None` when we don't know it or its places don't agree
+    ty: Option<&'s str>,
 }
 
-impl Field<'_> {
+impl Field<'_, '_> {
     fn same(a: &[Field], b: &[Field]) -> bool {
         a.len() == b.len()
             && a.iter().zip(b).all(|(a, b)| {
@@ -84,22 +93,88 @@ impl Field<'_> {
 
 impl ResponseShape {
     /// `possible_types` gives the object types of an interface or a union, so an object knows
-    /// which of its type conditions it matches.
+    /// which of its type conditions it matches. `field_type` gives the type a field returns,
+    /// starting from the `root` type, so an object of an object type knows its `__typename`.
     pub fn new<'s>(
         document: &Document,
+        root: Option<&'s str>,
         possible_types: impl Fn(&str) -> Option<&'s HashSet<String>>,
+        field_type: impl Fn(&str, &str) -> Option<&'s str>,
     ) -> Self {
+        Self::with_static_typenames(document, root, possible_types, field_type).0
+    }
+
+    /// Also says which selection sets of `document` can leave their `__typename` out, because
+    /// every object they're selected on has it in `Object::typename`.
+    pub fn with_static_typenames<'s>(
+        document: &Document,
+        root: Option<&'s str>,
+        possible_types: impl Fn(&str) -> Option<&'s HashSet<String>>,
+        field_type: impl Fn(&str, &str) -> Option<&'s str>,
+    ) -> (Self, StaticTypenames) {
         let mut builder = Builder {
             document,
             possible_types,
+            field_type,
             shape: Self {
                 nodes: Vec::new(),
                 types: Vec::new(),
                 data: Object::default(),
+                fills: false,
             },
+            sets: HashMap::default(),
         };
-        builder.shape.data = builder.object(&[&document.operation.selection_set]);
-        builder.shape
+        // the subgraph names its root type itself
+        builder.shape.data = builder.object(&[&document.operation.selection_set], root, false);
+        builder.shape.fills = builder.sets.values().any(|&typed| typed);
+        (builder.shape, StaticTypenames(builder.sets))
+    }
+
+    /// Puts back the `__typename` of every object the query asks for it on and the planner left
+    /// it out of the query for, see `Object::typename`.
+    pub fn fill_typenames<'a>(&'a self, data: &mut Value<'a>) {
+        if self.fills {
+            self.fill(data, &self.data);
+        }
+    }
+
+    fn fill<'a>(&'a self, value: &mut Value<'a>, object: &'a Object) {
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    self.fill(item, object);
+                }
+            }
+            Value::Object(entries) => {
+                let typename = entries
+                    .iter()
+                    .find(|(key, _)| *key == "__typename")
+                    .and_then(|(_, value)| value.as_str());
+                let fields = match (typename, &object.typename) {
+                    (Some(name), _) => {
+                        let types = self.types(&object.types);
+                        match types.binary_search_by(|t| t.name.as_ref().cmp(name)) {
+                            Ok(index) => &types[index].fields,
+                            Err(_) => &object.fields,
+                        }
+                    }
+                    (None, Some(name)) => {
+                        entries.insert(0, ("__typename", Value::String(name.as_ref().into())));
+                        &object.fields
+                    }
+                    (None, None) => &object.fields,
+                };
+                let fields = self.fields(fields);
+                for (key, value) in entries {
+                    if let Some(node) = fields.iter().find(|node| node.key() == key.as_bytes()) {
+                        if !node.object.fields.is_empty() {
+                            self.fill(value, &node.object);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     fn fields(&self, range: &Range<u32>) -> &[Node] {
@@ -111,16 +186,46 @@ impl ResponseShape {
     }
 }
 
-struct Builder<'d, F> {
-    document: &'d Document,
-    possible_types: F,
-    shape: ResponseShape,
+/// The selection sets whose `__typename` execution fills in itself.
+pub struct StaticTypenames(HashMap<*const SelectionSet, bool>);
+
+impl StaticTypenames {
+    pub fn contains(&self, set: &SelectionSet) -> bool {
+        self.0.get(&(set as *const _)) == Some(&true)
+    }
 }
 
-impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
-    fn object(&mut self, sets: &[&'d SelectionSet]) -> Object {
-        let merged = self.fields(sets, None);
+struct Builder<'d, F, T> {
+    document: &'d Document,
+    possible_types: F,
+    field_type: T,
+    shape: ResponseShape,
+    /// Whether every object a selection set is selected on has `Object::typename`
+    sets: HashMap<*const SelectionSet, bool>,
+}
+
+impl<'d, 's, F, T> Builder<'d, F, T>
+where
+    F: Fn(&str) -> Option<&'s HashSet<String>>,
+    T: Fn(&str, &str) -> Option<&'s str>,
+{
+    /// `ty` is the type the field of the object returns. `typed` is false when the object can
+    /// have another `__typename` than `ty`.
+    fn object(&mut self, sets: &[&'d SelectionSet], ty: Option<&'s str>, typed: bool) -> Object {
+        let merged = self.fields(sets, ty, None);
         let fields = self.flatten(&merged);
+        // an object type is the only possible type of itself
+        let typename = ty
+            .filter(|ty| {
+                typed
+                    && (self.possible_types)(ty)
+                        .is_some_and(|types| types.len() == 1 && types.contains(*ty))
+            })
+            .filter(|_| merged.iter().any(|field| field.key == "__typename"))
+            .map(Into::into);
+        for set in sets {
+            self.record(set, typename.is_some());
+        }
 
         let mut names = Vec::new();
         for set in sets {
@@ -132,7 +237,7 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
         let mut lists: Vec<(Vec<Field>, Range<u32>)> = Vec::new();
         let mut types = Vec::new();
         for name in names {
-            let own = self.fields(sets, Some(name));
+            let own = self.fields(sets, ty, Some(name));
             if Field::same(&own, &merged) {
                 continue;
             }
@@ -154,6 +259,24 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
         Object {
             fields,
             types: start..self.shape.types.len() as u32,
+            typename,
+        }
+    }
+
+    fn record(&mut self, set: &'d SelectionSet, typed: bool) {
+        let entry = self.sets.entry(set as *const _).or_insert(typed);
+        *entry &= typed;
+        for item in &set.items {
+            match item {
+                SelectionItem::Field(_) => {}
+                SelectionItem::InlineFragment(fragment) => self.record(&fragment.selections, typed),
+                SelectionItem::FragmentSpread(name) => {
+                    if let Some(fragment) = self.document.fragments.iter().find(|f| &f.name == name)
+                    {
+                        self.record(&fragment.selection_set, typed);
+                    }
+                }
+            }
         }
     }
 
@@ -200,25 +323,44 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
     }
 
     /// The fields of an object of `typename`, or under every type condition when it's `None`.
-    fn fields(&self, sets: &[&'d SelectionSet], typename: Option<&str>) -> Vec<Field<'d>> {
+    /// `parent` is the type the fields are looked up on.
+    fn fields(
+        &self,
+        sets: &[&'d SelectionSet],
+        parent: Option<&str>,
+        typename: Option<&str>,
+    ) -> Vec<Field<'d, 's>> {
         let mut out = Vec::new();
         for set in sets {
-            self.collect(set, typename, &mut out);
+            self.collect(set, parent, typename, &mut out);
         }
         out
     }
 
-    fn collect(&self, set: &'d SelectionSet, typename: Option<&str>, out: &mut Vec<Field<'d>>) {
+    fn collect(
+        &self,
+        set: &'d SelectionSet,
+        parent: Option<&str>,
+        typename: Option<&str>,
+        out: &mut Vec<Field<'d, 's>>,
+    ) {
         for item in &set.items {
             match item {
                 SelectionItem::Field(field) => {
                     let key = field.selection_identifier();
+                    let ty = parent.and_then(|parent| (self.field_type)(parent, &field.name));
                     let index = match out.iter().position(|f| f.key == key) {
-                        Some(index) => index,
+                        Some(index) => {
+                            if out[index].ty != ty {
+                                out[index].ty = None;
+                            }
+                            index
+                        }
                         None => {
                             out.push(Field {
                                 key,
                                 sets: Vec::new(),
+                                ty,
                             });
                             out.len() - 1
                         }
@@ -229,14 +371,16 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
                 }
                 SelectionItem::InlineFragment(fragment) => {
                     if self.applies(&fragment.type_condition, typename) {
-                        self.collect(&fragment.selections, typename, out)
+                        let condition = Some(fragment.type_condition.as_str());
+                        self.collect(&fragment.selections, condition, typename, out)
                     }
                 }
                 SelectionItem::FragmentSpread(name) => {
                     if let Some(fragment) = self.document.fragments.iter().find(|f| &f.name == name)
                     {
                         if self.applies(&fragment.type_condition, typename) {
-                            self.collect(&fragment.selection_set, typename, out)
+                            let condition = Some(fragment.type_condition.as_str());
+                            self.collect(&fragment.selection_set, condition, typename, out)
                         }
                     }
                 }
@@ -244,7 +388,7 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
         }
     }
 
-    fn flatten(&mut self, fields: &[Field<'d>]) -> Range<u32> {
+    fn flatten(&mut self, fields: &[Field<'d, 's>]) -> Range<u32> {
         let start = self.shape.nodes.len();
         self.shape.nodes.extend(fields.iter().map(|field| Node {
             quoted_key: format!("\"{}\"", field.key).into_bytes().into(),
@@ -252,7 +396,7 @@ impl<'d, 's, F: Fn(&str) -> Option<&'s HashSet<String>>> Builder<'d, F> {
         }));
         for (i, field) in fields.iter().enumerate() {
             if !field.sets.is_empty() {
-                self.shape.nodes[start + i].object = self.object(&field.sets);
+                self.shape.nodes[start + i].object = self.object(&field.sets, field.ty, true);
             }
         }
         start as u32..(start + fields.len()) as u32
@@ -732,11 +876,12 @@ mod tests {
     use crate::executor::response::value::Value;
     use crate::query_planner::ast::{
         document::Document, fragment::FragmentDefinition, operation::OperationDefinition,
+        selection_item::SelectionItem, selection_set::SelectionSet,
     };
     use crate::query_planner::planner::plan_nodes::CustomScalarPaths;
     use crate::query_planner::utils::parsing::parse_operation;
 
-    fn shape(source: &str) -> ResponseShape {
+    fn document(source: &str) -> Document {
         let mut selection_set = None;
         let mut fragments = Vec::new();
         for definition in parse_operation(source).definitions {
@@ -758,20 +903,26 @@ mod tests {
                 query::Definition::Operation(_) => {}
             }
         }
+        Document {
+            operation: OperationDefinition {
+                name: None,
+                operation_kind: None,
+                selection_set: selection_set.expect("a query"),
+                variable_definitions: None,
+            },
+            fragments,
+        }
+    }
+
+    fn shape(source: &str) -> ResponseShape {
         // `I` is an interface that A and C implement
         let mut interface = HashSet::new();
         interface.extend(["A".to_string(), "C".to_string()]);
         ResponseShape::new(
-            &Document {
-                operation: OperationDefinition {
-                    name: None,
-                    operation_kind: None,
-                    selection_set: selection_set.expect("a query"),
-                    variable_definitions: None,
-                },
-                fragments,
-            },
+            &document(source),
+            None,
             |name| (name == "I").then_some(&interface),
+            |_, _| None,
         )
     }
 
@@ -938,6 +1089,60 @@ mod tests {
             );
             same_as_sonic(body, None);
         }
+    }
+
+    /// `o` returns the object type O and `i` the interface I. `p` returns O on A and P on B,
+    /// so without the object's `__typename` we can't tell which.
+    #[test]
+    fn fills_the_typenames_left_out_of_the_query() {
+        let document = document(
+            "{ __typename o { __typename id o { __typename id } } i { __typename id }
+               u { ... on A { p { __typename id } } ... on B { p { __typename id } } } }",
+        );
+        let set = |types: &[&str]| HashSet::from_iter(types.iter().map(|t| t.to_string()));
+        let (o, p, i) = (set(&["O"]), set(&["P"]), set(&["A", "C"]));
+        let (shape, static_typenames) = ResponseShape::with_static_typenames(
+            &document,
+            Some("Query"),
+            |name| match name {
+                "O" => Some(&o),
+                "P" => Some(&p),
+                "I" => Some(&i),
+                _ => None,
+            },
+            |parent, field| match (parent, field) {
+                ("Query", "o") | ("O", "o") | ("A", "p") => Some("O"),
+                ("B", "p") => Some("P"),
+                ("Query", "i") => Some("I"),
+                _ => None,
+            },
+        );
+
+        let root = &document.operation.selection_set;
+        fn selections(set: &SelectionSet, index: usize) -> &SelectionSet {
+            match &set.items[index] {
+                SelectionItem::Field(field) => &field.selections,
+                SelectionItem::InlineFragment(fragment) => &fragment.selections,
+                SelectionItem::FragmentSpread(_) => unreachable!(),
+            }
+        }
+        let o_set = selections(root, 1);
+        let u_set = selections(root, 3);
+        assert!(!static_typenames.contains(root));
+        assert!(static_typenames.contains(o_set));
+        assert!(static_typenames.contains(selections(o_set, 2)));
+        assert!(!static_typenames.contains(selections(root, 2)));
+        assert!(!static_typenames.contains(selections(selections(u_set, 0), 0)));
+        assert!(!static_typenames.contains(selections(selections(u_set, 1), 0)));
+
+        let body = r#"{"data":{"__typename":"Query","o":[{"id":1,"o":{"id":2}},null],
+            "i":{"__typename":"A","id":3},"u":{"p":{"__typename":"P","id":4}}}}"#;
+        let mut data = parse_response(body.as_bytes(), &shape, None).unwrap().data;
+        shape.fill_typenames(&mut data);
+        assert_eq!(
+            sonic_rs::to_string(&data).unwrap(),
+            r#"{"__typename":"Query","o":[{"__typename":"O","id":1,"o":{"__typename":"O","id":2}},null],"i":{"__typename":"A","id":3},"u":{"p":{"__typename":"P","id":4}}}"#
+        );
     }
 
     #[test]

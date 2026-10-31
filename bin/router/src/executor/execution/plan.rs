@@ -366,6 +366,7 @@ pub async fn execute_query_plan<'exec>(
         let error_masking_runtime = opts.error_masking_runtime.clone();
 
         let operation_name_factory = opts.operation_name_factory.clone();
+        let response_shape = fetch_node.operation.response_shape.clone();
 
         let body_stream = Box::pin(async_stream::stream! {
             while let Some(stream_result) = response_stream.next().await {
@@ -432,7 +433,11 @@ pub async fn execute_query_plan<'exec>(
                     error_masking_runtime: opts.error_masking_runtime.clone(),
                     connection_fingerprint: opts.connection_fingerprint,
                 };
-                match execute_query_plan_with_data(response.data, opts).await {
+                let mut data = response.data;
+                if let Some(shape) = &response_shape {
+                    shape.fill_typenames(&mut data);
+                }
+                match execute_query_plan_with_data(data, opts).await {
                     Ok(result) => yield result.body,
                     Err(ref err) => {
                         // fatal error, stream it and stop
@@ -848,6 +853,31 @@ impl<'exec> ExecutionJob<'exec> {
             ExecutionJob::Fetch { response, .. } => response,
             ExecutionJob::FlattenFetch { response, .. } => response,
             ExecutionJob::BatchFetch { response, .. } => response,
+        }
+    }
+
+    /// Puts back the `__typename`s the planner left out of the query, before anything reads
+    /// the response. After `Unalias`, so the response has the keys of the original operation.
+    fn fill_typenames(&mut self) {
+        let (operation, response) = match self {
+            ExecutionJob::Fetch {
+                operation,
+                response,
+                ..
+            }
+            | ExecutionJob::FlattenFetch {
+                operation,
+                response,
+                ..
+            }
+            | ExecutionJob::BatchFetch {
+                operation,
+                response,
+                ..
+            } => (*operation, response),
+        };
+        if let Some(shape) = &operation.response_shape {
+            shape.fill_typenames(&mut response.data);
         }
     }
 
@@ -1404,7 +1434,8 @@ impl<'exec> Executor<'exec> {
                 self.log_error(err);
                 ctx.errors.push(err.into());
             }
-            Ok(job) => {
+            Ok(mut job) => {
+                job.fill_typenames();
                 let subgraph_name = job.subgraph_name();
                 let affected_path = job.affected_path();
 
