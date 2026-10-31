@@ -152,11 +152,14 @@ pub fn build_https_client_config(
 pub fn build_https_connector(
     tls_config: Option<&ClientTLSConfig>,
 ) -> Result<HttpsConnector<HttpConnector>, SubgraphExecutorError> {
+    let mut http = HttpConnector::new();
+    http.enforce_http(false);
+    http.set_nodelay(true);
     Ok(HttpsConnectorBuilder::new()
         .with_tls_config(build_https_client_config(tls_config)?)
         .https_or_http()
         .enable_all_versions()
-        .build())
+        .wrap_connector(http))
 }
 
 pub fn get_merged_tls_config(
