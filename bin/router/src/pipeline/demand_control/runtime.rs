@@ -27,7 +27,7 @@ use tracing::{debug, info, warn};
 use crate::pipeline::error::{ClientPipelineError, PipelineError};
 
 use super::formula::{
-    compile_cost_expr_for_operation, evaluate_formula_plan, DemandControlFormulaPlan,
+    compile_cost_expr_for_operation, evaluate_formula_plan, CostExpr, DemandControlFormulaPlan,
     FormulaFetchNode, FormulaPlanNode,
 };
 
@@ -312,13 +312,23 @@ impl DemandControlRuntime {
             self.compile_formula_plan_node(node, supergraph_state, actual_plans_by_fetch_hash)
         };
         match node {
-            PlanNode::Fetch(fetch) => FormulaPlanNode::Fetch(self.compile_formula_fetch_node(
-                &fetch.service_name,
-                fetch.operation_kind.as_ref(),
-                &fetch.operation,
-                supergraph_state,
-                actual_plans_by_fetch_hash,
-            )),
+            PlanNode::Fetch(fetch) => {
+                let mut fetch_node = self.compile_formula_fetch_node(
+                    &fetch.service_name,
+                    fetch.operation_kind.as_ref(),
+                    &fetch.operation,
+                    supergraph_state,
+                    actual_plans_by_fetch_hash,
+                );
+                // a fetch that doesn't run costs nothing
+                if let Some(groups) = &fetch.run_if {
+                    fetch_node.estimated_expr = CostExpr::AnyOf {
+                        groups: groups.clone(),
+                        expr: Box::new(fetch_node.estimated_expr),
+                    };
+                }
+                FormulaPlanNode::Fetch(fetch_node)
+            }
             PlanNode::BatchFetch(fetch) => FormulaPlanNode::Fetch(self.compile_formula_fetch_node(
                 &fetch.service_name,
                 fetch.operation_kind.as_ref(),

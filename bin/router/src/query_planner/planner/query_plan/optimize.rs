@@ -377,6 +377,12 @@ impl EntityFetch {
             return Ok(None);
         };
 
+        // ponytail: a fetch that runs only when some of its fields are asked for stays out of
+        // batches, a `BatchFetch` has no `run_if`. Give each alias one if they should batch too.
+        if fetch_node.run_if.is_some() {
+            return Ok(None);
+        }
+
         let Some(entities_field) = fetch_node
             .operation
             .document
@@ -2699,6 +2705,7 @@ mod tests {
             input_rewrites: None,
             output_rewrites: None,
             context: None,
+            run_if: None,
         };
 
         let path = FlattenNodePath::from(&MergePath::new(vec![
@@ -2768,6 +2775,7 @@ mod tests {
             input_rewrites: None,
             output_rewrites: None,
             context: None,
+            run_if: None,
         }
     }
 
