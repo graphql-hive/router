@@ -58,6 +58,26 @@ impl<'arena> Merger<'arena> {
             field.value = Value::Children(self.merge_selection_set(sub_fields, child_type));
         }
 
+        // A scope that takes in every type the object can be is no scope at all. Kept, it would
+        // be a variant of its own next to the same field without one, and merging those splits
+        // the field per type, which reads a `__typename` nothing may have asked for:
+        // `store { orders { media { id } } }` next to the same under `... on Store @include(if: $a)`.
+        // Only where the field's type reads the same without it: one the interface doesn't have
+        // needs the scope to find its type.
+        let object_types = self.object_types(parent_type);
+        for field in &mut siblings {
+            let Some(scope) = field.parent_scope else {
+                continue;
+            };
+            if !object_types.is_empty()
+                && object_types.iter().all(|name| scope.matches(name))
+                && self.child_parent_type(parent_type, None, field.field_name)
+                    == self.child_parent_type(parent_type, Some(scope), field.field_name)
+            {
+                field.parent_scope = None;
+            }
+        }
+
         let mut key_groups = ResponseKeyGroups::new();
         for next in siblings {
             let variants = key_groups
@@ -131,30 +151,33 @@ impl<'arena> Merger<'arena> {
                 continue;
             }
 
-            let object_types = object_types.get_or_insert_with(|| {
-                let mut names = BumpVec::new_in(self.arena);
-                if let Some(possible) = self.schema.get_possible_types(parent_type) {
-                    names.extend(
-                        possible
-                            .iter()
-                            .map(String::as_str)
-                            .filter(|obj_type| self.schema.is_object_type(obj_type)),
-                    );
-                }
-
-                if self.schema.is_object_type(parent_type) {
-                    names.push(parent_type);
-                }
-
-                names.sort_unstable();
-                names.dedup();
-                names
-            });
+            let object_types = object_types.get_or_insert_with(|| self.object_types(parent_type));
 
             self.specialize_variants(variants, parent_type, object_types, &mut merged);
         }
 
         merged
+    }
+
+    /// Every object type a value of `parent_type` can be, sorted.
+    fn object_types(&self, parent_type: &'arena str) -> BumpVec<'arena, &'arena str> {
+        let mut names = BumpVec::new_in(self.arena);
+        if let Some(possible) = self.schema.get_possible_types(parent_type) {
+            names.extend(
+                possible
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|obj_type| self.schema.is_object_type(obj_type)),
+            );
+        }
+
+        if self.schema.is_object_type(parent_type) {
+            names.push(parent_type);
+        }
+
+        names.sort_unstable();
+        names.dedup();
+        names
     }
 
     /// Clones an overlapping group into one exact variant per concrete type.
@@ -584,6 +607,61 @@ mod tests {
             }
         }
         "###);
+    }
+
+    /// `feed { id }` and the same under `... on Query @include(if: $a)`: in the fragment `id`
+    /// sits under every `Content` type, which is no type guard at all. Split per type, `id` would
+    /// need a `__typename` the subgraph wasn't asked for, and come out missing.
+    #[test]
+    fn scope_of_every_type_merges_with_no_scope() {
+        insta::assert_snapshot!(plan(SCHEMA_1,
+            r#"query($a: Boolean!) {
+                ... on Query @include(if: $a) { feed { id } }
+                feed { id }
+            }"#
+        ), @r"
+        feed: {
+          conditions: ((Include(if: $a) AND FieldType(OneOf(Article, Content, Photo, Video))) OR FieldType(OneOf(Article, Content, Photo, Video)))
+          selections:
+            id: {
+            }
+        }
+        ");
+    }
+
+    /// `ConcreteType` is the only `Node`, but `inner` isn't a `Node` field: without its scope it
+    /// would be read on `Node` and its own fields guarded by `Node` types.
+    #[test]
+    fn scope_of_every_type_stays_for_a_field_the_interface_lacks() {
+        let schema = SCHEMA_1
+            .replace(
+                "concrete: ConcreteType",
+                "concrete: ConcreteType\n        node: Node",
+            )
+            .replace(
+                "type ConcreteType @join__type(graph: LOCAL) {",
+                "type ConcreteType implements Node @join__type(graph: LOCAL) @join__implements(graph: LOCAL, interface: \"Node\") {",
+            )
+            + "\n    interface Node @join__type(graph: LOCAL) { id: ID! }\n";
+        insta::assert_snapshot!(plan(&schema,
+            r#"query($a: Boolean!) {
+                node {
+                    ... on ConcreteType { inner @skip(if: $a) { __typename } }
+                    ... on ConcreteType { inner { ... on InnerType { __typename } } }
+                }
+            }"#
+        ), @r"
+        node: {
+          conditions: FieldType(OneOf(ConcreteType, Node))
+          selections:
+            inner: {
+              type guard: Exact(ConcreteType)
+              selections:
+                __typename: {
+                }
+            }
+        }
+        ");
     }
 
     /// An "unguarded" selection (no concrete type) of `meta` (on the `Content` interface) overlaps a
