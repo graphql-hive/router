@@ -14,6 +14,7 @@ use crate::executor::{
     executors::error::SubgraphExecutorError,
     response::{
         graphql_error::GraphQLError,
+        shaped::{parse_response, ResponseShape},
         value::{DeserializeScratch, ScratchSeed, Value},
     },
 };
@@ -298,6 +299,31 @@ impl<'a> SubgraphResponse<'a> {
             }
 
             Ok(resp)
+        })
+    }
+
+    /// Same as `deserialize_from_bytes`, but reads the response knowing which fields the fetch
+    /// asked for. Anything it can't read goes to `deserialize_from_bytes`.
+    pub fn deserialize_with_shape(
+        bytes: Bytes,
+        shape: &ResponseShape,
+        custom_scalar_paths: Option<&CustomScalarPaths>,
+    ) -> Result<SubgraphResponse<'static>, SubgraphExecutorError> {
+        // SAFETY: same as in `deserialize_from_bytes`, the response keeps `bytes` alive
+        let bytes_ref: &'static [u8] = unsafe { std::mem::transmute::<&[u8], _>(&bytes) };
+        let Some(parsed) = parse_response(bytes_ref, shape, custom_scalar_paths) else {
+            return Self::deserialize_from_bytes(bytes, custom_scalar_paths);
+        };
+        if parsed.data.is_null() && parsed.errors.is_none() {
+            return Err(SubgraphExecutorError::MalformedResponse(None));
+        }
+        Ok(SubgraphResponse {
+            data: parsed.data,
+            errors: parsed.errors,
+            extensions: parsed.extensions,
+            headers: None,
+            bytes: Some(bytes),
+            status: None,
         })
     }
 }
@@ -587,7 +613,7 @@ mod tests {
         },
         "#);
 
-        let plan = plan.into_executable();
+        let plan = plan.into_executable(&planner.supergraph);
         let custom_scalar_paths = find_fetch_custom_scalar_paths(plan.node.as_ref(), "test")
             .expect("custom scalar paths");
 

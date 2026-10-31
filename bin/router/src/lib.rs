@@ -1,6 +1,7 @@
 // Needed because of ntex's way of defining middlewares
 #![recursion_limit = "256"]
 
+mod allocator;
 pub mod anonymize;
 pub mod background_tasks;
 mod cache_state;
@@ -89,13 +90,13 @@ use crate::telemetry::{
 };
 pub use crate::utils::BoxError;
 pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
+pub use allocator::RouterGlobalAllocator;
 pub use arc_swap::ArcSwap;
 pub use async_trait::async_trait;
 pub use dashmap::DashMap;
 pub use graphql_tools;
 use graphql_tools::validation::rules::default_rules_validation_plan;
 pub use http;
-pub use mimalloc::MiMalloc as RouterGlobalAllocator;
 pub use ntex;
 pub use ntex::main;
 use ntex::{

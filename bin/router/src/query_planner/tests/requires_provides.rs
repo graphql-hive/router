@@ -227,8 +227,8 @@ fn provides_fieldset_with_typename_and_requires() -> Result<(), Box<dyn Error>> 
             {
               ... on Review {
                 author {
-                  username
                   __typename
+                  username
                 }
               }
             }

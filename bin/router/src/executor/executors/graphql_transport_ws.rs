@@ -475,6 +475,7 @@ mod tests {
             raw_variable_values: None,
             extensions: None,
             custom_scalar_paths: None,
+            response_shape: None,
             connection_fingerprint: None,
         }
     }

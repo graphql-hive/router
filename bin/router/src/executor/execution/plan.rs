@@ -313,6 +313,7 @@ pub async fn execute_query_plan<'exec>(
             raw_variable_values: None,
             extensions: None,
             custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
+            response_shape: fetch_node.operation.response_shape.as_deref(),
             connection_fingerprint: opts.connection_fingerprint,
         };
 
@@ -1995,6 +1996,7 @@ impl<'exec> Executor<'exec> {
                 headers: headers_map,
                 extensions: None,
                 custom_scalar_paths: opts.custom_scalar_paths,
+                response_shape: opts.operation.response_shape.as_deref(),
                 connection_fingerprint: self.connection_fingerprint,
             };
 

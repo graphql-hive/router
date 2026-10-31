@@ -1,5 +1,10 @@
-use super::testkit::{build_query_plan_from_sdl, build_query_plan_with_defaults, read_supergraph};
+use super::testkit::{
+    build_query_plan_from_sdl, build_query_plan_with_defaults, read_supergraph,
+    read_supergraph_state,
+};
+use crate::query_planner::state::supergraph_state::SupergraphState;
 use crate::query_planner::utils::parsing::parse_operation;
+use crate::query_planner::utils::parsing::parse_schema;
 use std::error::Error;
 
 #[test]
@@ -102,7 +107,9 @@ fn contextual_fetches_carry_a_compiled_template() -> Result<(), Box<dyn Error>> 
             &format!("fixture/tests/{fixture}.supergraph.graphql"),
             parse_operation(query),
         )?
-        .into_executable();
+        .into_executable(&read_supergraph_state(&format!(
+            "fixture/tests/{fixture}.supergraph.graphql"
+        )));
         // plans are cloned out of the cache
         let plan = plan.clone();
         let mut found = Vec::new();
@@ -602,7 +609,9 @@ fn empty_context_selection_preserves_variable_names() -> Result<(), Box<dyn Erro
         Default::default(),
         Default::default(),
     )?;
-    let plan = sonic_rs::to_value(&plan.into_executable())?;
+    let plan = sonic_rs::to_value(
+        &plan.into_executable(&SupergraphState::new(&parse_schema(&supergraph))),
+    )?;
     let fetch = &plan["node"]["nodes"][1]["node"];
     assert_eq!(sonic_rs::to_string(&fetch["contextRewrites"])?, "[]");
     assert_eq!(
@@ -992,7 +1001,7 @@ fn remote_context_producer_precedes_consumer() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-    insta::assert_json_snapshot!(plan.into_executable(), @r#"
+    insta::assert_json_snapshot!(plan.into_executable(&read_supergraph_state("fixture/tests/context-remote-producer.supergraph.graphql")), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -1173,7 +1182,7 @@ fn context_selection_crosses_subgraphs_multiple_times() -> Result<(), Box<dyn Er
       },
     },
     "#);
-    insta::assert_json_snapshot!(plan.into_executable(), @r#"
+    insta::assert_json_snapshot!(plan.into_executable(&read_supergraph_state("fixture/tests/context-multi-hop.supergraph.graphql")), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -1364,7 +1373,7 @@ fn query_root_context_selects_a_sibling_field() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-    insta::assert_json_snapshot!(plan.into_executable(), @r#"
+    insta::assert_json_snapshot!(plan.into_executable(&read_supergraph_state("fixture/tests/context-query-root.supergraph.graphql")), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -1479,7 +1488,7 @@ fn context_is_resolved_before_a_key_transition() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-    insta::assert_json_snapshot!(plan.into_executable(), @r#"
+    insta::assert_json_snapshot!(plan.into_executable(&read_supergraph_state("fixture/tests/context-before-key-transition.supergraph.graphql")), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -1595,7 +1604,7 @@ fn context_value_reuses_an_existing_fetch() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-    insta::assert_json_snapshot!(plan.into_executable(), @r#"
+    insta::assert_json_snapshot!(plan.into_executable(&read_supergraph_state("fixture/tests/context-existing-fetch.supergraph.graphql")), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -1708,7 +1717,7 @@ fn list_context_argument_preserves_its_type() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-    insta::assert_json_snapshot!(plan.into_executable(), @r#"
+    insta::assert_json_snapshot!(plan.into_executable(&read_supergraph_state("fixture/tests/context-list-argument.supergraph.graphql")), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -1829,7 +1838,7 @@ fn multiple_context_arguments_merge_into_an_ancestor_fetch() -> Result<(), Box<d
       },
     },
     "#);
-    insta::assert_json_snapshot!(plan.into_executable(), @r#"
+    insta::assert_json_snapshot!(plan.into_executable(&read_supergraph_state("fixture/tests/context-merged-arguments.supergraph.graphql")), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -1989,7 +1998,7 @@ fn unrelated_objects_share_a_context_name() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-    insta::assert_json_snapshot!(plan.into_executable(), @r#"
+    insta::assert_json_snapshot!(plan.into_executable(&read_supergraph_state("fixture/tests/context-shared-duck.supergraph.graphql")), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -2192,7 +2201,7 @@ fn shared_context_name_selects_fields_by_type() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-    insta::assert_json_snapshot!(plan.into_executable(), @r#"
+    insta::assert_json_snapshot!(plan.into_executable(&read_supergraph_state("fixture/tests/context-shared-conditions.supergraph.graphql")), @r#"
     {
       "kind": "QueryPlan",
       "node": {

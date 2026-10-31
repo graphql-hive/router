@@ -4,10 +4,11 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+use crate::executor::response::shaped::ResponseShape;
 use crate::query_planner::{
     ast::{document::Document, hash::ast_hash},
     planner::plan_nodes::{hash_minified_query, CustomScalarPaths},
-    state::supergraph_state::TypeNode,
+    state::supergraph_state::{SupergraphState, TypeNode},
 };
 use graphql_tools::parser::query as parser;
 use serde::{Deserialize, Serialize};
@@ -67,6 +68,9 @@ pub struct SubgraphFetchOperation {
     /// pointer wide.
     #[serde(skip)]
     context_template: Option<Box<ContextAliasTemplate>>,
+    /// The fields the response has, to read it faster. Built when the plan is made executable.
+    #[serde(skip)]
+    pub response_shape: Option<Box<ResponseShape>>,
 }
 
 /// An entity fetch operation cut into the parts every group of contextual argument values
@@ -157,6 +161,7 @@ impl ContextAliasTemplate {
             name_write_position: name_write_position(&document),
             document_str: document.into_boxed_str(),
             context_template: None,
+            response_shape: None,
         }
     }
 
@@ -568,8 +573,31 @@ pub(crate) fn inner_selection_set(document: &Document) -> &SelectionSet {
     &document.operation.selection_set
 }
 
+/// Puts `__typename` first in every selection set, so the response parser knows an object's type
+/// before reading its other fields. The router projects the final response by the client's
+/// operation, so the order of fields in a subgraph query doesn't matter.
+fn typename_first(set: &mut SelectionSet) {
+    let typename = set.items.iter().position(|item| {
+        matches!(item, SelectionItem::Field(field) if field.name == "__typename" && field.alias.is_none())
+    });
+    if let Some(index) = typename {
+        set.items[..=index].rotate_right(1);
+    }
+    for item in &mut set.items {
+        match item {
+            SelectionItem::Field(field) => typename_first(&mut field.selections),
+            SelectionItem::InlineFragment(fragment) => typename_first(&mut fragment.selections),
+            SelectionItem::FragmentSpread(_) => {}
+        }
+    }
+}
+
 impl PlanningFetchOperation {
-    pub fn from_anonymous_operation(document: Document) -> Self {
+    pub fn from_anonymous_operation(mut document: Document) -> Self {
+        typename_first(&mut document.operation.selection_set);
+        for fragment in &mut document.fragments {
+            typename_first(&mut fragment.selection_set);
+        }
         let document_str = document.to_string();
         let hash = hash_minified_query(&document_str);
         let name_write_position = name_write_position(&document_str);
@@ -581,8 +609,18 @@ impl PlanningFetchOperation {
                 hash,
                 name_write_position,
                 context_template: None,
+                response_shape: None,
             },
         }
+    }
+
+    /// The operation execution sends, with the shape its response is read with.
+    pub fn into_executable(self, supergraph: &SupergraphState) -> SubgraphFetchOperation {
+        let mut operation = self.operation;
+        operation.response_shape = Some(Box::new(ResponseShape::new(&self.document, |name| {
+            supergraph.all_possible_types(name)
+        })));
+        operation
     }
 }
 

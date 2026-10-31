@@ -57,8 +57,8 @@ fn client_alias_named_internal_requires() -> Result<(), Box<dyn Error>> {
         Fetch(service: "shop") {
           {
             things {
-              _internal_qp_alias_0: id
               __typename
+              _internal_qp_alias_0: id
               ... on Cat {
                 __typename
                 price(currency: "GBP")
@@ -1614,6 +1614,7 @@ fn multi_enum_mismatch_across_fragments() -> Result<(), Box<dyn Error>> {
           Fetch(service: "service") {
             {
               getTypes {
+                __typename
                 id
                 identifier
                 code
@@ -1621,7 +1622,6 @@ fn multi_enum_mismatch_across_fragments() -> Result<(), Box<dyn Error>> {
                   value
                   unit
                 }
-                __typename
                 ... on TypeA {
                   field
                 }
@@ -1647,7 +1647,7 @@ fn multi_enum_mismatch_across_fragments() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "service",
             "operationKind": "query",
-            "operation": "{getTypes{id identifier code metadata{value unit} __typename ...on TypeA{field} ...on TypeB{typeBField: field} ...on TypeC{typeCField: field} ...on TypeD{typeDField: field}}}"
+            "operation": "{getTypes{__typename id identifier code metadata{value unit} ...on TypeA{field} ...on TypeB{typeBField: field} ...on TypeC{typeCField: field} ...on TypeD{typeDField: field}}}"
           }
         }
     "#);
@@ -1695,6 +1695,7 @@ fn multi_scalar_mismatch_across_fragments() -> Result<(), Box<dyn Error>> {
           Fetch(service: "service") {
             {
               getTypes {
+                __typename
                 id
                 identifier
                 code
@@ -1702,7 +1703,6 @@ fn multi_scalar_mismatch_across_fragments() -> Result<(), Box<dyn Error>> {
                   value
                   unit
                 }
-                __typename
                 ... on TypeA {
                   isScalar
                 }
@@ -1728,7 +1728,7 @@ fn multi_scalar_mismatch_across_fragments() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "service",
             "operationKind": "query",
-            "operation": "{getTypes{id identifier code metadata{value unit} __typename ...on TypeA{isScalar} ...on TypeB{scalarB: isScalar} ...on TypeC{scalarC: isScalar} ...on TypeD{scalarD: isScalar}}}"
+            "operation": "{getTypes{__typename id identifier code metadata{value unit} ...on TypeA{isScalar} ...on TypeB{scalarB: isScalar} ...on TypeC{scalarC: isScalar} ...on TypeD{scalarD: isScalar}}}"
           }
         }
     "#);
