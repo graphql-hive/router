@@ -680,9 +680,7 @@ fn outputs_differ_for_a_shared_type(
     // both are sorted by type name
     if left.iter_selections().count() == right.iter_selections().count()
         && left.iter_selections().zip(right.iter_selections()).all(
-            |((left_type, left), (right_type, right))| {
-                left_type == right_type && left == right
-            },
+            |((left_type, left), (right_type, right))| left_type == right_type && left == right,
         )
     {
         return false;
@@ -705,8 +703,7 @@ fn outputs_differ_for_a_shared_type(
         right
             .iter_selections()
             .any(|(right_type, right_selections)| {
-                overlap(left_type, right_type)
-                    && left_selections != right_selections
+                overlap(left_type, right_type) && left_selections != right_selections
             })
     })
 }
