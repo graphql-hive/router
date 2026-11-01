@@ -7,3 +7,5 @@
 - Enable `TCP_NODELAY` for subgraph HTTP connections
 - Serialize GraphQL variables directly into request buffers, avoiding intermediate allocations
 - Speed up response projection and object lookups with optimized field name comparisons
+
+Closes https://github.com/graphql-hive/router/pull/1796
