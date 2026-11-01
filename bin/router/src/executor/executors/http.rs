@@ -115,10 +115,9 @@ pub fn build_request_body(
             body.put(variable_name.as_bytes());
             body.put(QUOTE);
             body.put(COLON);
-            let value_str = sonic_rs::to_string(variable_value).map_err(|err| {
+            sonic_rs::to_writer(&mut body, variable_value).map_err(|err| {
                 SubgraphExecutorError::VariablesSerializationFailure(variable_name.to_string(), err)
             })?;
-            body.put(value_str.as_bytes());
         }
     }
     if let Some(raw_variable_values) = &execution_request.raw_variable_values {

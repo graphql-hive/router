@@ -9,6 +9,10 @@ impl<S> Capture<S> {
         Self(Some(state))
     }
 
+    pub fn get(&self) -> Option<&S> {
+        self.0.as_ref()
+    }
+
     pub fn take(self) -> Option<S> {
         self.0
     }
