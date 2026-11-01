@@ -116,6 +116,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.3.10 (2026-11-01)
+
+### Fixes
+
+#### Union members only ask for their own entity fields
+
+Union members only ask for their own fields of a shared entity type, instead of every member's fields for every entity ([#1732](https://github.com/graphql-hive/router/issues/1732)).
+
 ## 0.3.9 (2026-10-29)
 
 ### Fixes
