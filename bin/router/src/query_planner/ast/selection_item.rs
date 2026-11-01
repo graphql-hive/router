@@ -216,18 +216,15 @@ impl PartialEq for SelectionItem {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (SelectionItem::Field(f1), SelectionItem::Field(f2)) => {
-                f1 == f2
-                    && f1.include_if == f2.include_if
-                    && f1.skip_if == f2.skip_if
-                    && f1.selections == f2.selections
+                if f1.name != f2.name {
+                    return false;
+                }
+
+                f1.selections == f2.selections
             }
             (SelectionItem::InlineFragment(f1), SelectionItem::InlineFragment(f2)) => {
-                f1.type_condition == f2.type_condition
-                    && f1.include_if == f2.include_if
-                    && f1.skip_if == f2.skip_if
-                    && f1.selections.items == f2.selections.items
+                f1.type_condition == f2.type_condition && f1.selections.items == f2.selections.items
             }
-            (SelectionItem::FragmentSpread(f1), SelectionItem::FragmentSpread(f2)) => f1 == f2,
             _ => false,
         }
     }
