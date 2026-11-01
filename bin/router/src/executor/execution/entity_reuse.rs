@@ -2,6 +2,8 @@
 //! A representation that matches an object at one of the planner's `EntityReuse` sources is the
 //! same entity with the same `@requires` inputs.
 
+use std::{ops::Range, sync::Arc};
+
 use crate::{
     executor::{
         execution::context::{EntityRef, Known, TargetEntities},
@@ -55,10 +57,11 @@ impl<'d, 'v> ReuseIndex<'d, 'v> {
     }
 }
 
-/// The entities one fetch copied, and the trie node each of its paths ends at, with its targets.
+/// The entities one fetch copied, and its `paths` among the ones of `trie`, with their targets.
 pub struct Copies<'a, 'v> {
     pub trie: &'a PathTrie,
-    pub paths: Vec<(usize, TargetEntities)>,
+    pub paths: Range<usize>,
+    pub targets: Arc<TargetEntities>,
     pub copies: Vec<Value<'v>>,
 }
 
@@ -75,25 +78,22 @@ pub fn merge_copies<'v>(
     for Copies {
         trie,
         paths,
+        targets,
         mut copies,
     } in copies
     {
-        let mut merger = EntityMerger::new(
-            &mut copies,
-            paths
-                .iter()
-                .flat_map(|(_, targets)| targets.iter())
-                .filter_map(copied),
-        );
-        // the next target on every path
-        let mut next = vec![0; paths.len()];
+        let mut merger = EntityMerger::new(&mut copies, targets.iter().filter_map(copied));
+        // the next target on each of the fetch's paths
+        let mut next: Vec<_> = (0..targets.path_count())
+            .map(|path| targets.path(path).iter())
+            .collect();
         trie.walk_mut(data, possible_types, None, &mut |node, target, _| {
-            for ((end, targets), next) in paths.iter().zip(&mut next) {
-                if *end == node {
-                    if let Some(index) = targets.get(*next).and_then(copied) {
-                        merger.merge_into(target, index);
-                    }
-                    *next += 1;
+            for &path in trie.paths_ending_at(node) {
+                if !paths.contains(&path) {
+                    continue;
+                }
+                if let Some(index) = next[path - paths.start].next().and_then(copied) {
+                    merger.merge_into(target, index);
                 }
             }
         });

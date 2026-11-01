@@ -61,8 +61,8 @@ pub struct PathTrie {
 
 #[derive(Debug, Clone, Default)]
 struct TrieNode {
-    /// A path ends here
-    end: bool,
+    /// The paths that end here, in the order [`PathTrie::new`] got them
+    paths: Vec<usize>,
     fields: Vec<(Arc<str>, usize)>,
     /// `fields` by name, when there are enough of them
     fields_by_name: Option<AHashMap<Arc<str>, usize>>,
@@ -126,7 +126,7 @@ impl PathTrie {
                     }
                 };
             }
-            nodes[node].end = true;
+            nodes[node].paths.push(ends.len());
             ends.push(node);
         }
         for node in &mut nodes {
@@ -140,6 +140,11 @@ impl PathTrie {
     /// The node each path ends at, in the order [`Self::new`] got them
     pub fn ends(&self) -> &[usize] {
         &self.ends
+    }
+
+    /// The paths that end at `node`, in the order [`Self::new`] got them
+    pub fn paths_ending_at(&self, node: usize) -> &[usize] {
+        &self.nodes[node].paths
     }
 
     pub fn len(&self) -> usize {
@@ -173,7 +178,7 @@ impl PathTrie {
         callback: &mut impl FnMut(usize, &'d Value<'v>, &[&'d Value<'v>]),
     ) {
         let node = &self.nodes[index];
-        if node.end {
+        if !node.paths.is_empty() {
             if let Value::Array(items) = data {
                 for item in items {
                     callback(index, item, objects);
@@ -292,7 +297,7 @@ impl PathTrie {
         callback: &mut impl FnMut(usize, &mut Value<'a>, Option<&GraphQLErrorPath>),
     ) {
         let node = &self.nodes[index];
-        if node.end {
+        if !node.paths.is_empty() {
             if let Value::Array(items) = &mut *data {
                 for (item_index, item) in items.iter_mut().enumerate() {
                     push_index(error_path, item_index);

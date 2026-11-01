@@ -1,7 +1,7 @@
 use std::{
     collections::hash_map::Entry,
     hash::{Hash, Hasher},
-    sync::Arc,
+    ops::Range,
 };
 
 use ahash::{HashMap as AHashMap, HashMapExt};
@@ -28,9 +28,32 @@ use crate::{
     },
 };
 
-/// The [`EntityRef`] of each target on a path, in walk order. `None` when the target sends
-/// nothing (null, or not projected).
-pub(super) type TargetEntities = Arc<Vec<Option<EntityRef>>>;
+/// Which entity goes into each target at the ends of a fetch's paths, path by path and in walk
+/// order. `None` when the target sends nothing (null, or not projected).
+#[derive(Debug, Default)]
+pub struct TargetEntities {
+    targets: Vec<Option<EntityRef>>,
+    /// Where each path's targets are in `targets`. Identical paths share theirs.
+    paths: Vec<Range<usize>>,
+}
+
+impl TargetEntities {
+    pub fn path_count(&self) -> usize {
+        self.paths.len()
+    }
+
+    pub fn path(&self, path: usize) -> &[Option<EntityRef>] {
+        &self.targets[self.paths[path].clone()]
+    }
+
+    /// Every path's targets, one after another. A target identical paths share comes up once for
+    /// each of them, like the walk gives it.
+    pub fn iter(&self) -> impl Iterator<Item = &Option<EntityRef>> {
+        self.paths
+            .iter()
+            .flat_map(|range| &self.targets[range.clone()])
+    }
+}
 
 /// Which entity goes into a target: its index among the context group's representations, or
 /// among the fetch's copies.
@@ -283,22 +306,23 @@ pub(super) fn collect_path_values<'d, 'v>(
     by_node
 }
 
-/// Goes over the values at the end of every path (`ends` are the nodes the paths end at, see
-/// [`collect_path_values`]), deduplicates the entities by hash and projects their
-/// representations. Entities are grouped by the tuple of their context values (one request per
-/// group), without context variables there is at most one group. With `reuse`, entities already
+/// Goes over the values at the end of the `paths` of `trie` (see [`collect_path_values`]),
+/// deduplicates the entities by hash and projects their representations. Entities are grouped by
+/// the tuple of their context values (one request per group), without context variables there is
+/// at most one group. Identical paths share their target entities. With `reuse`, entities already
 /// in the response are copied instead of sent.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn collect_context_entities<'a, 'd, 'v>(
     path_values: &[PathValues<'d, 'v>],
-    ends: &[usize],
+    trie: &PathTrie,
+    paths: Range<usize>,
     requires: &RequiresSelectionSet,
     input_rewrites: Option<&[FetchRewrite]>,
     context: &'a Option<Box<FetchContext>>,
     possible_types: &PossibleTypes,
     subgraph_keys: Option<&KeysByType>,
     reuse: Option<&mut ReuseIndex<'d, 'v>>,
-) -> (Vec<ContextGroup<'a>>, Vec<TargetEntities>) {
+) -> (Vec<ContextGroup<'a>>, TargetEntities) {
     let mut contexts = ContextGroups::new(context);
     let mut reuse = reuse.filter(|_| contexts.names.is_empty());
     // every entity we know of, by its hash: the ones `reuse` could copy, and every one with a
@@ -307,10 +331,20 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
         .as_mut()
         .map(|reuse| std::mem::take(&mut reuse.seen))
         .unwrap_or_default();
+    let mut targets = TargetEntities::default();
     let required_selections = requires.root_selections();
-    let mut path_entities: Vec<TargetEntities> = Vec::new();
-    for &end in ends {
-        let mut entities = Vec::new();
+    for path in paths.clone() {
+        let end = trie.ends()[path];
+        // identical paths end at the same node, the first of them is collected for all
+        let ending_here = trie.paths_ending_at(end);
+        let first = ending_here[ending_here.partition_point(|&other| other < paths.start)];
+        if first != path {
+            let shared = targets.paths[first - paths.start].clone();
+            targets.paths.push(shared);
+            continue;
+        }
+        let start = targets.targets.len();
+        let entities = &mut targets.targets;
         // the callback gets references into `data`, which the ancestor cache relies on
         let mut collect = |entity: &'d Value<'v>, objects: &[&'d Value<'v>]| {
             if entity.is_null() {
@@ -385,12 +419,12 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
             collect(entity, &values.objects[objects_start..objects_end]);
             objects_start = objects_end;
         }
-        path_entities.push(Arc::new(entities));
+        targets.paths.push(start..targets.targets.len());
     }
     for group in &mut contexts.groups {
         group.representations.push(b']');
     }
-    (contexts.groups, path_entities)
+    (contexts.groups, targets)
 }
 
 /// One request that carries several groups of contextual argument values, written out from a
@@ -548,20 +582,24 @@ mod tests {
         possible_types: &PossibleTypes,
         subgraph_keys: Option<&KeysByType>,
         reuse: Option<&mut ReuseIndex<'d, 'v>>,
-    ) -> (Vec<ContextGroup<'a>>, Vec<TargetEntities>) {
+    ) -> (Vec<ContextGroup<'a>>, Vec<Vec<Option<EntityRef>>>) {
         let trie = PathTrie::new(paths.into_iter().map(|path| path.as_slice()));
-        let ends = trie.ends();
         let path_values = collect_path_values(&trie, data, possible_types, context_depth(context));
-        collect_context_entities(
+        let (groups, targets) = collect_context_entities(
             &path_values,
-            ends,
+            &trie,
+            0..trie.ends().len(),
             requires,
             input_rewrites,
             context,
             possible_types,
             subgraph_keys,
             reuse,
-        )
+        );
+        let targets = (0..targets.path_count())
+            .map(|path| targets.path(path).to_vec())
+            .collect();
+        (groups, targets)
     }
 
     #[test]
@@ -1123,5 +1161,56 @@ mod tests {
         assert!(errors[1].path.is_none());
         assert_eq!(errors[2].message, "surplus entity");
         assert!(errors[2].path.is_none());
+    }
+
+    #[test]
+    fn identical_paths_share_targets_within_an_alias_only() {
+        // one trie for two aliases, `a` and `b` for the first, `a`, `b` and `b` again for the
+        // second, like a batch fetch has them
+        let data = sonic_rs::from_str(
+            r#"{"a":[{"__typename":"T","id":"1"},{"__typename":"T","id":"2"}],"b":{"__typename":"T","id":"3"}}"#,
+        )
+        .unwrap();
+        let a = vec![PathSegment::Field("a".into()), PathSegment::List];
+        let b = vec![PathSegment::Field("b".into())];
+        let paths = [&a, &b, &a, &b, &b];
+        let trie = PathTrie::new(paths.iter().map(|path| path.as_slice()));
+        let definition = parse_operation("{ __typename id }").definitions.remove(0);
+        let graphql_tools::parser::query::Definition::Operation(
+            graphql_tools::parser::query::OperationDefinition::SelectionSet(selection),
+        ) = definition
+        else {
+            panic!("selection");
+        };
+        let requires = RequiresSelectionSet::from(&SelectionSet::from(selection));
+        let possible_types = PossibleTypes::default();
+        let path_values = collect_path_values(&trie, &data, &possible_types, 0);
+        let collect = |paths: Range<usize>| {
+            let (groups, targets) = collect_context_entities(
+                &path_values,
+                &trie,
+                paths,
+                &requires,
+                None,
+                &None,
+                &possible_types,
+                None,
+                None,
+            );
+            (groups, targets)
+        };
+
+        let (groups, first) = collect(0..2);
+        assert_eq!(groups[0].count, 3);
+        assert_eq!(first.path(0).len(), 2);
+        assert_eq!(first.path(1).len(), 1);
+
+        // the second alias collects its own `a` and `b`, its second `b` shares the first one's
+        let (groups, second) = collect(2..5);
+        assert_eq!(groups[0].count, 3);
+        assert_eq!(second.path_count(), 3);
+        assert_eq!(second.paths[1], second.paths[2]);
+        assert_eq!(second.targets.len(), 3);
+        assert_eq!(second.iter().count(), 4);
     }
 }
