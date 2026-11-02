@@ -39,7 +39,7 @@ use crate::executor::{
     executors::{
         common::{SubgraphExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
         error::SubgraphExecutorError,
-        http::{HTTPSubgraphExecutor, HttpClient, SubgraphHttpResponse},
+        http::{HTTPSubgraphExecutor, HttpClientProvider, SubgraphHttpResponse},
         http_callback::{CallbackSubscriptionsMap, HttpCallbackSubgraphExecutor},
         tls::{build_https_client_config, build_https_connector, get_merged_tls_config},
         websocket::WsSubgraphExecutor,
@@ -132,7 +132,7 @@ lazy_static::lazy_static! {
 }
 
 struct ResolvedSubgraphConfig<'a> {
-    client: Arc<HttpClient>,
+    client: Arc<HttpClientProvider>,
     timeout_config: &'a DurationOrExpression,
     dedupe_enabled: bool,
     compression: TrafficShapingSubgraphCompressionConfig,
@@ -167,7 +167,7 @@ pub struct SubgraphExecutorMap {
     circuit_breakers_by_subgraph: CircuitBreakersBySubgraph,
     global_timeout: DurationOrProgram,
     config: Arc<SubgraphExecutorConfig>,
-    client: Arc<HttpClient>,
+    client: Arc<HttpClientProvider>,
     semaphores_by_origin: DashMap<String, Arc<Semaphore>>,
     max_connections_per_host: usize,
     in_flight_requests: InflightRequestsMap,
@@ -197,9 +197,11 @@ impl SubgraphExecutorMap {
         if config.traffic_shaping.all.allow_only_http2 {
             client_builder.http2_only(true);
         }
-        let client: HttpClient = client_builder.build(build_https_connector(
-            config.traffic_shaping.all.tls.as_ref(),
-        )?);
+        let client = HttpClientProvider::new(
+            config.traffic_shaping.http_client_mode,
+            client_builder,
+            build_https_connector(config.traffic_shaping.all.tls.as_ref())?,
+        );
 
         let max_connections_per_host = config.traffic_shaping.max_connections_per_host;
 
@@ -995,8 +997,11 @@ impl SubgraphExecutorMap {
             if subgraph_allow_only_http2 {
                 client_builder.http2_only(true);
             }
-            config.client =
-                Arc::new(client_builder.build(build_https_connector(tls_config.as_ref())?));
+            config.client = Arc::new(HttpClientProvider::new(
+                self.config.traffic_shaping.http_client_mode,
+                client_builder,
+                build_https_connector(tls_config.as_ref())?,
+            ));
         }
 
         // Apply other subgraph-specific overrides
