@@ -2564,7 +2564,7 @@ dependencies = [
 
 [[package]]
 name = "graphql-tools"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "combine",
  "criterion",
@@ -2747,7 +2747,7 @@ dependencies = [
 
 [[package]]
 name = "hive-console-sdk"
-version = "0.3.23"
+version = "0.3.24"
 dependencies = [
  "ahash",
  "anyhow",
@@ -2785,7 +2785,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router"
-version = "0.3.9"
+version = "0.3.10"
 dependencies = [
  "ahash",
  "anyhow",
@@ -4585,7 +4585,7 @@ dependencies = [
 
 [[package]]
 name = "node-addon"
-version = "0.0.51"
+version = "0.0.52"
 dependencies = [
  "graphql-tools",
  "hive-router",

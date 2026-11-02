@@ -116,6 +116,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.3.10 (2026-11-02)
+
+### Features
+
+- Add an opt-in `ROUTER_DISABLE_INT_VALUE_RANGE_VALIDATION` environment variable to disable GraphQL `Int` range validation.
+
+#### `traffic_shaping.http_client_mode` with a per-worker option
+
+Every worker of the router runs its own single-threaded runtime, but all of them shared one HTTP client and connection pool to subgraphs. A connection opened on one worker got picked up by requests on the others, so a subgraph response often had to wake up another thread.
+
+With `http_client_mode: per_worker`, each worker gets its own client, so a request stays on its worker from start to end. In our benchmark, the router used 9.5% less CPU per request. Each worker keeps its own idle connections, so more connections can stay open, while `max_connections_per_host` still caps the requests in flight.
+
+`shared` is the default and keeps one client for all workers.
+
+```yaml
+traffic_shaping:
+  http_client_mode: per_worker
+```
+
+#### Don't send a fetch whose fields are all skipped
+
+A fetch whose fields are all switched off by `@include`/`@skip` on different variables, like `details @include(if: $d)` and `inventory @include(if: $i)` with both off, is no longer sent ([#1733](https://github.com/graphql-hive/router/issues/1733)). It used to go out with nothing to resolve, and the subgraph still loaded each entity.
+
+`FetchNode` in the query plan gets an optional `runIf`, a list of condition groups. The fetch runs when any of them holds, and always when it's missing. Each group has `includeIf` and `skipIf` variable names, and holds when every `includeIf` variable is `true` and no `skipIf` one is. Demand control only costs a fetch when it runs.
+
+`runIf` also has the `@include`/`@skip` around the fetch, so query plans no longer have `Condition` nodes. A fetch under `... @include(if: $a)` is now `Fetch(service: "b", if: $a)` instead of `Include(if: $a) { Fetch(service: "b") }`. Anything else that executes these plans has to check `runIf`.
+
+A fetch that can never run, like one under `... @skip(if: $a) { ... @include(if: $a) { ... } }`, is left out of the plan, so `runIf` is never empty. When that leaves no fetch at all, the plan has no node.
+
+A fetch with a `runIf` isn't batched with other entity calls for now.
+
+Closes #1733
+
+### Fixes
+
+- Add validation options to control `Int` value range validation.
+
+#### Break response compression ties by the configured `algorithms` order
+
+When a client accepted several algorithms with the same q-value, the router picked whichever the client listed first, so the order of `traffic_shaping.router.compression.response.algorithms` never acted as the documented tie-breaker. Cloudflare, for example, fetches the origin with `Accept-Encoding: gzip, br`, so the router always answered with gzip, even with `br` first in `algorithms`.
+
+The listed order in `Accept-Encoding` carries no preference (RFC 9110 §12.5.3), so equally acceptable algorithms are now ranked by the `algorithms` order. Client q-values still take precedence.
+
+```yaml
+traffic_shaping:
+  router:
+    compression:
+      response:
+        algorithms:
+          - kind: br
+          - kind: gzip
+```
+
+With this config, `Accept-Encoding: gzip, br` now gets a Brotli response, and a gzip-only client still gets gzip.
+
+#### Error paths point at what the client asked for
+
+A subgraph error inside a field the router fetched for itself, like a `@requires` value under `_internal_qp_alias_0`, or a raw `_entities` path, had a path the client never asked for. Error paths now stop at the closest value the client asked for, and an error with no such value has no path.
+
+#### Union members only ask for their own entity fields
+
+Union members only ask for their own fields of a shared entity type, instead of every member's fields for every entity.
+
+Closes https://github.com/graphql-hive/router/issues/1732
+
 ## 0.3.9 (2026-10-29)
 
 ### Fixes

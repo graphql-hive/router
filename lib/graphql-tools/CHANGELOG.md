@@ -1,3 +1,9 @@
+## 0.5.12 (2026-11-02)
+
+### Features
+
+- Add validation options to control `Int` value range validation.
+
 ## 0.5.11 (2026-10-29)
 
 ### Features
