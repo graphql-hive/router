@@ -1,5 +1,4 @@
 use std::{
-    cmp::Ordering,
     error::Error,
     io::Write,
     rc::Rc,
@@ -155,7 +154,7 @@ fn negotiate<'cfg>(
     // Keep `q=0` entries in here (rather than dropping them) - per RFC 9110 §12.5.3, `*`
     // only matches codings that aren't explicitly named elsewhere in the field, and an
     // explicit `gzip;q=0` still counts as "named" even though it's not itself acceptable.
-    let mut candidates: Vec<(&str, f64)> = header
+    let candidates: Vec<(&str, f64)> = header
         .split(',')
         .filter_map(|part| {
             let part = part.trim();
@@ -171,34 +170,29 @@ fn negotiate<'cfg>(
         })
         .collect();
 
-    // stable sort by quality: ties keep the client's original listed order
-    candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
-
-    let is_explicitly_named = |token: &str| {
+    let highest_quality = |matches: &dyn Fn(&str) -> bool| {
         candidates
             .iter()
-            .any(|(t, _)| *t != "*" && t.eq_ignore_ascii_case(token))
+            .filter(|(token, _)| matches(token))
+            .map(|(_, quality)| *quality)
+            .reduce(f64::max)
     };
+    let wildcard_quality = highest_quality(&|token| token == "*");
 
-    for (token, quality) in &candidates {
-        if *quality <= 0.0 {
-            continue;
-        }
-        if *token == "*" {
-            if let Some(algorithm) = algorithms.iter().find(|a| !is_explicitly_named(a.token())) {
-                return Some(algorithm);
-            }
-            continue;
-        }
-        if let Some(algorithm) = algorithms
-            .iter()
-            .find(|a| a.token().eq_ignore_ascii_case(token))
-        {
-            return Some(algorithm);
+    // RFC 9110 §12.5.3 gives the listed order of codings no meaning, so equally acceptable
+    // algorithms are ranked by the order of `algorithms` rather than by the client's order
+    let mut best: Option<(&CompressionAlgorithmConfig, f64)> = None;
+    for algorithm in algorithms {
+        let quality =
+            highest_quality(&|token| token != "*" && token.eq_ignore_ascii_case(algorithm.token()))
+                .or(wildcard_quality)
+                .unwrap_or(0.0);
+        if quality > 0.0 && best.is_none_or(|(_, best_quality)| quality > best_quality) {
+            best = Some((algorithm, quality));
         }
     }
 
-    None
+    best.map(|(algorithm, _)| algorithm)
 }
 
 fn brotli_compressor(config: BrotliCompressionConfig) -> impl FnOnce(&[u8]) -> Option<Vec<u8>> {

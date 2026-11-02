@@ -1057,6 +1057,81 @@ mod compression_e2e_tests {
         );
     }
 
+    // The order codings are listed in `Accept-Encoding` carries no preference (RFC 9110
+    // §12.5.3), so when the client accepts several algorithms equally, the router's own
+    // `algorithms` order decides. CDNs such as Cloudflare send `gzip, br` to the origin.
+    #[ntex::test]
+    async fn should_break_quality_ties_by_configured_algorithm_order() {
+        let router = TestRouter::builder()
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    router:
+                        compression:
+                            response:
+                                min_size: 1B
+                                algorithms:
+                                    - kind: br
+                                    - kind: gzip
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = send_graphql_request_raw(
+            &router,
+            "{ __typename }",
+            some_header_map! { ACCEPT_ENCODING => "gzip, br" }.unwrap(),
+        )
+        .await;
+
+        assert_eq!(
+            res.header(CONTENT_ENCODING.as_str()).map(|v| v.as_bytes()),
+            Some(b"br".as_slice()),
+            "br is first in `algorithms` and the client accepts gzip and br equally"
+        );
+    }
+
+    #[ntex::test]
+    async fn should_prefer_client_q_values_over_configured_algorithm_order() {
+        let router = TestRouter::builder()
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                traffic_shaping:
+                    router:
+                        compression:
+                            response:
+                                min_size: 1B
+                                algorithms:
+                                    - kind: br
+                                    - kind: gzip
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = send_graphql_request_raw(
+            &router,
+            "{ __typename }",
+            some_header_map! { ACCEPT_ENCODING => "gzip, br;q=0.5" }.unwrap(),
+        )
+        .await;
+
+        assert_eq!(
+            res.header(CONTENT_ENCODING.as_str()).map(|v| v.as_bytes()),
+            Some(b"gzip".as_slice()),
+            "the client's higher q-value for gzip must win over the configured order"
+        );
+    }
+
     #[ntex::test]
     async fn should_compress_with_wildcard_accept_encoding() {
         let router = TestRouter::builder()
