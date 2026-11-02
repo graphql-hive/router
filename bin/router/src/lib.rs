@@ -69,7 +69,9 @@ use crate::{
 use crate::background_tasks::{BackgroundTask, CancellationToken};
 use crate::cache_state::register_cache_size_observers;
 pub use crate::config::humantime_serde;
-use crate::config::{load_config, subscriptions::CallbackConfig, HiveRouterConfig};
+use crate::config::{
+    http_server::HttpWorkersConfig, load_config, subscriptions::CallbackConfig, HiveRouterConfig,
+};
 pub use crate::executor::execution::plan::PlanExecutionOutput;
 pub use crate::executor::executors::http::SubgraphHttpResponse;
 use crate::executor::headers::response::ResponseHeaderSink;
@@ -401,6 +403,26 @@ fn to_ntex_keep_alive(duration: std::time::Duration) -> KeepAlive {
     }
 }
 
+/// Resolves `http.workers` into an explicit worker count. `None` leaves the count to ntex,
+/// which uses the number of CPUs in the process' affinity mask.
+fn resolve_http_workers(workers: HttpWorkersConfig) -> Option<std::num::NonZeroUsize> {
+    match workers {
+        HttpWorkersConfig::Cpuset => None,
+        // on Linux, the smaller of the affinity mask size and the cgroup CPU quota
+        HttpWorkersConfig::Container => match std::thread::available_parallelism() {
+            Ok(count) => {
+                info!(target: targets::CORE, workers_count = count, "detected HTTP server worker(s) from the CPU affinity mask and CPU limit");
+                Some(count)
+            }
+            Err(err) => {
+                warn!(target: targets::CORE, error = %err, "failed to detect the container's CPU limit, falling back to one HTTP server worker per CPU in the cpuset");
+                None
+            }
+        },
+        HttpWorkersConfig::Count(count) => Some(count),
+    }
+}
+
 pub fn build_http_service_config(router_config: &HiveRouterConfig) -> HttpServiceConfig {
     let keep_alive = to_ntex_keep_alive(router_config.keep_alive());
 
@@ -443,7 +465,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     let graphql_path = router_config.graphql_path().to_string();
     let websocket_path = router_config.websocket_path().map(|p| p.to_string());
     let callback_conf = router_config.callback_conf().cloned();
-    let workers = router_config.workers();
+    let workers = resolve_http_workers(router_config.workers());
     let mut bg_tasks_manager = background_tasks::BackgroundTasksManager::new();
     let (shared_state, schema_state) = configure_app_from_config(
         router_config,

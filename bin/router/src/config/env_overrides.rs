@@ -35,7 +35,7 @@ pub struct EnvVarOverrides {
     #[envconfig(from = "HOST")]
     pub http_host: Option<String>,
     #[envconfig(from = "ROUTER_HTTP_WORKERS")]
-    pub http_workers: Option<usize>,
+    pub http_workers: Option<String>,
     #[envconfig(from = "ROUTER_HTTP_KEEP_ALIVE")]
     pub http_keep_alive: Option<String>,
     #[envconfig(from = "ROUTER_HTTP_SHUTDOWN_TIMEOUT")]
@@ -129,9 +129,9 @@ impl EnvVarOverrides {
 
         if let Some(http_workers) = self.http_workers.take() {
             debug!(target: CONFIG_LOGGING_TARGET, value = http_workers, "overriding 'http.workers'");
-            // cast to u64 because the `config` crate doesn't implement `Into<Value>` for `usize`;
-            // the value is then deserialized into `Option<NonZeroUsize>`, which rejects `0`.
-            config = config.set_override("http.workers", http_workers as u64)?;
+            // passed through as a string; `HttpWorkersConfig` accepts numeric strings as well as
+            // `cpuset` and `container`, and rejects `0`.
+            config = config.set_override("http.workers", http_workers)?;
         }
 
         if let Some(http_keep_alive) = self.http_keep_alive.take() {
@@ -292,9 +292,11 @@ impl EnvVarOverrides {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroUsize;
+
     use config_rs::{Config, File, FileFormat};
 
-    use crate::config::HiveRouterConfig;
+    use crate::config::{http_server::HttpWorkersConfig, HiveRouterConfig};
 
     use super::*;
 
@@ -417,6 +419,95 @@ http:
             config.http.shutdown_timeout,
             std::time::Duration::from_secs(90)
         );
+    }
+
+    fn config_from_yaml_and_overrides(
+        yaml: &str,
+        overrides: EnvVarOverrides,
+    ) -> Result<HiveRouterConfig, ConfigError> {
+        overrides
+            .apply_overrides(Config::builder().add_source(File::from_str(yaml, FileFormat::Yaml)))
+            .unwrap()
+            .build()?
+            .try_deserialize::<HiveRouterConfig>()
+    }
+
+    #[test]
+    fn http_workers_override_accepts_modes_and_counts() {
+        for (value, expected) in [
+            ("cpuset", HttpWorkersConfig::Cpuset),
+            ("container", HttpWorkersConfig::Container),
+            ("4", HttpWorkersConfig::Count(NonZeroUsize::new(4).unwrap())),
+        ] {
+            let config = config_from_overrides(EnvVarOverrides {
+                http_workers: Some(value.to_string()),
+                ..Default::default()
+            });
+
+            assert_eq!(config.http.workers, expected, "ROUTER_HTTP_WORKERS={value}");
+        }
+    }
+
+    #[test]
+    fn http_workers_override_wins_over_config_file_value() {
+        let config = config_from_yaml_and_overrides(
+            "http:\n  workers: 2\n",
+            EnvVarOverrides {
+                http_workers: Some("container".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(config.http.workers, HttpWorkersConfig::Container);
+    }
+
+    #[test]
+    fn http_workers_from_config_file() {
+        for (yaml, expected) in [
+            (
+                "http:\n  workers: 2\n",
+                HttpWorkersConfig::Count(NonZeroUsize::new(2).unwrap()),
+            ),
+            (
+                "http:\n  workers: \"2\"\n",
+                HttpWorkersConfig::Count(NonZeroUsize::new(2).unwrap()),
+            ),
+            (
+                "http:\n  workers: container\n",
+                HttpWorkersConfig::Container,
+            ),
+            ("http:\n  workers: ~\n", HttpWorkersConfig::Cpuset),
+            ("http: {}\n", HttpWorkersConfig::Cpuset),
+        ] {
+            let config = config_from_yaml_and_overrides(yaml, EnvVarOverrides::default())
+                .unwrap_or_else(|err| panic!("{yaml:?} should deserialize: {err}"));
+
+            assert_eq!(config.http.workers, expected, "{yaml:?}");
+        }
+    }
+
+    #[test]
+    fn http_workers_rejects_zero() {
+        let override_err = config_from_yaml_and_overrides(
+            "",
+            EnvVarOverrides {
+                http_workers: Some("0".to_string()),
+                ..Default::default()
+            },
+        )
+        .expect_err("ROUTER_HTTP_WORKERS=0 should be rejected");
+        let file_err =
+            config_from_yaml_and_overrides("http:\n  workers: 0\n", EnvVarOverrides::default())
+                .expect_err("workers: 0 should be rejected");
+
+        for err in [override_err, file_err] {
+            assert!(
+                err.to_string()
+                    .contains(r#"expected a positive integer, "cpuset" or "container""#),
+                "unexpected error: {err}"
+            );
+        }
     }
 
     #[test]
