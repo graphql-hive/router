@@ -377,8 +377,9 @@ impl EntityFetch {
             return Ok(None);
         };
 
-        // ponytail: a fetch that runs only when some of its fields are asked for stays out of
-        // batches, a `BatchFetch` has no `run_if`. Give each alias one if they should batch too.
+        // ponytail: a fetch with a `run_if` (from `@include`/`@skip` around it or on its fields)
+        // stays out of batches, a `BatchFetch` alias has no `run_if` yet. Give each alias one
+        // so they batch too.
         if fetch_node.run_if.is_some() {
             return Ok(None);
         }
