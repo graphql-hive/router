@@ -329,22 +329,20 @@ fn next_field_waits_for_conditional_entity_fetch_of_previous_one() -> Result<(),
             }
           }
         },
-        Include(if: $includeRemote) {
-          Flatten(path: "create|[Product]") {
-            Fetch(service: "b") {
-              {
-                ... on Product {
-                  __typename
-                  price
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  isExpensive
-                }
+        Flatten(path: "create|[Product]") {
+          Fetch(service: "b", if: $includeRemote) {
+            {
+              ... on Product {
+                __typename
+                price
+                id
               }
-            },
+            } =>
+            {
+              ... on Product {
+                isExpensive
+              }
+            }
           },
         },
         Fetch(service: "c") {

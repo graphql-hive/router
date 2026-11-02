@@ -377,6 +377,13 @@ impl EntityFetch {
             return Ok(None);
         };
 
+        // ponytail: a fetch with a `run_if` (from `@include`/`@skip` around it or on its fields)
+        // stays out of batches, a `BatchFetch` alias has no `run_if` yet. Give each alias one
+        // so they batch too.
+        if fetch_node.run_if.is_some() {
+            return Ok(None);
+        }
+
         let Some(entities_field) = fetch_node
             .operation
             .document
@@ -554,11 +561,6 @@ impl PlanOptimizer<'_> {
                     optimize_parallel_node(optimized_nodes, self.supergraph, self.options)?;
 
                 Ok(PlanNode::parallel(optimized_nodes))
-            }
-            PlanNode::Condition(mut condition_node) => {
-                self.optimize_optional_child(&mut condition_node.if_clause)?;
-                self.optimize_optional_child(&mut condition_node.else_clause)?;
-                Ok(PlanNode::Condition(condition_node))
             }
             PlanNode::Subscription(subscription_node) => {
                 // self.optimize_node on a FetchNode returns itself, no need to optimize
@@ -935,24 +937,7 @@ fn optimize_plan_sequence(nodes: Vec<PlanNode>) -> Vec<PlanNode> {
         }
     }
 
-    // Merge consecutive compatible Condition nodes.
-    // We check if current condition can be merged into the previous one.
     flattened_nodes
-        .into_iter()
-        .fold(Vec::new(), |mut acc, current_node| {
-            match (acc.last_mut(), current_node) {
-                // Merge adjacent compatible Condition nodes.
-                (Some(PlanNode::Condition(last_cond)), PlanNode::Condition(current_cond))
-                    if last_cond.can_merge_with(&current_cond) =>
-                {
-                    last_cond.merge(current_cond);
-                }
-                (_, current_node) => {
-                    acc.push(current_node);
-                }
-            }
-            acc
-        })
 }
 
 #[cfg(test)]
@@ -2699,6 +2684,7 @@ mod tests {
             input_rewrites: None,
             output_rewrites: None,
             context: None,
+            run_if: None,
         };
 
         let path = FlattenNodePath::from(&MergePath::new(vec![
@@ -2768,6 +2754,7 @@ mod tests {
             input_rewrites: None,
             output_rewrites: None,
             context: None,
+            run_if: None,
         }
     }
 

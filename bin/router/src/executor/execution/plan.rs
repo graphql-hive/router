@@ -11,8 +11,8 @@ use crate::query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use crate::query_planner::{
     ast::operation::OperationDefinition,
     planner::plan_nodes::{
-        ConditionNode, EntityBatch, EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
-        QueryPlan, SequenceNode,
+        EntityBatch, EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode, QueryPlan,
+        SequenceNode,
     },
     state::supergraph_state::OperationKind,
 };
@@ -889,15 +889,6 @@ impl<'exec> Executor<'exec> {
                     Box::pin(self.execute_plan_node(ctx, child)).await;
                 }
             }
-            PlanNode::Condition(condition_node) => {
-                if let Some(next_node) =
-                    condition_node_by_variables(condition_node, self.variable_values)
-                {
-                    // We use `Box.pin` here to avoid the compiler error about recursive future,
-                    // as `execute_plan_node` is calling itself recursively for condition nodes
-                    Box::pin(self.execute_plan_node(ctx, next_node)).await;
-                }
-            }
             node => {
                 let mut scope: FuturesUnordered<_> = self
                     .prepare_job_future(node, &ctx.data)
@@ -1110,6 +1101,20 @@ impl<'exec> Executor<'exec> {
         requests
     }
 
+    /// Whether the fetch runs, see `FetchNode::run_if`. A variable counts when it's `true`.
+    fn fetch_runs(&self, fetch_node: &FetchNode) -> bool {
+        fetch_node.run_if.as_ref().is_none_or(|groups| {
+            groups.iter().any(|group| {
+                group.holds(|name| {
+                    self.variable_values
+                        .as_ref()
+                        .and_then(|vars| vars.get(name))
+                        .is_some_and(|value| matches!(value.as_ref(), ValueRef::Bool(true)))
+                })
+            })
+        })
+    }
+
     /**
      * This function is sync, because we only need the immutable borrow of `ctx.data` to prepare the subgraph request,
      * and the actual execution of the subgraph request is done in `prepare_fetch_job` which is async.
@@ -1124,6 +1129,7 @@ impl<'exec> Executor<'exec> {
         data: &Value<'exec>,
     ) -> Vec<BoxFuture<'wave, Result<ExecutionJob<'exec>, PlanExecutionError>>> {
         match node {
+            PlanNode::Fetch(fetch_node) if !self.fetch_runs(fetch_node) => Vec::new(),
             PlanNode::Fetch(fetch_node) => vec![self
                 .prepare_execution_job(PrepareExecutionJobOpts {
                     subgraph_name: &fetch_node.service_name,
@@ -1202,6 +1208,9 @@ impl<'exec> Executor<'exec> {
                     PlanNode::Fetch(fetch_node) => fetch_node,
                     _ => return Vec::new(),
                 };
+                if !self.fetch_runs(fetch_node) {
+                    return Vec::new();
+                }
 
                 // If there are no requirements in the node (no _entities call), then we only need to make
                 // a regular call. This happens when we perform subgraph re-entry.
@@ -1266,9 +1275,6 @@ impl<'exec> Executor<'exec> {
                     })
                     .collect()
             }
-            PlanNode::Condition(node) => condition_node_by_variables(node, self.variable_values)
-                .map(|node| self.prepare_job_future(node, data))
-                .unwrap_or_default(),
             // Our Query Planner does not produce any other plan node types in ParallelNode
             _ => Vec::new(),
         }
@@ -1949,21 +1955,6 @@ impl<'e, 'exec> EntityMerger<'e, 'exec> {
     }
 }
 
-fn condition_node_by_variables<'a>(
-    condition_node: &'a ConditionNode,
-    variable_values: &'a Option<VariablesMap>,
-) -> Option<&'a PlanNode> {
-    let vars = variable_values.as_ref()?;
-    let value = vars.get(&condition_node.condition)?;
-    let condition_met = matches!(value.as_ref(), ValueRef::Bool(true));
-
-    if condition_met {
-        condition_node.if_clause.as_deref()
-    } else {
-        condition_node.else_clause.as_deref()
-    }
-}
-
 fn select_fetch_variables<'a>(
     variable_values: &'a Option<VariablesMap>,
     variable_usages: Option<&BTreeSet<String>>,
@@ -2454,6 +2445,7 @@ mod tests {
                             planner_requires: (),
                             service_name: "subgraph_a".to_string(),
                             context: None,
+                            run_if: None,
                             operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_a }"),
                             )
@@ -2470,6 +2462,7 @@ mod tests {
                             planner_requires: (),
                             service_name: "subgraph_b".to_string(),
                             context: None,
+                            run_if: None,
                             operation: PlanningFetchOperation::from_anonymous_operation(
                                 parse_document("{ from_b }"),
                             )

@@ -183,22 +183,20 @@ fn client_alias_named_like_a_key_field_under_a_condition() -> Result<(), Box<dyn
             }
           },
         },
-        Include(if: $x) {
-          Flatten(path: "userInA") {
-            Fetch(service: "a") {
-              {
-                ... on User {
-                  __typename
-                  name
-                  id: _internal_qp_alias_0
-                }
-              } =>
-              {
-                ... on User {
-                  aName
-                }
+        Flatten(path: "userInA") {
+          Fetch(service: "a", if: $x) {
+            {
+              ... on User {
+                __typename
+                name
+                id: _internal_qp_alias_0
               }
-            },
+            } =>
+            {
+              ... on User {
+                aName
+              }
+            }
           },
         },
       },

@@ -25,6 +25,7 @@ impl FetchNode<Planning> {
             input_rewrites: self.input_rewrites,
             output_rewrites: self.output_rewrites,
             context: self.context,
+            run_if: self.run_if,
         }
     }
 }
@@ -62,11 +63,6 @@ impl PlanNode<Planning> {
                     .into_iter()
                     .map(Self::into_executable)
                     .collect(),
-            }),
-            Self::Condition(condition) => PlanNode::Condition(ConditionNode {
-                condition: condition.condition,
-                if_clause: condition.if_clause.map(|node| boxed(*node)),
-                else_clause: condition.else_clause.map(|node| boxed(*node)),
             }),
             Self::Subscription(subscription) => {
                 PlanNode::Subscription(Box::new(SubscriptionNode {

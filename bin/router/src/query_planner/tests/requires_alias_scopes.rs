@@ -392,7 +392,7 @@ struct Fetch {
     service: String,
     operation: String,
     requires: Value,
-    /// Variables of the `Condition` nodes around the fetch, `!x` for a skip.
+    /// Variables that hold whenever the fetch runs, from its `runIf`, `!x` for a skip.
     conditions: Vec<String>,
     /// Where the fetched objects go, as response keys, without lists and type conditions.
     paths: Vec<Vec<String>>,
@@ -410,8 +410,37 @@ fn response_keys(path: &Value) -> Vec<String> {
         .collect()
 }
 
+/// What every group of a `runIf` asks for, so what holds whenever it runs.
+fn run_if_conditions(run_if: Option<&Value>) -> Vec<String> {
+    let groups: Vec<Vec<String>> = run_if
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|group| {
+            let names = |key: &str, prefix: &str| {
+                group[key]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(|name| format!("{prefix}{name}"))
+                    .collect::<Vec<_>>()
+            };
+            [names("includeIf", ""), names("skipIf", "!")].concat()
+        })
+        .collect();
+    let Some((first, rest)) = groups.split_first() else {
+        return Vec::new();
+    };
+    first
+        .iter()
+        .filter(|name| rest.iter().all(|group| group.contains(name)))
+        .cloned()
+        .collect()
+}
+
 fn fetches(plan: &Value) -> Vec<Fetch> {
-    fn walk(node: &Value, conditions: &[String], path: &[String], out: &mut Vec<Fetch>) {
+    fn walk(node: &Value, path: &[String], out: &mut Vec<Fetch>) {
         match node {
             Value::Object(map) => {
                 if map.get("kind").and_then(Value::as_str) == Some("Fetch") {
@@ -419,14 +448,14 @@ fn fetches(plan: &Value) -> Vec<Fetch> {
                         service: map["serviceName"].as_str().unwrap_or_default().to_string(),
                         operation: map["operation"].as_str().unwrap_or_default().to_string(),
                         requires: map.get("requires").cloned().unwrap_or(Value::Null),
-                        conditions: conditions.to_vec(),
+                        conditions: run_if_conditions(map.get("runIf")),
                         paths: vec![path.to_vec()],
                         entity_alias: None,
                     });
                     return;
                 }
                 if map.get("kind").and_then(Value::as_str) == Some("Flatten") {
-                    walk(&map["node"], conditions, &response_keys(&map["path"]), out);
+                    walk(&map["node"], &response_keys(&map["path"]), out);
                     return;
                 }
                 // Each entity call in a batch has its own representations.
@@ -437,7 +466,8 @@ fn fetches(plan: &Value) -> Vec<Fetch> {
                             service: map["serviceName"].as_str().unwrap_or_default().to_string(),
                             operation: map["operation"].as_str().unwrap_or_default().to_string(),
                             requires: alias["requires"].clone(),
-                            conditions: conditions.to_vec(),
+                            // fetches with a `runIf` aren't batched yet
+                            conditions: Vec::new(),
                             paths: alias["paths"]
                                 .as_array()
                                 .into_iter()
@@ -449,30 +479,17 @@ fn fetches(plan: &Value) -> Vec<Fetch> {
                     }
                     return;
                 }
-                if map.get("kind").and_then(Value::as_str) == Some("Condition") {
-                    let variable = map["condition"].as_str().unwrap_or_default();
-                    for (branch, prefix) in [("ifClause", ""), ("elseClause", "!")] {
-                        if let Some(branch) = map.get(branch) {
-                            let mut inner = conditions.to_vec();
-                            inner.push(format!("{prefix}{variable}"));
-                            walk(branch, &inner, path, out);
-                        }
-                    }
-                    return;
-                }
                 for value in map.values() {
-                    walk(value, conditions, path, out);
+                    walk(value, path, out);
                 }
             }
-            Value::Array(items) => items
-                .iter()
-                .for_each(|item| walk(item, conditions, path, out)),
+            Value::Array(items) => items.iter().for_each(|item| walk(item, path, out)),
             _ => {}
         }
     }
 
     let mut out = Vec::new();
-    walk(plan, &[], &[], &mut out);
+    walk(plan, &[], &mut out);
     out
 }
 

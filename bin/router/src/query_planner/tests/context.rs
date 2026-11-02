@@ -81,11 +81,6 @@ fn contextual_fetches_carry_a_compiled_template() -> Result<(), Box<dyn Error>> 
             PlanNode::Sequence(node) => node.nodes.iter().for_each(|node| contextual(node, found)),
             PlanNode::Parallel(node) => node.nodes.iter().for_each(|node| contextual(node, found)),
             PlanNode::Flatten(node) => contextual(&node.node, found),
-            PlanNode::Condition(node) => {
-                for clause in [&node.if_clause, &node.else_clause].into_iter().flatten() {
-                    contextual(clause, found);
-                }
-            }
             _ => {}
         }
     }
@@ -396,21 +391,19 @@ fn context_variables_do_not_collide_with_client_variables_or_requires() -> Resul
             }
           }
         },
-        Include(if: $__context_1) {
-          Flatten(path: "users.@.txs.@") {
-            Fetch(service: "b") {
-              {
-                ... on Transaction {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Transaction {
-                  base
-                }
+        Flatten(path: "users.@.txs.@") {
+          Fetch(service: "b", if: $__context_1) {
+            {
+              ... on Transaction {
+                __typename
+                id
               }
-            },
+            } =>
+            {
+              ... on Transaction {
+                base
+              }
+            }
           },
         },
         Flatten(path: "users.@.txs.@") {
@@ -544,42 +537,34 @@ fn context_under_conditional_ancestor_fragments() -> Result<(), Box<dyn Error>> 
           }
         },
         Parallel {
-          Skip(if: $skip) {
-            Include(if: $include) {
-              Flatten(path: "viewer|[Other].txs.@") {
-                Fetch(service: "a") {
-                  {
-                    ... on Transaction {
-                      __typename
-                      id
-                    }
-                  } =>
-                  ($__context_1:String) {
-                    ... on Transaction {
-                      fromUnion(code: $__context_1)
-                    }
-                  }
-                },
-              },
+          Flatten(path: "viewer|[Other].txs.@") {
+            Fetch(service: "a", if: $include && !$skip) {
+              {
+                ... on Transaction {
+                  __typename
+                  id
+                }
+              } =>
+              ($__context_1:String) {
+                ... on Transaction {
+                  fromUnion(code: $__context_1)
+                }
+              }
             },
           },
-          Include(if: $include) {
-            Skip(if: $skip) {
-              Flatten(path: "viewer|[User].txs.@") {
-                Fetch(service: "a") {
-                  {
-                    ... on Transaction {
-                      __typename
-                      id
-                    }
-                  } =>
-                  ($__context_0:String) {
-                    ... on Transaction {
-                      fromUnion(code: $__context_0)
-                    }
-                  }
-                },
-              },
+          Flatten(path: "viewer|[User].txs.@") {
+            Fetch(service: "a", if: $include && !$skip) {
+              {
+                ... on Transaction {
+                  __typename
+                  id
+                }
+              } =>
+              ($__context_0:String) {
+                ... on Transaction {
+                  fromUnion(code: $__context_0)
+                }
+              }
             },
           },
         },
@@ -2705,21 +2690,19 @@ fn context_field_under_include() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Include(if: $include) {
-          Flatten(path: "users.@.txs.@") {
-            Fetch(service: "a") {
-              {
-                ... on Transaction {
-                  __typename
-                  id
-                }
-              } =>
-              ($__context_0:String) {
-                ... on Transaction {
-                  amount(code: $__context_0)
-                }
+        Flatten(path: "users.@.txs.@") {
+          Fetch(service: "a", if: $include) {
+            {
+              ... on Transaction {
+                __typename
+                id
               }
-            },
+            } =>
+            ($__context_0:String) {
+              ... on Transaction {
+                amount(code: $__context_0)
+              }
+            }
           },
         },
       },
@@ -2891,21 +2874,19 @@ fn context_field_under_skip() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Skip(if: $skip) {
-          Flatten(path: "users.@.txs.@") {
-            Fetch(service: "a") {
-              {
-                ... on Transaction {
-                  __typename
-                  id
-                }
-              } =>
-              ($__context_0:String) {
-                ... on Transaction {
-                  amount(code: $__context_0)
-                }
+        Flatten(path: "users.@.txs.@") {
+          Fetch(service: "a", if: !$skip) {
+            {
+              ... on Transaction {
+                __typename
+                id
               }
-            },
+            } =>
+            ($__context_0:String) {
+              ... on Transaction {
+                amount(code: $__context_0)
+              }
+            }
           },
         },
       },
@@ -3444,82 +3425,74 @@ fn per_type_contextual_fields_under_other_aliases_stay_apart() -> Result<(), Box
           }
         },
         Parallel {
-          Skip(if: $v15) {
-            Flatten(path: "accounts.@|[Member].wallet") {
-              Fetch(service: "a") {
-                {
-                  ... on Wallet {
-                    __typename
-                    id
+          Flatten(path: "accounts.@|[Member].wallet") {
+            Fetch(service: "a", if: (!$v15 && !$v4) || (!$v15 && !$v6)) {
+              {
+                ... on Wallet {
+                  __typename
+                  id
+                }
+              } =>
+              ($v4:Boolean!,$v6:Boolean!=false,$__context_5:String,$__context_4:String) {
+                ... on Wallet {
+                  ... on Wallet @skip(if: $v4) {
+                    discount(plan: $__context_5)
                   }
-                } =>
-                ($v4:Boolean!,$v6:Boolean!=false,$__context_5:String,$__context_4:String) {
-                  ... on Wallet {
-                    ... on Wallet @skip(if: $v4) {
-                      discount(plan: $__context_5)
-                    }
-                    ... on Wallet @skip(if: $v6) {
-                      a3_discount: discount(plan: $__context_4)
-                    }
+                  ... on Wallet @skip(if: $v6) {
+                    a3_discount: discount(plan: $__context_4)
                   }
                 }
-              },
+              }
             },
           },
-          Skip(if: $v15) {
-            Flatten(path: "accounts.@|[Member].wallet") {
-              Fetch(service: "a") {
-                {
-                  ... on Wallet {
-                    __typename
-                    id
-                  }
-                } =>
-                ($__context_3:String) {
-                  ... on Wallet {
-                    discount(plan: $__context_3)
-                  }
+          Flatten(path: "accounts.@|[Member].wallet") {
+            Fetch(service: "a", if: !$v15) {
+              {
+                ... on Wallet {
+                  __typename
+                  id
                 }
-              },
+              } =>
+              ($__context_3:String) {
+                ... on Wallet {
+                  discount(plan: $__context_3)
+                }
+              }
             },
           },
-          Skip(if: $v15) {
-            Flatten(path: "accounts.@|[Guest].wallet") {
-              Fetch(service: "a") {
-                {
-                  ... on Wallet {
-                    __typename
-                    id
+          Flatten(path: "accounts.@|[Guest].wallet") {
+            Fetch(service: "a", if: (!$v15 && !$v4) || (!$v15 && !$v6)) {
+              {
+                ... on Wallet {
+                  __typename
+                  id
+                }
+              } =>
+              ($v4:Boolean!,$v6:Boolean!=false,$__context_2:String,$__context_1:String) {
+                ... on Wallet {
+                  ... on Wallet @skip(if: $v4) {
+                    discount(plan: $__context_2)
                   }
-                } =>
-                ($v4:Boolean!,$v6:Boolean!=false,$__context_2:String,$__context_1:String) {
-                  ... on Wallet {
-                    ... on Wallet @skip(if: $v4) {
-                      discount(plan: $__context_2)
-                    }
-                    ... on Wallet @skip(if: $v6) {
-                      a3_discount: discount(plan: $__context_1)
-                    }
+                  ... on Wallet @skip(if: $v6) {
+                    a3_discount: discount(plan: $__context_1)
                   }
                 }
-              },
+              }
             },
           },
-          Skip(if: $v15) {
-            Flatten(path: "accounts.@|[Guest].wallet") {
-              Fetch(service: "a") {
-                {
-                  ... on Wallet {
-                    __typename
-                    id
-                  }
-                } =>
-                ($__context_0:String) {
-                  ... on Wallet {
-                    discount(plan: $__context_0)
-                  }
+          Flatten(path: "accounts.@|[Guest].wallet") {
+            Fetch(service: "a", if: !$v15) {
+              {
+                ... on Wallet {
+                  __typename
+                  id
                 }
-              },
+              } =>
+              ($__context_0:String) {
+                ... on Wallet {
+                  discount(plan: $__context_0)
+                }
+              }
             },
           },
         },

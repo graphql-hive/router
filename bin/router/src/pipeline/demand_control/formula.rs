@@ -13,6 +13,7 @@ use crate::query_planner::{
         selection_set::{FieldSelection, SelectionSet},
         value::Value as AstValue,
     },
+    planner::plan_nodes::{display_run_if, ConditionGroup},
     state::supergraph_state::{OperationKind, SupergraphDefinition, SupergraphState, TypeNode},
 };
 use crate::telemetry::logging::targets;
@@ -42,6 +43,11 @@ pub(crate) enum CostExpr {
         variable: String,
         if_true: Box<CostExpr>,
         if_false: Box<CostExpr>,
+    },
+    /// `expr` when any of the groups holds, 0 otherwise. Like a fetch's `run_if`.
+    AnyOf {
+        groups: Vec<ConditionGroup>,
+        expr: Box<CostExpr>,
     },
     /// Integer resolved from request variables (list size via slicing arguments).
     ListSize {
@@ -116,6 +122,9 @@ impl fmt::Display for CostExpr {
             } => {
                 write!(f, "(if ${variable} then {if_true} else {if_false})")
             }
+            Self::AnyOf { groups, expr } => {
+                write!(f, "(if {} then {expr} else 0)", display_run_if(groups))
+            }
             Self::ListSize {
                 field_name: _,
                 args,
@@ -156,11 +165,6 @@ pub struct DemandControlFormulaPlan {
 pub(crate) enum FormulaPlanNode {
     Fetch(FormulaFetchNode),
     Aggregate(Vec<FormulaPlanNode>),
-    Condition {
-        condition: String,
-        if_clause: Option<Box<FormulaPlanNode>>,
-        else_clause: Option<Box<FormulaPlanNode>>,
-    },
 }
 
 pub(crate) struct FormulaFetchNode {
@@ -222,27 +226,6 @@ fn evaluate_formula_plan_node(
                 )?;
             }
         }
-        FormulaPlanNode::Condition {
-            condition,
-            if_clause,
-            else_clause,
-        } => {
-            let branch = if variable_payload.variable_equals_true(condition) {
-                if_clause.as_deref()
-            } else {
-                else_clause.as_deref()
-            };
-
-            if let Some(child) = branch {
-                evaluate_formula_plan_node(
-                    child,
-                    supergraph_state,
-                    variable_payload,
-                    per_subgraph,
-                    estimated_cost,
-                )?;
-            }
-        }
     }
 
     Ok(())
@@ -277,6 +260,14 @@ fn eval_cost_expr(
                 eval_cost_expr(if_true, supergraph_state, variable_payload)
             } else {
                 eval_cost_expr(if_false, supergraph_state, variable_payload)
+            }
+        }
+        CostExpr::AnyOf { groups, expr } => {
+            let is_true = |name: &str| variable_payload.variable_equals_true(name);
+            if groups.iter().any(|group| group.holds(is_true)) {
+                eval_cost_expr(expr, supergraph_state, variable_payload)
+            } else {
+                Ok(0)
             }
         }
         CostExpr::ListSize {
