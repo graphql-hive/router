@@ -701,7 +701,9 @@ mod conditional_directives_e2e_tests {
                 .await;
             assert!(res.status().is_success(), "Expected 200 OK");
             assert_eq!(res.json_body().await.to_string(), r#"{"data":{}}"#);
-            assert!(subgraphs.get_requests_log("accounts").is_none_or(|log| log.is_empty()));
+            assert!(subgraphs
+                .get_requests_log("accounts")
+                .is_none_or(|log| log.is_empty()));
         }
     }
 }

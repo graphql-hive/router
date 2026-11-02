@@ -54,34 +54,8 @@ impl ConditionGroup {
         )
     }
 
-    /// What's left to check once `known` holds, `None` when it can't hold then.
-    pub fn assuming(&self, known: &Self) -> Option<Self> {
-        if self
-            .include_if
-            .iter()
-            .any(|name| known.skip_if.contains(name))
-            || self
-                .skip_if
-                .iter()
-                .any(|name| known.include_if.contains(name))
-        {
-            return None;
-        }
-        let left = |names: &[String], known: &[String]| {
-            names
-                .iter()
-                .filter(|name| !known.contains(name))
-                .cloned()
-                .collect()
-        };
-        Some(Self {
-            include_if: left(&self.include_if, &known.include_if),
-            skip_if: left(&self.skip_if, &known.skip_if),
-        })
-    }
-
     /// Holds whenever `other` does, everything we ask for `other` asks for too.
-    fn is_implied_by(&self, other: &Self) -> bool {
+    fn covers(&self, other: &Self) -> bool {
         self.include_if
             .iter()
             .all(|name| other.include_if.contains(name))
@@ -109,7 +83,7 @@ pub fn any_of(mut groups: Vec<ConditionGroup>) -> Option<Vec<ConditionGroup>> {
     groups.sort_by_key(|group| group.include_if.len() + group.skip_if.len());
     let mut kept: Vec<ConditionGroup> = Vec::with_capacity(groups.len());
     for group in groups {
-        if !kept.iter().any(|smaller| smaller.is_implied_by(&group)) {
+        if !kept.iter().any(|smaller| smaller.covers(&group)) {
             kept.push(group);
         }
     }
@@ -117,27 +91,27 @@ pub fn any_of(mut groups: Vec<ConditionGroup>) -> Option<Vec<ConditionGroup>> {
     Some(kept)
 }
 
-/// When any field of `selection_sets` is asked for, what's left of it once `known` holds.
-/// `None` is always, like `any_of`.
-pub fn run_if_of_output<'a>(
+/// When `around` holds and any field of `selection_sets` is asked for. `None` is always, like
+/// `any_of`.
+pub fn run_if<'a>(
+    around: &ConditionGroup,
     selection_sets: impl IntoIterator<Item = &'a SelectionSet>,
-    known: &ConditionGroup,
 ) -> Option<Vec<ConditionGroup>> {
     let mut groups = Vec::new();
     for selection_set in selection_sets {
-        groups.extend(groups_of_selection_set(selection_set));
+        groups.extend(asked_for_when(selection_set));
     }
     any_of(
         groups
             .iter()
-            .filter_map(|group| group.assuming(known))
+            .filter_map(|group| group.and(around))
             .collect(),
     )
 }
 
 /// When any item is asked for, as groups. A field with no condition makes it always (an empty
 /// group), so most selection sets stop at their first field.
-fn groups_of_selection_set(selection_set: &SelectionSet) -> Vec<ConditionGroup> {
+fn asked_for_when(selection_set: &SelectionSet) -> Vec<ConditionGroup> {
     let mut groups = Vec::new();
     for item in &selection_set.items {
         let (include_if, skip_if, inner) = match item {
@@ -159,7 +133,7 @@ fn groups_of_selection_set(selection_set: &SelectionSet) -> Vec<ConditionGroup> 
         match inner {
             None => groups.push(own),
             Some(inner) => groups.extend(
-                groups_of_selection_set(inner)
+                asked_for_when(inner)
                     .iter()
                     .filter_map(|group| own.and(group)),
             ),
@@ -191,7 +165,7 @@ pub fn display_run_if(groups: &[ConditionGroup]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{any_of, run_if_of_output, ConditionGroup};
+    use super::{any_of, run_if, ConditionGroup};
     use crate::query_planner::ast::selection_set::SelectionSet;
     use crate::query_planner::utils::parsing::parse_operation;
 
@@ -232,29 +206,32 @@ mod tests {
         );
         let none = ConditionGroup::default();
         assert_eq!(
-            run_if_of_output([&output], &none),
+            run_if(&none, [&output]),
             Some(vec![group(&["a"], &[]), group(&["c"], &["b"])])
         );
-        // under `Include(if: $a)` the first one always runs
-        assert_eq!(run_if_of_output([&output], &group(&["a"], &[])), None);
-        // under `Skip(if: $a)` only the second one can
+        // under `@include(if: $a)` the first one runs whenever the fetch can
         assert_eq!(
-            run_if_of_output([&output], &group(&[], &["a"])),
-            Some(vec![group(&["c"], &["b"])])
+            run_if(&group(&["a"], &[]), [&output]),
+            Some(vec![group(&["a"], &[])])
+        );
+        // under `@skip(if: $a)` only the second one can
+        assert_eq!(
+            run_if(&group(&[], &["a"]), [&output]),
+            Some(vec![group(&["c"], &["a", "b"])])
         );
         // a field with no condition always runs
         assert_eq!(
-            run_if_of_output(
-                [&selection_set("{ x ... on T @include(if: $a) { y } }")],
-                &none
+            run_if(
+                &none,
+                [&selection_set("{ x ... on T @include(if: $a) { y } }")]
             ),
             None
         );
         // `@include(if: $a) @skip(if: $a)` never does
         assert_eq!(
-            run_if_of_output(
-                [&selection_set("{ x @include(if: $a) @skip(if: $a) }")],
-                &none
+            run_if(
+                &none,
+                [&selection_set("{ x @include(if: $a) @skip(if: $a) }")]
             ),
             Some(Vec::new())
         );

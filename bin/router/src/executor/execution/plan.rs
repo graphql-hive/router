@@ -11,8 +11,8 @@ use crate::query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use crate::query_planner::{
     ast::operation::OperationDefinition,
     planner::plan_nodes::{
-        EntityBatch, EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
-        QueryPlan, SequenceNode,
+        EntityBatch, EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode, QueryPlan,
+        SequenceNode,
     },
     state::supergraph_state::OperationKind,
 };

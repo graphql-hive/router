@@ -773,47 +773,30 @@ impl PlanNode<Planning> {
     ) -> Option<Self> {
         let mut fetch = FetchNode::from_fetch_step(step, supergraph, options);
 
-        // A fetch planned under fragments or fields with `@include`/`@skip` runs only when all
-        // of them hold. The step has the innermost condition, its path has the ones around it:
-        // `... on User @include(if: $a) { ... on User @include(if: $b) { name } }`.
-        let mut conditions: Vec<&Condition> = Vec::new();
-        for condition in step
-            .response_path
-            .conditions()
-            .chain(step.condition.as_ref())
-        {
-            if !conditions.contains(&condition) {
-                conditions.push(condition);
-            }
-        }
-
-        // Its fields can have conditions of their own, like `details @include(if: $d)` and
-        // `inventory @include(if: $i)`, so with all of them off there's nothing to ask for. It
-        // runs when the conditions around it hold and any of its fields is asked for.
+        // A fetch runs when the `@include`/`@skip` around it hold and any of its fields is asked
+        // for. The step has the innermost condition, its path has the ones around it, and the
+        // fields can have their own, like `details @include(if: $d)` and `inventory @include(if: $i)`.
         if !matches!(fetch.operation_kind, Some(OperationKind::Subscription)) {
-            let known = ConditionGroup::new(
-                conditions
-                    .iter()
-                    .filter_map(|condition| condition.to_include_if())
-                    .collect(),
-                conditions
-                    .iter()
-                    .filter_map(|condition| condition.to_skip_if())
-                    .collect(),
-            );
+            let path_conditions = || {
+                step.response_path
+                    .conditions()
+                    .chain(step.condition.as_ref())
+            };
             // conditions that can't all hold, it never runs
-            let known = known?;
-            fetch.run_if = match conditions::run_if_of_output(
+            let around = ConditionGroup::new(
+                path_conditions()
+                    .filter_map(Condition::to_include_if)
+                    .collect(),
+                path_conditions()
+                    .filter_map(Condition::to_skip_if)
+                    .collect(),
+            )?;
+            fetch.run_if = conditions::run_if(
+                &around,
                 step.output
                     .iter_selections()
                     .map(|(_, selections)| selections),
-                &known,
-            ) {
-                None => (!known.is_empty()).then(|| vec![known]),
-                Some(groups) => conditions::any_of(
-                    groups.iter().filter_map(|group| group.and(&known)).collect(),
-                ),
-            };
+            );
             // no field can ever be asked for, it never runs
             if fetch.run_if.as_ref().is_some_and(Vec::is_empty) {
                 return None;

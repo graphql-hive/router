@@ -483,9 +483,7 @@ fn fetches(plan: &Value) -> Vec<Fetch> {
                     walk(value, path, out);
                 }
             }
-            Value::Array(items) => items
-                .iter()
-                .for_each(|item| walk(item, path, out)),
+            Value::Array(items) => items.iter().for_each(|item| walk(item, path, out)),
             _ => {}
         }
     }
