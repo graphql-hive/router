@@ -14,3 +14,5 @@ A fetch whose fields are all switched off by `@include`/`@skip` on different var
 A fetch that can never run, like one under `... @skip(if: $a) { ... @include(if: $a) { ... } }`, is left out of the plan, so `runIf` is never empty. When that leaves no fetch at all, the plan has no node.
 
 A fetch with a `runIf` isn't batched with other entity calls for now.
+
+Closes #1733
