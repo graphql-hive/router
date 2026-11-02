@@ -165,11 +165,6 @@ pub struct DemandControlFormulaPlan {
 pub(crate) enum FormulaPlanNode {
     Fetch(FormulaFetchNode),
     Aggregate(Vec<FormulaPlanNode>),
-    Condition {
-        condition: String,
-        if_clause: Option<Box<FormulaPlanNode>>,
-        else_clause: Option<Box<FormulaPlanNode>>,
-    },
 }
 
 pub(crate) struct FormulaFetchNode {
@@ -222,27 +217,6 @@ fn evaluate_formula_plan_node(
         }
         FormulaPlanNode::Aggregate(nodes) => {
             for child in nodes {
-                evaluate_formula_plan_node(
-                    child,
-                    supergraph_state,
-                    variable_payload,
-                    per_subgraph,
-                    estimated_cost,
-                )?;
-            }
-        }
-        FormulaPlanNode::Condition {
-            condition,
-            if_clause,
-            else_clause,
-        } => {
-            let branch = if variable_payload.variable_equals_true(condition) {
-                if_clause.as_deref()
-            } else {
-                else_clause.as_deref()
-            };
-
-            if let Some(child) = branch {
                 evaluate_formula_plan_node(
                     child,
                     supergraph_state,

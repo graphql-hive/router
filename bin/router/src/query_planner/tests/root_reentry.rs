@@ -141,15 +141,13 @@ pub fn mutation_referencing_query_with_condition() -> Result<(), Box<dyn Error>>
             }
           }
         },
-        Include(if: $withQuery) {
-          Flatten(path: "doSomething.query") {
-            Fetch(service: "one") {
-              {
-                user(id: 1) {
-                  name
-                }
+        Flatten(path: "doSomething.query") {
+          Fetch(service: "one", if: $withQuery) {
+            {
+              user(id: 1) {
+                name
               }
-            },
+            }
           },
         },
       },

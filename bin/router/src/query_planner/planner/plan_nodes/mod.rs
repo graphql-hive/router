@@ -33,7 +33,6 @@ pub mod planning {
     pub type FlattenNode = super::FlattenNode<Planning>;
     pub type SequenceNode = super::SequenceNode<Planning>;
     pub type ParallelNode = super::ParallelNode<Planning>;
-    pub type ConditionNode = super::ConditionNode<Planning>;
     pub type SubscriptionNode = super::SubscriptionNode<Planning>;
     pub type DeferNode = super::DeferNode<Planning>;
     pub type DeferPrimary = super::DeferPrimary<Planning>;
@@ -73,7 +72,6 @@ pub enum PlanNode<S: PlanState = Executable> {
     Sequence(SequenceNode<S>),
     Parallel(ParallelNode<S>),
     Flatten(FlattenNode<S>),
-    Condition(ConditionNode<S>),
     Subscription(Box<SubscriptionNode<S>>),
     Defer(Box<DeferNode<S>>),
 }
@@ -110,13 +108,6 @@ impl<S: PlanState> PlanNode<S> {
     pub fn as_flatten(&self) -> Option<&FlattenNode<S>> {
         match self {
             PlanNode::Flatten(node) => Some(node),
-            _ => None,
-        }
-    }
-
-    pub fn as_condition(&self) -> Option<&ConditionNode<S>> {
-        match self {
-            PlanNode::Condition(node) => Some(node),
             _ => None,
         }
     }
@@ -160,9 +151,9 @@ pub struct FetchNode<S: PlanState = Executable> {
     pub output_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
     pub context: Option<Box<FetchContext>>,
-    /// The fetch runs when any of these holds, always when missing. It's what's left of its
-    /// fields' `@include`/`@skip` once the `Include`/`Skip` nodes around it are accounted for:
-    /// with every field off there's nothing to ask for.
+    /// The fetch runs when any of these holds, always when missing. It comes from the
+    /// `@include`/`@skip` around the fetch and on its fields: with every field off there's
+    /// nothing to ask for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_if: Option<Vec<ConditionGroup>>,
 }
@@ -489,53 +480,6 @@ pub struct ParallelNode<S: PlanState = Executable> {
     pub nodes: Vec<PlanNode<S>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(bound = "")]
-pub struct ConditionNode<S: PlanState = Executable> {
-    pub condition: String, // The variable name acting as the condition
-    pub if_clause: Option<Box<PlanNode<S>>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub else_clause: Option<Box<PlanNode<S>>>,
-}
-
-impl<S: PlanState> ConditionNode<S> {
-    /// Checks if this condition node can be merged with another.
-    pub fn can_merge_with(&self, other: &Self) -> bool {
-        if self.condition != other.condition {
-            return false;
-        }
-
-        let both_if = self.else_clause.is_none() && other.else_clause.is_none();
-        let both_else = self.if_clause.is_none() && other.if_clause.is_none();
-
-        both_if || both_else
-    }
-
-    /// Merges another compatible condition node into this one.
-    pub fn merge(&mut self, mut other: Self) {
-        let merge_into_if_clause = self.if_clause.is_some();
-        let mut nodes = self.take_inner_nodes();
-        nodes.extend(other.take_inner_nodes());
-
-        let merged_body = PlanNode::sequence(nodes);
-
-        if merge_into_if_clause {
-            self.if_clause = Some(Box::new(merged_body));
-        } else {
-            self.else_clause = Some(Box::new(merged_body));
-        }
-    }
-
-    fn take_inner_nodes(&mut self) -> Vec<PlanNode<S>> {
-        self.if_clause
-            .take()
-            .or_else(|| self.else_clause.take())
-            .map(|n| n.flatten_sequence())
-            .unwrap_or_default()
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub struct KeyRenamer {
@@ -844,8 +788,8 @@ impl PlanNode<Planning> {
         }
 
         // Its fields can have conditions of their own, like `details @include(if: $d)` and
-        // `inventory @include(if: $i)`, so with all of them off there's nothing to ask for. The
-        // conditions around it hold whenever it gets to run, only the rest is checked.
+        // `inventory @include(if: $i)`, so with all of them off there's nothing to ask for. It
+        // runs when the conditions around it hold and any of its fields is asked for.
         if !matches!(fetch.operation_kind, Some(OperationKind::Subscription)) {
             let known = ConditionGroup::new(
                 conditions
@@ -857,18 +801,24 @@ impl PlanNode<Planning> {
                     .filter_map(|condition| condition.to_skip_if())
                     .collect(),
             );
-            // with conditions that can't all hold, the nodes around never run it anyway
-            fetch.run_if = known.and_then(|known| {
-                conditions::run_if_of_output(
+            fetch.run_if = match known {
+                // conditions that can't all hold, it never runs
+                None => Some(Vec::new()),
+                Some(known) => match conditions::run_if_of_output(
                     step.output
                         .iter_selections()
                         .map(|(_, selections)| selections),
                     &known,
-                )
-            });
+                ) {
+                    None => (!known.is_empty()).then(|| vec![known]),
+                    Some(groups) => conditions::any_of(
+                        groups.iter().filter_map(|group| group.and(&known)).collect(),
+                    ),
+                },
+            };
         }
 
-        let node = if !step.response_path.is_empty() {
+        if !step.response_path.is_empty() {
             PlanNode::Flatten(FlattenNode {
                 path: step.response_path.clone().into(),
                 node: Box::new(PlanNode::Fetch(Box::new(fetch))),
@@ -877,39 +827,6 @@ impl PlanNode<Planning> {
             PlanNode::Subscription(Box::new(SubscriptionNode { primary: fetch }))
         } else {
             PlanNode::Fetch(Box::new(fetch))
-        };
-
-        conditions
-            .into_iter()
-            .rev()
-            .fold(node, |node, condition| node.under_condition(condition))
-    }
-
-    /// The node, run only when `condition` holds.
-    fn under_condition(self, condition: &Condition) -> Self {
-        match condition {
-            Condition::Include(var_name) => PlanNode::Condition(ConditionNode {
-                condition: var_name.clone(),
-                if_clause: Some(Box::new(self)),
-                else_clause: None,
-            }),
-            Condition::Skip(var_name) => PlanNode::Condition(ConditionNode {
-                condition: var_name.clone(),
-                if_clause: None,
-                else_clause: Some(Box::new(self)),
-            }),
-            Condition::SkipAndInclude { skip, include } => {
-                let include_node = PlanNode::Condition(ConditionNode {
-                    condition: include.clone(),
-                    if_clause: Some(Box::new(self)),
-                    else_clause: None,
-                });
-                PlanNode::Condition(ConditionNode {
-                    condition: skip.clone(),
-                    if_clause: None,
-                    else_clause: Some(Box::new(include_node)),
-                })
-            }
         }
     }
 }
@@ -1053,30 +970,6 @@ impl<S: PlanState> PrettyDisplay for ParallelNode<S> {
     }
 }
 
-impl<S: PlanState> PrettyDisplay for ConditionNode<S> {
-    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
-        let indent = get_indent(depth);
-
-        match (self.if_clause.as_ref(), self.else_clause.as_ref()) {
-            (Some(if_clause), None) => {
-                writeln!(f, "{indent}Include(if: ${}) {{", self.condition)?;
-                if_clause.pretty_fmt(f, depth + 1)?;
-                writeln!(f, "{indent}}},")?;
-            }
-            (None, Some(else_clause)) => {
-                writeln!(f, "{indent}Skip(if: ${}) {{", self.condition)?;
-                else_clause.pretty_fmt(f, depth + 1)?;
-                writeln!(f, "{indent}}},")?;
-            }
-            (Some(_if_clause), Some(_else_clause)) => {
-                todo!("Implement pretty_fmt for ConditionNode with both if and else clauses");
-            }
-            _ => panic!("Invalid condition node"),
-        }
-        Ok(())
-    }
-}
-
 impl<S: PlanState> PrettyDisplay for SubscriptionNode<S> {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
@@ -1095,7 +988,6 @@ impl<S: PlanState> PrettyDisplay for PlanNode<S> {
             PlanNode::Flatten(node) => node.pretty_fmt(f, depth),
             PlanNode::Sequence(node) => node.pretty_fmt(f, depth),
             PlanNode::Parallel(node) => node.pretty_fmt(f, depth),
-            PlanNode::Condition(node) => node.pretty_fmt(f, depth),
             PlanNode::Subscription(node) => node.pretty_fmt(f, depth),
             _ => Ok(()),
         }
@@ -1180,8 +1072,7 @@ mod stored_size_tests {
     #[test]
     fn stored_sizes_stay_small() {
         for (name, actual, expected) in [
-            ("PlanNode", size_of::<PlanNode>(), 40),
-            ("ConditionNode", size_of::<ConditionNode>(), 40),
+            ("PlanNode", size_of::<PlanNode>(), 32),
             // `run_if` is an `Option<Vec<_>>`
             ("FetchNode", size_of::<FetchNode>(), 264),
             ("BatchFetchNode", size_of::<BatchFetchNode>(), 168),

@@ -22,7 +22,6 @@ export type PlanNode =
   | SequenceNode
   | ParallelNode
   | FlattenNode
-  | ConditionNode
   | SubscriptionNode
   | DeferNode;
 
@@ -146,13 +145,6 @@ export interface FlattenNode {
   kind: "Flatten";
   path: FlattenNodePathSegment[];
   node: PlanNode;
-}
-
-export interface ConditionNode {
-  kind: "Condition";
-  condition: string;
-  ifClause?: PlanNode;
-  elseClause?: PlanNode;
 }
 
 export interface DeferNode {

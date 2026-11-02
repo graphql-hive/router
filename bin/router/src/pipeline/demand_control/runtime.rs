@@ -353,15 +353,6 @@ impl DemandControlRuntime {
             PlanNode::Parallel(parallel) => {
                 FormulaPlanNode::Aggregate(parallel.nodes.iter().map(&mut child).collect())
             }
-            PlanNode::Condition(condition) => FormulaPlanNode::Condition {
-                condition: condition.condition.clone(),
-                if_clause: condition.if_clause.as_deref().map(&mut child).map(Box::new),
-                else_clause: condition
-                    .else_clause
-                    .as_deref()
-                    .map(&mut child)
-                    .map(Box::new),
-            },
             PlanNode::Defer(defer) => {
                 let primary = defer.primary.node.as_deref().map(&mut child);
                 let deferred = defer

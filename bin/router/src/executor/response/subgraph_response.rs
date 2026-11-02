@@ -696,13 +696,6 @@ mod tests {
             PlanNode::Flatten(flatten) => {
                 find_fetch_custom_scalar_paths(Some(&flatten.node), service_name)
             }
-            PlanNode::Condition(condition) => find_fetch_custom_scalar_paths(
-                condition
-                    .if_clause
-                    .as_deref()
-                    .or(condition.else_clause.as_deref()),
-                service_name,
-            ),
             _ => None,
         }
     }

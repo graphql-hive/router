@@ -838,40 +838,36 @@ fn requires_partly_provided_after_entity_hop() -> Result<(), Box<dyn Error>> {
             }
           },
         },
-        Include(if: $x) {
-          Sequence {
-            Flatten(path: "user.orders.@") {
-              Fetch(service: "catalog") {
-                {
-                  ... on Order {
-                    __typename
-                    id
-                  }
-                } =>
-                {
-                  ... on Order {
-                    weight
-                  }
-                }
-              },
-            },
-            Flatten(path: "user.orders.@") {
-              Fetch(service: "orders") {
-                {
-                  ... on Order {
-                    __typename
-                    sku
-                    weight
-                    id
-                  }
-                } =>
-                {
-                  ... on Order {
-                    name
-                  }
-                }
-              },
-            },
+        Flatten(path: "user.orders.@") {
+          Fetch(service: "catalog", if: $x) {
+            {
+              ... on Order {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                weight
+              }
+            }
+          },
+        },
+        Flatten(path: "user.orders.@") {
+          Fetch(service: "orders", if: $x) {
+            {
+              ... on Order {
+                __typename
+                sku
+                weight
+                id
+              }
+            } =>
+            {
+              ... on Order {
+                name
+              }
+            }
           },
         },
       },

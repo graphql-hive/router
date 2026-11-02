@@ -11,7 +11,7 @@ use crate::query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use crate::query_planner::{
     ast::operation::OperationDefinition,
     planner::plan_nodes::{
-        ConditionNode, EntityBatch, EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
+        EntityBatch, EntityBatchAlias, FetchRewrite, FlattenNodePath, PlanNode,
         QueryPlan, SequenceNode,
     },
     state::supergraph_state::OperationKind,
@@ -889,15 +889,6 @@ impl<'exec> Executor<'exec> {
                     Box::pin(self.execute_plan_node(ctx, child)).await;
                 }
             }
-            PlanNode::Condition(condition_node) => {
-                if let Some(next_node) =
-                    condition_node_by_variables(condition_node, self.variable_values)
-                {
-                    // We use `Box.pin` here to avoid the compiler error about recursive future,
-                    // as `execute_plan_node` is calling itself recursively for condition nodes
-                    Box::pin(self.execute_plan_node(ctx, next_node)).await;
-                }
-            }
             node => {
                 let mut scope: FuturesUnordered<_> = self
                     .prepare_job_future(node, &ctx.data)
@@ -1110,8 +1101,7 @@ impl<'exec> Executor<'exec> {
         requests
     }
 
-    /// Whether any of the fetch's fields is asked for, see `FetchNode::run_if`. A variable counts
-    /// when it's `true`, like a `Condition` node reads it.
+    /// Whether the fetch runs, see `FetchNode::run_if`. A variable counts when it's `true`.
     fn fetch_runs(&self, fetch_node: &FetchNode) -> bool {
         fetch_node.run_if.as_ref().is_none_or(|groups| {
             groups.iter().any(|group| {
@@ -1285,9 +1275,6 @@ impl<'exec> Executor<'exec> {
                     })
                     .collect()
             }
-            PlanNode::Condition(node) => condition_node_by_variables(node, self.variable_values)
-                .map(|node| self.prepare_job_future(node, data))
-                .unwrap_or_default(),
             // Our Query Planner does not produce any other plan node types in ParallelNode
             _ => Vec::new(),
         }
@@ -1965,21 +1952,6 @@ impl<'e, 'exec> EntityMerger<'e, 'exec> {
         } else {
             deep_merge_from(target, entity);
         }
-    }
-}
-
-fn condition_node_by_variables<'a>(
-    condition_node: &'a ConditionNode,
-    variable_values: &'a Option<VariablesMap>,
-) -> Option<&'a PlanNode> {
-    let vars = variable_values.as_ref()?;
-    let value = vars.get(&condition_node.condition)?;
-    let condition_met = matches!(value.as_ref(), ValueRef::Bool(true));
-
-    if condition_met {
-        condition_node.if_clause.as_deref()
-    } else {
-        condition_node.else_clause.as_deref()
     }
 }
 

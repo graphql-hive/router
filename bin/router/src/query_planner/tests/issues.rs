@@ -1239,53 +1239,49 @@ fn issue_1308_conditional_rank_keeps_concrete_requires_types() -> Result<(), Box
             }
           },
         },
-        Include(if: $includeRank) {
-          Sequence {
-            Flatten(path: "cage.listings.@.pet") {
-              Fetch(service: "catalog") {
-                {
-                  ... on Animal {
-                    __typename
-                    id
+        Flatten(path: "cage.listings.@.pet") {
+          Fetch(service: "catalog", if: $includeRank) {
+            {
+              ... on Animal {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Animal {
+                __typename
+                ... on Cat {
+                  whiskers
+                }
+                ... on Dog {
+                  tricks
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "cage.listings.@") {
+          Fetch(service: "ranking", if: $includeRank) {
+            {
+              ... on Listing {
+                __typename
+                pet {
+                  __typename
+                  ... on Dog {
+                    tricks
                   }
-                } =>
-                {
-                  ... on Animal {
-                    __typename
-                    ... on Cat {
-                      whiskers
-                    }
-                    ... on Dog {
-                      tricks
-                    }
+                  ... on Cat {
+                    whiskers
                   }
                 }
-              },
-            },
-            Flatten(path: "cage.listings.@") {
-              Fetch(service: "ranking") {
-                {
-                  ... on Listing {
-                    __typename
-                    pet {
-                      __typename
-                      ... on Dog {
-                        tricks
-                      }
-                      ... on Cat {
-                        whiskers
-                      }
-                    }
-                    id
-                  }
-                } =>
-                {
-                  ... on Listing {
-                    rank
-                  }
-                }
-              },
-            },
+                id
+              }
+            } =>
+            {
+              ... on Listing {
+                rank
+              }
+            }
           },
         },
       },
@@ -1501,21 +1497,19 @@ fn issue_1647_include_on_field_after_conditional_entity_call() -> Result<(), Box
             }
           }
         },
-        Include(if: $withDetails) {
-          Flatten(path: "record|[User]") {
-            Fetch(service: "billing") {
-              {
-                ... on User {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on User {
-                  invoices
-                }
+        Flatten(path: "record|[User]") {
+          Fetch(service: "billing", if: $withDetails) {
+            {
+              ... on User {
+                __typename
+                id
               }
-            },
+            } =>
+            {
+              ... on User {
+                invoices
+              }
+            }
           },
         },
       },
@@ -1582,21 +1576,19 @@ fn issue_1647_include_on_fragment_after_conditional_entity_call() -> Result<(), 
             }
           }
         },
-        Include(if: $withDetails) {
-          Flatten(path: "record|[User]") {
-            Fetch(service: "billing") {
-              {
-                ... on User {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on User {
-                  invoices
-                }
+        Flatten(path: "record|[User]") {
+          Fetch(service: "billing", if: $withDetails) {
+            {
+              ... on User {
+                __typename
+                id
               }
-            },
+            } =>
+            {
+              ... on User {
+                invoices
+              }
+            }
           },
         },
       },

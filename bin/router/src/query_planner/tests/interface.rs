@@ -748,21 +748,19 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
           },
         },
         Parallel {
-          Include(if: $title) {
-            Flatten(path: "products.@.reviews.@.product|[Book]") {
-              Fetch(service: "books") {
-                {
-                  ... on Book {
-                    __typename
-                    id
-                  }
-                } =>
-                {
-                  ... on Book {
-                    title
-                  }
+          Flatten(path: "products.@.reviews.@.product|[Book]") {
+            Fetch(service: "books", if: $title) {
+              {
+                ... on Book {
+                  __typename
+                  id
                 }
-              },
+              } =>
+              {
+                ... on Book {
+                  title
+                }
+              }
             },
           },
           Flatten(path: "products.@.reviews.@.product|[Magazine]") {
@@ -864,21 +862,19 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
           },
         },
         Parallel {
-          Include(if: $title) {
-            Flatten(path: "products.@.reviews.@.product|[Book]") {
-              Fetch(service: "books") {
-                {
-                  ... on Book {
-                    __typename
-                    id
-                  }
-                } =>
-                {
-                  ... on Book {
-                    title
-                  }
+          Flatten(path: "products.@.reviews.@.product|[Book]") {
+            Fetch(service: "books", if: $title) {
+              {
+                ... on Book {
+                  __typename
+                  id
                 }
-              },
+              } =>
+              {
+                ... on Book {
+                  title
+                }
+              }
             },
           },
           Flatten(path: "products.@.reviews.@.product") {
@@ -994,21 +990,19 @@ fn nested_interface_field_with_redundant_inline_fragments_other_type_order(
           },
         },
         Parallel {
-          Include(if: $title) {
-            Flatten(path: "products.@.reviews.@.product|[Tome]") {
-              Fetch(service: "books") {
-                {
-                  ... on Tome {
-                    __typename
-                    id
-                  }
-                } =>
-                {
-                  ... on Tome {
-                    title
-                  }
+          Flatten(path: "products.@.reviews.@.product|[Tome]") {
+            Fetch(service: "books", if: $title) {
+              {
+                ... on Tome {
+                  __typename
+                  id
                 }
-              },
+              } =>
+              {
+                ... on Tome {
+                  title
+                }
+              }
             },
           },
           Flatten(path: "products.@.reviews.@.product") {

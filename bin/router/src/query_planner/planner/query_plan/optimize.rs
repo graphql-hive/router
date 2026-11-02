@@ -561,11 +561,6 @@ impl PlanOptimizer<'_> {
 
                 Ok(PlanNode::parallel(optimized_nodes))
             }
-            PlanNode::Condition(mut condition_node) => {
-                self.optimize_optional_child(&mut condition_node.if_clause)?;
-                self.optimize_optional_child(&mut condition_node.else_clause)?;
-                Ok(PlanNode::Condition(condition_node))
-            }
             PlanNode::Subscription(subscription_node) => {
                 // self.optimize_node on a FetchNode returns itself, no need to optimize
                 Ok(PlanNode::Subscription(subscription_node))
@@ -941,24 +936,7 @@ fn optimize_plan_sequence(nodes: Vec<PlanNode>) -> Vec<PlanNode> {
         }
     }
 
-    // Merge consecutive compatible Condition nodes.
-    // We check if current condition can be merged into the previous one.
     flattened_nodes
-        .into_iter()
-        .fold(Vec::new(), |mut acc, current_node| {
-            match (acc.last_mut(), current_node) {
-                // Merge adjacent compatible Condition nodes.
-                (Some(PlanNode::Condition(last_cond)), PlanNode::Condition(current_cond))
-                    if last_cond.can_merge_with(&current_cond) =>
-                {
-                    last_cond.merge(current_cond);
-                }
-                (_, current_node) => {
-                    acc.push(current_node);
-                }
-            }
-            acc
-        })
 }
 
 #[cfg(test)]
