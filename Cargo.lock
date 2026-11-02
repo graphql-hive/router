@@ -158,7 +158,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -169,7 +169,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1123,7 +1123,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1996,7 +1996,7 @@ dependencies = [
  "jsonwebtoken",
  "lazy_static",
  "libdd-trace-protobuf 5.1.1",
- "libdd-trace-utils 14.0.0",
+ "libdd-trace-utils 15.0.0",
  "mockito",
  "ntex",
  "opentelemetry-otlp",
@@ -2183,7 +2183,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3392,7 +3392,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3786,9 +3786,9 @@ dependencies = [
 
 [[package]]
 name = "libdd-common"
-version = "8.0.0"
+version = "9.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fe68e6dd16f4aa0b7b72fa7cf4c3ee5f6fd1cc9c9a569f08b712c9ef44750f3"
+checksum = "296383fd7c4927e77079c0e2660a71b16b792cb4f19b4e646e9c974fc1936cea"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3985,12 +3985,19 @@ dependencies = [
 
 [[package]]
 name = "libdd-tinybytes"
-version = "1.1.5"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "861c7ffeb31a76638456c696d472651c7b413c8a366b4ae2c34afd788c861e2b"
+checksum = "13cc057099a83139204f195f8af629c82b1aa6f89fef18de449d767901e79fa6"
 dependencies = [
+ "libdd-trace-model",
  "serde",
 ]
+
+[[package]]
+name = "libdd-trace-model"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5f9e207fa4eb1f2b8dbedf2b687706968341addd7092b57d8ad5b6d6c51d15a"
 
 [[package]]
 name = "libdd-trace-normalization"
@@ -4004,9 +4011,9 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-normalization"
-version = "4.2.0"
+version = "4.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a3c8d6bc3cbf1f46d8bde7fe802e82603f3de3ebab5b1b3bc8036a81e4d7cea"
+checksum = "31ceafaba82e03add2e5b95a101c13c6a212b5712fe22d87b19b1e5e297610c8"
 dependencies = [
  "anyhow",
  "libdd-trace-protobuf 5.1.1",
@@ -4120,16 +4127,18 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "14.0.0"
+version = "15.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a8a4fac534f744ab12645fcb2ef39c96ccc93d8ecf30f2469a89755fccee0de"
+checksum = "fe8b0c05953bd56365a9d3a578e12764db52da75964bec1655a7a7c0b94af8dc"
 dependencies = [
+ "allocator-api2",
  "anyhow",
  "base64 0.22.1",
  "bytes",
  "crossbeam-channel",
  "futures",
  "getrandom 0.2.17",
+ "hashbrown 0.17.1",
  "hex",
  "http",
  "http-body",
@@ -4137,9 +4146,10 @@ dependencies = [
  "indexmap 2.14.2",
  "itoa",
  "libdd-capabilities 4.0.1",
- "libdd-common 8.0.0",
+ "libdd-common 9.0.0",
  "libdd-tinybytes",
- "libdd-trace-normalization 4.2.0",
+ "libdd-trace-model",
+ "libdd-trace-normalization 4.3.1",
  "libdd-trace-protobuf 5.1.1",
  "prost 0.14.4",
  "rand 0.8.6",
@@ -5148,7 +5158,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6925,7 +6935,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6984,7 +6994,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7699,7 +7709,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7991,7 +8001,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8011,7 +8021,7 @@ version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8c27177b12a6399ffc08b98f76f7c9a1f4fe9fc967c784c5a071fa8d93cf7e1"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9168,7 +9178,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
