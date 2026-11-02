@@ -1,3 +1,9 @@
+## 0.3.24 (2026-11-02)
+
+### Fixes
+
+- Add validation options to control `Int` value range validation.
+
 ## 0.3.23 (2026-09-28)
 
 ### Fixes
