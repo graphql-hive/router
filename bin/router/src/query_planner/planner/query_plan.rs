@@ -124,7 +124,7 @@ pub fn build_query_plan_from_fetch_graph(
                 )))?;
 
             let step_data = fetch_graph.get_step_data(step_index)?;
-            current_wave_nodes.push(PlanNode::from_fetch_step(step_data, supergraph, options));
+            current_wave_nodes.extend(PlanNode::from_fetch_step(step_data, supergraph, options));
             planned_nodes_count += 1;
             in_degrees.mark_as_processed(step_index);
 
@@ -143,18 +143,13 @@ pub fn build_query_plan_from_fetch_graph(
             }
         }
 
-        if current_wave_nodes.is_empty() {
-            return Err(QueryPlanError::Internal(String::from(
-                "Wave was empty. It should not happen as the queue was non-empty.",
-            )));
-        } else if current_wave_nodes.len() == 1 {
-            overall_plan_sequence.push(current_wave_nodes.into_iter().next().ok_or(
-                QueryPlanError::Internal(String::from("Was was expected to be of length 1")),
-            )?);
-        } else {
+        // a wave can end up empty when none of its fetches would ever run
+        if current_wave_nodes.len() > 1 {
             overall_plan_sequence.push(PlanNode::Parallel(ParallelNode {
                 nodes: current_wave_nodes,
             }));
+        } else {
+            overall_plan_sequence.extend(current_wave_nodes);
         }
     }
 
@@ -170,11 +165,12 @@ pub fn build_query_plan_from_fetch_graph(
     if overall_plan_sequence.is_empty() {
         if total_fetch_nodes == 0 {
             return Err(QueryPlanError::EmptyPlan);
-        } else {
-            return Err(QueryPlanError::Internal(
-                "Plan is empty, but graph reported task nodes that were not planned.".to_string(),
-            ));
         }
+        // none of the fetches would ever run, so there's nothing to send
+        return Ok(QueryPlan {
+            kind: QUERY_PLAN_KIND,
+            node: None,
+        });
     }
 
     // First do light top-level normalization (e.g. flatten nested Sequence wrappers).

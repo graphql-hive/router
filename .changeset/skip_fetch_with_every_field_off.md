@@ -11,4 +11,6 @@ A fetch whose fields are all switched off by `@include`/`@skip` on different var
 
 `runIf` also has the `@include`/`@skip` around the fetch, so query plans no longer have `Condition` nodes. A fetch under `... @include(if: $a)` is now `Fetch(service: "b", if: $a)` instead of `Include(if: $a) { Fetch(service: "b") }`. Anything else that executes these plans has to check `runIf`.
 
+A fetch that can never run, like one under `... @skip(if: $a) { ... @include(if: $a) { ... } }`, is left out of the plan, so `runIf` is never empty. When that leaves no fetch at all, the plan has no node.
+
 A fetch with a `runIf` isn't batched with other entity calls for now.

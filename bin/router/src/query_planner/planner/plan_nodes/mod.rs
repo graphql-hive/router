@@ -153,7 +153,7 @@ pub struct FetchNode<S: PlanState = Executable> {
     pub context: Option<Box<FetchContext>>,
     /// The fetch runs when any of these holds, always when missing. It comes from the
     /// `@include`/`@skip` around the fetch and on its fields: with every field off there's
-    /// nothing to ask for.
+    /// nothing to ask for. Never empty, a fetch that can't ever run is left out of the plan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_if: Option<Vec<ConditionGroup>>,
 }
@@ -770,7 +770,7 @@ impl PlanNode<Planning> {
         step: &FetchStepData<MultiTypeFetchStep>,
         supergraph: &SupergraphState,
         options: &QueryPlannerOptions,
-    ) -> Self {
+    ) -> Option<Self> {
         let mut fetch = FetchNode::from_fetch_step(step, supergraph, options);
 
         // A fetch planned under fragments or fields with `@include`/`@skip` runs only when all
@@ -801,24 +801,26 @@ impl PlanNode<Planning> {
                     .filter_map(|condition| condition.to_skip_if())
                     .collect(),
             );
-            fetch.run_if = match known {
-                // conditions that can't all hold, it never runs
-                None => Some(Vec::new()),
-                Some(known) => match conditions::run_if_of_output(
-                    step.output
-                        .iter_selections()
-                        .map(|(_, selections)| selections),
-                    &known,
-                ) {
-                    None => (!known.is_empty()).then(|| vec![known]),
-                    Some(groups) => conditions::any_of(
-                        groups.iter().filter_map(|group| group.and(&known)).collect(),
-                    ),
-                },
+            // conditions that can't all hold, it never runs
+            let known = known?;
+            fetch.run_if = match conditions::run_if_of_output(
+                step.output
+                    .iter_selections()
+                    .map(|(_, selections)| selections),
+                &known,
+            ) {
+                None => (!known.is_empty()).then(|| vec![known]),
+                Some(groups) => conditions::any_of(
+                    groups.iter().filter_map(|group| group.and(&known)).collect(),
+                ),
             };
+            // no field can ever be asked for, it never runs
+            if fetch.run_if.as_ref().is_some_and(Vec::is_empty) {
+                return None;
+            }
         }
 
-        if !step.response_path.is_empty() {
+        Some(if !step.response_path.is_empty() {
             PlanNode::Flatten(FlattenNode {
                 path: step.response_path.clone().into(),
                 node: Box::new(PlanNode::Fetch(Box::new(fetch))),
@@ -827,7 +829,7 @@ impl PlanNode<Planning> {
             PlanNode::Subscription(Box::new(SubscriptionNode { primary: fetch }))
         } else {
             PlanNode::Fetch(Box::new(fetch))
-        }
+        })
     }
 }
 

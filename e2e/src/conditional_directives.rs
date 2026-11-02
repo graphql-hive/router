@@ -681,4 +681,27 @@ mod conditional_directives_e2e_tests {
             reviews_query
         );
     }
+
+    #[ntex::test]
+    async fn nothing_is_fetched_when_conditions_contradict() {
+        for a in [true, false] {
+            let (subgraphs, router) = build_router_with_supergraph().await;
+            let res = router
+                .send_graphql_request(
+                    r#"
+                    query ($a: Boolean!) {
+                      me @include(if: $a) @skip(if: $a) {
+                        name
+                      }
+                    }
+                    "#,
+                    Some(sonic_rs::json!({ "a": a })),
+                    None,
+                )
+                .await;
+            assert!(res.status().is_success(), "Expected 200 OK");
+            assert_eq!(res.json_body().await.to_string(), r#"{"data":{}}"#);
+            assert!(subgraphs.get_requests_log("accounts").is_none_or(|log| log.is_empty()));
+        }
+    }
 }

@@ -1864,3 +1864,69 @@ fn batched_entity_calls_keep_the_condition_of_their_fragment() -> Result<(), Box
 
     Ok(())
 }
+
+#[test]
+fn fetch_that_never_runs_is_left_out() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    // `reviews` needs `$a` to be true and false at once
+    let document = parse_operation(
+        r#"
+        query ($a: Boolean!) {
+          me {
+            name
+            ... @skip(if: $a) {
+              ... @include(if: $a) {
+                reviews {
+                  body
+                }
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults("../../bench/supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{query_plan}"), @r#"
+    QueryPlan {
+      Fetch(service: "accounts") {
+        query ($a:Boolean!) {
+          me {
+            name
+            ... on User @skip(if: $a) {
+              ... on User @include(if: $a) {
+                __typename
+                id
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn plan_is_empty_when_no_fetch_ever_runs() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($a: Boolean!) {
+          me @include(if: $a) @skip(if: $a) {
+            name
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults("../../bench/supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{query_plan}"), @r"
+    QueryPlan {
+      None,
+    },
+    ");
+
+    Ok(())
+}
