@@ -638,6 +638,7 @@ pub async fn execute_planned_request<'exec>(
         &supergraph.snapshot,
         &mut graphql_params.variables,
         normalize_payload,
+        shared_state.validation_options,
     )?;
 
     let client_request_details = MutableClientRequestDetails {
