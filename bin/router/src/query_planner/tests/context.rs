@@ -3425,82 +3425,74 @@ fn per_type_contextual_fields_under_other_aliases_stay_apart() -> Result<(), Box
           }
         },
         Parallel {
-          Skip(if: $v15) {
-            Flatten(path: "accounts.@|[Member].wallet") {
-              Fetch(service: "a") {
-                {
-                  ... on Wallet {
-                    __typename
-                    id
+          Flatten(path: "accounts.@|[Member].wallet") {
+            Fetch(service: "a", if: (!$v15 && !$v4) || (!$v15 && !$v6)) {
+              {
+                ... on Wallet {
+                  __typename
+                  id
+                }
+              } =>
+              ($v4:Boolean!,$v6:Boolean!=false,$__context_5:String,$__context_4:String) {
+                ... on Wallet {
+                  ... on Wallet @skip(if: $v4) {
+                    discount(plan: $__context_5)
                   }
-                } =>
-                ($v4:Boolean!,$v6:Boolean!=false,$__context_5:String,$__context_4:String) {
-                  ... on Wallet {
-                    ... on Wallet @skip(if: $v4) {
-                      discount(plan: $__context_5)
-                    }
-                    ... on Wallet @skip(if: $v6) {
-                      a3_discount: discount(plan: $__context_4)
-                    }
+                  ... on Wallet @skip(if: $v6) {
+                    a3_discount: discount(plan: $__context_4)
                   }
                 }
-              },
+              }
             },
           },
-          Skip(if: $v15) {
-            Flatten(path: "accounts.@|[Member].wallet") {
-              Fetch(service: "a") {
-                {
-                  ... on Wallet {
-                    __typename
-                    id
-                  }
-                } =>
-                ($__context_3:String) {
-                  ... on Wallet {
-                    discount(plan: $__context_3)
-                  }
+          Flatten(path: "accounts.@|[Member].wallet") {
+            Fetch(service: "a", if: !$v15) {
+              {
+                ... on Wallet {
+                  __typename
+                  id
                 }
-              },
+              } =>
+              ($__context_3:String) {
+                ... on Wallet {
+                  discount(plan: $__context_3)
+                }
+              }
             },
           },
-          Skip(if: $v15) {
-            Flatten(path: "accounts.@|[Guest].wallet") {
-              Fetch(service: "a") {
-                {
-                  ... on Wallet {
-                    __typename
-                    id
+          Flatten(path: "accounts.@|[Guest].wallet") {
+            Fetch(service: "a", if: (!$v15 && !$v4) || (!$v15 && !$v6)) {
+              {
+                ... on Wallet {
+                  __typename
+                  id
+                }
+              } =>
+              ($v4:Boolean!,$v6:Boolean!=false,$__context_2:String,$__context_1:String) {
+                ... on Wallet {
+                  ... on Wallet @skip(if: $v4) {
+                    discount(plan: $__context_2)
                   }
-                } =>
-                ($v4:Boolean!,$v6:Boolean!=false,$__context_2:String,$__context_1:String) {
-                  ... on Wallet {
-                    ... on Wallet @skip(if: $v4) {
-                      discount(plan: $__context_2)
-                    }
-                    ... on Wallet @skip(if: $v6) {
-                      a3_discount: discount(plan: $__context_1)
-                    }
+                  ... on Wallet @skip(if: $v6) {
+                    a3_discount: discount(plan: $__context_1)
                   }
                 }
-              },
+              }
             },
           },
-          Skip(if: $v15) {
-            Flatten(path: "accounts.@|[Guest].wallet") {
-              Fetch(service: "a") {
-                {
-                  ... on Wallet {
-                    __typename
-                    id
-                  }
-                } =>
-                ($__context_0:String) {
-                  ... on Wallet {
-                    discount(plan: $__context_0)
-                  }
+          Flatten(path: "accounts.@|[Guest].wallet") {
+            Fetch(service: "a", if: !$v15) {
+              {
+                ... on Wallet {
+                  __typename
+                  id
                 }
-              },
+              } =>
+              ($__context_0:String) {
+                ... on Wallet {
+                  discount(plan: $__context_0)
+                }
+              }
             },
           },
         },
