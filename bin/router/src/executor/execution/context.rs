@@ -27,9 +27,17 @@ use crate::{
     },
 };
 
-/// For each target of a path, in walk order: the context group it was sent in and its index
-/// among that group's representations. `None` when the target sends nothing (null, or not projected).
-pub(super) type EntityIndexes = Arc<Vec<Option<(usize, usize)>>>;
+/// Which entity goes into a target: the context group it was sent in, and its index among that
+/// group's representations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EntityRef {
+    pub context_group: usize,
+    pub index: usize,
+}
+
+/// The [`EntityRef`] of each target on a path, in walk order. `None` when the target sends
+/// nothing (null, or not projected).
+pub(super) type TargetEntities = Arc<Vec<Option<EntityRef>>>;
 
 pub(super) struct ContextGroup<'a> {
     pub variables: Vec<(&'a str, Vec<u8>)>,
@@ -224,7 +232,8 @@ impl<'a, 'd, 'v> ContextGroups<'a, 'd, 'v> {
 
 /// Walks every flatten path, deduplicates the entities by hash and projects their
 /// representations. Entities are grouped by the tuple of their context values (one request per
-/// group), without context variables there is at most one group. Identical paths share indexes.
+/// group), without context variables there is at most one group. Identical paths share their
+/// target entities.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn collect_context_entities<'a, 'd, 'v>(
     data: &'d Value<'v>,
@@ -234,21 +243,21 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
     context: &'a Option<Box<FetchContext>>,
     possible_types: &PossibleTypes,
     subgraph_keys: Option<&KeysByType>,
-) -> (Vec<ContextGroup<'a>>, Vec<EntityIndexes>) {
+) -> (Vec<ContextGroup<'a>>, Vec<TargetEntities>) {
     let mut contexts = ContextGroups::new(context);
-    let mut path_indexes: Vec<EntityIndexes> = Vec::new();
-    let mut seen_paths: Vec<(ResponsePathRef<'a>, EntityIndexes)> = Vec::new();
+    let mut path_entities: Vec<TargetEntities> = Vec::new();
+    let mut seen_paths: Vec<(ResponsePathRef<'a>, TargetEntities)> = Vec::new();
     let required_selections = requires.root_selections();
     for path in paths {
-        if let Some((_, indexes)) = seen_paths.iter().find(|(seen, _)| *seen == path) {
-            path_indexes.push(Arc::clone(indexes));
+        if let Some((_, entities)) = seen_paths.iter().find(|(seen, _)| *seen == path) {
+            path_entities.push(Arc::clone(entities));
             continue;
         }
-        let mut indexes = Vec::new();
+        let mut entities = Vec::new();
         // the callback gets references into `data`, which the ancestor cache relies on
         let mut collect = |entity: &'d Value<'v>, objects: &[&'d Value<'v>]| {
             if entity.is_null() {
-                indexes.push(None);
+                entities.push(None);
                 return;
             }
             let group_index = contexts.resolve(entity, objects, possible_types);
@@ -265,7 +274,10 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
             };
             let group = &mut contexts.groups[group_index];
             if let Some(index) = group.hash_to_index.get(&hash) {
-                indexes.push(Some((group_index, *index)));
+                entities.push(Some(EntityRef {
+                    context_group: group_index,
+                    index: *index,
+                }));
                 return;
             }
             let mut rewritten;
@@ -290,20 +302,23 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
             ) {
                 let index = group.hash_to_index.len();
                 group.hash_to_index.insert(hash, index);
-                indexes.push(Some((group_index, index)));
+                entities.push(Some(EntityRef {
+                    context_group: group_index,
+                    index,
+                }));
             } else {
-                indexes.push(None);
+                entities.push(None);
             }
         };
         traverse_and_callback(data, path.as_slice(), possible_types, &mut collect);
-        let indexes = Arc::new(indexes);
-        seen_paths.push((path, Arc::clone(&indexes)));
-        path_indexes.push(indexes);
+        let entities = Arc::new(entities);
+        seen_paths.push((path, Arc::clone(&entities)));
+        path_entities.push(entities);
     }
     for group in &mut contexts.groups {
         group.representations.push(b']');
     }
-    (contexts.groups, path_indexes)
+    (contexts.groups, path_entities)
 }
 
 /// One request that carries several groups of contextual argument values, written out from a
@@ -510,8 +525,8 @@ mod tests {
         assert_eq!(targets[0][4], None);
         // another parent with the same value lands in the same group
         assert_eq!(targets[0][5], targets[0][0]);
-        assert_eq!(targets[0][0].unwrap().0, 0);
-        assert_ne!(targets[0][2].unwrap().0, 0);
+        assert_eq!(targets[0][0].unwrap().context_group, 0);
+        assert_ne!(targets[0][2].unwrap().context_group, 0);
     }
 
     #[test]
@@ -571,7 +586,10 @@ mod tests {
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].variables[1].1, b"\"A\"");
         assert_eq!(groups[1].variables[1].1, b"\"B\"");
-        let entity_groups: Vec<usize> = targets[0].iter().map(|entity| entity.unwrap().0).collect();
+        let entity_groups: Vec<usize> = targets[0]
+            .iter()
+            .map(|entity| entity.unwrap().context_group)
+            .collect();
         assert_eq!(entity_groups[..3], [0, 1, 0]);
 
         // resolving the same sources again reuses the cached group, a different entity under
@@ -687,7 +705,7 @@ mod tests {
         // posts 1 to 4, then drafts 5 and 6, with the group each one must land in
         let entities = targets[0].iter().chain(targets[1].iter());
         for (entity, group) in entities.zip([0, 0, 1, 2, 0, 2]) {
-            assert_eq!(entity.unwrap().0, group);
+            assert_eq!(entity.unwrap().context_group, group);
         }
         assert_eq!(
             groups
