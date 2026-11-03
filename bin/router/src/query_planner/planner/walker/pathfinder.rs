@@ -28,7 +28,7 @@ use crate::query_planner::{
 
 use super::{
     error::WalkOperationError,
-    excluded::ExcludedFromLookup,
+    excluded::{ExcludedFromLookup, SubgraphSet, VisitedRequirements},
     path::{ContextRequirement, OperationPath},
 };
 
@@ -38,13 +38,12 @@ pub struct EdgeRequirements<'graph> {
     pub context_requirements: Vec<Rc<ContextRequirement>>,
 }
 
-pub type VisitedGraphs<'graph> = HashSet<&'graph str>;
 type ActiveEdgeChecks = HashSet<(NodeIndex, EdgeIndex)>;
 
 struct IndirectPathsLookupQueue<'graph> {
     queue: Vec<(
-        VisitedGraphs<'graph>,
-        HashSet<&'graph TypeAwareSelection<'graph>>,
+        SubgraphSet,
+        VisitedRequirements<'graph>,
         OperationPath<'graph>,
     )>,
 }
@@ -57,11 +56,7 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
         IndirectPathsLookupQueue {
             queue: vec![(
                 excluded.graph_ids.clone(),
-                excluded
-                    .requirement
-                    .clone()
-                    .into_iter()
-                    .collect::<HashSet<_>>(),
+                excluded.requirement.clone(),
                 path.clone(),
             )],
         }
@@ -69,8 +64,8 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
 
     pub fn add(
         &mut self,
-        visited_graphs: VisitedGraphs<'graph>,
-        selections: HashSet<&'graph TypeAwareSelection<'graph>>,
+        visited_graphs: SubgraphSet,
+        selections: VisitedRequirements<'graph>,
         path: OperationPath<'graph>,
     ) {
         self.queue.push((visited_graphs, selections, path));
@@ -79,8 +74,8 @@ impl<'graph> IndirectPathsLookupQueue<'graph> {
     pub fn pop(
         &mut self,
     ) -> Option<(
-        VisitedGraphs<'graph>,
-        HashSet<&'graph TypeAwareSelection<'graph>>,
+        SubgraphSet,
+        VisitedRequirements<'graph>,
         OperationPath<'graph>,
     )> {
         self.queue.pop()
@@ -231,6 +226,7 @@ impl<'graph> PathSearch<'graph> {
 
                 let edge_tail = graph.node(edge_ref.target().id())?;
                 let edge_tail_graph_id = edge_tail.graph_id().unwrap();
+                let edge_tail_subgraph = edge_tail.subgraph_index().unwrap();
 
                 let is_resolvable = match target {
                     NavigationTarget::Field {
@@ -247,7 +243,7 @@ impl<'graph> PathSearch<'graph> {
                     continue;
                 }
 
-                if visited_graphs.contains(edge_tail_graph_id) {
+                if visited_graphs.contains(edge_tail_subgraph) {
                     trace!(
                     "Ignoring, graph is excluded and already visited (current: {}, visited: {:?})",
                     edge_tail_graph_id,
@@ -306,7 +302,7 @@ impl<'graph> PathSearch<'graph> {
                 }
 
                 let mut new_excluded_graph_ids = visited_graphs.clone();
-                new_excluded_graph_ids.insert(edge_tail_graph_id);
+                new_excluded_graph_ids.insert(edge_tail_subgraph);
                 let new_excluded = ExcludedFromLookup {
                     graph_ids: new_excluded_graph_ids,
                     requirement: visited_key_fields.clone(),
@@ -353,7 +349,7 @@ impl<'graph> PathSearch<'graph> {
                             trace!("No direct paths found");
 
                             let mut new_visited_graphs = visited_graphs.clone();
-                            new_visited_graphs.insert(edge_tail_graph_id);
+                            new_visited_graphs.insert(edge_tail_subgraph);
 
                             let next_requirements = match edge.requirements() {
                                 Some(requirements) => {

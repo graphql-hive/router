@@ -2059,6 +2059,11 @@ fn find_satisfiable_key<'a>(
         .collect();
     entity_moves_edges_to_self.sort_by_key(|edge| std::cmp::Reverse(edge.weight().cost()));
 
+    // It's safe to use a noop CancellationToken here,
+    // as the result of this function is guaranteed to be successful,
+    // and fast.
+    let cancellation_token = CancellationToken::new();
+    let excluded = Default::default();
     for edge_ref in entity_moves_edges_to_self {
         if can_satisfy_edge(
             graph,
@@ -2071,12 +2076,9 @@ fn find_satisfiable_key<'a>(
                 cost: 0,
                 union_context: None,
             },
-            &Default::default(),
+            &excluded,
             true,
-            // It's safe to use a noop CancellationToken here,
-            // as the result of this function is guaranteed to be successful,
-            // and fast.
-            &CancellationToken::new(),
+            &cancellation_token,
         )?
         .is_some()
         {
