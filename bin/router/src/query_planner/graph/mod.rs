@@ -10,7 +10,6 @@ mod tests;
 
 use ahash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use std::{
-    collections::BTreeMap,
     fmt::{Debug, Display},
     sync::Arc,
 };
@@ -27,7 +26,7 @@ use crate::query_planner::{
         selection_set::{InlineFragmentSelection, SelectionSet},
         type_aware_selection::TypeAwareSelection,
     },
-    federation_spec::{CachedFederationRules, FederationRules},
+    federation_spec::{directives::JoinFieldDirective, FederationRules},
     graph::node::{SubgraphTypeSpecialization, UnionMembersData},
     state::supergraph_state::{
         OperationKind, SubgraphName as ResolvedSubgraphName, SupergraphDefinition, SupergraphField,
@@ -50,6 +49,13 @@ type SubgraphName<'a> = &'a str;
 type UnionMemberTypes<'a> = HashSet<&'a str>;
 type UnionRegistyHashMap<'a> =
     HashMap<UnionTypeName<'a>, HashMap<SubgraphName<'a>, UnionMemberTypes<'a>>>;
+
+/// A field of a type in one subgraph, with its @join__field there if it has one.
+type FieldInSubgraph<'a> = (
+    &'a String,
+    &'a SupergraphField,
+    Option<&'a JoinFieldDirective>,
+);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct SubgraphNodeKey<'state> {
@@ -249,13 +255,12 @@ impl<'graph> Graph<'graph> {
         );
 
         let mut build_context = GraphBuildContext::default();
-        let mut cached_rules = CachedFederationRules::default();
 
         self.build_root_nodes(state)?;
         self.link_root_edges(state, &mut build_context)?;
-        let provides = self.build_field_edges(state, &mut build_context, &mut cached_rules)?;
+        let provides = self.build_field_edges(state, &mut build_context)?;
         self.build_interface_implementation_edges(state, &mut build_context)?;
-        self.build_entity_reference_edges(state, &mut build_context, &mut cached_rules)?;
+        self.build_entity_reference_edges(state, &mut build_context)?;
         self.build_provides_edges(state, provides)?;
 
         Ok(())
@@ -384,12 +389,11 @@ impl<'graph> Graph<'graph> {
         );
     }
 
-    #[instrument(level = "trace", skip(self, state, build_context, cached_rules))]
+    #[instrument(level = "trace", skip(self, state, build_context))]
     fn build_entity_reference_edges(
         &mut self,
         state: &'graph SupergraphState,
         build_context: &mut GraphBuildContext<'graph>,
-        cached_rules: &mut CachedFederationRules<'graph>,
     ) -> Result<(), GraphError> {
         for (def_name, definition) in state
             .definitions
@@ -417,8 +421,12 @@ impl<'graph> Graph<'graph> {
                 let key = match (join_type.resolvable, &join_type.key) {
                     (true, Some(key)) => {
                         targets.push(index);
-                        let key_selection =
-                            cached_rules.parse_key(state, &join_type.graph_id, def_name, key);
+                        let key_selection = Arc::new(FederationRules::parse_key(
+                            state,
+                            &join_type.graph_id,
+                            def_name,
+                            key,
+                        ));
                         Some((key.as_str(), key_selection))
                     }
                     _ => None,
@@ -460,25 +468,20 @@ impl<'graph> Graph<'graph> {
                     continue;
                 }
 
-                // Ignore if the @key is not resolable
-                if !join_type1.resolvable {
+                // Ignore if the @key is not resolable or there is no @key
+                let Some((key, key_selection)) = keys[index1].clone() else {
                     continue;
-                }
-
-                // Ignore if there is no @key
-                if join_type1.key.is_none() {
-                    continue;
-                }
+                };
 
                 let interface_object_name = def_name;
                 let tail = head;
 
-                let typename_selection = cached_rules.parse_key(
+                let typename_selection = Arc::new(FederationRules::parse_key(
                     state,
                     &join_type1.graph_id,
                     interface_object_name,
                     "__typename",
-                );
+                ));
 
                 for (object_type_name, object_type_definition) in state
                     .definitions
@@ -525,19 +528,6 @@ impl<'graph> Graph<'graph> {
                     );
 
                     // Connect them via @key of the @interfaceObject.
-                    // Safe to expect a key, because of the if statement before.
-                    let key = join_type1
-                        .key
-                        .as_ref()
-                        .expect("@interfaceObject to have a key");
-
-                    let key_selection = cached_rules.parse_key(
-                        state,
-                        &join_type1.graph_id,
-                        interface_object_name,
-                        key,
-                    );
-
                     for join_type2 in object_type_definition.join_types() {
                         if join_type1.graph_id == join_type2.graph_id {
                             // it shouldn't really happen as the @interfaceObject is an object type,
@@ -776,12 +766,11 @@ impl<'graph> Graph<'graph> {
     }
 
     /// Returns the `@provides` of each field edge that has one, for `build_provides_edges`.
-    #[instrument(level = "trace", skip(self, state, build_context, cached_rules))]
+    #[instrument(level = "trace", skip(self, state, build_context))]
     fn build_field_edges(
         &mut self,
         state: &'graph SupergraphState,
         build_context: &mut GraphBuildContext<'graph>,
-        cached_rules: &mut CachedFederationRules<'graph>,
     ) -> Result<HashMap<EdgeIndex, Provided>, GraphError> {
         let unions = UnionDefinitions::new(state);
         let mut provides = HashMap::new();
@@ -796,13 +785,56 @@ impl<'graph> Graph<'graph> {
         {
             // A type can repeat @join__type for one subgraph (one per @key), so visit each
             // subgraph once. Everything below adds each edge once per subgraph, no dedup needed.
-            let mut subgraphs: BTreeMap<&str, bool> = BTreeMap::new();
-            for join_type in definition.join_types() {
-                *subgraphs.entry(join_type.graph_id.as_str()).or_default() |=
-                    join_type.is_interface_object;
+            let mut subgraphs: Vec<(&str, bool)> = definition
+                .join_types()
+                .iter()
+                .map(|join_type| (join_type.graph_id.as_str(), join_type.is_interface_object))
+                .collect();
+            subgraphs.sort_by_key(|&(graph_id, _)| graph_id);
+            subgraphs.dedup_by(|later, kept| {
+                let same = later.0 == kept.0;
+                if same {
+                    kept.1 |= later.1;
+                }
+                same
+            });
+
+            // Sort the fields into their subgraphs in one go. Asking every field about every
+            // subgraph is subgraphs * fields, and shared types like Query live in hundreds.
+            // A field without @join__field lives wherever its type does,
+            // otherwise the first @join__field of a subgraph is the one that counts.
+            let mut fields_per_subgraph: Vec<Vec<FieldInSubgraph>> =
+                vec![Vec::new(); subgraphs.len()];
+            for field in definition.fields() {
+                if field.1.join_field.is_empty() {
+                    for fields in &mut fields_per_subgraph {
+                        fields.push((field.0, field.1, None));
+                    }
+                    continue;
+                }
+                for join_field in &field.1.join_field {
+                    let Some(graph_id) = join_field.graph_id.as_deref() else {
+                        continue;
+                    };
+                    let Ok(position) =
+                        subgraphs.binary_search_by_key(&graph_id, |&(graph_id, _)| graph_id)
+                    else {
+                        continue;
+                    };
+                    let fields = &mut fields_per_subgraph[position];
+                    if fields
+                        .last()
+                        .is_some_and(|(name, ..)| std::ptr::eq(*name, field.0))
+                    {
+                        continue;
+                    }
+                    fields.push((field.0, field.1, Some(join_field)));
+                }
             }
 
-            for (graph_id, is_interface_object) in subgraphs {
+            for ((graph_id, is_interface_object), fields) in
+                subgraphs.into_iter().zip(fields_per_subgraph)
+            {
                 let graph_name = build_context.resolve_graph_id(state, graph_id)?.0.clone();
                 let has_resolvable_typename = matches!(
                     definition,
@@ -851,29 +883,8 @@ impl<'graph> Graph<'graph> {
                 )?;
                 self.push_edge(head, head, Edge::Selfie(def_name.clone()));
 
-                for (field_name, field_definition) in definition.fields().iter() {
-                    let (is_available, maybe_join_field) = if field_definition.join_field.is_empty()
-                    {
-                        // The type lives in this subgraph, so a field without @join__field does too.
-                        (true, None)
-                    } else {
-                        FederationRules::check_field_subgraph_availability(
-                            field_definition,
-                            graph_id,
-                            definition,
-                        )
-                    };
-
+                for (field_name, field_definition, maybe_join_field) in fields {
                     let target_type = field_definition.field_type.inner_type();
-
-                    if !is_available {
-                        // The field is not available in the current subgraph
-                        trace!(
-                              "[ ] Field '{}.{}/{}' is not available in the subgraph, skipping edge creation (type: {})",
-                              def_name, field_name, graph_id, target_type
-                          );
-                        continue;
-                    }
 
                     // A field is considered "overridden" if its resolution is handled by a different subgraph.
                     // This prevents the current subgraph from creating a resolvable edge for a field it no longer owns.
@@ -911,14 +922,14 @@ impl<'graph> Graph<'graph> {
 
                     let requirements = maybe_join_field.and_then(|join_field| {
                         join_field.requires.as_ref().map(|requires_str| {
-                            cached_rules.parse_requires(
+                            Arc::new(FederationRules::parse_key(
                                 state,
                                 join_field.graph_id.as_ref().expect(
                                     "join__field(graph:) should exist when join__field(requires:) exists",
                                 ),
                                 def_name,
                                 requires_str,
-                            )
+                            ))
                         })
                     });
 
@@ -954,7 +965,12 @@ impl<'graph> Graph<'graph> {
                     let provided = maybe_join_field
                         .and_then(|join_field| {
                             let graph_id = join_field.graph_id.as_ref()?;
-                            cached_rules.parse_provides(state, join_field, graph_id, target_type)
+                            FederationRules::parse_provides(
+                                state,
+                                join_field,
+                                graph_id,
+                                target_type,
+                            )
                         })
                         .map(|selection_set| Provided::from_selection_set(&selection_set));
 
