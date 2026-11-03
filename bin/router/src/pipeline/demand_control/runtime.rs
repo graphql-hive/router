@@ -14,6 +14,7 @@ use crate::executor::execution::demand_control::{
 use crate::executor::execution::plan::CoerceVariablesPayload;
 use crate::executor::hooks::on_supergraph_load::SupergraphSnapshot;
 use crate::query_planner::ast::operation::{OperationDefinition, PlanningFetchOperation};
+use crate::query_planner::ast::{selection_item::SelectionItem, selection_set::SelectionSet};
 use crate::query_planner::planner::plan_nodes::{PlanNode, Planning, QueryPlan};
 use crate::query_planner::state::supergraph_state::{OperationKind, SupergraphState};
 use crate::telemetry::logging::targets;
@@ -329,13 +330,58 @@ impl DemandControlRuntime {
                 }
                 FormulaPlanNode::Fetch(fetch_node)
             }
-            PlanNode::BatchFetch(fetch) => FormulaPlanNode::Fetch(self.compile_formula_fetch_node(
-                &fetch.service_name,
-                fetch.operation_kind.as_ref(),
-                &fetch.operation,
-                supergraph_state,
-                actual_plans_by_fetch_hash,
-            )),
+            PlanNode::BatchFetch(fetch) => {
+                let mut fetch_node = self.compile_formula_fetch_node(
+                    &fetch.service_name,
+                    fetch.operation_kind.as_ref(),
+                    &fetch.operation,
+                    supergraph_state,
+                    actual_plans_by_fetch_hash,
+                );
+                let aliases = &fetch.entity_batch.aliases;
+                if aliases.iter().any(|alias| alias.run_if.is_some()) {
+                    // an alias that's off costs nothing, so each one is costed on its own
+                    let document = fetch.operation.document.as_ref();
+                    let root_type =
+                        supergraph_state.expect_root_type_name(fetch.operation_kind.as_ref());
+                    let default_list_size =
+                        self.default_list_size_for_subgraph(&fetch.service_name);
+                    let costs = document.operation.selection_set.items.iter().map(|item| {
+                        let operation = OperationDefinition {
+                            name: None,
+                            operation_kind: document.operation.operation_kind.clone(),
+                            selection_set: SelectionSet {
+                                items: vec![item.clone()],
+                            },
+                            variable_definitions: document.operation.variable_definitions.clone(),
+                        };
+                        let expr = compile_cost_expr_for_operation(
+                            &operation,
+                            &document.fragments,
+                            root_type,
+                            fetch.operation_kind.as_ref(),
+                            supergraph_state,
+                            default_list_size,
+                        );
+                        let run_if = match item {
+                            SelectionItem::Field(field) => aliases
+                                .iter()
+                                .find(|alias| field.alias.as_ref() == Some(&alias.alias))
+                                .and_then(|alias| alias.run_if.clone()),
+                            _ => None,
+                        };
+                        match run_if {
+                            Some(groups) => CostExpr::AnyOf {
+                                groups,
+                                expr: Box::new(expr),
+                            },
+                            None => expr,
+                        }
+                    });
+                    fetch_node.estimated_expr = CostExpr::Add(costs.collect());
+                }
+                FormulaPlanNode::Fetch(fetch_node)
+            }
             PlanNode::Subscription(subscription) => {
                 let fetch = &subscription.primary;
                 FormulaPlanNode::Fetch(self.compile_formula_fetch_node(

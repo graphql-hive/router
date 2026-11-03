@@ -70,6 +70,8 @@ export interface EntityBatchAlias {
   outputRewrites?: OutputRewrite[];
   contextRewrites?: KeyRenamer[];
   contextVariables?: string[];
+  /** Like `FetchNode.runIf`, an alias that's off sends no representations. */
+  runIf?: ConditionGroup[];
 }
 
 export interface SubscriptionNode {

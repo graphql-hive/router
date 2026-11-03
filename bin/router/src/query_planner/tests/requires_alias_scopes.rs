@@ -466,8 +466,7 @@ fn fetches(plan: &Value) -> Vec<Fetch> {
                             service: map["serviceName"].as_str().unwrap_or_default().to_string(),
                             operation: map["operation"].as_str().unwrap_or_default().to_string(),
                             requires: alias["requires"].clone(),
-                            // fetches with a `runIf` aren't batched yet
-                            conditions: Vec::new(),
+                            conditions: run_if_conditions(alias.get("runIf")),
                             paths: alias["paths"]
                                 .as_array()
                                 .into_iter()

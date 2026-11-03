@@ -8,7 +8,8 @@ use std::vec;
 
 use crate::query_planner::ast::operation::{ContextAliasTemplate, SubgraphFetchOperation};
 use crate::query_planner::planner::plan_nodes::{
-    BatchFetchNode, CustomScalarPaths, FetchContext, FetchNode, FlattenNode, ResponsePathRef,
+    BatchFetchNode, ConditionGroup, CustomScalarPaths, FetchContext, FetchNode, FlattenNode,
+    ResponsePathRef,
 };
 use crate::query_planner::planner::query_plan::QUERY_PLAN_KIND;
 use crate::query_planner::{
@@ -1123,9 +1124,10 @@ impl<'exec> Executor<'exec> {
         requests
     }
 
-    /// Whether the fetch runs, see `FetchNode::run_if`. A variable counts when it's `true`.
-    fn fetch_runs(&self, fetch_node: &FetchNode) -> bool {
-        fetch_node.run_if.as_ref().is_none_or(|groups| {
+    /// Whether a fetch or batch alias runs, see `FetchNode::run_if`. A variable counts when it's
+    /// `true`.
+    fn runs(&self, run_if: Option<&[ConditionGroup]>) -> bool {
+        run_if.is_none_or(|groups| {
             groups.iter().any(|group| {
                 group.holds(|name| {
                     self.variable_values
@@ -1151,7 +1153,7 @@ impl<'exec> Executor<'exec> {
         data: &Value<'exec>,
     ) -> Vec<BoxFuture<'wave, Result<ExecutionJob<'exec>, PlanExecutionError>>> {
         match node {
-            PlanNode::Fetch(fetch_node) if !self.fetch_runs(fetch_node) => Vec::new(),
+            PlanNode::Fetch(fetch_node) if !self.runs(fetch_node.run_if.as_deref()) => Vec::new(),
             PlanNode::Fetch(fetch_node) => vec![self
                 .prepare_execution_job(PrepareExecutionJobOpts {
                     subgraph_name: &fetch_node.service_name,
@@ -1230,7 +1232,7 @@ impl<'exec> Executor<'exec> {
                     PlanNode::Fetch(fetch_node) => fetch_node,
                     _ => return Vec::new(),
                 };
-                if !self.fetch_runs(fetch_node) {
+                if !self.runs(fetch_node.run_if.as_deref()) {
                     return Vec::new();
                 }
 
@@ -1728,6 +1730,10 @@ impl<'exec> Executor<'exec> {
             .aliases
             .iter()
             .map(|alias_spec| {
+                // an alias that's off sends `[]`
+                if !self.runs(alias_spec.run_if.as_deref()) {
+                    return (Vec::new(), Vec::new());
+                }
                 collect_context_entities(
                     data,
                     alias_spec.merge_paths.iter(),
@@ -2220,6 +2226,7 @@ mod tests {
                     input_rewrites: None,
                     output_rewrites: None,
                     context: None,
+                    run_if: None,
                 },
                 EntityBatchAlias {
                     alias: "_e1".to_string(),
@@ -2229,6 +2236,7 @@ mod tests {
                     input_rewrites: None,
                     output_rewrites: None,
                     context: None,
+                    run_if: None,
                 },
             ],
         };

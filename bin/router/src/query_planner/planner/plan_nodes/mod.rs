@@ -459,6 +459,9 @@ pub struct EntityBatchAlias {
     pub output_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
     pub context: Option<Box<FetchContext>>,
+    /// Like `FetchNode::run_if`, an alias that's off sends no representations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_if: Option<Vec<ConditionGroup>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -900,7 +903,15 @@ impl<S: PlanState> PrettyDisplay for BatchFetchNode<S> {
         )?;
         writeln!(f, "{indent}  {{")?;
         for alias in &self.entity_batch.aliases {
-            writeln!(f, "{indent}    {} {{", alias.alias)?;
+            match &alias.run_if {
+                None => writeln!(f, "{indent}    {} {{", alias.alias)?,
+                Some(run_if) => writeln!(
+                    f,
+                    "{indent}    {}(if: {}) {{",
+                    alias.alias,
+                    display_run_if(run_if)
+                )?,
+            }
             writeln!(f, "{indent}      paths: [")?;
             for merge_path in alias.merge_paths.iter() {
                 writeln!(f, "{indent}        \"{}\"", merge_path)?;

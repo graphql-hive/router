@@ -71,8 +71,9 @@ use crate::query_planner::{
     },
     planner::error::QueryPlanError,
     planner::plan_nodes::planning::{
-        custom_scalar_paths_for_entities_selection, BatchFetchNode, CustomScalarPaths, EntityBatch,
-        EntityBatchAlias, FetchContext, FetchRewrite, FlattenNodePath, PlanNode,
+        custom_scalar_paths_for_entities_selection, BatchFetchNode, ConditionGroup,
+        CustomScalarPaths, EntityBatch, EntityBatchAlias, FetchContext, FetchRewrite,
+        FlattenNodePath, PlanNode,
     },
     planner::QueryPlannerOptions,
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
@@ -80,7 +81,7 @@ use crate::query_planner::{
 
 /// Fast key used before full shape comparison
 ///
-/// Shape = `requires + entities_selection + input_rewrites + output_rewrites`.
+/// Shape = `requires + entities_selection + input_rewrites + output_rewrites + run_if`.
 ///
 /// We first compare hashes (fast), then compare full values (exact).
 /// This keeps grouping fast and still safe with hash collisions.
@@ -91,6 +92,7 @@ struct ShapeKey {
     input_rewrites_hash: u64,
     output_rewrites_hash: u64,
     context_rewrites_hash: u64,
+    run_if_hash: u64,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -99,6 +101,9 @@ struct RepresentationsInputKey {
     input_rewrites: Option<Vec<FetchRewrite>>,
     context: Option<Box<FetchContext>>,
     merge_paths: Vec<FlattenNodePath>,
+    /// The first alias of a shared list fills it, so an alias that's off must not share one
+    /// with an alias that's on.
+    run_if: Option<Vec<ConditionGroup>>,
 }
 
 struct BatchFetchBuilder<'a> {
@@ -192,6 +197,7 @@ impl<'a> BatchFetchBuilder<'a> {
             input_rewrites: representative.input_rewrites.clone(),
             output_rewrites: representative.output_rewrites.clone(),
             context: representative.context.clone(),
+            run_if: representative.run_if.clone(),
         });
 
         Ok(())
@@ -221,6 +227,7 @@ impl<'a> BatchFetchBuilder<'a> {
             input_rewrites: representative.input_rewrites.clone(),
             context: representative.context.clone(),
             merge_paths: merge_paths.to_vec(),
+            run_if: representative.run_if.clone(),
         };
 
         if let Some(existing_name) = self
@@ -350,6 +357,7 @@ struct EntityFetch {
     input_rewrites: Option<Vec<FetchRewrite>>,
     output_rewrites: Option<Vec<FetchRewrite>>,
     context: Option<Box<FetchContext>>,
+    run_if: Option<Vec<ConditionGroup>>,
     shape_key: ShapeKey,
     non_representations_variable_definitions: Vec<VariableDefinition>,
 }
@@ -365,6 +373,7 @@ impl EntityFetch {
             && self.input_rewrites == right.input_rewrites
             && self.output_rewrites == right.output_rewrites
             && self.context == right.context
+            && self.run_if == right.run_if
     }
 
     fn from_node(index: usize, node: &PlanNode) -> Result<Option<Self>, QueryPlanError> {
@@ -376,13 +385,6 @@ impl EntityFetch {
         let PlanNode::Fetch(fetch_node) = flatten_node.node.as_ref() else {
             return Ok(None);
         };
-
-        // ponytail: a fetch with a `run_if` (from `@include`/`@skip` around it or on its fields)
-        // stays out of batches, a `BatchFetch` alias has no `run_if` yet. Give each alias one
-        // so they batch too.
-        if fetch_node.run_if.is_some() {
-            return Ok(None);
-        }
 
         let Some(entities_field) = fetch_node
             .operation
@@ -470,6 +472,7 @@ impl EntityFetch {
             input_rewrites_hash: fetch_rewrites_hash(input_rewrites.as_deref()),
             output_rewrites_hash: fetch_rewrites_hash(output_rewrites.as_deref()),
             context_rewrites_hash: fetch_rewrites_hash(FetchContext::rewrites(&context)),
+            run_if_hash: fetch_rewrites_hash(fetch_node.run_if.as_deref()),
         };
 
         Ok(Some(EntityFetch {
@@ -483,6 +486,7 @@ impl EntityFetch {
             input_rewrites,
             output_rewrites,
             context,
+            run_if: fetch_node.run_if.clone(),
             shape_key,
             non_representations_variable_definitions,
         }))
@@ -964,8 +968,8 @@ mod tests {
             selection_item::SelectionItem,
         },
         planner::plan_nodes::planning::{
-            FetchNode, FetchNodePathSegment, FetchRewrite, FlattenNode, FlattenNodePath, PlanNode,
-            QueryPlan, ValueSetter,
+            ConditionGroup, FetchNode, FetchNodePathSegment, FetchRewrite, FlattenNode,
+            FlattenNodePath, PlanNode, QueryPlan, ValueSetter,
         },
         planner::QueryPlannerOptions,
         state::supergraph_state::{OperationKind, SupergraphState},
@@ -1794,6 +1798,102 @@ mod tests {
                   inStock
                 }
               }
+            }
+          },
+        },
+        "#);
+    }
+
+    /// An alias per `run_if`. `c` and `d` only differ in `run_if`, so they don't share a list.
+    #[test]
+    fn optimize_parallel_node_batches_fetches_with_run_if_an_alias_each() {
+        let supergraph = test_supergraph_state();
+        let requires_query = "query { ... on Product { upc } }";
+        let entities_query = "
+          query($representations:[_Any!]!) {
+            _entities(representations: $representations) {
+              ... on Product { inStock }
+            }
+          }
+        ";
+        let fetch = |id, path| {
+            flatten_entity_fetch_node(id, "inventory", path, requires_query, entities_query)
+        };
+        let include_a = ConditionGroup::new(vec!["a".to_string()], vec![]);
+        let skip_b = ConditionGroup::new(vec![], vec!["b".to_string()]);
+
+        let optimized = optimize_root_node(
+            PlanNode::parallel(vec![
+                with_run_if(fetch(1, "products"), include_a.clone()),
+                with_run_if(fetch(2, "topProducts"), include_a),
+                with_run_if(fetch(3, "products"), skip_b),
+                fetch(4, "products"),
+            ]),
+            &supergraph,
+            &Default::default(),
+        )
+        .expect("optimize should work");
+
+        let query_plan = QueryPlan {
+            kind: "QueryPlan",
+            node: Some(optimized),
+        };
+
+        insta::assert_snapshot!(format!("{query_plan}"), @r#"
+        QueryPlan {
+          BatchFetch(service: "inventory") {
+            {
+              _e0(if: $a) {
+                paths: [
+                  "products.@"
+                  "topProducts.@"
+                ]
+                {
+                  ... on Product {
+                    upc
+                  }
+                }
+              }
+              _e1(if: !$b) {
+                paths: [
+                  "products.@"
+                ]
+                {
+                  ... on Product {
+                    upc
+                  }
+                }
+              }
+              _e2 {
+                paths: [
+                  "products.@"
+                ]
+                {
+                  ... on Product {
+                    upc
+                  }
+                }
+              }
+            }
+            {
+              _e0: _entities(representations: $__batch_reps_0) {
+                ... on Product {
+                  ...a
+                }
+              }
+              _e1: _entities(representations: $__batch_reps_1) {
+                ... on Product {
+                  ...a
+                }
+              }
+              _e2: _entities(representations: $__batch_reps_2) {
+                ... on Product {
+                  ...a
+                }
+              }
+            }
+            fragment a on Product {
+              inStock
             }
           },
         },
@@ -2700,6 +2800,17 @@ mod tests {
             path,
             node: Box::new(PlanNode::Fetch(Box::new(fetch_node))),
         })
+    }
+
+    fn with_run_if(mut node: PlanNode, group: Option<ConditionGroup>) -> PlanNode {
+        let PlanNode::Flatten(flatten) = &mut node else {
+            panic!("expected a Flatten node");
+        };
+        let PlanNode::Fetch(fetch) = flatten.node.as_mut() else {
+            panic!("expected a Fetch node");
+        };
+        fetch.run_if = Some(vec![group.expect("a valid condition group")]);
+        node
     }
 
     fn with_input_rewrite(node: PlanNode) -> PlanNode {
