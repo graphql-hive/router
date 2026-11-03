@@ -48,7 +48,7 @@
 //!     adds nodes not already present in the current tree, we avoid recalculating the
 //!     cost of the entire merged tree while preserving the exact branch-and-bound costs.
 
-use lazy_init::LazyTransform;
+use petgraph::graph::NodeIndex;
 use std::{cell::OnceCell, rc::Rc};
 
 use crate::query_planner::{
@@ -57,31 +57,38 @@ use crate::query_planner::{
         error::QueryPlanError,
         tree::{
             query_tree::QueryTree,
-            query_tree_node::{MutationFieldPosition, QueryTreeNode},
+            query_tree_node::{merge_query_tree_node_list, MutationFieldPosition, QueryTreeNode},
         },
-        walker::{path::OperationPath, ResolvedOperation},
+        walker::{
+            path::{OperationPath, PathSegment},
+            ResolvedOperation,
+        },
     },
     state::supergraph_state::OperationKind,
     utils::cancellation::CancellationToken,
 };
 
 type PathAndPosition<'graph> = (OperationPath<'graph>, MutationFieldPosition);
-type QueryTreeResult = Result<QueryTree, GraphError>;
-type LazyQueryTree<'graph> = LazyTransform<PathAndPosition<'graph>, QueryTreeResult>;
 
 /// The high-penalty cost for crossing a subgraph boundary or satisfying a requirement.
 /// This is the primary driver of the optimization, encouraging plans with fewer subgraphs.
 const CROSS_SUBGRAPH_COST: u64 = 1000;
 const FIELD_COST: u64 = 1;
 
-/// A lazily-evaluated, potential piece of the final query plan.
+/// A potential piece of the final query plan.
 /// It represents one of many possible ways to resolve a part of the query.
-#[derive(Clone)]
+///
+/// Costing and merging work on the path itself. Its `QueryTree` is built only if the search
+/// gets to it, which it rarely does, and building one per candidate was most of the memory.
 struct Candidate<'graph> {
-    /// The actual `QueryTree` for this candiate, computed only when first needed.
-    tree: LazyQueryTree<'graph>,
-    /// The cached cost of this tree, computed only once.
-    cost: OnceCell<u64>,
+    path: OperationPath<'graph>,
+    mutation_field_position: MutationFieldPosition,
+    /// Paths with `@fromContext` requirements always go through their `QueryTree`,
+    /// the context trees merge into each other.
+    uses_context: bool,
+    /// What the tree of this path costs on its own.
+    cost: u64,
+    tree: OnceCell<QueryTree>,
 }
 
 /// Represents a set of alternative Candidates to satisfy a single leaf in the query.
@@ -89,98 +96,122 @@ struct Candidate<'graph> {
 type Alternatives<'graph> = Vec<Candidate<'graph>>;
 
 impl<'graph> Candidate<'graph> {
-    fn new(path: OperationPath<'graph>, mutation_pos: MutationFieldPosition) -> Self {
-        Self {
-            tree: LazyTransform::new((path, mutation_pos)),
-            cost: OnceCell::new(),
-        }
+    fn new(
+        graph: &Graph<'_>,
+        path: OperationPath<'graph>,
+        mutation_field_position: MutationFieldPosition,
+    ) -> Result<Self, GraphError> {
+        let uses_context = path
+            .segments_rev()
+            .any(|segment| !segment.context_requirements().is_empty());
+        let tree = OnceCell::new();
+        let cost = if uses_context {
+            let built = QueryTree::from_path(graph, &path, mutation_field_position)?;
+            let cost = calculate_cost_of_tree(graph, &built.root);
+            let _ = tree.set(built);
+            cost
+        } else {
+            FIELD_COST + calculate_cost_of_segments(graph, &path.get_segments())?
+        };
+        Ok(Self {
+            path,
+            mutation_field_position,
+            uses_context,
+            cost,
+            tree,
+        })
     }
 
-    #[inline]
-    fn get_tree(&self, graph: &Graph<'_>) -> Result<QueryTree, QueryPlanError> {
-        Ok(self
-            .tree
-            .get_or_create(|(p, mp)| QueryTree::from_path(graph, &p, mp))
-            .clone()?)
+    fn get_tree(&self, graph: &Graph<'_>) -> Result<QueryTree, GraphError> {
+        if let Some(tree) = self.tree.get() {
+            return Ok(tree.clone());
+        }
+        let tree = QueryTree::from_path(graph, &self.path, self.mutation_field_position)?;
+        Ok(self.tree.get_or_init(|| tree).clone())
     }
 
-    #[inline]
-    fn get_cost(&self, graph: &Graph<'_>) -> Result<u64, QueryPlanError> {
-        if let Some(v) = self.cost.get() {
-            return Ok(*v);
+    /// How much merging this candidate into `root` adds to its cost.
+    fn added_cost(&self, graph: &Graph<'_>, root: &QueryTreeNode) -> Result<u64, GraphError> {
+        if self.uses_context {
+            return Ok(calculate_added_cost_of_merge(
+                graph,
+                root,
+                &self.get_tree(graph)?.root,
+            ));
         }
-        let tree = self.get_tree(graph)?;
-        let cost = calculate_cost_of_tree(graph, &tree.root);
-        let _ = self.cost.set(cost);
-        Ok(cost)
+        added_cost_of_path(
+            graph,
+            root,
+            &self.path.get_segments(),
+            self.mutation_field_position,
+        )
+    }
+
+    fn merge_into(&self, graph: &Graph<'_>, root: &mut QueryTreeNode) -> Result<(), GraphError> {
+        if self.uses_context {
+            root.merge_nodes(&self.get_tree(graph)?.root);
+            return Ok(());
+        }
+        merge_path(
+            graph,
+            root,
+            &self.path.get_segments(),
+            self.mutation_field_position,
+        )?;
+        Ok(())
     }
 }
 
-/// Each `Alternatives` group represents a set of possible ways to satisfy one leaf of the query.
-fn prepare_alternatives<'graph>(operation: ResolvedOperation<'graph>) -> Vec<Alternatives<'graph>> {
+/// Each group is a set of possible ways to satisfy one leaf of the query.
+/// Leaves with one way to get them come apart from the rest, in the order they came in.
+/// The rest are sorted by how many ways they have, fewest first.
+#[allow(clippy::type_complexity)]
+fn prepare_alternatives<'graph>(
+    operation: ResolvedOperation<'graph>,
+) -> (
+    Vec<PathAndPosition<'graph>>,
+    Vec<Vec<PathAndPosition<'graph>>>,
+) {
     let is_mutation = matches!(operation.operation_kind, OperationKind::Mutation);
-    let mut per_leaf_alternatives_asc: Vec<Alternatives<'graph>> = Vec::new();
+    let mut singles = Vec::new();
+    let mut per_leaf_alternatives_asc = Vec::new();
 
     for (index, root_field_options) in operation.root_field_groups.into_iter().enumerate() {
         let mutation_field_position: MutationFieldPosition = is_mutation.then_some(index);
 
-        let leaf_alternatives: Vec<Alternatives<'graph>> = root_field_options
-            .into_iter()
-            .map(|paths_to_leaf| {
+        for mut paths_to_leaf in root_field_options {
+            if paths_to_leaf.len() == 1 {
+                let path = paths_to_leaf.pop().expect("one path");
+                singles.push((path, mutation_field_position));
+                continue;
+            }
+            per_leaf_alternatives_asc.push(
                 paths_to_leaf
                     .into_iter()
-                    .map(|op| Candidate::new(op, mutation_field_position))
-                    .collect::<Alternatives>()
-            })
-            .collect();
-
-        per_leaf_alternatives_asc.extend(leaf_alternatives);
+                    .map(|path| (path, mutation_field_position))
+                    .collect::<Vec<_>>(),
+            );
+        }
     }
 
     // Sort alternatives by length in ascending order.
     per_leaf_alternatives_asc.sort_by_key(|alternatives| alternatives.len());
 
-    per_leaf_alternatives_asc
+    (singles, per_leaf_alternatives_asc)
 }
 
-fn calculate_min_remaining_costs(
-    graph: &Graph<'_>,
-    per_leaf_alternatives_asc: &[Alternatives],
-) -> Result<Vec<u64>, QueryPlanError> {
-    // Pre-compute a lower bound for pruning.
-    // Finds the absolute best-case cost for each set of alternatives.
-    let best_case_cost_per_leaf = per_leaf_alternatives_asc
-        .iter()
-        .map(|alternatives| {
-            alternatives
-                .iter()
-                .map(|candidate| candidate.get_cost(graph))
-                .try_fold(u64::MAX, |acc, cost_result| {
-                    Ok::<u64, QueryPlanError>(acc.min(cost_result?))
-                })
-        })
-        .collect::<Result<Vec<u64>, _>>()?;
-
-    // Pre-compute a "suffix lower bound" (LB) to enable effective pruning.
-    // `min_remaining_costs[i]` stores an optimistic "best-case" cost for completing the
-    // plan from alternatives `i` to the end.
-    // In the `explore_plan_combinations`, we can then check:
-    // `cost_so_far + min_remaining_costs[depth] >= best_cost_so_far`.
-    // If this is true, we know the current path is a dead end and can be abandoned.
-    let mut min_remaining_costs = vec![0; per_leaf_alternatives_asc.len() + 1];
-    for i in (0..per_leaf_alternatives_asc.len()).rev() {
+/// Pre-compute a "suffix lower bound" (LB) to enable effective pruning.
+/// `min_remaining_costs[i]` stores an optimistic "best-case" cost for completing the
+/// plan from leaf `i` to the end, from the best-case cost of each leaf.
+/// In the `explore_plan_combinations`, we can then check:
+/// `cost_so_far + min_remaining_costs[depth] >= best_cost_so_far`.
+/// If this is true, we know the current path is a dead end and can be abandoned.
+fn calculate_min_remaining_costs(best_case_cost_per_leaf: &[u64]) -> Vec<u64> {
+    let mut min_remaining_costs = vec![0; best_case_cost_per_leaf.len() + 1];
+    for i in (0..best_case_cost_per_leaf.len()).rev() {
         min_remaining_costs[i] = min_remaining_costs[i + 1] + best_case_cost_per_leaf[i];
     }
-    Ok(min_remaining_costs)
-}
-
-fn sort_candidates_by_cost(graph: &Graph<'_>, per_leaf_alternatives_asc: &mut [Alternatives]) {
-    // Within each set of alternatives, sort choices by their cost.
-    // Trying cheaper options first
-    // is more likely to lead to better solutions sooner.
-    for paths in per_leaf_alternatives_asc {
-        paths.sort_by_key(|c| c.get_cost(graph).unwrap_or(u64::MAX));
-    }
+    min_remaining_costs
 }
 
 pub fn find_best_combination(
@@ -197,20 +228,71 @@ pub fn find_best_combination(
         return Err(QueryPlanError::EmptyPlan);
     }
 
-    let mut per_leaf_alternatives_asc = prepare_alternatives(operation);
-    if per_leaf_alternatives_asc.is_empty() {
+    let (singles, multiples) = prepare_alternatives(operation);
+    if singles.is_empty() && multiples.is_empty() {
         return Err(QueryPlanError::EmptyPlan);
     }
 
-    let min_remaining_costs = calculate_min_remaining_costs(graph, &per_leaf_alternatives_asc)?;
-    sort_candidates_by_cost(graph, &mut per_leaf_alternatives_asc);
+    // Leaves with one way to get them are in every plan, and the search goes through them
+    // first. Merge them once, into a tree nobody else holds, so merging doesn't copy nodes.
+    // Searching through them instead keeps a version of the tree per leaf, and every merge
+    // copies the nodes it goes through.
+    let mut best_case_cost_per_leaf = Vec::with_capacity(singles.len() + multiples.len());
+    let mut base_tree: Option<QueryTree> = None;
+    // The cost before each single leaf is merged, and after the last one.
+    let mut costs_before = Vec::with_capacity(singles.len() + 1);
+    costs_before.push(0);
+    for (path, mutation_field_position) in singles {
+        cancellation_token.bail_if_cancelled()?;
+        let candidate = Candidate::new(graph, path, mutation_field_position)?;
+        best_case_cost_per_leaf.push(candidate.cost);
+        let cost = costs_before[costs_before.len() - 1];
+        match base_tree.as_mut() {
+            Some(tree) => {
+                let root = Rc::make_mut(&mut tree.root);
+                costs_before.push(cost + candidate.added_cost(graph, root)?);
+                candidate.merge_into(graph, root)?;
+            }
+            None => {
+                costs_before.push(cost + candidate.cost);
+                base_tree = Some(candidate.get_tree(graph)?);
+            }
+        }
+    }
+    let single_count = best_case_cost_per_leaf.len();
+    let base_cost = costs_before[single_count];
+
+    let mut per_leaf_alternatives_asc = Vec::with_capacity(multiples.len());
+    for paths in multiples {
+        let mut alternatives = paths
+            .into_iter()
+            .map(|(path, position)| Candidate::new(graph, path, position))
+            .collect::<Result<Alternatives, _>>()?;
+        // Finds the absolute best-case cost for each set of alternatives.
+        best_case_cost_per_leaf.push(
+            alternatives
+                .iter()
+                .map(|candidate| candidate.cost)
+                .min()
+                .unwrap_or(u64::MAX),
+        );
+        // Trying cheaper options first is more likely to lead to better solutions sooner.
+        alternatives.sort_by_key(|candidate| candidate.cost);
+        per_leaf_alternatives_asc.push(alternatives);
+    }
+    let min_remaining_costs = calculate_min_remaining_costs(&best_case_cost_per_leaf);
 
     let mut best_cost = u64::MAX;
     let mut best_tree: Option<QueryTree> = None;
 
     // Runs a fast, greedy search to find a good-enough initial solution.
     // A strong initial `best_cost` is critical for effective pruning.
-    if let Some((cost, tree)) = find_initial_plan(graph, &per_leaf_alternatives_asc) {
+    if let Some((cost, tree)) = find_initial_plan(
+        graph,
+        &per_leaf_alternatives_asc,
+        base_tree.clone(),
+        base_cost,
+    ) {
         if cost < best_cost {
             best_cost = cost;
             best_tree = Some(tree);
@@ -222,14 +304,23 @@ pub fn find_best_combination(
         best_tree,
     };
 
+    // The same bounds the search would check on its way through the single leaves.
+    for (group_index, pair) in costs_before.windows(2).enumerate() {
+        if pair[0] + min_remaining_costs[group_index] >= state.best_cost
+            || pair[1] >= state.best_cost
+        {
+            return state.best_tree.ok_or(QueryPlanError::EmptyPlan);
+        }
+    }
+
     // Performs the search for the optimal solution
     explore_plan_combinations(
         graph,
         &per_leaf_alternatives_asc,
         0,
-        None,
-        0,
-        &min_remaining_costs,
+        base_tree,
+        base_cost,
+        &min_remaining_costs[single_count..],
         cancellation_token,
         &mut state,
     )?;
@@ -242,43 +333,37 @@ pub fn find_best_combination(
 fn find_initial_plan(
     graph: &Graph<'_>,
     alternatives_list: &[Alternatives],
+    mut current_tree: Option<QueryTree>,
+    mut current_cost: u64,
 ) -> Option<(u64, QueryTree)> {
-    let mut current_tree: Option<QueryTree> = None;
-    let mut current_cost: u64 = 0;
-
     for alternatives in alternatives_list {
         let mut best_delta = u64::MAX;
-        let mut best_next: Option<(u64, QueryTree)> = None;
+        let mut best_candidate: Option<&Candidate> = None;
 
         // At each step, pick the candidate that adds the smallest cost to the current plan
         for candidate in alternatives {
-            let candidate_tree = match candidate.get_tree(graph) {
-                Ok(tree) => tree,
-                Err(_) => continue,
+            let delta = match current_tree.as_ref() {
+                Some(tree) => match candidate.added_cost(graph, &tree.root) {
+                    Ok(added_cost) => added_cost,
+                    Err(_) => continue,
+                },
+                None => candidate.cost,
             };
-
-            let added_cost = match current_tree.as_ref() {
-                Some(tree) => {
-                    calculate_added_cost_of_merge(graph, &tree.root, &candidate_tree.root)
-                }
-                None => calculate_cost_of_tree(graph, &candidate_tree.root),
-            };
-            let next_cost = current_cost + added_cost;
-            let delta = next_cost.saturating_sub(current_cost);
 
             if delta < best_delta {
                 best_delta = delta;
-                best_next = Some((next_cost, candidate_tree));
+                best_candidate = Some(candidate);
             }
         }
 
-        let (next_cost, next_tree) = best_next?;
-
+        let candidate = best_candidate?;
         match current_tree.as_mut() {
-            Some(tree) => Rc::make_mut(&mut tree.root).merge_nodes(&next_tree.root),
-            None => current_tree = Some(next_tree),
+            Some(tree) => candidate
+                .merge_into(graph, Rc::make_mut(&mut tree.root))
+                .ok()?,
+            None => current_tree = Some(candidate.get_tree(graph).ok()?),
         }
-        current_cost = next_cost;
+        current_cost += best_delta;
     }
 
     current_tree.map(|t| (current_cost, t))
@@ -358,6 +443,114 @@ fn explore_plan_combinations(
     }
 
     Ok(())
+}
+
+/// Where the node of `segment` is among the children of `node`, compared like
+/// `QueryTreeNode::eq` does. A node made from a path has no context coordinate.
+fn find_path_child(
+    node: &QueryTreeNode,
+    tail_node_index: NodeIndex,
+    segment: &PathSegment,
+    position: MutationFieldPosition,
+) -> Option<usize> {
+    node.children.iter().position(|child| {
+        child.node_index == tail_node_index
+            && child.edge_from_parent == Some(segment.edge_index)
+            && child.selection_attributes == segment.selection_attributes
+            && child.mutation_field_position == position
+            && child.condition == segment.condition
+            && child.context_coordinate().is_none()
+    })
+}
+
+/// Merges the tree of one path into `root`, without building that tree first, and returns
+/// what it adds to the cost. Same as merging `QueryTree::from_path`, which makes a node per
+/// segment just to find most of them in `root` already and drop them.
+/// Only for paths without `@fromContext` requirements, their trees merge into each other.
+fn merge_path(
+    graph: &Graph<'_>,
+    root: &mut QueryTreeNode,
+    segments: &[&PathSegment],
+    mutation_field_position: MutationFieldPosition,
+) -> Result<u64, GraphError> {
+    let mut added_cost = 0;
+    let mut node = root;
+    for (index, segment) in segments.iter().enumerate() {
+        let tail_node_index = graph.get_edge_tail(&segment.edge_index)?;
+        // Only the first node of the path has the position
+        let position = mutation_field_position.filter(|_| index == 0);
+
+        let Some(existing) = find_path_child(node, tail_node_index, segment, position) else {
+            let rest =
+                QueryTreeNode::from_path_segment_sequences(graph, segments, index, position)?
+                    .expect("a segment is left");
+            node.children.push(rest);
+            return Ok(added_cost + calculate_cost_of_segments(graph, &segments[index..])?);
+        };
+
+        let child = Rc::make_mut(&mut node.children[existing]);
+        if let Some(requirement) = &segment.requirement_tree {
+            let requirement = [Rc::clone(requirement)];
+            added_cost +=
+                calculate_added_cost_for_node_list(graph, &child.requirements, &requirement, true);
+            merge_query_tree_node_list(&mut child.requirements, &requirement);
+        }
+        node = child;
+    }
+    Ok(added_cost)
+}
+
+/// What `merge_path` would add to the cost of `root`, without merging.
+fn added_cost_of_path(
+    graph: &Graph<'_>,
+    root: &QueryTreeNode,
+    segments: &[&PathSegment],
+    mutation_field_position: MutationFieldPosition,
+) -> Result<u64, GraphError> {
+    let mut added_cost = 0;
+    let mut node = root;
+    for (index, segment) in segments.iter().enumerate() {
+        let tail_node_index = graph.get_edge_tail(&segment.edge_index)?;
+        let position = mutation_field_position.filter(|_| index == 0);
+
+        let Some(existing) = find_path_child(node, tail_node_index, segment, position) else {
+            return Ok(added_cost + calculate_cost_of_segments(graph, &segments[index..])?);
+        };
+
+        let child = &node.children[existing];
+        if let Some(requirement) = &segment.requirement_tree {
+            added_cost += calculate_added_cost_for_node_list(
+                graph,
+                &child.requirements,
+                std::slice::from_ref(requirement),
+                true,
+            );
+        }
+        node = child;
+    }
+    Ok(added_cost)
+}
+
+/// What the nodes of these segments cost, with the edge into the first one. For a whole path
+/// it's `calculate_cost_of_tree` of its tree, without the root. No `@fromContext` here.
+fn calculate_cost_of_segments(
+    graph: &Graph<'_>,
+    segments: &[&PathSegment],
+) -> Result<u64, GraphError> {
+    let mut cost = 0;
+    for segment in segments {
+        cost += FIELD_COST;
+        if matches!(
+            graph.edge(segment.edge_index)?,
+            Edge::SubgraphEntrypoint { .. }
+        ) {
+            cost += CROSS_SUBGRAPH_COST;
+        }
+        if let Some(requirement) = &segment.requirement_tree {
+            cost += CROSS_SUBGRAPH_COST + calculate_cost_of_tree(graph, requirement);
+        }
+    }
+    Ok(cost)
 }
 
 /// Calculate how much cost `source` adds when merged into `target`.

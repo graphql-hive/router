@@ -55,7 +55,7 @@ impl PartialEq for QueryTreeNode {
     }
 }
 
-fn merge_query_tree_node_list(
+pub(crate) fn merge_query_tree_node_list(
     target_list: &mut Vec<Rc<QueryTreeNode>>,
     source_list: &[Rc<QueryTreeNode>],
 ) {
@@ -183,7 +183,7 @@ impl QueryTreeNode {
     #[instrument(level = "trace",skip(graph, segments), fields(
       total_segments = segments.len()
     ))]
-    fn from_path_segment_sequences(
+    pub(crate) fn from_path_segment_sequences(
         graph: &Graph<'_>,
         segments: &[&PathSegment],
         current_index: usize,
