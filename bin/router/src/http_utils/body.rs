@@ -166,19 +166,33 @@ async fn read_body<R: RequestLike>(
     };
 
     let Some(encoding) = content_encoding else {
-        let mut body = if let Some(content_length) = content_length {
-            BytesMut::with_capacity(content_length)
-        } else {
-            BytesMut::new()
+        // most bodies arrive in one chunk, that one is returned as is without a copy
+        let Some(first) = body_stream.try_next().await? else {
+            write_request_body_size(req, 0);
+            return Ok(Bytes::new());
+        };
+        if first.len() > max_size {
+            write_request_body_size(req, first.len() as u64);
+            return Err(ReadBodyStreamError::PayloadTooLargeBodyStream);
+        }
+        let Some(second) = body_stream.try_next().await? else {
+            write_request_body_size(req, first.len() as u64);
+            return Ok(first);
         };
 
-        while let Some(chunk) = body_stream.try_next().await? {
+        let mut body =
+            BytesMut::with_capacity(content_length.unwrap_or(first.len() + second.len()));
+        body.extend_from_slice(&first);
+
+        let mut next = Some(second);
+        while let Some(chunk) = next {
             // limit max size of in-memory payload
             if chunk.len() > max_size.saturating_sub(body.len()) {
                 write_request_body_size(req, (body.len() + chunk.len()) as u64);
                 return Err(ReadBodyStreamError::PayloadTooLargeBodyStream);
             }
             body.extend_from_slice(&chunk);
+            next = body_stream.try_next().await?;
         }
 
         write_request_body_size(req, body.len() as u64);
@@ -470,5 +484,57 @@ mod tests {
                 "[{algorithm:?}] roundtrip mismatch"
             );
         }
+    }
+
+    fn payload_of(chunks: &[&'static [u8]]) -> web::types::Payload {
+        let (tx, rx) = ntex::channel::bstream::eof::<PayloadError>();
+        for chunk in chunks {
+            tx.feed_data(Bytes::from_static(chunk));
+        }
+        web::types::Payload(rx.into())
+    }
+
+    #[ntex::test]
+    async fn read_body_returns_a_single_chunk_without_copying() {
+        let req = ntex::web::test::TestRequest::default().to_http_request();
+        let chunk: &'static [u8] = b"{\"query\":\"{a}\"}";
+
+        let body = read_body(&req, payload_of(&[chunk]), 1024, None)
+            .await
+            .unwrap();
+
+        assert_eq!(body.as_ref(), chunk);
+        assert_eq!(body.as_ptr(), chunk.as_ptr(), "single chunk must not be copied");
+    }
+
+    #[ntex::test]
+    async fn read_body_joins_multiple_chunks() {
+        let req = ntex::web::test::TestRequest::default().to_http_request();
+
+        let body = read_body(&req, payload_of(&[b"ab", b"cd", b"ef"]), 1024, None)
+            .await
+            .unwrap();
+
+        assert_eq!(body.as_ref(), b"abcdef");
+    }
+
+    #[ntex::test]
+    async fn read_body_rejects_chunks_over_the_limit() {
+        let cases: [&[&'static [u8]]; 2] = [&[b"abcdef"], &[b"abc", b"def"]];
+        for chunks in cases {
+            let req = ntex::web::test::TestRequest::default().to_http_request();
+            let err = read_body(&req, payload_of(chunks), 5, None).await.unwrap_err();
+            assert!(
+                matches!(err, ReadBodyStreamError::PayloadTooLargeBodyStream),
+                "{chunks:?}: {err:?}"
+            );
+        }
+    }
+
+    #[ntex::test]
+    async fn read_body_returns_empty_for_no_chunks() {
+        let req = ntex::web::test::TestRequest::default().to_http_request();
+        let body = read_body(&req, payload_of(&[]), 1024, None).await.unwrap();
+        assert!(body.is_empty());
     }
 }
