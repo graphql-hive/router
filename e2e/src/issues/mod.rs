@@ -1178,6 +1178,9 @@ mod issues_e2e_tests {
                   supergraph:
                     source: file
                     path: src/issues/supergraph.escape-string-arguments.graphql
+                  # keeps the value inline, it would go as a variable otherwise
+                  query_planner:
+                    arguments_to_variables: false
                   override_subgraph_urls:
                     subgraphs:
                       entries:

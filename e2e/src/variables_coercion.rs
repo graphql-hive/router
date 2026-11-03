@@ -610,4 +610,33 @@ mod variables_coercion_e2e_tests {
             );
         }
     }
+
+    /// Inline values are turned into variables before coercion. If coercion rejects one that
+    /// validation let through, the error names the argument the client wrote, not `$_v0`.
+    #[ntex::test]
+    async fn invalid_inline_value_names_its_argument() {
+        let (subgraphs, router) = start("").await;
+
+        let response = router
+            .send_graphql_request(
+                "{ fieldWithNullableStringInput(input: { a: 1 }) }",
+                None,
+                None,
+            )
+            .await;
+
+        insta::assert_snapshot!(response.json_body_string_pretty_stable().await, @r#"
+        {
+          "errors": [
+            {
+              "extensions": {
+                "code": "BAD_USER_INPUT"
+              },
+              "message": "Argument \"Query.fieldWithNullableStringInput(input:)\" has invalid value: String cannot represent a non string value: { a: 1 }"
+            }
+          ]
+        }
+        "#);
+        assert_no_subgraph_request(&subgraphs);
+    }
 }

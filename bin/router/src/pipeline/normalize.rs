@@ -5,6 +5,9 @@ use crate::executor::hooks::on_graphql_params::GraphQLParams;
 use crate::executor::hooks::on_supergraph_load::SupergraphSnapshot;
 use crate::executor::introspection::partition::partition_operation;
 use crate::executor::projection::plan::ProjectionPlan;
+use crate::query_planner::ast::normalization::arguments_to_variables::{
+    arguments_to_variables, ExtractedVariable,
+};
 use crate::query_planner::ast::normalization::error::NormalizationError;
 use crate::query_planner::ast::normalization::normalize_operation;
 use crate::query_planner::ast::operation::OperationDefinition;
@@ -38,6 +41,9 @@ pub struct GraphQLNormalizationPayload {
     pub operation_kind: OperationKind,
     pub projection_plan: Arc<ProjectionPlan>,
     pub operation_identity: OperationIdentity,
+    /// Values of the variables that hard-coded arguments were turned into.
+    /// See `query_planner.arguments_to_variables` in the config.
+    pub extracted_variables: Arc<Vec<ExtractedVariable>>,
 }
 
 #[derive(Debug, Clone)]
@@ -64,8 +70,11 @@ impl GraphQLNormalizationPayload {
         new_operation: OperationDefinition,
         new_projection_plan: Arc<ProjectionPlan>,
     ) -> Arc<GraphQLNormalizationPayload> {
-        let hashes =
-            hash_normalized_operation(&new_operation, self.operation_for_introspection.as_deref());
+        let hashes = hash_normalized_operation(
+            &new_operation,
+            self.operation_for_introspection.as_deref(),
+            &self.extracted_variables,
+        );
 
         Arc::new(GraphQLNormalizationPayload {
             operation_for_plan: Arc::new(new_operation),
@@ -78,6 +87,7 @@ impl GraphQLNormalizationPayload {
             operation_kind: self.operation_kind.clone(),
             projection_plan: new_projection_plan,
             operation_identity: self.operation_identity.clone(),
+            extracted_variables: self.extracted_variables.clone(),
         })
     }
 }
@@ -107,6 +117,7 @@ impl<'exec> FilterOutputExt<'exec> for OperationFilterOutput<'exec> {
 pub fn hash_normalized_operation(
     operation_for_plan: &OperationDefinition,
     operation_for_introspection: Option<&OperationDefinition>,
+    extracted_variables: &[ExtractedVariable],
 ) -> NormalizedOperationHashes {
     let operation_for_plan_hash = operation_for_plan.hash();
     let operation_for_introspection_hash =
@@ -118,6 +129,9 @@ pub fn hash_normalized_operation(
     if let Some(hash) = operation_for_introspection_hash {
         hash.hash(&mut hasher);
     }
+    // `{ user(id: "1") }` and `{ user(id: "2") }` share an operation once the ids are extracted,
+    // so the values have to be in here too, or request dedupe would treat them as one request.
+    extracted_variables.hash(&mut hasher);
 
     NormalizedOperationHashes {
         operation_for_plan_hash,
@@ -181,6 +195,15 @@ pub async fn normalize_request_with_cache(
                 let root_type_name = root_type_name.to_string();
                 let projection_plan = Arc::new(projection_plan);
                 let mut partitioned_operation = partition_operation(operation);
+                let extracted_variables = if supergraph.options.query_planner.arguments_to_variables
+                {
+                    arguments_to_variables(
+                        &mut partitioned_operation.downstream_operation,
+                        &supergraph.planner.supergraph,
+                    )
+                } else {
+                    Vec::new()
+                };
                 partitioned_operation.downstream_operation.shrink_memory();
                 if let Some(operation) = &mut partitioned_operation.introspection_operation {
                     operation.shrink_memory();
@@ -193,6 +216,7 @@ pub async fn normalize_request_with_cache(
                 let hashes = hash_normalized_operation(
                     &operation_for_plan,
                     operation_for_introspection.as_deref(),
+                    &extracted_variables,
                 );
 
                 let payload = GraphQLNormalizationPayload {
@@ -209,6 +233,7 @@ pub async fn normalize_request_with_cache(
                         operation_type: parser_payload.operation_type.clone(),
                         client_document_hash: parser_payload.cache_key_string.clone(),
                     },
+                    extracted_variables: Arc::new(extracted_variables),
                 };
 
                 Ok(Arc::new(payload))

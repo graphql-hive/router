@@ -34,6 +34,20 @@ pub struct QueryPlannerConfig {
     /// Default: false.
     #[serde(default = "default_experimental_abstract_type_folding")]
     pub experimental_abstract_type_folding: bool,
+    /// Rewrites hard-coded field argument values into variables, so operations that differ
+    /// only in those values share one query plan.
+    /// For example, `{ user(id: "1") { name } }` is planned as `query($_v0: ID!) { user(id: $_v0) { name } }`.
+    ///
+    /// Without it, every distinct value makes a new plan cache entry,
+    /// and a client looping over IDs can push every other plan out of the cache.
+    ///
+    /// Subgraphs receive the values as variables instead of inline. A subgraph parses a custom
+    /// scalar given as a variable with its `parseValue`, not `parseLiteral`, so turn this off if
+    /// a subgraph has a scalar where the two behave differently.
+    ///
+    /// Default: true.
+    #[serde(default = "default_arguments_to_variables")]
+    pub arguments_to_variables: bool,
 }
 
 impl Default for QueryPlannerConfig {
@@ -42,6 +56,7 @@ impl Default for QueryPlannerConfig {
             allow_expose: default_query_planning_allow_expose(),
             timeout: default_query_planning_timeout(),
             experimental_abstract_type_folding: default_experimental_abstract_type_folding(),
+            arguments_to_variables: default_arguments_to_variables(),
         }
     }
 }
@@ -56,4 +71,8 @@ fn default_query_planning_timeout() -> Duration {
 
 fn default_experimental_abstract_type_folding() -> bool {
     false
+}
+
+fn default_arguments_to_variables() -> bool {
+    true
 }

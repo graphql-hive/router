@@ -105,6 +105,10 @@ impl ArgumentsMap {
         self.arguments_map.len()
     }
 
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&String, &mut Value)> {
+        self.arguments_map.iter_mut()
+    }
+
     pub fn values(&self) -> impl Iterator<Item = &Value> {
         self.arguments_map.values()
     }
