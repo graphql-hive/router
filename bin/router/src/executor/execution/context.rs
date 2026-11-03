@@ -1,4 +1,5 @@
 use std::{
+    collections::hash_map::Entry,
     hash::{Hash, Hasher},
     sync::Arc,
 };
@@ -31,23 +32,14 @@ use crate::{
 /// nothing (null, or not projected).
 pub(super) type TargetEntities = Arc<Vec<Option<EntityRef>>>;
 
-/// Which entity goes into a target, and the context group it belongs to.
+/// Which entity goes into a target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntityRef {
     /// Sent to the subgraph, `index` is its place among the context group's representations.
     Fetched { context_group: u32, index: u32 },
-    /// Copied from the response instead, `index` is its place among the copies. Copies only
-    /// happen without context variables, so always in group 0.
+    /// Copied from the response instead, `index` is its place among `Copies::copies`. Merged by
+    /// `entity_reuse::merge_copies`, the fetch's merge skips it.
     Copied { index: u32 },
-}
-
-impl EntityRef {
-    pub fn context_group(self) -> usize {
-        match self {
-            Self::Fetched { context_group, .. } => context_group as usize,
-            Self::Copied { .. } => 0,
-        }
-    }
 }
 
 pub(super) struct ContextGroup<'a> {
@@ -55,6 +47,14 @@ pub(super) struct ContextGroup<'a> {
     pub representations: Vec<u8>,
     /// How many representations went into `representations`
     pub count: usize,
+}
+
+/// What one fetch knows about an entity, by the hash of its representation.
+pub(super) enum Known<'d, 'v> {
+    /// In the response already, so the fetch could copy it instead (entity reuse). No target
+    /// asked for it yet.
+    InResponse(&'d Value<'v>),
+    Target(EntityRef),
 }
 
 /// Borrows existing values, including whole objects and arrays. Only projected
@@ -244,12 +244,10 @@ impl<'a, 'd, 'v> ContextGroups<'a, 'd, 'v> {
 
 /// Walks every flatten path, deduplicates the entities by hash and projects their
 /// representations. Entities are grouped by the tuple of their context values (one request per
-/// group), without context variables there is at most one group. Identical paths share their
-/// target entities.
+/// group), without context variables there is at most one group.
 ///
 /// With `reuse`, an entity already in the response is copied instead of sent. Its target is
-/// `EntityRef::Copied` and points into `reuse`'s copies. Only without context variables, so
-/// there's one group and the copies go after everything that group fetches.
+/// [`EntityRef::Copied`], and the copy goes in `reuse`, see `entity_reuse::merge_copies`.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn collect_context_entities<'a, 'd, 'v>(
     data: &'d Value<'v>,
@@ -259,21 +257,19 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
     context: &'a Option<Box<FetchContext>>,
     possible_types: &PossibleTypes,
     subgraph_keys: Option<&KeysByType>,
-    reuse: Option<&mut ReuseIndex<'_, 'v>>,
+    reuse: Option<&mut ReuseIndex<'d, 'v>>,
 ) -> (Vec<ContextGroup<'a>>, Vec<TargetEntities>) {
     let mut contexts = ContextGroups::new(context);
     let mut reuse = reuse.filter(|_| contexts.names.is_empty());
-    // every entity we've given a target so far, fetched or copied, by its hash. the hash covers
-    // the context group, so one map serves all of them
-    let mut seen = PrehashedMap::default();
-    let mut path_entities: Vec<TargetEntities> = Vec::new();
-    let mut seen_paths: Vec<(ResponsePathRef<'a>, TargetEntities)> = Vec::new();
+    // every entity we know of, by its hash: the ones `reuse` could copy, and every one with a
+    // target. the hash covers the context group, so one map serves all of them
+    let mut seen: PrehashedMap<Known> = reuse
+        .as_mut()
+        .map(|reuse| std::mem::take(&mut reuse.seen))
+        .unwrap_or_default();
     let required_selections = requires.root_selections();
+    let mut path_entities: Vec<TargetEntities> = Vec::new();
     for path in paths {
-        if let Some((_, entities)) = seen_paths.iter().find(|(seen, _)| *seen == path) {
-            path_entities.push(Arc::clone(entities));
-            continue;
-        }
         let mut entities = Vec::new();
         // the callback gets references into `data`, which the ancestor cache relies on
         let mut collect = |entity: &'d Value<'v>, objects: &[&'d Value<'v>]| {
@@ -293,56 +289,58 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
                 group_index.hash(&mut hasher);
                 hasher.finish()
             };
-            if let Some(&entity) = seen.get(&hash) {
-                entities.push(Some(entity));
-                return;
-            }
-            // a copy goes in `seen` like a fetched entity, so the next target with it gets the
-            // same copy
-            if let Some(index) = reuse.as_mut().and_then(|reuse| reuse.copy(hash)) {
-                let entity = EntityRef::Copied {
-                    index: index as u32,
-                };
-                seen.insert(hash, entity);
-                entities.push(Some(entity));
-                return;
-            }
-            let group = &mut contexts.groups[group_index];
-            let mut rewritten;
-            let projected = if let Some(rewrites) = input_rewrites {
-                rewritten = entity.clone();
-                for rewrite in rewrites {
-                    rewrite.rewrite(possible_types, &mut rewritten);
-                }
-                &rewritten
-            } else {
-                entity
+            let known = seen.entry(hash);
+            let in_response = match &known {
+                Entry::Occupied(known) => match known.get() {
+                    Known::Target(entity) => {
+                        entities.push(Some(*entity));
+                        return;
+                    }
+                    Known::InResponse(source) => Some(*source),
+                },
+                Entry::Vacant(_) => None,
             };
-            if project_requires(
-                possible_types,
-                required_selections,
-                projected,
-                &mut group.representations,
-                group.count == 0,
-                None,
-                false,
-                subgraph_keys,
-            ) {
-                let entity = EntityRef::Fetched {
-                    context_group: group_index as u32,
-                    index: group.count as u32,
+            let copied = in_response
+                .zip(reuse.as_mut())
+                .and_then(|(source, reuse)| reuse.copy(source))
+                .map(|index| EntityRef::Copied { index });
+            let target = copied.or_else(|| {
+                let group = &mut contexts.groups[group_index];
+                let mut rewritten;
+                let projected = if let Some(rewrites) = input_rewrites {
+                    rewritten = entity.clone();
+                    for rewrite in rewrites {
+                        rewrite.rewrite(possible_types, &mut rewritten);
+                    }
+                    &rewritten
+                } else {
+                    entity
                 };
-                group.count += 1;
-                seen.insert(hash, entity);
-                entities.push(Some(entity));
-            } else {
-                entities.push(None);
+                project_requires(
+                    possible_types,
+                    required_selections,
+                    projected,
+                    &mut group.representations,
+                    group.count == 0,
+                    None,
+                    false,
+                    subgraph_keys,
+                )
+                .then(|| {
+                    group.count += 1;
+                    EntityRef::Fetched {
+                        context_group: group_index as u32,
+                        index: group.count as u32 - 1,
+                    }
+                })
+            });
+            if let Some(target) = target {
+                known.insert_entry(Known::Target(target));
             }
+            entities.push(target);
         };
         traverse_and_callback(data, path.as_slice(), possible_types, &mut collect);
-        let entities = Arc::new(entities);
-        seen_paths.push((path, Arc::clone(&entities)));
-        path_entities.push(entities);
+        path_entities.push(Arc::new(entities));
     }
     for group in &mut contexts.groups {
         group.representations.push(b']');
@@ -486,6 +484,14 @@ mod tests {
         utils::parsing::parse_operation,
     };
 
+    /// The context group a fetched entity was sent in
+    fn group_of(entity: Option<EntityRef>) -> usize {
+        let Some(EntityRef::Fetched { context_group, .. }) = entity else {
+            panic!("not fetched");
+        };
+        context_group as usize
+    }
+
     #[test]
     fn contexts_group_and_deduplicate_by_ancestor_values() {
         let data: Value<'_> = sonic_rs::from_str(r#"{
@@ -555,8 +561,8 @@ mod tests {
         assert_eq!(targets[0][4], None);
         // another parent with the same value lands in the same group
         assert_eq!(targets[0][5], targets[0][0]);
-        assert_eq!(targets[0][0].unwrap().context_group(), 0);
-        assert_ne!(targets[0][2].unwrap().context_group(), 0);
+        assert_eq!(group_of(targets[0][0]), 0);
+        assert_ne!(group_of(targets[0][2]), 0);
     }
 
     #[test]
@@ -672,10 +678,7 @@ mod tests {
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].variables[1].1, b"\"A\"");
         assert_eq!(groups[1].variables[1].1, b"\"B\"");
-        let entity_groups: Vec<usize> = targets[0]
-            .iter()
-            .map(|entity| entity.unwrap().context_group())
-            .collect();
+        let entity_groups: Vec<usize> = targets[0].iter().map(|entity| group_of(*entity)).collect();
         assert_eq!(entity_groups[..3], [0, 1, 0]);
 
         // resolving the same sources again reuses the cached group, a different entity under
@@ -792,7 +795,7 @@ mod tests {
         // posts 1 to 4, then drafts 5 and 6, with the group each one must land in
         let entities = targets[0].iter().chain(targets[1].iter());
         for (entity, group) in entities.zip([0, 0, 1, 2, 0, 2]) {
-            assert_eq!(entity.unwrap().context_group(), group);
+            assert_eq!(group_of(*entity), group);
         }
         assert_eq!(
             groups.iter().map(|group| group.count).collect::<Vec<_>>(),

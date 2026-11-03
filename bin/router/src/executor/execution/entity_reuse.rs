@@ -7,59 +7,104 @@
 
 use crate::{
     executor::{
-        introspection::schema::PossibleTypes,
-        response::value::Value,
-        utils::{prehashed_map::PrehashedMap, traverse::traverse_and_callback},
+        execution::context::{EntityRef, Known, TargetEntities},
+        introspection::schema::{PossibleTypes, SchemaMetadata},
+        response::{merge::EntityMerger, value::Value},
+        utils::{
+            prehashed_map::PrehashedMap,
+            traverse::{traverse_and_callback, traverse_and_callback_mut},
+        },
     },
     query_planner::{
         ast::requires::{RequiresSelection, RequiresSelectionSetRef},
-        planner::plan_nodes::EntityReuse,
+        planner::plan_nodes::{EntityReuse, ResponsePathRef},
     },
 };
 
-/// Entities in the response one fetch could copy, by the hash of their representation, and the
-/// copies made so far.
-pub struct ReuseIndex<'d, 'a> {
-    by_hash: PrehashedMap<&'d Value<'a>>,
+/// What one fetch could copy instead of sending. `seen` starts out with the objects already in
+/// the response, by the hash their representation has, and `collect_context_entities` takes it
+/// over as its table of every entity it knows.
+pub struct ReuseIndex<'d, 'v> {
+    pub(super) seen: PrehashedMap<Known<'d, 'v>>,
     copy: RequiresSelectionSetRef<'d>,
-    copies: Vec<Value<'a>>,
+    copies: Vec<Value<'v>>,
 }
 
-impl<'d, 'a> ReuseIndex<'d, 'a> {
+impl<'d, 'v> ReuseIndex<'d, 'v> {
     pub fn build(
         reuse: &'d EntityReuse,
-        data: &'d Value<'a>,
+        data: &'d Value<'v>,
         required_selections: RequiresSelectionSetRef<'_>,
         possible_types: &PossibleTypes,
     ) -> Self {
-        let mut by_hash = PrehashedMap::default();
+        let mut seen = PrehashedMap::default();
         for source in &reuse.sources {
             traverse_and_callback(data, source.as_slice(), possible_types, &mut |object, _| {
                 if object.is_object() {
-                    by_hash
-                        .entry(object.to_hash(required_selections, possible_types))
-                        .or_insert(object);
+                    seen.entry(object.to_hash(required_selections, possible_types))
+                        .or_insert(Known::InResponse(object));
                 }
             });
         }
         Self {
-            by_hash,
+            seen,
             copy: reuse.copy.root_selections(),
             copies: Vec::new(),
         }
     }
 
-    /// Copies the fields the fetch asks for and says where the copy sits in
-    /// [`Self::into_copies`], if the entity is here and has all of them. Every call makes a new
-    /// copy, the caller asks once per entity.
-    pub fn copy(&mut self, hash: u64) -> Option<usize> {
-        let copy = copy_object(self.by_hash.get(&hash)?, self.copy)?;
-        self.copies.push(copy);
-        Some(self.copies.len() - 1)
+    /// Copies the fields the fetch asks for from `source` and says where the copy sits in
+    /// [`Self::into_copies`]. None if it doesn't have all of them.
+    pub(super) fn copy(&mut self, source: &Value<'v>) -> Option<u32> {
+        self.copies.push(copy_object(source, self.copy)?);
+        Some(self.copies.len() as u32 - 1)
     }
 
-    pub fn into_copies(self) -> Vec<Value<'a>> {
+    pub fn into_copies(self) -> Vec<Value<'v>> {
         self.copies
+    }
+}
+
+/// The entities one fetch copied, and the paths of its targets. The targets that are
+/// [`EntityRef::Copied`] get them.
+pub struct Copies<'a, 'v> {
+    pub paths: Vec<(ResponsePathRef<'a>, TargetEntities)>,
+    pub copies: Vec<Value<'v>>,
+}
+
+/// Puts the copies a wave made into their targets, before its requests are awaited. Nothing was
+/// sent for them, so there are no errors or rewrites to apply.
+pub fn merge_copies<'v>(
+    data: &mut Value<'v>,
+    copies: Vec<Copies<'_, 'v>>,
+    schema_metadata: &SchemaMetadata,
+) {
+    let copied = |target: &Option<EntityRef>| match target {
+        Some(EntityRef::Copied { index }) => Some(*index as usize),
+        _ => None,
+    };
+    for Copies { paths, mut copies } in copies {
+        let mut merger = EntityMerger::new(
+            &mut copies,
+            paths
+                .iter()
+                .flat_map(|(_, targets)| targets.iter())
+                .filter_map(copied),
+        );
+        for (path, targets) in &paths {
+            let mut targets = targets.iter();
+            traverse_and_callback_mut(
+                data,
+                path.as_slice(),
+                schema_metadata,
+                None,
+                &mut |target, _| {
+                    if let Some(index) = targets.next().and_then(copied) {
+                        merger.merge_into(target, index);
+                    }
+                },
+            );
+        }
     }
 }
 
@@ -128,26 +173,11 @@ fn copy_nested<'a>(
     }
 }
 
-/// Lines up the subgraph's entities with the indexes the targets point at, and puts the copies
-/// after them. A subgraph that sends too few or too many can't shift the copies.
-pub fn append_reused<'a>(
-    entities: &mut Vec<Value<'a>>,
-    fetched_count: usize,
-    reused: Vec<Value<'a>>,
-) {
-    if reused.is_empty() {
-        return;
-    }
-    entities.resize(fetched_count, Value::Null);
-    entities.extend(reused);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::query_planner::{
-        ast::requires::RequiresSelectionSet, planner::plan_nodes::FlattenNodePath,
-        planner::plan_nodes::PathSegment, utils::parsing::parse_operation,
+        ast::requires::RequiresSelectionSet, utils::parsing::parse_operation,
     };
     use serde::Deserialize;
 
@@ -174,58 +204,17 @@ mod tests {
     }
 
     #[test]
-    fn copies_a_matching_entity_and_skips_incomplete_ones() {
-        let data = parse(
-            r#"{"topProducts": [
-                {"__typename": "Product", "upc": "1", "name": "Table", "price": 10},
-                {"__typename": "Product", "upc": "2", "price": 20}
-            ]}"#,
-        );
-        let reuse = EntityReuse {
-            sources: vec![FlattenNodePath::from(vec![
-                PathSegment::Field("topProducts".into()),
-                PathSegment::List,
-            ])],
-            copy: selection("{ ... on Product { __typename name price } }"),
-        };
-        let requires = selection("{ ... on Product { __typename upc } }");
-        let possible_types = PossibleTypes::default();
-        let mut index =
-            ReuseIndex::build(&reuse, &data, requires.root_selections(), &possible_types);
-
-        let wanted =
-            |json: &'static str| parse(json).to_hash(requires.root_selections(), &possible_types);
-        let product_1 = wanted(r#"{"__typename": "Product", "upc": "1"}"#);
-        assert_eq!(index.copy(product_1), Some(0));
-        // Product 2 has no name, so the subgraph has to answer for it.
+    fn copies_the_selected_fields_and_skips_incomplete_entities() {
+        let copy = selection("{ ... on Product { __typename name price } }");
+        let table = parse(r#"{"__typename": "Product", "upc": "1", "name": "Table", "price": 10}"#);
         assert_eq!(
-            index.copy(wanted(r#"{"__typename": "Product", "upc": "2"}"#)),
-            None
-        );
-        // Product 3 isn't in the response at all.
-        assert_eq!(
-            index.copy(wanted(r#"{"__typename": "Product", "upc": "3"}"#)),
-            None
-        );
-        let copies = index.into_copies();
-        assert_eq!(copies.len(), 1);
-        assert_eq!(
-            copies[0].to_string(),
+            copy_object(&table, copy.root_selections())
+                .unwrap()
+                .to_string(),
             r#"{"__typename": "Product", "name": "Table", "price": 10}"#
         );
-    }
-
-    #[test]
-    fn copies_go_after_what_the_subgraph_returns() {
-        // The subgraph sent one entity instead of two: the copies still land at 2 and 3.
-        let mut entities = vec![parse(r#"{"a": 1}"#)];
-        append_reused(
-            &mut entities,
-            2,
-            vec![parse(r#"{"b": 2}"#), parse(r#"{"c": 3}"#)],
-        );
-        assert!(entities[1].is_null());
-        assert_eq!(entities[2].to_string(), r#"{"b": 2}"#);
-        assert_eq!(entities[3].to_string(), r#"{"c": 3}"#);
+        // no name, so the subgraph has to answer for it
+        let chair = parse(r#"{"__typename": "Product", "upc": "2", "price": 20}"#);
+        assert!(copy_object(&chair, copy.root_selections()).is_none());
     }
 }
