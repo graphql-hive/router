@@ -742,8 +742,7 @@ mod websocket_e2e_tests {
             .serv()
             .get(router.graphql_path()) // same path as the websocket upgrade endpoint
             .header(http::header::ACCEPT, "application/graphql-response+json")
-            .query(&[("query", "{ __typename }")])
-            .unwrap();
+            .query(&[("query", "{ __typename }")]);
 
         let res = req.send().await.unwrap();
 
