@@ -916,6 +916,8 @@ impl TestRouter<Built> {
                         .with_config(app_config)
                         .configure(move |m| add_callback_handler(m, &cb_path))
                 })
+                // unpinned like the production callback server
+                .affinity(ntex::server::Affinity::Disabled)
                 .graceful_shutdown_timeout(config.shutdown_timeout())
                 .bind(&cb_addr, cb_cfg)
                 .expect("failed to bind callback server")
@@ -1024,6 +1026,8 @@ impl TestRouter<Built> {
             // in-flight connection during a graceful stop, so the client hangs forever
             // instead of seeing the connection force-dropped at the shutdown timeout.
             let server = web::HttpServer::new(app_factory)
+                // unpinned like the production server
+                .affinity(ntex::server::Affinity::Disabled)
                 .graceful_shutdown_timeout(config.shutdown_timeout())
                 .workers(1)
                 .listen(serv_listener, srv_cfg)
