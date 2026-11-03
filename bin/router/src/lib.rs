@@ -451,16 +451,18 @@ fn cpuset_cpu_count() -> Option<std::num::NonZeroUsize> {
 
 pub fn build_http_service_config(router_config: &HiveRouterConfig) -> HttpServiceConfig {
     let keep_alive = to_ntex_keep_alive(router_config.keep_alive());
+    let header_read_timeout =
+        to_ntex_seconds(router_config.traffic_shaping.router.header_read_timeout);
 
     let max_request_header_size = router_config.limits.max_request_header_size.to_bytes() as usize;
 
     HttpServiceConfig::new()
         .set_keepalive(keep_alive)
-        // time allowed to receive the complete request head, zero disables it.
-        // the body has its own deadline, see `read_body_stream`
-        .set_client_timeout(to_ntex_seconds(
-            router_config.traffic_shaping.router.header_read_timeout,
-        ))
+        // time allowed to receive the complete request head, zero disables it. the interval and
+        // the cumulative limit are both the timeout, so slow clients get no extension past it and
+        // values above ntex's default 16s limit aren't capped. the body has its own deadline,
+        // see `read_body_stream`
+        .set_headers_read_rate(header_read_timeout, header_read_timeout, 256)
         // ntex's parse buffer must fit the whole request head, otherwise limits
         // above its 64KiB default would be unreachable; the exact per-request
         // limit is enforced in the pipeline (`graphql_request_handler`)
