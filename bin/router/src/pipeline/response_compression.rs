@@ -126,11 +126,10 @@ where
             CompressionAlgorithmConfig::Gzip | CompressionAlgorithmConfig::Deflate
                 if matches!(body_size, BodySize::Sized(n) if n < NTEX_ENCODER_MIN_SIZE) =>
             {
-                let algorithm = *algorithm;
-                compress_full_body(response, token, move |data| {
-                    crate::http_utils::compression::compress(data, algorithm)
-                })
-                .await
+                // compressing under 1KiB takes microseconds, way less than a blocking pool hop.
+                // the fast level matches what ntex's encoder uses for the larger bodies
+                let gzip = matches!(algorithm, CompressionAlgorithmConfig::Gzip);
+                compress_full_body(response, token, false, flate_fast_compressor(gzip)).await
             }
             CompressionAlgorithmConfig::Gzip => response.map_body(move |head, body| {
                 track_response_bytes(
@@ -147,10 +146,10 @@ where
             // br/zstd buffer the whole body; `compress_full_body` records the compressed size once
             // compression succeeds.
             CompressionAlgorithmConfig::Br(brotli) => {
-                compress_full_body(response, token, brotli_compressor(*brotli)).await
+                compress_full_body(response, token, true, brotli_compressor(*brotli)).await
             }
             CompressionAlgorithmConfig::Zstd(zstd) => {
-                compress_full_body(response, token, zstd_compressor(*zstd)).await
+                compress_full_body(response, token, true, zstd_compressor(*zstd)).await
             }
         };
 
@@ -223,17 +222,36 @@ fn brotli_compressor(config: BrotliCompressionConfig) -> impl FnOnce(&[u8]) -> O
     }
 }
 
+/// Compresses with gzip, or zlib-wrapped deflate when `gzip` is false, at the fast level
+/// that ntex's streaming `Encoder` uses, so small and large bodies compress alike.
+fn flate_fast_compressor(gzip: bool) -> impl FnOnce(&[u8]) -> Option<Vec<u8>> {
+    move |data| {
+        let level = flate2::Compression::fast();
+        if gzip {
+            let mut encoder = flate2::write::GzEncoder::new(Vec::new(), level);
+            encoder.write_all(data).ok()?;
+            encoder.finish().ok()
+        } else {
+            let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), level);
+            encoder.write_all(data).ok()?;
+            encoder.finish().ok()
+        }
+    }
+}
+
 fn zstd_compressor(config: ZstdCompressionConfig) -> impl FnOnce(&[u8]) -> Option<Vec<u8>> {
     move |data| zstd::stream::encode_all(data, config.level).ok()
 }
 
-/// Drains the response body, runs `compress` on a blocking-pool thread, and rebuilds the
-/// response with the compressed bytes and a `Content-Encoding` header
+/// Drains the response body, runs `compress` on a blocking-pool thread when `offload` is set
+/// or on the current thread otherwise, and rebuilds the response with the compressed bytes
+/// and a `Content-Encoding` header
 ///
 /// Compression is best-effort: if it fails, we log the failure/error and return the original response
 async fn compress_full_body(
     response: web::WebResponse,
     token: &'static str,
+    offload: bool,
     compress: impl FnOnce(&[u8]) -> Option<Vec<u8>> + Send + 'static,
 ) -> web::WebResponse {
     let (http_response, request) = response.into_parts();
@@ -269,8 +287,17 @@ async fn compress_full_body(
     };
 
     let fallback = original.clone();
-    let compressed_body = match ntex::rt::spawn_blocking(move || compress(&original)).await {
-        Ok(Some(compressed)) => {
+    let compressed = if offload {
+        // a failed blocking task counts as a failed compression
+        ntex::rt::spawn_blocking(move || compress(&original))
+            .await
+            .ok()
+            .flatten()
+    } else {
+        compress(&original)
+    };
+    let compressed_body = match compressed {
+        Some(compressed) => {
             head.headers_mut()
                 .insert(CONTENT_ENCODING, HeaderValue::from_static(token));
 
@@ -280,7 +307,7 @@ async fn compress_full_body(
 
             Body::Bytes(crate::utils::vec_into_ntex_bytes(compressed))
         }
-        _ => Body::Bytes(fallback),
+        None => Body::Bytes(fallback),
     };
 
     web::WebResponse::new(head.set_body(compressed_body), request)
