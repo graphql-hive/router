@@ -116,6 +116,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.3.11 (2026-11-03)
+
+### Features
+
+#### Support `https://` coprocessor URLs
+
+`coprocessor.url` now accepts `https://` endpoints, and a new `coprocessor.tls` block configures how the router connects to them. It takes the same settings as `traffic_shaping.subgraphs.<name>.tls`: a custom CA (`cert_file`), a client certificate for mTLS (`client_auth`), and `insecure_skip_ca_verification`.
+
+```yaml
+coprocessor:
+  url: https://coprocessor.internal:8443/hook
+  protocol: http2
+  tls:
+    cert_file: ./certs/coprocessor-ca.pem
+    client_auth:
+      cert_file: ./certs/router.pem
+      key_file: ./certs/router.key
+```
+
+- Without a `tls` block, the coprocessor's certificate is verified against the system's root certificates. `coprocessor.tls` does not inherit `traffic_shaping.all.tls`.
+- `protocol: http1` and `protocol: http2` are supported over `https://`. `http2` was previously rejected; it now requires an `https://` endpoint, and `h2c` requires `http://` or `unix://`.
+- Setting `tls` on an `http://` or `unix://` endpoint fails at startup.
+- The per-stage `timeout` includes the TLS handshake when a new connection is opened.
+
+Closes https://github.com/graphql-hive/router/issues/1731
+
+#### Size HTTP server workers to the container's CPU limit
+
+`http.workers` (and `ROUTER_HTTP_WORKERS`) now accepts `cpuset` and `container`, in addition to an explicit number of workers.
+
+- `cpuset` (default, unchanged behavior): one worker per logical CPU the process is allowed to run on (its CPU affinity mask, which follows the cgroup cpuset on Linux). CPU limits are not taken into account, so in Kubernetes this is usually the number of CPUs of the node.
+- `container`: like `cpuset`, but also capped by the container's CPU limit (the cgroup CPU quota), rounded down, with a minimum of `1`. For example, a `1500m` CPU limit results in a single worker.
+- A positive integer: an explicit number of workers, as before.
+
+```yaml
+http:
+  workers: container
+```
+
+Closes https://github.com/graphql-hive/router/issues/1561
+
+### Fixes
+
+#### Faster entity merging
+
+When entities come back from a subgraph, the router now finds where each one goes by its position in the request, instead of looking up the hash of its representation. Entities are also deduplicated with a faster hash, so hashing one entity takes 35–53% less time. Responses don't change.
+
+#### Plan `@requires` that ask for one nested field with other arguments
+
+Planning no longer fails with "Response key 'averagePrice' would hold two different fields" when two `@requires` need the same nested field with other arguments, like `category { averagePrice(currency: "USD") }` and `category { averagePrice(currency: "EUR") }` ([#1829](https://github.com/graphql-hive/router/issues/1829)). The router fetches both, the second under an alias, and sends each to the field that needs it.
+
+Closes #1829
+
 ## 0.3.10 (2026-11-02)
 
 ### Features
