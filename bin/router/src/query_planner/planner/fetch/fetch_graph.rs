@@ -1990,7 +1990,7 @@ fn process_requires_field_edge(
             }
         }
         for key in jump_keys {
-            let input = fetch_graph.read_at(response_path, &key);
+            let input = fetch_graph.read_at(response_path, key);
             let output = fetch_graph
                 .response_keys
                 .output(&place_of(response_path), &key.selection_set);
