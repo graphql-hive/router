@@ -161,6 +161,7 @@ impl DemandControlRuntime {
             actual: DemandControlExecutionActualCostContext {
                 cost_mode: self.config.actual_cost_mode,
                 cost_plan: compiled_plan.actual_cost_plan.clone(),
+                supergraph: supergraph.planner.supergraph.clone(),
             },
             operation: DemandControlExecutionOperationContext {
                 operation_max_cost: max_cost,

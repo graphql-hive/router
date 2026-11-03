@@ -107,9 +107,10 @@ mod extensions_tests {
             .await;
 
         // The slicing argument (`first: 3`) drives the estimated cost; the actual
-        // cost reflects the three books returned.
+        // cost reflects the three books returned. Both count 1 for each of the two
+        // input objects in `$input`.
         assert_eq!(res.cost_header("x-cost-estimated"), Some(8));
-        assert_eq!(res.cost_header("x-cost-actual"), Some(6));
+        assert_eq!(res.cost_header("x-cost-actual"), Some(8));
         assert_eq!(res.cost_header("x-cost-max"), Some(1000));
 
         let json = res.json_body().await;
