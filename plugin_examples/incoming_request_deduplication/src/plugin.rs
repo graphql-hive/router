@@ -129,10 +129,10 @@ impl RouterPlugin for IncomingRequestDeduplicationPlugin {
                     response.set_header(header_name, header_value);
                 }
                 let response = response.body(shared_response.body);
-                receiver.unsubscribe(&fingerprint);
-                receiver
-                    .close()
-                    .expect("Expected to successfully close receiver");
+                // dropping the cloned receiver unsubscribes it and releases its slot. an explicit
+                // `close()` on top would release the slot twice (fibre's drop doesn't check
+                // `closed`), which can drop the receiver count to zero and make `send` fail
+                drop(receiver);
                 return payload.end_with_response(response);
             }
         } else {
