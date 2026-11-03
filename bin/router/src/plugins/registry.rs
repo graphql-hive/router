@@ -260,8 +260,8 @@ mod tests {
             .initialize_plugins(&router_config, bg_tasks_manager)
             .expect("Plugins should be initialized successfully")
             .expect("Plugins should exist");
-        let uri: http::Uri = "http://example.com/graphql".parse().unwrap();
-        let path: Path<http::Uri> = Path::new(uri.clone());
+        let uri: ntex::url::Url = "http://example.com/graphql".parse().unwrap();
+        let path: Path<ntex::url::Url> = Path::new(uri.clone());
         let fake_request = RouterHttpRequest {
             uri: &uri,
             method: &http::Method::POST,

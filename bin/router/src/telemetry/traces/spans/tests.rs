@@ -69,7 +69,7 @@ impl HttpServerSpanRequest for HttpRequestMock {
         self.req.method()
     }
 
-    fn uri(&self) -> &Uri {
+    fn uri(&self) -> &ntex::url::Url {
         self.req.uri()
     }
 

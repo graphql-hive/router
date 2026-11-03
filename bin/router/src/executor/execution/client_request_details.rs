@@ -4,10 +4,10 @@ use std::{
     sync::Arc,
 };
 
-use crate::vrl::expressions::{ToVrlValue, VrlValue};
+use crate::vrl::expressions::{url_to_vrl_value, ToVrlValue, VrlValue};
 use bytes::Bytes;
-use http::{Method, Uri};
-use ntex::{http::HeaderMap as NtexHeaderMap, router::Path};
+use http::Method;
+use ntex::{http::HeaderMap as NtexHeaderMap, router::Path, url::Url};
 
 use crate::executor::request_context::{RequestContextError, SharedRequestContext};
 
@@ -22,8 +22,8 @@ type PathParamsMap<'exec> = HashMap<Cow<'exec, str>, Cow<'exec, str>>;
 #[derive(Debug, Clone, Default)]
 pub struct PathParams<'exec>(PathParamsMap<'exec>);
 
-impl<'exec> From<&'exec Path<Uri>> for PathParams<'exec> {
-    fn from(path: &'exec Path<Uri>) -> Self {
+impl<'exec> From<&'exec Path<Url>> for PathParams<'exec> {
+    fn from(path: &'exec Path<Url>) -> Self {
         Self(
             path.iter()
                 .map(|(key, value)| (key.into(), value.into()))
@@ -53,7 +53,7 @@ impl<'exec> PathParams<'exec> {
 
 pub struct MutableClientRequestDetails<'exec> {
     pub method: &'exec Method,
-    pub url: &'exec http::Uri,
+    pub url: &'exec Url,
     pub headers: NtexHeaderMap,
     pub operation: OperationDetails<'exec>,
     pub jwt: Arc<JwtRequestDetails>,
@@ -62,7 +62,7 @@ pub struct MutableClientRequestDetails<'exec> {
 
 pub struct ClientRequestDetails<'exec> {
     pub method: &'exec Method,
-    pub url: &'exec http::Uri,
+    pub url: &'exec Url,
     pub headers: Arc<NtexHeaderMap>,
     pub operation: OperationDetails<'exec>,
     pub jwt: Arc<JwtRequestDetails>,
@@ -75,7 +75,7 @@ pub struct ClientRequestDetails<'exec> {
 // It's created to do not leak the mutable implementation details.
 pub trait ClientRequestDetailsView {
     fn method(&self) -> &Method;
-    fn url(&self) -> &http::Uri;
+    fn url(&self) -> &Url;
     fn headers(&self) -> &NtexHeaderMap;
     fn operation<'a>(&'a self) -> &'a OperationDetails<'a>;
     fn jwt(&self) -> &JwtRequestDetails;
@@ -91,7 +91,7 @@ impl ClientRequestDetailsView for MutableClientRequestDetails<'_> {
         self.method
     }
 
-    fn url(&self) -> &http::Uri {
+    fn url(&self) -> &Url {
         self.url
     }
 
@@ -117,7 +117,7 @@ impl ClientRequestDetailsView for ClientRequestDetails<'_> {
         self.method
     }
 
-    fn url(&self) -> &http::Uri {
+    fn url(&self) -> &Url {
         self.url
     }
 
@@ -213,7 +213,7 @@ fn request_details_to_vrl_value(details: &(impl ClientRequestDetailsView + ?Size
     let headers_value = ntex_header_map_to_vrl_value(details.headers());
 
     // .request.url
-    let url_value = details.url().to_vrl_value();
+    let url_value = url_to_vrl_value(details.url());
 
     // .request.path_params - parameters captured from the GraphQL endpoint pattern
     // (e.g. `/{tenant}/graphql`).

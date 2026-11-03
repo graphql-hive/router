@@ -4,7 +4,7 @@ use http::header::CONTENT_LENGTH;
 use ntex::{
     http::error::PayloadError,
     util::Extensions,
-    web::{self, DefaultError, HttpRequest, WebRequest},
+    web::{self, HttpRequest, WebRequest},
 };
 use ntex_bytes::{Bytes, BytesMut};
 use ntex_http::HeaderMap;
@@ -360,7 +360,7 @@ impl RequestLike for HttpRequest {
     }
 }
 
-impl RequestLike for WebRequest<DefaultError> {
+impl RequestLike for WebRequest<()> {
     fn headers(&self) -> &HeaderMap {
         self.headers()
     }

@@ -8,9 +8,9 @@ use crate::executor::{
     request_context::{RequestContextExt, SharedRequestContext},
 };
 use ntex::{
-    service::{Service, ServiceCtx},
-    web::{self, DefaultError},
-    Middleware, SharedCfg,
+    service::{Ctx, Service},
+    web,
+    Middleware,
 };
 
 use crate::{RouterPaths, RouterSharedState};
@@ -29,10 +29,10 @@ impl PluginService {
     }
 }
 
-impl<S> Middleware<S, SharedCfg> for PluginService {
+impl<S, St> Middleware<S, St> for PluginService {
     type Service = PluginMiddleware<S>;
 
-    fn create(&self, service: S, _cfg: SharedCfg) -> Self::Service {
+    fn create(&self, _st: &St, service: S) -> Self::Service {
         PluginMiddleware {
             service,
             paths: self.paths.clone(),
@@ -48,20 +48,22 @@ pub struct PluginMiddleware<S> {
     prometheus_endpoint: Option<String>,
 }
 
-impl<S> Service<web::WebRequest<DefaultError>> for PluginMiddleware<S>
+impl<S, St> Service<St, web::WebRequest<()>> for PluginMiddleware<S>
 where
-    S: Service<web::WebRequest<DefaultError>, Response = web::WebResponse, Error = web::Error>,
+    S: Service<St, web::WebRequest<()>, Res = web::WebResponse>,
 {
-    type Response = web::WebResponse;
+    type Res = web::WebResponse;
     type Error = S::Error;
 
-    ntex::forward_ready!(service);
+    ntex::forward_bind!(St, service);
+    ntex::forward_ready!(St, service);
+    ntex::forward_shutdown!(St, service);
 
     async fn call(
         &self,
-        mut req: web::WebRequest<DefaultError>,
-        ctx: ServiceCtx<'_, Self>,
-    ) -> Result<Self::Response, Self::Error> {
+        mut req: web::WebRequest<()>,
+        ctx: Ctx<'_, Self, St>,
+    ) -> Result<Self::Res, Self::Error> {
         let shared_state = req.app_state::<Arc<RouterSharedState>>().cloned();
 
         // The prometheus endpoint (if it's on the same port) bypasses both plugins and the

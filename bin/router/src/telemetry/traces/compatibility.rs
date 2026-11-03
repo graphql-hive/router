@@ -364,7 +364,7 @@ mod tests {
         let body = Bytes::from_static(b"test body");
         let http_req = req.to_http_request();
         let http_res =
-            ntex::web::HttpResponse::build(ntex::http::StatusCode::OK).body("response body");
+            ntex::web::HttpResponse::builder(ntex::http::StatusCode::OK).body("response body");
 
         tracer.in_span("root", |_cx| {
             let span =
@@ -457,7 +457,7 @@ mod tests {
         )
         .with_peer_addr("10.0.0.2:5678".parse().unwrap());
         let body = Bytes::from_static(b"test body");
-        let res = ntex::web::HttpResponse::build(ntex::http::StatusCode::OK).body("response body");
+        let res = ntex::web::HttpResponse::builder(ntex::http::StatusCode::OK).body("response body");
 
         let span = export_first_span(|| {
             let span = HttpServerRequestSpan::from_request(&req, &None);
@@ -476,7 +476,7 @@ mod tests {
     #[test]
     fn test_http_server_span_error_type_is_status_code() {
         let req = ntex::web::test::TestRequest::default().to_http_request();
-        let res = ntex::web::HttpResponse::build(ntex::http::StatusCode::BAD_GATEWAY).finish();
+        let res = ntex::web::HttpResponse::builder(ntex::http::StatusCode::BAD_GATEWAY).build();
 
         let span = export_first_span(|| {
             HttpServerRequestSpan::from_request(&req, &None).record_response(&res);
@@ -570,7 +570,7 @@ mod tests {
         let body = Bytes::from_static(b"test body");
         let http_req = req.to_http_request();
         let http_res =
-            ntex::web::HttpResponse::build(ntex::http::StatusCode::OK).body("response body");
+            ntex::web::HttpResponse::builder(ntex::http::StatusCode::OK).body("response body");
 
         tracer.in_span("root", |_cx| {
             let span =
@@ -623,7 +623,7 @@ mod tests {
         let body = Bytes::from_static(b"test body");
         let http_req = req.to_http_request();
         let http_res =
-            ntex::web::HttpResponse::build(ntex::http::StatusCode::OK).body("response body");
+            ntex::web::HttpResponse::builder(ntex::http::StatusCode::OK).body("response body");
 
         tracer.in_span("root", |_cx| {
             let span =

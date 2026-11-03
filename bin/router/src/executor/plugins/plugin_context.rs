@@ -8,21 +8,21 @@ use dashmap::{
     mapref::one::{Ref, RefMut},
     DashMap,
 };
-use http::Uri;
 use ntex::router::Path;
+use ntex::url::Url;
 use ntex::{http::HeaderMap, web::HttpRequest};
 
 use crate::executor::plugin_trait::RouterPluginBoxed;
 use crate::executor::request_context::SharedRequestContext;
 
 pub struct RouterHttpRequest<'req> {
-    pub uri: &'req Uri,
+    pub uri: &'req Url,
     pub method: &'req http::Method,
     pub version: http::Version,
     pub headers: &'req HeaderMap,
     pub path: &'req str,
     pub query_string: &'req str,
-    pub match_info: &'req Path<Uri>,
+    pub match_info: &'req Path<Url>,
 }
 
 impl<'a> From<&'a HttpRequest> for RouterHttpRequest<'a> {

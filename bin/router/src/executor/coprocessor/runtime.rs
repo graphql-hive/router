@@ -3,9 +3,10 @@ use crate::http_utils::body::read_body_stream;
 use crate::telemetry::logging::targets;
 use crate::telemetry::traces::spans::coprocessor::CoprocessorSpan;
 use crate::telemetry::TelemetryContext;
-use http::{Method as HttpMethod, Uri};
+use http::Method as HttpMethod;
+use ntex::url::Url;
 use ntex::http::HeaderMap;
-use ntex::web::{self, DefaultError};
+use ntex::web;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::Duration;
@@ -53,7 +54,7 @@ struct StageRuntime<S: Stage> {
 
 pub struct MutableRequestState<'a> {
     pub method: &'a HttpMethod,
-    pub uri: &'a Uri,
+    pub uri: &'a Url,
     pub headers: &'a mut HeaderMap,
 }
 
@@ -261,8 +262,8 @@ impl CoprocessorRuntime {
 
     pub async fn on_router_request(
         &self,
-        mut req: web::WebRequest<DefaultError>,
-    ) -> ControlFlow<web::WebResponse, web::WebRequest<DefaultError>> {
+        mut req: web::WebRequest<()>,
+    ) -> ControlFlow<web::WebResponse, web::WebRequest<()>> {
         let Some(stage) = &self.router_request else {
             return ControlFlow::Continue(req);
         };
@@ -443,7 +444,7 @@ fn build_router_stage_error_response(
     }
     .serialize();
 
-    web::HttpResponse::build(status)
+    web::HttpResponse::builder(status)
         .header(http::header::CONTENT_TYPE, "application/json")
         .body(body)
 }

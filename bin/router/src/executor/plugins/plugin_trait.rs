@@ -282,7 +282,7 @@ impl FromGraphQLErrorsToResponse for ntex::http::Response {
         status_code: http::StatusCode,
     ) -> Self {
         let body = from_graphql_errors_to_bytes(errors);
-        ntex::http::Response::build(ntex::http::StatusCode::OK)
+        ntex::http::Response::builder(ntex::http::StatusCode::OK)
             .content_type("application/json")
             .status(status_code)
             .body(body)

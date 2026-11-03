@@ -9,7 +9,7 @@ use crate::config::persisted_documents::{
 };
 use crate::config::primitives::value_or_expression::ValueOrExpression;
 use crate::executor::execution::client_request_details::ntex_header_map_to_vrl_value;
-use crate::vrl::expressions::{ToVrlValue, ValueOrProgram};
+use crate::vrl::expressions::{url_to_vrl_value, ValueOrProgram};
 use hive_console_sdk::expressions::{CompileExpression, ProgramHints};
 use ntex::web::HttpRequest;
 use tokio::sync::{mpsc, Mutex};
@@ -301,7 +301,7 @@ impl PersistedDocumentsRuntime {
                             .insert_lazy("headers", || {
                                 ntex_header_map_to_vrl_value(request.headers())
                             })
-                            .insert_lazy("url", || request.uri().to_vrl_value());
+                            .insert_lazy("url", || url_to_vrl_value(request.uri()));
                     });
                 })
             })

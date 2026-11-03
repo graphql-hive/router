@@ -1,7 +1,7 @@
 use futures::future::LocalBoxFuture;
 use ntex::{
     http::Response,
-    web::{self, DefaultError, WebRequest},
+    web::{self, WebRequest},
 };
 use std::sync::Arc;
 
@@ -32,7 +32,7 @@ pub struct OnHttpRequestHookPayload<'req> {
     ///     })
     /// }
     /// ```
-    pub router_http_request: WebRequest<DefaultError>,
+    pub router_http_request: WebRequest<()>,
     /// The context object that can be used to share data across different plugin hooks for the same request.
     /// It is unique per request and is dropped after the response is sent.
     ///

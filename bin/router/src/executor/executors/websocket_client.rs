@@ -10,7 +10,6 @@ use ntex::{
     io::Sealed,
     rt,
     ws::{self, error::WsError, WsClient as NtexWsClient, WsConnection, WsSink},
-    SharedCfg,
 };
 use tracing::{debug, error, trace};
 
@@ -35,7 +34,7 @@ pub enum WsConnectError {
     #[error("Wrong WebSocket URI schema: {0}")]
     WrongUriSchema(String),
     #[error("WebSocket client error: {0}")]
-    Client(#[from] ws::error::WsClientError),
+    Client(#[from] ntex::Error<ws::error::WsClientError>),
     #[error("WebSocket client builder error: {0}")]
     BuilderError(String),
     #[error("Failed to load native TLS certificates: {0}")]
@@ -114,30 +113,25 @@ pub async fn connect(
             ),
         };
 
-        let ws_client = NtexWsClient::builder(uri)
-            .max_frame_size(16 * 1024 * 1024) // default is 64kB which is too small
-            .protocols([WS_SUBPROTOCOL])
-            .timeout(ntex::time::Seconds(60))
-            .rustls(tls_config)
-            .take()
-            .build(SharedCfg::default())
-            .await
-            .map_err(|e| WsConnectError::BuilderError(e.to_string()))?;
+        let ws_client = NtexWsClient::new(uri, ws_client_config()?).rustls(tls_config);
 
         Ok(ws_client.connect().await?.seal())
     } else if scheme == "ws" {
-        let ws_client = NtexWsClient::builder(uri)
-            .max_frame_size(16 * 1024 * 1024) // default is 64kB which is too small
-            .protocols([WS_SUBPROTOCOL])
-            .timeout(ntex::time::Seconds(60))
-            .build(SharedCfg::default())
-            .await
-            .map_err(|e| WsConnectError::BuilderError(e.to_string()))?;
+        let ws_client = NtexWsClient::new(uri, ws_client_config()?);
 
         Ok(ws_client.connect().await?.seal())
     } else {
         Err(WsConnectError::WrongUriSchema(uri.to_string()))
     }
+}
+
+// shared by the ws and wss connections to subgraphs
+fn ws_client_config() -> Result<ws::WsClientConfig, WsConnectError> {
+    Ok(ws::WsClientConfig::new()
+        .set_max_frame_size(16 * 1024 * 1024) // default is 64kB which is too small
+        .set_protocols([WS_SUBPROTOCOL])
+        .map_err(|e| WsConnectError::BuilderError(e.to_string()))?
+        .set_handshake_timeout(ntex::time::Seconds(60)))
 }
 
 type WsResponse = Result<SubgraphResponse<'static>, WsClientError>;

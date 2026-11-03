@@ -1,4 +1,5 @@
 // The `graphiql` feature skips Laboratory asset generation, so there is no page to seed.
+pub mod app_state;
 pub mod body;
 pub mod compression;
 pub(crate) mod headers;
