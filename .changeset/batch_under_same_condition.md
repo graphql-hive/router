@@ -2,8 +2,8 @@
 hive-router: patch
 ---
 
-# Batch entity fetches under `@include`/`@skip` conditions
+# Batch conditional entity fetches
 
-Entity fetches with a `runIf` (from `@include`/`@skip` around them or on their fields) were never batched, each one went out as its own request. They now go into the same batched request as the other entity fetches to that subgraph, whatever their condition, so an operation with many conditional fields sends far fewer subgraph requests.
+Entity fetches under `@include`/`@skip` used to go out as separate requests. They're now batched with the other entity fetches to the same subgraph, so operations with many conditional fields send far fewer requests.
 
-Each condition gets its own alias, with the fetch's `runIf` on it. The router doesn't collect representations for an alias that's off, it sends `[]` for it. With every alias off there's no request. Demand control only counts the cost of the aliases that are on.
+A fetch whose condition is false sends no entities, and if every fetch in the batch is off, no request is sent. Demand control only counts the fetches that run.
