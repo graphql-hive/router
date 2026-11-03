@@ -120,6 +120,9 @@ impl FileManifestResolver {
     ) -> Result<RecommendedWatcher, PersistedDocumentResolverError> {
         let path = Path::new(manifest_path);
         let manifest_path_buf = PathBuf::from(manifest_path);
+        // macOS reports events with symlinks resolved (e.g. `/var` -> `/private/var`) while
+        // linux reports the path as watched, so events are matched against both forms
+        let canonical_manifest_path = path.canonicalize().ok();
         // Watch the parent directory so replace/rename save patterns are observed.
         let watch_target = path.parent().unwrap_or(path);
 
@@ -131,8 +134,10 @@ impl FileManifestResolver {
                             event.kind,
                             EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
                         );
-                        let touches_manifest =
-                            event.paths.iter().any(|path| path == &manifest_path_buf);
+                        let touches_manifest = event.paths.iter().any(|path| {
+                            path == &manifest_path_buf
+                                || canonical_manifest_path.as_ref() == Some(path)
+                        });
                         is_relevant_kind && touches_manifest
                     }
                     Err(err) => {
