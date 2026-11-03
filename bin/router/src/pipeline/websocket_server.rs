@@ -37,6 +37,7 @@ use crate::telemetry::metrics::subscription_metrics::{
 };
 use crate::telemetry::traces::spans::graphql::GraphQLOperationSpan;
 
+use crate::http_utils::app_state::AppData;
 use crate::jwt::errors::JwtError;
 use crate::pipeline::active_subscriptions::SubscriptionEvent;
 use crate::pipeline::error::{ClientPipelineError, PipelineError};
@@ -48,7 +49,6 @@ use crate::pipeline::{
     inbound_request_fingerprint, normalize::normalize_request_with_cache,
     parser::parse_operation_with_cache, usage_reporting, validation::validate_operation_with_cache,
 };
-use crate::http_utils::app_state::AppData;
 use crate::schema_state::SchemaState;
 use crate::shared_state::{RouterSharedState, SharedRouterResponse};
 use crate::telemetry::logging::request_id::WithRequestIdentifiers;

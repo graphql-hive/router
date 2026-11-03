@@ -9,8 +9,7 @@ use crate::executor::{
 };
 use ntex::{
     service::{Ctx, Service},
-    web,
-    Middleware,
+    web, Middleware,
 };
 
 use crate::{RouterPaths, RouterSharedState};

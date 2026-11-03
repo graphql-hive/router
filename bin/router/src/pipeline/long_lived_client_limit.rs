@@ -6,8 +6,7 @@ use std::sync::{
 use http::{header, StatusCode};
 use ntex::{
     service::{Ctx, Service},
-    web,
-    Middleware,
+    web, Middleware,
 };
 
 use crate::RouterSharedState;

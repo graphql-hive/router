@@ -5,8 +5,8 @@ use crate::config::coprocessor::{
     CoprocessorGraphqlAnalysisIncludeConfig, CoprocessorGraphqlRequestIncludeConfig,
     CoprocessorGraphqlResponseIncludeConfig, CoprocessorHookConfig,
 };
-use crate::vrl::expressions::BooleanOrProgram;
 use crate::vrl::expressions::url_to_vrl_value;
+use crate::vrl::expressions::BooleanOrProgram;
 use ntex::http::body::{Body, ResponseBody};
 use ntex::http::HeaderMap;
 use ntex::web;
@@ -272,7 +272,10 @@ impl Stage for GraphqlAnalysisStage {
                 .include
                 .method
                 .then(|| input.request.method.as_str().into()),
-            path: self.include.path.then(|| input.request.uri.path().as_str().into()),
+            path: self
+                .include
+                .path
+                .then(|| input.request.uri.path().as_str().into()),
             headers: self
                 .include
                 .headers

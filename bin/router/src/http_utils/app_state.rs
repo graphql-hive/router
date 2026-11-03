@@ -29,11 +29,7 @@ impl<T> Deref for AppData<T> {
 impl<T: Clone + 'static, St: web::State> FromRequest<St> for AppData<T> {
     type Error = InternalError<&'static str>;
 
-    async fn from_request(
-        _: &St,
-        req: &HttpRequest,
-        _: &mut Payload,
-    ) -> Result<Self, Self::Error> {
+    async fn from_request(_: &St, req: &HttpRequest, _: &mut Payload) -> Result<Self, Self::Error> {
         // a missing value is a wiring bug in the app setup, not a client error
         req.app_state::<T>()
             .cloned()

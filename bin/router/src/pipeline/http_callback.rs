@@ -4,9 +4,9 @@ use crate::executor::executors::http_callback::{
 };
 use crate::executor::executors::subscription_buffer::{try_send_or_drop, SendOutcome};
 use crate::executor::response::graphql_error::GraphQLError;
+use crate::http_utils::app_state::AppData;
 use crate::telemetry::logging::targets;
 use crate::telemetry::metrics::subscription_metrics::SubscriptionTransport;
-use crate::http_utils::app_state::AppData;
 use crate::telemetry::TelemetryContext;
 use bytes::Bytes as BytesLib;
 use dashmap::mapref::one::Ref;
