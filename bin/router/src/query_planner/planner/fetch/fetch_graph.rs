@@ -50,8 +50,7 @@ pub struct FetchGraph<State> {
     /// holds the object the entity call extends. Only kept while the graph is built: merges
     /// would make the indexes stale, so `to_multi_type` drops it.
     pub(crate) entity_owners: HashMap<NodeIndex, NodeIndex>,
-    /// The graph node an entity call's objects sit on in the step holding them, `Item/source` for
-    /// a call that came from `source`. Same lifetime as `entity_owners`.
+    /// For each entity call step, the type and subgraph its objects came from, as a graph node.
     pub(crate) entity_sources: HashMap<NodeIndex, NodeIndex>,
     /// The keys of the fields the planner adds itself. Only needed while the graph is built.
     pub(crate) response_keys: ResponseKeys,
@@ -1667,12 +1666,8 @@ fn process_requires_field_edge(
         _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
 
-    // The entity call goes to the subgraph of the field, so it takes one of that subgraph's own
-    // keys. The other edges have the keys of other subgraphs, `group { id }` where this one
-    // wants `group { tag }`.
     let key_to_reenter_subgraph =
         find_satisfiable_key(graph, supergraph, override_context, head_node_index, true)?;
-    // What the entity calls read, and the keys the step holding the objects writes.
     let requires_input = requires.map(|requires| fetch_graph.read_at(response_path, requires));
     let key_input = fetch_graph.read_at(response_path, key_to_reenter_subgraph);
     let key_output = fetch_graph.response_keys.output(
@@ -1715,12 +1710,9 @@ fn process_requires_field_edge(
         false => *fetch_graph
             .entity_owners
             .get(&parent_fetch_step_index)
-            .ok_or(FetchGraphError::MissingEntityOwner(
-                parent_fetch_step_index.index(),
-            ))?,
+            .ok_or_else(|| FetchGraphError::MissingEntityOwner(parent_fetch_step_index.index()))?,
     };
-    // Where the step holding the objects has them in the graph. Unknown for some entity calls,
-    // then nothing counts on it.
+    // Which subgraph (and type) these objects were loaded from. `None` if we don't know.
     let holder_node = if real_parent_fetch_step_index == parent_fetch_step_index {
         Some(head_node_index)
     } else {
@@ -1952,9 +1944,8 @@ fn process_requires_field_edge(
                 .or_insert(holder_node);
         }
 
-        // The requirements jump out of this subgraph with another key, `group { id }` to
-        // `source`. When the step holding the objects can fetch that key too, it does and this
-        // one passes it through, the optimizer folds it away then.
+        // The requirements need another key to reach their subgraph. If the subgraph the objects
+        // came from can fetch that key too, grab it there and pass it along.
         let mut jump_keys = Vec::new();
         if let Some(holder_node) = holder_node {
             let requirements = query_node
@@ -1966,12 +1957,14 @@ fn process_requires_field_edge(
                 .iter()
                 .filter_map(|child| child.edge_from_parent)
                 .collect();
+
             let from_holder = OperationPath {
                 root_node: holder_node,
                 last_segment: None,
                 cost: 0,
                 union_context: None,
             };
+
             for edge_ref in graph
                 .edges_from(requirements.node_index)
                 .filter(|edge_ref| jumps.contains(&edge_ref.id()))
@@ -2169,12 +2162,9 @@ fn find_satisfiable_key<'a>(
         )?
         .is_some()
         {
-            return edge_ref
-                .weight()
-                .requirements()
-                .ok_or(FetchGraphError::Internal(String::from(
-                    "Resolved empty Satisfiable Key",
-                )));
+            return edge_ref.weight().requirements().ok_or_else(|| {
+                FetchGraphError::Internal(String::from("Resolved empty Satisfiable Key"))
+            });
         }
     }
 
