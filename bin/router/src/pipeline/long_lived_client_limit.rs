@@ -1,17 +1,11 @@
-use std::{
-    rc::Rc,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-    task::{Context, Poll},
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
 };
 
 use http::{header, StatusCode};
 use ntex::{
-    http::body::{Body, BodySize, MessageBody},
     service::{Ctx, Service},
-    util::Bytes,
     web,
     Middleware,
 };
@@ -97,7 +91,7 @@ where
             return ctx.call(&self.service, req).await;
         }
 
-        let guard = match try_reserve_long_lived_client(&self.shared_state) {
+        let _guard = match try_reserve_long_lived_client(&self.shared_state) {
             Ok(Some(guard)) => guard,
             // limit disabled, nothing to track
             Ok(None) => return ctx.call(&self.service, req).await,
@@ -106,18 +100,10 @@ where
             }
         };
 
-        let response = ctx.call(&self.service, req).await?;
-
-        // wrap the body so the guard lives until the connection is fully closed
-        let response = response.map_body(|_head, body| {
-            let wrapped = GuardedBody {
-                inner: body.into_body().into(),
-                _guard: guard,
-            };
-            Body::from_message(wrapped).into()
-        });
-
-        Ok(response)
+        // `ws::start` drives the whole connection inside the handler, so this call resolves
+        // only once the socket is closed and holding the guard across it covers the
+        // connection's lifetime. a rejected upgrade resolves right away and frees the slot
+        ctx.call(&self.service, req).await
     }
 }
 
@@ -171,27 +157,6 @@ pub struct LongLivedClientGuard(Arc<AtomicUsize>);
 impl Drop for LongLivedClientGuard {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::AcqRel);
-    }
-}
-
-// wraps the body and keeps the guard alive until it's fully consumed and dropped.
-// one extra vtable call per chunk on top of the Box<dyn MessageBody> dispatch streaming bodies
-// already go through - negligible next to actual I/O cost per chunk.
-struct GuardedBody {
-    inner: Body,
-    _guard: LongLivedClientGuard,
-}
-
-impl MessageBody for GuardedBody {
-    fn size(&self) -> BodySize {
-        self.inner.size()
-    }
-
-    fn poll_next_chunk(
-        &mut self,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Bytes, Rc<dyn std::error::Error>>>> {
-        self.inner.poll_next_chunk(cx)
     }
 }
 
