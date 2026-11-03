@@ -321,29 +321,33 @@ impl<'graph> Graph<'graph> {
         ))
     }
 
-    pub fn upsert_edge(
-        &mut self,
-        head: NodeIndex,
-        tail: NodeIndex,
-        edge: Edge<'graph>,
-    ) -> EdgeIndex {
-        let existing_edge = self
-            .graph
-            .edges_connecting(head, tail)
-            .find_map(|edge_ref| {
-                let edge_weight = edge_ref.weight();
+    /// Adds the edges in order, but only the first of any that repeat between the same nodes.
+    /// Repeats come from a type repeating @join__type in a subgraph, one per @key.
+    /// Sorting finds them. Checking each new edge against all edges of its head
+    /// is subgraphs^2 * edges per type, and a node has an edge per field.
+    ///
+    /// Only for edges that are equal when their names are, like entity and abstract moves.
+    fn push_unique_edges(&mut self, edges: Vec<(NodeIndex, NodeIndex, Edge<'graph>)>) {
+        // Equal edges have to end up next to each other, so the kind goes before the name.
+        let sort_key = |index: usize| {
+            let (head, tail, edge) = &edges[index];
+            let is_entity_move = matches!(edge, Edge::EntityMove(_));
+            (*head, *tail, is_entity_move, edge.display_name(), index)
+        };
+        let mut first_ones: Vec<usize> = (0..edges.len()).collect();
+        first_ones.sort_unstable_by(|&a, &b| sort_key(a).cmp(&sort_key(b)));
+        first_ones.dedup_by(|later, earlier| {
+            let (head, tail, edge) = &edges[*later];
+            let (first_head, first_tail, first_edge) = &edges[*earlier];
+            head == first_head && tail == first_tail && edge == first_edge
+        });
+        first_ones.sort_unstable();
 
-                if edge_weight == &edge {
-                    Some(edge_ref.id())
-                } else {
-                    None
-                }
-            });
-
-        if let Some(edge) = existing_edge {
-            edge
-        } else {
-            self.graph.add_edge(head, tail, edge)
+        let mut first_ones = first_ones.into_iter().peekable();
+        for (index, (head, tail, edge)) in edges.into_iter().enumerate() {
+            if first_ones.next_if_eq(&index).is_some() {
+                self.graph.add_edge(head, tail, edge);
+            }
         }
     }
 
@@ -390,6 +394,7 @@ impl<'graph> Graph<'graph> {
         {
             let is_interface = definition.is_interface_type();
             let join_types = definition.join_types();
+            let mut edges = Vec::new();
 
             let mut nodes = Vec::with_capacity(join_types.len());
             for join_type in join_types {
@@ -444,11 +449,11 @@ impl<'graph> Graph<'graph> {
                         key
                     );
 
-                    self.upsert_edge(
+                    edges.push((
                         head,
                         tail,
                         Edge::create_entity_move(key, key_selection.clone(), is_interface),
-                    );
+                    ));
                 }
 
                 // Connects object types implementing @interfaceObject by @key
@@ -506,14 +511,14 @@ impl<'graph> Graph<'graph> {
                         join_type1.graph_id,
                         "__typename"
                     );
-                    self.upsert_edge(
+                    edges.push((
                         tail,
                         tail,
                         Edge::create_interface_object_type_move(
                             object_type_name,
                             typename_selection.clone(),
                         ),
-                    );
+                    ));
 
                     // Connect them via @key of the @interfaceObject.
                     for join_type2 in object_type_definition.join_types() {
@@ -541,14 +546,16 @@ impl<'graph> Graph<'graph> {
                             key
                         );
 
-                        self.upsert_edge(
+                        edges.push((
                             head,
                             tail,
                             Edge::create_entity_move(key, key_selection.clone(), is_interface),
-                        );
+                        ));
                     }
                 }
             }
+
+            self.push_unique_edges(edges);
         }
 
         Ok(())
@@ -565,6 +572,7 @@ impl<'graph> Graph<'graph> {
             .iter()
             .filter(|(_, d)| matches!(d, SupergraphDefinition::Object(_)))
         {
+            let mut edges = Vec::new();
             for join_implements in definition.join_implements() {
                 let tail = self.upsert_subgraph_node(
                     build_context,
@@ -593,8 +601,9 @@ impl<'graph> Graph<'graph> {
                     join_implements.graph_id
                 );
 
-                self.upsert_edge(head, tail, Edge::AbstractMove(definition.name()));
+                edges.push((head, tail, Edge::AbstractMove(definition.name())));
             }
+            self.push_unique_edges(edges);
         }
 
         Ok(())
@@ -1164,7 +1173,7 @@ impl<'graph> Graph<'graph> {
                                 target_node.display_name()
                             );
 
-                            self.upsert_edge(
+                            self.push_edge(
                                 head,
                                 target_node_index,
                                 Edge::create_reentry_move(
