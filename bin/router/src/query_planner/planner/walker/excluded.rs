@@ -41,15 +41,23 @@ impl<'graph> VisitedRequirements<'graph> {
     }
 }
 
-#[derive(Default)]
+/// What a search for indirect paths shouldn't go through again.
+#[derive(Debug, Clone, Default)]
 pub struct ExcludedFromLookup<'graph> {
-    pub graph_ids: SubgraphSet,
-    pub requirement: VisitedRequirements<'graph>,
+    pub subgraphs: SubgraphSet,
+    pub requirements: VisitedRequirements<'graph>,
 }
 
 impl<'graph> ExcludedFromLookup<'graph> {
     pub fn new() -> ExcludedFromLookup<'graph> {
         Default::default()
+    }
+
+    /// The same, with `subgraph_index` excluded too.
+    pub fn with_subgraph(&self, subgraph_index: u16) -> Self {
+        let mut excluded = self.clone();
+        excluded.subgraphs.insert(subgraph_index);
+        excluded
     }
 }
 

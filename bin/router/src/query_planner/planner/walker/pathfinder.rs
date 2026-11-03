@@ -28,7 +28,7 @@ use crate::query_planner::{
 
 use super::{
     error::WalkOperationError,
-    excluded::{ExcludedFromLookup, SubgraphSet, VisitedRequirements},
+    excluded::ExcludedFromLookup,
     path::{ContextRequirement, OperationPath, SelectionAttributes},
 };
 
@@ -39,48 +39,6 @@ pub struct EdgeRequirements<'graph> {
 }
 
 type ActiveEdgeChecks = HashSet<(NodeIndex, EdgeIndex)>;
-
-struct IndirectPathsLookupQueue<'graph> {
-    queue: Vec<(
-        SubgraphSet,
-        VisitedRequirements<'graph>,
-        OperationPath<'graph>,
-    )>,
-}
-
-impl<'graph> IndirectPathsLookupQueue<'graph> {
-    pub fn new_from_excluded(
-        excluded: &ExcludedFromLookup<'graph>,
-        path: &OperationPath<'graph>,
-    ) -> Self {
-        IndirectPathsLookupQueue {
-            queue: vec![(
-                excluded.graph_ids.clone(),
-                excluded.requirement.clone(),
-                path.clone(),
-            )],
-        }
-    }
-
-    pub fn add(
-        &mut self,
-        visited_graphs: SubgraphSet,
-        selections: VisitedRequirements<'graph>,
-        path: OperationPath<'graph>,
-    ) {
-        self.queue.push((visited_graphs, selections, path));
-    }
-
-    pub fn pop(
-        &mut self,
-    ) -> Option<(
-        SubgraphSet,
-        VisitedRequirements<'graph>,
-        OperationPath<'graph>,
-    )> {
-        self.queue.pop()
-    }
-}
 
 #[derive(Debug)]
 pub enum NavigationTarget<'op> {
@@ -198,11 +156,11 @@ impl<'graph> PathSearch<'graph> {
             }
         }
 
-        let mut queue = IndirectPathsLookupQueue::new_from_excluded(excluded, path);
+        // Paths to go on from, with what each one shouldn't go through again.
+        let mut queue = vec![(excluded.clone(), path.clone())];
 
-        while let Some(item) = queue.pop() {
+        while let Some((visited, path)) = queue.pop() {
             cancellation_token.bail_if_cancelled()?;
-            let (visited_graphs, visited_key_fields, path) = item;
 
             if !seen.insert((path.tail(), target_key)) {
                 trace!(
@@ -244,11 +202,11 @@ impl<'graph> PathSearch<'graph> {
                     continue;
                 }
 
-                if visited_graphs.contains(edge_tail_subgraph) {
+                if visited.subgraphs.contains(edge_tail_subgraph) {
                     trace!(
                     "Ignoring, graph is excluded and already visited (current: {}, visited: {:?})",
                     edge_tail_graph_id,
-                    visited_graphs
+                    visited.subgraphs
                 );
                     continue;
                 }
@@ -290,27 +248,17 @@ impl<'graph> PathSearch<'graph> {
                 //    - User/B @key(name) -> User/A
                 // Allows us to ignore an edge with the same key fields.
                 // That's because in some other path, we will or already have checked the other edge.
-                let requirements_already_checked = match edge.requirements() {
-                    Some(selection_requirements) => {
-                        visited_key_fields.contains(selection_requirements)
-                    }
-                    None => false,
-                };
-
-                if requirements_already_checked {
+                if edge
+                    .requirements()
+                    .is_some_and(|requirements| visited.requirements.contains(requirements))
+                {
                     trace!("Ignoring. Already visited similar edge");
                     continue;
                 }
 
-                let mut new_excluded_graph_ids = visited_graphs.clone();
-                new_excluded_graph_ids.insert(edge_tail_subgraph);
-                let new_excluded = ExcludedFromLookup {
-                    graph_ids: new_excluded_graph_ids,
-                    requirement: visited_key_fields.clone(),
-                };
-
+                let mut next_excluded = visited.with_subgraph(edge_tail_subgraph);
                 let can_be_satisfied =
-                    self.can_satisfy_edge(&edge_ref, &path, &new_excluded, false)?;
+                    self.can_satisfy_edge(&edge_ref, &path, &next_excluded, false)?;
 
                 match can_be_satisfied {
                     None => {
@@ -349,19 +297,10 @@ impl<'graph> PathSearch<'graph> {
                         } else {
                             trace!("No direct paths found");
 
-                            let mut new_visited_graphs = visited_graphs.clone();
-                            new_visited_graphs.insert(edge_tail_subgraph);
-
-                            let next_requirements = match edge.requirements() {
-                                Some(requirements) => {
-                                    let mut new_visited_key_fields = visited_key_fields.clone();
-                                    new_visited_key_fields.insert(requirements);
-                                    new_visited_key_fields
-                                }
-                                None => visited_key_fields.clone(),
-                            };
-
-                            queue.add(new_visited_graphs, next_requirements, next_resolution_path);
+                            if let Some(requirements) = edge.requirements() {
+                                next_excluded.requirements.insert(requirements);
+                            }
+                            queue.push((next_excluded, next_resolution_path));
 
                             trace!("going deeper");
                         }
