@@ -116,6 +116,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.3.12 (2026-11-03)
+
+### Fixes
+
+#### Batch conditional entity fetches
+
+Entity fetches under `@include`/`@skip` used to go out as separate requests. They're now batched with the other entity fetches to the same subgraph, so operations with many conditional fields send far fewer requests.
+
+A fetch whose condition is false sends no entities, and if every fetch in the batch is off, no request is sent. Demand control only counts the fetches that run.
+
 ## 0.3.11 (2026-11-03)
 
 ### Features
