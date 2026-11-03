@@ -3576,6 +3576,155 @@ mod issues_e2e_tests {
     }
 
     #[ntex::test]
+    /// https://github.com/graphql-hive/router/issues/1829
+    ///
+    /// `expensiveUsdCategory` needs `category { averagePrice(currency: "USD") }` and
+    /// `expensiveEurCategory` needs the EUR one. Planning used to fail, because both calls to `a`
+    /// were merged into one with two `averagePrice`s in `category`.
+    ///
+    /// `a` answers by the price it gets, so `p1`'s `expensiveEurCategory` is only `true` when it
+    /// gets the EUR price (30), not the USD one (15).
+    async fn issue_1829_nested_requires_with_other_arguments() {
+        use crate::testkit::mock_subgraphs::mock_subgraphs;
+        use serde_json::json;
+
+        let mocks = mock_subgraphs(json!({
+            "b": {
+                "query": {
+                    "products": [
+                        {
+                            "__typename": "Product",
+                            "upc": "p1",
+                            "category": {
+                                "averagePrice(currency: \"USD\")": 15,
+                                "averagePrice(currency: \"EUR\")": 30
+                            }
+                        },
+                        {
+                            "__typename": "Product",
+                            "upc": "p2",
+                            "category": {
+                                "averagePrice(currency: \"USD\")": 8,
+                                "averagePrice(currency: \"EUR\")": 16
+                            }
+                        }
+                    ]
+                }
+            },
+            "a": {
+                // USD is expensive above 10, EUR above 20
+                "entities": [
+                    { "__typename": "Product", "upc": "p1", "category": { "averagePrice": 15 }, "expensiveUsdCategory": true, "expensiveEurCategory": false },
+                    { "__typename": "Product", "upc": "p1", "category": { "averagePrice": 30 }, "expensiveUsdCategory": true, "expensiveEurCategory": true },
+                    { "__typename": "Product", "upc": "p2", "category": { "averagePrice": 8 }, "expensiveUsdCategory": false, "expensiveEurCategory": false },
+                    { "__typename": "Product", "upc": "p2", "category": { "averagePrice": 16 }, "expensiveUsdCategory": true, "expensiveEurCategory": false }
+                ]
+            }
+        }));
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mocks)
+            .build()
+            .start()
+            .await;
+
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                  supergraph:
+                    source: file
+                    path: src/issues/supergraph.1829.graphql
+                  "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let res = router
+            .send_graphql_request(
+                r#"{ products { upc usdAverage: category { averagePrice(currency: "USD") } expensiveUsdCategory expensiveEurCategory } }"#,
+                None,
+                None,
+            )
+            .await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+        insta::assert_snapshot!(res.json_body_string_pretty().await, @r#"
+        {
+          "data": {
+            "products": [
+              {
+                "upc": "p1",
+                "usdAverage": {
+                  "averagePrice": 15
+                },
+                "expensiveUsdCategory": true,
+                "expensiveEurCategory": true
+              },
+              {
+                "upc": "p2",
+                "usdAverage": {
+                  "averagePrice": 8
+                },
+                "expensiveUsdCategory": false,
+                "expensiveEurCategory": false
+              }
+            ]
+          }
+        }
+        "#);
+
+        let a_requests = subgraphs
+            .get_requests_log("a")
+            .expect("expected requests to a");
+        let variables: Vec<serde_json::Value> = a_requests
+            .iter()
+            .map(|req| {
+                let body: serde_json::Value =
+                    serde_json::from_slice(req.body.as_ref().expect("expected a body")).unwrap();
+                body["variables"].clone()
+            })
+            .collect();
+        insta::assert_snapshot!(serde_json::to_string_pretty(&variables).unwrap(), @r#"
+        [
+          {
+            "__batch_reps_0": [
+              {
+                "__typename": "Product",
+                "category": {
+                  "averagePrice": 30
+                },
+                "upc": "p1"
+              },
+              {
+                "__typename": "Product",
+                "category": {
+                  "averagePrice": 16
+                },
+                "upc": "p2"
+              }
+            ],
+            "__batch_reps_1": [
+              {
+                "__typename": "Product",
+                "category": {
+                  "averagePrice": 15
+                },
+                "upc": "p1"
+              },
+              {
+                "__typename": "Product",
+                "category": {
+                  "averagePrice": 8
+                },
+                "upc": "p2"
+              }
+            ]
+          }
+        ]
+        "#);
+    }
+
+    #[ntex::test]
     /// https://github.com/graphql-hive/router/issues/1309
     ///
     /// `rank` requires the pet's `whiskers` or `tricks`, which only `catalog` has. Both can
