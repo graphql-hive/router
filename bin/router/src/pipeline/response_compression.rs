@@ -96,7 +96,8 @@ where
         };
 
         let min_size = config.min_size.to_bytes();
-        let should_compress = match response.response().body().size() {
+        let body_size = response.response().body().size();
+        let should_compress = match body_size {
             BodySize::Sized(n) => n >= min_size,
             // SSE or unknown stream size are not compressible
             BodySize::Stream => false,
@@ -120,6 +121,17 @@ where
         }
 
         let response = match algorithm {
+            // ntex's streaming `Encoder` leaves sized bodies below 1KiB untouched, so those are
+            // buffered and compressed here to honour a configured `min_size` below that floor
+            CompressionAlgorithmConfig::Gzip | CompressionAlgorithmConfig::Deflate
+                if matches!(body_size, BodySize::Sized(n) if n < NTEX_ENCODER_MIN_SIZE) =>
+            {
+                let algorithm = *algorithm;
+                compress_full_body(response, token, move |data| {
+                    crate::http_utils::compression::compress(data, algorithm)
+                })
+                .await
+            }
             CompressionAlgorithmConfig::Gzip => response.map_body(move |head, body| {
                 track_response_bytes(
                     Encoder::response(ContentEncoding::Gzip, head, body),
@@ -145,6 +157,10 @@ where
         Ok(response)
     }
 }
+
+/// Smallest sized body that ntex's streaming `Encoder::response` compresses, smaller bodies are
+/// passed through unchanged. Mirrors the private `MIN_SIZE` constant in ntex's encoder.
+const NTEX_ENCODER_MIN_SIZE: u64 = 1024;
 
 /// Picks the algorithm from `algorithms` that best matches the client's `Accept-Encoding` preference
 fn negotiate<'cfg>(
