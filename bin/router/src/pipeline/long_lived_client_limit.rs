@@ -35,15 +35,18 @@ use crate::RouterSharedState;
 pub struct LongLivedClientLimitService {
     // false means the middleware is entirely bypassed on every request
     enabled: bool,
+    shared_state: Arc<RouterSharedState>,
 }
 
 impl LongLivedClientLimitService {
-    pub fn new(router_config: &crate::config::HiveRouterConfig) -> Self {
+    pub fn new(shared_state: Arc<RouterSharedState>) -> Self {
+        let router_config = shared_state.router_config;
         let limit = router_config.traffic_shaping.router.max_long_lived_clients;
         Self {
             // the middleware only counts WebSocket connections; HTTP streaming
             // responses are counted in the pipeline where the operation is known
             enabled: limit > 0 && router_config.websocket.enabled,
+            shared_state,
         }
     }
 }
@@ -55,6 +58,7 @@ impl<S, St> Middleware<S, St> for LongLivedClientLimitService {
         LongLivedClientLimitMiddleware {
             service,
             enabled: self.enabled,
+            shared_state: self.shared_state.clone(),
         }
     }
 }
@@ -62,6 +66,8 @@ impl<S, St> Middleware<S, St> for LongLivedClientLimitService {
 pub struct LongLivedClientLimitMiddleware<S> {
     service: S,
     enabled: bool,
+    // held here so requests don't look it up in the app state map every time
+    shared_state: Arc<RouterSharedState>,
 }
 
 impl<S, St> Service<St, web::WebRequest<()>> for LongLivedClientLimitMiddleware<S>
@@ -91,12 +97,7 @@ where
             return ctx.call(&self.service, req).await;
         }
 
-        let shared_state = match req.app_state::<Arc<RouterSharedState>>() {
-            Some(s) => s,
-            None => return ctx.call(&self.service, req).await,
-        };
-
-        let guard = match try_reserve_long_lived_client(shared_state) {
+        let guard = match try_reserve_long_lived_client(&self.shared_state) {
             Ok(Some(guard)) => guard,
             // limit disabled, nothing to track
             Ok(None) => return ctx.call(&self.service, req).await,
