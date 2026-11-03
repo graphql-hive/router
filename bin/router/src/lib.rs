@@ -514,6 +514,8 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
             let cb_cfg = SharedCfg::new("HIVE_ROUTER_CALLBACK")
                 .add(build_http_service_config(router_config));
             let cb_server = cb_server_builder
+                // see `affinity` on the main server below
+                .affinity(ntex::server::Affinity::Disabled)
                 .graceful_shutdown_timeout(router_config.shutdown_timeout())
                 .bind(&cb_addr, cb_cfg)
                 .map_err(|err| RouterInitError::HttpCallbackServerBindError(cb_addr, err))?
@@ -583,7 +585,12 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
 
     let cfg = SharedCfg::new("HIVE_ROUTER").add(build_http_service_config(router_config));
 
-    server = server.graceful_shutdown_timeout(router_config.shutdown_timeout());
+    // ntex pins workers to cores by default, but the plan ignores cgroup cpu quotas and
+    // starts at the same core for every server (main, callback, metrics) and every pod on
+    // the node. blocking pool threads inherit the pin too, so let the os scheduler place them
+    server = server
+        .affinity(ntex::server::Affinity::Disabled)
+        .graceful_shutdown_timeout(router_config.shutdown_timeout());
 
     let tls_config = shared_state_clone
         .router_config

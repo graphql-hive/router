@@ -369,6 +369,8 @@ fn create_prometheus_runtime(
             .default_service(web::to(async || HttpResponse::NotFound()))
     })
     .workers(1)
+    // unpinned like the main server, otherwise this worker shares its core with main worker 0
+    .affinity(ntex::server::Affinity::Disabled)
     .disable_signals()
     .bind(listen_address, ntex::SharedCfg::default());
 
