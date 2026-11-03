@@ -391,36 +391,50 @@ fn context_variables_do_not_collide_with_client_variables_or_requires() -> Resul
             }
           }
         },
-        Flatten(path: "users.@.txs.@") {
-          Fetch(service: "b", if: $__context_1) {
-            {
-              ... on Transaction {
-                __typename
-                id
+        Parallel {
+          Flatten(path: "users.@.txs.@") {
+            Fetch(service: "b", if: $__context_1) {
+              {
+                ... on Transaction {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Transaction {
+                  base
+                }
               }
-            } =>
-            {
-              ... on Transaction {
-                base
+            },
+          },
+          Flatten(path: "users.@.txs.@") {
+            Fetch(service: "a") {
+              {
+                ... on Transaction {
+                  __typename
+                  id
+                }
+              } =>
+              ($__context_3:Int,$__context_4:String) {
+                ... on Transaction {
+                  amount(code: $__context_4, multiplier: $__context_3)
+                }
               }
-            }
+            },
           },
         },
         Flatten(path: "users.@.txs.@") {
-          Fetch(service: "a") {
+          Fetch(service: "a", if: $__context_1) {
             {
               ... on Transaction {
                 __typename
-                id
                 base
+                id
               }
             } =>
-            ($__context_0:Int=2,$__context_1:Boolean!,$__context_3:Int,$__context_4:String,$__context_2:String) {
+            ($__context_0:Int=2,$__context_2:String) {
               ... on Transaction {
-                amount(code: $__context_4, multiplier: $__context_3)
-                ... on Transaction @include(if: $__context_1) {
-                  required(code: $__context_2, multiplier: $__context_0)
-                }
+                required(code: $__context_2, multiplier: $__context_0)
               }
             }
           },
