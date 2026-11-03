@@ -14,10 +14,10 @@ use ntex::{
         header::{ContentEncoding, HeaderValue},
         StatusCode,
     },
-    service::{Service, ServiceCtx},
+    service::{Ctx, Service},
     util::{Bytes, BytesMut},
-    web::{self, DefaultError},
-    Middleware, SharedCfg,
+    web,
+    Middleware,
 };
 use tokio_stream::StreamExt;
 use tracing::error;
@@ -46,10 +46,10 @@ impl ResponseCompressionService {
     }
 }
 
-impl<S> Middleware<S, SharedCfg> for ResponseCompressionService {
+impl<S, St> Middleware<S, St> for ResponseCompressionService {
     type Service = ResponseCompressionMiddleware<S>;
 
-    fn create(&self, service: S, _cfg: SharedCfg) -> Self::Service {
+    fn create(&self, _st: &St, service: S) -> Self::Service {
         ResponseCompressionMiddleware {
             service,
             response_compression_config: self.response_compression_config,
@@ -62,20 +62,22 @@ pub struct ResponseCompressionMiddleware<S> {
     response_compression_config: &'static TrafficShapingRouterCompressionConfig,
 }
 
-impl<S> Service<web::WebRequest<DefaultError>> for ResponseCompressionMiddleware<S>
+impl<S, St> Service<St, web::WebRequest<()>> for ResponseCompressionMiddleware<S>
 where
-    S: Service<web::WebRequest<DefaultError>, Response = web::WebResponse, Error = web::Error>,
+    S: Service<St, web::WebRequest<()>, Res = web::WebResponse>,
 {
-    type Response = web::WebResponse;
+    type Res = web::WebResponse;
     type Error = S::Error;
 
-    ntex::forward_ready!(service);
+    ntex::forward_bind!(St, service);
+    ntex::forward_ready!(St, service);
+    ntex::forward_shutdown!(St, service);
 
     async fn call(
         &self,
-        req: web::WebRequest<DefaultError>,
-        ctx: ServiceCtx<'_, Self>,
-    ) -> Result<Self::Response, Self::Error> {
+        req: web::WebRequest<()>,
+        ctx: Ctx<'_, Self, St>,
+    ) -> Result<Self::Res, Self::Error> {
         let config = &self.response_compression_config.response;
 
         if !config.enabled {
@@ -234,7 +236,7 @@ async fn compress_full_body(
                  mid-read and the original response can't be recovered"
             );
 
-            let error_response = web::HttpResponse::build(StatusCode::INTERNAL_SERVER_ERROR)
+            let error_response = web::HttpResponse::builder(StatusCode::INTERNAL_SERVER_ERROR)
                 .header(CONTENT_TYPE, "application/json")
                 .body(
                     FailedExecutionResult {

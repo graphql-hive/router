@@ -18,7 +18,7 @@ use hive_router::executor::request_context::SharedRequestContext;
 use ntex::http::header::{HeaderName, HeaderValue};
 use ntex::http::StatusCode;
 use ntex::util::Bytes as NtexBytes;
-use ntex::web::{self, test, DefaultError};
+use ntex::web::{self, test};
 use std::hint::black_box;
 use std::ops::ControlFlow;
 
@@ -72,11 +72,11 @@ fn make_web_request(
     path: &str,
     body: &'static [u8],
     header_count: usize,
-) -> web::WebRequest<DefaultError> {
+) -> web::WebRequest<()> {
     let mut req = test::TestRequest::default()
         .method(method)
         .uri(path)
-        .set_payload(body);
+        .payload(body);
 
     for i in 0..header_count {
         req = req.header(format!("x-bench-{i}"), "value");
@@ -91,7 +91,7 @@ fn make_web_response(
     header_count: usize,
 ) -> web::WebResponse {
     let req = test::TestRequest::default().to_srv_request();
-    let mut builder = web::HttpResponse::build(status_code);
+    let mut builder = web::HttpResponse::builder(status_code);
     for i in 0..header_count {
         let name = HeaderName::from_bytes(format!("x-resp-{i}").as_bytes()).unwrap();
         builder.set_header(name, HeaderValue::from_static("value"));
@@ -127,7 +127,7 @@ fn make_graphql_http_response(
     body: &'static [u8],
     header_count: usize,
 ) -> web::HttpResponse {
-    let mut response = web::HttpResponse::build(status);
+    let mut response = web::HttpResponse::builder(status);
     for i in 0..header_count {
         let name = HeaderName::from_bytes(format!("x-graphql-resp-{i}").as_bytes()).unwrap();
         response.set_header(name, HeaderValue::from_static("value"));

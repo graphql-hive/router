@@ -6,7 +6,7 @@ use crate::config::coprocessor::{
     CoprocessorGraphqlResponseIncludeConfig, CoprocessorHookConfig,
 };
 use crate::vrl::expressions::BooleanOrProgram;
-use crate::vrl::expressions::ToVrlValue;
+use crate::vrl::expressions::url_to_vrl_value;
 use ntex::http::body::{Body, ResponseBody};
 use ntex::http::HeaderMap;
 use ntex::web;
@@ -158,7 +158,7 @@ impl Stage for GraphqlRequestStage {
                         .insert_lazy("headers", || {
                             ntex_header_map_to_vrl_value(input.request.headers())
                         })
-                        .insert_lazy("url", || input.request.uri().to_vrl_value())
+                        .insert_lazy("url", || url_to_vrl_value(input.request.uri()))
                         .insert_object("operation", |op| {
                             op.insert_lazy("name", || {
                                 input.graphql_params.operation_name.clone().into()
@@ -241,7 +241,7 @@ impl Stage for GraphqlAnalysisStage {
                         .insert_lazy("headers", || {
                             ntex_header_map_to_vrl_value(input.request.headers)
                         })
-                        .insert_lazy("url", || input.request.uri.to_vrl_value())
+                        .insert_lazy("url", || url_to_vrl_value(input.request.uri))
                         .insert_object("operation", |op| {
                             op.insert_lazy("name", || {
                                 input.graphql_params.operation_name.clone().into()
@@ -272,7 +272,7 @@ impl Stage for GraphqlAnalysisStage {
                 .include
                 .method
                 .then(|| input.request.method.as_str().into()),
-            path: self.include.path.then(|| input.request.uri.path().into()),
+            path: self.include.path.then(|| input.request.uri.path().as_str().into()),
             headers: self
                 .include
                 .headers
@@ -323,7 +323,7 @@ impl Stage for GraphqlResponseStage {
                         .insert_lazy("headers", || {
                             ntex_header_map_to_vrl_value(input.request.headers())
                         })
-                        .insert_lazy("url", || input.request.uri().to_vrl_value());
+                        .insert_lazy("url", || url_to_vrl_value(input.request.uri()));
                 });
                 root.insert_object("response", |res| {
                     res.insert_lazy("headers", || {

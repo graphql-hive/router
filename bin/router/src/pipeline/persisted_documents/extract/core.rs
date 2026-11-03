@@ -38,7 +38,7 @@ pub struct DocumentIdResolverInput<'a> {
 
 impl<'a> From<&'a HttpRequest> for HttpRequestContext<'a> {
     fn from(req: &'a HttpRequest) -> Self {
-        Self::from_parts(req.uri().path(), req.uri().query())
+        Self::from_parts(req.uri().path().as_str(), req.uri().query().map(|q| q.as_str()))
     }
 }
 

@@ -91,7 +91,7 @@ pub trait Stage {
             let body = Self::parse_json_body(&body)?;
             response.body(CoprocessorResponseBody::from(body).into_ntex_bytes())
         } else {
-            response.finish()
+            response.build()
         };
 
         // Break short-circuits the pipeline with an immediate HTTP response.

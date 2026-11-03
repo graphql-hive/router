@@ -228,7 +228,7 @@ impl Cors {
                 web::HttpResponse::Ok()
                     .status(StatusCode::NO_CONTENT)
                     .header(header::CONTENT_LENGTH, HeaderValue::from_static("0"))
-                    .finish(),
+                    .build(),
             )
         } else {
             None

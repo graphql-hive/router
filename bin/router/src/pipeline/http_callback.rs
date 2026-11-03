@@ -6,6 +6,7 @@ use crate::executor::executors::subscription_buffer::{try_send_or_drop, SendOutc
 use crate::executor::response::graphql_error::GraphQLError;
 use crate::telemetry::logging::targets;
 use crate::telemetry::metrics::subscription_metrics::SubscriptionTransport;
+use crate::http_utils::app_state::AppData;
 use crate::telemetry::TelemetryContext;
 use bytes::Bytes as BytesLib;
 use dashmap::mapref::one::Ref;
@@ -93,7 +94,7 @@ impl CallbackError {
     }
 }
 
-impl WebResponseError for CallbackError {
+impl CallbackError {
     fn status_code(&self) -> StatusCode {
         match self {
             CallbackError::InvalidProtocolHeader
@@ -105,11 +106,15 @@ impl WebResponseError for CallbackError {
             | CallbackError::SubscriptionIdMismatch { .. } => StatusCode::NOT_FOUND,
         }
     }
-    fn error_response(&self, _: &HttpRequest) -> HttpResponse {
+}
+
+// rendered for any app state, the response only depends on the error itself
+impl<St> WebResponseError<St, web::DefaultError> for CallbackError {
+    fn error_response(&self, _: &St) -> HttpResponse {
         self.log();
-        HttpResponse::build(self.status_code())
+        HttpResponse::builder(self.status_code())
             .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
-            .finish()
+            .build()
     }
 }
 
@@ -213,8 +218,8 @@ pub async fn handler(
     req: HttpRequest,
     path: Path<String>,
     body: Bytes,
-    callback_subscriptions: web::types::State<CallbackSubscriptionsMap>,
-    telemetry_context: web::types::State<std::sync::Arc<TelemetryContext>>,
+    callback_subscriptions: AppData<CallbackSubscriptionsMap>,
+    telemetry_context: AppData<std::sync::Arc<TelemetryContext>>,
 ) -> Result<HttpResponse, CallbackError> {
     let subscription_id_from_path = path.into_inner();
 
@@ -257,5 +262,5 @@ pub async fn handler(
 
     Ok(HttpResponse::NoContent()
         .header(SUBSCRIPTION_PROTOCOL_HEADER, CALLBACK_PROTOCOL_VERSION)
-        .finish())
+        .build())
 }

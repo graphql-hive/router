@@ -601,7 +601,7 @@ pub async fn graphql_request_handler(
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_planned_request<'exec>(
     method: &'exec Method,
-    url: &'exec http::Uri,
+    url: &'exec ntex::url::Url,
     headers: HeaderMap,
     path_params: PathParams<'exec>,
     mut graphql_params: GraphQLParams,
@@ -774,7 +774,7 @@ fn materialize_shared_response_headers(
 ) -> Arc<HeaderMap> {
     let mut builder = web::HttpResponse::Ok();
     builder.content_type(content_type);
-    let mut response = builder.finish();
+    let mut response = builder.build();
 
     // Deduped requests reuse this shared response, but header sinks are per-request,
     // so propagated headers must be finalized here instead of relying on each sink.
