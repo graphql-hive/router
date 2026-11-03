@@ -906,18 +906,18 @@ impl TestRouter<Built> {
 
                 let cb_cfg = SharedCfg::new("HIVE_ROUTER_TEST_CALLBACK")
                     .add(hive_router::build_http_service_config(config));
-                let server = web::HttpServer::new(async move || {
-                    let cb_subs = cb_subs.clone();
+                let server = web::HttpServer::new(async move |_| {
                     let cb_path = cb_path.clone();
-                    let telemetry_context = cb_telemetry_context.clone();
+                    // handlers pick these up with the `AppData` extractor
+                    let app_config = WebAppConfig::new()
+                        .set_state(cb_subs.clone())
+                        .set_state(cb_telemetry_context.clone());
                     web::App::new()
-                        .state(cb_subs)
-                        .state(telemetry_context)
+                        .with_config(app_config)
                         .configure(move |m| add_callback_handler(m, &cb_path))
                 })
-                .config(cb_cfg)
-                .shutdown_timeout(config.shutdown_timeout())
-                .bind(&cb_addr)
+                .graceful_shutdown_timeout(config.shutdown_timeout())
+                .bind(&cb_addr, cb_cfg)
                 .expect("failed to bind callback server")
                 .run();
 
@@ -962,21 +962,25 @@ impl TestRouter<Built> {
         let system_name = ntex::rt::System::current().name().to_string();
         let srv_cfg = SharedCfg::new("HIVE_ROUTER_TEST")
             .add(hive_router::build_http_service_config(config))
-            .add(WebAppConfig::with(
-                &system_name,
-                secure,
-                serv_local_addr,
-                format!("{serv_local_addr}"),
-            ))
+            .add(
+                WebAppConfig::with(
+                    &system_name,
+                    secure,
+                    serv_local_addr,
+                    format!("{serv_local_addr}"),
+                )
+                // handlers pick these up with the `AppData` extractor, middlewares with `app_state`
+                .set_state(serv_shared_state.clone())
+                .set_state(serv_schema_state.clone())
+                .set_state(serv_callback_subs.clone())
+                .set_state(serv_shared_state.telemetry_context.clone()),
+            )
             .build();
 
-        let app_factory = move || {
-            let shared_state = serv_shared_state.clone();
-            let schema_state = serv_schema_state.clone();
+        let app_factory = move |_: &()| {
             let paths = serv_paths.clone();
             let prometheus = serv_prometheus.clone();
             let serv_callback_path = serv_callback_path.clone();
-            let callback_subs = serv_callback_subs.clone();
             let long_lived_limit = long_lived_limit.clone();
             let response_compression = response_compression.clone();
 
@@ -991,21 +995,19 @@ impl TestRouter<Built> {
             std::mem::forget(guard);
 
             async move {
+                // the first registered middleware is the outermost layer, same order as the router
                 web::App::new()
-                    .middleware(long_lived_limit)
+                    .middleware(response_compression)
+                    .middleware(RequestIdentifiersService)
+                    .middleware(RequestSummaryService::new(&paths.graphql))
                     .middleware(PluginService::new(
                         paths.clone(),
                         prometheus.as_ref().map(|p| p.endpoint.clone()),
                     ))
-                    .middleware(RequestSummaryService::new(&paths.graphql))
-                    .middleware(RequestIdentifiersService)
-                    .middleware(response_compression)
-                    .state(shared_state.clone())
-                    .state(schema_state)
-                    .state(callback_subs)
-                    .state(shared_state.telemetry_context.clone())
-                    .configure(|m| configure_ntex_app(m, &paths, prometheus))
+                    .middleware(long_lived_limit)
+                    // `App::configure` can only be called once, so both registrations share it
                     .configure(|m| {
+                        configure_ntex_app(m, &paths, prometheus);
                         if let Some(ref callback) = serv_callback_path {
                             add_callback_handler(m, callback);
                         }
@@ -1022,10 +1024,9 @@ impl TestRouter<Built> {
             // in-flight connection during a graceful stop, so the client hangs forever
             // instead of seeing the connection force-dropped at the shutdown timeout.
             let server = web::HttpServer::new(app_factory)
-                .config(srv_cfg)
-                .shutdown_timeout(config.shutdown_timeout())
+                .graceful_shutdown_timeout(config.shutdown_timeout())
                 .workers(1)
-                .listen(serv_listener)
+                .listen(serv_listener, srv_cfg)
                 .expect("failed to bind real http server for test router")
                 .run();
 
@@ -1047,7 +1048,7 @@ impl TestRouter<Built> {
                 serv_config = serv_config.rustls(rustls_config);
             }
 
-            ntex::util::Either::Left(test::server_with(serv_config, app_factory).await)
+            ntex::util::Either::Left(test::server_with(serv_config, app_factory))
         };
 
         let mut hold_until_drop = self._hold_until_drop;
