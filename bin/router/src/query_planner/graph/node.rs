@@ -3,8 +3,6 @@ use std::{
     sync::Arc,
 };
 
-use crate::query_planner::state::supergraph_state::SubgraphName;
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UnionMembersData<'graph> {
     /// Represents the type owning the field
@@ -38,7 +36,7 @@ impl<'graph> SubgraphTypeSpecialization<'graph> {
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct SubgraphType<'graph> {
     pub name: &'graph str,
-    pub subgraph: SubgraphName,
+    pub subgraph: &'graph str,
     /// `subgraph`'s index in `SupergraphState::subgraph_names`. Set once the graph is built.
     pub(super) subgraph_index: u16,
     pub is_interface_object: bool,
@@ -50,7 +48,7 @@ pub struct SubgraphType<'graph> {
 
 impl SubgraphType<'_> {
     pub fn plain_display_name(&self) -> String {
-        format!("{}/{}", self.name, self.subgraph.0)
+        format!("{}/{}", self.name, self.subgraph)
     }
 }
 
@@ -75,7 +73,7 @@ impl<'graph> Node<'graph> {
                 let name = match &st.specialization {
                     Some(SubgraphTypeSpecialization::UnionMembers(u)) => format!(
                         "{}/{} for {}.{}:{}",
-                        st.name, st.subgraph.0, u.type_name, u.field_name, u.object_type_name
+                        st.name, st.subgraph, u.type_name, u.field_name, u.object_type_name
                     ),
                     None => st.plain_display_name(),
                 };
@@ -117,7 +115,7 @@ impl<'graph> Node<'graph> {
 
     pub fn new_node(
         name: &'graph str,
-        subgraph: SubgraphName,
+        subgraph: &'graph str,
         is_interface_object: bool,
     ) -> Node<'graph> {
         Node::SubgraphType(SubgraphType {
@@ -131,13 +129,13 @@ impl<'graph> Node<'graph> {
     }
 
     /// Root types are never interface objects, so this is the same node the field edges use.
-    pub fn new_root_node(name: &'graph str, subgraph: SubgraphName) -> Node<'graph> {
+    pub fn new_root_node(name: &'graph str, subgraph: &'graph str) -> Node<'graph> {
         Self::new_node(name, subgraph, false)
     }
 
     pub fn new_specialized_node(
         name: &'graph str,
-        subgraph: SubgraphName,
+        subgraph: &'graph str,
         is_interface_object: bool,
         specialization: SubgraphTypeSpecialization<'graph>,
     ) -> Node<'graph> {
@@ -156,7 +154,7 @@ impl<'graph> Node<'graph> {
             Node::QueryRoot(_) => None,
             Node::MutationRoot(_) => None,
             Node::SubscriptionRoot(_) => None,
-            Node::SubgraphType(st) => Some(&st.subgraph.0),
+            Node::SubgraphType(st) => Some(st.subgraph),
         }
     }
 

@@ -219,12 +219,12 @@ impl FetchStepData<SingleTypeFetchStep> {
     /// Whether an entity call to this subgraph, type, path and condition could reuse this step.
     pub fn matches_entity_call(
         &self,
-        subgraph_name: &SubgraphName,
+        subgraph_name: &str,
         input_type_name: &str,
         response_path: &MergePath,
         condition: Option<&Condition>,
     ) -> bool {
-        self.service_name == *subgraph_name
+        self.service_name.0 == subgraph_name
             && self.input.definition_name() == input_type_name
             && self.response_path == *response_path
             && self.condition.as_ref() == condition

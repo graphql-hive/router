@@ -100,7 +100,7 @@ impl FetchGraph<SingleTypeFetchStep> {
     fn same_entity_calls(
         &self,
         parent: NodeIndex,
-        subgraph_name: &SubgraphName,
+        subgraph_name: &str,
         input_type_name: &str,
         response_path: &MergePath,
         condition: Option<&Condition>,
@@ -446,7 +446,7 @@ fn create_noop_fetch_step(
 fn create_fetch_step_for_entity_call(
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     owner_index: NodeIndex,
-    subgraph_name: &SubgraphName,
+    subgraph_name: &str,
     input_type_name: &str,
     output_type_name: &str,
     response_path: &MergePath,
@@ -467,7 +467,7 @@ fn create_fetch_step_for_entity_call(
 
     let step_index = fetch_graph.add_step(FetchStepData {
         id: fetch_graph.create_fetch_id(),
-        service_name: subgraph_name.clone(),
+        service_name: SubgraphName(subgraph_name.to_string()),
         response_path: response_path.clone(),
         input,
         output: FetchStepSelections::new(output_type_name),
@@ -494,7 +494,7 @@ fn create_fetch_step_for_entity_call(
 fn create_fetch_step_for_root_move(
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     root_step_index: NodeIndex,
-    subgraph_name: &SubgraphName,
+    subgraph_name: &str,
     type_name: &str,
     operation_kind: OperationKind,
     mutation_field_position: MutationFieldPosition,
@@ -503,7 +503,7 @@ fn create_fetch_step_for_root_move(
 ) -> NodeIndex {
     let idx = fetch_graph.add_step(FetchStepData {
         id: fetch_graph.create_fetch_id(),
-        service_name: subgraph_name.clone(),
+        service_name: SubgraphName(subgraph_name.to_string()),
         response_path: response_path.clone(),
         input: FetchStepSelections::new(type_name),
         output: FetchStepSelections::new(type_name),
@@ -529,7 +529,7 @@ fn create_fetch_step_for_root_move(
 /// The entity call a step makes, the part a step gets reused on: its subgraph, input type,
 /// response path and condition.
 fn entity_call_hash(
-    subgraph_name: &SubgraphName,
+    subgraph_name: &str,
     input_type_name: &str,
     response_path: &MergePath,
     condition: Option<&Condition>,
@@ -548,7 +548,7 @@ fn entity_call_hash(
 fn entity_call_hash_of<State>(step: &FetchStepData<State>) -> Option<u64> {
     let input_type_name = step.input.first_definition_name()?;
     Some(entity_call_hash(
-        &step.service_name,
+        &step.service_name.0,
         input_type_name,
         &step.response_path,
         step.condition.as_ref(),
@@ -560,7 +560,7 @@ fn entity_call_hash_of<State>(step: &FetchStepData<State>) -> Option<u64> {
 fn ensure_fetch_step_for_subgraph(
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     parent_fetch_step_index: NodeIndex,
-    subgraph_name: &SubgraphName,
+    subgraph_name: &str,
     input_type_name: &str,
     output_type_name: &str,
     response_path: &MergePath,
@@ -640,7 +640,7 @@ fn ensure_fetch_step_for_subgraph(
 fn ensure_fetch_step_for_requirement(
     fetch_graph: &mut FetchGraph<SingleTypeFetchStep>,
     parent_fetch_step_index: NodeIndex,
-    subgraph_name: &SubgraphName,
+    subgraph_name: &str,
     type_name: &str,
     response_path: &MergePath,
     condition: Option<&Condition>,
@@ -1162,7 +1162,7 @@ fn process_subgraph_entrypoint_edge(
     let fetch_step_index = create_fetch_step_for_root_move(
         fetch_graph,
         parent_fetch_step_index,
-        subgraph_name,
+        &subgraph_name.0,
         type_name,
         operation_kind,
         query_node.mutation_field_position,
@@ -2442,13 +2442,13 @@ mod tests {
     #[test]
     fn same_entity_calls_are_children_of_one_parent_newest_first() {
         let mut fetch_graph = FetchGraph::new(OperationKind::Query);
-        let users = SubgraphName("users".to_string());
-        let reviews = SubgraphName("reviews".to_string());
+        let users = "users";
+        let reviews = "reviews";
         let path = MergePath::default();
 
         let parent = create_noop_fetch_step(&mut fetch_graph, false);
         let other_parent = create_noop_fetch_step(&mut fetch_graph, false);
-        let mut add_child = |parent: NodeIndex, subgraph_name: &SubgraphName| {
+        let mut add_child = |parent: NodeIndex, subgraph_name: &str| {
             let index = create_fetch_step_for_entity_call(
                 &mut fetch_graph,
                 parent,
@@ -2462,14 +2462,14 @@ mod tests {
             fetch_graph.connect(parent, index);
             index
         };
-        let older = add_child(parent, &users);
-        add_child(parent, &reviews);
-        let newer = add_child(parent, &users);
-        let under_other_parent = add_child(other_parent, &users);
+        let older = add_child(parent, users);
+        add_child(parent, reviews);
+        let newer = add_child(parent, users);
+        let under_other_parent = add_child(other_parent, users);
 
         let found = |fetch_graph: &FetchGraph<SingleTypeFetchStep>, parent: NodeIndex| {
             fetch_graph
-                .same_entity_calls(parent, &users, "User", &path, None)
+                .same_entity_calls(parent, users, "User", &path, None)
                 .collect::<Vec<_>>()
         };
         assert_eq!(found(&fetch_graph, parent), vec![newer, older]);

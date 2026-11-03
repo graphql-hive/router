@@ -57,35 +57,19 @@ type FieldInSubgraph<'a> = (
     Option<&'a JoinFieldDirective>,
 );
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-struct SubgraphNodeKey<'state> {
-    type_name: &'state str,
-    graph_id: &'state str,
-    is_interface_object: bool,
+/// What we need only while building. Dropped with the builder, so a built graph doesn't keep
+/// a second copy of every node around.
+#[derive(Debug, Default)]
+struct GraphBuildContext<'graph> {
+    node_to_index: HashMap<Node<'graph>, NodeIndex>,
 }
 
-#[derive(Default)]
-struct GraphBuildContext<'state> {
-    resolved_graph_ids: HashMap<&'state str, ResolvedSubgraphName>,
-    subgraph_nodes: HashMap<SubgraphNodeKey<'state>, NodeIndex>,
-}
-
-impl<'state> GraphBuildContext<'state> {
-    fn resolve_graph_id(
-        &mut self,
-        state: &SupergraphState,
-        graph_id: &'state str,
-    ) -> Result<&ResolvedSubgraphName, GraphError> {
-        if !self.resolved_graph_ids.contains_key(graph_id) {
-            self.resolved_graph_ids
-                .insert(graph_id, state.resolve_graph_id(graph_id)?);
-        }
-
-        Ok(self
-            .resolved_graph_ids
-            .get(graph_id)
-            .expect("resolved graph ID should be cached"))
-    }
+/// The subgraph name behind a `join__Graph` value, borrowed from the supergraph.
+fn subgraph_name<'a>(state: &'a SupergraphState, graph_id: &str) -> Result<&'a str, GraphError> {
+    Ok(state
+        .known_subgraphs
+        .get(graph_id)
+        .ok_or_else(|| SupergraphStateError::SubgraphNotFound(graph_id.to_string()))?)
 }
 
 #[derive(Debug, Default)]
@@ -169,7 +153,6 @@ pub struct Graph<'graph> {
     pub query_root: NodeIndex,
     pub mutation_root: Option<NodeIndex>,
     pub subscription_root: Option<NodeIndex>,
-    node_to_index: HashMap<Node<'graph>, NodeIndex>,
 }
 
 impl<'graph> Graph<'graph> {
@@ -202,7 +185,6 @@ impl<'graph> Graph<'graph> {
         supergraph_state: &'graph SupergraphState,
     ) -> Result<Self, GraphError> {
         let mut instance = Graph {
-            node_to_index: HashMap::new(),
             graph: InnerGraph::new(),
             ..Default::default()
         };
@@ -211,10 +193,10 @@ impl<'graph> Graph<'graph> {
 
         for node in instance.graph.node_weights_mut() {
             if let Node::SubgraphType(subgraph_type) = node {
-                let name = &subgraph_type.subgraph.0;
+                let name = subgraph_type.subgraph;
                 subgraph_type.subgraph_index = supergraph_state
                     .subgraph_index(name)
-                    .ok_or_else(|| SupergraphStateError::SubgraphNotFound(name.clone()))?;
+                    .ok_or_else(|| SupergraphStateError::SubgraphNotFound(name.to_string()))?;
             }
         }
 
@@ -256,12 +238,12 @@ impl<'graph> Graph<'graph> {
 
         let mut build_context = GraphBuildContext::default();
 
-        self.build_root_nodes(state)?;
+        self.build_root_nodes(state, &mut build_context)?;
         self.link_root_edges(state, &mut build_context)?;
         let provides = self.build_field_edges(state, &mut build_context)?;
         self.build_interface_implementation_edges(state, &mut build_context)?;
         self.build_entity_reference_edges(state, &mut build_context)?;
-        self.build_provides_edges(state, provides)?;
+        self.build_provides_edges(state, provides, build_context)?;
 
         Ok(())
     }
@@ -283,29 +265,43 @@ impl<'graph> Graph<'graph> {
         }
     }
 
-    #[instrument(level = "trace", skip(self, state))]
-    fn build_root_nodes(&mut self, state: &'graph SupergraphState) -> Result<(), GraphError> {
-        self.query_root = self.upsert_node(Node::QueryRoot(state.query_type.as_str()));
+    #[instrument(level = "trace", skip(self, state, build_context))]
+    fn build_root_nodes(
+        &mut self,
+        state: &'graph SupergraphState,
+        build_context: &mut GraphBuildContext<'graph>,
+    ) -> Result<(), GraphError> {
+        self.query_root =
+            self.upsert_node(build_context, Node::QueryRoot(state.query_type.as_str()));
         trace!("added root type for queries: {}", state.query_type);
         self.mutation_root = state.mutation_type.as_ref().map(|mutation_type| {
             trace!("added root type for mutations: {}", mutation_type);
-            self.upsert_node(Node::MutationRoot(mutation_type.as_str()))
+            self.upsert_node(build_context, Node::MutationRoot(mutation_type.as_str()))
         });
         self.subscription_root = state.subscription_type.as_ref().map(|subscription_type| {
             trace!("added root type for subscriptions: {}", subscription_type);
-            self.upsert_node(Node::SubscriptionRoot(subscription_type.as_str()))
+            self.upsert_node(
+                build_context,
+                Node::SubscriptionRoot(subscription_type.as_str()),
+            )
         });
 
         Ok(())
     }
 
-    pub fn upsert_node(&mut self, node: Node<'graph>) -> NodeIndex {
-        if let Some(&index) = self.node_to_index.get(&node) {
+    fn upsert_node(
+        &mut self,
+        build_context: &mut GraphBuildContext<'graph>,
+        node: Node<'graph>,
+    ) -> NodeIndex {
+        if let Some(&index) = build_context.node_to_index.get(&node) {
             return index;
         }
 
         let index = self.graph.add_node(node);
-        self.node_to_index.insert(self.graph[index].clone(), index);
+        build_context
+            .node_to_index
+            .insert(self.graph[index].clone(), index);
 
         index
     }
@@ -318,19 +314,11 @@ impl<'graph> Graph<'graph> {
         graph_id: &'graph str,
         is_interface_object: bool,
     ) -> Result<NodeIndex, GraphError> {
-        let key = SubgraphNodeKey {
-            type_name,
-            graph_id,
-            is_interface_object,
-        };
-        if let Some(&node_index) = build_context.subgraph_nodes.get(&key) {
-            return Ok(node_index);
-        }
-
-        let subgraph = build_context.resolve_graph_id(state, graph_id)?.clone();
-        let node_index = self.upsert_node(Node::new_node(type_name, subgraph, is_interface_object));
-        build_context.subgraph_nodes.insert(key, node_index);
-        Ok(node_index)
+        let subgraph = subgraph_name(state, graph_id)?;
+        Ok(self.upsert_node(
+            build_context,
+            Node::new_node(type_name, subgraph, is_interface_object),
+        ))
     }
 
     pub fn upsert_edge(
@@ -691,15 +679,15 @@ impl<'graph> Graph<'graph> {
                         }
                         .ok_or(GraphError::MissingRootType(root_type.clone()))?;
 
-                        let subgraph = build_context.resolve_graph_id(state, graph_id)?.clone();
-                        let tail =
-                            self.upsert_node(Node::new_root_node(def_name, subgraph.clone()));
+                        let subgraph = subgraph_name(state, graph_id)?;
+                        let tail = self
+                            .upsert_node(build_context, Node::new_root_node(def_name, subgraph));
 
                         self.push_edge(
                             head,
                             tail,
                             Edge::SubgraphEntrypoint {
-                                name: subgraph,
+                                name: ResolvedSubgraphName(subgraph.to_string()),
                                 operation_kind: root_type.clone(),
                             },
                         );
@@ -831,7 +819,7 @@ impl<'graph> Graph<'graph> {
             for ((graph_id, is_interface_object), fields) in
                 subgraphs.into_iter().zip(fields_per_subgraph)
             {
-                let graph_name = build_context.resolve_graph_id(state, graph_id)?.0.clone();
+                let graph_name = subgraph_name(state, graph_id)?;
                 let has_resolvable_typename = matches!(
                     definition,
                     SupergraphDefinition::Object(_)
@@ -886,7 +874,7 @@ impl<'graph> Graph<'graph> {
                     // This prevents the current subgraph from creating a resolvable edge for a field it no longer owns.
                     let overridden_by = field_definition.join_field.iter().find_map(|jf| {
                         if let Some(override_from) = &jf.override_value {
-                            if override_from == &graph_name {
+                            if override_from == graph_name {
                                 let overriding_subgraph_name = state
                                     .known_subgraphs
                                     .get(jf.graph_id.as_ref().expect(
@@ -1027,17 +1015,20 @@ impl<'graph> Graph<'graph> {
                         );
 
                         for member in member_types.iter().copied() {
-                            let tail = self.upsert_node(Node::new_specialized_node(
-                                target_type,
-                                build_context.resolve_graph_id(state, graph_id)?.clone(),
-                                state.is_interface_object_in_subgraph(target_type, graph_id),
-                                SubgraphTypeSpecialization::UnionMembers(UnionMembersData {
-                                    type_name: def_name,
-                                    field_name,
-                                    object_type_name: member,
-                                    possible_members: Arc::clone(&possible_members),
-                                }),
-                            ));
+                            let tail = self.upsert_node(
+                                build_context,
+                                Node::new_specialized_node(
+                                    target_type,
+                                    graph_name,
+                                    state.is_interface_object_in_subgraph(target_type, graph_id),
+                                    SubgraphTypeSpecialization::UnionMembers(UnionMembersData {
+                                        type_name: def_name,
+                                        field_name,
+                                        object_type_name: member,
+                                        possible_members: Arc::clone(&possible_members),
+                                    }),
+                                ),
+                            );
                             let abstract_tail = self.upsert_subgraph_node(
                                 build_context,
                                 state,
@@ -1211,6 +1202,7 @@ impl<'graph> Graph<'graph> {
         &mut self,
         state: &'graph SupergraphState,
         provides: HashMap<EdgeIndex, Provided>,
+        build_context: GraphBuildContext<'graph>,
     ) -> Result<(), GraphError> {
         // The map is in no particular order. Sorting keeps the node order, and so the plans,
         // the same between runs.
@@ -1239,6 +1231,7 @@ impl<'graph> Graph<'graph> {
             state,
             provides,
             copies: HashMap::new(),
+            build: build_context,
         };
 
         // Copies are built from the plain edges, so those stay as they are until every copy
@@ -1280,7 +1273,7 @@ impl<'graph> Graph<'graph> {
         provided: Provided,
         graph_id: &str,
     ) -> Result<NodeIndex, GraphError> {
-        let provided = self.prune_provided(ctx.state, original, provided, graph_id)?;
+        let provided = self.prune_provided(ctx, original, provided, graph_id)?;
         if provided.is_empty() {
             return Ok(original);
         }
@@ -1288,7 +1281,10 @@ impl<'graph> Graph<'graph> {
             return Ok(copy);
         }
 
-        let copy = self.upsert_node(self.graph[original].provides_copy(provided.to_string()));
+        let copy = self.upsert_node(
+            &mut ctx.build,
+            self.graph[original].provides_copy(provided.to_string()),
+        );
         // Saved before the edges are, so a path that comes back to the same state ends up here.
         ctx.copies.insert((original, provided.clone()), copy);
 
@@ -1336,19 +1332,22 @@ impl<'graph> Graph<'graph> {
             .get(&type_name)
             .ok_or_else(|| GraphError::DefinitionNotFound(type_name.clone()))?
             .name();
-        let subgraph = ctx.state.resolve_graph_id(graph_id)?;
+        let subgraph = subgraph_name(ctx.state, graph_id)?;
         for (field_name, below) in &provided.fields {
             if self.field_targets(original, field_name).next().is_some() {
                 continue;
             }
             let field_definition = field_definition(ctx.state, &type_name, field_name)?;
             let return_type_name = field_definition.field_type.inner_type();
-            let plain = self.upsert_node(Node::new_node(
-                return_type_name,
-                subgraph.clone(),
-                ctx.state
-                    .is_interface_object_in_subgraph(return_type_name, graph_id),
-            ));
+            let plain = self.upsert_node(
+                &mut ctx.build,
+                Node::new_node(
+                    return_type_name,
+                    subgraph,
+                    ctx.state
+                        .is_interface_object_in_subgraph(return_type_name, graph_id),
+                ),
+            );
             let target = self.provided_node(ctx, plain, below.clone(), graph_id)?;
             self.graph.add_edge(
                 copy,
@@ -1375,11 +1374,14 @@ impl<'graph> Graph<'graph> {
                 .get(on_type)
                 .ok_or_else(|| GraphError::DefinitionNotFound(on_type.clone()))?
                 .name();
-            let plain = self.upsert_node(Node::new_node(
-                on_type_name,
-                subgraph.clone(),
-                ctx.state.is_interface_object_in_subgraph(on_type, graph_id),
-            ));
+            let plain = self.upsert_node(
+                &mut ctx.build,
+                Node::new_node(
+                    on_type_name,
+                    subgraph,
+                    ctx.state.is_interface_object_in_subgraph(on_type, graph_id),
+                ),
+            );
             let target = self.provided_node(ctx, plain, below.clone(), graph_id)?;
             self.graph
                 .add_edge(copy, target, Edge::AbstractMove(on_type_name));
@@ -1392,7 +1394,7 @@ impl<'graph> Graph<'graph> {
     /// fields when `node` is a `T`. What's left is the key of the copy.
     fn prune_provided(
         &self,
-        state: &SupergraphState,
+        ctx: &ProvidesContext<'graph>,
         node: NodeIndex,
         mut provided: Provided,
         graph_id: &str,
@@ -1413,10 +1415,10 @@ impl<'graph> Graph<'graph> {
                 // `@external`, the path is the only way to get it.
                 let plain = match below.is_empty() {
                     true => None,
-                    false => self.plain_node_of_field(state, node, &field_name, graph_id)?,
+                    false => self.plain_node_of_field(ctx, node, &field_name, graph_id)?,
                 };
                 let below = match plain {
-                    Some(plain) => self.prune_provided(state, plain, below, graph_id)?,
+                    Some(plain) => self.prune_provided(ctx, plain, below, graph_id)?,
                     None => below,
                 };
                 pruned.fields.insert(field_name, below);
@@ -1425,7 +1427,7 @@ impl<'graph> Graph<'graph> {
             // The subgraph resolves it anyway, so only what's below can add something.
             let mut kept = Provided::default();
             for target in targets {
-                kept.merge(self.prune_provided(state, target, below.clone(), graph_id)?);
+                kept.merge(self.prune_provided(ctx, target, below.clone(), graph_id)?);
             }
             if !kept.is_empty() {
                 pruned.fields.insert(field_name, kept);
@@ -1442,11 +1444,12 @@ impl<'graph> Graph<'graph> {
                 // An `@external` abstract field has no member edges here, the path adds one.
                 let plain = Node::new_node(
                     &on_type,
-                    state.resolve_graph_id(graph_id)?,
-                    state.is_interface_object_in_subgraph(&on_type, graph_id),
+                    subgraph_name(ctx.state, graph_id)?,
+                    ctx.state
+                        .is_interface_object_in_subgraph(&on_type, graph_id),
                 );
-                let below = match self.node_to_index.get(&plain) {
-                    Some(&plain) => self.prune_provided(state, plain, below, graph_id)?,
+                let below = match ctx.build.node_to_index.get(&plain) {
+                    Some(&plain) => self.prune_provided(ctx, plain, below, graph_id)?,
                     None => below,
                 };
                 pruned.on_types.insert(on_type, below);
@@ -1454,7 +1457,7 @@ impl<'graph> Graph<'graph> {
             }
             let mut kept = Provided::default();
             for member in members {
-                kept.merge(self.prune_provided(state, member, below.clone(), graph_id)?);
+                kept.merge(self.prune_provided(ctx, member, below.clone(), graph_id)?);
             }
             if !kept.is_empty() {
                 pruned.on_types.insert(on_type, kept);
@@ -1491,19 +1494,21 @@ impl<'graph> Graph<'graph> {
     /// The plain node an `@external` field would lead to, if it's in the graph already.
     fn plain_node_of_field(
         &self,
-        state: &SupergraphState,
+        ctx: &ProvidesContext<'graph>,
         node: NodeIndex,
         field_name: &str,
         graph_id: &str,
     ) -> Result<Option<NodeIndex>, GraphError> {
-        let field_definition = field_definition(state, self.graph[node].name_str(), field_name)?;
+        let field_definition =
+            field_definition(ctx.state, self.graph[node].name_str(), field_name)?;
         let return_type_name = field_definition.field_type.inner_type();
         let plain = Node::new_node(
             return_type_name,
-            state.resolve_graph_id(graph_id)?,
-            state.is_interface_object_in_subgraph(return_type_name, graph_id),
+            subgraph_name(ctx.state, graph_id)?,
+            ctx.state
+                .is_interface_object_in_subgraph(return_type_name, graph_id),
         );
-        Ok(self.node_to_index.get(&plain).copied())
+        Ok(ctx.build.node_to_index.get(&plain).copied())
     }
 }
 
@@ -1529,6 +1534,7 @@ struct ProvidesContext<'a> {
     provides: HashMap<EdgeIndex, Provided>,
     /// Copies, by their plain node and what's provided on them.
     copies: HashMap<(NodeIndex, Provided), NodeIndex>,
+    build: GraphBuildContext<'a>,
 }
 
 /// Print me with `println!("{}", graph);` to see the graph in DOT/digraph format.
