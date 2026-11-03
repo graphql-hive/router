@@ -714,53 +714,6 @@ fn fragment_condition_equal(cond: &Option<Condition>, fragment: &InlineFragmentS
     }
 }
 
-/// Find the arguments conflicts between two selections.
-/// Returns a vector of tuples containing the indices of conflicting fields in both "source" and "other"
-/// Both indices are returned in order to allow for easy resolution of conflicts later, in either side.
-pub fn find_arguments_conflicts(
-    source: &SelectionSet,
-    other: &SelectionSet,
-) -> Vec<(usize, usize)> {
-    other
-        .items
-        .iter()
-        .enumerate()
-        .filter_map(|(index, other_selection)| {
-            if let SelectionItem::Field(other_field) = other_selection {
-                let other_identifier = other_field.selection_identifier();
-                let other_args_hash = other_field.arguments_hash();
-
-                let existing_in_self =
-                    source
-                        .items
-                        .iter()
-                        .enumerate()
-                        .find_map(|(self_index, self_selection)| {
-                            if let SelectionItem::Field(self_field) = self_selection {
-                                // If the field selection identifier matches and the arguments hash is different,
-                                // then it means that we can't merge the two input siblings
-                                if self_field.selection_identifier() == other_identifier
-                                    && self_field.arguments_hash() != other_args_hash
-                                {
-                                    return Some(self_index);
-                                }
-                            }
-
-                            None
-                        });
-
-                if let Some(existing_index) = existing_in_self {
-                    return Some((existing_index, index));
-                }
-
-                return None;
-            }
-
-            None
-        })
-        .collect()
-}
-
 /// Whether `a` and `b` in one selection set would give a response key two values: the same key
 /// for another field or other arguments, at any depth. Inline fragments are looked through,
 /// their fields write the same object.

@@ -12,9 +12,7 @@ use tracing::{instrument, trace};
 use crate::query_planner::{
     ast::{
         merge_path::{MergePath, Segment},
-        selection_set::{
-            find_arguments_conflicts, find_selection_set_by_path, response_keys_conflict,
-        },
+        selection_set::{find_selection_set_by_path, response_keys_conflict},
     },
     planner::fetch::{
         error::FetchGraphError,
@@ -528,17 +526,17 @@ impl FetchStepData<MultiTypeFetchStep> {
             }
         }
 
+        // at any depth, `category { averagePrice(currency: "USD") }` and
+        // `category { averagePrice: _internal_qp_alias_0(currency: "EUR") }` can't share an input
         let input_conflicts = FetchStepSelections::<MultiTypeFetchStep>::iter_matching_types(
             &self.input,
             &other.input,
             |_, self_selections, other_selections| {
-                find_arguments_conflicts(self_selections, other_selections)
+                response_keys_conflict(self_selections, other_selections)
             },
         );
 
-        input_conflicts
-            .iter()
-            .any(|(_, conflicts)| !conflicts.is_empty())
+        input_conflicts.iter().any(|(_, conflict)| *conflict)
     }
 }
 

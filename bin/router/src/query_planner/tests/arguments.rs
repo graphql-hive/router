@@ -2361,3 +2361,97 @@ fn requires_with_argument_conflict_after_entity_hop() -> Result<(), Box<dyn Erro
 
     Ok(())
 }
+
+/// https://github.com/graphql-hive/router/issues/1829
+///
+/// `expensiveUsdCategory` needs `category { averagePrice(currency: "USD") }` and
+/// `expensiveEurCategory` needs `category { averagePrice(currency: "EUR") }`. The EUR one is
+/// `_internal_qp_alias_0` inside `category`, so the two calls to `a` can't share one input.
+#[test]
+fn requires_with_nested_argument_conflict() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          products {
+            upc
+            usdAverage: category { averagePrice(currency: "USD") }
+            expensiveUsdCategory
+            expensiveEurCategory
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-nested-argument-conflict.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {
+            products {
+              __typename
+              upc
+              usdAverage: category {
+                averagePrice(currency: "USD")
+              }
+              category {
+                averagePrice(currency: "USD")
+                _internal_qp_alias_0: averagePrice(currency: "EUR")
+              }
+            }
+          }
+        },
+        BatchFetch(service: "a") {
+          {
+            _e0 {
+              paths: [
+                "products.@"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  category {
+                    averagePrice: _internal_qp_alias_0
+                  }
+                  upc
+                }
+              }
+            }
+            _e1 {
+              paths: [
+                "products.@"
+              ]
+              {
+                ... on Product {
+                  __typename
+                  category {
+                    averagePrice
+                  }
+                  upc
+                }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on Product {
+                expensiveEurCategory
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on Product {
+                expensiveUsdCategory
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
