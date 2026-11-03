@@ -8,6 +8,7 @@ use std::{
 use crate::config::demand_control::{
     DemandControlActualCostMode, DemandControlExposeHeadersConfig, DemandControlMode,
 };
+use crate::pipeline::demand_control::formula::{estimate_input_value_cost, is_input_object_typed};
 use crate::query_planner::{
     ast::{
         document::Document,
@@ -81,6 +82,8 @@ impl DemandControlExecutionSubgraphsContext {
 pub struct DemandControlExecutionActualCostContext {
     pub cost_mode: DemandControlActualCostMode,
     pub cost_plan: Arc<CompiledActualCostPlan>,
+    /// To price input object arguments, whose values may come from variables.
+    pub supergraph: Arc<SupergraphState>,
 }
 
 #[derive(Debug)]
@@ -135,6 +138,7 @@ impl DemandControlExecutionContext {
                     actual_response_shape_plan,
                     data,
                     variable_values,
+                    &self.actual.supergraph,
                 )
             }
         }
@@ -160,6 +164,7 @@ impl DemandControlExecutionContext {
                         plan,
                         &response_ref.data,
                         variables_map,
+                        &self.actual.supergraph,
                     )
                 })
                 .unwrap_or(0);
@@ -258,6 +263,8 @@ enum CompiledSelectionItemActualCostPlan {
 struct CompiledFieldActualCostPlan {
     response_key: String,
     field_base_cost: u64,
+    /// Input object arguments, priced per request as their values can be variables.
+    input_object_arguments: Vec<(AstValue, TypeNode)>,
     return_type_cost: u64,
     /// How many lists wrap the type, 2 for `[[Product]]`
     list_depth: usize,
@@ -370,10 +377,16 @@ pub fn estimate_actual_subgraph_response_cost_with_compiled_plan(
     plan: &CompiledSubgraphActualCostPlan,
     response_data: &Value<'_>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
+    supergraph: &SupergraphState,
 ) -> u64 {
     match &plan.root {
         CompiledActualCostRootPlan::SelectionSet(selection_set) => {
-            evaluate_selection_set_actual_cost_plan(selection_set, response_data, variable_values)
+            evaluate_selection_set_actual_cost_plan(
+                selection_set,
+                response_data,
+                variable_values,
+                supergraph,
+            )
         }
         CompiledActualCostRootPlan::EntityGroups(groups) => {
             let mut total = 0_u64;
@@ -422,6 +435,7 @@ pub fn estimate_actual_subgraph_response_cost_with_compiled_plan(
                         &entity_plan.selections,
                         entity,
                         variable_values,
+                        supergraph,
                     ));
                 }
             }
@@ -435,8 +449,9 @@ pub fn estimate_actual_response_shape_cost_with_compiled_plan(
     plan: &CompiledResponseShapeActualCostPlan,
     response_data: &Value<'_>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
+    supergraph: &SupergraphState,
 ) -> u64 {
-    evaluate_selection_set_actual_cost_plan(&plan.root, response_data, variable_values)
+    evaluate_selection_set_actual_cost_plan(&plan.root, response_data, variable_values, supergraph)
 }
 
 fn compile_selection_set_actual_cost_plan(
@@ -497,6 +512,7 @@ fn compile_field_actual_cost_plan(
         return CompiledFieldActualCostPlan {
             response_key: field.selection_identifier().to_string(),
             field_base_cost: 0,
+            input_object_arguments: Vec::new(),
             return_type_cost: 0,
             list_depth: 0,
             include_if: field.include_if.clone(),
@@ -510,6 +526,7 @@ fn compile_field_actual_cost_plan(
         .get(parent_type_name)
         .and_then(|definition| definition.fields().get(field.name.as_str()));
 
+    let mut input_object_arguments = Vec::new();
     let (return_type_name, field_type, field_base_cost) = if let Some(definition) = field_def {
         let mut base = definition
             .cost
@@ -522,19 +539,12 @@ fn compile_field_actual_cost_plan(
                 if let Some(cost) = definition.cost_by_arguments.get(key) {
                     base = base.saturating_add(cost.weight);
                 }
-                // Recursively account for `@cost` on input field definitions
-                // referenced through this argument's value (e.g. an input
-                // object whose fields carry `@cost(weight: ...)`). These
-                // contribute to the actual cost as well, mirroring the
-                // estimated cost behaviour. Variables are not resolved at
-                // compile time and contribute 0 here (a TODO for
-                // variable-driven inputs).
+                // `@cost` on input object fields counts too, like in the estimated cost.
+                // It depends on the value, so it's worked out per request.
                 if let Some(arg_type) = definition.argument_types.get(key) {
-                    base = base.saturating_add(compile_input_value_cost(
-                        value,
-                        arg_type,
-                        supergraph_state,
-                    ));
+                    if is_input_object_typed(arg_type, supergraph_state) {
+                        input_object_arguments.push((value.clone(), arg_type.clone()));
+                    }
                 }
             }
         }
@@ -555,6 +565,7 @@ fn compile_field_actual_cost_plan(
     CompiledFieldActualCostPlan {
         response_key: field.selection_identifier().to_string(),
         field_base_cost,
+        input_object_arguments,
         return_type_cost: demand_control_definition_cost(supergraph_state, return_type_name),
         list_depth: field_type.list_depth(),
         include_if: field.include_if.clone(),
@@ -571,6 +582,7 @@ fn evaluate_selection_set_actual_cost_plan(
     plan: &CompiledSelectionSetActualCostPlan,
     parent_value: &Value<'_>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
+    supergraph: &SupergraphState,
 ) -> u64 {
     let mut total_cost = 0_u64;
 
@@ -581,6 +593,7 @@ fn evaluate_selection_set_actual_cost_plan(
                     field,
                     parent_value,
                     variable_values,
+                    supergraph,
                 ));
             }
             CompiledSelectionItemActualCostPlan::InlineFragment(fragment) => {
@@ -592,6 +605,7 @@ fn evaluate_selection_set_actual_cost_plan(
                     &fragment.child,
                     parent_value,
                     variable_values,
+                    supergraph,
                 ));
             }
         }
@@ -604,6 +618,7 @@ fn evaluate_field_actual_cost_plan(
     field: &CompiledFieldActualCostPlan,
     parent_value: &Value<'_>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
+    supergraph: &SupergraphState,
 ) -> u64 {
     if !is_conditionally_included_for_actual_from_flags(
         field.include_if.as_deref(),
@@ -613,37 +628,48 @@ fn evaluate_field_actual_cost_plan(
         return 0;
     }
 
+    let field_base_cost = field.input_object_arguments.iter().fold(
+        field.field_base_cost,
+        |cost, (value, value_type)| {
+            cost.saturating_add(estimate_input_value_cost(
+                value,
+                value_type,
+                supergraph,
+                variable_values,
+            ))
+        },
+    );
+
     let value = parent_value
         .as_object()
         .and_then(|obj| response_object_get(obj, field.response_key.as_str()));
 
     if field.list_depth > 0 {
         let Some(Value::Array(items)) = value else {
-            return field.field_base_cost;
+            return field_base_cost;
         };
 
-        return field
-            .field_base_cost
-            .saturating_add(evaluate_list_items_actual_cost(
-                field,
-                items,
-                field.list_depth,
-                variable_values,
-            ));
+        return field_base_cost.saturating_add(evaluate_list_items_actual_cost(
+            field,
+            items,
+            field.list_depth,
+            variable_values,
+            supergraph,
+        ));
     }
 
     let Some(value) = value else {
-        return field.field_base_cost;
+        return field_base_cost;
     };
 
     if value.is_null() {
-        return field.field_base_cost;
+        return field_base_cost;
     }
 
-    let child = evaluate_selection_set_actual_cost_plan(&field.child, value, variable_values);
+    let child =
+        evaluate_selection_set_actual_cost_plan(&field.child, value, variable_values, supergraph);
 
-    field
-        .field_base_cost
+    field_base_cost
         .saturating_add(field.return_type_cost)
         .saturating_add(child)
 }
@@ -656,12 +682,17 @@ fn evaluate_list_items_actual_cost(
     items: &[Value<'_>],
     depth: usize,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
+    supergraph: &SupergraphState,
 ) -> u64 {
     items.iter().fold(0_u64, |total, item| {
         let cost = match item {
-            Value::Array(inner) if depth > 1 => {
-                evaluate_list_items_actual_cost(field, inner, depth - 1, variable_values)
-            }
+            Value::Array(inner) if depth > 1 => evaluate_list_items_actual_cost(
+                field,
+                inner,
+                depth - 1,
+                variable_values,
+                supergraph,
+            ),
             _ if depth > 1 => 0,
             Value::Null => 0,
             item => field
@@ -670,6 +701,7 @@ fn evaluate_list_items_actual_cost(
                     &field.child,
                     item,
                     variable_values,
+                    supergraph,
                 )),
         };
         total.saturating_add(cost)
@@ -706,72 +738,6 @@ pub fn demand_control_definition_cost(supergraph_state: &SupergraphState, type_n
         SupergraphDefinition::Enum(def) => def.cost.as_ref().map(|cost| cost.weight).unwrap_or(0),
         SupergraphDefinition::Scalar(def) => def.cost.as_ref().map(|cost| cost.weight).unwrap_or(0),
         SupergraphDefinition::InputObject(_) => 0,
-    }
-}
-
-/// Computes the additional cost contribution of a literal argument value
-/// (used for `field_base_cost` precomputation in the actual cost plan).
-///
-/// Rules:
-/// - For each input-object instance, charges a default cost of `1` plus the
-///   per-field `@cost(weight)` declared on each present input field, plus
-///   the recursive cost of the field's value.
-/// - For lists, sums the cost of each element.
-/// - For scalar/enum values and `null`, contributes `0`.
-/// - For `Variable` references, contributes `0` here (variables would need
-///   runtime resolution; literals cover all parity fixtures).
-fn compile_input_value_cost(
-    value: &AstValue,
-    value_type: &TypeNode,
-    supergraph_state: &SupergraphState,
-) -> u64 {
-    match value {
-        AstValue::Object(map) => {
-            let TypeNode::Named(type_name) = value_type.unwrap_non_null() else {
-                return 0;
-            };
-            let Some(SupergraphDefinition::InputObject(input_object)) =
-                supergraph_state.definitions.get(type_name)
-            else {
-                return 0;
-            };
-
-            let mut total: u64 = 1; // default per input-object instance
-            for (field_name, field_value) in map {
-                let Some(input_field) = input_object.fields.get(field_name) else {
-                    continue;
-                };
-                let field_cost = input_field
-                    .cost
-                    .as_ref()
-                    .map(|cost| cost.weight)
-                    .unwrap_or(0);
-                total = total
-                    .saturating_add(field_cost)
-                    .saturating_add(compile_input_value_cost(
-                        field_value,
-                        &input_field.field_type,
-                        supergraph_state,
-                    ));
-            }
-            total
-        }
-        AstValue::List(items) => {
-            let TypeNode::List(inner_type) = value_type.unwrap_non_null() else {
-                return 0;
-            };
-            items
-                .iter()
-                .map(|item| compile_input_value_cost(item, inner_type, supergraph_state))
-                .fold(0u64, |acc, c| acc.saturating_add(c))
-        }
-        AstValue::Null
-        | AstValue::Variable(_)
-        | AstValue::Int(_)
-        | AstValue::Float(_)
-        | AstValue::String(_)
-        | AstValue::Boolean(_)
-        | AstValue::Enum(_) => 0,
     }
 }
 
@@ -845,16 +811,24 @@ mod tests {
             "Query",
             &supergraph,
         );
-        let by_response_shape =
-            estimate_actual_response_shape_cost_with_compiled_plan(&plan, &data, &variables);
+        let by_response_shape = estimate_actual_response_shape_cost_with_compiled_plan(
+            &plan,
+            &data,
+            &variables,
+            &supergraph,
+        );
 
         let query_plan = build_query_plan_with_defaults(FIXTURE, parse_operation(query)).unwrap();
         let Some(PlanNode::Fetch(fetch)) = &query_plan.node else {
             panic!("expected a single fetch, got {query_plan}");
         };
         let plan = compile_actual_subgraph_cost_plan(&fetch.operation.document, &supergraph);
-        let by_subgraph =
-            estimate_actual_subgraph_response_cost_with_compiled_plan(&plan, &data, &variables);
+        let by_subgraph = estimate_actual_subgraph_response_cost_with_compiled_plan(
+            &plan,
+            &data,
+            &variables,
+            &supergraph,
+        );
 
         (by_response_shape, by_subgraph)
     }
@@ -893,6 +867,7 @@ mod tests {
                 &plan,
                 &Value::from(json.as_ref()),
                 &None,
+                &supergraph,
             )
         };
 
