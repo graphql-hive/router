@@ -82,7 +82,10 @@ fn handle_selection_set<'a>(
     parent_type_def: &SupergraphDefinition,
 ) -> Result<(), NormalizationError> {
     let old_items = std::mem::take(&mut selection_set.items);
-    let mut new_items: Vec<Selection<'a, String>> = Vec::new();
+    let mut new_items: Vec<Selection<'a, String>> = Vec::with_capacity(old_items.len());
+    // Where the fragments are in `new_items`, so looking for an equal one skips the fields.
+    // A selection set can have hundreds of fields and a fragment per concrete type.
+    let mut fragment_positions: Vec<usize> = Vec::new();
 
     for selection in old_items {
         match selection {
@@ -131,30 +134,35 @@ fn handle_selection_set<'a>(
                 )?;
                 flatten_redundant_nested_inline_fragments(&mut current_fragment);
 
-                let mut merged_into_existing = false;
-                for new_item_selection in new_items.iter_mut() {
-                    if let Selection::InlineFragment(ref mut existing_fragment) = new_item_selection
-                    {
-                        if inline_fragments_equal(&current_fragment, existing_fragment) {
-                            existing_fragment
-                                .selection_set
-                                .items
-                                .append(&mut current_fragment.selection_set.items);
+                let existing_position = fragment_positions.iter().copied().find(|&position| {
+                    matches!(
+                        &new_items[position],
+                        Selection::InlineFragment(existing_fragment)
+                            if inline_fragments_equal(&current_fragment, existing_fragment)
+                    )
+                });
 
-                            handle_selection_set(
-                                state,
-                                &mut existing_fragment.selection_set,
-                                child_parent_type,
-                            )?;
+                match existing_position {
+                    Some(position) => {
+                        let Selection::InlineFragment(existing_fragment) = &mut new_items[position]
+                        else {
+                            unreachable!("fragment_positions only points at fragments");
+                        };
+                        existing_fragment
+                            .selection_set
+                            .items
+                            .append(&mut current_fragment.selection_set.items);
 
-                            merged_into_existing = true;
-                            break;
-                        }
+                        handle_selection_set(
+                            state,
+                            &mut existing_fragment.selection_set,
+                            child_parent_type,
+                        )?;
                     }
-                }
-
-                if !merged_into_existing {
-                    new_items.push(Selection::InlineFragment(current_fragment));
+                    None => {
+                        fragment_positions.push(new_items.len());
+                        new_items.push(Selection::InlineFragment(current_fragment));
+                    }
                 }
             }
             Selection::FragmentSpread(_) => {
