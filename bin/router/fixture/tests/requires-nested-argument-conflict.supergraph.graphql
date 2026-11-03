@@ -55,6 +55,7 @@ type Product @join__type(graph: A, key: "upc") @join__type(graph: B, key: "upc")
   category: Category! @join__field(graph: A, external: true) @join__field(graph: B)
   expensiveUsdCategory: Boolean! @join__field(graph: A, requires: "category{averagePrice(currency:\"USD\")}")
   expensiveEurCategory: Boolean! @join__field(graph: A, requires: "category{averagePrice(currency:\"EUR\")}")
+  cheapUsdCategory: Boolean! @join__field(graph: A, requires: "category{averagePrice(currency:\"USD\")}")
   name: String! @join__field(graph: B)
 }
 

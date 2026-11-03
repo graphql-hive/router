@@ -2455,3 +2455,63 @@ fn requires_with_nested_argument_conflict() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+/// `expensiveUsdCategory` and `cheapUsdCategory` both need `category { averagePrice(currency: "USD") }`,
+/// so the two calls to `a` can share one input and go out as one.
+#[test]
+fn requires_with_same_nested_arguments_share_a_call() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          products {
+            expensiveUsdCategory
+            cheapUsdCategory
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-nested-argument-conflict.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {
+            products {
+              __typename
+              upc
+              category {
+                averagePrice(currency: "USD")
+              }
+            }
+          }
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "a") {
+            {
+              ... on Product {
+                __typename
+                category {
+                  averagePrice
+                }
+                upc
+              }
+            } =>
+            {
+              ... on Product {
+                cheapUsdCategory
+                expensiveUsdCategory
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}

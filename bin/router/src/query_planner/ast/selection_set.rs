@@ -718,14 +718,28 @@ fn fragment_condition_equal(cond: &Option<Condition>, fragment: &InlineFragmentS
 /// for another field or other arguments, at any depth. Inline fragments are looked through,
 /// their fields write the same object.
 pub fn response_keys_conflict(a: &SelectionSet, b: &SelectionSet) -> bool {
-    let (a_fields, b_fields) = (fields_through_fragments(a), fields_through_fragments(b));
-    a_fields.iter().any(|a_field| {
-        b_fields.iter().any(|b_field| {
+    any_field_through_fragments(a, &|a_field| {
+        any_field_through_fragments(b, &|b_field| {
             a_field.selection_identifier() == b_field.selection_identifier()
                 && (a_field.name != b_field.name
                     || a_field.arguments() != b_field.arguments()
                     || response_keys_conflict(&a_field.selections, &b_field.selections))
         })
+    })
+}
+
+/// Like `fields_through_fragments`, without collecting them, so the check runs on every merge
+/// candidate without allocating.
+fn any_field_through_fragments(
+    selection_set: &SelectionSet,
+    predicate: &impl Fn(&FieldSelection) -> bool,
+) -> bool {
+    selection_set.items.iter().any(|item| match item {
+        SelectionItem::Field(field) => predicate(field),
+        SelectionItem::InlineFragment(fragment) => {
+            any_field_through_fragments(&fragment.selections, predicate)
+        }
+        SelectionItem::FragmentSpread(_) => false,
     })
 }
 

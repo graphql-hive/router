@@ -9,8 +9,9 @@ use crate::query_planner::{
         merge_path::{Condition, MergePath},
         selection_item::SelectionItem,
         selection_set::{
-            find_selection_set_by_path_mut, merge_selection_set, selection_items_are_subset_of,
-            FieldSelection, InlineFragmentSelection, ResponseKeyConflict, SelectionSet,
+            find_selection_set_by_path_mut, merge_selection_set, response_keys_conflict,
+            selection_items_are_subset_of, FieldSelection, InlineFragmentSelection,
+            ResponseKeyConflict, SelectionSet,
         },
     },
     planner::fetch::state::{MultiTypeFetchStep, SingleTypeFetchStep},
@@ -424,21 +425,17 @@ impl FetchStepSelections<MultiTypeFetchStep> {
         true
     }
 
-    pub fn iter_matching_types<'a, 'b, R>(
-        input: &'a FetchStepSelections<MultiTypeFetchStep>,
-        other: &'b FetchStepSelections<MultiTypeFetchStep>,
-        mut callback: impl FnMut(&str, &SelectionSet, &SelectionSet) -> R,
-    ) -> Vec<(&'a str, R)> {
-        let mut result: Vec<(&'a str, R)> = Vec::new();
-
-        for (definition_name, input_selections) in input.iter_selections() {
-            if let Some(other_selections) = other.selections.get(definition_name) {
-                let r = callback(definition_name, input_selections, other_selections);
-                result.push((definition_name, r));
-            }
-        }
-
-        result
+    /// Whether a type both select would get a response key with two values, see
+    /// `response_keys_conflict`.
+    pub fn response_keys_conflict_with(&self, other: &Self) -> bool {
+        self.iter_selections().any(|(definition_name, selections)| {
+            other
+                .selections
+                .get(definition_name)
+                .is_some_and(|other_selections| {
+                    response_keys_conflict(selections, other_selections)
+                })
+        })
     }
 
     pub fn try_as_single(&self) -> Option<&str> {
