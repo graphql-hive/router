@@ -1985,7 +1985,7 @@ fn process_requires_field_edge(
                 )?
                 .is_some()
                 {
-                    jump_keys.push(entity_move.requirements.clone());
+                    jump_keys.push(&entity_move.requirements);
                 }
             }
         }
