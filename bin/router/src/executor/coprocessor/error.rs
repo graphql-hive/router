@@ -1,4 +1,5 @@
 use crate::config::coprocessor::CoprocessorProtocol;
+use crate::executor::executors::error::TlsCertificatesError;
 use crate::vrl::expressions::ExpressionCompileError;
 use http::header::ToStrError;
 use http::uri::InvalidUri;
@@ -9,9 +10,20 @@ use crate::executor::request_context::RequestContextError;
 
 #[derive(thiserror::Error, Debug, IntoStaticStr)]
 pub enum CoprocessorError {
-    #[error("coprocessor protocol '{0:?}' is not supported")]
+    #[error("coprocessor protocol '{protocol:?}' is not supported with {scheme} endpoints")]
     #[strum(serialize = "COPROCESSOR_UNSUPPORTED_PROTOCOL")]
-    UnsupportedProtocol(CoprocessorProtocol),
+    UnsupportedProtocol {
+        protocol: CoprocessorProtocol,
+        scheme: &'static str,
+    },
+
+    #[error("coprocessor.tls is only supported with https:// endpoints, received {0} endpoint")]
+    #[strum(serialize = "COPROCESSOR_TLS_REQUIRES_HTTPS")]
+    TlsRequiresHttps(&'static str),
+
+    #[error("failed to build coprocessor TLS configuration: {0}")]
+    #[strum(serialize = "COPROCESSOR_TLS_CONFIG_FAILURE")]
+    TlsConfig(#[from] TlsCertificatesError),
 
     #[error("coprocessor unix:// request path must start with '/', received '{0}'")]
     #[strum(serialize = "COPROCESSOR_INVALID_UNIX_REQUEST_PATH")]
