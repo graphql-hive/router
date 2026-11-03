@@ -550,6 +550,30 @@ mod tests {
         );
     }
 
+    /// Entities with the same hash share one representation, so lists whose items sit in
+    /// different places, or that have a different number of them, can't hash the same.
+    #[test]
+    fn list_items_in_different_places_hash_differently() {
+        let requires = requires_from_str("id items { value }");
+        let hash = |entity_json: sonic_rs::Value| {
+            Value::from(entity_json.as_ref())
+                .to_hash(requires.root_selections(), &PossibleTypes::default())
+        };
+
+        assert_ne!(
+            hash(json!({ "id": "1", "items": [{}, { "value": "v1" }] })),
+            hash(json!({ "id": "1", "items": [{ "value": "v1" }, {}] })),
+        );
+        assert_ne!(
+            hash(json!({ "id": "1", "items": [{}] })),
+            hash(json!({ "id": "1", "items": [] })),
+        );
+        assert_eq!(
+            hash(json!({ "id": "1", "items": [{}, { "value": "v1" }] })),
+            hash(json!({ "id": "1", "items": [{}, { "value": "v1" }] })),
+        );
+    }
+
     /// Regression testt for https://github.com/graphql-hive/router/issues/1099:
     /// a key that has only `__typename` must still produce a
     /// representation, and using `__typename` alongside another field (in

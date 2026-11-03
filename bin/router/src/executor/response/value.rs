@@ -174,6 +174,10 @@ impl<'a> Value<'a> {
             Value::Array(arr) => {
                 for item in arr {
                     item.hash_with_requires(state, selections, possible_types);
+                    // every item keeps its place in the representation, even one that hashes to
+                    // nothing like `{}`, so mark where each one ends.
+                    // without it `[{}, a]` and `[a, {}]` would share a representation
+                    state.write_u8(0xff);
                 }
             }
             _ => {
