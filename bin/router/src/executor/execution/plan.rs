@@ -802,8 +802,8 @@ struct AliasPathState<'exec> {
     target_entities: TargetEntities,
 }
 
-/// Where a fetched entity sits in an `_entities` response that carries the context groups in
-/// `context_group_offsets`. A copied one isn't in it, see `entity_reuse::merge_copies`.
+/// Where an entity sits in an `_entities` response that carries the context groups in
+/// `context_group_offsets`.
 #[inline]
 fn entity_index(
     entity: Option<EntityRef>,

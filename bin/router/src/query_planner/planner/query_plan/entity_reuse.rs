@@ -1,10 +1,5 @@
-//! Finds where an entity fetch could take its data from the response instead of the subgraph.
-//!
-//! Say `topProducts { upc name price }` ran first, and later we need `name price` of the
-//! products under `users.@.reviews.@.product`. Those are often the same products. The fetch
-//! can't know which ones until it runs, but we can tell it where to look: every position an
-//! earlier fetch filled with the same type and (at least) the same fields.
-//! The executor matches entities there by their representation and copies the fields over.
+//! Finds where an entity fetch could take its data from the response instead of the subgraph:
+//! every position an earlier fetch filled with the same type and (at least) the same fields.
 //!
 //! Fields are matched by name, arguments and response key, not by subgraph.
 //! A field resolved by two subgraphs is `@shareable`, which promises the same data.
@@ -33,9 +28,6 @@ use crate::query_planner::{
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
 };
 
-/// Where the entity fetch at `step_index` can find entities it would otherwise fetch,
-/// looking at what `earlier_steps` (steps from earlier waves) put in the response.
-/// None when there's nowhere to look, or the fetch is one we don't try this on.
 pub(super) fn find_entity_reuse(
     fetch_graph: &FetchGraph<MultiTypeFetchStep>,
     step_index: NodeIndex,
@@ -63,7 +55,6 @@ pub(super) fn find_entity_reuse(
     let representation = step.input.selections_for_definition(type_name)?;
 
     let mut sources: Vec<FlattenNodePath> = Vec::new();
-    // positions where a fetch put something else under a response key of the representation
     let mut conflicts: Vec<FlattenNodePath> = Vec::new();
     for earlier_index in earlier_steps {
         let Ok(earlier) = fetch_graph.get_step_data(*earlier_index) else {
@@ -110,7 +101,6 @@ pub(super) fn find_entity_reuse(
     })
 }
 
-/// Puts `reuse` on the fetch inside a node built from one fetch step.
 pub(super) fn attach_entity_reuse(node: &mut PlanNode, reuse: EntityReuse) {
     if let PlanNode::Flatten(flatten) = node {
         if let PlanNode::Fetch(fetch) = flatten.node.as_mut() {
@@ -119,9 +109,6 @@ pub(super) fn attach_entity_reuse(node: &mut PlanNode, reuse: EntityReuse) {
     }
 }
 
-/// Walks a fetch's selections and records every position that holds `type_name` objects
-/// with all the `needed` fields in `sources`, and every one where the fetch puts something else
-/// under a response key of the `representation` in `conflicts`.
 #[allow(clippy::too_many_arguments)]
 fn collect_positions(
     supergraph: &SupergraphState,
@@ -244,14 +231,14 @@ fn conflicts_with(selections: &SelectionSet, representation: &SelectionSet) -> b
     })
 }
 
-/// Only plain fields, all the way down. Fragments and `@skip`/`@include` would need the
-/// copy to know about types and variables, which we don't do (yet).
 /// Fields of a fetch with `@fromContext` arguments depend on values from outside the entity,
 /// so the same entity can come back different. We don't copy into or out of those.
 fn has_context(step: &FetchStepData<MultiTypeFetchStep>) -> bool {
     !step.context_variable_definitions.is_empty() || step.context_rewrites.is_some()
 }
 
+/// Only plain fields, all the way down. Fragments and `@skip`/`@include` would need the
+/// copy to know about types and variables, which we don't do (yet).
 fn is_plain(selections: &SelectionSet) -> bool {
     selections.items.iter().all(|item| match item {
         SelectionItem::Field(field) => {

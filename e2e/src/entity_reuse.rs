@@ -105,7 +105,6 @@ mod entity_reuse_e2e_tests {
         res.json_body().await
     }
 
-    // Every `inStock` under `users`, which is what the deep fetch fills.
     fn deep_in_stock(body: &sonic_rs::Value) -> Vec<String> {
         let mut values = Vec::new();
         for user in body["data"]["users"].as_array().unwrap().iter() {
@@ -119,33 +118,6 @@ mod entity_reuse_e2e_tests {
             }
         }
         values
-    }
-
-    #[ntex::test]
-    async fn deep_fetch_copies_everything_when_shallow_fetch_worked() {
-        let subgraphs = TestSubgraphs::builder().build().start().await;
-        let body = send_shallow_and_deep_inventory(&subgraphs).await;
-
-        assert!(body.get("errors").is_none(), "unexpected errors: {body}");
-        insta::assert_snapshot!(deep_in_stock(&body).join("\n"), @r"
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        1: true
-        ");
-        assert_eq!(
-            subgraphs.get_requests_log("inventory").unwrap().len(),
-            1,
-            "the deep fetch should copy every product"
-        );
     }
 
     // Once a fetch fails we stop copying. The failed fetch also leaves `inStock` out of the

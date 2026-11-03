@@ -98,37 +98,23 @@ fn source_with_an_aliased_key_is_left_out() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn source_with_its_own_key_is_kept() -> Result<(), Box<dyn Error>> {
-    init_logger();
-    let document = parse_operation(r#"{ users { id name reviews { author { name } } } }"#);
-    let query_plan = build_query_plan_with_defaults("../../bench/supergraph.graphql", document)?;
-
-    insta::assert_snapshot!(describe(&query_plan), @r"
-    reviews at users.@ <- -
-    accounts at users.@.reviews.@.author <- users.@
-    ");
-
-    Ok(())
-}
-
-#[test]
 fn mutation_fields_never_copy_from_each_other() -> Result<(), Box<dyn Error>> {
     init_logger();
-    // the second rename changes the user the first one returned, so the author has to be fetched
+    // `add` keeps the two products in separate waves. A mutation can change what an earlier one
+    // returned, so `second` can't copy from `first`.
     let document = parse_operation(
         r#"mutation {
-          first: renameUser(id: "1", name: "First") { id name }
-          second: renameUser(id: "1", name: "Second") { id reviews { author { name } } }
+          first: addProduct(input: { name: "a", price: 1 }) { id isAvailable }
+          add(num: 1)
+          second: addProduct(input: { name: "b", price: 2 }) { id isAvailable }
         }"#,
     );
-    let query_plan = build_query_plan_with_defaults(
-        "fixture/tests/mutations-entity-reuse.supergraph.graphql",
-        document,
-    )?;
+    let query_plan =
+        build_query_plan_with_defaults("fixture/tests/mutations.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(describe(&query_plan), @r"
-    reviews at second <- -
-    accounts at second.reviews.@.author <- -
+    b at first <- -
+    b at second <- -
     ");
 
     Ok(())

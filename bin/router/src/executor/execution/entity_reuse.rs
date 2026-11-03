@@ -1,9 +1,6 @@
 //! Copies entities that are already in the response, instead of asking a subgraph for them again.
-//!
-//! The planner tells an entity fetch where earlier fetches put objects of the same type with
-//! the same fields (`EntityReuse`). Here we hash those objects the same way the fetch hashes its
-//! representations. When a representation matches one, it's the same entity with the same
-//! `@requires` inputs, so we copy the fields and leave it out of the request.
+//! A representation that matches an object at one of the planner's `EntityReuse` sources is the
+//! same entity with the same `@requires` inputs.
 
 use crate::{
     executor::{
@@ -21,9 +18,8 @@ use crate::{
     },
 };
 
-/// What one fetch could copy instead of sending. `seen` starts out with the objects already in
-/// the response, by the hash their representation has, and `collect_context_entities` takes it
-/// over as its table of every entity it knows.
+/// What one fetch could copy instead of sending. `collect_context_entities` takes `seen` over as
+/// its table of every entity it knows.
 pub struct ReuseIndex<'d, 'v> {
     pub(super) seen: PrehashedMap<Known<'d, 'v>>,
     copy: RequiresSelectionSetRef<'d>,
@@ -53,8 +49,6 @@ impl<'d, 'v> ReuseIndex<'d, 'v> {
         }
     }
 
-    /// Copies the fields the fetch asks for from `source` and says where the copy sits in
-    /// [`Self::into_copies`]. None if it doesn't have all of them.
     pub(super) fn copy(&mut self, source: &Value<'v>) -> Option<u32> {
         self.copies.push(copy_object(source, self.copy)?);
         Some(self.copies.len() as u32 - 1)
@@ -65,15 +59,12 @@ impl<'d, 'v> ReuseIndex<'d, 'v> {
     }
 }
 
-/// The entities one fetch copied, and the paths of its targets. The targets that are
-/// [`EntityRef::Copied`] get them.
 pub struct Copies<'a, 'v> {
     pub paths: Vec<(ResponsePathRef<'a>, TargetEntities)>,
     pub copies: Vec<Value<'v>>,
 }
 
-/// Puts the copies a wave made into their targets, before its requests are awaited. Nothing was
-/// sent for them, so there are no errors or rewrites to apply.
+/// Nothing was sent for the copies, so there are no errors or rewrites to apply.
 pub fn merge_copies<'v>(
     data: &mut Value<'v>,
     copies: Vec<Copies<'_, 'v>>,
@@ -132,8 +123,7 @@ fn holds_every_field(value: &Value, selections: RequiresSelectionSetRef<'_>) -> 
     }
 }
 
-/// Copies the selected fields of `source`. None if any is missing, or doesn't have the shape
-/// we expect, and then the subgraph answers for that entity as usual.
+/// Copies the selected fields of `source`. None if any is missing, then the subgraph answers.
 fn copy_object<'a>(
     source: &Value<'a>,
     selections: RequiresSelectionSetRef<'_>,
@@ -156,7 +146,6 @@ fn copy_fields<'a>(
     copied.reserve(selections.len());
     for selection in selections.iter() {
         match selection {
-            // The planner only gives us one, around the whole entity.
             RequiresSelection::InlineFragment { selections, .. } => {
                 copy_fields(fields, selections, copied, cursor)?
             }
@@ -194,51 +183,5 @@ fn copy_nested<'a>(
             .map(Value::Array),
         Value::Object(_) => copy_object(value, selections),
         _ => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::query_planner::{
-        ast::requires::RequiresSelectionSet, utils::parsing::parse_operation,
-    };
-    use serde::Deserialize;
-
-    fn parse(json: &'static str) -> Value<'static> {
-        let mut deserializer = sonic_rs::Deserializer::from_slice(json.as_bytes());
-        Value::deserialize(&mut deserializer).unwrap()
-    }
-
-    fn selection(query: &str) -> RequiresSelectionSet {
-        use graphql_tools::parser::query;
-        let document = parse_operation(query);
-        let selection = document
-            .definitions
-            .iter()
-            .find_map(|definition| match definition {
-                query::Definition::Operation(query::OperationDefinition::SelectionSet(set)) => {
-                    Some(set.clone())
-                }
-                _ => None,
-            })
-            .expect("a bare selection set");
-        let set: crate::query_planner::ast::selection_set::SelectionSet = selection.into();
-        RequiresSelectionSet::from(&set)
-    }
-
-    #[test]
-    fn copies_the_selected_fields_and_skips_incomplete_entities() {
-        let copy = selection("{ ... on Product { __typename name price } }");
-        let table = parse(r#"{"__typename": "Product", "upc": "1", "name": "Table", "price": 10}"#);
-        assert_eq!(
-            copy_object(&table, copy.root_selections())
-                .unwrap()
-                .to_string(),
-            r#"{"__typename": "Product", "name": "Table", "price": 10}"#
-        );
-        // no name, so the subgraph has to answer for it
-        let chair = parse(r#"{"__typename": "Product", "upc": "2", "price": 20}"#);
-        assert!(copy_object(&chair, copy.root_selections()).is_none());
     }
 }

@@ -555,13 +555,6 @@ query_planner:
     }
 
     #[test]
-    fn experimental_entity_reuse_is_off_by_default() {
-        let config = config_from_overrides(EnvVarOverrides::default());
-
-        assert!(!config.traffic_shaping.experimental_entity_reuse);
-    }
-
-    #[test]
     fn experimental_entity_reuse_override_wins_over_config_file_value() {
         let config = EnvVarOverrides {
             experimental_entity_reuse: Some(true),

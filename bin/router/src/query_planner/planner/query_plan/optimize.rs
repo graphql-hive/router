@@ -198,8 +198,6 @@ impl<'a> BatchFetchBuilder<'a> {
             output_rewrites: representative.output_rewrites.clone(),
             context: representative.context.clone(),
             run_if: representative.run_if.clone(),
-            // the fetches in a shape group come from one wave and ask for the same fields, so
-            // they can all copy from the same places
             entity_reuse: representative.entity_reuse.clone(),
         });
 
@@ -1926,8 +1924,6 @@ mod tests {
         "#);
     }
 
-    /// Only the first alias's list goes out for a shared variable, so copying could leave
-    /// different entities out of each. Neither alias copies.
     #[test]
     fn optimize_parallel_node_drops_entity_reuse_of_aliases_sharing_a_variable() {
         let supergraph = test_supergraph_state();

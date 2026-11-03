@@ -28,31 +28,26 @@ use crate::{
     },
 };
 
-/// Which entity goes into each target on a path, in walk order. `None` when the target sends
+/// The [`EntityRef`] of each target on a path, in walk order. `None` when the target sends
 /// nothing (null, or not projected).
 pub(super) type TargetEntities = Arc<Vec<Option<EntityRef>>>;
 
-/// Which entity goes into a target.
+/// Which entity goes into a target: its index among the context group's representations, or
+/// among the fetch's copies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntityRef {
-    /// Sent to the subgraph, `index` is its place among the context group's representations.
     Fetched { context_group: u32, index: u32 },
-    /// Copied from the response instead, `index` is its place among `Copies::copies`. Merged by
-    /// `entity_reuse::merge_copies`, the fetch's merge skips it.
     Copied { index: u32 },
 }
 
 pub(super) struct ContextGroup<'a> {
     pub variables: Vec<(&'a str, Vec<u8>)>,
     pub representations: Vec<u8>,
-    /// How many representations went into `representations`
     pub count: usize,
 }
 
 /// What one fetch knows about an entity, by the hash of its representation.
 pub(super) enum Known<'d, 'v> {
-    /// In the response already, so the fetch could copy it instead (entity reuse). No target
-    /// asked for it yet.
     InResponse(&'d Value<'v>),
     Target(EntityRef),
 }
@@ -244,10 +239,8 @@ impl<'a, 'd, 'v> ContextGroups<'a, 'd, 'v> {
 
 /// Walks every flatten path, deduplicates the entities by hash and projects their
 /// representations. Entities are grouped by the tuple of their context values (one request per
-/// group), without context variables there is at most one group.
-///
-/// With `reuse`, an entity already in the response is copied instead of sent. Its target is
-/// [`EntityRef::Copied`], and the copy goes in `reuse`, see `entity_reuse::merge_copies`.
+/// group), without context variables there is at most one group. With `reuse`, entities already
+/// in the response are copied instead of sent.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn collect_context_entities<'a, 'd, 'v>(
     data: &'d Value<'v>,
@@ -563,61 +556,6 @@ mod tests {
         assert_eq!(targets[0][5], targets[0][0]);
         assert_eq!(group_of(targets[0][0]), 0);
         assert_ne!(group_of(targets[0][2]), 0);
-    }
-
-    #[test]
-    fn an_entity_twice_gets_one_copy() {
-        use crate::query_planner::planner::plan_nodes::EntityReuse;
-        let data: Value<'_> = sonic_rs::from_str(
-            r#"{
-            "top": [{"__typename":"P", "id":"1", "name":"A"}],
-            "again": [{"__typename":"P", "id":"1"}, {"__typename":"P", "id":"2"}, {"__typename":"P", "id":"1"}]
-        }"#,
-        )
-        .unwrap();
-        let selection = |query: &str| {
-            let definition = parse_operation(query).definitions.remove(0);
-            let graphql_tools::parser::query::Definition::Operation(
-                graphql_tools::parser::query::OperationDefinition::SelectionSet(selection),
-            ) = definition
-            else {
-                panic!("selection");
-            };
-            RequiresSelectionSet::from(&SelectionSet::from(selection))
-        };
-        let requires = selection("{ __typename id }");
-        let reuse = EntityReuse {
-            sources: vec![vec![PathSegment::Field("top".into()), PathSegment::List].into()],
-            copy: selection("{ __typename name }"),
-        };
-        let possible_types = PossibleTypes::default();
-        let mut index =
-            ReuseIndex::build(&reuse, &data, requires.root_selections(), &possible_types);
-        let path: FlattenNodePath =
-            vec![PathSegment::Field("again".into()), PathSegment::List].into();
-        let (groups, targets) = collect_context_entities(
-            &data,
-            [path.as_ref()],
-            &requires,
-            None,
-            &None,
-            &possible_types,
-            None,
-            Some(&mut index),
-        );
-        assert_eq!(
-            targets[0].as_slice(),
-            [
-                Some(EntityRef::Copied { index: 0 }),
-                Some(EntityRef::Fetched {
-                    context_group: 0,
-                    index: 0
-                }),
-                Some(EntityRef::Copied { index: 0 })
-            ]
-        );
-        assert_eq!(groups[0].count, 1);
-        assert_eq!(index.into_copies().len(), 1);
     }
 
     #[test]

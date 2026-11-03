@@ -287,12 +287,11 @@ impl SubgraphExecutorMap {
         Ok(subgraph_executor_map)
     }
 
-    /// Returns the shared active callback subscriptions map for use by callback handlers.
-    /// Whether entity fetches may copy entities that are already in the response.
     pub fn entity_reuse_enabled(&self) -> bool {
         self.config.traffic_shaping.experimental_entity_reuse
     }
 
+    /// Returns the shared active callback subscriptions map for use by callback handlers.
     pub fn callback_subscriptions(&self) -> CallbackSubscriptionsMap {
         self.callback_subscriptions.clone()
     }
