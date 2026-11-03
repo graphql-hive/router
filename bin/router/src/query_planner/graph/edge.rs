@@ -63,6 +63,26 @@ pub struct ReentryMove<'graph> {
 }
 
 impl<'graph> FieldMove<'graph> {
+    /// A field move without join metadata, requirements, context arguments or overrides.
+    pub fn plain(name: &'graph str, type_name: &'graph str, is_leaf: bool, is_list: bool) -> Self {
+        Self {
+            name,
+            type_name,
+            is_leaf,
+            is_list,
+            join_field: None,
+            requirements: None,
+            context_arguments: vec![],
+            overridden_by: None,
+        }
+    }
+
+    /// `__typename` is a meta-field: it carries no declared field definition, so unlike
+    /// other fields it always resolves to a plain "String" move, regardless of parent type.
+    pub fn typename(type_name: &'graph str) -> Self {
+        Self::plain("__typename", type_name, true, false)
+    }
+
     pub fn override_label(&self) -> Option<&'graph OverrideLabel> {
         self.join_field?.override_label.as_ref()
     }
@@ -201,6 +221,12 @@ pub enum Edge<'graph> {
 
 pub type EdgeReference<'a> = GraphEdgeReference<'a, Edge<'a>>;
 
+impl<'graph> From<FieldMove<'graph>> for Edge<'graph> {
+    fn from(field_move: FieldMove<'graph>) -> Self {
+        Self::FieldMove(Box::new(field_move))
+    }
+}
+
 impl<'graph> Edge<'graph> {
     pub fn create_entity_move(
         key: &'graph str,
@@ -222,29 +248,6 @@ impl<'graph> Edge<'graph> {
             object_type_name,
             requirements: selection,
         })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn create_field_move(
-        name: &'graph str,
-        type_name: &'graph str,
-        is_leaf: bool,
-        is_list: bool,
-        join_field: Option<&'graph JoinFieldDirective>,
-        requirements: Option<Arc<TypeAwareSelection<'graph>>>,
-        context_arguments: Vec<ContextArgument<'graph>>,
-        overridden_by: Option<(&'graph str, Option<&'graph OverrideLabel>)>,
-    ) -> Self {
-        Self::FieldMove(Box::new(FieldMove {
-            name,
-            type_name,
-            is_leaf,
-            is_list,
-            join_field,
-            requirements,
-            context_arguments,
-            overridden_by,
-        }))
     }
 
     pub fn create_reentry_move(name: &'graph str, type_name: &'graph str, is_list: bool) -> Self {
