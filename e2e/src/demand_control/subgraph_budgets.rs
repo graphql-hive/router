@@ -324,4 +324,65 @@ mod subgraph_budgets_tests {
             "reviews should be blocked because reviews.list_size=10 overrides all.list_size=3"
         );
     }
+
+    // `me`'s and `topProducts`' reviews batch into one request, an alias each. One alias costs
+    // 2, both cost 4.
+    #[ntex::test]
+    async fn batched_alias_that_is_off_costs_nothing() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+        supergraph:
+            source: file
+            path: supergraph.graphql
+        demand_control:
+            enabled: true
+            operation_cost:
+              max: 1000
+              mode: enforce
+            default_list_size:
+              all: 1
+            subgraphs_budget:
+              mode: enforce
+              subgraphs:
+                reviews: 2
+        "#,
+            )
+            .build()
+            .start()
+            .await;
+        let query = r#"
+            query($a: Boolean!, $b: Boolean!) {
+              topProducts { upc ... @include(if: $a) { reviews { body } } }
+              me { name ... @include(if: $b) { reviews { body } } }
+            }
+        "#;
+
+        let res = router
+            .send_graphql_request(query, Some(json!({ "a": true, "b": false })), None)
+            .await;
+        let json = res.json_body().await;
+        assert!(json["errors"].is_null(), "only one alias is on: {json}");
+        assert!(json["data"]["topProducts"][0]["reviews"].is_array());
+        let requests = subgraphs.get_requests_log("reviews").unwrap_or_default();
+        assert_eq!(requests.len(), 1);
+        let body = String::from_utf8_lossy(requests[0].body.as_ref().unwrap()).to_string();
+        assert_eq!(
+            body.matches("_entities").count(),
+            2,
+            "one alias each: {body}"
+        );
+
+        let res = router
+            .send_graphql_request(query, Some(json!({ "a": true, "b": true })), None)
+            .await;
+        let json = res.json_body().await;
+        assert_eq!(
+            json["errors"][0]["extensions"]["code"].as_str(),
+            Some("SUBGRAPH_COST_ESTIMATED_TOO_EXPENSIVE"),
+            "both aliases are on: {json}"
+        );
+    }
 }

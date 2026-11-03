@@ -2,9 +2,12 @@
 mod entity_batching_e2e_tests {
     use std::collections::BTreeMap;
 
+    use serde_json::json;
     use sonic_rs::JsonValueTrait;
 
-    use crate::testkit::{ClientResponseExt, TestRouter, TestSubgraphs};
+    use crate::testkit::{
+        mock_subgraphs::mock_subgraphs, ClientResponseExt, TestRouter, TestSubgraphs,
+    };
 
     #[ntex::test]
     async fn measure_bench_operation_subgraph_calls() {
@@ -122,5 +125,72 @@ mod entity_batching_e2e_tests {
           }
         ]
         "#);
+    }
+
+    #[ntex::test]
+    /// `first` calls `c` under `$x`, `second` under `$x && !$y`: one request, an alias each, `[]`
+    /// for the one that's off, and no request with both off.
+    async fn entity_calls_under_other_conditions_share_one_request() {
+        let subgraphs = TestSubgraphs::builder()
+            .with_on_request(mock_subgraphs(json!({
+                "b": {
+                    "query": { "userInB": { "__typename": "User", "id": "u1", "name": "Ann" } }
+                },
+                "c": {
+                    "entities": [
+                        { "__typename": "User", "id": "u1", "name": "Ann", "cName": "c-Ann" }
+                    ]
+                }
+            })))
+            .build()
+            .start()
+            .await;
+        // the fixture leaves subgraph URLs empty
+        let urls: String = ["a", "b", "c"]
+            .iter()
+            .map(|name| format!("    {name}:\n      url: \"{}/{name}\"\n", subgraphs.url()))
+            .collect();
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(format!(
+                "supergraph:\n  source: file\n  path: ../bin/router/fixture/tests/override_requires.supergraph.graphql\noverride_subgraph_urls:\n  subgraphs:\n{urls}"
+            ))
+            .build()
+            .start()
+            .await;
+        let query = r#"
+          query($x: Boolean!, $y: Boolean!) {
+            first: userInB { id name ... @include(if: $x) { cName } }
+            second: userInB { id name ... @include(if: $x) { ... @skip(if: $y) { cName } } }
+          }
+        "#;
+        let send = |x: bool, y: bool| {
+            let variables = sonic_rs::from_str(&json!({ "x": x, "y": y }).to_string()).unwrap();
+            router.send_graphql_request(query, Some(variables), None)
+        };
+        let user = json!({ "id": "u1", "name": "Ann" });
+
+        let body: serde_json::Value =
+            serde_json::from_str(&send(true, true).await.string_body().await).unwrap();
+        let first = json!({ "id": "u1", "name": "Ann", "cName": "c-Ann" });
+        assert_eq!(body, json!({ "data": { "first": first, "second": user } }));
+        let requests = subgraphs.get_requests_log("c").unwrap_or_default();
+        assert_eq!(requests.len(), 1);
+        let request: serde_json::Value =
+            serde_json::from_slice(requests[0].body.as_ref().unwrap()).unwrap();
+        let mut lists: Vec<usize> = request["variables"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .filter(|(name, _)| name.starts_with("__batch_reps_"))
+            .map(|(_, list)| list.as_array().unwrap().len())
+            .collect();
+        lists.sort();
+        assert_eq!(lists, [0, 1]);
+
+        let body: serde_json::Value =
+            serde_json::from_str(&send(false, false).await.string_body().await).unwrap();
+        assert_eq!(body, json!({ "data": { "first": user, "second": user } }));
+        assert_eq!(subgraphs.get_requests_log("c").unwrap_or_default().len(), 1);
     }
 }
