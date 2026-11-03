@@ -534,8 +534,7 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     paths.detect_conflicts(&prometheus)?;
 
     let graphql_path = graphql_path.to_string();
-    let long_lived_client_limit_service =
-        LongLivedClientLimitService::new(shared_state.router_config);
+    let long_lived_client_limit_service = LongLivedClientLimitService::new(shared_state.clone());
     let response_compression_service = ResponseCompressionService::new(shared_state.router_config);
 
     let mut server = web::HttpServer::new(async move |_| {
@@ -557,9 +556,10 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
             // before it reaches the socket - everything below still sees the real,
             // uncompressed size/content (RequestSummaryService's logged size included).
             .middleware(response_compression_service)
-            .middleware(RequestIdentifiersService)
+            .middleware(RequestIdentifiersService::new(shared_state.clone()))
             .middleware(RequestSummaryService::new(&graphql_path))
             .middleware(PluginService::new(
+                shared_state.clone(),
                 paths_for_plugin,
                 prometheus.as_ref().map(|p| p.endpoint.clone()),
             ))
