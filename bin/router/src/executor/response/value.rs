@@ -176,7 +176,9 @@ impl<'a> Value<'a> {
                     item.hash_with_requires(state, selections, possible_types);
                     // every item keeps its place in the representation, even one that hashes to
                     // nothing like `{}`, so mark where each one ends.
-                    // without it `[{}, a]` and `[a, {}]` would share a representation
+                    // without it `[{}, a]` and `[a, {}]` would share a representation.
+                    // any byte works, 0xff is what std puts after a string, it never shows up in
+                    // utf-8 text
                     state.write_u8(0xff);
                 }
             }
