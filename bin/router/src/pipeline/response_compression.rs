@@ -332,6 +332,12 @@ async fn compress_full_body(
 }
 
 async fn drain_body(body: &mut ResponseBody<Body>) -> Result<Bytes, Rc<dyn std::error::Error>> {
+    // in-memory bodies (most graphql responses) are handed over without a copy
+    if let ResponseBody::Body(Body::Bytes(bytes)) | ResponseBody::Other(Body::Bytes(bytes)) = body
+    {
+        return Ok(bytes.clone());
+    }
+
     let mut buf = BytesMut::new();
     while let Some(chunk) = body.try_next().await? {
         buf.extend_from_slice(&chunk);
