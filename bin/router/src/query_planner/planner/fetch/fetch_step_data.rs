@@ -26,8 +26,8 @@ bitflags! {
         const USED_FOR_REQUIRES = 1 << 0;
         /// This fetch is for resolving a type condition on an interface.
         const USED_FOR_TYPE_CONDITION = 1 << 1;
-        /// Some of its input is only fetched under conditions its fields carry, from a step
-        /// under other conditions merged in. It's no longer on the step to see.
+        /// Part of this call's input is only fetched under an `@include`/`@skip`. Set when calls
+        /// with different conditions get merged, as the merged `condition` no longer shows it.
         const CONDITIONAL_INPUT = 1 << 2;
     }
 }

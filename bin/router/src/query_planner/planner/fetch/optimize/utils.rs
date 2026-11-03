@@ -112,11 +112,14 @@ pub(crate) fn perform_fetch_step_merge(
     let source_id = source.id;
     let target_id = target.id;
 
-    // merged from sides under other conditions, the input is only all there when theirs hold
+    // the merged call runs if either side does, but each side's input is only fetched under
+    // that side's conditions, so remember it. a nested call we absorb doesn't count, it reads
+    // our output, not our input
+    let merges_input = force_merge_inputs || target.response_path == source.response_path;
     if target.is_entity_call()
         && source.is_entity_call()
-        && (source.flags.contains(FetchStepFlags::CONDITIONAL_INPUT)
-            || !target.merged_input_is_unconditional(source))
+        && merges_input
+        && target.merge_adds_input_condition(source)
     {
         target.flags.insert(FetchStepFlags::CONDITIONAL_INPUT);
     }
@@ -489,23 +492,31 @@ impl FetchStepData<MultiTypeFetchStep> {
         true
     }
 
-    /// Under other conditions, a side's `@requires` inputs are only fetched when its conditions
-    /// hold. Merged, its representations would miss them when they don't, and an object missing
-    /// a field goes out as `null` for the side that runs too. So a side's input has to be there
-    /// whenever the merged call runs: covered by an unconditional side, or the same on both.
+    /// Can the two calls share one call without losing input?
+    ///
+    /// A call's `@requires` fields are only fetched when its `@include`/`@skip` holds. If the
+    /// merged call runs without them, the object goes out with a field missing, turns into
+    /// `null`, and breaks the other side's fields too. So each side's input has to be there
+    /// every time the merged call runs.
     pub(crate) fn inputs_hold_when_merged(&self, other: &Self) -> bool {
-        self.merged_input_is_unconditional(other)
-            || (self.input_covers(other) && other.input_covers(self))
-    }
-
-    /// Same conditions on both, or an unconditional side whose input covers the other's.
-    fn merged_input_is_unconditional(&self, other: &Self) -> bool {
         !self.conditions_differ(other)
-            || (self.is_unconditional() && self.input_covers(other))
-            || (other.is_unconditional() && other.input_covers(self))
+            || (self.input_present_when_merged_with(other)
+                && other.input_present_when_merged_with(self))
     }
 
-    /// Other conditions on the steps or their paths, or an input that has them.
+    /// Will the merged call have input that's only there sometimes?
+    fn merge_adds_input_condition(&self, other: &Self) -> bool {
+        if !self.conditions_differ(other) {
+            return false;
+        }
+        if !self.is_unconditional() && !other.is_unconditional() {
+            return true;
+        }
+        !self.inputs_hold_when_merged(other)
+    }
+
+    /// The two calls don't run under the same `@include`/`@skip`, on the call, its path or its
+    /// input.
     fn conditions_differ(&self, other: &Self) -> bool {
         self.condition != other.condition
             || !self
@@ -516,23 +527,31 @@ impl FetchStepData<MultiTypeFetchStep> {
             || other.flags.contains(FetchStepFlags::CONDITIONAL_INPUT)
     }
 
-    /// No condition on the step, its path or its input.
+    /// This call always runs and its input is always there.
     fn is_unconditional(&self) -> bool {
         self.condition.is_none()
             && self.response_path.conditions().next().is_none()
             && !self.flags.contains(FetchStepFlags::CONDITIONAL_INPUT)
     }
 
-    /// Our input asks for everything `other`'s does, for the types we both send. A type only
-    /// `other` sends is its own representations, merged they stay what they were.
-    fn input_covers(&self, other: &Self) -> bool {
-        other
-            .input
-            .iter_selections()
-            .all(|(type_name, selections)| {
-                !self.input.is_selecting_definition(type_name)
-                    || self.input.contains(type_name, selections)
-            })
+    /// Is our input there every time the merged call runs? Yes if we always run. Otherwise
+    /// `other` has to send each of our types too: at least our fields if it always runs, exactly
+    /// our fields if it doesn't. A type only we send would go out even when we don't run, with
+    /// fields missing.
+    fn input_present_when_merged_with(&self, other: &Self) -> bool {
+        if self.is_unconditional() {
+            return true;
+        }
+        self.input.iter_selections().all(|(type_name, ours)| {
+            let Some(theirs) = other.input.selections_for_definition(type_name) else {
+                return false;
+            };
+            if other.is_unconditional() {
+                theirs.contains(ours)
+            } else {
+                theirs.contains(ours) && ours.contains(theirs)
+            }
+        })
     }
 
     /// Only call this when we are the only step `other` waits for.
