@@ -123,4 +123,36 @@ mod header_limit_e2e_tests {
 
         assert_eq!(res.status(), ntex::http::StatusCode::OK);
     }
+
+    // a GET query travels in the request line, which ntex limits to 16KiB by default
+    #[ntex::test]
+    async fn should_accept_a_get_request_line_above_16kib() {
+        let router = TestRouter::builder()
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let query = format!("{{{}}}", "__typename%20".repeat(2000));
+        let url = format!("{}?query={query}", router.graphql_path());
+        assert!(url.len() > 16 * 1024, "the request line must exceed 16KiB");
+
+        let res = router
+            .serv()
+            .get(url.as_str())
+            .header(http::header::ACCEPT, "application/json")
+            .send()
+            .await
+            .expect("failed to send graphql request");
+
+        assert_eq!(res.status(), ntex::http::StatusCode::OK);
+        let body = res.string_body().await;
+        assert!(body.contains(r#""__typename":"Query""#), "{body}");
+    }
 }
