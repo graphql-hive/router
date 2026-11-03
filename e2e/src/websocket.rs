@@ -753,4 +753,53 @@ mod websocket_e2e_tests {
             "application/graphql-response+json"
         );
     }
+
+    #[ntex::test]
+    async fn max_long_lived_clients_holds_a_slot_for_the_websocket_connection_lifetime() {
+        let subgraphs = TestSubgraphs::builder().build().start().await;
+        let router = TestRouter::builder()
+            .with_subgraphs(&subgraphs)
+            .inline_config(
+                r#"
+                supergraph:
+                    source: file
+                    path: supergraph.graphql
+                websocket:
+                    enabled: true
+                traffic_shaping:
+                    router:
+                        max_long_lived_clients: 2
+                "#,
+            )
+            .build()
+            .start()
+            .await;
+
+        let ws_uri = router
+            .serv()
+            .url("/graphql")
+            .as_str()
+            .replace("http://", "ws://")
+            .parse::<hive_router::http::Uri>()
+            .expect("failed to parse ws url");
+
+        // both open connections hold a slot for as long as they stay connected
+        let conn1 = router.ws().await;
+        let _conn2 = router.ws().await;
+
+        let rejected =
+            hive_router::executor::executors::websocket_client::connect(&ws_uri, None).await;
+        assert!(
+            rejected.is_err(),
+            "third websocket connection should be rejected while two are open"
+        );
+
+        // closing a connection frees its slot
+        drop(conn1);
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        hive_router::executor::executors::websocket_client::connect(&ws_uri, None)
+            .await
+            .expect("websocket connection should be accepted after a slot was freed");
+    }
 }
