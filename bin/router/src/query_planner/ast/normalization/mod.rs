@@ -63,7 +63,8 @@ pub fn normalize_operation(
 ) -> Result<NormalizedDocument, NormalizationError> {
     let mut query_mut = query.clone();
     normalize_operation_mut(supergraph, &mut query_mut, operation_name, None, None)?;
-    let operation = query_mut.definitions.iter_mut().find_map(|def| match def {
+    // The document is ours, so the operation moves out instead of being copied.
+    let operation = query_mut.definitions.into_iter().find_map(|def| match def {
         Definition::Operation(op) => Some(op),
         _ => None,
     });
@@ -73,7 +74,7 @@ pub fn normalize_operation(
     // Use the operation name from the operation definition if available,
     // as a fallback if the user did not provide an operation name.
     let operation_name = operation_name
-        .or(match op_def {
+        .or(match &op_def {
             OperationDefinition::Query(query) => query.name.as_deref(),
             OperationDefinition::Mutation(mutation) => mutation.name.as_deref(),
             OperationDefinition::Subscription(subscription) => subscription.name.as_deref(),
@@ -83,7 +84,7 @@ pub fn normalize_operation(
 
     Ok(create_normalized_document(
         supergraph,
-        op_def.to_owned(),
+        op_def,
         operation_name,
     ))
 }
