@@ -120,11 +120,14 @@ where
             summary.set_response_compression(token);
         }
 
+        let below_encoder_min_size =
+            matches!(body_size, BodySize::Sized(n) if n < NTEX_ENCODER_MIN_SIZE);
+
         let response = match algorithm {
             // ntex's streaming `Encoder` leaves sized bodies below 1KiB untouched, so those are
             // buffered and compressed here to honour a configured `min_size` below that floor
             CompressionAlgorithmConfig::Gzip | CompressionAlgorithmConfig::Deflate
-                if matches!(body_size, BodySize::Sized(n) if n < NTEX_ENCODER_MIN_SIZE) =>
+                if below_encoder_min_size =>
             {
                 // compressing under 1KiB takes microseconds, way less than a blocking pool hop.
                 // the fast level matches what ntex's encoder uses for the larger bodies
@@ -143,8 +146,19 @@ where
                     summary,
                 )
             }),
-            // br/zstd buffer the whole body; `compress_full_body` records the compressed size once
-            // compression succeeds.
+            // ntex's encoder only runs zstd at the default level, so only that level streams
+            CompressionAlgorithmConfig::Zstd(zstd)
+                if zstd.level == NTEX_ENCODER_ZSTD_LEVEL && !below_encoder_min_size =>
+            {
+                response.map_body(move |head, body| {
+                    track_response_bytes(
+                        Encoder::response(ContentEncoding::Zstd, head, body),
+                        summary,
+                    )
+                })
+            }
+            // br and the remaining zstd cases buffer the whole body; `compress_full_body` records
+            // the compressed size once compression succeeds.
             CompressionAlgorithmConfig::Br(brotli) => {
                 compress_full_body(response, token, true, brotli_compressor(*brotli)).await
             }
@@ -160,6 +174,10 @@ where
 /// Smallest sized body that ntex's streaming `Encoder::response` compresses, smaller bodies are
 /// passed through unchanged. Mirrors the private `MIN_SIZE` constant in ntex's encoder.
 const NTEX_ENCODER_MIN_SIZE: u64 = 1024;
+
+/// The zstd level of ntex's streaming `Encoder::response`. ntex sets level `0`, which zstd
+/// treats as its default level `3`.
+const NTEX_ENCODER_ZSTD_LEVEL: i32 = 3;
 
 /// Picks the algorithm from `algorithms` that best matches the client's `Accept-Encoding` preference
 fn negotiate<'cfg>(
