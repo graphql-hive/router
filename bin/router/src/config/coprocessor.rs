@@ -6,7 +6,9 @@ use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
 };
 
-use crate::config::primitives::value_or_expression::ValueOrExpression;
+use crate::config::{
+    primitives::value_or_expression::ValueOrExpression, traffic_shaping::ClientTLSConfig,
+};
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
@@ -16,6 +18,7 @@ pub struct CoprocessorConfig {
     ///
     /// Supported formats:
     /// - `http://host[:port][/path]`
+    /// - `https://host[:port][/path]`
     /// - `unix:///absolute/path/to/socket.sock`
     /// - `unix:///absolute/path/to/socket.sock?path=/request/path`
     pub url: CoprocessorEndpoint,
@@ -34,6 +37,13 @@ pub struct CoprocessorConfig {
     /// Defaults to `1s`.
     pub timeout: Duration,
 
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// TLS configuration for `https://` endpoints.
+    ///
+    /// When omitted, the coprocessor's certificate is verified against the system's root certificates.
+    /// It does not inherit `traffic_shaping.all.tls`.
+    pub tls: Option<ClientTLSConfig>,
+
     #[serde(default)]
     /// Stage-specific configuration.
     pub stages: CoprocessorStagesConfig,
@@ -49,7 +59,7 @@ fn default_coprocessor_timeout() -> Duration {
 pub enum CoprocessorProtocol {
     /// HTTP/1.1 over TCP.
     Http1,
-    /// HTTP/2 over TLS (currently unsupported and rejected).
+    /// HTTP/2 over TLS. Requires an `https://` endpoint.
     Http2,
     /// HTTP/2 cleartext over TCP.
     H2c,
@@ -499,6 +509,10 @@ pub enum CoprocessorEndpoint {
         /// HTTP endpoint URL in `http://host[:port][/path]` form.
         url: String,
     },
+    Https {
+        /// HTTPS endpoint URL in `https://host[:port][/path]` form.
+        url: String,
+    },
     Unix {
         /// Absolute path to Unix domain socket file.
         socket_path: String,
@@ -509,25 +523,32 @@ pub enum CoprocessorEndpoint {
 
 impl CoprocessorEndpoint {
     fn parse(value: &str) -> Result<Self, String> {
-        if value.starts_with("https://") {
-            return Err("coprocessor.url with https scheme is not supported yet".to_string());
-        }
+        let http_scheme = if value.starts_with("http://") {
+            Some("http")
+        } else if value.starts_with("https://") {
+            Some("https")
+        } else {
+            None
+        };
 
-        if value.starts_with("http://") {
+        if let Some(scheme) = http_scheme {
             let parsed = value
                 .parse::<http::Uri>()
-                .map_err(|error| format!("invalid http URL: {error}"))?;
+                .map_err(|error| format!("invalid {scheme} URL: {error}"))?;
 
-            if parsed.scheme_str() != Some("http") {
-                return Err("coprocessor.url must use http scheme".to_string());
+            if parsed.scheme_str() != Some(scheme) {
+                return Err(format!("coprocessor.url must use {scheme} scheme"));
             }
 
             if parsed.authority().is_none() {
                 return Err("coprocessor.url must include host (and optional port)".to_string());
             }
 
-            return Ok(Self::Http {
-                url: value.to_string(),
+            let url = value.to_string();
+            return Ok(if scheme == "https" {
+                Self::Https { url }
+            } else {
+                Self::Http { url }
             });
         }
 
@@ -601,12 +622,15 @@ impl CoprocessorEndpoint {
             });
         }
 
-        Err("coprocessor.url must use one of the supported schemes: http:// or unix://".to_string())
+        Err(
+            "coprocessor.url must use one of the supported schemes: http://, https:// or unix://"
+                .to_string(),
+        )
     }
 
     fn to_config_string(&self) -> String {
         match self {
-            CoprocessorEndpoint::Http { url } => url.clone(),
+            CoprocessorEndpoint::Http { url } | CoprocessorEndpoint::Https { url } => url.clone(),
             CoprocessorEndpoint::Unix {
                 socket_path,
                 request_path,
@@ -638,7 +662,7 @@ impl JsonSchema for CoprocessorEndpoint {
     fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         json_schema!({
             "type": "string",
-            "description": "Coprocessor endpoint URL. Supported forms: http://host[:port][/path], unix:///path/to/socket.sock, unix:///path/to/socket.sock?path=/api/v1"
+            "description": "Coprocessor endpoint URL. Supported forms: http://host[:port][/path], https://host[:port][/path], unix:///path/to/socket.sock, unix:///path/to/socket.sock?path=/api/v1"
         })
     }
 
@@ -654,7 +678,7 @@ impl<'de> Visitor<'de> for CoprocessorEndpointVisitor {
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str(
-            "a coprocessor endpoint URL (http://... or unix:///... with optional ?path=/...)",
+            "a coprocessor endpoint URL (http://..., https://... or unix:///... with optional ?path=/...)",
         )
     }
 
@@ -686,5 +710,35 @@ impl<'de> Deserialize<'de> for CoprocessorEndpoint {
         D: Deserializer<'de>,
     {
         deserializer.deserialize_str(CoprocessorEndpointVisitor)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CoprocessorEndpoint;
+
+    #[test]
+    fn parses_https_endpoint() {
+        assert_eq!(
+            CoprocessorEndpoint::parse("https://coprocessor.example.com:8443/hook"),
+            Ok(CoprocessorEndpoint::Https {
+                url: "https://coprocessor.example.com:8443/hook".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn parses_http_endpoint() {
+        assert_eq!(
+            CoprocessorEndpoint::parse("http://127.0.0.1:8080/hook"),
+            Ok(CoprocessorEndpoint::Http {
+                url: "http://127.0.0.1:8080/hook".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_https_endpoint_without_host() {
+        assert!(CoprocessorEndpoint::parse("https:///hook").is_err());
     }
 }

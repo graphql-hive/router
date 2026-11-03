@@ -15,4 +15,6 @@ mod router_request;
 #[cfg(test)]
 mod router_response;
 #[cfg(test)]
+mod tls;
+#[cfg(test)]
 mod unix_domain_socket;

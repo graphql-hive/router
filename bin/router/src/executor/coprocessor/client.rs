@@ -1,4 +1,6 @@
 use crate::config::coprocessor::{CoprocessorConfig, CoprocessorEndpoint, CoprocessorProtocol};
+use crate::config::traffic_shaping::ClientTLSConfig;
+use crate::executor::executors::tls::build_https_client_config;
 use crate::telemetry::external_wait;
 use crate::telemetry::metrics::catalog::values::GraphQLResponseStatus;
 use crate::telemetry::traces::spans::http_request::HttpClientRequestSpan;
@@ -7,6 +9,7 @@ use bytes::Bytes;
 use http::{HeaderMap, HeaderValue, Method, Request, Response, Uri};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
+use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
 use hyper_util::client::legacy::{connect::HttpConnector, Client as HyperClient};
 use hyper_util::rt::{TokioExecutor, TokioTimer};
 use hyperlocal::{UnixConnector, Uri as HyperlocalUri};
@@ -18,6 +21,7 @@ use tracing::Instrument;
 use super::error::CoprocessorError;
 
 type HttpClient = HyperClient<HttpConnector, Full<Bytes>>;
+type HttpsClient = HyperClient<HttpsConnector<HttpConnector>, Full<Bytes>>;
 type UnixClient = HyperClient<UnixConnector, Full<Bytes>>;
 
 const ACCEPT_ENCODING_VALUE: HeaderValue = HeaderValue::from_static("gzip, br, deflate");
@@ -25,6 +29,7 @@ const CONTENT_TYPE_VALUE: HeaderValue = HeaderValue::from_static("application/js
 
 enum Client {
     Http { client: Arc<HttpClient> },
+    Https { client: Arc<HttpsClient> },
     Unix { client: Arc<UnixClient> },
 }
 
@@ -128,6 +133,10 @@ impl Client {
                 .request(request)
                 .await
                 .map_err(CoprocessorError::RequestExecutionFailure)?,
+            Client::Https { client } => client
+                .request(request)
+                .await
+                .map_err(CoprocessorError::RequestExecutionFailure)?,
             Client::Unix { client } => client
                 .request(request)
                 .await
@@ -152,11 +161,7 @@ impl CoprocessorClient {
     ) -> Result<Self, CoprocessorError> {
         let timeout = config.timeout;
 
-        if config.protocol == CoprocessorProtocol::Http2 {
-            return Err(CoprocessorError::UnsupportedProtocol(
-                CoprocessorProtocol::Http2,
-            ));
-        }
+        validate_transport(&config)?;
 
         match (&config.url, config.protocol) {
             (CoprocessorEndpoint::Http { url }, protocol) => {
@@ -164,10 +169,24 @@ impl CoprocessorClient {
                     .parse::<Uri>()
                     .map_err(|error| CoprocessorError::EndpointParseFailure(url.clone(), error))?;
 
-                let client = Arc::new(build_http_client(protocol)?);
+                let client = Arc::new(build_http_client(protocol));
 
                 Ok(Self {
                     client: Client::Http { client },
+                    endpoint,
+                    timeout,
+                    telemetry_context,
+                })
+            }
+            (CoprocessorEndpoint::Https { url }, protocol) => {
+                let endpoint = url
+                    .parse::<Uri>()
+                    .map_err(|error| CoprocessorError::EndpointParseFailure(url.clone(), error))?;
+
+                let client = Arc::new(build_https_client(protocol, config.tls.as_ref())?);
+
+                Ok(Self {
+                    client: Client::Https { client },
                     endpoint,
                     timeout,
                     telemetry_context,
@@ -187,7 +206,7 @@ impl CoprocessorClient {
                 }
 
                 let endpoint: Uri = HyperlocalUri::new(socket_path, request_path.as_str()).into();
-                let client = Arc::new(build_unix_client(protocol)?);
+                let client = Arc::new(build_unix_client(protocol));
 
                 Ok(Self {
                     client: Client::Unix { client },
@@ -291,31 +310,66 @@ impl CoprocessorClient {
     }
 }
 
-fn build_http_client(protocol: CoprocessorProtocol) -> Result<HttpClient, CoprocessorError> {
-    // `http2` config value is reserved for future (https) and explicitly rejected for now.
-    if protocol == CoprocessorProtocol::Http2 {
-        return Err(CoprocessorError::UnsupportedProtocol(protocol));
+/// Rejects protocol and TLS settings that don't match the endpoint scheme.
+fn validate_transport(config: &CoprocessorConfig) -> Result<(), CoprocessorError> {
+    let (scheme, supports_protocol) = match config.url {
+        CoprocessorEndpoint::Http { .. } => {
+            ("http://", config.protocol != CoprocessorProtocol::Http2)
+        }
+        CoprocessorEndpoint::Https { .. } => {
+            ("https://", config.protocol != CoprocessorProtocol::H2c)
+        }
+        CoprocessorEndpoint::Unix { .. } => {
+            ("unix://", config.protocol != CoprocessorProtocol::Http2)
+        }
+    };
+
+    if !supports_protocol {
+        return Err(CoprocessorError::UnsupportedProtocol {
+            protocol: config.protocol,
+            scheme,
+        });
     }
 
+    if config.tls.is_some() && !matches!(config.url, CoprocessorEndpoint::Https { .. }) {
+        return Err(CoprocessorError::TlsRequiresHttps(scheme));
+    }
+
+    Ok(())
+}
+
+fn build_http_client(protocol: CoprocessorProtocol) -> HttpClient {
     let mut connector = HttpConnector::new();
     connector.enforce_http(true);
     connector.set_keepalive(Some(Duration::from_secs(60)));
 
-    let builder = client_builder(protocol);
-
-    Ok(builder.build(connector))
+    client_builder(protocol).build(connector)
 }
 
-fn build_unix_client(protocol: CoprocessorProtocol) -> Result<UnixClient, CoprocessorError> {
-    // `http2` config value is reserved for future (https) and explicitly rejected for now.
-    if protocol == CoprocessorProtocol::Http2 {
-        return Err(CoprocessorError::UnsupportedProtocol(protocol));
-    }
+fn build_https_client(
+    protocol: CoprocessorProtocol,
+    tls: Option<&ClientTLSConfig>,
+) -> Result<HttpsClient, CoprocessorError> {
+    let mut http_connector = HttpConnector::new();
+    http_connector.enforce_http(false);
+    http_connector.set_keepalive(Some(Duration::from_secs(60)));
 
-    let connector = UnixConnector;
-    let builder = client_builder(protocol);
+    let builder = HttpsConnectorBuilder::new()
+        .with_tls_config(build_https_client_config(tls)?)
+        .https_only();
 
-    Ok(builder.build(connector))
+    // ALPN advertises only the configured protocol, so a server that can't speak it fails the handshake.
+    let connector = if protocol == CoprocessorProtocol::Http2 {
+        builder.enable_http2().wrap_connector(http_connector)
+    } else {
+        builder.enable_http1().wrap_connector(http_connector)
+    };
+
+    Ok(client_builder(protocol).build(connector))
+}
+
+fn build_unix_client(protocol: CoprocessorProtocol) -> UnixClient {
+    client_builder(protocol).build(UnixConnector)
 }
 
 fn client_builder(protocol: CoprocessorProtocol) -> hyper_util::client::legacy::Builder {
@@ -323,9 +377,73 @@ fn client_builder(protocol: CoprocessorProtocol) -> hyper_util::client::legacy::
     builder.pool_timer(TokioTimer::new());
     builder.pool_idle_timeout(Duration::from_secs(60));
 
-    if protocol == CoprocessorProtocol::H2c {
+    if matches!(
+        protocol,
+        CoprocessorProtocol::H2c | CoprocessorProtocol::Http2
+    ) {
         builder.http2_only(true);
     }
 
     builder
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_transport;
+    use crate::config::coprocessor::CoprocessorConfig;
+    use crate::executor::coprocessor::error::CoprocessorError;
+
+    fn config(url: &str, protocol: &str, tls: bool) -> CoprocessorConfig {
+        let mut value = serde_json::json!({ "url": url, "protocol": protocol });
+        if tls {
+            value["tls"] = serde_json::json!({ "insecure_skip_ca_verification": true });
+        }
+        serde_json::from_value(value).expect("valid coprocessor config")
+    }
+
+    #[test]
+    fn accepts_matching_protocol_and_scheme() {
+        for (url, protocol, tls) in [
+            ("http://localhost/hook", "http1", false),
+            ("http://localhost/hook", "h2c", false),
+            ("https://localhost/hook", "http1", false),
+            ("https://localhost/hook", "http2", true),
+            ("unix:///tmp/coprocessor.sock", "h2c", false),
+        ] {
+            assert!(
+                validate_transport(&config(url, protocol, tls)).is_ok(),
+                "{url} with {protocol} (tls: {tls}) should be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unsupported_protocol_for_scheme() {
+        for (url, protocol) in [
+            ("http://localhost/hook", "http2"),
+            ("https://localhost/hook", "h2c"),
+            ("unix:///tmp/coprocessor.sock", "http2"),
+        ] {
+            assert!(
+                matches!(
+                    validate_transport(&config(url, protocol, false)),
+                    Err(CoprocessorError::UnsupportedProtocol { .. })
+                ),
+                "{url} with {protocol} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_tls_without_https() {
+        for url in ["http://localhost/hook", "unix:///tmp/coprocessor.sock"] {
+            assert!(
+                matches!(
+                    validate_transport(&config(url, "http1", true)),
+                    Err(CoprocessorError::TlsRequiresHttps(_))
+                ),
+                "tls with {url} should be rejected"
+            );
+        }
+    }
 }
