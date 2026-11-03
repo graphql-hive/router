@@ -9,8 +9,7 @@ use ntex::{
     http::body::{BodySize, MessageBody},
     router::{Path, Router},
     service::{Ctx, Service},
-    web,
-    Middleware,
+    web, Middleware,
 };
 
 /// Matches whatever `graphql_endpoint_handler` serves

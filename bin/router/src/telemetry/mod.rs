@@ -363,9 +363,10 @@ fn create_prometheus_runtime(
     let server = HttpServer::new(async move |_| {
         let registry = registry.clone();
         App::new()
-            .service(web::resource(path.as_str()).route(web::get().to(async move || {
-                build_metrics_response(&registry)
-            })))
+            .service(
+                web::resource(path.as_str())
+                    .route(web::get().to(async move || build_metrics_response(&registry))),
+            )
             .default_service(web::to(async || HttpResponse::NotFound()))
     })
     .workers(1)

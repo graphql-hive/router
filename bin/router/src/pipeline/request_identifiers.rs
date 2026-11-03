@@ -3,8 +3,7 @@ use std::sync::Arc;
 use crate::telemetry::logging::request_id::WithRequestIdentifiers;
 use ntex::{
     service::{Ctx, Service},
-    web,
-    Middleware,
+    web, Middleware,
 };
 
 use crate::{telemetry::HeaderExtractor, RouterSharedState};

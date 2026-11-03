@@ -504,7 +504,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(body.as_ref(), chunk);
-        assert_eq!(body.as_ptr(), chunk.as_ptr(), "single chunk must not be copied");
+        assert_eq!(
+            body.as_ptr(),
+            chunk.as_ptr(),
+            "single chunk must not be copied"
+        );
     }
 
     #[ntex::test]
@@ -523,7 +527,9 @@ mod tests {
         let cases: [&[&'static [u8]]; 2] = [&[b"abcdef"], &[b"abc", b"def"]];
         for chunks in cases {
             let req = ntex::web::test::TestRequest::default().to_http_request();
-            let err = read_body(&req, payload_of(chunks), 5, None).await.unwrap_err();
+            let err = read_body(&req, payload_of(chunks), 5, None)
+                .await
+                .unwrap_err();
             assert!(
                 matches!(err, ReadBodyStreamError::PayloadTooLargeBodyStream),
                 "{chunks:?}: {err:?}"

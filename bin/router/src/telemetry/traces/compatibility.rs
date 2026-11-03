@@ -457,7 +457,8 @@ mod tests {
         )
         .with_peer_addr("10.0.0.2:5678".parse().unwrap());
         let body = Bytes::from_static(b"test body");
-        let res = ntex::web::HttpResponse::builder(ntex::http::StatusCode::OK).body("response body");
+        let res =
+            ntex::web::HttpResponse::builder(ntex::http::StatusCode::OK).body("response body");
 
         let span = export_first_span(|| {
             let span = HttpServerRequestSpan::from_request(&req, &None);
