@@ -1,7 +1,4 @@
-use graphql_tools::parser::query::{
-    Definition, Field, InlineFragment, Mutation, OperationDefinition, Query, Selection,
-    SelectionSet, Subscription, TypeCondition,
-};
+use graphql_tools::parser::query::{InlineFragment, Selection, SelectionSet, TypeCondition};
 
 use crate::query_planner::{
     ast::normalization::{
@@ -22,334 +19,315 @@ use crate::query_planner::{
 ///    the correct semantics are maintained.
 #[inline]
 pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
-    let query_type_name = ctx.root_types.query_type_name()?;
-
-    for definition in &mut ctx.document.definitions {
-        if let Definition::Operation(op_def) = definition {
-            let (root_type_name, selection_set) = match op_def {
-                OperationDefinition::SelectionSet(s) => (query_type_name, s),
-                OperationDefinition::Query(Query { selection_set, .. }) => {
-                    (query_type_name, selection_set)
-                }
-                OperationDefinition::Mutation(Mutation { selection_set, .. }) => (
-                    ctx.root_types.mutation_type_name().ok_or_else(|| {
-                        NormalizationError::TypeForOperationNotFound {
-                            kind: "mutation".to_string(),
-                        }
-                    })?,
-                    selection_set,
-                ),
-                OperationDefinition::Subscription(Subscription { selection_set, .. }) => (
-                    ctx.root_types.subscription_type_name().ok_or_else(|| {
-                        NormalizationError::TypeForOperationNotFound {
-                            kind: "subscription".to_string(),
-                        }
-                    })?,
-                    selection_set,
-                ),
-            };
-
-            let root_type_def =
-                ctx.supergraph
-                    .definitions
-                    .get(root_type_name)
-                    .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
-                        type_name: root_type_name.to_string(),
-                    })?;
-
-            handle_selection_set(
-                ctx.supergraph,
-                ctx.subgraph_name,
-                root_type_def,
-                selection_set,
-            )?;
-        }
+    let flattener = Flattener {
+        state: ctx.supergraph,
+        subgraph_name: ctx.subgraph_name,
+    };
+    for operation in ctx.operations_mut() {
+        let (root_type_def, selection_set) = operation?;
+        flattener.handle_selection_set(root_type_def, selection_set)?;
     }
 
     Ok(())
 }
 
-#[inline]
-fn handle_selection_set(
-    state: &SupergraphState,
-    subgraph_name: Option<&str>,
-    parent_type_def: &SupergraphDefinition,
-    selection_set: &mut SelectionSet<'static, String>,
-) -> Result<(), NormalizationError> {
-    let old_items = std::mem::take(&mut selection_set.items);
-    let mut new_items: Vec<Selection<'static, String>> = Vec::new();
-
-    for selection in old_items {
-        match selection {
-            Selection::Field(mut field) => {
-                process_field(state, subgraph_name, parent_type_def, &mut field)?;
-                new_items.push(Selection::Field(field));
-            }
-            Selection::InlineFragment(current_fragment) => {
-                let processed_fragments = process_inline_fragment(
-                    state,
-                    subgraph_name,
-                    parent_type_def,
-                    current_fragment,
-                )?;
-                new_items.extend(processed_fragments);
-            }
-            Selection::FragmentSpread(_) => {
-                // Fragment spreads should have been inlined in a previous step.
-            }
-        }
-    }
-    selection_set.items = new_items;
-    Ok(())
+struct Flattener<'a> {
+    state: &'a SupergraphState,
+    subgraph_name: Option<&'a str>,
 }
 
-/// Processes a field's selection set recursively.
-#[inline]
-fn process_field(
-    state: &SupergraphState,
-    subgraph_name: Option<&str>,
-    parent_type_def: &SupergraphDefinition,
-    field: &mut Field<'static, String>,
-) -> Result<(), NormalizationError> {
-    if field.name.starts_with("__") || field.selection_set.items.is_empty() {
-        return Ok(());
+impl<'a> Flattener<'a> {
+    fn definition(&self, type_name: &str) -> Result<&'a SupergraphDefinition, NormalizationError> {
+        self.state.definitions.get(type_name).ok_or_else(|| {
+            NormalizationError::SchemaTypeNotFound {
+                type_name: type_name.to_string(),
+            }
+        })
     }
 
-    let field_def = parent_type_def.fields().get(&field.name).ok_or_else(|| {
-        NormalizationError::FieldNotFoundInType {
-            field_name: field.name.clone(),
-            type_name: parent_type_def.name().to_string(),
-        }
-    })?;
+    #[inline]
+    fn handle_selection_set(
+        &self,
+        parent_type_def: &SupergraphDefinition,
+        selection_set: &mut SelectionSet<'static, String>,
+    ) -> Result<(), NormalizationError> {
+        let old_items = std::mem::take(&mut selection_set.items);
+        let mut new_items: Vec<Selection<'static, String>> = Vec::new();
 
-    let inner_type_name = field_def.field_type.inner_type();
-    let inner_type_def = state.definitions.get(inner_type_name).ok_or_else(|| {
-        NormalizationError::SchemaTypeNotFound {
-            type_name: inner_type_name.to_string(),
-        }
-    })?;
-
-    handle_selection_set(
-        state,
-        subgraph_name,
-        inner_type_def,
-        &mut field.selection_set,
-    )
-}
-
-#[inline]
-fn process_inline_fragment(
-    state: &SupergraphState,
-    subgraph_name: Option<&str>,
-    parent_type_def: &SupergraphDefinition,
-    mut fragment: InlineFragment<'static, String>,
-) -> Result<Vec<Selection<'static, String>>, NormalizationError> {
-    let had_no_type_condition = fragment.type_condition.is_none();
-    let type_condition_matches_parent = fragment
-        .type_condition
-        .as_ref()
-        .is_none_or(|tc| extract_type_condition(tc) == parent_type_def.name());
-
-    if type_condition_matches_parent {
-        // The fragment's type condition is the same as the parent's type, or it has no type condition.
-        // We can flatten it if it has no directives, otherwise we must preserve it.
-        if fragment.directives.is_empty() {
-            handle_selection_set(
-                state,
-                subgraph_name,
-                parent_type_def,
-                &mut fragment.selection_set,
-            )?;
-            Ok(fragment.selection_set.items)
-        } else {
-            handle_selection_set(
-                state,
-                subgraph_name,
-                parent_type_def,
-                &mut fragment.selection_set,
-            )?;
-
-            if had_no_type_condition {
-                fragment.type_condition =
-                    Some(TypeCondition::On(parent_type_def.name().to_string()));
-
-                if matches!(
-                    parent_type_def,
-                    SupergraphDefinition::Interface(_) | SupergraphDefinition::Union(_)
-                ) {
-                    return expand_abstract_fragment(
-                        state,
-                        subgraph_name,
-                        parent_type_def,
-                        fragment,
-                    );
+        for selection in old_items {
+            match selection {
+                Selection::Field(mut field) => {
+                    if !field.name.starts_with("__") && !field.selection_set.items.is_empty() {
+                        let field_def =
+                            parent_type_def.fields().get(&field.name).ok_or_else(|| {
+                                NormalizationError::FieldNotFoundInType {
+                                    field_name: field.name.clone(),
+                                    type_name: parent_type_def.name().to_string(),
+                                }
+                            })?;
+                        let inner_type_def = self.definition(field_def.field_type.inner_type())?;
+                        self.handle_selection_set(inner_type_def, &mut field.selection_set)?;
+                    }
+                    new_items.push(Selection::Field(field));
+                }
+                Selection::InlineFragment(fragment) => {
+                    new_items.extend(self.process_inline_fragment(parent_type_def, fragment)?);
+                }
+                Selection::FragmentSpread(_) => {
+                    // Fragment spreads should have been inlined in a previous step.
                 }
             }
-
-            Ok(vec![Selection::InlineFragment(fragment)])
         }
-    } else {
-        // The fragment has a different type condition from its parent, so we must expand it.
-        expand_fragment_with_type_condition(state, subgraph_name, parent_type_def, fragment)
+        selection_set.items = new_items;
+        Ok(())
     }
-}
 
-/// Expands a fragment that has a specific type condition.
-#[inline]
-fn expand_fragment_with_type_condition(
-    state: &SupergraphState,
-    subgraph_name: Option<&str>,
-    parent_type_def: &SupergraphDefinition,
-    mut fragment: InlineFragment<'static, String>,
-) -> Result<Vec<Selection<'static, String>>, NormalizationError> {
-    let type_condition_name = fragment
-        .type_condition
-        .as_ref()
-        .map(extract_type_condition)
-        .expect("Type condition should exist here");
-
-    let type_condition_def = state.definitions.get(type_condition_name).ok_or_else(|| {
-        NormalizationError::SchemaTypeNotFound {
-            type_name: type_condition_name.to_string(),
-        }
-    })?;
-
-    match type_condition_def {
-        SupergraphDefinition::Interface(_) | SupergraphDefinition::Union(_) => {
-            expand_abstract_fragment(state, subgraph_name, parent_type_def, fragment)
-        }
-        SupergraphDefinition::Object(_) => {
-            // This fragment is on a concrete object type. It's only valid if the parent
-            // isn't a different, incompatible object type.
-            if matches!(parent_type_def, SupergraphDefinition::Object(_))
-                && parent_type_def.name() != type_condition_def.name()
-            {
-                // e.g. `... on Dog { ... on Cat { ... } }` -> impossible, drop inner fragment.
-                return Ok(Vec::new());
-            }
-
-            handle_selection_set(
-                state,
-                subgraph_name,
-                type_condition_def,
-                &mut fragment.selection_set,
-            )?;
-            Ok(vec![Selection::InlineFragment(fragment)])
-        }
-        _ => {
-            // Fragments cannot be defined on these types. This indicates invalid GraphQL.
-            Ok(Vec::new())
-        }
-    }
-}
-
-/// Expands a fragment on an abstract type (interface or union) into a set of fragments
-/// on concrete object types.
-#[inline]
-fn expand_abstract_fragment(
-    state: &SupergraphState,
-    subgraph_name: Option<&str>,
-    parent_type_def: &SupergraphDefinition,
-    mut fragment: InlineFragment<'static, String>,
-) -> Result<Vec<Selection<'static, String>>, NormalizationError> {
-    let mut new_items = Vec::new();
-    let type_condition_name = extract_type_condition(
-        fragment
+    #[inline]
+    fn process_inline_fragment(
+        &self,
+        parent_type_def: &SupergraphDefinition,
+        mut fragment: InlineFragment<'static, String>,
+    ) -> Result<Vec<Selection<'static, String>>, NormalizationError> {
+        let had_no_type_condition = fragment.type_condition.is_none();
+        let type_condition_matches_parent = fragment
             .type_condition
             .as_ref()
-            .expect("type condition should exist"),
-    );
+            .is_none_or(|tc| extract_type_condition(tc) == parent_type_def.name());
 
-    let object_types_of_type_cond = match subgraph_name {
-        Some(graph_id) => state.possible_types_in_subgraph(type_condition_name, graph_id),
-        None => state.all_possible_types(type_condition_name),
+        if !type_condition_matches_parent {
+            // The fragment has a different type condition from its parent, so we must expand it.
+            return self.expand_fragment_with_type_condition(parent_type_def, fragment);
+        }
+
+        // The fragment's type condition is the same as the parent's type, or it has no type condition.
+        // We can flatten it if it has no directives, otherwise we must preserve it.
+        self.handle_selection_set(parent_type_def, &mut fragment.selection_set)?;
+        if fragment.directives.is_empty() {
+            return Ok(fragment.selection_set.items);
+        }
+
+        if had_no_type_condition {
+            fragment.type_condition = Some(TypeCondition::On(parent_type_def.name().to_string()));
+
+            if matches!(
+                parent_type_def,
+                SupergraphDefinition::Interface(_) | SupergraphDefinition::Union(_)
+            ) {
+                return self.expand_abstract_fragment(parent_type_def, fragment);
+            }
+        }
+
+        Ok(vec![Selection::InlineFragment(fragment)])
     }
-    .ok_or_else(|| NormalizationError::PossibleTypesNotFound {
-        type_name: type_condition_name.to_string(),
-    })?;
 
-    let mut intersecting_types: Vec<&str> = match parent_type_def {
-        SupergraphDefinition::Union(_) | SupergraphDefinition::Interface(_) => {
-            let object_types_of_parent_type = match subgraph_name {
-                Some(graph_id) => {
-                    state.possible_types_in_subgraph(parent_type_def.name(), graph_id)
-                }
-                None => state.all_possible_types(parent_type_def.name()),
+    /// Expands a fragment that has a specific type condition.
+    #[inline]
+    fn expand_fragment_with_type_condition(
+        &self,
+        parent_type_def: &SupergraphDefinition,
+        mut fragment: InlineFragment<'static, String>,
+    ) -> Result<Vec<Selection<'static, String>>, NormalizationError> {
+        let type_condition_name = fragment
+            .type_condition
+            .as_ref()
+            .map(extract_type_condition)
+            .expect("Type condition should exist here");
+        let type_condition_def = self.definition(type_condition_name)?;
+
+        match type_condition_def {
+            SupergraphDefinition::Interface(_) | SupergraphDefinition::Union(_) => {
+                self.expand_abstract_fragment(parent_type_def, fragment)
             }
+            SupergraphDefinition::Object(_) => {
+                // This fragment is on a concrete object type. It's only valid if the parent
+                // isn't a different, incompatible object type.
+                if matches!(parent_type_def, SupergraphDefinition::Object(_))
+                    && parent_type_def.name() != type_condition_def.name()
+                {
+                    // e.g. `... on Dog { ... on Cat { ... } }` -> impossible, drop inner fragment.
+                    return Ok(Vec::new());
+                }
+
+                self.handle_selection_set(type_condition_def, &mut fragment.selection_set)?;
+                Ok(vec![Selection::InlineFragment(fragment)])
+            }
+            _ => {
+                // Fragments cannot be defined on these types. This indicates invalid GraphQL.
+                Ok(Vec::new())
+            }
+        }
+    }
+
+    /// Expands a fragment on an abstract type (interface or union) into a set of fragments
+    /// on concrete object types.
+    #[inline]
+    fn expand_abstract_fragment(
+        &self,
+        parent_type_def: &SupergraphDefinition,
+        mut fragment: InlineFragment<'static, String>,
+    ) -> Result<Vec<Selection<'static, String>>, NormalizationError> {
+        let mut new_items = Vec::new();
+        let type_condition_name = extract_type_condition(
+            fragment
+                .type_condition
+                .as_ref()
+                .expect("type condition should exist"),
+        );
+
+        let object_types_of_type_cond = self
+            .state
+            .possible_types(type_condition_name, self.subgraph_name)
             .ok_or_else(|| NormalizationError::PossibleTypesNotFound {
-                type_name: parent_type_def.name().to_string(),
+                type_name: type_condition_name.to_string(),
             })?;
-            object_types_of_type_cond
-                .intersection(object_types_of_parent_type)
+
+        let mut intersecting_types: Vec<&str> = match parent_type_def {
+            SupergraphDefinition::Union(_) | SupergraphDefinition::Interface(_) => {
+                let object_types_of_parent_type = self
+                    .state
+                    .possible_types(parent_type_def.name(), self.subgraph_name)
+                    .ok_or_else(|| NormalizationError::PossibleTypesNotFound {
+                        type_name: parent_type_def.name().to_string(),
+                    })?;
+                object_types_of_type_cond
+                    .intersection(object_types_of_parent_type)
+                    .map(String::as_str)
+                    .collect()
+            }
+            _ => object_types_of_type_cond
+                .get(parent_type_def.name())
                 .map(String::as_str)
-                .collect()
-        }
-        _ => object_types_of_type_cond
-            .get(parent_type_def.name())
-            .map(String::as_str)
-            .into_iter()
-            .collect(),
-    };
-    intersecting_types.sort_unstable();
+                .into_iter()
+                .collect(),
+        };
+        intersecting_types.sort_unstable();
 
-    // Almost every fragment expands to one or two types. The last type takes the selections,
-    // only the ones before it get copies of them.
-    let mut items = std::mem::take(&mut fragment.selection_set.items);
-    let last_type_index = intersecting_types.len().saturating_sub(1);
-    for (type_index, obj_type_name) in intersecting_types.into_iter().enumerate() {
-        let obj_type_def = state.definitions.get(obj_type_name).ok_or_else(|| {
-            NormalizationError::SchemaTypeNotFound {
-                type_name: obj_type_name.to_string(),
-            }
-        })?;
+        // Almost every fragment expands to one or two types. The last type takes the selections,
+        // only the ones before it get copies of them.
+        let mut items = std::mem::take(&mut fragment.selection_set.items);
+        let last_type_index = intersecting_types.len().saturating_sub(1);
+        for (type_index, obj_type_name) in intersecting_types.into_iter().enumerate() {
+            let obj_type_def = self.definition(obj_type_name)?;
 
-        // The fields, and the child fragments that apply to this concrete type, including
-        // nested abstract fragments like `... on Node` while expanding `Node` to `Account`.
-        let mut inherited_fields: Vec<Selection<String>> = Vec::new();
-        let mut specific_sub_fragments: Vec<InlineFragment<'static, String>> = Vec::new();
-        if type_index == last_type_index {
-            for selection in std::mem::take(&mut items) {
-                match selection {
-                    Selection::Field(_) => inherited_fields.push(selection),
-                    Selection::InlineFragment(sub_fragment)
-                        if fragment_applies_to_object(
-                            state,
-                            subgraph_name,
-                            &sub_fragment,
-                            obj_type_name,
-                        ) =>
-                    {
-                        specific_sub_fragments.push(sub_fragment)
+            // The fields, and the child fragments that apply to this concrete type, including
+            // nested abstract fragments like `... on Node` while expanding `Node` to `Account`.
+            let mut inherited_fields: Vec<Selection<String>> = Vec::new();
+            let mut specific_sub_fragments: Vec<InlineFragment<'static, String>> = Vec::new();
+            if type_index == last_type_index {
+                for selection in std::mem::take(&mut items) {
+                    match selection {
+                        Selection::Field(_) => inherited_fields.push(selection),
+                        Selection::InlineFragment(sub_fragment)
+                            if self.fragment_applies_to_object(&sub_fragment, obj_type_name) =>
+                        {
+                            specific_sub_fragments.push(sub_fragment)
+                        }
+                        _ => {}
                     }
-                    _ => {}
+                }
+            } else {
+                for selection in &items {
+                    match selection {
+                        Selection::Field(_) => inherited_fields.push(selection.clone()),
+                        Selection::InlineFragment(sub_fragment)
+                            if self.fragment_applies_to_object(sub_fragment, obj_type_name) =>
+                        {
+                            specific_sub_fragments.push(sub_fragment.clone())
+                        }
+                        _ => {}
+                    }
                 }
             }
-        } else {
-            for selection in &items {
-                match selection {
-                    Selection::Field(_) => inherited_fields.push(selection.clone()),
-                    Selection::InlineFragment(sub_fragment)
-                        if fragment_applies_to_object(
-                            state,
-                            subgraph_name,
-                            sub_fragment,
-                            obj_type_name,
-                        ) =>
-                    {
-                        specific_sub_fragments.push(sub_fragment.clone())
-                    }
-                    _ => {}
-                }
-            }
-        }
 
-        if specific_sub_fragments
-            .iter()
-            .any(|f| !f.directives.is_empty())
-        {
-            // If any sub-fragment has directives, each is treated as a distinct entity.
-            // A fragment for the inherited fields (with parent directives) is created first...
-            let mut inherited_fragment = InlineFragment {
+            if specific_sub_fragments
+                .iter()
+                .any(|f| !f.directives.is_empty())
+            {
+                // If any sub-fragment has directives, each is treated as a distinct entity.
+                // A fragment for the inherited fields (with parent directives) is created first...
+                let mut inherited_fragment = InlineFragment {
+                    type_condition: Some(TypeCondition::On(obj_type_name.to_string())),
+                    directives: fragment.directives.clone(),
+                    selection_set: SelectionSet {
+                        span: fragment.selection_set.span,
+                        items: inherited_fields,
+                    },
+                    position: fragment.position,
+                };
+                self.handle_selection_set(obj_type_def, &mut inherited_fragment.selection_set)?;
+                // Recursive normalization can eliminate every inherited selection, so
+                // avoid emitting an empty inline fragment like `... on Account {}`.
+                if !inherited_fragment.selection_set.items.is_empty() {
+                    new_items.push(Selection::InlineFragment(inherited_fragment));
+                }
+
+                // then a separate fragment for each sub-fragment's fields and directives.
+                // Propagate any parent directives (e.g. @skip/@include) into each sub-fragment
+                // so they remain gated by the abstract fragment's conditions. For each parent
+                // directive we either:
+                //   * skip it, if a semantically equal directive (same name + args) is already
+                //     on the sub-fragment (avoids redundant nesting for the common case);
+                //   * merge it into the sub-fragment's directives, if no same-named directive
+                //     exists there;
+                //   * fall back to wrapping the sub-fragment in an outer inline fragment that
+                //     carries the parent directives, when a same-named directive with different
+                //     arguments is present on the sub-fragment (e.g. nested `@include` with
+                //     different conditions) — both conditions must be preserved and `@include`
+                //     / `@skip` are non-repeatable so they can't co-exist on the same fragment.
+                for mut specific_fragment in specific_sub_fragments {
+                    specific_fragment.type_condition =
+                        Some(TypeCondition::On(obj_type_name.to_string()));
+
+                    let mut needs_wrapping = false;
+                    let mut directives_to_merge: Vec<_> = Vec::new();
+                    for parent_directive in &fragment.directives {
+                        let same_named = specific_fragment
+                            .directives
+                            .iter()
+                            .find(|d| d.name == parent_directive.name);
+                        match same_named {
+                            Some(existing) if existing.arguments == parent_directive.arguments => {
+                                // Equivalent directive already present – nothing to do.
+                            }
+                            Some(_) => {
+                                // Same-named directive but with different arguments –
+                                // can't merge safely, must wrap.
+                                needs_wrapping = true;
+                                break;
+                            }
+                            None => {
+                                directives_to_merge.push(parent_directive.clone());
+                            }
+                        }
+                    }
+
+                    self.handle_selection_set(obj_type_def, &mut specific_fragment.selection_set)?;
+
+                    if specific_fragment.selection_set.items.is_empty() {
+                        continue;
+                    }
+
+                    if needs_wrapping {
+                        let wrapper = InlineFragment {
+                            type_condition: Some(TypeCondition::On(obj_type_name.to_string())),
+                            directives: fragment.directives.clone(),
+                            selection_set: SelectionSet {
+                                span: fragment.selection_set.span,
+                                items: vec![Selection::InlineFragment(specific_fragment)],
+                            },
+                            position: fragment.position,
+                        };
+                        new_items.push(Selection::InlineFragment(wrapper));
+                    } else {
+                        specific_fragment.directives.extend(directives_to_merge);
+                        new_items.push(Selection::InlineFragment(specific_fragment));
+                    }
+                }
+
+                continue;
+            }
+
+            let mut new_fragment = InlineFragment {
                 type_condition: Some(TypeCondition::On(obj_type_name.to_string())),
                 directives: fragment.directives.clone(),
                 selection_set: SelectionSet {
@@ -358,136 +336,38 @@ fn expand_abstract_fragment(
                 },
                 position: fragment.position,
             };
-            handle_selection_set(
-                state,
-                subgraph_name,
-                obj_type_def,
-                &mut inherited_fragment.selection_set,
-            )?;
-            // Recursive normalization can eliminate every inherited selection, so
-            // avoid emitting an empty inline fragment like `... on Account {}`.
-            if !inherited_fragment.selection_set.items.is_empty() {
-                new_items.push(Selection::InlineFragment(inherited_fragment));
+
+            // Merge ALL matching sub-fragments into the new fragment.
+            for sub_fragment in specific_sub_fragments {
+                new_fragment.directives.extend(sub_fragment.directives);
+                new_fragment
+                    .selection_set
+                    .items
+                    .extend(sub_fragment.selection_set.items);
             }
 
-            // then a separate fragment for each sub-fragment's fields and directives.
-            // Propagate any parent directives (e.g. @skip/@include) into each sub-fragment
-            // so they remain gated by the abstract fragment's conditions. For each parent
-            // directive we either:
-            //   * skip it, if a semantically equal directive (same name + args) is already
-            //     on the sub-fragment (avoids redundant nesting for the common case);
-            //   * merge it into the sub-fragment's directives, if no same-named directive
-            //     exists there;
-            //   * fall back to wrapping the sub-fragment in an outer inline fragment that
-            //     carries the parent directives, when a same-named directive with different
-            //     arguments is present on the sub-fragment (e.g. nested `@include` with
-            //     different conditions) — both conditions must be preserved and `@include`
-            //     / `@skip` are non-repeatable so they can't co-exist on the same fragment.
-            for mut specific_fragment in specific_sub_fragments {
-                specific_fragment.type_condition =
-                    Some(TypeCondition::On(obj_type_name.to_string()));
-
-                let mut needs_wrapping = false;
-                let mut directives_to_merge: Vec<_> = Vec::new();
-                for parent_directive in &fragment.directives {
-                    let same_named = specific_fragment
-                        .directives
-                        .iter()
-                        .find(|d| d.name == parent_directive.name);
-                    match same_named {
-                        Some(existing) if existing.arguments == parent_directive.arguments => {
-                            // Equivalent directive already present – nothing to do.
-                        }
-                        Some(_) => {
-                            // Same-named directive but with different arguments –
-                            // can't merge safely, must wrap.
-                            needs_wrapping = true;
-                            break;
-                        }
-                        None => {
-                            directives_to_merge.push(parent_directive.clone());
-                        }
-                    }
-                }
-
-                handle_selection_set(
-                    state,
-                    subgraph_name,
-                    obj_type_def,
-                    &mut specific_fragment.selection_set,
-                )?;
-
-                if specific_fragment.selection_set.items.is_empty() {
-                    continue;
-                }
-
-                if needs_wrapping {
-                    let wrapper = InlineFragment {
-                        type_condition: Some(TypeCondition::On(obj_type_name.to_string())),
-                        directives: fragment.directives.clone(),
-                        selection_set: SelectionSet {
-                            span: fragment.selection_set.span,
-                            items: vec![Selection::InlineFragment(specific_fragment)],
-                        },
-                        position: fragment.position,
-                    };
-                    new_items.push(Selection::InlineFragment(wrapper));
-                } else {
-                    specific_fragment.directives.extend(directives_to_merge);
-                    new_items.push(Selection::InlineFragment(specific_fragment));
-                }
+            self.handle_selection_set(obj_type_def, &mut new_fragment.selection_set)?;
+            // Recursive normalization can eliminate every child selection, so avoid
+            // emitting an empty inline fragment like `... on Account {}`.
+            if !new_fragment.selection_set.items.is_empty() {
+                new_items.push(Selection::InlineFragment(new_fragment));
             }
-
-            continue;
         }
-
-        let mut new_fragment = InlineFragment {
-            type_condition: Some(TypeCondition::On(obj_type_name.to_string())),
-            directives: fragment.directives.clone(),
-            selection_set: SelectionSet {
-                span: fragment.selection_set.span,
-                items: inherited_fields,
-            },
-            position: fragment.position,
-        };
-
-        // Merge ALL matching sub-fragments into the new fragment.
-        for sub_fragment in specific_sub_fragments {
-            new_fragment.directives.extend(sub_fragment.directives);
-            new_fragment
-                .selection_set
-                .items
-                .extend(sub_fragment.selection_set.items);
-        }
-
-        handle_selection_set(
-            state,
-            subgraph_name,
-            obj_type_def,
-            &mut new_fragment.selection_set,
-        )?;
-        // Recursive normalization can eliminate every child selection, so avoid
-        // emitting an empty inline fragment like `... on Account {}`.
-        if !new_fragment.selection_set.items.is_empty() {
-            new_items.push(Selection::InlineFragment(new_fragment));
-        }
+        Ok(new_items)
     }
-    Ok(new_items)
-}
 
-fn fragment_applies_to_object(
-    state: &SupergraphState,
-    subgraph_name: Option<&str>,
-    fragment: &InlineFragment<'static, String>,
-    obj_type_name: &str,
-) -> bool {
-    match fragment.type_condition.as_ref().map(extract_type_condition) {
-        Some(type_condition) if type_condition == obj_type_name => true,
-        Some(type_condition) => (match subgraph_name {
-            Some(graph_id) => state.possible_types_in_subgraph(type_condition, graph_id),
-            None => state.all_possible_types(type_condition),
-        })
-        .is_some_and(|possible_types| possible_types.contains(obj_type_name)),
-        None => true,
+    fn fragment_applies_to_object(
+        &self,
+        fragment: &InlineFragment<'static, String>,
+        obj_type_name: &str,
+    ) -> bool {
+        match fragment.type_condition.as_ref().map(extract_type_condition) {
+            Some(type_condition) if type_condition == obj_type_name => true,
+            Some(type_condition) => self
+                .state
+                .possible_types(type_condition, self.subgraph_name)
+                .is_some_and(|possible_types| possible_types.contains(obj_type_name)),
+            None => true,
+        }
     }
 }

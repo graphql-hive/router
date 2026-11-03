@@ -430,6 +430,18 @@ impl SupergraphState {
             .and_then(|types| types.get(type_name))
     }
 
+    /// Possible concrete types for `type_name`, in one subgraph when there is one.
+    pub(crate) fn possible_types(
+        &self,
+        type_name: &str,
+        graph_id: Option<&str>,
+    ) -> Option<&HashSet<String>> {
+        match graph_id {
+            Some(graph_id) => self.possible_types_in_subgraph(type_name, graph_id),
+            None => self.all_possible_types(type_name),
+        }
+    }
+
     pub fn field_return_type_name(&self, type_name: &str, field_name: &str) -> Option<&str> {
         if field_name == "__typename" {
             return Some("String");

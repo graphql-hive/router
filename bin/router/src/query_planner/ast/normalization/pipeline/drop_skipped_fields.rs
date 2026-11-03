@@ -1,34 +1,18 @@
-use graphql_tools::parser::query::{
-    Definition, Directive, FragmentDefinition, Mutation, OperationDefinition, Query, Selection,
-    SelectionSet, Subscription, Value,
-};
+use graphql_tools::parser::query::{Definition, Directive, Selection, SelectionSet, Value};
 
 use crate::query_planner::ast::normalization::{
-    context::NormalizationContext, error::NormalizationError,
+    context::{selection_set_mut, NormalizationContext},
+    error::NormalizationError,
 };
 
 #[inline]
 pub fn drop_skipped_fields(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
-    for def in &mut ctx.document.definitions {
-        match def {
-            Definition::Operation(op) => match op {
-                OperationDefinition::Query(Query { selection_set, .. }) => {
-                    handle_selection_set(selection_set)?;
-                }
-                OperationDefinition::Mutation(Mutation { selection_set, .. }) => {
-                    handle_selection_set(selection_set)?;
-                }
-                OperationDefinition::Subscription(Subscription { selection_set, .. }) => {
-                    handle_selection_set(selection_set)?;
-                }
-                OperationDefinition::SelectionSet(s) => {
-                    handle_selection_set(s)?;
-                }
-            },
-            Definition::Fragment(FragmentDefinition { selection_set, .. }) => {
-                handle_selection_set(selection_set)?;
-            }
-        }
+    for definition in &mut ctx.document.definitions {
+        let selection_set = match definition {
+            Definition::Operation(operation) => selection_set_mut(operation),
+            Definition::Fragment(fragment) => &mut fragment.selection_set,
+        };
+        handle_selection_set(selection_set)?;
     }
 
     Ok(())

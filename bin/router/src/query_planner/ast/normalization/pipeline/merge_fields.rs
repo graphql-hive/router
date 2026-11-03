@@ -1,32 +1,16 @@
-use graphql_tools::parser::query::{
-    Definition, Field, Mutation, OperationDefinition, Query, Selection, SelectionSet, Subscription,
-};
+use graphql_tools::parser::query::{Definition, Field, Selection, SelectionSet};
 
-use crate::query_planner::ast::normalization::context::NormalizationContext;
+use crate::query_planner::ast::normalization::context::{selection_set_mut, NormalizationContext};
 use crate::query_planner::ast::normalization::error::NormalizationError;
 use crate::query_planner::utils::ast::equal_directives_arr;
 
 #[inline]
 pub fn merge_fields(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
     for definition in &mut ctx.document.definitions {
-        match definition {
-            Definition::Operation(op_def) => match op_def {
-                OperationDefinition::SelectionSet(selection_set) => {
-                    handle_selection_set(selection_set)?;
-                }
-                OperationDefinition::Query(Query { selection_set, .. }) => {
-                    handle_selection_set(selection_set)?;
-                }
-                OperationDefinition::Mutation(Mutation { selection_set, .. }) => {
-                    handle_selection_set(selection_set)?;
-                }
-                OperationDefinition::Subscription(Subscription { selection_set, .. }) => {
-                    handle_selection_set(selection_set)?;
-                }
-            },
-            Definition::Fragment(_) => {
-                // no longer relevant at this point, every fragment spread was inlined and defs will be dropped
-            }
+        // fragment definitions are no longer relevant at this point, every fragment spread
+        // was inlined and the definitions will be dropped
+        if let Definition::Operation(operation) = definition {
+            handle_selection_set(selection_set_mut(operation))?;
         }
     }
 

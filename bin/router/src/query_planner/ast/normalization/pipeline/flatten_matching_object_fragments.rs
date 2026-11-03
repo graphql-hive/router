@@ -1,6 +1,4 @@
-use graphql_tools::parser::query::{
-    Definition, Field, Mutation, OperationDefinition, Query, Selection, SelectionSet, Subscription,
-};
+use graphql_tools::parser::query::{Field, Selection, SelectionSet};
 
 use crate::query_planner::ast::normalization::context::NormalizationContext;
 use crate::query_planner::ast::normalization::error::NormalizationError;
@@ -12,65 +10,9 @@ pub fn flatten_matching_object_fragments(
     ctx: &mut NormalizationContext,
 ) -> Result<(), NormalizationError> {
     let supergraph = ctx.supergraph;
-    let query_type_name = ctx.root_types.query_type_name()?;
-
-    for definition in &mut ctx.document.definitions {
-        match definition {
-            Definition::Operation(op_def) => match op_def {
-                OperationDefinition::SelectionSet(selection_set) => {
-                    let root_def =
-                        supergraph.definitions.get(query_type_name).ok_or_else(|| {
-                            NormalizationError::SchemaTypeNotFound {
-                                type_name: query_type_name.to_string(),
-                            }
-                        })?;
-                    handle_selection_set(supergraph, selection_set, root_def)?;
-                }
-                OperationDefinition::Query(Query { selection_set, .. }) => {
-                    let root_def =
-                        supergraph.definitions.get(query_type_name).ok_or_else(|| {
-                            NormalizationError::SchemaTypeNotFound {
-                                type_name: query_type_name.to_string(),
-                            }
-                        })?;
-                    handle_selection_set(supergraph, selection_set, root_def)?;
-                }
-                OperationDefinition::Mutation(Mutation { selection_set, .. }) => {
-                    let mutation_type_name =
-                        ctx.root_types.mutation_type_name().ok_or_else(|| {
-                            NormalizationError::TypeForOperationNotFound {
-                                kind: "mutation".to_string(),
-                            }
-                        })?;
-                    let root_def =
-                        supergraph
-                            .definitions
-                            .get(mutation_type_name)
-                            .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
-                                type_name: mutation_type_name.to_string(),
-                            })?;
-                    handle_selection_set(supergraph, selection_set, root_def)?;
-                }
-                OperationDefinition::Subscription(Subscription { selection_set, .. }) => {
-                    let subscription_type_name = ctx
-                        .root_types
-                        .subscription_type_name()
-                        .ok_or_else(|| NormalizationError::TypeForOperationNotFound {
-                            kind: "subscription".to_string(),
-                        })?;
-                    let root_def = supergraph
-                        .definitions
-                        .get(subscription_type_name)
-                        .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
-                            type_name: subscription_type_name.to_string(),
-                        })?;
-                    handle_selection_set(supergraph, selection_set, root_def)?;
-                }
-            },
-            Definition::Fragment(_) => {
-                // no longer relevant at this point, every fragment spread was inlined and defs will be dropped
-            }
-        }
+    for operation in ctx.operations_mut() {
+        let (root_def, selection_set) = operation?;
+        handle_selection_set(supergraph, selection_set, root_def)?;
     }
 
     Ok(())

@@ -1,34 +1,17 @@
-use graphql_tools::parser::query::{
-    Definition, Field, FragmentDefinition, Mutation, OperationDefinition, Query, Selection,
-    SelectionSet, Subscription,
-};
+use graphql_tools::parser::query::{Definition, Field, Selection, SelectionSet};
 
-use crate::query_planner::ast::normalization::context::NormalizationContext;
+use crate::query_planner::ast::normalization::context::{selection_set_mut, NormalizationContext};
 use crate::query_planner::ast::normalization::error::NormalizationError;
 use crate::query_planner::utils::ast::equal_directives_arr;
 
 #[inline]
 pub fn drop_duplicated_fields(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
-    for def in &mut ctx.document.definitions {
-        match def {
-            Definition::Operation(op) => match op {
-                OperationDefinition::Query(Query { selection_set, .. }) => {
-                    handle_selection_set(selection_set)?;
-                }
-                OperationDefinition::Mutation(Mutation { selection_set, .. }) => {
-                    handle_selection_set(selection_set)?;
-                }
-                OperationDefinition::Subscription(Subscription { selection_set, .. }) => {
-                    handle_selection_set(selection_set)?;
-                }
-                OperationDefinition::SelectionSet(s) => {
-                    handle_selection_set(s)?;
-                }
-            },
-            Definition::Fragment(FragmentDefinition { selection_set, .. }) => {
-                handle_selection_set(selection_set)?;
-            }
-        }
+    for definition in &mut ctx.document.definitions {
+        let selection_set = match definition {
+            Definition::Operation(operation) => selection_set_mut(operation),
+            Definition::Fragment(fragment) => &mut fragment.selection_set,
+        };
+        handle_selection_set(selection_set)?;
     }
 
     Ok(())

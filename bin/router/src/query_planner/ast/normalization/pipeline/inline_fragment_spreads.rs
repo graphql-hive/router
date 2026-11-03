@@ -1,12 +1,12 @@
 use ahash::{HashMap, HashMapExt};
 
 use graphql_tools::parser::query::{
-    Definition, FragmentDefinition, InlineFragment, Mutation, OperationDefinition, Query,
-    Selection, SelectionSet, Subscription, TypeCondition,
+    Definition, FragmentDefinition, InlineFragment, Selection, SelectionSet, TypeCondition,
 };
 
 use crate::query_planner::ast::normalization::{
-    context::NormalizationContext, error::NormalizationError,
+    context::{selection_set_mut, NormalizationContext},
+    error::NormalizationError,
 };
 
 #[inline]
@@ -23,50 +23,18 @@ pub fn inline_fragment_spreads(ctx: &mut NormalizationContext) -> Result<(), Nor
         // the active inline/wrap path, so any cyclic expansion - regardless of shape - is
         // caught before it recurses forever.
         let mut active_fragments = Vec::new();
-        match definition {
-            Definition::Operation(op_def) => match op_def {
-                OperationDefinition::SelectionSet(selection_set) => {
-                    handle_selection_set(
-                        selection_set,
-                        &fragment_map,
-                        None,
-                        &mut active_fragments,
-                    )?;
-                }
-                OperationDefinition::Query(Query { selection_set, .. }) => {
-                    handle_selection_set(
-                        selection_set,
-                        &fragment_map,
-                        None,
-                        &mut active_fragments,
-                    )?;
-                }
-                OperationDefinition::Mutation(Mutation { selection_set, .. }) => {
-                    handle_selection_set(
-                        selection_set,
-                        &fragment_map,
-                        None,
-                        &mut active_fragments,
-                    )?;
-                }
-                OperationDefinition::Subscription(Subscription { selection_set, .. }) => {
-                    handle_selection_set(
-                        selection_set,
-                        &fragment_map,
-                        None,
-                        &mut active_fragments,
-                    )?;
-                }
-            },
-            Definition::Fragment(frag_def) => {
-                handle_selection_set(
-                    &mut frag_def.selection_set,
-                    &fragment_map,
-                    Some(&frag_def.type_condition),
-                    &mut active_fragments,
-                )?;
+        let (selection_set, type_condition) = match definition {
+            Definition::Operation(operation) => (selection_set_mut(operation), None),
+            Definition::Fragment(fragment) => {
+                (&mut fragment.selection_set, Some(&fragment.type_condition))
             }
-        }
+        };
+        handle_selection_set(
+            selection_set,
+            &fragment_map,
+            type_condition,
+            &mut active_fragments,
+        )?;
     }
 
     Ok(())
