@@ -8,6 +8,9 @@
 //!
 //! Fields are matched by name, arguments and response key, not by subgraph.
 //! A field resolved by two subgraphs is `@shareable`, which promises the same data.
+//!
+//! Only in queries. Entity calls are queries even in a mutation, but there each root field can
+//! change an entity an earlier one returned, so what's in the response may be stale.
 
 use petgraph::graph::NodeIndex;
 
@@ -41,7 +44,7 @@ pub(super) fn find_entity_reuse(
 ) -> Option<EntityReuse> {
     let step = fetch_graph.get_step_data(step_index).ok()?;
     if !step.is_entity_call()
-        || step.operation_kind != OperationKind::Query
+        || fetch_graph.operation_kind != OperationKind::Query
         || step.input_rewrites.is_some()
         || step.output_rewrites.is_some()
         || step.flags.contains(FetchStepFlags::USED_FOR_TYPE_CONDITION)
@@ -57,8 +60,11 @@ pub(super) fn find_entity_reuse(
     if !is_plain(needed) {
         return None;
     }
+    let representation = step.input.selections_for_definition(type_name)?;
 
     let mut sources: Vec<FlattenNodePath> = Vec::new();
+    // positions where a fetch put something else under a response key of the representation
+    let mut conflicts: Vec<FlattenNodePath> = Vec::new();
     for earlier_index in earlier_steps {
         let Ok(earlier) = fetch_graph.get_step_data(*earlier_index) else {
             continue;
@@ -75,10 +81,15 @@ pub(super) fn find_entity_reuse(
                 start.as_slice().to_vec(),
                 type_name,
                 needed,
+                representation,
                 &mut sources,
+                &mut conflicts,
             );
         }
     }
+    // the executor matches entities by their representation, read from these positions. a user
+    // alias like `id: username` would match the wrong entity there.
+    sources.retain(|source| !conflicts.contains(source));
 
     if sources.is_empty() {
         return None;
@@ -109,7 +120,9 @@ pub(super) fn attach_entity_reuse(node: &mut PlanNode, reuse: EntityReuse) {
 }
 
 /// Walks a fetch's selections and records every position that holds `type_name` objects
-/// with all the `needed` fields.
+/// with all the `needed` fields in `sources`, and every one where the fetch puts something else
+/// under a response key of the `representation` in `conflicts`.
+#[allow(clippy::too_many_arguments)]
 fn collect_positions(
     supergraph: &SupergraphState,
     selections: &SelectionSet,
@@ -117,12 +130,20 @@ fn collect_positions(
     path: Vec<PathSegment>,
     type_name: &str,
     needed: &SelectionSet,
+    representation: &SelectionSet,
     sources: &mut Vec<FlattenNodePath>,
+    conflicts: &mut Vec<FlattenNodePath>,
 ) {
-    if current_type == type_name && covers(selections, needed) {
-        let path = FlattenNodePath::from(path.clone());
-        if !sources.contains(&path) {
-            sources.push(path);
+    if current_type == type_name {
+        let positions = [
+            (covers(selections, needed), &mut *sources),
+            (conflicts_with(selections, representation), &mut *conflicts),
+        ];
+        for (found, list) in positions {
+            let path = FlattenNodePath::from(path.clone());
+            if found && !list.contains(&path) {
+                list.push(path);
+            }
         }
     }
 
@@ -151,7 +172,9 @@ fn collect_positions(
                     child_path,
                     type_name,
                     needed,
+                    representation,
                     sources,
+                    conflicts,
                 );
             }
             SelectionItem::InlineFragment(fragment) => {
@@ -168,7 +191,9 @@ fn collect_positions(
                     child_path,
                     type_name,
                     needed,
+                    representation,
                     sources,
+                    conflicts,
                 );
             }
             _ => {}
@@ -195,6 +220,26 @@ fn covers(source: &SelectionSet, needed: &SelectionSet) -> bool {
                 && field.name == needed_field.name
                 && field.arguments == needed_field.arguments
                 && covers(&field.selections, &needed_field.selections)
+        })
+    })
+}
+
+/// Does `selections` put a different field (or arguments) under a response key `representation`
+/// reads?
+fn conflicts_with(selections: &SelectionSet, representation: &SelectionSet) -> bool {
+    representation.items.iter().any(|item| {
+        let SelectionItem::Field(wanted) = item else {
+            return false;
+        };
+        let key = wanted.alias.as_ref().unwrap_or(&wanted.name);
+        selections.items.iter().any(|item| {
+            let SelectionItem::Field(field) = item else {
+                return false;
+            };
+            field.alias.as_ref().unwrap_or(&field.name) == key
+                && (field.name != wanted.name
+                    || field.arguments != wanted.arguments
+                    || conflicts_with(&field.selections, &wanted.selections))
         })
     })
 }

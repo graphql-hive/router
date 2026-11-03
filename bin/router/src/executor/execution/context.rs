@@ -621,6 +621,57 @@ mod tests {
     }
 
     #[test]
+    fn an_entity_without_a_key_is_never_copied() {
+        use crate::query_planner::planner::plan_nodes::EntityReuse;
+        // neither user can be told apart from the other, so the subgraph answers for both
+        let data: Value<'_> = sonic_rs::from_str(
+            r#"{
+            "top": [{"__typename":"P", "id":null, "name":"A"}, {"__typename":"P", "name":"B"}],
+            "again": [{"__typename":"P", "id":null}]
+        }"#,
+        )
+        .unwrap();
+        let selection = |query: &str| {
+            let definition = parse_operation(query).definitions.remove(0);
+            let graphql_tools::parser::query::Definition::Operation(
+                graphql_tools::parser::query::OperationDefinition::SelectionSet(selection),
+            ) = definition
+            else {
+                panic!("selection");
+            };
+            RequiresSelectionSet::from(&SelectionSet::from(selection))
+        };
+        let requires = selection("{ __typename id }");
+        let reuse = EntityReuse {
+            sources: vec![vec![PathSegment::Field("top".into()), PathSegment::List].into()],
+            copy: selection("{ __typename name }"),
+        };
+        let possible_types = PossibleTypes::default();
+        let mut index =
+            ReuseIndex::build(&reuse, &data, requires.root_selections(), &possible_types);
+        let path: FlattenNodePath =
+            vec![PathSegment::Field("again".into()), PathSegment::List].into();
+        let (_, targets) = collect_context_entities(
+            &data,
+            [path.as_ref()],
+            &requires,
+            None,
+            &None,
+            &possible_types,
+            None,
+            Some(&mut index),
+        );
+        assert_eq!(
+            targets[0].as_slice(),
+            [Some(EntityRef::Fetched {
+                context_group: 0,
+                index: 0
+            })]
+        );
+        assert!(index.into_copies().is_empty());
+    }
+
+    #[test]
     fn ancestor_cache_invalidates_on_entity_local_values() {
         // all posts share the same user, only the entity-local code differs, so the cached
         // parent alone must not decide the group

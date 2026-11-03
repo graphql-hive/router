@@ -40,7 +40,7 @@ impl<'d, 'v> ReuseIndex<'d, 'v> {
         let mut seen = PrehashedMap::default();
         for source in &reuse.sources {
             traverse_and_callback(data, source.as_slice(), possible_types, &mut |object, _| {
-                if object.is_object() {
+                if object.is_object() && holds_every_field(object, required_selections) {
                     seen.entry(object.to_hash(required_selections, possible_types))
                         .or_insert(Known::InResponse(object));
                 }
@@ -105,6 +105,30 @@ pub fn merge_copies<'v>(
                 },
             );
         }
+    }
+}
+
+/// Whether `value` has every field of `selections`, none of them null. An entity with a missing
+/// or null key can't be told apart from another one like it, so we never copy from it. A null
+/// `@requires` field counts too, that only costs a fetch.
+fn holds_every_field(value: &Value, selections: RequiresSelectionSetRef<'_>) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Object(fields) => selections.iter().all(|selection| match selection {
+            RequiresSelection::Field {
+                name,
+                alias,
+                selections,
+                ..
+            } => Value::object_get(fields, alias.unwrap_or(name))
+                .is_some_and(|field| holds_every_field(field, selections)),
+            RequiresSelection::InlineFragment { selections, .. } => {
+                holds_every_field(value, selections)
+            }
+            RequiresSelection::FragmentSpread(_) => false,
+        }),
+        Value::Array(items) => items.iter().all(|item| holds_every_field(item, selections)),
+        _ => selections.is_empty(),
     }
 }
 
