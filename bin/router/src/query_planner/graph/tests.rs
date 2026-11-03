@@ -419,7 +419,7 @@ mod graph_tests {
             let Edge::FieldMove(field_move) = edge_ref.weight() else {
                 unreachable!()
             };
-            assert!(field_move.override_label.is_some());
+            assert!(field_move.override_label().is_some());
             assert!(field_move.join_field.as_ref().unwrap().provides.is_some());
             targets.push(graph.node(*to)?.display_name());
         }
@@ -438,7 +438,7 @@ mod graph_tests {
             let Edge::FieldMove(field_move) = edge_ref.weight() else {
                 unreachable!()
             };
-            assert!(matches!(&field_move.overridden_by, Some((b, Some(_))) if b == "b"));
+            assert!(matches!(&field_move.overridden_by, Some((b, Some(_))) if *b == "b"));
         }
 
         Ok(())

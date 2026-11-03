@@ -47,26 +47,29 @@ pub struct FieldMove<'graph> {
     pub type_name: &'graph str,
     pub is_leaf: bool,
     pub is_list: bool,
-    pub join_field: Option<JoinFieldDirective>,
+    /// Borrowed from the supergraph, so field edges don't each carry a copy.
+    pub join_field: Option<&'graph JoinFieldDirective>,
     pub requirements: Option<Arc<TypeAwareSelection<'graph>>>,
     pub context_arguments: Vec<ContextArgument<'graph>>,
-    pub override_from: Option<String>,
-    pub override_label: Option<OverrideLabel>,
-    pub overridden_by: Option<(String, Option<OverrideLabel>)>,
+    pub overridden_by: Option<(&'graph str, Option<&'graph OverrideLabel>)>,
 }
 
 /// Represent a simple file move
 #[derive(Debug, PartialEq, Clone)]
-pub struct ReentryMove {
-    pub name: String,
-    pub type_name: String,
+pub struct ReentryMove<'graph> {
+    pub name: &'graph str,
+    pub type_name: &'graph str,
     pub is_list: bool,
 }
 
-impl FieldMove<'_> {
+impl<'graph> FieldMove<'graph> {
+    pub fn override_label(&self) -> Option<&'graph OverrideLabel> {
+        self.join_field?.override_label.as_ref()
+    }
+
     pub fn satisfies_override_rules(&self, ctx: &PlannerOverrideContext) -> bool {
         // Field is being progressively overridden by another subgraph
-        if let Some((_, Some(label))) = &self.overridden_by {
+        if let Some((_, Some(label))) = self.overridden_by {
             return self.check_progressive_override(label, ctx, false);
         }
 
@@ -76,7 +79,7 @@ impl FieldMove<'_> {
         }
 
         // Field is progressively overriding another subgraph
-        if let Some(label) = &self.override_label {
+        if let Some(label) = self.override_label() {
             return self.check_progressive_override(label, ctx, true);
         }
 
@@ -175,14 +178,14 @@ pub enum Edge<'graph> {
         operation_kind: OperationKind,
     },
     FieldMove(Box<FieldMove<'graph>>),
-    ReentryMove(ReentryMove),
+    ReentryMove(ReentryMove<'graph>),
     EntityMove(EntityMove<'graph>),
     /// join__implements
-    AbstractMove(String),
+    AbstractMove(&'graph str),
     /// A special edge representing a case where an inline fragment is used with a condition,
     /// and we don't really move anywhere, but we need to ensure that
     /// the condition is preserved when planning the query.
-    Selfie(String),
+    Selfie(&'graph str),
     /// Represents a special case where going from @interfaceObject
     /// to an object type due to the `__typename` field usage,
     /// or usage of a type condition (fragment),
@@ -227,14 +230,11 @@ impl<'graph> Edge<'graph> {
         type_name: &'graph str,
         is_leaf: bool,
         is_list: bool,
-        join_field: Option<JoinFieldDirective>,
+        join_field: Option<&'graph JoinFieldDirective>,
         requirements: Option<Arc<TypeAwareSelection<'graph>>>,
         context_arguments: Vec<ContextArgument<'graph>>,
-        overridden_by: Option<(String, Option<OverrideLabel>)>,
+        overridden_by: Option<(&'graph str, Option<&'graph OverrideLabel>)>,
     ) -> Self {
-        let override_from = join_field.as_ref().and_then(|jf| jf.override_value.clone());
-        let override_label = join_field.as_ref().and_then(|jf| jf.override_label.clone());
-
         Self::FieldMove(Box::new(FieldMove {
             name,
             type_name,
@@ -243,16 +243,14 @@ impl<'graph> Edge<'graph> {
             join_field,
             requirements,
             context_arguments,
-            override_from,
-            override_label,
             overridden_by,
         }))
     }
 
-    pub fn create_reentry_move(name: String, type_name: String, is_list: bool) -> Self {
+    pub fn create_reentry_move(name: &'graph str, type_name: &'graph str, is_list: bool) -> Self {
         Self::ReentryMove(ReentryMove {
-            name: name.clone(),
-            type_name: type_name.clone(),
+            name,
+            type_name,
             is_list,
         })
     }
@@ -260,7 +258,7 @@ impl<'graph> Edge<'graph> {
     pub fn display_name(&self) -> &str {
         match self {
             Self::FieldMove(fm) => fm.name,
-            Self::ReentryMove(fm) => &fm.name,
+            Self::ReentryMove(fm) => fm.name,
             Self::EntityMove(EntityMove { key, .. }) => key,
             Self::AbstractMove(id) => id,
             Self::Selfie(_) => "selfie",

@@ -605,11 +605,7 @@ impl<'graph> Graph<'graph> {
                     join_implements.graph_id
                 );
 
-                self.upsert_edge(
-                    head,
-                    tail,
-                    Edge::AbstractMove(definition.name().to_string()),
-                );
+                self.upsert_edge(head, tail, Edge::AbstractMove(definition.name()));
             }
         }
 
@@ -881,7 +877,7 @@ impl<'graph> Graph<'graph> {
                     graph_id,
                     state.is_interface_object_in_subgraph(def_name, graph_id),
                 )?;
-                self.push_edge(head, head, Edge::Selfie(def_name.clone()));
+                self.push_edge(head, head, Edge::Selfie(def_name));
 
                 for (field_name, field_definition, maybe_join_field) in fields {
                     let target_type = field_definition.field_type.inner_type();
@@ -892,13 +888,14 @@ impl<'graph> Graph<'graph> {
                         if let Some(override_from) = &jf.override_value {
                             if override_from == &graph_name {
                                 let overriding_subgraph_name = state
-                                    .resolve_graph_id(jf.graph_id.as_ref().expect(
+                                    .known_subgraphs
+                                    .get(jf.graph_id.as_ref().expect(
                                         "@override must be on a @join__field with a graph argument",
                                     ))
-                                    .unwrap();
+                                    .expect("@override graph should be a known subgraph");
                                 return Some((
-                                    overriding_subgraph_name.0,
-                                    jf.override_label.clone(),
+                                    overriding_subgraph_name.as_str(),
+                                    jf.override_label.as_ref(),
                                 ));
                             }
                         }
@@ -1091,10 +1088,10 @@ impl<'graph> Graph<'graph> {
                                     def_name.as_str(),
                                     Self::is_leaf_output_type(state, target_type),
                                     field_definition.field_type.is_list(),
-                                    maybe_join_field.cloned(),
+                                    maybe_join_field,
                                     requirements.clone(),
                                     context_arguments.clone(),
-                                    overridden_by.clone(),
+                                    overridden_by,
                                 ),
                             );
                             if let Some(provided) = &provided {
@@ -1105,11 +1102,7 @@ impl<'graph> Graph<'graph> {
                                 "  [x] Creating abstract move edge for '{}.{}/{}' (union member: {})",
                                 def_name, field_name, graph_id, member
                             );
-                            self.push_edge(
-                                tail,
-                                abstract_tail,
-                                Edge::AbstractMove(member.to_string()),
-                            );
+                            self.push_edge(tail, abstract_tail, Edge::AbstractMove(member));
                         }
 
                         continue;
@@ -1139,10 +1132,10 @@ impl<'graph> Graph<'graph> {
                             def_name.as_str(),
                             Self::is_leaf_output_type(state, target_type),
                             field_definition.field_type.is_list(),
-                            maybe_join_field.cloned(),
+                            maybe_join_field,
                             requirements.clone(),
                             context_arguments,
-                            overridden_by.clone(),
+                            overridden_by,
                         ),
                     );
                     if let Some(provided) = provided {
@@ -1184,8 +1177,8 @@ impl<'graph> Graph<'graph> {
                                 head,
                                 target_node_index,
                                 Edge::create_reentry_move(
-                                    field_name.clone(),
-                                    def_name.clone(),
+                                    field_name,
+                                    def_name,
                                     field_definition.field_type.is_list(),
                                 ),
                             );
@@ -1322,7 +1315,7 @@ impl<'graph> Graph<'graph> {
                 Edge::AbstractMove(type_name) => {
                     let below = provided
                         .on_types
-                        .get(type_name)
+                        .get(*type_name)
                         .cloned()
                         .unwrap_or_default();
                     self.provided_node(ctx, target, below, graph_id)?
@@ -1389,7 +1382,7 @@ impl<'graph> Graph<'graph> {
             ));
             let target = self.provided_node(ctx, plain, below.clone(), graph_id)?;
             self.graph
-                .add_edge(copy, target, Edge::AbstractMove(on_type.clone()));
+                .add_edge(copy, target, Edge::AbstractMove(on_type_name));
         }
 
         Ok(copy)
@@ -1490,7 +1483,7 @@ impl<'graph> Graph<'graph> {
         self.graph
             .edges(node)
             .filter(
-                move |edge| matches!(edge.weight(), Edge::AbstractMove(name) if name == type_name),
+                move |edge| matches!(edge.weight(), Edge::AbstractMove(name) if *name == type_name),
             )
             .map(|edge| edge.target())
     }
