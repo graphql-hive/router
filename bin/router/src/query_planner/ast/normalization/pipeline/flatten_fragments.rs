@@ -1,4 +1,3 @@
-use ahash::HashSet;
 use graphql_tools::parser::query::{
     Definition, Field, InlineFragment, Mutation, OperationDefinition, Query, Selection,
     SelectionSet, Subscription, TypeCondition,
@@ -251,7 +250,7 @@ fn expand_abstract_fragment(
     state: &SupergraphState,
     subgraph_name: Option<&str>,
     parent_type_def: &SupergraphDefinition,
-    fragment: InlineFragment<'static, String>,
+    mut fragment: InlineFragment<'static, String>,
 ) -> Result<Vec<Selection<'static, String>>, NormalizationError> {
     let mut new_items = Vec::new();
     let type_condition_name = extract_type_condition(
@@ -269,10 +268,9 @@ fn expand_abstract_fragment(
         type_name: type_condition_name.to_string(),
     })?;
 
-    let owned_parent_set: HashSet<String>;
-    let object_types_of_parent_type = match parent_type_def {
+    let mut intersecting_types: Vec<&str> = match parent_type_def {
         SupergraphDefinition::Union(_) | SupergraphDefinition::Interface(_) => {
-            match subgraph_name {
+            let object_types_of_parent_type = match subgraph_name {
                 Some(graph_id) => {
                     state.possible_types_in_subgraph(parent_type_def.name(), graph_id)
                 }
@@ -280,50 +278,70 @@ fn expand_abstract_fragment(
             }
             .ok_or_else(|| NormalizationError::PossibleTypesNotFound {
                 type_name: parent_type_def.name().to_string(),
-            })?
+            })?;
+            object_types_of_type_cond
+                .intersection(object_types_of_parent_type)
+                .map(String::as_str)
+                .collect()
         }
-        _ => {
-            owned_parent_set = HashSet::from_iter([parent_type_def.name().to_string()]);
-            &owned_parent_set
-        }
+        _ => object_types_of_type_cond
+            .get(parent_type_def.name())
+            .map(String::as_str)
+            .into_iter()
+            .collect(),
     };
-
-    let mut intersecting_types: Vec<&str> = object_types_of_type_cond
-        .intersection(object_types_of_parent_type)
-        .map(String::as_str)
-        .collect();
     intersecting_types.sort_unstable();
 
-    for obj_type_name in intersecting_types {
+    // Almost every fragment expands to one or two types. The last type takes the selections,
+    // only the ones before it get copies of them.
+    let mut items = std::mem::take(&mut fragment.selection_set.items);
+    let last_type_index = intersecting_types.len().saturating_sub(1);
+    for (type_index, obj_type_name) in intersecting_types.into_iter().enumerate() {
         let obj_type_def = state.definitions.get(obj_type_name).ok_or_else(|| {
             NormalizationError::SchemaTypeNotFound {
                 type_name: obj_type_name.to_string(),
             }
         })?;
 
-        let inherited_fields: Vec<Selection<String>> = fragment
-            .selection_set
-            .items
-            .iter()
-            .filter(|s| matches!(s, Selection::Field(_)))
-            .cloned()
-            .collect();
-
-        // Collect all child fragments that apply to this concrete type, including
+        // The fields, and the child fragments that apply to this concrete type, including
         // nested abstract fragments like `... on Node` while expanding `Node` to `Account`.
-        let specific_sub_fragments: Vec<&InlineFragment<'static, String>> = fragment
-            .selection_set
-            .items
-            .iter()
-            .filter_map(|s| {
-                if let Selection::InlineFragment(f) = s {
-                    if fragment_applies_to_object(state, subgraph_name, f, obj_type_name) {
-                        return Some(f);
+        let mut inherited_fields: Vec<Selection<String>> = Vec::new();
+        let mut specific_sub_fragments: Vec<InlineFragment<'static, String>> = Vec::new();
+        if type_index == last_type_index {
+            for selection in std::mem::take(&mut items) {
+                match selection {
+                    Selection::Field(_) => inherited_fields.push(selection),
+                    Selection::InlineFragment(sub_fragment)
+                        if fragment_applies_to_object(
+                            state,
+                            subgraph_name,
+                            &sub_fragment,
+                            obj_type_name,
+                        ) =>
+                    {
+                        specific_sub_fragments.push(sub_fragment)
                     }
+                    _ => {}
                 }
-                None
-            })
-            .collect();
+            }
+        } else {
+            for selection in &items {
+                match selection {
+                    Selection::Field(_) => inherited_fields.push(selection.clone()),
+                    Selection::InlineFragment(sub_fragment)
+                        if fragment_applies_to_object(
+                            state,
+                            subgraph_name,
+                            sub_fragment,
+                            obj_type_name,
+                        ) =>
+                    {
+                        specific_sub_fragments.push(sub_fragment.clone())
+                    }
+                    _ => {}
+                }
+            }
+        }
 
         if specific_sub_fragments
             .iter()
@@ -365,8 +383,7 @@ fn expand_abstract_fragment(
             //     arguments is present on the sub-fragment (e.g. nested `@include` with
             //     different conditions) — both conditions must be preserved and `@include`
             //     / `@skip` are non-repeatable so they can't co-exist on the same fragment.
-            for sub_fragment in &specific_sub_fragments {
-                let mut specific_fragment = (*sub_fragment).clone();
+            for mut specific_fragment in specific_sub_fragments {
                 specific_fragment.type_condition =
                     Some(TypeCondition::On(obj_type_name.to_string()));
 
@@ -435,14 +452,12 @@ fn expand_abstract_fragment(
         };
 
         // Merge ALL matching sub-fragments into the new fragment.
-        for sub_fragment in &specific_sub_fragments {
-            new_fragment
-                .directives
-                .extend(sub_fragment.directives.clone());
+        for sub_fragment in specific_sub_fragments {
+            new_fragment.directives.extend(sub_fragment.directives);
             new_fragment
                 .selection_set
                 .items
-                .extend(sub_fragment.selection_set.items.clone());
+                .extend(sub_fragment.selection_set.items);
         }
 
         handle_selection_set(
