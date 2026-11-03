@@ -5,13 +5,11 @@
 //! representations. When a representation matches one, it's the same entity with the same
 //! `@requires` inputs, so we copy the fields and leave it out of the request.
 
-use ahash::HashMap as AHashMap;
-use ahash::HashMapExt;
-
 use crate::{
     executor::{
-        introspection::schema::PossibleTypes, response::value::Value,
-        utils::traverse::traverse_and_callback,
+        introspection::schema::PossibleTypes,
+        response::value::Value,
+        utils::{prehashed_map::PrehashedMap, traverse::traverse_and_callback},
     },
     query_planner::{
         ast::requires::{RequiresSelection, RequiresSelectionSetRef},
@@ -22,10 +20,9 @@ use crate::{
 /// Entities in the response one fetch could copy, by the hash of their representation, and the
 /// copies made so far.
 pub struct ReuseIndex<'d, 'a> {
-    by_hash: AHashMap<u64, &'d Value<'a>>,
+    by_hash: PrehashedMap<&'d Value<'a>>,
     copy: RequiresSelectionSetRef<'d>,
     copies: Vec<Value<'a>>,
-    copy_by_hash: AHashMap<u64, usize>,
 }
 
 impl<'d, 'a> ReuseIndex<'d, 'a> {
@@ -35,7 +32,7 @@ impl<'d, 'a> ReuseIndex<'d, 'a> {
         required_selections: RequiresSelectionSetRef<'_>,
         possible_types: &PossibleTypes,
     ) -> Self {
-        let mut by_hash = AHashMap::new();
+        let mut by_hash = PrehashedMap::default();
         for source in &reuse.sources {
             traverse_and_callback(data, source.as_slice(), possible_types, &mut |object, _| {
                 if object.is_object() {
@@ -49,19 +46,15 @@ impl<'d, 'a> ReuseIndex<'d, 'a> {
             by_hash,
             copy: reuse.copy.root_selections(),
             copies: Vec::new(),
-            copy_by_hash: AHashMap::new(),
         }
     }
 
-    /// Where the copy of the fields the fetch asks for sits in [`Self::into_copies`], if the
-    /// entity is here and has all of them. Each entity is copied once.
+    /// Copies the fields the fetch asks for and says where the copy sits in
+    /// [`Self::into_copies`], if the entity is here and has all of them. Every call makes a new
+    /// copy, the caller asks once per entity.
     pub fn copy(&mut self, hash: u64) -> Option<usize> {
-        if let Some(&index) = self.copy_by_hash.get(&hash) {
-            return Some(index);
-        }
         let copy = copy_object(self.by_hash.get(&hash)?, self.copy)?;
         self.copies.push(copy);
-        self.copy_by_hash.insert(hash, self.copies.len() - 1);
         Some(self.copies.len() - 1)
     }
 
@@ -203,8 +196,6 @@ mod tests {
         let wanted =
             |json: &'static str| parse(json).to_hash(requires.root_selections(), &possible_types);
         let product_1 = wanted(r#"{"__typename": "Product", "upc": "1"}"#);
-        assert_eq!(index.copy(product_1), Some(0));
-        // Asking again gives the same copy.
         assert_eq!(index.copy(product_1), Some(0));
         // Product 2 has no name, so the subgraph has to answer for it.
         assert_eq!(

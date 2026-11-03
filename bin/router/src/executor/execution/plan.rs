@@ -819,8 +819,8 @@ fn entity_index(
     let entity = entity?;
     let offset = (*context_group_offsets.get(entity.context_group())?)?;
     Some(match entity {
-        EntityRef::Fetched { index, .. } => offset + index,
-        EntityRef::Copied { index, .. } => fetched_count + index,
+        EntityRef::Fetched { index, .. } => offset + index as usize,
+        EntityRef::Copied { index } => fetched_count + index as usize,
     })
 }
 
@@ -1079,7 +1079,7 @@ impl<'exec> Executor<'exec> {
         let mut groups = groups
             .into_iter()
             .enumerate()
-            .filter(|(_, group)| !group.hash_to_index.is_empty())
+            .filter(|(_, group)| group.count > 0)
             .peekable();
         while groups.peek().is_some() {
             let chunk: Vec<_> = groups.by_ref().take(groups_per_request).collect();
@@ -1108,7 +1108,7 @@ impl<'exec> Executor<'exec> {
             let mut counts = Vec::with_capacity(chunk.len());
             let mut offset = 0;
             for (group_index, group) in chunk {
-                let count = group.hash_to_index.len();
+                let count = group.count;
                 counts.push(count);
                 context_group_offsets[group_index] = Some(offset);
                 offset += count;
@@ -1297,7 +1297,7 @@ impl<'exec> Executor<'exec> {
                 let target_entities = path_entities.pop().unwrap_or_default();
                 // Copies only happen without context variables, so with a single group,
                 // and they go after everything that group fetches.
-                let fetched_count = groups.first().map_or(0, |group| group.hash_to_index.len());
+                let fetched_count = groups.first().map_or(0, |group| group.count);
 
                 let requests = self.prepare_flatten_requests(fetch_node, groups);
                 if requests.is_empty() {
@@ -1902,7 +1902,7 @@ impl<'exec> Executor<'exec> {
                 let reused = std::mem::take(reused);
                 aliases.push(AliasBatchState {
                     alias_spec,
-                    entity_count: group.map_or(0, |group| group.hash_to_index.len()),
+                    entity_count: group.map_or(0, |group| group.count),
                     context_group_offsets: single_context_group_offsets(wave, groups.len()),
                     reused,
                     paths: alias_spec

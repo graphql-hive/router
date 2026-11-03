@@ -15,7 +15,7 @@ use crate::{
             graphql_error::GraphQLErrorPathSegment, subgraph_response::SubgraphResponse,
             value::Value,
         },
-        utils::traverse::traverse_and_callback,
+        utils::{prehashed_map::PrehashedMap, traverse::traverse_and_callback},
     },
     query_planner::{
         ast::{
@@ -35,16 +35,16 @@ pub(super) type TargetEntities = Arc<Vec<Option<EntityRef>>>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntityRef {
     /// Sent to the subgraph, `index` is its place among the context group's representations.
-    Fetched { context_group: usize, index: usize },
+    Fetched { context_group: u32, index: u32 },
     /// Copied from the response instead, `index` is its place among the copies. Copies only
     /// happen without context variables, so always in group 0.
-    Copied { index: usize },
+    Copied { index: u32 },
 }
 
 impl EntityRef {
     pub fn context_group(self) -> usize {
         match self {
-            Self::Fetched { context_group, .. } => context_group,
+            Self::Fetched { context_group, .. } => context_group as usize,
             Self::Copied { .. } => 0,
         }
     }
@@ -53,7 +53,8 @@ impl EntityRef {
 pub(super) struct ContextGroup<'a> {
     pub variables: Vec<(&'a str, Vec<u8>)>,
     pub representations: Vec<u8>,
-    pub hash_to_index: AHashMap<u64, usize>,
+    /// How many representations went into `representations`
+    pub count: usize,
 }
 
 /// Borrows existing values, including whole objects and arrays. Only projected
@@ -158,7 +159,7 @@ impl<'a, 'd, 'v> ContextGroups<'a, 'd, 'v> {
             groups.push(ContextGroup {
                 variables: Vec::new(),
                 representations: vec![b'['],
-                hash_to_index: AHashMap::new(),
+                count: 0,
             });
         }
         Self {
@@ -232,7 +233,7 @@ impl<'a, 'd, 'v> ContextGroups<'a, 'd, 'v> {
                         .zip(values.iter().cloned())
                         .collect(),
                     representations: vec![b'['],
-                    hash_to_index: AHashMap::new(),
+                    count: 0,
                 });
                 index
             });
@@ -262,6 +263,9 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
 ) -> (Vec<ContextGroup<'a>>, Vec<TargetEntities>) {
     let mut contexts = ContextGroups::new(context);
     let mut reuse = reuse.filter(|_| contexts.names.is_empty());
+    // every entity we've given a target so far, fetched or copied, by its hash. the hash covers
+    // the context group, so one map serves all of them
+    let mut seen = PrehashedMap::default();
     let mut path_entities: Vec<TargetEntities> = Vec::new();
     let mut seen_paths: Vec<(ResponsePathRef<'a>, TargetEntities)> = Vec::new();
     let required_selections = requires.root_selections();
@@ -289,18 +293,21 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
                 group_index.hash(&mut hasher);
                 hasher.finish()
             };
-            let group = &mut contexts.groups[group_index];
-            if let Some(index) = group.hash_to_index.get(&hash) {
-                entities.push(Some(EntityRef::Fetched {
-                    context_group: group_index,
-                    index: *index,
-                }));
+            if let Some(&entity) = seen.get(&hash) {
+                entities.push(Some(entity));
                 return;
             }
+            // a copy goes in `seen` like a fetched entity, so the next target with it gets the
+            // same copy
             if let Some(index) = reuse.as_mut().and_then(|reuse| reuse.copy(hash)) {
-                entities.push(Some(EntityRef::Copied { index }));
+                let entity = EntityRef::Copied {
+                    index: index as u32,
+                };
+                seen.insert(hash, entity);
+                entities.push(Some(entity));
                 return;
             }
+            let group = &mut contexts.groups[group_index];
             let mut rewritten;
             let projected = if let Some(rewrites) = input_rewrites {
                 rewritten = entity.clone();
@@ -316,17 +323,18 @@ pub(super) fn collect_context_entities<'a, 'd, 'v>(
                 required_selections,
                 projected,
                 &mut group.representations,
-                group.hash_to_index.is_empty(),
+                group.count == 0,
                 None,
                 false,
                 subgraph_keys,
             ) {
-                let index = group.hash_to_index.len();
-                group.hash_to_index.insert(hash, index);
-                entities.push(Some(EntityRef::Fetched {
-                    context_group: group_index,
-                    index,
-                }));
+                let entity = EntityRef::Fetched {
+                    context_group: group_index as u32,
+                    index: group.count as u32,
+                };
+                group.count += 1;
+                seen.insert(hash, entity);
+                entities.push(Some(entity));
             } else {
                 entities.push(None);
             }
@@ -541,7 +549,7 @@ mod tests {
                 &b"null".to_vec()
             ]
         );
-        assert!(groups.iter().all(|g| g.hash_to_index.len() == 1));
+        assert!(groups.iter().all(|g| g.count == 1));
         assert_eq!(targets[0][0], targets[0][1]);
         assert_ne!(targets[0][0], targets[0][2]);
         assert_eq!(targets[0][4], None);
@@ -549,6 +557,61 @@ mod tests {
         assert_eq!(targets[0][5], targets[0][0]);
         assert_eq!(targets[0][0].unwrap().context_group(), 0);
         assert_ne!(targets[0][2].unwrap().context_group(), 0);
+    }
+
+    #[test]
+    fn an_entity_twice_gets_one_copy() {
+        use crate::query_planner::planner::plan_nodes::EntityReuse;
+        let data: Value<'_> = sonic_rs::from_str(
+            r#"{
+            "top": [{"__typename":"P", "id":"1", "name":"A"}],
+            "again": [{"__typename":"P", "id":"1"}, {"__typename":"P", "id":"2"}, {"__typename":"P", "id":"1"}]
+        }"#,
+        )
+        .unwrap();
+        let selection = |query: &str| {
+            let definition = parse_operation(query).definitions.remove(0);
+            let graphql_tools::parser::query::Definition::Operation(
+                graphql_tools::parser::query::OperationDefinition::SelectionSet(selection),
+            ) = definition
+            else {
+                panic!("selection");
+            };
+            RequiresSelectionSet::from(&SelectionSet::from(selection))
+        };
+        let requires = selection("{ __typename id }");
+        let reuse = EntityReuse {
+            sources: vec![vec![PathSegment::Field("top".into()), PathSegment::List].into()],
+            copy: selection("{ __typename name }"),
+        };
+        let possible_types = PossibleTypes::default();
+        let mut index =
+            ReuseIndex::build(&reuse, &data, requires.root_selections(), &possible_types);
+        let path: FlattenNodePath =
+            vec![PathSegment::Field("again".into()), PathSegment::List].into();
+        let (groups, targets) = collect_context_entities(
+            &data,
+            [path.as_ref()],
+            &requires,
+            None,
+            &None,
+            &possible_types,
+            None,
+            Some(&mut index),
+        );
+        assert_eq!(
+            targets[0].as_slice(),
+            [
+                Some(EntityRef::Copied { index: 0 }),
+                Some(EntityRef::Fetched {
+                    context_group: 0,
+                    index: 0
+                }),
+                Some(EntityRef::Copied { index: 0 })
+            ]
+        );
+        assert_eq!(groups[0].count, 1);
+        assert_eq!(index.into_copies().len(), 1);
     }
 
     #[test]
@@ -732,10 +795,7 @@ mod tests {
             assert_eq!(entity.unwrap().context_group(), group);
         }
         assert_eq!(
-            groups
-                .iter()
-                .map(|group| group.hash_to_index.len())
-                .collect::<Vec<_>>(),
+            groups.iter().map(|group| group.count).collect::<Vec<_>>(),
             vec![3, 1, 2]
         );
     }
@@ -770,7 +830,7 @@ mod tests {
         );
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].variables, vec![("__context_0", b"null".to_vec())]);
-        assert_eq!(groups[0].hash_to_index.len(), 1);
+        assert_eq!(groups[0].count, 1);
         assert_eq!(
             std::str::from_utf8(&groups[0].representations).unwrap(),
             r#"[{"__typename":"Transaction","id":"1","missing":null}]"#
