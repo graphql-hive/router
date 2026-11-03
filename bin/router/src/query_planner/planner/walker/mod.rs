@@ -390,6 +390,7 @@ fn process_inline_fragment<'graph, 'op: 'graph>(
                 path,
                 &NavigationTarget::Field {
                     field: &FieldSelection::new_typename(),
+                    attributes: None,
                     target_subgraph_ids: None,
                 },
                 cancellation_token,
@@ -553,6 +554,7 @@ fn process_field<'graph, 'op: 'graph>(
 
     cancellation_token.bail_if_cancelled()?;
 
+    let attributes = path::SelectionAttributes::of(field);
     let mut target_subgraph_ids_cache = None;
 
     for path in paths {
@@ -573,6 +575,7 @@ fn process_field<'graph, 'op: 'graph>(
             path,
             &NavigationTarget::Field {
                 field,
+                attributes: attributes.clone(),
                 target_subgraph_ids: None,
             },
             cancellation_token,
@@ -612,6 +615,7 @@ fn process_field<'graph, 'op: 'graph>(
                     path,
                     &NavigationTarget::Field {
                         field,
+                        attributes: attributes.clone(),
                         target_subgraph_ids,
                     },
                     &excluded,

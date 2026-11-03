@@ -25,7 +25,7 @@ pub struct QueryTreeNode {
     /// Only set on nodes that deal with `@fromContext`, the rest pay a pointer for it.
     pub context: Option<Box<NodeContext>>,
     pub children: Vec<Rc<QueryTreeNode>>,
-    pub selection_attributes: Option<SelectionAttributes>,
+    pub selection_attributes: Option<Rc<SelectionAttributes>>,
     pub condition: Option<Condition>,
     /// Distinguishes nodes originating from different top-level mutation fields.
     pub mutation_field_position: MutationFieldPosition,
@@ -85,7 +85,7 @@ impl QueryTreeNode {
     pub fn new(
         node_index: &NodeIndex,
         edge_from_parent: Option<&EdgeIndex>,
-        selection_attributes: Option<&SelectionAttributes>,
+        selection_attributes: Option<&Rc<SelectionAttributes>>,
         condition: Option<&Condition>,
     ) -> Self {
         QueryTreeNode {
@@ -299,8 +299,8 @@ mod size_tests {
     fn planner_structs_stay_small() {
         // pathfinding makes a lot of these, so growing them makes planning slower
         for (name, actual, expected) in [
-            ("PathSegment", size_of::<PathSegment>(), 160),
-            ("QueryTreeNode", size_of::<QueryTreeNode>(), 192),
+            ("PathSegment", size_of::<PathSegment>(), 112),
+            ("QueryTreeNode", size_of::<QueryTreeNode>(), 144),
         ] {
             assert_eq!(
                 actual, expected,
