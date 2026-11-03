@@ -83,6 +83,16 @@ impl Hash for Value {
 }
 
 impl Value {
+    /// Like `!variable_usages().is_empty()`, without collecting the names.
+    pub fn contains_variable(&self) -> bool {
+        match self {
+            Value::Variable(_) => true,
+            Value::List(values) => values.iter().any(Value::contains_variable),
+            Value::Object(map) => map.values().any(Value::contains_variable),
+            _ => false,
+        }
+    }
+
     pub fn variable_usages(&self) -> BTreeSet<String> {
         match self {
             Value::Variable(name) => BTreeSet::from([name.clone()]),
