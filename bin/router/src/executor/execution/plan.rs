@@ -41,7 +41,7 @@ use crate::executor::execution::client_request_details::OperationDetails;
 use crate::executor::execution::demand_control::DemandControlExecutionContext;
 use crate::executor::execution::error_masking::ErrorMaskingRuntime;
 use crate::executor::execution::operation_name::OperationNameFactory;
-use crate::executor::executors::common::ConnectionFingerprint;
+use crate::executor::executors::common::{ConnectionFingerprint, SubgraphRequestExtensions};
 use crate::executor::headers::cache_control;
 use crate::executor::{
     execution::{
@@ -138,6 +138,8 @@ pub struct QueryPlanExecutionOpts<'exec> {
     pub operation_kind: OperationKind,
     pub executors: Arc<SubgraphExecutorMap>,
     pub jwt_auth_forwarding: Option<Arc<JwtAuthForwardingPlan>>,
+    /// Client request `extensions` to send with every subgraph request.
+    pub subgraph_request_extensions: Option<Arc<SubgraphRequestExtensions>>,
     pub graphql_error_recorder: Option<GraphQLErrorMetricsRecorder>,
     pub demand_control_context: Option<Arc<DemandControlExecutionContext>>,
     pub initial_errors: Vec<GraphQLError>,
@@ -310,7 +312,7 @@ pub async fn execute_query_plan<'exec>(
             variables: variable_refs,
             headers: headers_map,
             raw_variable_values: None,
-            extensions: None,
+            extensions: opts.subgraph_request_extensions.as_deref().cloned(),
             custom_scalar_paths: fetch_node.custom_scalar_paths.as_ref(),
             connection_fingerprint: opts.connection_fingerprint,
         };
@@ -419,6 +421,7 @@ pub async fn execute_query_plan<'exec>(
                     operation_kind: opts.operation_kind.clone(),
                     executors: opts.executors.clone(),
                     jwt_auth_forwarding: opts.jwt_auth_forwarding.clone(),
+                    subgraph_request_extensions: opts.subgraph_request_extensions.clone(),
                     initial_errors,
                     span: GraphQLOperationSpan { span: opts.span.clone() },
                     // TODO: plugins for subscriptions are not yet supported
@@ -536,6 +539,7 @@ async fn execute_query_plan_with_data<'exec>(
         headers_plan: &opts.headers_plan,
         extensions_plan: &opts.extensions_plan,
         jwt_forwarding_plan: opts.jwt_auth_forwarding,
+        subgraph_request_extensions: opts.subgraph_request_extensions.as_deref(),
         dedupe_subgraph_requests,
         demand_control_context: opts.demand_control_context.clone(),
         plugin_req_state: opts.plugin_req_state.as_ref(),
@@ -716,6 +720,7 @@ pub struct Executor<'exec> {
     pub headers_plan: &'exec HeaderRulesPlan,
     pub extensions_plan: &'exec ExtensionsPlan,
     pub jwt_forwarding_plan: Option<Arc<JwtAuthForwardingPlan>>,
+    pub subgraph_request_extensions: Option<&'exec SubgraphRequestExtensions>,
     pub dedupe_subgraph_requests: bool,
     pub demand_control_context: Option<Arc<DemandControlExecutionContext>>,
     pub plugin_req_state: Option<&'exec PluginRequestState<'exec>>,
@@ -1842,7 +1847,7 @@ impl<'exec> Executor<'exec> {
                 variables: variable_refs,
                 raw_variable_values: opts.raw_variable_values,
                 headers: headers_map,
-                extensions: None,
+                extensions: self.subgraph_request_extensions.cloned(),
                 custom_scalar_paths: opts.custom_scalar_paths,
                 connection_fingerprint: self.connection_fingerprint,
             };
@@ -2156,6 +2161,7 @@ mod tests {
             headers_plan: &HeaderRulesPlan::default(),
             extensions_plan: &ExtensionsPlan::default(),
             jwt_forwarding_plan: None,
+            subgraph_request_extensions: None,
             dedupe_subgraph_requests: false,
             demand_control_context: None,
             plugin_req_state: None,
@@ -2345,6 +2351,7 @@ mod tests {
             headers_plan: &HeaderRulesPlan::default(),
             extensions_plan: &ExtensionsPlan::default(),
             jwt_forwarding_plan: None,
+            subgraph_request_extensions: None,
             dedupe_subgraph_requests: false,
             demand_control_context: None,
             plugin_req_state: None,

@@ -6,7 +6,7 @@ use crate::executor::execution::plan::{
     execute_query_plan, CoerceVariablesPayload, ExecutionResultExtensions, PlanExecutionOutput,
     QueryPlanExecutionOpts, QueryPlanExecutionResult,
 };
-use crate::executor::executors::common::ConnectionFingerprint;
+use crate::executor::executors::common::{ConnectionFingerprint, SubgraphRequestExtensions};
 use crate::executor::headers::response::ResponseHeaderSink;
 use crate::pipeline::error::{InternalPipelineError, PipelineError};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
@@ -41,6 +41,8 @@ pub struct PlannedRequest<'req> {
     pub demand_control_execution_context: Option<DemandControlExecutionContext>,
     pub plugin_req_state: Option<PluginRequestState<'req>>,
     pub connection_fingerprint: Option<ConnectionFingerprint>,
+    /// Client request `extensions` to send with every subgraph request.
+    pub subgraph_request_extensions: Option<Arc<SubgraphRequestExtensions>>,
 }
 
 #[inline]
@@ -142,6 +144,7 @@ pub async fn execute_plan<'exec>(
             operation_type_name: planned_request.normalized_payload.root_type_name.clone(),
             operation_kind: planned_request.normalized_payload.operation_kind.clone(),
             jwt_auth_forwarding: jwt_auth_forwarding.map(|j| j.into()),
+            subgraph_request_extensions: planned_request.subgraph_request_extensions,
             graphql_error_recorder: app_state
                 .telemetry_context
                 .metrics
