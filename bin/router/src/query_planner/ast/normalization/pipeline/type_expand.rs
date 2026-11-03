@@ -124,7 +124,7 @@ fn handle_selection_set(
 
     for selection in old_items {
         match selection {
-            Selection::Field(mut field) => {
+            Selection::Field(field) => {
                 // Don't try to look up introspection fields in the schema
                 // Just keep the selection set as-is
                 if field.name.starts_with("__") {
@@ -139,18 +139,22 @@ fn handle_selection_set(
                     }
                 })?;
 
-                if let Some(possible_object_types) = &possible_object_types {
-                    if handle_type_expansion_candidate(
-                        state,
-                        subgraph_name,
-                        possible_object_types,
-                        type_def,
-                        &field,
-                        &mut new_items,
-                    )? {
-                        continue;
+                let mut field = match &possible_object_types {
+                    Some(possible_object_types) => {
+                        match handle_type_expansion_candidate(
+                            state,
+                            subgraph_name,
+                            possible_object_types,
+                            type_def,
+                            field,
+                            &mut new_items,
+                        )? {
+                            Some(field) => field,
+                            None => continue,
+                        }
                     }
-                }
+                    None => field,
+                };
 
                 if !field.selection_set.items.is_empty() {
                     let inner_type_name = field_def.field_type.inner_type();
@@ -194,24 +198,24 @@ fn handle_selection_set(
     selection_set.items = new_items;
     Ok(())
 }
-type ShouldContinue = bool;
-
+/// Expands `field` into a fragment per object type when it has to be, and gives it back
+/// when it doesn't.
 #[inline]
 fn handle_type_expansion_candidate<'a>(
     state: &SupergraphState,
     subgraph_name: Option<&str>,
     possible_object_types: &[&SupergraphObjectType],
     type_def: &SupergraphDefinition,
-    field: &Field<'a, String>,
+    field: Field<'a, String>,
     new_items: &mut Vec<Selection<'a, String>>,
-) -> Result<ShouldContinue, NormalizationError> {
+) -> Result<Option<Field<'a, String>>, NormalizationError> {
     let interface_type = match type_def {
         SupergraphDefinition::Interface(interface_type) => Some(interface_type),
         _ => None,
     };
 
     if interface_type.is_none() {
-        return Ok(false);
+        return Ok(Some(field));
     }
     let interface_type = interface_type.unwrap(); // safe due to previous check
 
@@ -246,18 +250,18 @@ fn handle_type_expansion_candidate<'a>(
 
         if subgraphs_with_interface <= 1 {
             // No need to expand if interface is in at most one subgraph.
-            return Ok(false);
+            return Ok(Some(field));
         }
 
         let field_def = interface_type.fields.get(&field.name);
         if field_def.is_none() {
-            return Ok(false);
+            return Ok(Some(field));
         }
 
         let field_def = field_def.unwrap(); // safe due to previous check
         if field_def.join_field.is_empty() {
             // The field is available everywhere the interface is defined if there's no join info
-            return Ok(false);
+            return Ok(Some(field));
         }
 
         // Check if the field is contributed by the interface object,
@@ -284,7 +288,7 @@ fn handle_type_expansion_candidate<'a>(
             });
 
         if is_interface_object_field {
-            return Ok(false);
+            return Ok(Some(field));
         }
 
         // All subgraphs where this field is resolvable
@@ -296,13 +300,22 @@ fn handle_type_expansion_candidate<'a>(
 
         if subgraphs_resolving_field >= subgraphs_with_interface {
             // All subgraphs are resolving the field
-            return Ok(false);
+            return Ok(Some(field));
         }
     }
 
+    // The last object takes the field, only the ones before it get copies.
     let mut fragments = Vec::with_capacity(possible_object_types.len());
-    for obj in possible_object_types {
-        let mut new_field = field.clone();
+    let directives = field.directives.clone();
+    let mut field = Some(field);
+    for (index, obj) in possible_object_types.iter().enumerate() {
+        let mut new_field = if index + 1 == possible_object_types.len() {
+            field.take().expect("the last object takes the field")
+        } else {
+            field
+                .clone()
+                .expect("the field is there until the last object")
+        };
         if !new_field.selection_set.items.is_empty() {
             if let Some(obj_field) = obj.fields.get(&new_field.name) {
                 let inner_type_name = obj_field.field_type.inner_type();
@@ -321,7 +334,7 @@ fn handle_type_expansion_candidate<'a>(
         }
         fragments.push(Selection::InlineFragment(InlineFragment {
             type_condition: Some(TypeCondition::On(obj.name.clone())),
-            directives: field.directives.clone(),
+            directives: directives.clone(),
             selection_set: SelectionSet {
                 span: Default::default(),
                 items: vec![Selection::Field(new_field)],
@@ -331,5 +344,5 @@ fn handle_type_expansion_candidate<'a>(
     }
     new_items.extend(fragments);
 
-    Ok(true)
+    Ok(None)
 }
