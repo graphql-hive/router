@@ -518,8 +518,6 @@ impl FetchStepData<MultiTypeFetchStep> {
             return true;
         }
 
-        // at any depth, `category { averagePrice(currency: "USD") }` and
-        // `category { averagePrice: _internal_qp_alias_0(currency: "EUR") }` can't share an input
         self.input.response_keys_conflict_with(&other.input)
     }
 }
