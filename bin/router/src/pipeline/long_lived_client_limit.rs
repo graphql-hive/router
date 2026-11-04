@@ -9,7 +9,7 @@ use ntex::{
     web, Middleware,
 };
 
-use crate::RouterSharedState;
+use crate::{RouterAppState, RouterSharedState};
 
 /// Counting happens in two places because the two kinds of long-lived clients
 /// become known at different points of the request lifecycle:
@@ -28,30 +28,26 @@ use crate::RouterSharedState;
 pub struct LongLivedClientLimitService {
     // false means the middleware is entirely bypassed on every request
     enabled: bool,
-    shared_state: Arc<RouterSharedState>,
 }
 
 impl LongLivedClientLimitService {
-    pub fn new(shared_state: Arc<RouterSharedState>) -> Self {
-        let router_config = shared_state.router_config;
+    pub fn new(router_config: &crate::config::HiveRouterConfig) -> Self {
         let limit = router_config.traffic_shaping.router.max_long_lived_clients;
         Self {
             // the middleware only counts WebSocket connections; HTTP streaming
             // responses are counted in the pipeline where the operation is known
             enabled: limit > 0 && router_config.websocket.enabled,
-            shared_state,
         }
     }
 }
 
-impl<S, St> Middleware<S, St> for LongLivedClientLimitService {
+impl<S> Middleware<S, RouterAppState> for LongLivedClientLimitService {
     type Service = LongLivedClientLimitMiddleware<S>;
 
-    fn create(&self, _st: &St, service: S) -> Self::Service {
+    fn create(&self, _st: &RouterAppState, service: S) -> Self::Service {
         LongLivedClientLimitMiddleware {
             service,
             enabled: self.enabled,
-            shared_state: self.shared_state.clone(),
         }
     }
 }
@@ -59,25 +55,23 @@ impl<S, St> Middleware<S, St> for LongLivedClientLimitService {
 pub struct LongLivedClientLimitMiddleware<S> {
     service: S,
     enabled: bool,
-    // held here so requests don't look it up in the app state map every time
-    shared_state: Arc<RouterSharedState>,
 }
 
-impl<S, St> Service<St, web::WebRequest<()>> for LongLivedClientLimitMiddleware<S>
+impl<S> Service<RouterAppState, web::WebRequest<()>> for LongLivedClientLimitMiddleware<S>
 where
-    S: Service<St, web::WebRequest<()>, Res = web::WebResponse>,
+    S: Service<RouterAppState, web::WebRequest<()>, Res = web::WebResponse>,
 {
     type Res = web::WebResponse;
     type Error = S::Error;
 
-    ntex::forward_bind!(St, service);
-    ntex::forward_ready!(St, service);
-    ntex::forward_shutdown!(St, service);
+    ntex::forward_bind!(RouterAppState, service);
+    ntex::forward_ready!(RouterAppState, service);
+    ntex::forward_shutdown!(RouterAppState, service);
 
     async fn call(
         &self,
         req: web::WebRequest<()>,
-        ctx: Ctx<'_, Self, St>,
+        ctx: Ctx<'_, Self, RouterAppState>,
     ) -> Result<Self::Res, Self::Error> {
         if !self.enabled {
             return ctx.call(&self.service, req).await;
@@ -90,7 +84,8 @@ where
             return ctx.call(&self.service, req).await;
         }
 
-        let _guard = match try_reserve_long_lived_client(&self.shared_state) {
+        // the shared state comes from the typed app state in the pipeline ctx
+        let _guard = match try_reserve_long_lived_client(&ctx.st().shared) {
             Ok(Some(guard)) => guard,
             // limit disabled, nothing to track
             Ok(None) => return ctx.call(&self.service, req).await,

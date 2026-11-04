@@ -952,9 +952,7 @@ impl TestRouter<Built> {
         let serv_port = serv_local_addr.port();
         let serv_paths = paths.clone();
         let serv_prometheus = prometheus.clone();
-        let long_lived_limit = LongLivedClientLimitService::new(serv_shared_state.clone());
-        let request_identifiers = RequestIdentifiersService::new(serv_shared_state.clone());
-        let mw_shared_state = serv_shared_state.clone();
+        let long_lived_limit = LongLivedClientLimitService::new(shared_state.router_config);
         let response_compression = ResponseCompressionService::new(shared_state.router_config);
 
         let secure = serv_shared_state
@@ -981,8 +979,6 @@ impl TestRouter<Built> {
             let serv_callback_path = serv_callback_path.clone();
             let long_lived_limit = long_lived_limit.clone();
             let response_compression = response_compression.clone();
-            let request_identifiers = request_identifiers.clone();
-            let mw_shared_state = mw_shared_state.clone();
 
             // set the tracing dispatch on the server thread. the guard is
             // intentionally leaked: dropping it would restore the no-op default
@@ -998,10 +994,9 @@ impl TestRouter<Built> {
                 // the first registered middleware is the outermost layer, same order as the router
                 web::App::<RouterAppState>::new()
                     .middleware(response_compression)
-                    .middleware(request_identifiers)
+                    .middleware(RequestIdentifiersService)
                     .middleware(RequestSummaryService::new(&paths.graphql))
                     .middleware(PluginService::new(
-                        mw_shared_state,
                         paths.clone(),
                         prometheus.as_ref().map(|p| p.endpoint.clone()),
                     ))

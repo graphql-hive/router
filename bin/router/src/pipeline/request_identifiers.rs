@@ -6,57 +6,45 @@ use ntex::{
     web, Middleware,
 };
 
-use crate::{telemetry::HeaderExtractor, RouterSharedState};
+use crate::{telemetry::HeaderExtractor, RouterAppState};
 
 /// Extracts the request/trace correlation identifiers and scopes them as a task-local
 /// for the rest of the request, so every downstream middleware (`PluginService`,
 /// the coprocessor, etc.) can log with the same correlation ids as the handler -
 /// not just the handler itself, which is where this used to happen.
-#[derive(Clone)]
-pub struct RequestIdentifiersService {
-    shared_state: Arc<RouterSharedState>,
-}
+#[derive(Clone, Default)]
+pub struct RequestIdentifiersService;
 
-impl RequestIdentifiersService {
-    pub fn new(shared_state: Arc<RouterSharedState>) -> Self {
-        Self { shared_state }
-    }
-}
-
-impl<S, St> Middleware<S, St> for RequestIdentifiersService {
+impl<S> Middleware<S, RouterAppState> for RequestIdentifiersService {
     type Service = RequestIdentifiersMiddleware<S>;
 
-    fn create(&self, _st: &St, service: S) -> Self::Service {
-        RequestIdentifiersMiddleware {
-            service,
-            shared_state: self.shared_state.clone(),
-        }
+    fn create(&self, _st: &RouterAppState, service: S) -> Self::Service {
+        RequestIdentifiersMiddleware { service }
     }
 }
 
 pub struct RequestIdentifiersMiddleware<S> {
     service: S,
-    // held here so requests don't look it up in the app state map every time
-    shared_state: Arc<RouterSharedState>,
 }
 
-impl<S, St> Service<St, web::WebRequest<()>> for RequestIdentifiersMiddleware<S>
+impl<S> Service<RouterAppState, web::WebRequest<()>> for RequestIdentifiersMiddleware<S>
 where
-    S: Service<St, web::WebRequest<()>, Res = web::WebResponse>,
+    S: Service<RouterAppState, web::WebRequest<()>, Res = web::WebResponse>,
 {
     type Res = web::WebResponse;
     type Error = S::Error;
 
-    ntex::forward_bind!(St, service);
-    ntex::forward_ready!(St, service);
-    ntex::forward_shutdown!(St, service);
+    ntex::forward_bind!(RouterAppState, service);
+    ntex::forward_ready!(RouterAppState, service);
+    ntex::forward_shutdown!(RouterAppState, service);
 
     async fn call(
         &self,
         req: web::WebRequest<()>,
-        ctx: Ctx<'_, Self, St>,
+        ctx: Ctx<'_, Self, RouterAppState>,
     ) -> Result<Self::Res, Self::Error> {
-        let shared_state = &self.shared_state;
+        // the typed app state rides along in the pipeline ctx, no lookup or clone needed
+        let shared_state = &ctx.st().shared;
         let parent_ctx = shared_state
             .telemetry_context
             .extract_context(&HeaderExtractor(req.headers()));

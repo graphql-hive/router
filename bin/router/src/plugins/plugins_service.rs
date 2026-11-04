@@ -12,35 +12,28 @@ use ntex::{
     web, Middleware,
 };
 
-use crate::{RouterPaths, RouterSharedState};
+use crate::{RouterAppState, RouterPaths};
 
 pub struct PluginService {
-    shared_state: Arc<RouterSharedState>,
     paths: RouterPaths,
     prometheus_endpoint: Option<String>,
 }
 
 impl PluginService {
-    pub fn new(
-        shared_state: Arc<RouterSharedState>,
-        paths: RouterPaths,
-        prometheus_endpoint: Option<String>,
-    ) -> Self {
+    pub fn new(paths: RouterPaths, prometheus_endpoint: Option<String>) -> Self {
         Self {
-            shared_state,
             paths,
             prometheus_endpoint,
         }
     }
 }
 
-impl<S, St> Middleware<S, St> for PluginService {
+impl<S> Middleware<S, RouterAppState> for PluginService {
     type Service = PluginMiddleware<S>;
 
-    fn create(&self, _st: &St, service: S) -> Self::Service {
+    fn create(&self, _st: &RouterAppState, service: S) -> Self::Service {
         PluginMiddleware {
             service,
-            shared_state: self.shared_state.clone(),
             paths: self.paths.clone(),
             prometheus_endpoint: self.prometheus_endpoint.clone(),
         }
@@ -50,28 +43,29 @@ impl<S, St> Middleware<S, St> for PluginService {
 pub struct PluginMiddleware<S> {
     // This is special: We need this to avoid lifetime issues.
     service: S,
-    // held here so requests don't look it up in the app state map every time
-    shared_state: Arc<RouterSharedState>,
     paths: RouterPaths,
     prometheus_endpoint: Option<String>,
 }
 
-impl<S, St> Service<St, web::WebRequest<()>> for PluginMiddleware<S>
+impl<S> Service<RouterAppState, web::WebRequest<()>> for PluginMiddleware<S>
 where
-    S: Service<St, web::WebRequest<()>, Res = web::WebResponse>,
+    S: Service<RouterAppState, web::WebRequest<()>, Res = web::WebResponse>,
 {
     type Res = web::WebResponse;
     type Error = S::Error;
 
-    ntex::forward_bind!(St, service);
-    ntex::forward_ready!(St, service);
-    ntex::forward_shutdown!(St, service);
+    ntex::forward_bind!(RouterAppState, service);
+    ntex::forward_ready!(RouterAppState, service);
+    ntex::forward_shutdown!(RouterAppState, service);
 
     async fn call(
         &self,
         mut req: web::WebRequest<()>,
-        ctx: Ctx<'_, Self, St>,
+        ctx: Ctx<'_, Self, RouterAppState>,
     ) -> Result<Self::Res, Self::Error> {
+        // the typed app state rides along in the pipeline ctx, no lookup or clone needed
+        let shared_state = &ctx.st().shared;
+
         // The prometheus endpoint (if it's on the same port) bypasses both plugins and the
         // coprocessor entirely.
         if self.prometheus_endpoint.as_deref() == Some(req.path()) {
@@ -89,10 +83,10 @@ where
         let coprocessor_runtime = if is_probe {
             None
         } else {
-            self.shared_state.coprocessor.as_ref()
+            shared_state.coprocessor.as_ref()
         };
 
-        let plugins = self.shared_state.plugins.clone();
+        let plugins = &shared_state.plugins;
 
         if let Some(coprocessor_runtime) = coprocessor_runtime {
             match coprocessor_runtime.on_router_request(req).await {
