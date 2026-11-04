@@ -7,9 +7,7 @@ static LANDING_PAGE_HTML: &str = include_str!("../../static/landing-page.html");
 static PRODUCT_LOGO_SVG: &str = include_str!("../../static/product_logo.svg");
 
 // responders are typed by the app state of the app serving them
-pub async fn landing_page_handler(
-    graphql_endpoint: String,
-) -> impl Responder<RouterAppState> {
+pub async fn landing_page_handler(graphql_endpoint: String) -> impl Responder<RouterAppState> {
     let rendered_html = LANDING_PAGE_HTML
         .replace("__LABORATORY_LINK__", &graphql_endpoint)
         .replace("__PRODUCT_NAME__", "Hive Router")
