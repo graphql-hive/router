@@ -7,6 +7,7 @@ use crate::executor::response::graphql_error::GraphQLError;
 use crate::telemetry::logging::targets;
 use crate::telemetry::metrics::subscription_metrics::SubscriptionTransport;
 use crate::telemetry::TelemetryContext;
+use crate::RouterAppState;
 use bytes::Bytes as BytesLib;
 use dashmap::mapref::one::Ref;
 use http::StatusCode;
@@ -214,7 +215,7 @@ fn handle_complete(
 }
 
 pub async fn handler(
-    state: &crate::RouterAppState,
+    state: &RouterAppState,
     _: (),
     req: HttpRequest,
     path: Path<String>,
