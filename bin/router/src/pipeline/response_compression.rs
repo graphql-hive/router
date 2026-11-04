@@ -94,6 +94,12 @@ where
             return Ok(response);
         };
 
+        // already encoded upstream (a plugin or coprocessor), compressing again would leave
+        // clients with one `Content-Encoding` but two layers of compressed bytes
+        if response.headers().contains_key(&CONTENT_ENCODING) {
+            return Ok(response);
+        }
+
         let min_size = config.min_size.to_bytes();
         let body_size = response.response().body().size();
         let should_compress = match body_size {
