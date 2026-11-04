@@ -99,7 +99,7 @@ const VEC_STORAGE_VTABLE: ntex_bytes::StorageVTable = ntex_bytes::StorageVTable:
     |addr, _| unsafe { std::sync::Arc::decrement_strong_count(addr.cast::<Vec<u8>>()) },
 );
 
-// safety: see the vtable comment above, it covers every requirement listed on `StorageExt`
+// SAFETY: see the vtable comment above, it covers every requirement listed on `StorageExt`
 unsafe impl ntex_bytes::StorageExt for VecStorage {
     fn create(self) -> (*const u8, usize, &'static ntex_bytes::StorageVTable) {
         let len = self.0.len();
