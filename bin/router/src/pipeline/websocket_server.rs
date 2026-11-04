@@ -49,13 +49,13 @@ use crate::pipeline::{
     parser::parse_operation_with_cache, usage_reporting, validation::validate_operation_with_cache,
 };
 use crate::schema_state::SchemaState;
-use crate::RouterAppState;
 use crate::shared_state::{RouterSharedState, SharedRouterResponse};
 use crate::telemetry::logging::request_id::WithRequestIdentifiers;
 use crate::telemetry::logging::summary::{self, WithRequestSummary};
 use crate::telemetry::logging::targets;
 use crate::telemetry::request_scope::RequestTaskScope;
 use crate::telemetry::{traces::hive_trace_context::HiveTraceScope, HeaderExtractor};
+use crate::RouterAppState;
 
 type WsStateRef = Rc<RefCell<WsState<tokio::sync::mpsc::Sender<()>>>>;
 
