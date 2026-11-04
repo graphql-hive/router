@@ -89,7 +89,3 @@ Plugins that measure request durations, keep in-flight counters or set response 
 ## Timers never fire early
 
 ntex 4 timers fire at or after their deadline, up to one 16ms tick late, while ntex 3 timers could fire early. Periodic work such as supergraph polling runs at the configured interval or slightly later, never sooner.
-
-## Persisted documents file watching follows symlinks
-
-The persisted documents file watcher reloads the manifest when its path goes through a symlinked directory, such as the temp directory on macOS. File system events on macOS report resolved paths, so the watcher matches events against both the configured and the canonicalized manifest path.
