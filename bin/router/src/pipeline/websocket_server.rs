@@ -49,6 +49,7 @@ use crate::pipeline::{
     parser::parse_operation_with_cache, usage_reporting, validation::validate_operation_with_cache,
 };
 use crate::schema_state::SchemaState;
+use crate::RouterAppState;
 use crate::shared_state::{RouterSharedState, SharedRouterResponse};
 use crate::telemetry::logging::request_id::WithRequestIdentifiers;
 use crate::telemetry::logging::summary::{self, WithRequestSummary};
@@ -58,7 +59,7 @@ use crate::telemetry::{traces::hive_trace_context::HiveTraceScope, HeaderExtract
 
 type WsStateRef = Rc<RefCell<WsState<tokio::sync::mpsc::Sender<()>>>>;
 
-pub async fn ws_index(state: &crate::RouterAppState, _: (), req: HttpRequest) -> HttpResponse {
+pub async fn ws_index(state: &RouterAppState, _: (), req: HttpRequest) -> HttpResponse {
     // the ws connection service outlives the handler, so it owns its own arcs
     let schema_state = state.schema.clone();
     let shared_state = state.shared.clone();
