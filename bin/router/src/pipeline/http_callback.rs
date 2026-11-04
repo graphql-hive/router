@@ -4,7 +4,6 @@ use crate::executor::executors::http_callback::{
 };
 use crate::executor::executors::subscription_buffer::{try_send_or_drop, SendOutcome};
 use crate::executor::response::graphql_error::GraphQLError;
-use crate::http_utils::app_state::AppData;
 use crate::telemetry::logging::targets;
 use crate::telemetry::metrics::subscription_metrics::SubscriptionTransport;
 use crate::telemetry::TelemetryContext;
@@ -215,12 +214,15 @@ fn handle_complete(
 }
 
 pub async fn handler(
+    state: &crate::RouterAppState,
+    _: (),
     req: HttpRequest,
     path: Path<String>,
     body: Bytes,
-    callback_subscriptions: AppData<CallbackSubscriptionsMap>,
-    telemetry_context: AppData<std::sync::Arc<TelemetryContext>>,
 ) -> Result<HttpResponse, CallbackError> {
+    // the map is shared with the subgraph executors that register the subscriptions
+    let callback_subscriptions = &state.schema.callback_subscriptions;
+    let telemetry_context = &state.shared.telemetry_context;
     let subscription_id_from_path = path.into_inner();
 
     validate_protocol(&req)?;
@@ -251,12 +253,12 @@ pub async fn handler(
                 &payload.id,
                 &payload,
                 subscription,
-                &callback_subscriptions,
-                &telemetry_context,
+                callback_subscriptions,
+                telemetry_context,
             )?;
         }
         CallbackAction::Complete => {
-            handle_complete(&payload.id, &payload, subscription, &callback_subscriptions)
+            handle_complete(&payload.id, &payload, subscription, callback_subscriptions)
         }
     };
 

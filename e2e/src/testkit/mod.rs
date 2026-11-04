@@ -48,8 +48,8 @@ use hive_router::{
     pipeline::request_identifiers::RequestIdentifiersService,
     pipeline::request_summary::RequestSummaryService,
     pipeline::response_compression::ResponseCompressionService,
-    plugins::plugins_service::PluginService, telemetry::Telemetry, PluginRegistry, RouterPaths,
-    RouterSharedState, SchemaState,
+    plugins::plugins_service::PluginService, telemetry::Telemetry, PluginRegistry, RouterAppState,
+    RouterPaths, RouterSharedState, SchemaState,
 };
 use subgraphs::{subgraphs_app, HTTPStreamingSubscriptionProtocol};
 
@@ -886,8 +886,10 @@ impl TestRouter<Built> {
         let serv_dispatch = tracing::dispatcher::get_default(|d| d.clone());
 
         let serv_shared_state = shared_state.clone();
-        let serv_schema_state = schema_state.clone();
-        let serv_callback_subs = schema_state.callback_subscriptions.clone();
+        let app_state = RouterAppState {
+            shared: shared_state.clone(),
+            schema: schema_state.clone(),
+        };
         let serv_graphql_path = self.graphql_path.clone();
         let serv_websocket_path = self.websocket_path.clone();
 
@@ -901,21 +903,19 @@ impl TestRouter<Built> {
             }) => {
                 let cb_path = path.to_string();
                 let cb_addr = listen.to_string();
-                let cb_subs = schema_state.callback_subscriptions.clone();
-                let cb_telemetry_context = shared_state.telemetry_context.clone();
+                let cb_state = app_state.clone();
 
                 let cb_cfg = SharedCfg::new("HIVE_ROUTER_TEST_CALLBACK")
                     .add(hive_router::build_http_service_config(config));
-                let server = web::HttpServer::new(async move |_| {
-                    let cb_path = cb_path.clone();
-                    // handlers pick these up with the `AppData` extractor
-                    let app_config = WebAppConfig::new()
-                        .set_state(cb_subs.clone())
-                        .set_state(cb_telemetry_context.clone());
-                    web::App::new()
-                        .with_config(app_config)
-                        .configure(move |m| add_callback_handler(m, &cb_path))
-                })
+                // same typed state as the main server, like the production callback server
+                let server = web::HttpServer::with_config(
+                    async move || Ok::<_, std::io::Error>(cb_state.clone()),
+                    async move |_| {
+                        let cb_path = cb_path.clone();
+                        web::App::<RouterAppState>::new()
+                            .configure(move |m| add_callback_handler(m, &cb_path))
+                    },
+                )
                 // unpinned like the production callback server
                 .affinity(ntex::server::Affinity::Disabled)
                 .graceful_shutdown_timeout(config.shutdown_timeout())
@@ -966,22 +966,16 @@ impl TestRouter<Built> {
         let system_name = ntex::rt::System::current().name().to_string();
         let srv_cfg = SharedCfg::new("HIVE_ROUTER_TEST")
             .add(hive_router::build_http_service_config(config))
-            .add(
-                WebAppConfig::with(
-                    &system_name,
-                    secure,
-                    serv_local_addr,
-                    format!("{serv_local_addr}"),
-                )
-                // handlers pick these up with the `AppData` extractor, middlewares with `app_state`
-                .set_state(serv_shared_state.clone())
-                .set_state(serv_schema_state.clone())
-                .set_state(serv_callback_subs.clone())
-                .set_state(serv_shared_state.telemetry_context.clone()),
-            )
+            .add(WebAppConfig::with(
+                &system_name,
+                secure,
+                serv_local_addr,
+                format!("{serv_local_addr}"),
+            ))
             .build();
 
-        let app_factory = move |_: &()| {
+        // builds the app for the typed state of a worker, both servers below call it
+        let app_factory = move |_: &RouterAppState| {
             let paths = serv_paths.clone();
             let prometheus = serv_prometheus.clone();
             let serv_callback_path = serv_callback_path.clone();
@@ -1002,7 +996,7 @@ impl TestRouter<Built> {
 
             async move {
                 // the first registered middleware is the outermost layer, same order as the router
-                web::App::new()
+                web::App::<RouterAppState>::new()
                     .middleware(response_compression)
                     .middleware(request_identifiers)
                     .middleware(RequestSummaryService::new(&paths.graphql))
@@ -1030,14 +1024,17 @@ impl TestRouter<Built> {
             // worker count, ntex's per-worker connection accounting loses track of the one
             // in-flight connection during a graceful stop, so the client hangs forever
             // instead of seeing the connection force-dropped at the shutdown timeout.
-            let server = web::HttpServer::new(app_factory)
-                // unpinned like the production server
-                .affinity(ntex::server::Affinity::Disabled)
-                .graceful_shutdown_timeout(config.shutdown_timeout())
-                .workers(1)
-                .listen(serv_listener, srv_cfg)
-                .expect("failed to bind real http server for test router")
-                .run();
+            let server = web::HttpServer::with_config(
+                async move || Ok::<_, std::io::Error>(app_state.clone()),
+                app_factory,
+            )
+            // unpinned like the production server
+            .affinity(ntex::server::Affinity::Disabled)
+            .graceful_shutdown_timeout(config.shutdown_timeout())
+            .workers(1)
+            .listen(serv_listener, srv_cfg)
+            .expect("failed to bind real http server for test router")
+            .run();
 
             ntex::util::Either::Right(RealHttpServer {
                 addr: serv_local_addr,
@@ -1057,7 +1054,13 @@ impl TestRouter<Built> {
                 serv_config = serv_config.rustls(rustls_config);
             }
 
-            ntex::util::Either::Left(test::server_with(serv_config, app_factory))
+            // the test server only serves apps with unit state, so the app binds its typed
+            // state itself with `build_with` and is served like any `()` app
+            ntex::util::Either::Left(test::server_with(serv_config, async move |_: &()| {
+                app_factory(&app_state)
+                    .await
+                    .build_with::<()>(app_state.clone())
+            }))
         };
 
         let mut hold_until_drop = self._hold_until_drop;

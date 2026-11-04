@@ -37,7 +37,6 @@ use crate::telemetry::metrics::subscription_metrics::{
 };
 use crate::telemetry::traces::spans::graphql::GraphQLOperationSpan;
 
-use crate::http_utils::app_state::AppData;
 use crate::jwt::errors::JwtError;
 use crate::pipeline::active_subscriptions::SubscriptionEvent;
 use crate::pipeline::error::{ClientPipelineError, PipelineError};
@@ -59,13 +58,10 @@ use crate::telemetry::{traces::hive_trace_context::HiveTraceScope, HeaderExtract
 
 type WsStateRef = Rc<RefCell<WsState<tokio::sync::mpsc::Sender<()>>>>;
 
-pub async fn ws_index(
-    req: HttpRequest,
-    schema_state: AppData<Arc<SchemaState>>,
-    shared_state: AppData<Arc<RouterSharedState>>,
-) -> HttpResponse {
-    let schema_state = schema_state.get_ref().clone();
-    let shared_state = shared_state.get_ref().clone();
+pub async fn ws_index(state: &crate::RouterAppState, _: (), req: HttpRequest) -> HttpResponse {
+    // the ws connection service outlives the handler, so it owns its own arcs
+    let schema_state = state.schema.clone();
+    let shared_state = state.shared.clone();
 
     let accepted_subprotocol = ws::subprotocols(&req)
         .find(|p| *p == WS_SUBPROTOCOL)

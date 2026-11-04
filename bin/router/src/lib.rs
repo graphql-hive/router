@@ -33,7 +33,6 @@ use crate::{
     consts::ROUTER_VERSION,
     error::RouterInitError,
     http_utils::{
-        app_state::AppData,
         body::read_request_body_size,
         landing_page::landing_page_handler,
         probes::{health_check_handler, readiness_check_handler},
@@ -188,11 +187,12 @@ fn obtain_header_value<'a>(
 }
 
 async fn graphql_endpoint_handler(
+    state: &RouterAppState,
+    _: (),
     mut request: HttpRequest,
     body_stream: web::types::Payload,
-    schema_state: AppData<Arc<SchemaState>>,
-    app_state: AppData<Arc<RouterSharedState>>,
 ) -> web::HttpResponse {
+    let app_state = &state.shared;
     request
         .extensions_mut()
         .insert(RequestRoutePattern(app_state.router_config.graphql_path()));
@@ -224,8 +224,8 @@ async fn graphql_endpoint_handler(
     let dispatch = graphql_endpoint_dispatch(
         &mut request,
         body_stream,
-        schema_state,
-        app_state.clone(),
+        &state.schema,
+        app_state,
         parent_ctx,
     );
     let response = match &overhead_tracker {
@@ -287,8 +287,8 @@ async fn graphql_endpoint_handler(
 async fn graphql_endpoint_dispatch(
     request: &mut HttpRequest,
     body_stream: web::types::Payload,
-    schema_state: AppData<Arc<SchemaState>>,
-    app_state: AppData<Arc<RouterSharedState>>,
+    schema_state: &Arc<SchemaState>,
+    app_state: &Arc<RouterSharedState>,
     parent_ctx: opentelemetry::Context,
 ) -> web::HttpResponse {
     let root_http_request_span = HttpServerRequestSpan::from_request(
@@ -318,21 +318,21 @@ async fn graphql_endpoint_dispatch(
         let req_handler_fut = graphql_request_handler(
             request,
             body_stream,
-            app_state.get_ref(),
-            schema_state.get_ref(),
+            app_state,
+            schema_state,
             &root_http_request_span,
             &mut response_mode,
             response_header_sink.clone(),
         );
 
         // Handle the request with a timeout. If the timeout is reached, a timeout error response will be generated.
-        let result = handle_timeout(req_handler_fut, &app_state).await;
+        let result = handle_timeout(req_handler_fut, app_state).await;
         let mut response = match result {
             Ok(response) => response,
             // If the request handler returns an error, convert it to an HTTP response.
             Err(err) => {
                 write_graphql_response_metric_status(request, GraphQLResponseStatus::Error);
-                handle_pipeline_error(err, request, &app_state, &response_mode)
+                handle_pipeline_error(err, request, app_state, &response_mode)
             }
         };
 
@@ -367,7 +367,7 @@ async fn graphql_endpoint_dispatch(
                 Err(error) => {
                     warn!(target: targets::COPROCESSOR, error = ?error, "coprocessor graphql.response stage failed");
                     write_graphql_response_metric_status(request, GraphQLResponseStatus::Error);
-                    handle_pipeline_error(error.into(), request, &app_state, &response_mode)
+                    handle_pipeline_error(error.into(), request, app_state, &response_mode)
                 }
             };
         }
@@ -486,7 +486,10 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     .await?;
 
     let shared_state_clone = shared_state.clone();
-    let callback_subscriptions_for_handler = schema_state.callback_subscriptions.clone();
+    let app_state = RouterAppState {
+        shared: shared_state.clone(),
+        schema: schema_state,
+    };
 
     // when `listen` is set, the callback route lives on a dedicated server bound to that address
     // otherwise, the callback route is mounted on the main server on the `callback_path`
@@ -498,18 +501,17 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
         }) => {
             let cb_path = path.to_string();
             let cb_addr = listen.to_string();
-            let cb_subs = callback_subscriptions_for_handler.clone();
-            let cb_telemetry_context = shared_state.telemetry_context.clone();
-            let mut cb_server_builder = web::HttpServer::new(async move |_| {
-                let cb_path = cb_path.clone();
-                // handlers pick these up with the `AppData` extractor
-                let app_config = web::WebAppConfig::new()
-                    .set_state(cb_subs.clone())
-                    .set_state(cb_telemetry_context.clone());
-                web::App::new()
-                    .with_config(app_config)
-                    .configure(move |m| add_callback_handler(m, &cb_path))
-            });
+            let cb_state = app_state.clone();
+            // the callback handler reads the subscriptions map and telemetry from the same
+            // typed state as the main server, every worker gets a cheap arc clone of it
+            let mut cb_server_builder = web::HttpServer::with_config(
+                async move || Ok::<_, std::io::Error>(cb_state.clone()),
+                async move |_| {
+                    let cb_path = cb_path.clone();
+                    web::App::<RouterAppState>::new()
+                        .configure(move |m| add_callback_handler(m, &cb_path))
+                },
+            );
             if let Some(workers) = workers {
                 info!(
                     target: targets::CORE,
@@ -544,46 +546,43 @@ pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), Ro
     let long_lived_client_limit_service = LongLivedClientLimitService::new(shared_state.clone());
     let response_compression_service = ResponseCompressionService::new(shared_state.router_config);
 
-    let mut server = web::HttpServer::new(async move |_| {
-        let landing_page_path = graphql_path.clone();
-        let prometheus = prometheus.clone();
-        let long_lived_client_limit_service = long_lived_client_limit_service.clone();
-        let response_compression_service = response_compression_service.clone();
-        let paths_for_plugin = paths.clone();
-        // handlers pick these up with the `AppData` extractor, middlewares with `app_state`
-        let app_config = web::WebAppConfig::new()
-            .set_state(shared_state.clone())
-            .set_state(schema_state.clone())
-            .set_state(shared_state.telemetry_context.clone())
-            .set_state(callback_subscriptions_for_handler.clone());
-        // the first registered middleware is the outermost layer
-        web::App::new()
-            .with_config(app_config)
-            // first: the outermost layer, so it's the final thing touching the response body
-            // before it reaches the socket - everything below still sees the real,
-            // uncompressed size/content (RequestSummaryService's logged size included).
-            .middleware(response_compression_service)
-            .middleware(RequestIdentifiersService::new(shared_state.clone()))
-            .middleware(RequestSummaryService::new(&graphql_path))
-            .middleware(PluginService::new(
-                shared_state.clone(),
-                paths_for_plugin,
-                prometheus.as_ref().map(|p| p.endpoint.clone()),
-            ))
-            .middleware(long_lived_client_limit_service)
-            // `App::configure` can only be called once, so both registrations share it
-            .configure(|m| {
-                configure_ntex_app(m, &paths, prometheus);
-                if let Some(ref callback) = paths.callback {
-                    // callback path will be some only if callback is enabled and if
-                    // its listen is not configured to be on another server
-                    add_callback_handler(m, callback);
-                }
-            })
-            .default_service(web::to(move || {
-                landing_page_handler(landing_page_path.clone())
-            }))
-    });
+    // every worker gets a cheap arc clone of the typed state, handlers get it by reference
+    let mut server = web::HttpServer::with_config(
+        async move || Ok::<_, std::io::Error>(app_state.clone()),
+        async move |_| {
+            let landing_page_path = graphql_path.clone();
+            let prometheus = prometheus.clone();
+            let long_lived_client_limit_service = long_lived_client_limit_service.clone();
+            let response_compression_service = response_compression_service.clone();
+            let paths_for_plugin = paths.clone();
+            // the first registered middleware is the outermost layer
+            web::App::<RouterAppState>::new()
+                // first: the outermost layer, so it's the final thing touching the response body
+                // before it reaches the socket - everything below still sees the real,
+                // uncompressed size/content (RequestSummaryService's logged size included).
+                .middleware(response_compression_service)
+                .middleware(RequestIdentifiersService::new(shared_state.clone()))
+                .middleware(RequestSummaryService::new(&graphql_path))
+                .middleware(PluginService::new(
+                    shared_state.clone(),
+                    paths_for_plugin,
+                    prometheus.as_ref().map(|p| p.endpoint.clone()),
+                ))
+                .middleware(long_lived_client_limit_service)
+                // `App::configure` can only be called once, so both registrations share it
+                .configure(|m| {
+                    configure_ntex_app(m, &paths, prometheus);
+                    if let Some(ref callback) = paths.callback {
+                        // callback path will be some only if callback is enabled and if
+                        // its listen is not configured to be on another server
+                        add_callback_handler(m, callback);
+                    }
+                })
+                .default_service(web::to(move || {
+                    landing_page_handler(landing_page_path.clone())
+                }))
+        },
+    );
 
     if let Some(workers) = workers {
         info!(target: targets::CORE, workers_count = workers, "configuring HTTP server worker(s)");
@@ -720,6 +719,20 @@ pub async fn configure_app_from_config(
     Ok((shared_state, schema_state_arc))
 }
 
+/// The application state of the router's web servers.
+///
+/// Every worker holds a clone of it, and state-aware handlers receive it by reference,
+/// so cloning only bumps the reference counts of the shared values.
+#[derive(Clone)]
+pub struct RouterAppState {
+    pub shared: Arc<RouterSharedState>,
+    pub schema: Arc<SchemaState>,
+}
+
+impl web::State for RouterAppState {
+    type Error = web::DefaultError;
+}
+
 #[derive(Clone)]
 pub struct RouterPaths {
     pub graphql: String,
@@ -784,16 +797,16 @@ impl RouterPaths {
     }
 }
 
-pub fn add_callback_handler(cfg: &mut web::ServiceConfig<()>, callback_path: &str) {
+pub fn add_callback_handler(cfg: &mut web::ServiceConfig<RouterAppState>, callback_path: &str) {
     let callback_route = format!(
         "{}/{{subscription_id}}",
         callback_path.trim_end_matches('/'),
     );
-    cfg.route(&callback_route, web::post().to(handler));
+    cfg.route(&callback_route, web::post().to_with_state(handler));
 }
 
 pub fn configure_ntex_app(
-    cfg: &mut web::ServiceConfig<()>,
+    cfg: &mut web::ServiceConfig<RouterAppState>,
     paths: &RouterPaths,
     prometheus: Option<PrometheusAttached>,
 ) {
@@ -809,13 +822,19 @@ pub fn configure_ntex_app(
                         .and_then(|v| v.to_str().ok())
                         .is_some_and(|v| v.eq_ignore_ascii_case("websocket"))
                 }))
-                .route(web::get().to(ws_index)),
+                .route(web::get().to_with_state(ws_index)),
         );
     }
 
-    cfg.route(paths.graphql.as_str(), web::to(graphql_endpoint_handler))
-        .route(paths.health.as_str(), web::to(health_check_handler))
-        .route(paths.readiness.as_str(), web::to(readiness_check_handler));
+    cfg.route(
+        paths.graphql.as_str(),
+        web::to_with_state(graphql_endpoint_handler),
+    )
+    .route(paths.health.as_str(), web::to(health_check_handler))
+    .route(
+        paths.readiness.as_str(),
+        web::to_with_state(readiness_check_handler),
+    );
 
     if let Some(prom) = prometheus {
         let registry = prom.registry;
@@ -831,7 +850,8 @@ pub fn configure_ntex_app(
     // Enables /graphql/sha256:12345 cases for persisted documents
     if paths.graphql != "/" {
         cfg.service(
-            web::scope(paths.graphql.as_str()).default_service(web::to(graphql_endpoint_handler)),
+            web::scope(paths.graphql.as_str())
+                .default_service(web::to_with_state(graphql_endpoint_handler)),
         );
     }
 }
