@@ -33,17 +33,14 @@ pub struct HttpServerConfig {
     ///
     /// - `cpuset` (default): one worker per logical CPU the process is allowed to run on
     ///   (its CPU affinity mask, which follows the cgroup cpuset on Linux), capped by the
-    ///   container's CPU limit (the cgroup CPU quota, such as Kubernetes'
-    ///   `resources.limits.cpu`), rounded down, with a minimum of `1`. For example, a
-    ///   `1500m` CPU limit results in a single worker.
-    /// - `container`: the same as `cpuset`, accepted so existing configurations keep working.
+    ///   container's CPU limit (the cgroup CPU quota), rounded down, with a minimum of `1`.
+    ///   For example, a `1500m` CPU limit results in a single worker.
+    /// - `container`: the same as `cpuset`.
     /// - A positive integer: an explicit number of workers.
-    ///
-    /// Set an explicit number to run more workers than the CPU limit allows.
     ///
     /// ```yaml
     /// http:
-    ///   workers: 4
+    ///   workers: container
     /// ```
     ///
     /// Can also be set via the `ROUTER_HTTP_WORKERS` environment variable.
@@ -97,7 +94,7 @@ pub enum HttpWorkersConfig {
     /// capped by the cgroup CPU quota.
     #[default]
     Cpuset,
-    /// The same as `Cpuset`, accepted so existing configurations keep working.
+    /// The same as `Cpuset`.
     Container,
     /// An explicit number of workers.
     Count(NonZeroUsize),
@@ -201,7 +198,7 @@ impl JsonSchema for HttpWorkersConfig {
                     "const": HttpWorkersConfig::CPUSET
                 },
                 {
-                    "description": "The same as `cpuset`, accepted so existing configurations keep working.",
+                    "description": "The same as `cpuset`.",
                     "const": HttpWorkersConfig::CONTAINER
                 },
                 {
