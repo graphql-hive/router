@@ -84,12 +84,24 @@ pub async fn ws_index(state: &RouterAppState, _: (), req: HttpRequest) -> HttpRe
     );
 
     // drives the whole connection, it resolves only once the connection is closed
-    if let Err(err) = ws::start(&req, accepted_subprotocol, service).await {
-        debug!(target: targets::WEBSOCKET_SERVER, error = ?err, "websocket connection terminated with an error");
+    match ws::start(&req, accepted_subprotocol, service).await {
+        // a rejected handshake gets its proper error status. when ntex still had the io it
+        // already wrote this response itself, otherwise (like a missing `Connection: upgrade`)
+        // this is the response the client gets
+        Err(ntex::ws::error::WsError::Handshake(err)) => {
+            debug!(target: targets::WEBSOCKET_SERVER, error = ?err, "websocket handshake rejected");
+            ntex::http::ResponseError::error_response(&err)
+        }
+        result => {
+            if let Err(err) = result {
+                debug!(target: targets::WEBSOCKET_SERVER, error = ?err, "websocket connection terminated with an error");
+            }
+            // the upgraded connection belongs to the websocket dispatcher, so this response is
+            // never sent. it carries the 101 that went out on the wire, so request summaries
+            // and plugin `on_end` callbacks see the real status
+            HttpResponse::new(ntex::http::StatusCode::SWITCHING_PROTOCOLS)
+        }
     }
-
-    // the upgraded connection belongs to the websocket dispatcher, so this response is never sent
-    HttpResponse::Ok().build()
 }
 
 /// Serves the frames of a single GraphQL over WebSocket connection.
