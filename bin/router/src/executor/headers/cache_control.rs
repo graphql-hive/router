@@ -304,7 +304,7 @@ pub fn finalize(
             merged.immutable = false;
         }
         let serialized = to_header_value(&merged);
-        // safety: to_header_value only produces ASCII
+        // SAFETY: to_header_value only produces ASCII
         let value = HeaderValue::from_str(&serialized).expect("to_header_value produced non-ASCII");
         aggregator.entries.insert(
             http::header::CACHE_CONTROL,
