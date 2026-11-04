@@ -1,12 +1,3 @@
-//! The response projection tells the objects of an interface or a union apart by their
-//! `__typename`, wherever the client's selections on it sit under type conditions: `results { id }`
-//! next to `results @include(if: $a) { ... on Product { id } }` has an `id` for every type and one
-//! for `Product`s. The planner asks for `__typename` where a type condition needs it, but that may
-//! be under a condition too, here `$a`. With `$a` off the projection can't tell the `Product`s and
-//! drops `id`. So such an object gets a `__typename` that's always there.
-
-use ahash::{HashMap, HashSet};
-
 use crate::query_planner::{
     ast::{
         selection_item::SelectionItem,
@@ -15,24 +6,13 @@ use crate::query_planner::{
     state::supergraph_state::{SupergraphDefinition, SupergraphState},
 };
 
-/// Adds `__typename` to the objects of `selection_set` (of type `type_name`) that need it, not to
-/// `selection_set` itself.
+/// `selection_set` is a root fetch's selections, of type `type_name`.
 pub(super) fn add_typename_for_projection(
     selection_set: &mut SelectionSet,
     type_name: &str,
     supergraph: &SupergraphState,
 ) {
-    let mut targets = HashSet::default();
-    find_targets(
-        &[&*selection_set],
-        type_name,
-        &mut Vec::new(),
-        supergraph,
-        &mut targets,
-    );
-    if !targets.is_empty() {
-        add_typename(selection_set, &mut Vec::new(), &targets);
-    }
+    add_typename(vec![(selection_set, Some(type_name), true)], supergraph);
 }
 
 /// Like `add_typename_for_projection`, for the selections of `_entities`, an inline fragment for
@@ -41,119 +21,122 @@ pub(super) fn add_typename_for_projection_to_entities(
     selection_set: &mut SelectionSet,
     supergraph: &SupergraphState,
 ) {
-    let mut by_type: HashMap<&str, Vec<&SelectionSet>> = HashMap::default();
-    for item in &selection_set.items {
+    for item in &mut selection_set.items {
         if let SelectionItem::InlineFragment(fragment) = item {
-            by_type
-                .entry(fragment.type_condition.as_str())
-                .or_default()
-                .push(&fragment.selections);
+            let set = (
+                &mut fragment.selections,
+                Some(&*fragment.type_condition),
+                true,
+            );
+            add_typename(vec![set], supergraph);
         }
-    }
-    let mut targets = HashSet::default();
-    for (type_name, sets) in by_type {
-        find_targets(&sets, type_name, &mut Vec::new(), supergraph, &mut targets);
-    }
-    if !targets.is_empty() {
-        add_typename(selection_set, &mut Vec::new(), &targets);
     }
 }
 
-/// Collects the response key paths of the objects that need `__typename`. `sets` are the
-/// selection sets the projection merges into one object of `type_name`: the same response key
-/// selected more than once ends up as one value.
-fn find_targets(
-    sets: &[&SelectionSet],
-    type_name: &str,
-    path: &mut Vec<String>,
-    supergraph: &SupergraphState,
-    targets: &mut HashSet<Vec<String>>,
-) {
-    let mut fields: Vec<(&FieldSelection, &str)> = Vec::new();
-    let mut has_fragment = false;
-    for set in sets {
-        has_fragment |= collect(set, type_name, &mut fields);
-    }
-
-    let is_abstract = matches!(
-        supergraph.definitions.get(type_name),
-        Some(SupergraphDefinition::Interface(_) | SupergraphDefinition::Union(_))
-    );
-    // the object the planner was asked for can't get one, the top level is `_entities` or a root
-    if !path.is_empty() && is_abstract && has_fragment {
-        targets.insert(path.clone());
-    }
-
-    // order doesn't matter, `targets` is a set
-    let mut by_key: HashMap<&str, (Vec<&SelectionSet>, Option<&str>)> = HashMap::default();
-    for (field, parent_type) in fields {
-        if field.selections.items.is_empty() {
-            continue;
-        }
-        let output_type = supergraph
-            .definitions
-            .get(parent_type)
-            .and_then(|definition| definition.fields().get(&field.name))
-            .map(|field| field.field_type.inner_type());
-        let (sets, output) = by_key.entry(field.selection_identifier()).or_default();
-        sets.push(&field.selections);
-        *output = output.or(output_type);
-    }
-    for (key, (sets, output_type)) in by_key {
-        let Some(output_type) = output_type else {
-            continue;
-        };
-        path.push(key.to_string());
-        find_targets(&sets, output_type, path, supergraph, targets);
-        path.pop();
-    }
+struct Occurrence<'a, 's> {
+    field: &'a mut FieldSelection,
+    /// The field's type, `None` when it isn't known.
+    output_type: Option<&'s str>,
+    /// It's there whenever its object is.
+    always: bool,
 }
 
-/// The fields of an object through its inline fragments, each with the type it's on. Whether
-/// there's an inline fragment at all.
-fn collect<'a>(
-    set: &'a SelectionSet,
-    type_name: &'a str,
-    fields: &mut Vec<(&'a FieldSelection, &'a str)>,
-) -> bool {
-    let mut has_fragment = false;
-    for item in &set.items {
-        match item {
-            SelectionItem::Field(field) => fields.push((field, type_name)),
-            SelectionItem::InlineFragment(fragment) => {
-                // one on the interface itself gets a scope in the projection too
-                has_fragment = true;
-                collect(&fragment.selections, &fragment.type_condition, fields);
+/// `sets` are the occurrences of one object: each with the type it's on, `None` when it isn't
+/// known, and whether it's there whenever the object is.
+fn add_typename(sets: Vec<(&mut SelectionSet, Option<&str>, bool)>, supergraph: &SupergraphState) {
+    let mut fields = Vec::new();
+    for (set, type_name, always) in sets {
+        collect(set, type_name, always, supergraph, &mut fields);
+    }
+    // the occurrences of each object next to each other. Inline fragments don't add a key, the
+    // projection merges what's under them into the same object
+    fields.sort_unstable_by(|a, b| {
+        a.field
+            .selection_identifier()
+            .cmp(b.field.selection_identifier())
+    });
+    for occurrences in
+        fields.chunk_by_mut(|a, b| a.field.selection_identifier() == b.field.selection_identifier())
+    {
+        let only = occurrences.len() == 1;
+        let (mut asked, mut has_typename_always, mut any_always) = (false, false, false);
+        for occurrence in occurrences.iter_mut() {
+            occurrence.always |= only;
+            // one we can't tell counts as abstract, a `__typename` too many beats a field
+            // missing from the response
+            let is_abstract = occurrence.output_type.is_none_or(|name| {
+                matches!(
+                    supergraph.definitions.get(name),
+                    Some(SupergraphDefinition::Interface(_) | SupergraphDefinition::Union(_))
+                )
+            });
+            let asks = is_abstract && has_typename(&occurrence.field.selections);
+            asked |= asks;
+            has_typename_always |= asks && occurrence.always;
+            any_always |= occurrence.always;
+        }
+        if asked && !has_typename_always {
+            // one that's always there is enough
+            for occurrence in occurrences.iter_mut() {
+                if (occurrence.always || !any_always) && !has_typename(&occurrence.field.selections)
+                {
+                    let typename = SelectionItem::Field(FieldSelection::new_typename());
+                    occurrence.field.selections.items.insert(0, typename);
+                }
             }
-            SelectionItem::FragmentSpread(_) => {}
         }
+        let children = occurrences
+            .iter_mut()
+            .map(|occurrence| {
+                let set = &mut occurrence.field.selections;
+                (set, occurrence.output_type, occurrence.always)
+            })
+            .collect();
+        add_typename(children, supergraph);
     }
-    has_fragment
 }
 
-fn add_typename(set: &mut SelectionSet, path: &mut Vec<String>, targets: &HashSet<Vec<String>>) {
+/// The fields of `set` with selections, through its inline fragments. `always` is whether `set` is
+/// there whenever its object is, and stays so through fragments with no `@include`/`@skip`.
+fn collect<'a, 's>(
+    set: &'a mut SelectionSet,
+    type_name: Option<&str>,
+    always: bool,
+    supergraph: &'s SupergraphState,
+    fields: &mut Vec<Occurrence<'a, 's>>,
+) {
     for item in &mut set.items {
         match item {
-            SelectionItem::Field(field) => {
-                if field.selections.items.is_empty() {
-                    continue;
-                }
-                path.push(field.selection_identifier().to_string());
-                if targets.contains(path) && !has_typename(&field.selections) {
-                    field
-                        .selections
-                        .items
-                        .insert(0, SelectionItem::Field(FieldSelection::new_typename()));
-                }
-                add_typename(&mut field.selections, path, targets);
-                path.pop();
+            SelectionItem::Field(field) if !field.selections.items.is_empty() => {
+                let output_type = type_name
+                    .and_then(|name| supergraph.definitions.get(name))
+                    .and_then(|definition| definition.fields().get(&field.name))
+                    .map(|field| field.field_type.inner_type());
+                let always = always && is_unconditional(&field.include_if, &field.skip_if);
+                fields.push(Occurrence {
+                    field,
+                    output_type,
+                    always,
+                });
             }
             SelectionItem::InlineFragment(fragment) => {
-                add_typename(&mut fragment.selections, path, targets)
+                let always = always && is_unconditional(&fragment.include_if, &fragment.skip_if);
+                let type_name = Some(&*fragment.type_condition);
+                collect(
+                    &mut fragment.selections,
+                    type_name,
+                    always,
+                    supergraph,
+                    fields,
+                );
             }
-            SelectionItem::FragmentSpread(_) => {}
+            SelectionItem::Field(_) | SelectionItem::FragmentSpread(_) => {}
         }
     }
+}
+
+fn is_unconditional(include_if: &Option<String>, skip_if: &Option<String>) -> bool {
+    include_if.is_none() && skip_if.is_none()
 }
 
 /// A `__typename` that's always there, not under a condition.

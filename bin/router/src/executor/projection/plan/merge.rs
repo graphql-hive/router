@@ -58,17 +58,23 @@ impl<'arena> Merger<'arena> {
             field.value = Value::Children(self.merge_selection_set(sub_fields, child_type));
         }
 
-        // A scope that takes in every type the object can be is no scope at all. Kept, it would
-        // be a variant of its own next to the same field without one, and merging those splits
-        // the field per type, which reads a `__typename` nothing may have asked for:
-        // `store { orders { media { id } } }` next to the same under `... on Store @include(if: $a)`.
-        // Only where the field's type reads the same without it: one the interface doesn't have
-        // needs the scope to find its type.
-        let object_types = self.object_types(parent_type);
+        // Some fields get a scope that lists every type the object can be.
+        // That scope doesn't filter anything, so we remove it.
+        //
+        // `orders { media { id } }`
+        // and the same selection inside
+        // `... on Store @include(if: $a) { orders { media { id } } }`
+        // both ask for `id`. Only the second `id` gets a scope.
+        // Because their scopes differ, `id` gets split into one copy per type, and picking the
+        // right copy needs `__typename`.
+        // The subgraph wasn't asked for it, so `id` goes missing.
+        // With the scope gone, both are the same `id` and nothing gets split.
+        let mut object_types = None;
         for field in &mut siblings {
             let Some(scope) = field.parent_scope else {
                 continue;
             };
+            let object_types = object_types.get_or_insert_with(|| self.object_types(parent_type));
             if !object_types.is_empty()
                 && object_types.iter().all(|name| scope.matches(name))
                 && self.child_parent_type(parent_type, None, field.field_name)
@@ -92,7 +98,7 @@ impl<'arena> Merger<'arena> {
             }
         }
 
-        self.merge_groups(key_groups, parent_type)
+        self.merge_groups(key_groups, parent_type, object_types)
     }
 
     /// Merges `next` into `kept`. Both share one response key and one parent scope.
@@ -135,8 +141,8 @@ impl<'arena> Merger<'arena> {
         &self,
         key_groups: ResponseKeyGroups<'arena>,
         parent_type: &'arena str,
+        mut object_types: Option<BumpVec<'arena, &'arena str>>,
     ) -> BumpVec<'arena, Field<'arena>> {
-        let mut object_types: Option<BumpVec<'arena, &'arena str>> = None;
         let mut merged = BumpVec::new_in(self.arena);
         for (_, variants) in key_groups {
             // One variant, or scopes that are all single concrete types, can
