@@ -26,6 +26,7 @@ impl FetchNode<Planning> {
             output_rewrites: self.output_rewrites,
             context: self.context,
             run_if: self.run_if,
+            entity_reuse: self.entity_reuse,
         }
     }
 }
