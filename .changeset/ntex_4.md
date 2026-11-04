@@ -8,10 +8,6 @@ The router runs on ntex 4.5.0 instead of ntex 3. Users of the prebuilt binary or
 
 Custom plugins and custom router binaries built on the `hive-router` crate need the migration steps below. Code that uses ntex APIs directly through `hive_router::ntex`, such as building responses, writing ntex services or using ntex test helpers, follows the upstream [ntex 3 to 4 migration guide](https://github.com/ntex-rs/ntex/blob/main/ntex/migration_3to4.md).
 
-## Rust 1.97 or newer is required
-
-ntex 4 requires Rust 1.97, so every crate that depends on `hive-router` has to build with at least that version.
-
 ## BREAKING: Request URLs use `ntex::url::Url`
 
 ntex 4 represents request URLs with `ntex::url::Url` instead of `http::Uri`, and `ntex::http::Uri` no longer exists. The following APIs expose the new type:
