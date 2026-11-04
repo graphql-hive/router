@@ -2839,7 +2839,6 @@ dependencies = [
  "lasso2",
  "lazy-init",
  "lazy_static",
- "libc",
  "matchit 0.9.2",
  "md5",
  "mediatype",
