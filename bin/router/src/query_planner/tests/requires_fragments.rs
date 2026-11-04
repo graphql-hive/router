@@ -185,3 +185,382 @@ fn requires_root_fragment_on_inapplicable_type() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+/// `permissions @skip(if: $skip)` needs more of `profile` than `basicPermissions` does, and the
+/// extra part is only fetched when `$skip` is false. In one shared call, `$skip: true` would send
+/// a `profile` with fields missing, it'd become `null` and break `basicPermissions`. So they get
+/// separate calls.
+#[test]
+fn conditional_requires_stay_out_of_an_unconditional_call() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($skip: Boolean!) {
+          userFromA {
+            basicPermissions
+            permissions @skip(if: $skip)
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-with-fragments.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          query ($skip:Boolean!) {
+            userFromA {
+              __typename
+              id
+              profile {
+                displayName
+              }
+              ... on User @skip(if: $skip) {
+                profile {
+                  displayName
+                  __typename
+                  ... on GuestAccount {
+                    guestToken
+                    accountType
+                  }
+                  ... on AdminAccount {
+                    adminLevel
+                    accountType
+                  }
+                }
+                __typename
+                id
+              }
+            }
+          }
+        },
+        BatchFetch(service: "b") {
+          {
+            _e0(if: !$skip) {
+              paths: [
+                "userFromA"
+              ]
+              {
+                ... on User {
+                  __typename
+                  profile {
+                    displayName
+                    ... on AdminAccount {
+                      accountType
+                      adminLevel
+                    }
+                    ... on GuestAccount {
+                      accountType
+                      guestToken
+                    }
+                  }
+                  id
+                }
+              }
+            }
+            _e1 {
+              paths: [
+                "userFromA"
+              ]
+              {
+                ... on User {
+                  __typename
+                  profile {
+                    displayName
+                  }
+                  id
+                }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on User {
+                permissions
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on User {
+                basicPermissions
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+/// Same as above, plus `permissions` on another `userFromA` under `@include`. Neither
+/// conditional call shares with `basicPermissions`, and the two conditional ones stay separate
+/// too.
+#[test]
+fn merged_conditional_requires_stay_out_of_an_unconditional_call() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($skip: Boolean!, $include: Boolean!) {
+          userFromA {
+            basicPermissions
+            permissions @skip(if: $skip)
+          }
+          userFromA @include(if: $include) {
+            permissions
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-with-fragments.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          query ($include:Boolean!,$skip:Boolean!) {
+            userFromA {
+              __typename
+              id
+              profile {
+                displayName
+              }
+              ... on User @skip(if: $skip) {
+                ...a
+              }
+            }
+            userFromA @include(if: $include) {
+              ...a
+            }
+          }
+          fragment a on User {
+            profile {
+              displayName
+              __typename
+              ... on GuestAccount {
+                guestToken
+                accountType
+              }
+              ... on AdminAccount {
+                adminLevel
+                accountType
+              }
+            }
+            __typename
+            id
+          }
+        },
+        BatchFetch(service: "b") {
+          {
+            _e0(if: $include) {
+              paths: [
+                "userFromA"
+              ]
+              {
+                ... on User {
+                  __typename
+                  profile {
+                    displayName
+                    ... on AdminAccount {
+                      accountType
+                      adminLevel
+                    }
+                    ... on GuestAccount {
+                      accountType
+                      guestToken
+                    }
+                  }
+                  id
+                }
+              }
+            }
+            _e1(if: !$skip) {
+              paths: [
+                "userFromA"
+              ]
+              {
+                ... on User {
+                  __typename
+                  profile {
+                    displayName
+                    ... on AdminAccount {
+                      accountType
+                      adminLevel
+                    }
+                    ... on GuestAccount {
+                      accountType
+                      guestToken
+                    }
+                  }
+                  id
+                }
+              }
+            }
+            _e2 {
+              paths: [
+                "userFromA"
+              ]
+              {
+                ... on User {
+                  __typename
+                  profile {
+                    displayName
+                  }
+                  id
+                }
+              }
+            }
+          }
+          {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on User {
+                ...a
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on User {
+                ...a
+              }
+            }
+            _e2: _entities(representations: $__batch_reps_2) {
+              ... on User {
+                basicPermissions
+              }
+            }
+          }
+          fragment a on User {
+            permissions
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn merged_conditional_inputs_stay_out_of_an_unconditional_call() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($skip: Boolean!, $include: Boolean!) {
+          userFromA {
+            basicPermissions
+            permissions @skip(if: $skip)
+            other: permissions @include(if: $include)
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_defaults(
+        "fixture/tests/requires-with-fragments.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          query ($include:Boolean!,$skip:Boolean!) {
+            userFromA {
+              __typename
+              id
+              profile {
+                displayName
+              }
+              ... on User @skip(if: $skip) {
+                ...a
+              }
+              ... on User @include(if: $include) {
+                ...a
+              }
+            }
+          }
+          fragment a on User {
+            profile {
+              displayName
+              __typename
+              ... on GuestAccount {
+                guestToken
+                accountType
+              }
+              ... on AdminAccount {
+                adminLevel
+                accountType
+              }
+            }
+            __typename
+            id
+          }
+        },
+        BatchFetch(service: "b") {
+          {
+            _e0(if: !$skip || $include) {
+              paths: [
+                "userFromA"
+              ]
+              {
+                ... on User {
+                  __typename
+                  profile {
+                    displayName
+                    ... on AdminAccount {
+                      accountType
+                      adminLevel
+                    }
+                    ... on GuestAccount {
+                      accountType
+                      guestToken
+                    }
+                  }
+                  id
+                }
+              }
+            }
+            _e1 {
+              paths: [
+                "userFromA"
+              ]
+              {
+                ... on User {
+                  __typename
+                  profile {
+                    displayName
+                  }
+                  id
+                }
+              }
+            }
+          }
+          ($include:Boolean!,$skip:Boolean!) {
+            _e0: _entities(representations: $__batch_reps_0) {
+              ... on User {
+                ... on User @include(if: $include) {
+                  other: permissions
+                }
+                ... on User @skip(if: $skip) {
+                  permissions
+                }
+              }
+            }
+            _e1: _entities(representations: $__batch_reps_1) {
+              ... on User {
+                basicPermissions
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}

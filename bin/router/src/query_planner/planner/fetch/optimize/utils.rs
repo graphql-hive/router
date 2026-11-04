@@ -17,7 +17,7 @@ use crate::query_planner::{
     planner::fetch::{
         error::FetchGraphError,
         fetch_graph::FetchGraph,
-        fetch_step_data::{FetchStepData, FetchStepKind},
+        fetch_step_data::{FetchStepData, FetchStepFlags, FetchStepKind},
         response_keys::read_as_written,
         state::MultiTypeFetchStep,
     },
@@ -112,6 +112,17 @@ pub(crate) fn perform_fetch_step_merge(
     let source_id = source.id;
     let target_id = target.id;
 
+    // the merged call runs if either side does, but each side's input is only fetched under
+    // that side's conditions, so remember it. a nested call we absorb doesn't count, it reads
+    // our output, not our input
+    let merges_input = force_merge_inputs || target.response_path == source.response_path;
+    if target.is_entity_call()
+        && source.is_entity_call()
+        && merges_input
+        && target.merge_adds_input_condition(source)
+    {
+        target.flags.insert(FetchStepFlags::CONDITIONAL_INPUT);
+    }
     let source_condition_merged = merge_source_condition_into_non_entity_target(target, source)?;
     if !source_condition_merged {
         target.scope_fetch_conditions_before_merge(source);
@@ -448,6 +459,9 @@ impl FetchStepData<MultiTypeFetchStep> {
                 if !self.output.selecting_same_types(&other.output) {
                     return false;
                 }
+                if !self.inputs_hold_when_merged(other) {
+                    return false;
+                }
             } else if !(is_only_parent && self.can_absorb_nested_entity_call(other)) {
                 return false;
             }
@@ -476,6 +490,68 @@ impl FetchStepData<MultiTypeFetchStep> {
         }
 
         true
+    }
+
+    /// Can the two calls share one call without losing input?
+    ///
+    /// A call's `@requires` fields are only fetched when its `@include`/`@skip` holds. If the
+    /// merged call runs without them, the object goes out with a field missing, turns into
+    /// `null`, and breaks the other side's fields too. So each side's input has to be there
+    /// every time the merged call runs.
+    pub(crate) fn inputs_hold_when_merged(&self, other: &Self) -> bool {
+        !self.conditions_differ(other)
+            || (self.input_present_when_merged_with(other)
+                && other.input_present_when_merged_with(self))
+    }
+
+    /// Will the merged call have input that's only there sometimes?
+    fn merge_adds_input_condition(&self, other: &Self) -> bool {
+        if !self.conditions_differ(other) {
+            return false;
+        }
+        if !self.is_unconditional() && !other.is_unconditional() {
+            return true;
+        }
+        !self.inputs_hold_when_merged(other)
+    }
+
+    /// The two calls don't run under the same `@include`/`@skip`, on the call, its path or its
+    /// input.
+    fn conditions_differ(&self, other: &Self) -> bool {
+        self.condition != other.condition
+            || !self
+                .response_path
+                .conditions()
+                .eq(other.response_path.conditions())
+            || self.flags.contains(FetchStepFlags::CONDITIONAL_INPUT)
+            || other.flags.contains(FetchStepFlags::CONDITIONAL_INPUT)
+    }
+
+    /// This call always runs and its input is always there.
+    fn is_unconditional(&self) -> bool {
+        self.condition.is_none()
+            && self.response_path.conditions().next().is_none()
+            && !self.flags.contains(FetchStepFlags::CONDITIONAL_INPUT)
+    }
+
+    /// Is our input there every time the merged call runs? Yes if we always run. Otherwise
+    /// `other` has to send each of our types too: at least our fields if it always runs, exactly
+    /// our fields if it doesn't. A type only we send would go out even when we don't run, with
+    /// fields missing.
+    fn input_present_when_merged_with(&self, other: &Self) -> bool {
+        if self.is_unconditional() {
+            return true;
+        }
+        self.input.iter_selections().all(|(type_name, ours)| {
+            let Some(theirs) = other.input.selections_for_definition(type_name) else {
+                return false;
+            };
+            if other.is_unconditional() {
+                theirs.contains(ours)
+            } else {
+                theirs.contains(ours) && ours.contains(theirs)
+            }
+        })
     }
 
     /// Only call this when we are the only step `other` waits for.
