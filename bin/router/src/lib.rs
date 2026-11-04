@@ -407,11 +407,12 @@ fn to_ntex_keep_alive(duration: std::time::Duration) -> KeepAlive {
 }
 
 /// Resolves `http.workers` into an explicit worker count. `None` leaves the count to ntex,
-/// which uses `std::thread::available_parallelism()`, the CPU affinity mask capped by the
-/// cgroup CPU quota on Linux.
+/// which uses `std::thread::available_parallelism()`.
 fn resolve_http_workers(workers: HttpWorkersConfig) -> Option<std::num::NonZeroUsize> {
     match workers {
-        HttpWorkersConfig::Cpuset => None,
+        // ntex's own count is capped by the cgroup cpu quota on linux, so the affinity mask
+        // is counted here to keep `cpuset` independent of cpu limits
+        HttpWorkersConfig::Cpuset => cpuset_cpu_count(),
         // on Linux, the smaller of the affinity mask size and the cgroup CPU quota
         HttpWorkersConfig::Container => match std::thread::available_parallelism() {
             Ok(count) => {
@@ -425,6 +426,27 @@ fn resolve_http_workers(workers: HttpWorkersConfig) -> Option<std::num::NonZeroU
         },
         HttpWorkersConfig::Count(count) => Some(count),
     }
+}
+
+/// Counts the CPUs in the process' affinity mask, the cgroup cpuset on Linux.
+#[cfg(target_os = "linux")]
+fn cpuset_cpu_count() -> Option<std::num::NonZeroUsize> {
+    // shortcut: `cpu_set_t` holds 1024 CPUs, larger masks fail and fall back to ntex's count
+    // SAFETY: `set` is a zeroed `cpu_set_t` and the kernel writes at most its size into it
+    let count = unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        if libc::sched_getaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &mut set) != 0 {
+            return None;
+        }
+        libc::CPU_COUNT(&set)
+    };
+    std::num::NonZeroUsize::new(usize::try_from(count).ok()?)
+}
+
+/// Other platforms have no cgroup quota, so ntex's count already is the cpuset size.
+#[cfg(not(target_os = "linux"))]
+fn cpuset_cpu_count() -> Option<std::num::NonZeroUsize> {
+    None
 }
 
 pub fn build_http_service_config(router_config: &HiveRouterConfig) -> HttpServiceConfig {
@@ -930,6 +952,24 @@ mod to_ntex_keep_alive_tests {
         assert_eq!(
             to_ntex_keep_alive(Duration::from_secs(u64::from(u16::MAX) + 1)),
             KeepAlive::Timeout(Seconds(u16::MAX))
+        );
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod resolve_http_workers_tests {
+    use super::*;
+
+    // `available_parallelism` is the affinity mask capped by the cgroup quota, so the plain
+    // mask count `cpuset` uses can never be smaller
+    #[test]
+    fn cpuset_counts_the_affinity_mask_ignoring_the_cpu_quota() {
+        let cpuset = resolve_http_workers(HttpWorkersConfig::Cpuset)
+            .expect("the affinity mask should be readable");
+        let container = std::thread::available_parallelism().unwrap();
+        assert!(
+            cpuset >= container,
+            "cpuset {cpuset} < container {container}"
         );
     }
 }

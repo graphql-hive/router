@@ -215,6 +215,10 @@ config_rs = { package = "config", version = "0.15.23", features = ["yaml", "json
 envconfig = "0.11.0"
 boxcar = "0.2.14"
 
+# reads the cpu affinity mask for `http.workers: cpuset`, already in the tree through tokio and std
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2.189"
+
 [dev-dependencies]
 criterion = { workspace = true }
 insta = { workspace = true }
